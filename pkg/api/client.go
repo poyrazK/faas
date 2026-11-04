@@ -779,7 +779,10 @@ func (c *Client) PostAccountMfaEnroll(ctx context.Context) (MFAEnrollResponse, e
 // ConfirmMFA finishes enrollment with the customer's first 6-digit
 // TOTP code. On success the server stamps mfa_enrolled_at, clears
 // mfa_required, and re-issues the session cookie without
-// mfa_pending. Idempotent on retry.
+// mfa_pending. An already-confirmed enrollment returns a conflict; use
+// verification for subsequent challenges. This method requires a session
+// and its action-bound CSRF token, plus CurrentPassword when the account has
+// one; the CLI opens the browser form instead.
 func (c *Client) PostAccountMfaConfirm(ctx context.Context, req MFAConfirmRequest) (MFAConfirmResponse, error) {
 	var out MFAConfirmResponse
 	return out, c.do(ctx, "POST", "/v1/account/mfa/confirm", req, &out)

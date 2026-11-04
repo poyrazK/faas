@@ -1539,8 +1539,9 @@ func TestCmdPlan_DispatchesKnownPlans(t *testing.T) {
 			var gotBody []byte
 			sink := &multiSink{
 				onAccount: func(method string) (int, any) {
-					// Same-plan current → no downgrade prompt
-					return http.StatusOK, api.AccountResponse{Email: "a@b.c", Plan: c.plan}
+					// No current plan → no downgrade prompt, and no
+					// "already on" answer for the current plan.
+					return http.StatusOK, api.AccountResponse{Email: "a@b.c"}
 				},
 				onPlan: func(body []byte) (int, any) {
 					gotBody = body

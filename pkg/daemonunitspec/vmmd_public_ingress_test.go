@@ -2,7 +2,8 @@ package daemonunitspec
 
 // adr: 20261102081618 — vmmd rebuilds the compute node's whole ruleset, so
 // its drop-in must hand it the same Cloudflare ranges the boot policy admits
-// on 80/443, or the first rebuild reopens them to everyone.
+// on 80/443, or the first rebuild reopens them to everyone. An edge with no
+// proxy in front (ADR-20261103163954) hands it its entry addresses instead.
 
 import (
 	"encoding/json"
@@ -32,12 +33,16 @@ from jinja2 import Environment
 print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads(sys.argv[2])))
 `
 	for _, tc := range []struct {
-		name string
-		on   bool
-		want string
+		name            string
+		on              bool
+		entry           []string
+		want, entryWant string
 	}{
 		{name: "Cloudflare-only origin", on: true, want: `Environment="FAAS_PUBLIC_INGRESS_CIDRS=` + strings.Join(ranges, ",") + `"`},
 		{name: "open origin", on: false},
+		{name: "no proxy in front", on: true, entry: []string{"203.0.113.10", "2001:db8::10"},
+			want:      `Environment="FAAS_PUBLIC_INGRESS_CIDRS=` + strings.Join(ranges, ",") + `"`,
+			entryWant: `Environment="FAAS_PUBLIC_ENTRY_ADDRS=203.0.113.10,2001:db8::10"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values, err := json.Marshal(map[string]any{
@@ -49,6 +54,7 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 				"faas_cloudflare_origin_only":      tc.on,
 				"faas_cloudflare_ipv4_cidrs":       families[0],
 				"faas_cloudflare_ipv6_cidrs":       families[1],
+				"faas_public_entry_addrs":          tc.entry,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -58,14 +64,20 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 			if err != nil {
 				t.Fatalf("render: %v: %s", err, out)
 			}
-			got := ""
+			got, entryGot := "", ""
 			for _, line := range strings.Split(string(out), "\n") {
-				if strings.HasPrefix(line, `Environment="FAAS_PUBLIC_INGRESS_CIDRS=`) {
+				switch {
+				case strings.HasPrefix(line, `Environment="FAAS_PUBLIC_INGRESS_CIDRS=`):
 					got = line
+				case strings.HasPrefix(line, `Environment="FAAS_PUBLIC_ENTRY_ADDRS=`):
+					entryGot = line
 				}
 			}
 			if got != tc.want {
 				t.Fatalf("FAAS_PUBLIC_INGRESS_CIDRS line = %q, want %q", got, tc.want)
+			}
+			if entryGot != tc.entryWant {
+				t.Fatalf("FAAS_PUBLIC_ENTRY_ADDRS line = %q, want %q", entryGot, tc.entryWant)
 			}
 		})
 	}

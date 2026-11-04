@@ -280,7 +280,6 @@ ListAllAppSecrets
 ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
-ListAllEventsPaged
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge

@@ -146,7 +146,7 @@ func (s *PgStore) CreateRealtimeConsumerGroup(ctx context.Context, ep, ch, name 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var id string
-	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&id)
+	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for no key update`, ep).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RealtimeConsumerGroup{}, ErrNotFound
 	}

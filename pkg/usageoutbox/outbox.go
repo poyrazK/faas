@@ -97,6 +97,68 @@ type Outbox struct {
 	pending    int64
 	flushing   bool
 	broken     error
+	// brokenAt is when broken was set; tornAt is the durable end to cut the
+	// data file back to before recovering, or -1 when the failure did not
+	// leave undurable lines behind (H103).
+	brokenAt time.Time
+	tornAt   int64
+}
+
+// recoverAfter is how long a broken outbox waits before it reloads itself
+// from disk. A single failed append, fsync or cursor write used to latch the
+// outbox broken until the process restarted, withholding every attributed
+// response on the gateway meanwhile (bug hunt H103).
+var recoverAfter = 5 * time.Second
+
+// failLocked marks the outbox broken. torn says the failure may have left
+// lines past durableEnd whose producers were told the write failed; recovery
+// cuts them off so a withheld response is never billed.
+func (q *Outbox) failLocked(err error, torn bool) error {
+	if q.broken == nil {
+		q.brokenAt = time.Now()
+		if torn {
+			q.tornAt = q.durableEnd
+		}
+	}
+	q.broken = err
+	return err
+}
+
+// recoverLocked reloads a broken outbox from disk once recoverAfter has
+// passed, first cutting off lines that were never durable.
+func (q *Outbox) recoverLocked() {
+	if q.broken == nil || q.flushing || time.Since(q.brokenAt) < recoverAfter {
+		return
+	}
+	if q.tornAt >= 0 {
+		if err := truncateSync(q.dataPath, q.tornAt); err != nil {
+			q.brokenAt = time.Now()
+			return
+		}
+	}
+	fresh := &Outbox{root: q.root, dataPath: q.dataPath, cursorPath: q.cursorPath, maxBytes: q.maxBytes, tornAt: -1}
+	if err := fresh.load(); err != nil {
+		q.broken, q.brokenAt = err, time.Now()
+		return
+	}
+	q.offset, q.end, q.durableEnd, q.pending = fresh.offset, fresh.end, fresh.durableEnd, fresh.pending
+	q.broken, q.tornAt = nil, -1
+}
+
+func truncateSync(path string, size int64) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0o640)
+	if err != nil {
+		return err
+	}
+	if err := f.Truncate(size); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func Open(root string, maxBytes int64) (*Outbox, error) {
@@ -109,7 +171,7 @@ func Open(root string, maxBytes int64) (*Outbox, error) {
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		return nil, fmt.Errorf("create usage outbox: %w", err)
 	}
-	q := &Outbox{root: root, dataPath: filepath.Join(root, "events.jsonl"), cursorPath: filepath.Join(root, "cursor.json"), maxBytes: maxBytes}
+	q := &Outbox{root: root, dataPath: filepath.Join(root, "events.jsonl"), cursorPath: filepath.Join(root, "cursor.json"), maxBytes: maxBytes, tornAt: -1}
 	q.cond = sync.NewCond(&q.mu)
 	if err := q.load(); err != nil {
 		return nil, err
@@ -226,6 +288,7 @@ func (q *Outbox) Enqueue(event Event) error {
 	b = append(b, '\n')
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.recoverLocked()
 	if q.broken != nil {
 		return q.broken
 	}
@@ -234,8 +297,7 @@ func (q *Outbox) Enqueue(event Event) error {
 	}
 	f, err := os.OpenFile(q.dataPath, os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
-		q.broken = err
-		return err
+		return q.failLocked(err, true)
 	}
 	_, err = f.Write(b)
 	closeErr := f.Close()
@@ -243,8 +305,7 @@ func (q *Outbox) Enqueue(event Event) error {
 		err = closeErr
 	}
 	if err != nil {
-		q.broken = fmt.Errorf("append usage event: %w", err)
-		return q.broken
+		return q.failLocked(fmt.Errorf("append usage event: %w", err), true)
 	}
 	q.end += int64(len(b))
 	q.pending++
@@ -277,7 +338,7 @@ func (q *Outbox) waitDurableLocked(target int64) error {
 				}
 			}
 			if err != nil {
-				q.broken = fmt.Errorf("sync usage outbox: %w", err)
+				_ = q.failLocked(fmt.Errorf("sync usage outbox: %w", err), true)
 			} else {
 				q.durableEnd = q.end
 			}
@@ -291,6 +352,7 @@ func (q *Outbox) waitDurableLocked(target int64) error {
 func (q *Outbox) Next() (Item, bool, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.recoverLocked()
 	if q.broken != nil {
 		return Item{}, false, q.broken
 	}
@@ -328,27 +390,23 @@ func (q *Outbox) Ack(item Item) error {
 		return errors.New("stale usage outbox acknowledgement")
 	}
 	if err := q.saveCursor(item.end); err != nil {
-		q.broken = err
-		return err
+		return q.failLocked(err, false)
 	}
 	q.offset = item.end
 	q.pending--
 	if q.pending == 0 {
 		if err := os.Truncate(q.dataPath, 0); err != nil {
-			q.broken = err
-			return err
+			return q.failLocked(err, false)
 		}
 		q.end = 0
 		q.durableEnd = 0
 		if err := q.saveCursor(0); err != nil {
-			q.broken = err
-			return err
+			return q.failLocked(err, false)
 		}
 		q.offset = 0
 	} else if q.durableEnd == q.end && !q.flushing && q.offset >= compactAfter && q.offset >= q.end/2 {
 		if err := q.compact(); err != nil {
-			q.broken = err
-			return err
+			return q.failLocked(err, false)
 		}
 	}
 	return nil
@@ -434,6 +492,7 @@ func (q *Outbox) appendFrom(src *Outbox) error {
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.recoverLocked()
 	if q.broken != nil {
 		return q.broken
 	}
@@ -442,8 +501,7 @@ func (q *Outbox) appendFrom(src *Outbox) error {
 	}
 	f, err := os.OpenFile(q.dataPath, os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
-		q.broken = err
-		return err
+		return q.failLocked(err, true)
 	}
 	_, err = f.Write(b)
 	closeErr := f.Close()
@@ -451,8 +509,7 @@ func (q *Outbox) appendFrom(src *Outbox) error {
 		err = closeErr
 	}
 	if err != nil {
-		q.broken = fmt.Errorf("append adopted usage events: %w", err)
-		return q.broken
+		return q.failLocked(fmt.Errorf("append adopted usage events: %w", err), true)
 	}
 	q.end += int64(len(b))
 	q.pending += src.pending
@@ -496,7 +553,12 @@ func (q *Outbox) Stats() Stats {
 	return Stats{PendingRecords: q.pending, PendingBytes: q.end - q.offset, CapacityBytes: q.maxBytes}
 }
 
-func (q *Outbox) Health() error { q.mu.Lock(); defer q.mu.Unlock(); return q.broken }
+func (q *Outbox) Health() error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.recoverLocked()
+	return q.broken
+}
 
 func (q *Outbox) saveCursor(offset int64) error {
 	b, err := json.Marshal(offset)

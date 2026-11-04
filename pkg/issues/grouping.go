@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/redact"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 const (
@@ -105,7 +106,11 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	}
 	in.Redactions = nil
 	sanitize := func(value string, cap int) string {
-		value, names := redact.New(cap).Apply(strings.ToValidUTF8(value, ""))
+		// PostgreSQL text and jsonb reject U+0000, even when JSON-escaped.
+		// Preserve the surrounding evidence without making the event a
+		// permanently retrying poison pill for reporter queues.
+		value = strings.ReplaceAll(strings.ToValidUTF8(value, ""), "\x00", "\uFFFD")
+		value, names := redact.New(cap).Apply(value)
 		in.Redactions = append(in.Redactions, names...)
 		return value
 	}
@@ -124,6 +129,11 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	in.ErrorCode = sanitize(strings.TrimSpace(in.ErrorCode), api.IssueMaxTypeBytes)
 	if err := normalizeContext(&in, sanitize); err != nil {
 		return in, "", "", err
+	}
+	// Validate breadcrumb times against the reported occurrence before
+	// clamping accepted future timestamps for alert-window evaluation.
+	if in.OccurredAt.After(now) {
+		in.OccurredAt = now
 	}
 	in.Frames = append([]api.IssueFrame(nil), in.Frames...)
 	if len(in.Frames) == 0 {
@@ -156,6 +166,11 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	}
 	sort.Strings(in.Redactions)
 	in.Redactions = compactRedactions(in.Redactions)
+	fingerprint, title := groupingResult(in)
+	return in, fingerprint, title, nil
+}
+
+func groupingResult(in api.IssueEvent) (string, string) {
 	decision := decideGrouping(in, GroupingVersionFor(in))
 	fingerprint := groupingFingerprint(decision.parts, decision.explanation.GroupingVersion)
 	title := in.ExceptionType
@@ -163,7 +178,87 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 		title += ": " + in.Message
 	}
 	title, _ = redact.New(api.IssueMessageMaxBytes).Apply(title)
-	return in, fingerprint, title, nil
+	// Redaction and its truncation marker can expand the output past the
+	// database title limit even when each submitted field is within bounds.
+	title = safetext.Truncate(title, api.IssueMessageMaxBytes)
+	return fingerprint, title
+}
+
+// boundedMappedFrame bounds the JSON representation as well as the UTF-8
+// string. A source map may repeat control characters across hundreds of
+// frames, and JSON escaping can otherwise multiply the stored payload.
+func boundedMappedFrame(value string) string {
+	used := 2 // JSON string quotes
+	for i, r := range value {
+		n := utf8.RuneLen(r)
+		switch r {
+		case '"', '\\', '\b', '\f', '\n', '\r', '\t':
+			n = 2
+		case '<', '>', '&', '\u2028', '\u2029':
+			n = 6
+		default:
+			if r < 0x20 {
+				n = 6
+			}
+		}
+		if used+n > api.IssueMaxFrameBytes {
+			return value[:i]
+		}
+		used += n
+	}
+	return value
+}
+
+// NormalizeSymbolicated sanitizes newly mapped frame text without validating or
+// truncating the already normalized envelope a second time. Redaction can
+// expand a valid input beyond its original input limit.
+func NormalizeSymbolicated(original, mapped api.IssueEvent) (api.IssueEvent, string, string, error) {
+	if len(original.Frames) != len(mapped.Frames) || len(original.Causes) != len(mapped.Causes) {
+		return original, "", "", errors.New("symbolication changed issue frame structure")
+	}
+	out := original
+	out.Redactions = append([]string(nil), original.Redactions...)
+	sanitize := func(value string) string {
+		value = strings.ReplaceAll(strings.ToValidUTF8(value, ""), "\x00", "\uFFFD")
+		value, names := redact.New(api.IssueMaxFrameBytes).Apply(value)
+		out.Redactions = append(out.Redactions, names...)
+		return boundedMappedFrame(value)
+	}
+	frames := func(before, after []api.IssueFrame) ([]api.IssueFrame, error) {
+		if len(before) != len(after) {
+			return nil, errors.New("symbolication changed issue frame structure")
+		}
+		result := append([]api.IssueFrame(nil), after...)
+		for i := range result {
+			f := &result[i]
+			if f.Line < 0 || f.Column < 0 || f.Column > api.IssueFrameCoordinateMax || !utf8.ValidString(f.File) || !utf8.ValidString(f.Function) {
+				return nil, errors.New("invalid symbolicated stack frame")
+			}
+			if f.File != before[i].File {
+				f.File = sanitize(f.File)
+			}
+			if f.Function != before[i].Function {
+				f.Function = sanitize(f.Function)
+			}
+		}
+		return result, nil
+	}
+	var err error
+	out.Frames, err = frames(original.Frames, mapped.Frames)
+	if err != nil {
+		return original, "", "", err
+	}
+	out.Causes = append([]api.IssueCause(nil), original.Causes...)
+	for i := range out.Causes {
+		out.Causes[i].Frames, err = frames(original.Causes[i].Frames, mapped.Causes[i].Frames)
+		if err != nil {
+			return original, "", "", err
+		}
+	}
+	sort.Strings(out.Redactions)
+	out.Redactions = compactRedactions(out.Redactions)
+	fingerprint, title := groupingResult(out)
+	return out, fingerprint, title, nil
 }
 
 // PayloadDigest makes an exact retry idempotent while rejecting an event-ID

@@ -29,7 +29,9 @@ type config struct {
 // configFromEnv reads edgednsd's settings, which the edgednsd role renders
 // from the manifest:
 //
-//   - FAAS_EDGEDNS_NAMES: the managed names, "<zone id>:<host>,...";
+//   - FAAS_EDGEDNS_NAMES: the managed names, "<zone id>:<host>[:<mode>],...",
+//     where mode is "proxied" (the default) or "dns-only"
+//     (ADR-20261103163954 §1);
 //   - FAAS_EDGEDNS_NODE_ADDRESSES: each compute node's public address,
 //     "<node name>=<address>,...";
 //   - FAAS_EDGEDNS_CF_TOKEN_FILE: the Zone > DNS: Edit token;
@@ -45,12 +47,17 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		edgePort:    defaultEdgeControlPort,
 		metricsAddr: "127.0.0.1:9113",
 	}
+	seen := map[string]bool{}
 	for _, entry := range splitList(getenv("FAAS_EDGEDNS_NAMES")) {
-		zone, host, ok := strings.Cut(entry, ":")
-		if !ok || zone == "" || host == "" {
-			return config{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_NAMES entry %q is not <zone id>:<host>", entry)
+		name, err := parseName(entry)
+		if err != nil {
+			return config{}, err
 		}
-		c.names = append(c.names, edgedns.Name{ZoneID: zone, Host: strings.ToLower(host)})
+		if seen[name.Host] {
+			return config{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_NAMES lists %s twice; a name has one mode", name.Host)
+		}
+		seen[name.Host] = true
+		c.names = append(c.names, name)
 	}
 	if len(c.names) == 0 {
 		return config{}, errors.New("edgednsd: FAAS_EDGEDNS_NAMES names no host to manage")
@@ -89,6 +96,24 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		c.metricsAddr = raw
 	}
 	return c, nil
+}
+
+// parseName reads one "<zone id>:<host>[:<mode>]" entry.
+func parseName(entry string) (edgedns.Name, error) {
+	zone, rest, ok := strings.Cut(entry, ":")
+	host, mode, _ := strings.Cut(rest, ":")
+	if !ok || zone == "" || host == "" {
+		return edgedns.Name{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_NAMES entry %q is not <zone id>:<host>[:proxied|:dns-only]", entry)
+	}
+	name := edgedns.Name{ZoneID: zone, Host: strings.ToLower(host)}
+	switch mode {
+	case "", "proxied":
+	case "dns-only":
+		name.DNSOnly = true
+	default:
+		return edgedns.Name{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_NAMES entry %q: mode %q is not proxied or dns-only", entry, mode)
+	}
+	return name, nil
 }
 
 func splitList(raw string) []string {

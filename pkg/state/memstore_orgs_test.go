@@ -313,7 +313,9 @@ func TestMemStore_ListOrgsForAccount_FiltersRemoved(t *testing.T) {
 func TestMemStore_CreateAndConsumeOrgInvitation_HappyAndInvalid(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
-	org, err := m.CreateOrg(ctx, newTestOrg("invite-test"))
+	seed := newTestOrg("invite-test")
+	seed.Plan = api.PlanHobby // invitation acceptance requires a positive member allowance
+	org, err := m.CreateOrg(ctx, seed)
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}

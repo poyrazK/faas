@@ -114,7 +114,13 @@ def sync_detailed(
      Requires the organization owner, admin credential scope, verified email,
     MFA and recent step-up. Paid entitlements activate only after provider
     confirmation. Existing personal subscriptions are never reassigned.
-    A payment-required response carries checkout_url or billing_portal_url.
+    A payment-required response carries checkout_url, or billing_portal_url
+    when the upgrade charge of an existing subscription is declined. The
+    first checkout bills the acting owner's email until
+    `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+    Asking for the organization's current plan keeps its subscription,
+    undoing a scheduled cancellation or downgrade; while a cancellation is
+    scheduled any other plan answers 409 `billing_subscription_ending`.
 
     Args:
         slug (str):
@@ -154,7 +160,13 @@ def sync(
      Requires the organization owner, admin credential scope, verified email,
     MFA and recent step-up. Paid entitlements activate only after provider
     confirmation. Existing personal subscriptions are never reassigned.
-    A payment-required response carries checkout_url or billing_portal_url.
+    A payment-required response carries checkout_url, or billing_portal_url
+    when the upgrade charge of an existing subscription is declined. The
+    first checkout bills the acting owner's email until
+    `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+    Asking for the organization's current plan keeps its subscription,
+    undoing a scheduled cancellation or downgrade; while a cancellation is
+    scheduled any other plan answers 409 `billing_subscription_ending`.
 
     Args:
         slug (str):
@@ -189,7 +201,13 @@ async def asyncio_detailed(
      Requires the organization owner, admin credential scope, verified email,
     MFA and recent step-up. Paid entitlements activate only after provider
     confirmation. Existing personal subscriptions are never reassigned.
-    A payment-required response carries checkout_url or billing_portal_url.
+    A payment-required response carries checkout_url, or billing_portal_url
+    when the upgrade charge of an existing subscription is declined. The
+    first checkout bills the acting owner's email until
+    `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+    Asking for the organization's current plan keeps its subscription,
+    undoing a scheduled cancellation or downgrade; while a cancellation is
+    scheduled any other plan answers 409 `billing_subscription_ending`.
 
     Args:
         slug (str):
@@ -227,7 +245,13 @@ async def asyncio(
      Requires the organization owner, admin credential scope, verified email,
     MFA and recent step-up. Paid entitlements activate only after provider
     confirmation. Existing personal subscriptions are never reassigned.
-    A payment-required response carries checkout_url or billing_portal_url.
+    A payment-required response carries checkout_url, or billing_portal_url
+    when the upgrade charge of an existing subscription is declined. The
+    first checkout bills the acting owner's email until
+    `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+    Asking for the organization's current plan keeps its subscription,
+    undoing a scheduled cancellation or downgrade; while a cancellation is
+    scheduled any other plan answers 409 `billing_subscription_ending`.
 
     Args:
         slug (str):

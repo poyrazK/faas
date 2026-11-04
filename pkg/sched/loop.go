@@ -93,6 +93,10 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
+	// triggerClaimRenewInterval is how often a running trigger batch renews
+	// its record claims; zero means api.TriggerRecordClaimRenewInterval.
+	// Tests shorten it.
+	triggerClaimRenewInterval time.Duration
 	// triggerPollers caches one triggerSource per trigger id.
 	// triggerPollerConfigs holds the fingerprint of the config each
 	// poller was built from: a changed trigger (credentials, topic, URL)
@@ -252,6 +256,8 @@ type Loop struct {
 	workflowScheduleMinute            int64
 	workflowFailurePolicyAfter        string
 	workflowFailurePolicyNextPass     time.Time
+	workflowFailurePolicyPassFailed   bool
+	workflowFailurePolicyUncertain    bool
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
@@ -1382,16 +1388,16 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(jobsDispatchT):
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
-			l.runJobsReaperTick(ctx)
+			l.submitWork(workJobsReaper, "tick", func() { l.runJobsReaperTick(ctx) })
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
-			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
+			l.dispatchWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
 		case <-workerRecoveryT.C:
 			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
-			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
+			l.dispatchWorkflowRetention(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
@@ -1410,8 +1416,10 @@ func (l *Loop) Run(ctx context.Context) error {
 			// network blip). Same dispatcher as the notify arm —
 			// drainPendingFireNowRequests is the single owner of the
 			// claim + dispatch loop.
-			l.failInterruptedFireNowRequests(ctx)
-			l.drainPendingFireNowRequests(ctx)
+			l.submitWork(workCronFireNow, "drain", func() {
+				l.failInterruptedFireNowRequests(ctx)
+				l.drainPendingFireNowRequests(ctx)
+			})
 		case <-operatorIntentT.C:
 			// PR #1099 P2 redesign: safety sweep. Picks up rows
 			// that missed a NotifyOperatorIntent delivery
@@ -2533,14 +2541,25 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// source of truth) — drain handles claim + dispatch
 		// regardless of which request_id the notify carried. This
 		// matches the build_queued notify-loss defense pattern
-		// (cmd/imaged consumer: subscriber re-reads the row).
-		l.drainPendingFireNowRequests(ctx)
+		// (cmd/imaged consumer: subscriber re-reads the row). The drain
+		// runs off the loop (ADR 20261103195512).
+		l.submitWork(workCronFireNow, "drain", func() { l.drainPendingFireNowRequests(ctx) })
 	case db.NotifyInstanceFailureRelayed:
 		// Issue #3359: a peer schedd hosts one of this schedd's instances
 		// and relayed vmmd's terminal failure report. Non-owners discard.
-		if err := l.engine.HandleRelayedInstanceFailure(ctx, n.Payload); err != nil {
-			l.log.Warn("sched: relayed instance failure", "err", err)
+		// The destroy waits on the app lock and vmmd, so it runs off the
+		// loop (ADR 20261103195512).
+		payload := n.Payload
+		var report InstanceFailureReport
+		key := payload
+		if json.Unmarshal([]byte(payload), &report) == nil && report.InstanceID != "" {
+			key = report.InstanceID + "/" + report.Kind
 		}
+		l.submitWork(workInstanceFailure, key, func() {
+			if err := l.engine.HandleRelayedInstanceFailure(ctx, payload); err != nil {
+				l.log.Warn("sched: relayed instance failure", "err", err)
+			}
+		})
 	case db.NotifyFrameworkReadyRelayed:
 		// Hunt 14 H14-104: a peer schedd hosts one of this schedd's instances
 		// and relayed vmmd's framework-ready receipt. Non-owners discard.
@@ -2692,6 +2711,15 @@ func (l *Loop) runReaper(ctx context.Context) {
 			}
 		}
 		if !mustPark {
+			continue
+		}
+		// An app with nothing live has nothing to park, so it takes no
+		// app_park slot. The pool runs four at once and drops the rest: on
+		// production-us (rc.319, 2026-11-04) nine parked apps with nothing
+		// live filled the slots in the same order every tick, and the same
+		// five were dropped every 10 s for hours. Without a preload the app
+		// parks as before.
+		if budgetPreload.nothingLive(app) {
 			continue
 		}
 		// ADR 20261103164725: whole-app parks run on the work pool, so a
@@ -4648,13 +4676,36 @@ func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
 	})
 }
 
-func (l *Loop) runWorkflowRetention(ctx context.Context) {
+func (l *Loop) dispatchWorkflowRetention(ctx context.Context) {
+	l.submitWork(workWorkflowRetention, "tick", func() {
+		if l.runWorkflowRetention(ctx) && ctx.Err() == nil {
+			l.dispatchWorkflowRetention(ctx)
+		}
+	})
+}
+
+func (l *Loop) runWorkflowRetention(ctx context.Context) bool {
 	if l.workflowRetention == nil {
-		return
+		return false
 	}
-	if err := l.workflowRetention.SweepOnce(ctx); err != nil {
-		l.log.Warn("workflow retention: sweep failed", "err", err)
+	more, err := l.workflowRetention.sweepOnce(ctx)
+	if err != nil {
+		if l.log != nil {
+			l.log.Warn("workflow retention: sweep failed", "err", err)
+		}
+		// Keep other full phases progressing, but do not hammer a persistently
+		// failing phase on every immediate continuation.
+		if more {
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return false
+			}
+		}
 	}
+	return more
 }
 
 // cronSweepSlice bounds one pass of the cron sweep, which runs on schedd's

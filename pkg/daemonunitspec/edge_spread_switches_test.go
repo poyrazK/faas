@@ -1,4 +1,4 @@
-// adr: 20261102081618
+// adr: 20261102081618, 20261103163954
 package daemonunitspec
 
 import (
@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// The §5 switches reach the edge and gatewayd-internal only through their
-// roles' drop-ins, and only when set.
+// The §5 switches, and the edge's client limits (ADR-20261103163954 §4), reach
+// the edge and gatewayd-internal only through their roles' drop-ins, and only
+// when set.
 func TestEdgeSpreadSwitchesRender(t *testing.T) {
 	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
 		t.Skip("python3 with jinja2 required for drop-in rendering")
@@ -31,6 +32,12 @@ print(env.from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads
 			template: filepath.Join(roles, "gatewayd_public_edge_service", "templates", "99-faas-edge.conf.j2"),
 			variable: "faas_edge_placement_node_set",
 			line:     "Environment=FAAS_EDGE_PLACEMENT_NODE_SET=1\n",
+			base:     map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"},
+		},
+		{
+			template: filepath.Join(roles, "gatewayd_public_edge_service", "templates", "99-faas-edge.conf.j2"),
+			variable: "faas_edge_client_limits",
+			line:     "Environment=FAAS_EDGE_CLIENT_LIMITS=1\n",
 			base:     map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"},
 		},
 		{

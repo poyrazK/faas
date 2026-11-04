@@ -595,6 +595,7 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .billing_status_response_scheduled_plan import BillingStatusResponseScheduledPlan
 from .binding_adoption_counts import BindingAdoptionCounts
 from .binding_application_ack_target import BindingApplicationAckTarget
 from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
@@ -773,6 +774,7 @@ from .configure_managed_realtime_push_provider_response_200 import ConfigureMana
 from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
+from .confirm_email_verification_body import ConfirmEmailVerificationBody
 from .connection_budget_capacity import ConnectionBudgetCapacity
 from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
@@ -2258,6 +2260,7 @@ from .incident_update import IncidentUpdate
 from .incidents_response import IncidentsResponse
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
+from .ingest_issue_otlp_response_200_partial_success import IngestIssueOTLPResponse200PartialSuccess
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
 from .inject_scenario_test_chaos_request import InjectScenarioTestChaosRequest
 from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
@@ -2425,6 +2428,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .key_org import KeyOrg
 from .label_change import LabelChange
 from .label_change_set import LabelChangeSet
 from .labels_response import LabelsResponse
@@ -4014,9 +4018,14 @@ from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
 from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
+from .org_agent_policy_request import OrgAgentPolicyRequest
+from .org_agent_policy_request_allowed_scopes_item import OrgAgentPolicyRequestAllowedScopesItem
+from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
 from .org_app_summary_type import OrgAppSummaryType
+from .org_billing_email_request import OrgBillingEmailRequest
+from .org_billing_email_response import OrgBillingEmailResponse
 from .org_invitation_response import OrgInvitationResponse
 from .org_invitation_response_role import OrgInvitationResponseRole
 from .org_invitation_response_status import OrgInvitationResponseStatus
@@ -6849,6 +6858,7 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BillingStatusResponseScheduledPlan",
     "BindingAdoptionCounts",
     "BindingApplicationAckTarget",
     "BindingApplicationAckTargetApplicationAck",
@@ -7017,6 +7027,7 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
+    "ConfirmEmailVerificationBody",
     "ConnectionBudgetCapacity",
     "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
@@ -8442,6 +8453,7 @@ __all__ = (
     "IncidentUpdate",
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
+    "IngestIssueOTLPResponse200PartialSuccess",
     "IngestIssueOTLPSignal",
     "InjectScenarioTestChaosRequest",
     "InjectScenarioTestChaosResponse",
@@ -8609,6 +8621,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "KeyOrg",
     "LabelChange",
     "LabelChangeSet",
     "LabelsResponse",
@@ -10026,9 +10039,14 @@ __all__ = (
     "OperatorRuntimeConfigStatus",
     "OrgActivityResponse",
     "OrgActivityResponseData",
+    "OrgAgentPolicyRequest",
+    "OrgAgentPolicyRequestAllowedScopesItem",
+    "OrgAgentPolicyResponse",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
+    "OrgBillingEmailRequest",
+    "OrgBillingEmailResponse",
     "OrgInvitationResponse",
     "OrgInvitationResponseRole",
     "OrgInvitationResponseStatus",

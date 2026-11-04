@@ -56,7 +56,10 @@ type Options struct {
 	// (ADR-20261026195952).
 	Capabilities []string
 	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
-	Toolsets  []string
+	Toolsets []string
+	// Org is the slug of the shared organization a hosted connection acts
+	// in; its apps come from the organization (ADR-20261101225122).
+	Org       string
 	planStore *StateStore
 	// uploads is the hosted bridge's upload store (ADR-20261026195952).
 	uploads       *uploadStore

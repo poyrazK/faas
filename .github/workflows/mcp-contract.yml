@@ -7,6 +7,10 @@ on:
     # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
     # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
+      - 'cmd/gregale/commands_mcp*.go'
+      - 'cmd/gregale/templates/mcp-node/**'
+      - 'cmd/gregale/templates/mcp-go/**'
+      - 'cmd/gregale/templates/mcp-python/**'
       - 'pkg/mcphosting/**'
       - 'pkg/mcpmanagement/**'
       - 'pkg/apphealth/**'

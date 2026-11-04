@@ -54,6 +54,23 @@ scopes pick the agent's tools; see
 
 Interactive users can enable MFA from the account settings page. Each authenticator code works once: a code that already verified a session is refused if it is sent again, so wait for the next code. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
+`gregale account mfa enroll`, `confirm`, `verify`, `recover`, and `disable`
+open the corresponding form in your signed-in browser. You can use recovery
+before completing CLI login. Enter passwords and codes in the browser;
+the CLI prints a URL, and `--json` returns that URL with `requires_browser: true`.
+In a terminal without a browser, open the printed URL on a device where you
+can sign in. Setup shows the QR code and recovery codes in the browser.
+Legacy code, password, and `--qr-out` arguments remain accepted but do not
+submit credentials or write setup material. A browser handoff is complete
+only after the browser confirms the action succeeded.
+
+Enrollment confirmation spends its authenticator code and grants the current
+session a fresh MFA verification. Accounts with a password must enter their
+current password to confirm setup. A pending setup cannot verify a session
+or provide recovery access. An already-enrolled account uses `verify`
+for further challenges; repeating `confirm` returns a conflict. A suspended
+account can obtain the CSRF token needed to use its saved recovery codes.
+
 For shared applications, the current organization role and the credential's
 scope both apply. Use an organization-bound key to work on a teammate's app;
 see [team application access](organization-app-access.md) for the permission

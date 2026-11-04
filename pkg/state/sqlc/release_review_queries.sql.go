@@ -110,18 +110,19 @@ func (q *Queries) LockReviewedRoutePolicy(ctx context.Context, db DBTX, arg Lock
 }
 
 const readDeploymentTrafficScope = `-- name: ReadDeploymentTrafficScope :one
-SELECT app_id::text,scope FROM deployments WHERE id=$1::uuid
+SELECT (environment_workload_runtime IS NOT NULL)::boolean AS managed, app_id::text,scope FROM deployments WHERE id=$1::uuid
 `
 
 type ReadDeploymentTrafficScopeRow struct {
-	AppID string
-	Scope string
+	Managed bool
+	AppID   string
+	Scope   string
 }
 
 func (q *Queries) ReadDeploymentTrafficScope(ctx context.Context, db DBTX, id pgtype.UUID) (ReadDeploymentTrafficScopeRow, error) {
 	row := db.QueryRow(ctx, readDeploymentTrafficScope, id)
 	var i ReadDeploymentTrafficScopeRow
-	err := row.Scan(&i.AppID, &i.Scope)
+	err := row.Scan(&i.Managed, &i.AppID, &i.Scope)
 	return i, err
 }
 

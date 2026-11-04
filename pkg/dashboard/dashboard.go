@@ -97,7 +97,7 @@ type DPAView struct {
 // MFAChallengeData is the /dashboard/mfa payload: the TOTP challenge an
 // mfa_pending session must pass before any other dashboard page. Enrolled
 // is false for an account an explicit policy requires to enroll; it has
-// no code to enter yet and is pointed at the CLI enrollment.
+// no code to enter yet and is linked to browser enrollment.
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
@@ -3403,6 +3403,10 @@ type BillingData struct {
 	CanCheckout    bool
 	UpgradeOptions []UpgradeOption
 	UpgradeNotice  string
+	// ScheduledChange describes the subscription's scheduled cancellation
+	// or downgrade; the template links to /dashboard/upgrade, which can
+	// undo it (ADR-20261103131742 amendment 1).
+	ScheduledChange string
 }
 
 // UpgradeOption is one paid plan the account can upgrade to. Money is
@@ -3440,8 +3444,16 @@ type UpgradeData struct {
 	Provider      string
 	ProviderLabel string
 	// PortalURL is the fallback for accounts that already have a
-	// subscription (the provider portal owns product changes).
+	// subscription when the provider cannot change it through its API.
 	PortalURL string
+	// SubscriptionChange is true when the account already has a
+	// subscription: the form upgrades it in place and the provider charges
+	// the prorated difference now (ADR-20261103131742).
+	SubscriptionChange bool
+	// ScheduledChange describes the subscription's scheduled cancellation
+	// or downgrade; the page then offers Keep subscription, which posts
+	// CurrentPlan (ADR-20261103131742 amendment 1).
+	ScheduledChange string
 	// ConfirmToken is the (action="upgrade_plan", account_id) CSRF
 	// envelope minted by renderUpgrade.
 	ConfirmToken string

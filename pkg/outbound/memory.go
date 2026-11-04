@@ -502,6 +502,24 @@ func (b *MemoryBackend) Release(ctx context.Context, integrationID, leaseID stri
 	return nil
 }
 
+// RenewLease moves a live lease's expiry to ttl from now (ADR
+// 20261027132936). An expired or released lease stays gone.
+func (b *MemoryBackend) RenewLease(ctx context.Context, integrationID, leaseID string, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.now()
+	if state := b.states[integrationID]; state != nil {
+		if lease, ok := state.leases[leaseID]; ok && lease.expiresAt.After(now) {
+			lease.expiresAt = now.Add(ttl)
+			state.leases[leaseID] = lease
+		}
+	}
+	return nil
+}
+
 func validUUID(value string) bool {
 	_, err := uuid.Parse(value)
 	return err == nil

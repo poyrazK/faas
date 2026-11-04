@@ -4,7 +4,7 @@
 - **Date:** 2026-10-30
 - **Amends:** ADR-1162 (a month's allowance follows its plan history), ADR-20261029180000 (default spend cap), ADR-20261026120843 (spend cap holds)
 - **Related:** ADR-20261029094512 (subscription reconciliation)
-- **Amended by:** ADR-20261031090658 (the ledger nets the hourly billed overage; Free organizations bounded)
+- **Amended by:** ADR-20261031090658 (the ledger nets the hourly billed overage; Free organizations bounded), ADR-20261103131742 (decision 4: apps outside a lowered plan park; portal plan switching off, subscribers upgrade through the API)
 
 This record has a date-and-time identifier because numbered ADRs collide
 when parallel changes pick the next number.

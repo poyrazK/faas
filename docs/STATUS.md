@@ -28,8 +28,16 @@ Open evidence:
   [GA rollout](managed-postgres.md#ga-rollout)).
 - The compute and storage cap qualifications, the deletion hold check and the
   enforcement switches are operator steps in the same rollout.
-- Free and Hobby cannot restore: a restore is a second database and those
-  plans allow one.
+- Free and Hobby restore into the restore slot
+  ([ADR-20261031123259](adr/20261031123259-managed-postgres-restore-slot.md)):
+  one copy past the database limit until the slot ends. A rollback that
+  restores the database must fit inside the limit, so it needs room for a
+  second database.
+- A source with restore copies can be deleted, and work on existing
+  databases no longer stops when the production approval lapses or a
+  capacity setting changes
+  ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md),
+  not released).
 
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 
@@ -130,6 +138,17 @@ ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
   (`gregale cron run --wait`).
 - Deployment cron staging applies the cron API's path and timezone rules.
 - The dashboard refuses a disabled cron's manual run and names each refusal.
+
+Audit round 5, 2026-11-03 (branch `fix/crons-audit-round5`,
+ADR-20261026201726 amendment 2026-11-03 (2)):
+
+- A cron's schedule policy and failure rules can be removed
+  (`clear_schedule_policy`, `clear_failure_rules`, the matching CLI flags, and
+  Terraform when the configuration drops them).
+- On a preview app a compute budget holds, `gregale cron status` reports
+  `budget_held` and a manual run is refused (`402`) instead of waiting.
+- A disabled cron's manual run is refused (`409`); the scheduler no longer
+  lists disabled crons from PostgreSQL.
 
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the

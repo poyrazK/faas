@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingrun"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 // Package-level types
@@ -1341,6 +1342,8 @@ var FindPreviewReportRoute = findPreviewReportRoute
 var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
 var FinishMCPDeploy = finishMCPDeploy
+var FinishMCPDeployWithSmoke = finishMCPDeployWithSmoke
+var RunMCPVerificationJobs = runMCPVerificationJobs
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
 var FinishTestRunReports = finishTestRunReports
@@ -2035,6 +2038,11 @@ var ValidateLocalTestURL = validateLocalTestURL
 var ValidateMCPDeploySecretsFile = validateMCPDeploySecretsFile
 var ValidateMCPDeploymentCatalogFleetPin = validateMCPDeploymentCatalogFleetPin
 var ValidateMCPDeploymentCatalogPin = validateMCPDeploymentCatalogPin
+
+func PinMCPCandidateWithSubmit(ctx context.Context, c *Client, key string, cfg mcphosting.Config, candidate api.DeploymentResponse, submit func([]string, map[string]string) (api.DeploymentResponse, error)) (api.DeploymentResponse, string, error) {
+	return pinMCPCandidateRevisionWithSubmit(ctx, c, mcpDeployOptions{slug: "demo", timeout: 60, idempotencyKey: key}, "/src", cfg, candidate, submit)
+}
+
 var ValidatePreviewArchivePlanLimit = validatePreviewArchivePlanLimit
 var ValidateProductCustomerActivity = validateProductCustomerActivity
 var ValidateProductOnboardingPreview = validateProductOnboardingPreview

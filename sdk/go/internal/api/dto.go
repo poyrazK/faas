@@ -938,6 +938,9 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
 	RetryMax            *int            `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int            `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove them from the cron.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // SchedulePolicy controls overlap and missed-run handling for recurring work.

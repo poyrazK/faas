@@ -12765,8 +12765,23 @@ paths:
         Switch the account between `free`, `hobby`, `pro`, and `scale`. The
         local account moves to a paid tier only after the configured billing
         provider confirms payment. If a new subscription is required, the
-        `payment_required` response includes `checkout_url`; if an existing
-        subscription must be changed, it includes `billing_portal_url`.
+        `payment_required` response includes `checkout_url`. An existing
+        subscription changes in place: an upgrade is charged the prorated
+        difference now and answers 202 until the provider confirms it; a
+        declined charge answers 402 with `billing_portal_url` to update the
+        payment method, and the plan stays. A downgrade answers 202 and takes
+        effect at the end of the billing period. A billing email that already
+        pays for another account or organization answers 409
+        `billing_email_in_use`.
+
+        Asking for the plan the account already pays for keeps its
+        subscription: a scheduled cancellation or downgrade is undone and the
+        200 carries `plan_change_status: scheduled_change_undone`. A
+        subscription scheduled to end changes no plan, so an upgrade or
+        downgrade then answers 409 `billing_subscription_ending` until it is
+        kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+        answers 402 `payment_authentication_required` with
+        `billing_portal_url`; nothing is charged and the plan stays.
       requestBody:
         required: true
         description: "Plan change payload."
@@ -12984,6 +12999,9 @@ paths:
         cookie without the mfa_pending flag; future dashboard logins
         will require a TOTP verification because enrollment is the
         customer's explicit opt-in.
+        If the account has a password, current_password is also required
+        to authorize this new factor. An unconfirmed setup secret cannot
+        be used for session verification or recovery.
       requestBody:
         required: true
         content:
@@ -12997,12 +13015,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MFAConfirmResponse' }
         '401':
-          description: Invalid TOTP code.
+          description: Invalid TOTP code or missing/incorrect current password.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404':
           description: No in-flight enrollment. Call /enroll first.
+        '409':
+          description: MFA is already enrolled; use /verify for a subsequent challenge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/mfa/verify:
     post:
@@ -13031,6 +13054,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: MFA setup is incomplete; finish /confirm first.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/mfa/recover:
     post:
@@ -13038,10 +13066,10 @@ paths:
       operationId: mfaRecover
       summary: Burn a recovery code to regain access.
       description: |
-        Use when the customer's TOTP device is lost. Removes
-        one matching SHA-256 hash from the stored set; if the
-        customer burns the last code, /recover still works but
-        /disable via recovery_code no longer does.
+        Use when an enrolled customer's TOTP device is lost. Removes
+        one matching recovery-code hash from the stored set. The last
+        code is reserved for disabling MFA via recovery_code instead.
+        Pending setup material does not authorize recovery.
       requestBody:
         required: true
         content:
@@ -13056,6 +13084,11 @@ paths:
               schema: { $ref: '#/components/schemas/MFARecoverResponse' }
         '401':
           description: No matching recovery code.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: MFA setup is incomplete, or only the last recovery code remains.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -13386,9 +13419,11 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        Consumes a 24-hour, single-use verification token and marks the
-        account email verified. This endpoint does not create a session;
-        the returned HTML page prompts the customer to sign in again.
+        A browser (Accept text/html) gets an HTML page whose button posts the
+        token back, and nothing is consumed, so a mail scanner that prefetches
+        the link cannot use up the token. Any other client consumes the
+        24-hour, single-use token here and the account email is marked
+        verified. No session is created.
       parameters:
         - in: query
           name: token
@@ -13397,12 +13432,41 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: The confirmation page, or for a non-browser client the verified-email page.
           content:
             text/html:
               schema: { type: string }
         '410':
           description: Verification link expired, invalid, or already used.
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [auth]
+      operationId: confirmEmailVerification
+      summary: Confirm an email verification from its confirmation page.
+      description: |
+        The confirmation page's form posts the token here. It is consumed and
+        the account email marked verified; the HTML answer asks the customer
+        to sign in again rather than creating a session.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: The verification token from the confirmation page's form.
+      responses:
+        '200':
+          description: Email verified; HTML sign-in prompt.
+          content:
+            text/html:
+              schema: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '410':
+          description: The posted token is expired, unknown, or was already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/reset:
@@ -23035,10 +23099,19 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '200':
-          description: Exceptions accepted, including exact retries
+          description: Exceptions accepted, including exact retries. Partial success reports permanently rejected logs or spans.
           content:
             application/json:
-              schema: { type: object, additionalProperties: false }
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  partialSuccess:
+                    type: object
+                    properties:
+                      rejectedLogRecords: { type: string, description: Decimal count of rejected log records. }
+                      rejectedSpans: { type: string, description: Decimal count of rejected spans. }
+                      errorMessage: { type: string }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanFeatureGated' }
@@ -24170,6 +24243,26 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssue
+      summary: Permanently delete a standalone issue and its retained history.
+      description: Split linked groups and remove derived branches first. A later occurrence may create a new issue.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: abandon_unconfirmed_tickets
+          in: query
+          description: Explicitly abandon expired unconfirmed ticket dispatches. The provider may still have created a ticket, and deleting the issue removes its recovery receipt. Confirmed unattached tickets still block deletion.
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Issue and its dependent history deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issues/{issue_id}/split-preview:
     parameters:
@@ -29073,7 +29166,8 @@ paths:
 
         Once current-month overage meets/exceeds the cap, the scheduler refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (admin scope required) and the response
+        account-self-scoped (admin scope required; a dashboard session also
+        needs a step-up within the last 5 minutes) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -35386,9 +35480,13 @@ paths:
       tags: [workflows]
       operationId: injectPlatformTenantSelfWorkflowEvent
       summary: Deliver an external event to this tenant's waiting workflow run.
-      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404. A matching retained event may be retried after the run finishes; reusing its key with different content conflicts.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Preserve this key and event content when retrying a retained tenant workflow event.
       requestBody:
         required: true
         content:
@@ -35405,7 +35503,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only active runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive tenant run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -35907,6 +36005,13 @@ paths:
       tags: [workflows]
       operationId: injectWorkflowEvent
       summary: Deliver an external event to a waiting workflow run.
+      description: A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Reuse the same key and event content to retry while the event is retained.
       requestBody:
         required: true
         content:
@@ -35922,7 +36027,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only running or awaiting_event runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -53260,6 +53365,115 @@ paths:
   # operationIds match the Go SDK method names 1:1 so the
   # cmd/sdk-coverage gate compiles cleanly.
 
+  /v1/orgs/{slug}/agent-connections:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [orgs, keys]
+      operationId: listOrgAgentConnections
+      summary: List the agents acting in an organization.
+      description: |
+        Hosted MCP connections bound to the organization and its API keys
+        with the `agent` scope that still work, newest first, with the
+        member who connected each. Owners and admins only.
+      responses:
+        '200':
+          description: The organization's connected agents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/revoke_all:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [orgs, keys]
+      operationId: revokeAllOrgAgentConnections
+      summary: Revoke every agent acting in an organization.
+      description: |
+        Revokes the API key of every agent acting in the organization; each
+        must sign in again. Owners and admins only. Each revocation is
+        recorded in the organization's activity.
+      responses:
+        '200':
+          description: How many of the organization's connections were revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The API key id of an agent acting in the organization.
+        schema: { type: string }
+    delete:
+      tags: [orgs, keys]
+      operationId: revokeOrgAgentConnection
+      summary: Revoke one agent acting in an organization.
+      description: |
+        Revokes the agent's API key; the agent must sign in again. Owners and
+        admins only. An id that is not one of the organization's agents is
+        404.
+      responses:
+        '204': { description: No body. The agent's organization key is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [orgs]
+      operationId: getOrgAgentPolicy
+      summary: Show whether agents may act in an organization.
+      description: |
+        An organization that never set a policy allows agents with every
+        capability. Every member may read it.
+      responses:
+        '200':
+          description: The organization's agent policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgAgentPolicyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [orgs]
+      operationId: setOrgAgentPolicy
+      summary: Set whether agents may act in an organization.
+      description: |
+        Owners and admins only. Agents connecting to the organization get
+        only the capabilities the policy allows. Connections the new policy
+        no longer allows are revoked in the same request, and `revoked`
+        counts them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgAgentPolicyRequest' }
+      responses:
+        '200':
+          description: The policy as saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgAgentPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/keys:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -54702,7 +54916,10 @@ paths:
       description: |
         Returns a provider-independent deployment and account billing
         projection. This customer endpoint requires usage:read and never
-        calls an operator catalog surface.
+        calls an operator catalog surface. A scheduled cancellation
+        (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+        `scheduled_plan_at`) is reported before it applies; asking for the
+        current plan with PATCH /v1/account/plan undoes it.
       responses:
         '200':
           description: Current deployment billing mode and customer attachment status.
@@ -54725,7 +54942,10 @@ paths:
         download receipts, cancel). When the active provider exposes
         customer sessions, the server creates a short-lived authenticated
         portal URL. Otherwise it renders the operator's
-        `FAAS_BILLING_PORTAL_URL` template.
+        `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+        that can cancel the subscription and replace the card, so the route
+        takes an admin credential, MFA, a verified email and, for a dashboard
+        session, a step-up within the last 5 minutes.
 
         The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
         The CLI's `faas billing payment-method` renders from this
@@ -57722,7 +57942,10 @@ paths:
         Owner-only (`org.remove_members`). Stamps `removed_at` on
         the row (the row stays for audit; live-cap count drops).
         Self-removal is rejected at the boundary; the last-owner
-        invariant surfaces as 409 `org_last_owner`.
+        invariant surfaces as 409 `org_last_owner`. The member whose email
+        the organization bills to cannot be removed while the organization
+        has a billing customer (409 `billing_contact_member`); set another
+        billing email with `PUT /v1/orgs/{slug}/billing/email` first.
       responses:
         '204': { description: Member removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -64345,7 +64568,13 @@ paths:
         Requires the organization owner, admin credential scope, verified email,
         MFA and recent step-up. Paid entitlements activate only after provider
         confirmation. Existing personal subscriptions are never reassigned.
-        A payment-required response carries checkout_url or billing_portal_url.
+        A payment-required response carries checkout_url, or billing_portal_url
+        when the upgrade charge of an existing subscription is declined. The
+        first checkout bills the acting owner's email until
+        `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+        Asking for the organization's current plan keeps its subscription,
+        undoing a scheduled cancellation or downgrade; while a cancellation is
+        scheduled any other plan answers 409 `billing_subscription_ending`.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -64652,6 +64881,52 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/orgs/{slug}/billing/email:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    put:
+      tags: [orgs]
+      operationId: setOrgBillingEmail
+      summary: Set the email the organization bills to.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. The billing provider sends this address the
+        organization's invoices and signs it in to the organization's billing
+        portal, so use an address the organization controls rather than a
+        member's. The first organization checkout bills the member who starts
+        it until this is set. When the organization already has a billing
+        customer, the customer moves to the new email first and nothing changes
+        if the provider refuses. The provider keeps one customer per email: an
+        email another Gregale account or organization already pays with is
+        refused with 409 `billing_email_in_use`. While a member's email is the
+        billing email, that member cannot be removed (409
+        `billing_contact_member`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgBillingEmailRequest' }
+            example: {"billing_email": "billing@example.com"}
+      responses:
+        '200':
+          description: The organization's billing email after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgBillingEmailResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: The billing provider could not move the customer (`billing_email_change_failed`); the billing email is unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/orgs/{organization}/projects:
     parameters:
@@ -86192,6 +86467,7 @@ components:
         billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
         tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
         key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
+        key_org: { $ref: '#/components/schemas/KeyOrg' }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
 
     AccountAbuseHold:
@@ -86293,6 +86569,25 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+
+    OrgBillingEmailRequest:
+      description: The email an organization bills to; invoices and the billing portal sign-in go to it.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
+          maxLength: 254
+
+    OrgBillingEmailResponse:
+      description: The email an organization bills to.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
 
     AccountRateLimitsResponse:
       description: Account-wide operation rate limits.
@@ -95643,6 +95938,18 @@ components:
         customer_configured: { type: boolean }
         subscription_configured: { type: boolean }
         usage_reconciliation_enabled: { type: boolean }
+        subscription_ends_at:
+          type: string
+          format: date-time
+          description: When a scheduled cancellation ends the subscription instead of renewing it; the plan then returns to Free. Absent when none is scheduled.
+        scheduled_plan:
+          type: string
+          enum: [free, hobby, pro, scale]
+          description: The plan a scheduled downgrade moves to at scheduled_plan_at. Absent when none is scheduled.
+        scheduled_plan_at:
+          type: string
+          format: date-time
+          description: When the scheduled downgrade applies.
 
     BillingPortalResponse:
       description: |
@@ -104329,6 +104636,8 @@ components:
         challenge_token: { type: [string, "null"] }
         verified: { type: boolean }
         verified_at: { type: [string, "null"], format: date-time }
+        verification_expires_at: { type: string, format: date-time, description: "Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof." }
+        verification_expired: { type: boolean, description: "True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim." }
         txt_record: { type: [string, "null"] }
         default: { type: boolean, description: "True when this domain is the app's default. Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
@@ -104655,6 +104964,8 @@ components:
         retry_backoff_seconds: { type: [integer, "null"], minimum: 1, maximum: 3600, description: "Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
+        clear_schedule_policy: { type: boolean, description: "Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy." }
+        clear_failure_rules: { type: boolean, description: "Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules." }
 
     SchedulePolicy:
       description: >-
@@ -111450,6 +111761,8 @@ components:
         created_at: { type: string, format: date-time }
         last_used_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
+        org_id: { type: string, format: uuid, description: The organization the agent acts in. }
+        member: { type: string, description: "Email of the member who connected the agent, in an organization's list." }
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
 
     AgentConnectionsResponse:
@@ -111476,6 +111789,40 @@ components:
       properties:
         client_name: { type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces." }
         client_site: { type: string, maxLength: 253, description: Lower-case host name the client was verified at. }
+
+    OrgAgentPolicyRequest:
+      description: Whether agents may act in the organization, and the capabilities they may get.
+      type: object
+      required: [agents_allowed, allowed_scopes]
+      additionalProperties: false
+      properties:
+        agents_allowed: { type: boolean, description: Whether hosted MCP connections and agent keys may act in the organization. }
+        allowed_scopes:
+          type: array
+          description: Capabilities agents may get beyond inspection; empty for read-only.
+          items: { type: string, enum: [deploy:write, secrets:request, storage:manage, postgres:manage] }
+
+    OrgAgentPolicyResponse:
+      description: An organization's agent policy.
+      type: object
+      required: [agents_allowed, allowed_scopes]
+      properties:
+        agents_allowed: { type: boolean, description: Whether agents may act in the organization. }
+        allowed_scopes:
+          type: array
+          description: The capabilities agents may carry beyond inspection.
+          items: { type: string }
+        updated_at: { type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one. }
+        revoked: { type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them. }
+
+    KeyOrg:
+      description: The shared organization an API key acts in.
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
 
     APIKeyResponse:
       description: "API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count. **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new org-scoped verbs."
@@ -118039,7 +118386,7 @@ components:
             the plaintext never reappears.
 
     MFAConfirmRequest:
-      description: Body for /confirm — a single 6-digit TOTP code.
+      description: Body for /confirm — a TOTP code and the existing password, if set.
       type: object
       required: [totp]
       properties:
@@ -118047,6 +118394,10 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: 6-digit rotating code from the authenticator app.
+        current_password:
+          type: string
+          format: password
+          description: Required when the account already has a password; authorizes the new factor.
         csrf_token:
           type: string
           description: |
@@ -124607,6 +124958,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
 
     IssueGroupingFrame:
       description: "Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is present, otherwise occurrence frames. Line numbers are excluded."
@@ -124643,6 +124995,8 @@ components:
           properties:
             id: { type: string, format: uuid }
             original_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint provenance retained through occurrence-level splits and manual merges. }
+            occurrence_count: { type: integer, format: int64, minimum: 1, readOnly: true, description: Number of failures represented by this record; customer identity applies to the sampled request only. }
+            occurrence_count_exact: { type: boolean, readOnly: true, description: False when an older writer did not preserve the folded HTTP weight. }
             deployment_id: { type: string, format: uuid }
             received_at: { type: string, format: date-time }
             verified_consumer_id: { type: string, format: uuid }
@@ -124685,6 +125039,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound. }
         coverage: { type: string }
 
     IssueLifecycleAlertPolicy:
@@ -124885,6 +125240,7 @@ components:
         title: { type: string, maxLength: 256 }
         description: { type: string, maxLength: 16384 }
         recovery_url: { type: string, format: uri, maxLength: 512 }
+        original_app_slug: { type: string, maxLength: 512, description: Original slug for recovering a legacy receipt after an app rename. }
     NativeIssueTicketResult:
       type: object
       description: Durable GitHub ticket evidence and Gregale attachment state for a native creation operation.
@@ -124929,6 +125285,7 @@ components:
         description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
         recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
         recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
+        original_app_slug: { type: string, maxLength: 512, description: Slug used when recovering a legacy Linear receipt created before the app was renamed. }
     IssueTrackerLinearConnection:
       type: object
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
@@ -125248,6 +125605,7 @@ components:
         regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
         identified_customers: { type: integer, format: int64, minimum: 0 }
         unattributed_events: { type: integer, format: int64, minimum: 0 }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds. }
     IssueReleaseComparison:
       description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
       type: object

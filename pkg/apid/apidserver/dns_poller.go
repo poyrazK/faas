@@ -95,6 +95,7 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 		}
 	}
 	for _, d := range pending {
+		probeCtx := state.WithCustomDomainProbe(ctx, d)
 		checkedAt := time.Now().UTC()
 		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
 			if s.domainVerificationMetrics != nil {
@@ -126,14 +127,13 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 				log.Info("dns_poller: stale domain challenge ignored", "domain", d.Domain)
 				continue
 			}
-			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
-				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
-			}
+			// Verification publishes pending certificate state atomically. A
+			// later write here could erase a concurrently issued certificate.
 			if api.CustomDomainTLSOnDemand() {
 				// ADR-520: the edge issues on the first TLS handshake. Probe
 				// now so issuance starts without waiting for the doctor batch;
 				// the probe also records the resulting certificate status.
-				s.startOnDemandTLSProbe(ctx, log, d.Domain)
+				s.startOnDemandTLSProbe(probeCtx, log, d.Domain)
 			} else {
 				// gatewayd-internal listens for this event to eagerly mint a
 				// customer-owned wildcard certificate with DNS-01.
@@ -147,8 +147,10 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			// Keep dns_drifted durable until the customer has both fixed the
 			// target and satisfied the TXT challenge. A failed TXT lookup on
 			// the next tick must not downgrade the warning back to pending.
-			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
-				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
+			if recorder, ok := s.store.(state.CustomDomainVerificationCheckStore); ok {
+				if err := recorder.RecordCustomDomainVerificationCheck(probeCtx, d, checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+					log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
+				}
 			}
 		}
 	}
@@ -251,12 +253,12 @@ type pendingHostnameRow struct {
 // pendingUnverifiedDomains reads the unverified index directly. Implemented
 // as a tiny helper here (rather than a Store method) because the poller
 // goroutine is the only consumer.
-func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainRow, error) {
+func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]state.CustomDomain, error) {
 	// We can't reach a *sql.DB from server without exposing one on the
 	// struct. The simpler path is to walk all apps and ListDomainsForApp,
 	// which works fine at M5 scale (one-box, single-digit accounts). The
 	// Store interface grows a dedicated method when this matters.
-	var out []pendingDomainRow
+	var out []state.CustomDomain
 	// Fast path: PgStore and MemStore expose the full row through this
 	// optional interface. Keeping it optional preserves compatibility with
 	// narrow test doubles that only implement the historical Store surface.
@@ -264,40 +266,17 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 		ClaimCustomDomainsForVerification(context.Context, int) ([]state.CustomDomain, error)
 	}
 	if c, ok := s.store.(claimer); ok {
-		domains, err := c.ClaimCustomDomainsForVerification(ctx, 64)
-		if err != nil {
-			return nil, err
-		}
-		out = make([]pendingDomainRow, 0, len(domains))
-		for _, d := range domains {
-			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken, CertStatus: d.CertStatus})
-		}
-		return out, nil
+		return c.ClaimCustomDomainsForVerification(ctx, 64)
 	}
 	type listUnverified interface {
 		ListUnverifiedCustomDomains(ctx context.Context) ([]state.CustomDomain, error)
 	}
 	if lu, ok := s.store.(listUnverified); ok {
-		domains, err := lu.ListUnverifiedCustomDomains(ctx)
-		if err != nil {
-			return nil, err
-		}
-		out = make([]pendingDomainRow, 0, len(domains))
-		for _, d := range domains {
-			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken, CertStatus: d.CertStatus})
-		}
-		return out, nil
+		return lu.ListUnverifiedCustomDomains(ctx)
 	}
 	// No compatible enumeration seam: leave the pass empty rather than
 	// issuing an unbounded account/app walk from the poller goroutine.
 	return out, nil
-}
-
-// pendingDomainRow is the poller's view of an unverified custom domain.
-type pendingDomainRow struct {
-	Domain         string
-	ChallengeToken string
-	CertStatus     state.CustomDomainCertStatus
 }
 
 // checkTXT does a TXT lookup for _faas-verify.<domain> and reports whether
@@ -469,8 +448,20 @@ func (s *server) emitDoctorSkip(log *slog.Logger) {
 }
 
 func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
+	legacy, legacyErr := s.store.DomainByName(ctx, domain)
+	legacyLoaded := legacyErr == nil
+	if expected, bound := state.CustomDomainProbe(ctx); bound && (!legacyLoaded || !state.SameCustomDomainClaim(expected, legacy)) {
+		return state.ErrStaleCustomDomainProbe
+	}
+	if legacyErr != nil && !errors.Is(legacyErr, state.ErrNotFound) {
+		return legacyErr
+	}
+	if legacyLoaded {
+		ctx = state.WithCustomDomainProbe(ctx, legacy)
+	}
+
 	probeDomain, _ := state.WildcardProbeHost(domain)
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, probeDomain)
+	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, domain)
 	// Translate probe results into the observation row
 	// shape. probeOK → true, probeFail → false, probePending
 	// → false (we treat "transient" as "not currently
@@ -484,16 +475,15 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		ObservedAt:      time.Now().UTC(),
 		DNSRecordFound:  probeToBool(dnsFound.Status, true),
 		PointsToGregale: probeToBool(pointsToG.Status, false),
-		IPv6Conflict:    probeToBool(aaaa.Status, false),
+		IPv6Conflict:    aaaa.Status == probeFail,
 		ObservedTarget:  pointsToG.Observed,
 		ObservedAAAA:    aaaa.Observed,
 		CAAObserved:     caa.Observed,
 		DNSCheckedAt:    earliest(dnsFound.ObservedAt, pointsToG.ObservedAt, caa.ObservedAt, aaaa.ObservedAt),
 	}
 	// CAA is tri-state. ok = true; fail = false; pending
-	// stays nil (NULL in the column, the handler renders
-	// "transient" in that case so a flaky upstream doesn't
-	// burn the customer's "permits" badge).
+	// stays nil (NULL in the column) when DNS or issuer restrictions
+	// leave permission unconfirmed.
 	switch caa.Status {
 	case probeOK:
 		v := true
@@ -501,6 +491,10 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 	case probeFail:
 		v := false
 		obs.CAAPermits = &v
+	case probePending:
+		// A NULL permit with no observation means absent CAA to readers.
+		// Preserve the reason permission remains unconfirmed.
+		obs.CAAObserved = caa.Detail
 	}
 	// Surface-aware cert state. Look up the tenant_surfaces
 	// row via the hostname; if present, read its
@@ -516,15 +510,13 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		}
 	}
 	if obs.CertState == "" {
-		var legacy state.CustomDomain
-		var legacyErr error
-		legacyLoaded := false
+		if !legacyLoaded {
+			return state.ErrNotFound
+		}
 		// Legacy custom_domains path. An unverified row is still waiting
 		// on the TXT challenge, so keep it pending and avoid a misleading
 		// port-443 failure while DNS ownership is being established.
-		legacy, legacyErr = s.store.DomainByName(ctx, domain)
-		legacyLoaded = legacyErr == nil
-		if legacyErr == nil && !legacy.Verified() {
+		if !legacy.Verified() {
 			obs.CertState = certStatusPending
 		} else if pointsToG.Status == probeFail {
 			// A definite routing mismatch is already actionable and must not
@@ -566,7 +558,7 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 				transitioned, err := ds.MarkCustomDomainDNSDrifted(ctx, domain, dnsCheckedAt, reason)
 				if err != nil {
 					log.Warn("dns_poller: mark custom-domain DNS drift failed", "domain", domain, "err", err)
-					drifted = false
+					return err
 				} else {
 					if transitioned {
 						s.emitDomainDrifted(ctx, log, legacy, pointsToG, dnsCheckedAt, reason)
@@ -593,8 +585,9 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 			status = state.CustomDomainCertIssued
 		}
 		if !drifted {
-			if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+			if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil {
 				log.Warn("dns_poller: update custom-domain cert status failed", "domain", domain, "err", err)
+				return err
 			} else if status == state.CustomDomainCertIssued {
 				if legacyLoaded && legacy.CertStatus != state.CustomDomainCertIssued {
 					s.recordDomainTLSIssuedActivity(ctx, legacy, obs.CertNotAfter)
@@ -610,6 +603,9 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 				}
 			}
 		}
+	}
+	if !legacyLoaded && obs.SurfaceID == "" {
+		return state.ErrNotFound
 	}
 	if err := s.store.UpsertDoctorObservation(ctx, obs); err != nil {
 		log.Warn("dns_poller: upsert doctor observation failed", "domain", domain, "err", err)
@@ -653,17 +649,19 @@ func (s *server) emitDomainDrifted(ctx context.Context, log *slog.Logger, d stat
 }
 
 // probeToBool converts a probeStatus into a bool column
-// value. The defaultForOK parameter controls the
+// value. The defaultForNA parameter controls the
 // interpretation of probeNA: dns_record_found is true on
 // NA (a CNAME-only setup is a healthy DNS posture);
 // points_to_gregale is false on NA (we don't know if
 // they point at us; treat as not-passing so the operator
 // can investigate). This keeps the doctor's 5-line
 // shape boolean-only without losing the na case.
-func probeToBool(s probeStatus, defaultForOK bool) bool {
+func probeToBool(s probeStatus, defaultForNA bool) bool {
 	switch s {
-	case probeOK, probeNA:
-		return defaultForOK
+	case probeOK:
+		return true
+	case probeNA:
+		return defaultForNA
 	default:
 		return false
 	}
