@@ -17431,6 +17431,23 @@ const (
 	// EdgeCertificateListenRetry.
 	EdgeCertificateReloadInterval = 10 * time.Minute
 	EdgeCertificateListenRetry    = 5 * time.Second
+	// edgednsd's Certificate Transparency watch reads the apps domain's
+	// unexpired issuances from Cert Spotter every
+	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter
+	// allows a few subdomain queries a day, and Let's Encrypt logs a
+	// certificate before it issues it, so a few hours is still well ahead of
+	// any use of one. A read takes at most
+	// EdgeCertificateTransparencyPagesMax pages, each within
+	// EdgeCertificateTransparencyTimeout and at most
+	// EdgeCertificateTransparencyPageBytesMax long.
+	EdgeCertificateTransparencyInterval     = 6 * time.Hour
+	EdgeCertificateTransparencyTimeout      = 30 * time.Second
+	EdgeCertificateTransparencyPagesMax     = 20
+	EdgeCertificateTransparencyPageBytesMax = 8 << 20
+	// EdgeCertificateTransparencyAllowNamesMax caps the names the watch
+	// accepts on certificates edgednsd did not issue (the CDN's, a hosted
+	// site's).
+	EdgeCertificateTransparencyAllowNamesMax = 32
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

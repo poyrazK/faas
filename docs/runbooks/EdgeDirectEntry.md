@@ -61,6 +61,13 @@ Order first, then switch the edges:
    result="issued"}` counts it, set `serve: letsencrypt` and converge the
    compute nodes. Changing both at once would restart every edge on a CA it
    has no certificate from yet.
+5. `public_edge.dns.certificate.transparency` turns on the Certificate
+   Transparency watch: `domain` (the apps domain) and `allow_names`, the
+   names other parties' certificates may carry without a page. For
+   gregale.dev today: `gregale.dev` and `*.gregale.dev` (Cloudflare's own
+   edge certificate, which platform hosts still use) and
+   `operations.gregale.dev` (hosted elsewhere). Turn it on with step 2, before
+   the edges serve the certificate.
 
 Only `origin-pull-ca.pem` is still staged by hand. Alerts and failures:
 [FaasEdgeCertificate](FaasEdgeCertificate.md).

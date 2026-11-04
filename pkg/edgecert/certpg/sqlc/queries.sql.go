@@ -23,6 +23,32 @@ func (q *Queries) DeleteEdgeTLSCertificatesExpiredBefore(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const edgeTLSCertificateChains = `-- name: EdgeTLSCertificateChains :many
+SELECT chain_pem FROM edge_tls_certificates ORDER BY id
+`
+
+// Every stored chain, expired ones included: the Certificate Transparency
+// watch tells edgednsd's certificates from anyone else's by their keys.
+func (q *Queries) EdgeTLSCertificateChains(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, edgeTLSCertificateChains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var chain_pem string
+		if err := rows.Scan(&chain_pem); err != nil {
+			return nil, err
+		}
+		items = append(items, chain_pem)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertEdgeTLSCertificate = `-- name: InsertEdgeTLSCertificate :one
 
 INSERT INTO edge_tls_certificates

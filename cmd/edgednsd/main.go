@@ -12,7 +12,9 @@
 // With FAAS_EDGEDNS_CERT_NAMES set it also keeps the apps domains'
 // publicly trusted certificate (ADR-20261103163954 §3): it orders it from
 // Let's Encrypt with the DNS-01 challenge, through the same token, and
-// stores it with its key sealed to the compute edges.
+// stores it with its key sealed to the compute edges. With
+// FAAS_EDGEDNS_CT_DOMAIN set it watches Certificate Transparency for
+// certificates under that domain it did not issue.
 package main
 
 import (
@@ -73,13 +75,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 		public:   cfg.public,
 		edgePort: cfg.edgePort,
 	}
+	certStore := edgecert.NewPgStore(pool)
 	if cfg.cert.enabled() {
-		certs, err := newCertManager(cfg.cert, dns, edgecert.NewPgStore(pool), edgecert.NewMetrics(ops.Registry()), log)
+		certs, err := newCertManager(cfg.cert, dns, certStore, edgecert.NewMetrics(ops.Registry()), log)
 		if err != nil {
 			return err
 		}
 		go certs.Run(ctx)
 		log.Info("edgednsd: certificate on", "names", strings.Join(cfg.cert.names, ","), "ca", cfg.cert.ca)
+	}
+	if cfg.watch.enabled() {
+		watch, err := newTransparency(cfg.watch, certStore, edgecert.NewTransparencyMetrics(ops.Registry()), log)
+		if err != nil {
+			return err
+		}
+		go watch.Run(ctx)
+		log.Info("edgednsd: certificate transparency watch on", "domain", cfg.watch.domain, "allow", strings.Join(cfg.watch.allow, ","), "api_key", cfg.watch.apiKeyFile != "")
 	}
 	log.Info("edgednsd: running", "names", len(cfg.names), "nodes", len(cfg.public), "dry_run", cfg.dryRun, "interval", cfg.interval)
 

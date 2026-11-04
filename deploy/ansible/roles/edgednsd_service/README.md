@@ -44,14 +44,28 @@ the key back.
   then `letsencrypt`.
 - The role creates the ACME account key once, at
   `/etc/faas/secrets/edgednsd/acme-account.key` (0400 root), and never
-  replaces or removes it: the zone's CAA records name that account. Back it
-  up with the other control-plane secrets.
+  replaces or removes it: it is the account that ordered, and can revoke,
+  every stored certificate. Back it up with the other control-plane
+  secrets.
 - The `edge-tls` recipient must be staged first
   (`gregalectl seal-domain init --domain edge-tls`, then the seal_domains
   role); the role refuses to configure a certificate without it.
-- `edge_certificate_acme_account_info{account_uri}` reports the account URI
-  for the CAA records, and `edge_certificate_orders_total{result}` and
+- `edge_certificate_acme_account_info{account_uri}` reports the account
+  URI, and `edge_certificate_orders_total{result}` and
   `edge_certificate_stored_expiry_timestamp_seconds` how ordering goes.
+
+## The Certificate Transparency watch
+
+With `faas_edgednsd_ct_domain` set (the manifest's
+`public_edge.dns.certificate.transparency.domain`), edgednsd reads every
+unexpired publicly trusted certificate for that domain and the names under
+it from Cert Spotter every 6 hours, and counts in
+`edge_certificate_transparency_unexpected` those it did not issue (their key
+is not one it stored) and whose names are not all in
+`faas_edgednsd_ct_allow_names`. `FaasEdgeCertificateUnexpected` pages on it.
+Without an API key Cert Spotter allows a few queries a day; an operator may
+stage one at `/etc/faas/secrets/edgednsd/certspotter-api-key` (0400 root),
+and the role passes it as a credential when the file exists.
 
 In dry run, edgednsd logs each change it would make and counts it in
 `edge_dns_changes_total{dry_run="true"}`. Read those before going live. See

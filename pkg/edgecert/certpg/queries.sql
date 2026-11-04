@@ -31,3 +31,8 @@ SELECT DISTINCT ON (names) id, names, chain_pem, key_sealed, not_before, not_aft
 FROM edge_tls_certificates
 WHERE ca = @ca AND not_before <= now() AND not_after > now()
 ORDER BY names, not_after DESC, id DESC;
+
+-- name: EdgeTLSCertificateChains :many
+-- Every stored chain, expired ones included: the Certificate Transparency
+-- watch tells edgednsd's certificates from anyone else's by their keys.
+SELECT chain_pem FROM edge_tls_certificates ORDER BY id;

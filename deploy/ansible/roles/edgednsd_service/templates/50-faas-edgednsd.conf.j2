@@ -21,3 +21,14 @@ Environment=FAAS_EDGEDNS_ACME_EMAIL={{ faas_edgednsd_acme_email }}
 Environment=FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE=%d/acme_account_key
 Environment=FAAS_EDGEDNS_CERT_RECIPIENT_FILE=%d/edge_tls_recipient
 {% endif %}
+{% if faas_edgednsd_ct_domain | default('', true) | length > 0 %}
+# The Certificate Transparency watch (ADR-20261103163954 §3).
+Environment=FAAS_EDGEDNS_CT_DOMAIN={{ faas_edgednsd_ct_domain }}
+{% if faas_edgednsd_ct_allow_names | default([], true) | length > 0 %}
+Environment=FAAS_EDGEDNS_CT_ALLOW_NAMES={{ faas_edgednsd_ct_allow_names | join(',') }}
+{% endif %}
+{% if (faas_edgednsd_ct_api_key_staged | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %}
+LoadCredential=certspotter_api_key:/etc/faas/secrets/edgednsd/certspotter-api-key
+Environment=FAAS_EDGEDNS_CT_API_KEY_FILE=%d/certspotter_api_key
+{% endif %}
+{% endif %}

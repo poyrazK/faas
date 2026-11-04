@@ -19,7 +19,11 @@ Series:
 
 - edgednsd: `edge_certificate_orders_total{ca,result}`,
   `edge_certificate_stored_expiry_timestamp_seconds{ca}`,
-  `edge_certificate_acme_account_info{ca,account_uri}`.
+  `edge_certificate_acme_account_info{ca,account_uri}`; with the
+  Certificate Transparency watch on,
+  `edge_certificate_transparency_unexpected`,
+  `edge_certificate_transparency_checks_total{result}` and
+  `edge_certificate_transparency_last_success_timestamp_seconds`.
 - each edge: `edge_certificate_expiry_seconds{name}`,
   `edge_certificate_loads_total{result}`,
   `faas_seal_domain_loaded{domain="edge-tls"}`.
@@ -42,9 +46,10 @@ Usual causes:
 - **The DNS-01 record does not land.** The token lost Zone > DNS: Edit, or
   `FAAS_EDGEDNS_CERT_ZONE_ID` names another zone. `edge_dns_errors_total`
   rises too.
-- **CAA refuses the order.** The zone's CAA records name another CA or
-  account. Compare them with `edge_certificate_acme_account_info`:
-  `dig +short CAA <apps domain>`.
+- **CAA refuses the order.** Gregale publishes no CAA records for the apps
+  domain (ADR-20261103163954 §3), so someone added one that does not allow
+  `letsencrypt.org`: `dig +short CAA <apps domain>`. Remove it, or allow
+  `letsencrypt.org`.
 - **Let's Encrypt limits.** After five failed validations in an hour the
   account waits; edgednsd already backs off from 1 h to 12 h. Do not restart
   edgednsd in a loop: each start retries at once.
@@ -81,6 +86,49 @@ journalctl -u faas-gatewayd-public --since -1h | grep edgecert
   `FAAS_EDGEDNS_ACME_CA`: the edge only serves certificates from its CA.
 
 A restart of `faas-gatewayd-public` reloads at once.
+
+## FaasEdgeCertificateUnexpected (page)
+
+edgednsd's Certificate Transparency watch
+(`public_edge.dns.certificate.transparency` in the manifest) reads every
+unexpired publicly trusted certificate for the apps domain and the names
+under it from Cert Spotter every 6 hours. A certificate is edgednsd's when
+its key is one it stored in `edge_tls_certificates`; one whose every name is
+in `allow_names` (the CDN's own `gregale.dev` + `*.gregale.dev` certificate, a
+hosted site such as `operations.gregale.dev`) is someone else's by design.
+Anything else pages.
+
+```bash
+journalctl -u faas-edgednsd --since -1d | grep 'a certificate edgednsd did not issue'
+# the issuance, from the cert_sha256 in that line
+curl -s "https://api.certspotter.com/v1/issuances?domain=<apps domain>&include_subdomains=true&expand=dns_names&expand=issuer" | jq '.[] | select(.cert_sha256=="<cert_sha256>")'
+```
+
+Decide what it is:
+
+- **A single app host** (`h1.gregale.dev`) from any CA: what a compromised
+  compute node could get by answering a CA's TLS-ALPN challenge for a host it
+  serves. Treat the node as compromised: follow "A lost or exposed key"
+  below, and revoke that certificate too (its CA's problem-reporting address
+  is in the issuance's `problem_reporting`).
+- **A wildcard** or the apex: needs control of the zone's DNS. Check
+  Cloudflare's audit log for TXT records edgednsd did not write, rotate the
+  edgednsd token, then revoke.
+- **Expected after all** (a new hosted site, the CDN switching CA with
+  new names): add its names to `allow_names` and converge the control
+  plane. The page clears on the next check.
+
+The page also clears once the certificate expires out of the logs.
+
+## FaasEdgeCertificateTransparencyStale (warn)
+
+The watch has not completed a check for a day.
+`edge_certificate_transparency_checks_total{result="rate_limited"}` rising:
+without an API key Cert Spotter allows a few queries a day. Stage a key from
+an SSLMate account at `/etc/faas/secrets/edgednsd/certspotter-api-key` (root,
+0400) and converge the control plane; the role passes it as a credential.
+`result="error"`: edgednsd's log names the failure (Cert Spotter down, the
+control plane's outbound HTTPS, or Postgres for the stored keys).
 
 ## A lost or exposed key
 

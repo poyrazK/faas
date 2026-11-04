@@ -135,3 +135,72 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 		t.Errorf("an empty contact rendered:\n%s", out)
 	}
 }
+
+// The Certificate Transparency watch renders only with a domain, and its
+// Cert Spotter key arrives as a credential only when the operator staged one
+// (ADR-20261103163954 §3).
+func TestEdgednsdRoleDropInTransparency(t *testing.T) {
+	roleDir := filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "edgednsd_service")
+	raw, err := os.ReadFile(filepath.Join(roleDir, "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := map[string]any{}
+	if err := yaml.Unmarshal(raw, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
+		t.Skip("python3 with jinja2 required for drop-in rendering")
+	}
+	script := `import json, pathlib, sys
+from jinja2 import Environment
+print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads(sys.argv[2])), end="")
+`
+	render := func(overrides map[string]any) string {
+		values := map[string]any{}
+		for k, v := range defaults {
+			values[k] = v
+		}
+		values["faas_edgednsd_names"] = []string{"zone-1:*.gregale.dev:dns-only"}
+		values["faas_edgednsd_node_addresses"] = []string{"fsn-2.faas=203.0.113.2"}
+		for k, v := range overrides {
+			values[k] = v
+		}
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("python3", "-c", script, filepath.Join(roleDir, "templates", "50-faas-edgednsd.conf.j2"), string(encoded)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("render: %v: %s", err, out)
+		}
+		return string(out) + "\n"
+	}
+	if out := render(nil); strings.Contains(out, "FAAS_EDGEDNS_CT_") || strings.Contains(out, "certspotter") {
+		t.Fatalf("no watch domain, yet the drop-in configures the watch:\n%s", out)
+	}
+	out := render(map[string]any{"faas_edgednsd_ct_domain": "gregale.dev", "faas_edgednsd_ct_allow_names": []string{"*.gregale.dev", "gregale.dev"}})
+	for _, line := range []string{
+		"Environment=FAAS_EDGEDNS_CT_DOMAIN=gregale.dev\n",
+		"Environment=FAAS_EDGEDNS_CT_ALLOW_NAMES=*.gregale.dev,gregale.dev\n",
+	} {
+		if !strings.Contains(out, line) {
+			t.Errorf("drop-in lacks %q:\n%s", line, out)
+		}
+	}
+	if strings.Contains(out, "certspotter") || strings.Contains(out, "FAAS_EDGEDNS_CT_API_KEY_FILE") {
+		t.Errorf("a key the operator did not stage rendered:\n%s", out)
+	}
+	out = render(map[string]any{"faas_edgednsd_ct_domain": "gregale.dev", "faas_edgednsd_ct_api_key_staged": true})
+	for _, line := range []string{
+		"LoadCredential=certspotter_api_key:/etc/faas/secrets/edgednsd/certspotter-api-key\n",
+		"Environment=FAAS_EDGEDNS_CT_API_KEY_FILE=%d/certspotter_api_key\n",
+	} {
+		if !strings.Contains(out, line) {
+			t.Errorf("drop-in lacks %q:\n%s", line, out)
+		}
+	}
+	if strings.Contains(out, "FAAS_EDGEDNS_CT_ALLOW_NAMES") {
+		t.Errorf("an empty allow list rendered:\n%s", out)
+	}
+}

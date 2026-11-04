@@ -21,9 +21,11 @@ import (
 // LetsEncrypt orders certificates from Let's Encrypt with the DNS-01
 // challenge, through certmagic's DNS-01 solver and the ACME client under it
 // (ADR-100's issuer stack). It drives that client directly because the
-// account is ours: a fixed key the operator keeps, registered once, whose
-// URI the zone's CAA records name (RFC 8657), which certmagic's issuer
-// neither registers for a given key nor reports.
+// account is ours: a fixed key the operator keeps, registered once, so
+// Let's Encrypt's per-account limits and the revocation in the key-loss
+// runbook always see the same account, whose URI certmagic's issuer
+// neither registers for a given key nor reports. The zone publishes no CAA
+// records (ADR-20261103163954 §3 as amended 2026-11-04).
 type LetsEncrypt struct {
 	ca      string
 	client  *acmez.Client
