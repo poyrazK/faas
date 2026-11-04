@@ -176,6 +176,12 @@ const AgentKeyLifetime = 90 * 24 * time.Hour
 // before it gets 429 without a lookup.
 const InboundWebhookFailuresPerIPPerMinute = 30
 
+// SelfVerifiedRouteFailuresPerIPPerMinute is how many refused requests (401,
+// 403, 404) one client IP may send a minute to the other unauthenticated
+// routes that check their own credential with a database lookup (consumer
+// billing keys) before it gets 429 without one (bug hunt H15).
+const SelfVerifiedRouteFailuresPerIPPerMinute = 30
+
 // AppWebhookMaxInFlightPerAccount bounds one account's concurrent outbound
 // webhook requests across every scheduler (ADR-20261101093517). Each
 // scheduler runs 64 delivery slots and each subscription may hold 4, so an
