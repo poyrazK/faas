@@ -184,6 +184,29 @@ burst on one reason from many addresses is a flood; a steady stream from one
 address may be carrier-grade NAT, where the starting values need raising.
 An edge with no front and the limits off logs a warning at start.
 
+### The kernel backstop
+
+On a node with entry addresses (`faas_public_entry_addrs`, vmmd's
+`FAAS_PUBLIC_ENTRY_ADDRS`) the host firewall also drops a source's new
+connections to an entry address's 443 before the edge sees them, at twice
+the edge's own limits (`PublicEntry*` in `pkg/api/limits.go`): open
+connections per source, and new connections a second per source.
+Cloudflare's ranges are exempt when the node keeps them
+(`faas_cloudflare_origin_only`, which `front: none` keeps on): a host moved
+back behind Cloudflare arrives from a few of its addresses, each carrying many
+clients. The drops are counted on their rules:
+
+```bash
+sudo nft list chain inet faas input | grep 'per source'
+```
+
+The nftables role also raises the conntrack table to
+`faas_public_entry_conntrack_max`, shortens its `SYN_RECV` timeout to
+`faas_public_entry_conntrack_syn_recv_timeout` seconds and deepens the SYN
+queue, so a spoofed SYN flood, which per-source limits cannot stop, does not
+fill the conntrack table that tenant NAT shares. Watch
+`node_nf_conntrack_entries` against `node_nf_conntrack_entries_limit`.
+
 ## Nothing in front (ADR-20261103163954), pilot
 
 Clients reach the pilot host straight at the compute nodes, with DNS-only

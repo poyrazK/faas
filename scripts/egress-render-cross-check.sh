@@ -153,8 +153,9 @@ PY
 }
 
 # check_public_entry_ingress: an edge with no proxy in front opens 443 on its
-# entry addresses only, drops everything else sent to them before sshd's
-# accept, and keeps 80 closed (ADR-20261103163954 §2).
+# entry addresses only, behind a per-source connection limit, drops
+# everything else sent to them before sshd's accept, and keeps 80 closed
+# (ADR-20261103163954 §2, §4).
 check_public_entry_ingress() {
   local rendered
   rendered=$(render_go eth0 10.100.0.0/16 "" "" "" "" "" "" "" "" "203.0.113.10,2001:db8::10")
@@ -162,12 +163,18 @@ check_public_entry_ingress() {
     echo "egress-render: DIVERGE public-entry retained broad public ingress"
     return 1
   fi
-  local accept drop ssh
+  local limit accept drop ssh
+  limit=$(grep -n 'ip daddr 203.0.113.10 tcp dport 443 ct state new add @public_entry_conns_v4 { ip saddr ct count over' <<<"$rendered" | cut -d: -f1 || true)
   accept=$(grep -n 'ip daddr 203.0.113.10 tcp dport 443 accept' <<<"$rendered" | cut -d: -f1)
   drop=$(grep -n 'ip6 daddr 2001:db8::10 drop' <<<"$rendered" | cut -d: -f1)
   ssh=$(grep -n 'tcp dport 22 accept' <<<"$rendered" | head -1 | cut -d: -f1)
   if [[ -z "$accept" || -z "$drop" || -z "$ssh" ]] || (( accept > drop || drop > ssh )); then
     echo "egress-render: DIVERGE public-entry rules missing or out of order (443 accept, drop, then sshd)"
+    return 1
+  fi
+  # The kernel's per-source backstop drops before the 443 accept.
+  if [[ -z "$limit" ]] || (( limit > accept )); then
+    echo "egress-render: DIVERGE public-entry per-source limit missing or after the 443 accept"
     return 1
   fi
   echo "egress-render: OK public-entry"
