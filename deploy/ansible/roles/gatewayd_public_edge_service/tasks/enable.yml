@@ -122,6 +122,18 @@
       ADR-20261103163954 §2).
   when: faas_edge_entry == 'both'
 
+# ADR-20261103163954 §4: the same pinned Cloudflare ranges as the host
+# firewall, read here so this role does not depend on the nftables role
+# having run earlier in the play.
+- name: gatewayd_public_edge_service — load the pinned Cloudflare ranges
+  ansible.builtin.set_fact:
+    faas_edge_cloudflare_ipv4_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v4.txt').splitlines() }}"
+    faas_edge_cloudflare_ipv6_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v6.txt').splitlines() }}"
+  when:
+    - faas_edge_entry == 'both'
+    - (faas_edge_public_front | string | lower) == 'none'
+    - faas_cloudflare_origin_only | default(false) | bool
+
 - name: gatewayd_public_edge_service — install apps domain and control-plane target drop-in
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.template:

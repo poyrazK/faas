@@ -33,5 +33,11 @@ Environment=FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE=%d/edge_tls_client_ca
 # client certificate is verified only when given, so a proxied record still
 # works, and the certificate above is publicly trusted.
 Environment=FAAS_EDGE_PUBLIC_FRONT=none
+{% if (faas_cloudflare_origin_only | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+# ADR-20261103163954 §4: a host moved back behind Cloudflare, the flood
+# fallback, arrives from Cloudflare's addresses; the per-address connection
+# limits skip them.
+Environment=FAAS_EDGE_PROXY_CIDRS={{ (faas_edge_cloudflare_ipv4_cidrs + faas_edge_cloudflare_ipv6_cidrs) | join(',') }}
+{% endif %}
 {% endif %}
 {% endif %}

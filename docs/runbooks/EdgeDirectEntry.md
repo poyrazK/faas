@@ -165,6 +165,11 @@ injected failure as soon as it is measured.
   `CF-Connecting-IP`; with no front it is the connection's peer, whatever the
   request claims. A refusal is `429 rate_limited` with `Retry-After: 1`,
   `x-faas-rate-limit-scope: client-address`, the limit and the observed value.
+- **Requests a second per hostname**, on any front, per node, before the
+  request is forwarded or wakes anything (`EdgeHostRequests*`): twice the
+  highest plan's per-app limit, so the gateway's plan limit answers an app
+  first. A refusal is `429 rate_limited` with
+  `x-faas-rate-limit-scope: host`.
 - **Open connections, new connections a second and TLS handshakes in
   progress**, only with `faas_edge_public_front: none`. A refused connection
   is reset before TLS; a handshake slot is held at most
@@ -179,10 +184,33 @@ injected failure as soon as it is measured.
 
 `gatewayd_public_edge_refused_total{reason}` counts refusals by
 `open_connections`, `connection_rate`, `handshakes`, `request_rate`,
-`body_rate` and `forward_in_flight`. A
+`host_request_rate`, `body_rate` and `forward_in_flight`. A
 burst on one reason from many addresses is a flood; a steady stream from one
 address may be carrier-grade NAT, where the starting values need raising.
 An edge with no front and the limits off logs a warning at start.
+
+### The kernel backstop
+
+On a node with entry addresses (`faas_public_entry_addrs`, vmmd's
+`FAAS_PUBLIC_ENTRY_ADDRS`) the host firewall also drops a source's new
+connections to an entry address's 443 before the edge sees them, at twice
+the edge's own limits (`PublicEntry*` in `pkg/api/limits.go`): open
+connections per source, and new connections a second per source.
+Cloudflare's ranges are exempt when the node keeps them
+(`faas_cloudflare_origin_only`, which `front: none` keeps on): a host moved
+back behind Cloudflare arrives from a few of its addresses, each carrying many
+clients. The drops are counted on their rules:
+
+```bash
+sudo nft list chain inet faas input | grep 'per source'
+```
+
+The nftables role also raises the conntrack table to
+`faas_public_entry_conntrack_max`, shortens its `SYN_RECV` timeout to
+`faas_public_entry_conntrack_syn_recv_timeout` seconds and deepens the SYN
+queue, so a spoofed SYN flood, which per-source limits cannot stop, does not
+fill the conntrack table that tenant NAT shares. Watch
+`node_nf_conntrack_entries` against `node_nf_conntrack_entries_limit`.
 
 ## Nothing in front (ADR-20261103163954), pilot
 
@@ -233,6 +261,57 @@ records. The owner decides each step marked **owner**.
 
 To put one host back behind Cloudflare, add it to `public_edge.dns.proxied`
 and release: edgednsd switches its records to proxied in place.
+
+## Under attack: back behind Cloudflare (ADR-20261103163954)
+
+With nothing in front, the node's provider absorbs network floods and the
+edge's per-address limits shed what one address sends. A flood that fills the
+entry addresses, or an application flood from many addresses, needs Cloudflare
+back in front. The fallback works because:
+
+- the edge still verifies the zone's client certificate when given, and then
+  takes the client from `CF-Connecting-IP`, so request limits stay per client
+  (keep zone-level Authenticated Origin Pulls on, step 3, so Cloudflare
+  presents it);
+- Cloudflare's ranges skip the per-address connection limits, in the edge
+  (`FAAS_EDGE_PROXY_CIDRS`) and in the host firewall's backstop
+  (`public_entry_proxy_v4/v6`), as long as the node keeps
+  `faas_cloudflare_origin_only`, which `front: none` keeps on;
+- the edge's certificate is publicly trusted, which Cloudflare's Full (strict)
+  accepts;
+- on GCP, `gregale-cloudflare-origin-v4/v6` still admit Cloudflare on 443 to
+  the `gregale-origin` tag, with or without `gregale-direct-entry-v4`.
+
+Fastest first. Each step is the operator's (**owner**); it needs the zone
+token on the control plane, which only edgednsd reads.
+
+1. **One host or every app host, minutes:** on the control plane, set the
+   affected entries of `FAAS_EDGEDNS_NAMES` in
+   `/etc/systemd/system/faas-edgednsd.service.d/50-faas-edgednsd.conf` from
+   `:dns-only` to `:proxied` (the wildcard entry moves every app host), then
+   `systemctl daemon-reload && systemctl restart faas-edgednsd`. edgednsd
+   switches the records in place on its next pass. DNS-only records carry a
+   60 s TTL, so resolvers follow within about a minute; clients holding
+   connections to the entry addresses keep them until they reconnect. Record
+   the same names under `public_edge.dns.proxied` in the manifest before the
+   next release, which rewrites that file. Do not flip records in the
+   dashboard while edgednsd runs: it switches them back.
+2. **The entry addresses themselves are the target** (attackers who learned
+   them keep sending after the records are proxied):
+   `APPLY=1 deploy/scripts/gcp-compute-edge-address.sh unentry NODE...`
+   untags the nodes, and Google's firewall drops everything but Cloudflare on
+   443 before it reaches them. Proxied hosts keep working; DNS-only ones stop,
+   so do step 1 for every app host first.
+3. **Stay behind Cloudflare:** set `public_edge.front: cloudflare` and
+   release. The edge then requires the client certificate again.
+
+Check after each step: `dig +short <host>` returns Cloudflare's addresses
+(step 1); `gatewayd_public_edge_refused_total` and the firewall's `per source`
+counters fall; `curl -sI https://<host>` shows `server: cloudflare` and
+`cf-ray`. Undo in reverse: `entry` again, then the names back to `:dns-only`.
+
+Rehearse steps 1 and 2 on the pilot host before the wildcard leaves
+Cloudflare, and time them (ADR-20261103163954).
 
 ## Undo
 

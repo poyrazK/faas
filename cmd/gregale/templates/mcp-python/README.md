@@ -205,7 +205,9 @@ deploy paths, set that variable to the `/healthz` digest on every serving
 replica. Remove any existing app-wide env or secret with this key before using
 `gregale mcp server deploy`; those runtime layers take precedence over deployment
 overrides. A mismatch makes `/healthz` return 503 and blocks MCP requests.
-The health response includes Gregale's `FAAS_INSTANCE_ID`. In addition,
+The health response includes the serving instance from Gregale's
+`X-Faas-Instance-Id` request header. (`FAAS_INSTANCE_ID` is set at boot, so every
+instance restored from one snapshot would report the same value.) In addition,
 `gregale mcp server status` receives the selected replica identity from Gregale's
 authenticated exact-instance probes. It initializes MCP and lists the
 caller-visible catalogs on every running replica without invoking tools,
