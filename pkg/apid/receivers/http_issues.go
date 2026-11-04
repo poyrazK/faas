@@ -30,7 +30,7 @@ func (a *appErrorsReceiver) RecordHTTPIssue(ctx context.Context, req *apidpb.Inc
 	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" || req.GetIssueEventId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "HTTP issue identity required")
 	}
-	release, err := a.gate.acquire(ctx)
+	release, err := a.acquireIssueWrite(ctx, req.GetAppId())
 	if err != nil {
 		return nil, status.FromContextError(err).Err()
 	}

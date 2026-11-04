@@ -151,6 +151,54 @@ func TestHTTPFailureAttemptsUseSharedIngestGate(t *testing.T) {
 	}
 }
 
+func TestHTTPFailureOneAppCannotOccupySharedGate(t *testing.T) {
+	receiver := NewAppErrorsReceiver(nil, nil, true)
+	receiver.gate = NewIngestGate(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	release, err := receiver.acquireIssueWrite(ctx, "busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var waiters sync.WaitGroup
+	for i := 0; i < issueRetryPerApp; i++ {
+		waiters.Add(1)
+		go func() {
+			defer waiters.Done()
+			unlock, err := receiver.acquireIssueWrite(ctx, "busy")
+			if err == nil {
+				unlock()
+			}
+		}()
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		receiver.issueAppMu.Lock()
+		users := receiver.issueAppGates["busy"].users
+		receiver.issueAppMu.Unlock()
+		if users == issueRetryPerApp+1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			waiters.Wait()
+			t.Fatal("same-app attempts did not queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	otherCtx, otherCancel := context.WithTimeout(context.Background(), time.Second)
+	defer otherCancel()
+	otherRelease, err := receiver.acquireIssueWrite(otherCtx, "other")
+	if err != nil {
+		cancel()
+		waiters.Wait()
+		t.Fatal("one app starved another", err)
+	}
+	otherRelease()
+	cancel()
+	waiters.Wait()
+}
+
 type issueCaptureStore struct {
 	*countingAppErrorsStore
 	state.IssueStore

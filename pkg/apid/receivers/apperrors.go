@@ -77,6 +77,8 @@ type appErrorsReceiver struct {
 	ops                *wire.OpsMetrics
 	enabled            bool
 	gate               IngestGate
+	issueAppMu         sync.Mutex
+	issueAppGates      map[string]*issueAppGate
 	issueRetryMu       sync.Mutex
 	issueRetryCount    int
 	issueRetryApps     map[string]int
@@ -91,7 +93,7 @@ type appErrorsReceiver struct {
 
 // NewAppErrorsReceiver wires a production receiver.
 func NewAppErrorsReceiver(store AppErrorsStore, ops *wire.OpsMetrics, enabled bool) *appErrorsReceiver {
-	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled, issueRetryApps: make(map[string]int), issueRetryWaitApps: make(map[string]int), issueRetryChanged: make(chan struct{}), issueAttemptApps: make(map[string]int), issuePendingApps: make(map[string]int)}
+	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled, issueAppGates: make(map[string]*issueAppGate), issueRetryApps: make(map[string]int), issueRetryWaitApps: make(map[string]int), issueRetryChanged: make(chan struct{}), issueAttemptApps: make(map[string]int), issuePendingApps: make(map[string]int)}
 }
 
 // IncrementAppError streams per-record error records from the

@@ -40923,11 +40923,20 @@ func (q *Queries) IssuePurgeEventsBounded(ctx context.Context, db DBTX, arg Issu
 }
 
 const issuePurgeExpiredTokens = `-- name: IssuePurgeExpiredTokens :execrows
-DELETE FROM issue_ingest_tokens WHERE expires_at < $1
+WITH expired AS (
+ SELECT expired_token.id FROM issue_ingest_tokens expired_token WHERE expired_token.expires_at < $1
+ ORDER BY expired_token.expires_at,expired_token.id LIMIT $2 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM issue_ingest_tokens t USING expired x WHERE t.id=x.id
 `
 
-func (q *Queries) IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
-	result, err := db.Exec(ctx, issuePurgeExpiredTokens, now)
+type IssuePurgeExpiredTokensParams struct {
+	Now        pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) IssuePurgeExpiredTokens(ctx context.Context, db DBTX, arg IssuePurgeExpiredTokensParams) (int64, error) {
+	result, err := db.Exec(ctx, issuePurgeExpiredTokens, arg.Now, arg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}

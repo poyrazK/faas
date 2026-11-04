@@ -371,7 +371,7 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 }
 
 const issueTrackerEscalationApp = `-- name: IssueTrackerEscalationApp :one
-SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT a.id,a.account_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT (GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -384,7 +384,7 @@ JOIN LATERAL (SELECT (GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_unti
  AND tr.acknowledged_by IS NULL
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
-WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL))
 AND owner.plan=ANY($1::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
 `
 
@@ -401,7 +401,7 @@ func (q *Queries) IssueTrackerEscalationApp(ctx context.Context, db DBTX, entitl
 }
 
 const issueTrackerEscalationDue = `-- name: IssueTrackerEscalationDue :one
-SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -415,7 +415,7 @@ JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, 
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute',c.link_id LIMIT 1) c ON true
 WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($3::text[])
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($3::text[])
 `
 
 type IssueTrackerEscalationDueParams struct {
@@ -1148,7 +1148,7 @@ func (q *Queries) IssueTrackerNotificationTarget(ctx context.Context, db DBTX, a
 }
 
 const issueTrackerReminderApp = `-- name: IssueTrackerReminderApp :one
-SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT a.id,a.account_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT (GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -1160,7 +1160,7 @@ JOIN LATERAL (SELECT (GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.s
  AND tr.acknowledged_by IS NULL
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
-WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL))
 AND owner.plan=ANY($2::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
 `
 
@@ -1182,7 +1182,7 @@ func (q *Queries) IssueTrackerReminderApp(ctx context.Context, db DBTX, arg Issu
 }
 
 const issueTrackerReminderDue = `-- name: IssueTrackerReminderDue :one
-SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -1195,7 +1195,7 @@ JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, 
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until),c.link_id LIMIT 1) c ON true
 WHERE a.id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($4::text[])
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($4::text[])
 `
 
 type IssueTrackerReminderDueParams struct {

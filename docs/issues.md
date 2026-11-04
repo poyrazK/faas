@@ -3,6 +3,9 @@
 Gregale Issues groups related failures across deployments and connects ownership,
 resolution, release history, and retained request or worker evidence. It is a
 preview feature on Hobby, Pro, and Scale.
+For company-owned apps, Issue integrations use the company's current plan and
+status. Before a company adopts resource ownership, its apps use the creator's
+plan together with the company's status.
 
 ## Connect exception reporting
 
@@ -287,8 +290,8 @@ restart or a later exhausted retry can lose a record after acknowledgement.
 If recording an HTTP Issue fails transiently, apid retries the Issue independently
 of the legacy error count. Initial attempts allow 128 concurrent records, at most 8 per app. Up to 1,024
 additional records can wait for an initial attempt, at most 128 per app. Retries
-run at most 128 at a time, at most 8 per app; database attempts share the
-four-slot telemetry ingest gate. Another 1,024 failed records can
+run at most 128 at a time, at most 8 per app; database attempts for one app
+serialize before they enter the four-slot telemetry ingest gate. Another 1,024 failed records can
 wait for a retry slot, at most 128 per app. They remain in memory for up to an
 hour from the initial attempt; a full queue, expiry, or process restart can
 still lose records.
@@ -1014,7 +1017,9 @@ upgrade before relying on weighted counts. The original per-record weights
 cannot be reconstructed from retained issue events. Rolling back the schema
 is blocked while weighted events remain, to avoid discarding known weights.
 
-Maintenance runs every minute with bounded batches. Detailed occurrences expire
+Maintenance runs every minute with bounded batches; while a retention batch is
+full, an independent worker drains further bounded batches once per second.
+Expired ingest tokens are also deleted in bounded batches. Detailed occurrences expire
 even when traffic stops. Aggregate issue/release totals and activity survive.
 Expired tokens are removed; app deletion cascades all issue records. A Free
 downgrade gates reporting and removes detailed occurrences on maintenance.

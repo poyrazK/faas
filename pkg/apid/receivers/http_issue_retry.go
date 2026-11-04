@@ -18,6 +18,54 @@ const (
 
 var errHTTPIssueSkipped = errors.New("HTTP issue was not eligible for ingestion")
 
+type issueAppGate struct {
+	slot  chan struct{}
+	users int
+}
+
+// Serialize writes for one app before taking a shared telemetry slot. The
+// database already serializes these on the app row; waiting there while
+// holding the shared gate would let one noisy app occupy every slot.
+func (a *appErrorsReceiver) acquireIssueApp(ctx context.Context, app string) (func(), error) {
+	a.issueAppMu.Lock()
+	g := a.issueAppGates[app]
+	if g == nil {
+		g = &issueAppGate{slot: make(chan struct{}, 1)}
+		g.slot <- struct{}{}
+		a.issueAppGates[app] = g
+	}
+	g.users++
+	a.issueAppMu.Unlock()
+	done := func() {
+		a.issueAppMu.Lock()
+		g.users--
+		if g.users == 0 {
+			delete(a.issueAppGates, app)
+		}
+		a.issueAppMu.Unlock()
+	}
+	select {
+	case <-ctx.Done():
+		done()
+		return nil, ctx.Err()
+	case <-g.slot:
+		return func() { g.slot <- struct{}{}; done() }, nil
+	}
+}
+
+func (a *appErrorsReceiver) acquireIssueWrite(ctx context.Context, app string) (func(), error) {
+	releaseApp, err := a.acquireIssueApp(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	releaseGate, err := a.gate.acquire(ctx)
+	if err != nil {
+		releaseApp()
+		return nil, err
+	}
+	return func() { releaseGate(); releaseApp() }, nil
+}
+
 func retryableHTTPIssueError(err error) bool {
 	var limit *state.IssueLimitError
 	if errors.As(err, &limit) {
@@ -71,7 +119,7 @@ func (a *appErrorsReceiver) startHTTPIssue(snapshot *apidpb.IncrementAppErrorReq
 		outcome := httpIssueSkipped
 		attempt := func(ctx context.Context) error {
 			attempts++
-			release, err := a.gate.acquire(ctx)
+			release, err := a.acquireIssueWrite(ctx, app)
 			if err != nil {
 				return err
 			}

@@ -75899,6 +75899,13 @@ CREATE INDEX issue_events_attribution_review_idx ON public.issue_events USING bt
 
 
 --
+-- Name: issue_events_global_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_global_retention_idx ON public.issue_events USING btree (received_at, app_id);
+
+
+--
 -- Name: issue_events_list_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -75952,6 +75959,13 @@ CREATE INDEX issue_group_links_canonical_idx ON public.issue_group_links USING b
 --
 
 CREATE INDEX issue_ingest_tokens_app_idx ON public.issue_ingest_tokens USING btree (app_id, expires_at);
+
+
+--
+-- Name: issue_ingest_tokens_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_ingest_tokens_expiry_idx ON public.issue_ingest_tokens USING btree (expires_at, id);
 
 
 --

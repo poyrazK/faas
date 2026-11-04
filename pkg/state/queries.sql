@@ -10827,7 +10827,11 @@ WITH expired AS (
 )
 DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id;
 -- name: IssuePurgeExpiredTokens :execrows
-DELETE FROM issue_ingest_tokens WHERE expires_at < sqlc.arg(now);
+WITH expired AS (
+ SELECT expired_token.id FROM issue_ingest_tokens expired_token WHERE expired_token.expires_at < sqlc.arg(now)
+ ORDER BY expired_token.expires_at,expired_token.id LIMIT sqlc.arg(batch_limit) FOR UPDATE SKIP LOCKED
+)
+DELETE FROM issue_ingest_tokens t USING expired x WHERE t.id=x.id;
 -- name: IssueExpiredIgnores :many
 SELECT app_id,id FROM app_issues i WHERE state='ignored' AND ignored_until <= sqlc.arg(now)
 AND NOT EXISTS (SELECT 1 FROM issue_group_links l WHERE l.issue_id=i.id)

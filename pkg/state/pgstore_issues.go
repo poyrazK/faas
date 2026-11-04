@@ -1122,15 +1122,16 @@ func actOnIssueTxDetails(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, i
 // MaintainIssues is a bounded sweep, independent of whether an app receives
 // new events. Issue metadata and release totals outlive occurrence retention.
 func (s *PgStore) MaintainIssues(ctx context.Context, now time.Time) error {
-	q := sqlc.New()
-	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if _, err := q.IssuePurgePlanEvents(ctx, s.pool, sqlc.IssuePurgePlanEventsParams{Plan: string(plan), Before: issueTime(now.AddDate(0, 0, -plan.IssueLimits().RetentionDays)), BatchLimit: api.IssueMaintenanceBatch}); err != nil {
-			return err
-		}
-	}
-	if _, err := q.IssuePurgeExpiredTokens(ctx, s.pool, issueTime(now)); err != nil {
+	if _, err := s.MaintainIssueRetention(ctx, now); err != nil {
 		return err
 	}
+	return s.MaintainIssueHousekeeping(ctx, now)
+}
+
+// MaintainIssueHousekeeping advances attribution and expired ignores without
+// coupling them to a potentially large retention backlog.
+func (s *PgStore) MaintainIssueHousekeeping(ctx context.Context, now time.Time) error {
+	q := sqlc.New()
 	if err := s.enrichIssueAttribution(ctx, now); err != nil {
 		return err
 	}
@@ -1147,6 +1148,25 @@ func (s *PgStore) MaintainIssues(ctx context.Context, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// MaintainIssueRetention deletes one bounded batch per plan and one token
+// batch. A full batch signals the worker to keep draining after a short pause.
+func (s *PgStore) MaintainIssueRetention(ctx context.Context, now time.Time) (bool, error) {
+	q := sqlc.New()
+	more := false
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		n, err := q.IssuePurgePlanEvents(ctx, s.pool, sqlc.IssuePurgePlanEventsParams{Plan: string(plan), Before: issueTime(now.AddDate(0, 0, -plan.IssueLimits().RetentionDays)), BatchLimit: api.IssueMaintenanceBatch})
+		if err != nil {
+			return false, err
+		}
+		more = more || n >= api.IssueMaintenanceBatch
+	}
+	n, err := q.IssuePurgeExpiredTokens(ctx, s.pool, sqlc.IssuePurgeExpiredTokensParams{Now: issueTime(now), BatchLimit: api.IssueMaintenanceBatch})
+	if err != nil {
+		return false, err
+	}
+	return more || n >= api.IssueMaintenanceBatch, nil
 }
 
 func issueDebugRequest(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, app, dep string, e api.IssueEvent) string {
