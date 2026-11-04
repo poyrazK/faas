@@ -102,14 +102,6 @@ func parseGatewayRequestsTotal(body string) map[string]int64 {
 	return counts
 }
 
-// parseGatewayAppInflight parses `gateway_app_inflight_requests{app="..."}`
-// rows into `appID → requests in flight`. An app absent from a successful
-// scrape has no in-flight requests on that gateway.
-func parseGatewayAppInflight(body string) map[string]int64 {
-	_, inflight, _ := parseGatewayLoad(strings.NewReader(body))
-	return inflight
-}
-
 const (
 	gatewayRequestsPrefix = "gateway_requests_total{"
 	gatewayInflightPrefix = "gateway_app_inflight_requests{"
