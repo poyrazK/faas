@@ -2531,6 +2531,17 @@ func (m *Metrics) RequestCountHandler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
 }
 
+// ForgetAppRequestCounts drops a deleted app's request counters. Their
+// series stayed for the gateway's lifetime, one per status code, and
+// schedd reads them every second (ADR 20261104091530). The in-flight gauge
+// stays: a request still finishing would bring it back below zero.
+func (m *Metrics) ForgetAppRequestCounts(appID string) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.requests.DeletePartialMatch(prometheus.Labels{"app": appID})
+}
+
 // AdjustAppInflight moves appID's in-flight request gauge by delta.
 // Nil-receiver safe.
 func (m *Metrics) AdjustAppInflight(appID string, delta float64) {

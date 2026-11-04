@@ -43,6 +43,10 @@ type NodeLedger struct {
 	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-590)
 	perAppProduction  map[string]int              // valid production ownership, including unpinned compatibility rows
 	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	// byNode indexes entries by node and boosted holds the entries with a
+	// CPU startup boost to expire (admission_index.go).
+	byNode  map[string]map[string]*reservation
+	boosted map[*reservation]struct{}
 	// measured, when set, admits by measured memory (ADR-909): it returns a
 	// node's measured charge and when it was taken. nil keeps invariant 2's
 	// reservation check.
@@ -569,7 +573,7 @@ func (l *NodeLedger) Admit(r Request) error {
 			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
 	}
 
-	l.entries[r.Instance] = &reservation{
+	l.putEntry_locked(r.Instance, &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production:  r.ProductionEnvironment || r.EnvironmentKey == "",
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
@@ -578,7 +582,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		countsConc: kindCountsConcurrency(r.Kind),
 		admittedAt: l.clock(),
 		agentRun:   r.Kind == KindAgentRun,
-	}
+	})
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
 	node.usedCPUMillicores += reservedCPU
@@ -612,7 +616,7 @@ func (l *NodeLedger) SetCPUStartupBoostUntil(instance string, until time.Time) b
 }
 
 func (l *NodeLedger) expireCPUBoosts_locked(now time.Time) {
-	for _, r := range l.entries {
+	for r := range l.boosted {
 		if r.cpuBoostMillicores > 0 && !r.cpuBoostUntil.IsZero() && !now.Before(r.cpuBoostUntil) {
 			l.releaseCPUBoost_locked(r)
 		}
@@ -631,6 +635,7 @@ func (l *NodeLedger) releaseCPUBoost_locked(r *reservation) {
 	}
 	r.cpuBoostMillicores = 0
 	r.cpuBoostUntil = time.Time{}
+	delete(l.boosted, r)
 }
 
 // ceilingForNode_locked resolves the per-node admission ceiling.
@@ -753,7 +758,7 @@ func (l *NodeLedger) Release(instance string) {
 	if e == nil {
 		return
 	}
-	delete(l.entries, instance)
+	l.dropEntry_locked(instance)
 	if node, ok := l.resident[e.nodeID]; ok {
 		node.residentRAM -= e.admissionMB
 		if node.residentRAM < 0 {
@@ -1014,8 +1019,8 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	}
 	// The measurement cannot include instances admitted after it, nor agent
 	// run VMs at all: it sums instances rows, and agent runs have none.
-	for _, e := range l.entries {
-		if e.nodeID == nodeID && (e.agentRun || e.admittedAt.After(asOf)) {
+	for _, e := range l.entriesOnNode_locked(nodeID) {
+		if e.agentRun || e.admittedAt.After(asOf) {
 			used += e.admissionMB
 		}
 	}

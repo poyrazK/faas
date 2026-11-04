@@ -1,4 +1,4 @@
--- filename: 20261104143437771_instance_booked_cpu.sql
+-- filename: 20261104215117167_instance_booked_cpu.sql
 -- ADR-20261101160231 step 5b: an app on schedd's guest_vcpu_from_cpu_apps list
 -- books its plan's CPU baseline (1,000 m per GB of plan RAM: 250 m Free,
 -- 500 m Hobby, 1,000 m Pro, 2,000 m Scale) instead of its configured

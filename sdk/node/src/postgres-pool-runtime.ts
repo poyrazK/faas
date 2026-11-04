@@ -7,7 +7,22 @@ export class PostgresPoolBindingError extends Error {
 
 /** Explicit connection identity; factories must avoid ambient credentials and
  * connection-identity overrides. Ordinary JSON/Node inspection is redacted. */
-export interface PostgresPoolConfig {readonly connectionString: string;}
+/** `max` is how many connections one instance can use, from
+ * `GREGALE_POSTGRES_POOL_MAX` when Gregale sets it (ADR-20261104141122). It is
+ * the `pg.Pool` option, so `new pg.Pool({...config})` uses it; an explicit
+ * setting after the spread wins. Absent when unset. */
+export interface PostgresPoolConfig {readonly connectionString: string; readonly max?: number;}
+
+/** Carries the pool size Gregale derives from the instance's concurrency. */
+export const POSTGRES_POOL_MAX_ENV = 'GREGALE_POSTGRES_POOL_MAX';
+
+/** Reads POSTGRES_POOL_MAX_ENV, ignoring a value outside 1–1000. */
+export function postgresPoolMax(value = (globalThis as {process?: {env?: Record<string, string | undefined>}}).process?.env?.[POSTGRES_POOL_MAX_ENV]): number | undefined {
+  const text = value?.trim() ?? '';
+  if (!/^[0-9]{1,4}$/.test(text)) return undefined;
+  const n = Number(text);
+  return n >= 1 && n <= 1000 ? n : undefined;
+}
 
 export interface PostgresPoolOptions<T> {
   /** Establish a connection, verify readiness, and release it before resolving.
@@ -39,7 +54,8 @@ function configuration(key: string, values: Readonly<Record<string, string | und
         'connectionstring', 'connection_string', 'dsn'].includes(key.toLowerCase())) throw invalid();
     }
   } catch {throw invalid();}
-  const config = {connectionString: value};
+  const max = postgresPoolMax();
+  const config = max === undefined ? {connectionString: value} : {connectionString: value, max};
   Object.defineProperty(config, 'toJSON', {value: () => '[PostgresPoolConfig redacted]'});
   Object.defineProperty(config, Symbol.for('nodejs.util.inspect.custom'), {value: () => '[PostgresPoolConfig redacted]'});
   return Object.freeze(config);

@@ -734,17 +734,18 @@ type Engine struct {
 	// operation and receives the same outcome.
 	restartMu        sync.Mutex
 	restartInFlight  map[string]*restartCall
-	restartCompleted map[string]string
+	restartCompleted map[string]completedRestart
+	restartPrunedAt  time.Time
 	// serviceAppMu serialises service replica allocation and worker singleton
 	// convergence across all live deployments for an app. It is distinct from
 	// appMu because lifecycle reconciliation invokes admission, which acquires
 	// appMu itself, and from serviceMu, which protects one deployment's state
 	// transition.
-	serviceAppMu map[string]*sync.Mutex
+	serviceAppMu keyedLocks
 	// serviceMu serialises replica reconciliation per deployment. It is
 	// separate from appMu because reconciliation invokes admission, which
 	// must acquire appMu itself.
-	serviceMu map[string]*sync.Mutex
+	serviceMu keyedLocks
 	// wakeCoord coordinates demand within one selected deployment (ADR-098/375).
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
@@ -872,6 +873,12 @@ type Engine struct {
 	// usageCache is the short TTL cache for the bulk store fallback used when
 	// a node has no fresh vmmd capacity report.
 	usageCache *NodeUsageCache
+	// cpuUsageCache and vcpuUsageCache bound placement's booked CPU and vCPU
+	// reads the same way. Each wake ran both aggregates over the candidate
+	// nodes' live instances (ADR 20261104143005); the local ledger's own
+	// bookings are still read fresh and win when higher.
+	cpuUsageCache  *NodeUsageCache
+	vcpuUsageCache *NodeUsageCache
 
 	// now is the clock source for the chooser's freshness check
 	// (applyLiveCapacityMB). Defaults to time.Now inside NewEngine.
@@ -1062,9 +1069,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		appMu:                    map[string]*appLock{},
 		restorePlacementInFlight: map[string]int{},
 		restartInFlight:          map[string]*restartCall{},
-		restartCompleted:         map[string]string{},
-		serviceAppMu:             map[string]*sync.Mutex{},
-		serviceMu:                map[string]*sync.Mutex{},
+		restartCompleted:         map[string]completedRestart{},
 		wakeCoord:                newWakeCoord(),
 		breaker:                  newNodeWakeBreaker(),
 		warmBroadcaster:          newWarmHintBroadcaster(),
@@ -1074,6 +1079,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		cpuUsageCache:            NewNodeUsageCache(),
+		vcpuUsageCache:           NewNodeUsageCache(),
 		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
 		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
@@ -2191,9 +2198,9 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		e.restartInFlight = make(map[string]*restartCall)
 	}
 	if e.restartCompleted == nil {
-		e.restartCompleted = make(map[string]string)
+		e.restartCompleted = make(map[string]completedRestart)
 	}
-	if wakeID != "" && e.restartCompleted[appID] == wakeID {
+	if wakeID != "" && e.restartCompleted[appID].wakeID == wakeID {
 		e.restartMu.Unlock()
 		return CoordOutcome{}, nil
 	}
@@ -2213,7 +2220,9 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		e.restartMu.Lock()
 		call.out, call.err = out, err
 		if err == nil && out.Instance != nil && wakeID != "" {
-			e.restartCompleted[appID] = wakeID
+			now := time.Now()
+			e.restartCompleted[appID] = completedRestart{wakeID: wakeID, at: now}
+			e.pruneCompletedRestartsLocked(now)
 		}
 		close(call.done)
 		delete(e.restartInFlight, appID)
@@ -5072,6 +5081,14 @@ func (e *Engine) fallbackNodeUsage(ctx context.Context, nodes []state.ComputeNod
 	return used
 }
 
+// clockNow is the engine's clock: e.now when a test set it, else time.Now.
+func (e *Engine) clockNow() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
+}
+
 // nodeUsageForNodes merges fresh vmmd reports with the one-batch store
 // fallback. All callers that make a fleet-wide placement decision use this
 // helper so a new placement feature cannot accidentally reintroduce an N+1
@@ -5123,10 +5140,16 @@ func (e *Engine) nodeCPUUsageForNodes(ctx context.Context, nodes []state.Compute
 	if !ok || len(ids) == 0 {
 		return used
 	}
-	bulk, err := batcher.ComputeNodeUsedCPUMillicoresByNode(ctx, ids)
-	if err != nil {
-		e.log.Warn("sched: placement: bulk compute node used_cpu_millicores read failed", "err", err)
-		return used
+	now := e.clockNow()
+	bulk, cached := e.cpuUsageCache.Lookup(ids, now)
+	if !cached {
+		var err error
+		bulk, err = batcher.ComputeNodeUsedCPUMillicoresByNode(ctx, ids)
+		if err != nil {
+			e.log.Warn("sched: placement: bulk compute node used_cpu_millicores read failed", "err", err)
+			return used
+		}
+		e.cpuUsageCache.Replace(ids, bulk, now)
 	}
 	for _, id := range ids {
 		if bulk[id] > used[id] {
@@ -5149,11 +5172,16 @@ func (e *Engine) nodeVCPUUsageForNodes(ctx context.Context, nodes []state.Comput
 	for _, node := range nodes {
 		ids = append(ids, node.ID)
 	}
+	now := e.clockNow()
+	if cached, ok := e.vcpuUsageCache.Lookup(ids, now); ok {
+		return cached
+	}
 	used, err := batcher.ComputeNodeUsedVCPUByNode(ctx, ids)
 	if err != nil {
 		e.log.Warn("sched: placement: bulk compute node used_vcpu read failed", "err", err)
 		return nil
 	}
+	e.vcpuUsageCache.Replace(ids, used, now)
 	return used
 }
 

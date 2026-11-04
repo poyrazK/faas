@@ -30,9 +30,7 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		return nil
 	}
 	ctx = detachedServiceContext(ctx)
-	mu := e.serviceAppMutex(appID)
-	mu.Lock()
-	defer mu.Unlock()
+	defer e.lockServiceApp(appID)()
 	budget := warmPoolRestoreMaxPerTick
 	return e.reconcileWarmPoolLocked(ctx, appID, &budget)
 }
@@ -45,9 +43,7 @@ func (e *Engine) ReconcileEnvironmentWarmPools(ctx context.Context, appID string
 		return nil
 	}
 	ctx = detachedServiceContext(ctx)
-	mu := e.serviceAppMutex(appID)
-	mu.Lock()
-	defer mu.Unlock()
+	defer e.lockServiceApp(appID)()
 	deployments, err := e.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: environment inventory: %w", err)

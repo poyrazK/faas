@@ -50,6 +50,7 @@ plain app_fork_execs.stderr
 plain app_fork_execs.stdout
 plain app_forks.access_token_hash
 plain app_openapi_docs.doc_sha256
+plain app_scaling_receipts.request_hash
 plain app_task_attach_sessions.attach_token_sha256
 plain app_trusted_signers.cosign_public_key
 plain application_standard_publishers.public_key_der

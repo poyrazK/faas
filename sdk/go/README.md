@@ -441,6 +441,15 @@ validates that the caller deployment belongs to the selected release; these
 helpers preserve request context and do not grant deployment-selection
 authority to the guest.
 
+The middleware also captures `X-Faas-Deadline-Ms`, the time Gregale gives the
+request to run, and the transport sends the time still left on each managed
+call, so the service proxy ends a downstream call when the caller's request
+runs out (ADR-20261102082606). It only shortens: a smaller value you set on the
+call is kept, and a request with no time left sends `1`, which the proxy
+refuses without waking the target. `faas.GregaleDeadlineFromContext(ctx)`
+returns the captured deadline; it does not cancel the context. The proxy
+honours the header once the platform enables service-call deadlines.
+
 For a long-lived native client, use the client transport to capture a release
 from its first managed API response and pin later calls from that transport
 instance:

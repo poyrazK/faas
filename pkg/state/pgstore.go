@@ -26175,7 +26175,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&publicAuthIPAllowlistText,
 		&a.AutoscaleTargetRPS, &a.AutoscaleTargetCPUPct,
 		&a.ProjectID, &a.RootDir, &a.WorkloadName, &workloadClassStr, &a.StartCommand,
-		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.ScalingPolicyRevision, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
+		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.ScalingPolicyRevision, &a.ScalingRevision, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
 		&a.WarmSnapshotEnabled, &a.WarmSnapshotMinRequests, &a.WarmSnapshotMinMs, &a.WarmPoolSize,
 		// Issue #475: per-app eviction tier. eviction_priority is
 		// NOT NULL DEFAULT 'best_effort' (migration 00135) so the
@@ -26378,7 +26378,7 @@ const appsSelectColumns = `
 	coalesce(autoscale_target_rps, 0), coalesce(autoscale_target_cpu_pct, 0),
 	coalesce(project_id::text, ''), coalesce(root_dir, ''), workload_name,
 	workload_class, coalesce(start_command, ''), streaming_enabled, require_signed,
-	scaling_policy, scaling_policy_revision, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
+	scaling_policy, scaling_policy_revision, scaling_revision, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
 	reassigned_at, migrated_at,
 	warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size,
 	eviction_priority,
@@ -28403,10 +28403,10 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		// in the deleted tombstone state; remove those tombstones explicitly
 		// before the apps/accounts sentinels so GDPR deletion can complete.
 		{"managed_postgres_usage", `delete from managed_postgres_usage where account_id = $1 and database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where o.personal_org)`},
-		// Usage imports and accounting reconciliations of the personal
-		// database tombstones removed below reference them without a cascade.
-		{"managed_postgres_usage_imports", `delete from managed_postgres_usage_imports where database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where d.account_id = $1 and o.personal_org and d.state = 'deleted')`},
-		{"managed_postgres_accounting_reconciliations", `delete from managed_postgres_accounting_reconciliations where database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where d.account_id = $1 and o.personal_org and d.state = 'deleted')`},
+		// Usage imports and accounting reconciliations are not deleted here:
+		// their append-only triggers refuse while the account row exists. Their
+		// key to the tombstones is deferred, and they cascade from the
+		// account's namespace once the account row is gone.
 		{"managed_postgres_bindings", `delete from managed_postgres_bindings where account_id = $1 and database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where o.personal_org) and state = 'deleted'`},
 		{"managed_postgres_databases", `delete from managed_postgres_databases where account_id = $1 and org_id in (select id from orgs where personal_org) and state = 'deleted'`},
 		{"custom_domains", `delete from custom_domains
@@ -31337,6 +31337,12 @@ func (s *PgStore) RequestTelemetryCoverage(ctx context.Context, arg sqlc.Request
 // public trace id or the internal row id, preserving the tenant boundary.
 func (s *PgStore) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
 	return s.appErrorsQueries().GetRequestTelemetryByAppAndIdentifier(ctx, s.pool, arg)
+}
+
+// GetRequestTelemetryByAppTraceNearest resolves a journaled public request ID
+// to the row of its trace that started nearest the journaled start.
+func (s *PgStore) GetRequestTelemetryByAppTraceNearest(ctx context.Context, arg sqlc.GetRequestTelemetryByAppTraceNearestParams) (sqlc.GetRequestTelemetryByAppTraceNearestRow, error) {
+	return s.appErrorsQueries().GetRequestTelemetryByAppTraceNearest(ctx, s.pool, arg)
 }
 
 // ListRequestTelemetryByAccountTrace backs the account-wide trace lookup.

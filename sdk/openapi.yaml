@@ -7230,6 +7230,91 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/scaling:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - {name: environment, in: query, schema: {type: string}, description: Named project environment; omit for the default app.}
+    get:
+      tags: [apps]
+      operationId: getAppScaling
+      summary: Read scaling settings and their revision.
+      description: Requires read access. Named environments must have a materialized workload revision.
+      responses:
+        '200':
+          description: Current desired configuration; does not imply running instance convergence.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppScalingSnapshot'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [apps]
+      operationId: applyAppScaling
+      summary: Commit reviewed scaling settings with a recoverable request ID.
+      description: |
+        Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+        The expected app UUID and revision are checked under the write lock. Default revisions advance for
+        every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+        Named environments use their workload revision, including no-op revision semantics.
+        Settings and the receipt commit atomically. Reuse request_id with the exact original
+        body after an interruption to recover the original receipt even after later writes.
+        Changing the body under an accepted ID returns scaling_request_conflict; a stale
+        revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+        Named production and protected environments require their existing approved workflow.
+        A receipt confirms desired configuration only; named settings require a subsequent
+        deployment, and default settings do not prove guest readiness or replica convergence.
+      requestBody:
+        description: Reviewed scaling fields and the revision and request identity to preserve on retry.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplyAppScalingRequest'}
+      responses:
+        '200':
+          description: Original durable configuration receipt, including on replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppScalingReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Write permission, MFA, capability or plan admission denied.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Scaling revision changed, request ID reused, or environment protected.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Commit outcome uncertain; recover or retry the original request ID and body.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/scaling/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - {name: environment, in: query, schema: {type: string}, description: Environment of the original scaling request; omit to recover a default-app request.}
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}, description: Original scaling request UUID.}
+    get:
+      tags: [apps]
+      operationId: getAppScalingReceipt
+      summary: Recover a scaling configuration receipt without performing a write.
+      description: Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+      responses:
+        '200':
+          description: Original durable configuration receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppScalingReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/env/batch:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -11040,6 +11125,195 @@ paths:
       description: The apps remain live. Their project_id is cleared by the database foreign-key action.
       responses:
         '204': {description: Project deleted.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/config:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment configuration.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment slug whose configuration is addressed.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentConfig
+      summary: Get the latest non-secret environment configuration.
+      responses:
+        '200':
+          description: Latest immutable configuration version, or the implicit empty configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentConfigResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentConfig
+      summary: Append a non-secret environment configuration version.
+      description: Secret-shaped keys are rejected; sensitive values belong in the secrets surface.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateProjectEnvironmentConfigRequest'}
+      responses:
+        '200':
+          description: Stored immutable configuration version.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentConfigResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/secrets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the listed secrets.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secrets are addressed.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentSecrets
+      summary: List the secrets shared by every service of a project environment.
+      description: |
+        Metadata only: key, version, sealing key id and value
+        fingerprint. Values are write-only and never returned.
+      responses:
+        '200':
+          description: The environment's shared secrets and the plan's limit.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecretsResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the secret.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is addressed.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+      - $ref: '#/components/parameters/SecretKey'
+    put:
+      tags: [projects]
+      operationId: setProjectEnvironmentSecret
+      summary: Set a secret shared by every service of a project environment.
+      description: |
+        Seals the value for the fleet and stores it once for the environment. Each service receives it at its next boot unless it sets
+        the same key itself; services' snapshots in the environment are
+        invalidated. Platform identity keys are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest'}
+      responses:
+        '200':
+          description: The stored secret's metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/PlanLimitProjectSecrets'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/SecretValueTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironmentSecret
+      summary: Delete a secret shared by a project environment.
+      description: Services stop receiving it at their next boot.
+      responses:
+        '204': {description: The shared secret was removed.}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the rotated secret.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is rotated.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+      - $ref: '#/components/parameters/SecretKey'
+    post:
+      tags: [projects]
+      operationId: rotateProjectEnvironmentSecret
+      summary: Replace the value of an existing shared secret.
+      description: Like PUT, but an unknown key is 404 instead of being created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest'}
+      responses:
+        '200':
+          description: The rotated secret's metadata, with its new version.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/SecretValueTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/environments/{environment}/config/diff:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment configurations are compared.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+      - name: environment
+        in: path
+        required: true
+        description: Destination environment for the configuration comparison.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+      - name: from
+        in: query
+        required: true
+        description: Baseline environment for the configuration snapshot comparison.
+        schema: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'}
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentConfigDiff
+      summary: Compare two environment configuration snapshots.
+      responses:
+        '200':
+          description: Stable key-level configuration diff ordered by key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectEnvironmentConfigDiffResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -25077,6 +25351,49 @@ components:
         apps: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/DeletedAppSummary'}}
         next_cursor: {type: string, maxLength: 1024}
         evaluated_at: {type: string, format: date-time}
+    AppScalingSettings:
+      description: Stored RAM, CPU, concurrency and instance-floor settings.
+      type: object
+      required: [ram_mb, cpu_millicores, max_concurrency, min_instances]
+      properties:
+        ram_mb: {type: integer}
+        cpu_millicores: {type: integer, description: Stored CPU allowance; zero uses the plan default.}
+        max_concurrency: {type: integer}
+        min_instances: {type: integer}
+    AppScalingSnapshot:
+      description: Current desired scaling configuration and its compare-and-swap revision.
+      type: object
+      required: [app_id, scope, revision, settings]
+      properties:
+        app_id: {type: string, format: uuid}
+        scope: {type: string}
+        environment_id: {type: string, format: uuid, description: Immutable identity for a named environment.}
+        revision: {type: integer, format: int64}
+        settings: {$ref: '#/components/schemas/AppScalingSettings'}
+    ApplyAppScalingRequest:
+      description: A reviewed partial scaling change with a durable request identity.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_app_id, expected_revision]
+      properties:
+        expected_app_id: {type: string, format: uuid, description: Immutable app UUID from the reviewed scaling snapshot.}
+        request_id: {type: string, format: uuid}
+        expected_environment_id: {type: string, format: uuid, description: Required for a named environment; must match its immutable identity.}
+        expected_revision: {type: integer, format: int64, minimum: 0}
+        ram_mb: {type: integer, minimum: 1}
+        cpu_millicores: {type: integer, minimum: 1}
+        max_concurrency: {type: integer, minimum: 1}
+        min_instances: {type: integer, minimum: 0}
+    AppScalingReceipt:
+      description: Original atomic scaling configuration commit; does not establish runtime readiness.
+      allOf:
+        - $ref: '#/components/schemas/AppScalingSnapshot'
+        - type: object
+          required: [request_id, previous_revision, committed_at]
+          properties:
+            request_id: {type: string, format: uuid}
+            previous_revision: {type: integer, format: int64}
+            committed_at: {type: string, format: date-time}
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."
       type: object
@@ -32890,6 +33207,89 @@ components:
         environment: {type: string}
         key: {type: string}
         reference: {type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$'}
+    UpdateProjectEnvironmentConfigRequest:
+      description: Non-secret JSON configuration to append as a new environment version.
+      type: object
+      required: [values]
+      additionalProperties: false
+      properties:
+        values:
+          type: object
+          additionalProperties: true
+          maxProperties: 256
+    ProjectEnvironmentConfigResponse:
+      description: Latest immutable non-secret configuration snapshot for a project environment.
+      type: object
+      required: [project_slug, environment, version, config_hash, values]
+      properties:
+        project_slug: {type: string}
+        environment: {type: string}
+        version: {type: integer, format: int64, minimum: 0}
+        config_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        values:
+          type: object
+          additionalProperties: true
+        updated_at: {type: string, format: date-time}
+    ProjectEnvironmentSharedSecret:
+      description: Metadata of one secret shared by every service of a project environment. The value is write-only.
+      type: object
+      required: [key, version, kid, value_hash, created_at, updated_at]
+      properties:
+        key: {type: string}
+        version: {type: integer, format: int64, minimum: 1, description: "Increases on every value change."}
+        kid: {type: string, description: "Recipient of the fleet key that sealed the value."}
+        value_hash: {type: string, description: "HMAC fingerprint of the value, for comparing values without revealing them."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ProjectEnvironmentSharedSecretsResponse:
+      description: The secrets a project environment shares with its services.
+      type: object
+      required: [project_slug, environment, secrets, limit]
+      properties:
+        project_slug: {type: string}
+        environment: {type: string}
+        secrets:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecret'}
+        limit: {type: integer, description: "The plan's ProjectSecretCountMax for one environment."}
+    SetProjectEnvironmentSharedSecretRequest:
+      description: The plaintext value to seal. Never returned.
+      type: object
+      required: [value]
+      properties:
+        value: {type: string, minLength: 1}
+    ProjectEnvironmentSharedSecretResponse:
+      description: A shared secret's metadata after a write.
+      type: object
+      required: [project_slug, environment, secret]
+      properties:
+        project_slug: {type: string}
+        environment: {type: string}
+        secret: {$ref: '#/components/schemas/ProjectEnvironmentSharedSecret'}
+    ProjectEnvironmentConfigChange:
+      description: One key-level change between two environment configuration snapshots.
+      type: object
+      required: [key, kind]
+      properties:
+        key: {type: string}
+        kind: {type: string, enum: [added, removed, changed]}
+        before: {}
+        after: {}
+    ProjectEnvironmentConfigDiffResponse:
+      description: Stable key-level diff between two project environment configuration snapshots.
+      type: object
+      required: [project_slug, from_environment, to_environment, from_version, to_version, from_hash, to_hash, changes]
+      properties:
+        project_slug: {type: string}
+        from_environment: {type: string}
+        to_environment: {type: string}
+        from_version: {type: integer, format: int64, minimum: 0}
+        to_version: {type: integer, format: int64, minimum: 0}
+        from_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        to_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        changes:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectEnvironmentConfigChange'}
     ProjectDeploymentCheckRequest:
       type: object
       additionalProperties: false
@@ -38014,7 +38414,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -38023,7 +38423,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -49763,6 +50163,11 @@ components:
           schema: {$ref: '#/components/schemas/Problem'}
     PlanLimitSecrets:
       description: 'code: plan_limit_secrets'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PlanLimitProjectSecrets:
+      description: 'code: plan_limit_project_secrets'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
