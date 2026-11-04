@@ -174,6 +174,10 @@ gregale mcp client read --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_
 gregale mcp client watch --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
 ```
 
+Node, Go and Python use the same owner identity for new Tasks. Retained Tasks
+written with the older Go identity remain accessible to their original caller,
+including input replies and cancellation, and count toward outstanding limits.
+
 The server only creates a handle after PostgreSQL confirms the row, so
 `tasks/get` can read it immediately. By default, the HTTP server also claims
 tasks for backwards-compatible single-process operation. To run a separate
@@ -499,6 +503,12 @@ and contain no customer identifiers.
 
 ### Task retry policy and failure metrics
 
+Numeric zero uses the omitted default for `ttl_seconds`, `poll_interval_ms`,
+`worker_concurrency`, `shutdown_timeout_ms`, `max_attempts`,
+`retry_base_delay_ms` and `retry_max_delay_ms`, matching CLI validation. Invalid
+types and negative values remain rejected. `MCP_DRAIN_TIMEOUT_SECONDS` overrides
+the configured shutdown timeout and must remain positive.
+
 Handler errors remain terminal by default. Opt into retries only for failures
 that are safe to repeat:
 
@@ -519,6 +529,11 @@ running capacity during the wait. Delayed retries still count against outstandin
 admission limits. Cancellation wins over retry scheduling. Exhausted attempts or
 a delay that would reach the Task TTL produce a terminal failure. Retries never
 extend TTL. Input pauses do not consume another execution attempt.
+
+Lowering `max_attempts` fails exhausted queued retries on the next worker poll,
+even before their retry due time. Live attempts can finish, and input or drain
+resumptions keep their existing attempt count even above the new budget. A later
+failure cannot grant another attempt above that budget.
 
 Keep retry settings consistent across every worker in a namespace. Upgrade all
 workers before enabling retryable handler errors, since older workers do not
@@ -561,10 +576,16 @@ observer database grants, and upgrade every worker so the inventory is complete.
 `mcp_tasks_active_workers` counts unexpired registrations.
 `mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and
 expired-lease running Tasks with no matching version among registered workers.
-Future retries and live executions are excluded; retry-attempt eligibility is
-separate from handler compatibility. When there are no registered
+Future retries, live executions and retries that have exhausted the configured
+`tasks.max_attempts` are excluded. Input and drain resumptions remain eligible
+without starting another attempt. When there are no registered
 workers the unsupported count is zero and compatibility is unknown; status reports
 worker absence rather than claiming that all handlers are compatible.
+
+The observer's `mcp_tasks_without_compatible_worker` metric uses the same due-time
+and retry-budget rules, including nondefault attempt budgets. Use the same
+`tasks.max_attempts` on workers and observers sharing a namespace. Delayed retries
+remain visible in `mcp_tasks_retry_waiting`.
 
 Only the observer role publishes `mcp_tasks_observer_heartbeat` (value 1), after
 its database read and aggregate metric publication succeed. Worker publishers do
@@ -576,6 +597,33 @@ status reports an unknown observer when that heartbeat is absent or stale.
 Telemetry contains aggregate counts and declared handler inventory, without Task
 arguments, results, bearer tokens, caller identities, or exception messages.
 
+
+### Retained owner aliases and runtime handoffs
+
+Run `npm run tasks:migrate` and refresh `tasks:roles` grants before upgrading.
+The runtime profile now includes data access to `gregale_mcp_task_owners`, and
+observers need SELECT on it. Drain and upgrade all workers sharing the queue
+before relying on alias-aware capacity. Canonical and earlier Go owner hashes
+share one execution limit after authenticated caller operations associate them.
+Unregistered retained owners conservatively share one namespace bucket bounded
+by `max_running_per_owner` until their callers return; migration can temporarily
+reduce throughput. Whole alias groups are pruned after their last unexpired Task
+expires. The registry stores only HMAC hashes, without caller identities.
+
+For Go/Python handoffs, keep the same owner secret and `tasks.owner_key_id`
+(the generated starters use `initial`; omitted IDs resolve to `default`). Node
+reads their native v2 payloads with the original KDF and AAD, including IDs in
+`tasks.previous_owner_keys` with `{ "id": "old", "env": "OLD_TASK_OWNER_KEY" }`.
+Those retained secrets also preserve owner lookup aliases. Bind the same settings
+to migration, runtime and doctor commands. Keep keys until retained Task TTL
+ends. Node continues writing v1 or its explicitly configured payload ring, and
+its existing stable-owner fingerprint check still applies to Node queues.
+
+Claims authenticate their payloads before committing the lease or attempt count.
+An unreadable retained row leaves its prior queue state available for key repair.
+Worker completion, cancellation, retry and input writes require a live lease and
+unexpired Task TTL. Terminal writes check the database clock after acquiring the
+row lock, including when a concurrent transaction delayed the write.
 
 ### Task payload encryption key rotation
 

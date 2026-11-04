@@ -62,9 +62,16 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 	if err = migrateTaskSchema(ctx, migration); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = migration.Exec(ctx, `INSERT INTO gregale_mcp_tasks (namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,expires_at) VALUES ('parity',$1,$2,'migration_probe','1',$2,'completed',clock_timestamp()+interval '1 hour')`, id, []byte{1}); err != nil {
+	key := []byte(strings.Repeat("x", 32))
+	cipherRuntime := &mcpTaskRuntime{namespace: "parity", payloadEncryptionVersion: 1, taskKeys: []mcpTaskKey{{id: "default", payloadKey: deriveTaskKey(key, "gregale-mcp-task-payload:v1")}}}
+	payload, err := cipherRuntime.encrypt(map[string]any{}, id, "arguments", 1024)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = migration.Exec(ctx, `INSERT INTO gregale_mcp_tasks (namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,expires_at) VALUES ('parity',$1,$2,'migration_probe','1',$3,'completed',clock_timestamp()+interval '1 hour')`, id, []byte{1}, payload); err != nil {
+		t.Fatal(err)
+	}
+
 	if err = migrateTaskSchema(ctx, migration); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +79,7 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 	if err = migration.QueryRow(ctx, `SELECT count(*) FROM gregale_mcp_tasks`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("migration lost existing tasks: count=%d err=%v", count, err)
 	}
-	if _, err = admin.Exec(ctx, "GRANT USAGE ON SCHEMA "+quoted+" TO "+quoted+"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+quoted+".gregale_mcp_tasks,"+quoted+".gregale_mcp_task_worker_handlers TO "+quoted+"; GRANT SELECT ON "+quoted+".gregale_mcp_task_starter_schema TO "+quoted); err != nil {
+	if _, err = admin.Exec(ctx, "GRANT USAGE ON SCHEMA "+quoted+" TO "+quoted+"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+quoted+".gregale_mcp_tasks,"+quoted+".gregale_mcp_task_worker_handlers,"+quoted+".gregale_mcp_task_owners TO "+quoted+"; GRANT SELECT ON "+quoted+".gregale_mcp_task_starter_schema TO "+quoted); err != nil {
 		t.Fatal(err)
 	}
 	runtimeURL, err := neturl.Parse(url)
@@ -101,6 +108,23 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 		t.Fatal("runtime could alter schema")
 	}
 	if err = checkTaskSchema(ctx, runtime.pool); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"gregale_mcp_tasks", "gregale_mcp_task_worker_handlers", "gregale_mcp_task_owners"} {
+		if _, err := admin.Exec(ctx, "REVOKE INSERT,UPDATE,DELETE ON "+quoted+"."+pgx.Identifier{table}.Sanitize()+" FROM "+quoted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runtime.assertReadOnly(ctx); err != nil {
+		t.Fatalf("read-only observer rejected: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "GRANT INSERT ON "+quoted+".gregale_mcp_task_owners TO "+quoted); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.assertReadOnly(ctx); err == nil {
+		t.Fatal("observer accepted write access to owner aliases")
+	}
+	if _, err := admin.Exec(ctx, "REVOKE INSERT ON "+quoted+".gregale_mcp_task_owners FROM "+quoted); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = migration.Exec(ctx, `UPDATE gregale_mcp_task_starter_schema SET version=2`); err != nil {

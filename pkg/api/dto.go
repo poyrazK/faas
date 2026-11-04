@@ -4518,16 +4518,20 @@ type RotateOrgAPIKeyResponse struct {
 // alt names, useful for the `gregale domains show` listing). All three
 // fields are omitempty so pre-PR-3 clients see bit-identical payloads.
 type CustomDomainResponse struct {
-	Domain         string   `json:"domain"`
-	AppID          string   `json:"app_id"`
-	Environment    string   `json:"environment,omitempty"`
-	ChallengeToken string   `json:"challenge_token,omitempty"`
-	Verified       bool     `json:"verified"`
-	VerifiedAt     string   `json:"verified_at,omitempty"`
-	TXTRecord      string   `json:"txt_record,omitempty"` // convenience for the customer
-	Default        bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
-	CertNotAfter   string   `json:"cert_not_after,omitempty"`
-	CertSANs       []string `json:"cert_sans,omitempty"`
+	// VerificationExpiresAt is the hard deadline for an unverified claim.
+	// Expired claims require a fresh create request and a new TXT proof.
+	VerificationExpiresAt string   `json:"verification_expires_at,omitempty"`
+	VerificationExpired   bool     `json:"verification_expired,omitempty"`
+	Domain                string   `json:"domain"`
+	AppID                 string   `json:"app_id"`
+	Environment           string   `json:"environment,omitempty"`
+	ChallengeToken        string   `json:"challenge_token,omitempty"`
+	Verified              bool     `json:"verified"`
+	VerifiedAt            string   `json:"verified_at,omitempty"`
+	TXTRecord             string   `json:"txt_record,omitempty"` // convenience for the customer
+	Default               bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
+	CertNotAfter          string   `json:"cert_not_after,omitempty"`
+	CertSANs              []string `json:"cert_sans,omitempty"`
 	// Durable legacy custom-domain TLS state (issue #1397 / F1). These
 	// fields are populated by the DNS/cert poller and remain available when
 	// the live cert endpoint is temporarily unreachable.

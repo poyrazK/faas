@@ -9295,38 +9295,28 @@ const (
 	// certificate for a customer hostname.
 	//
 	// OnDemandTLSRegisteredDomainNewHostsPerWeek caps how many distinct
-	// new hostnames below wildcard custom domains may be admitted for
+	// new exact and wildcard hostnames may be admitted for
 	// certificate issuance per registered domain (public suffix + 1) in a
-	// rolling 7-day window, across every wildcard under that domain.
+	// rolling 7-day window, across every claim under that domain.
 	// Hosts admitted before stay admitted, so reloads and renewals never
 	// consume it. 40 stays under Let's Encrypt's 50 certificates per
-	// registered domain per week, which sibling wildcards share.
+	// registered domain per week, shared by exact hosts and wildcard leaves.
 	//
 	// OnDemandTLSOwnerNewHostsPerWeek caps the same admissions per owner
-	// (the wildcard app's organization, else its account) across all of
+	// (the app's organization, else its account) across all of
 	// the owner's registered domains, so one tenant with many domains
 	// cannot draw unbounded orders from the platform's shared ACME
 	// account.
 	//
 	// OnDemandTLSFleetNewHostsPer3h caps new-host admissions across the
 	// deployment in a rolling 3-hour window. Let's Encrypt allows one ACME
-	// account 300 new orders per 3 hours; the other half is left for
-	// exact custom domains, whose admission is their verified row.
+	// account 300 new orders per 3 hours; the remaining capacity is
+	// reserved for renewals and issuance retries. Exact and wildcard hosts
+	// share all three new-host caps (ADR-520 amendment 4).
 	//
 	// The three counts come from a ledger that outlives the wildcard
 	// (custom_domain_tls_admissions), so deleting and re-creating a
 	// wildcard does not reset them (bug hunt 32 M7, ADR-520 amendment 1).
-	//
-	// OnDemandTLSHostRetry* back off a host the edge keeps asking for
-	// right after being allowed: an admitted host costs no budget, so
-	// one whose ACME order keeps failing would otherwise draw an order
-	// on every handshake. OnDemandTLSHostRetryAllows allows, each in its
-	// own OnDemandTLSHostRetryBucketSeconds slice, within
-	// OnDemandTLSHostRetryWindowSeconds start a backoff of
-	// OnDemandTLSHostRetryBackoffSeconds that doubles on each repeat up to
-	// OnDemandTLSHostRetryMaxBackoffSeconds. A host that has not triggered
-	// a backoff for OnDemandTLSHostRetryResetSeconds starts again from the
-	// first step. OnDemandTLSHostRetryEntries bounds the tracked hosts.
 	//
 	// OnDemandTLSIssuanceGraceSeconds is how long after verification a
 	// failed port-443 probe is reported as pending instead of failed: the
@@ -9335,13 +9325,6 @@ const (
 	OnDemandTLSRegisteredDomainNewHostsPerWeek = 40
 	OnDemandTLSOwnerNewHostsPerWeek            = 200
 	OnDemandTLSFleetNewHostsPer3h              = 150
-	OnDemandTLSHostRetryAllows                 = 3
-	OnDemandTLSHostRetryBucketSeconds          = 30
-	OnDemandTLSHostRetryWindowSeconds          = 10 * 60
-	OnDemandTLSHostRetryBackoffSeconds         = 60 * 60
-	OnDemandTLSHostRetryMaxBackoffSeconds      = 24 * 60 * 60
-	OnDemandTLSHostRetryResetSeconds           = 24 * 60 * 60
-	OnDemandTLSHostRetryEntries                = 10000
 	OnDemandTLSIssuanceGraceSeconds            = 900
 	// CustomDomainTLSAllowedHostsMax caps the names in one wildcard custom
 	// domain's optional host allowlist (ADR-520 amendment 2). With an
@@ -17327,3 +17310,10 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// Domain doctor DNS probes are bounded independently of the inventory size.
+// The query ceiling accommodates the maximum DNS label depth plus aliases.
+const (
+	DomainDoctorDNSTimeout    = 5 * time.Second
+	DomainDoctorCAAMaxQueries = 128
+)

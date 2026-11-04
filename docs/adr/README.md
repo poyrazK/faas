@@ -1992,6 +1992,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017190813: Durable GitOps rollout outcome notifications](20261017190813-gitops-rollout-outcome-notifications.md)
 
 - [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
+- [ADR-20261103204500: MCP starter owner aliases and wire validation](20261103204500-mcp-starter-owner-aliases-and-wire-validation.md)
+- [ADR-20261104001500: MCP Task key preflight and lease-bound writes](20261104001500-mcp-task-key-preflight-and-lease-writes.md)
+- [ADR-20261104020000: MCP Task recovery after retry budget changes](20261104020000-mcp-task-retry-budget-rollouts.md)
+- [ADR-20261104033000: MCP release protocol gates and verification budgets](20261104033000-mcp-release-protocol-gates-and-verification-budgets.md)
+- [ADR-20261104050000: MCP observer bindings and Task identity defaults](20261104050000-mcp-observer-bindings-and-task-identity-defaults.md)
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
 - [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)

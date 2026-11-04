@@ -15,23 +15,36 @@ import (
 
 type domainProviderFixture struct {
 	ready, removeFail bool
+	preflightFail     bool
 	uncertain         bool
 	creates           int
 	calls, removals   int
 	after             func()
+	beforeCreate      func()
 	err               error
 }
 
 func (*domainProviderFixture) ID() string     { return strings.Repeat("b", 64) }
 func (*domainProviderFixture) Target() string { return "customers.hosting.example" }
-func (p *domainProviderFixture) Ensure(_ context.Context, d api.HostingDomain, allowCreate bool) (api.HostingDomainDetails, bool, error) {
+func (p *domainProviderFixture) Ensure(ctx context.Context, d api.HostingDomain, beginCreate artifacts.DomainCreateFence) (api.HostingDomainDetails, bool, error) {
 	p.calls++
-	if d.Details.CreateStartedAt == nil {
-		panic("provider called without durable create fence")
+	if p.preflightFail {
+		return d.Details, false, artifacts.ErrDomainProviderUnavailable
 	}
 	if d.Details.ProviderID == "" {
-		if !allowCreate {
+		if p.beforeCreate != nil {
+			p.beforeCreate()
+		}
+		if beginCreate == nil {
 			return d.Details, false, artifacts.ErrDomainProviderConflict
+		}
+		var err error
+		d.Details, err = beginCreate(ctx)
+		if err != nil {
+			return d.Details, false, err
+		}
+		if d.Details.CreateStartedAt == nil {
+			panic("provider create without durable fence")
 		}
 		p.creates++
 		if p.uncertain {
@@ -234,6 +247,66 @@ func TestDomainReconcilerUncertainCreateNeverRepeats(t *testing.T) {
 	rows, _ = store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
 	if rows[0].LastErrorCode != "provider_conflict" {
 		t.Fatal("recovery not surfaced")
+	}
+}
+
+func TestDomainReconcilerRetriesReadOnlyPreflightFailure(t *testing.T) {
+	store, site, _, provider, dns, publisher, now, r := domainReconcilerFixture(t)
+	dns.valid, provider.preflightFail = true, true
+	if err := r.RunOnce(t.Context()); err == nil {
+		t.Fatal("missing preflight error")
+	}
+	rows, _ := store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
+	if rows[0].Details.CreateStartedAt != nil || provider.creates != 0 {
+		t.Fatal("read-only failure consumed the creation attempt")
+	}
+	provider.preflightFail, provider.ready = false, true
+	*now = now.Add(2 * api.HostingDomainRetryInterval)
+	if err := r.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
+	if rows[0].State != "active" || !publisher.head.Enabled || provider.creates != 1 {
+		t.Fatalf("retry did not provision: %+v creates=%d", rows[0], provider.creates)
+	}
+}
+
+func TestDomainReconcilerCanDeleteAfterReadOnlyFailure(t *testing.T) {
+	store, site, domain, provider, dns, _, now, r := domainReconcilerFixture(t)
+	dns.valid, provider.preflightFail = true, true
+	if err := r.RunOnce(t.Context()); err == nil {
+		t.Fatal("missing preflight error")
+	}
+	if _, err := store.DeleteHostingDomain(t.Context(), site.AccountID, site.ID, domain.ID, domain.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(api.HostingDomainRemovalGrace + api.HostingDomainRetryInterval)
+	if err := r.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("cleanup stuck: %v %v", rows, err)
+	}
+}
+
+func TestDomainReconcilerDeletionDuringPreflightPreventsCreate(t *testing.T) {
+	store, site, domain, provider, dns, _, _, r := domainReconcilerFixture(t)
+	dns.valid = true
+	provider.beforeCreate = func() {
+		if _, err := store.DeleteHostingDomain(t.Context(), site.AccountID, site.ID, domain.ID, domain.Revision); err != nil {
+			t.Error(err)
+		}
+	}
+	if err := r.RunOnce(t.Context()); err == nil {
+		t.Fatal("stale create was accepted")
+	}
+	rows, err := store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
+	if err != nil || len(rows) != 1 || rows[0].State != "deleting" || rows[0].Details.CreateStartedAt != nil || provider.creates != 0 {
+		t.Fatalf("deletion lost its fence: domains=%+v creates=%d err=%v", rows, provider.creates, err)
 	}
 }
 

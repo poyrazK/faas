@@ -53,6 +53,7 @@ def healthy_snapshot() -> dict:
     backup_sa = POLICY["backup"]["writer_service_account"]
     control = instance(POLICY["control_plane"]["instance"], POLICY["control_plane"]["service_account"])
     control["tags"]["items"].append(POLICY["access"]["origin_target_tag"])
+    control["tags"]["items"].append(POLICY["access"]["custom_domain_tls"]["target_tag"])
     compute = instance("faas-compute-node-1", compute_sa)
     compute_peer = instance("faas-compute-node-2", compute_sa, zone="europe-west3-c")
     disks = []
@@ -101,6 +102,15 @@ def healthy_snapshot() -> dict:
                 "targetTags": [POLICY["access"]["origin_target_tag"]],
                 "allowed": [{"IPProtocol": "tcp", "ports": ["80", "443"]}],
             },
+        ] + [
+            {
+                "name": name,
+                "direction": "INGRESS",
+                "sourceRanges": ["0.0.0.0/0" if family == "ipv4" else "::/0"],
+                "targetTags": [POLICY["access"]["custom_domain_tls"]["target_tag"]],
+                "allowed": [{"IPProtocol": "tcp", "ports": ["80", "443"]}],
+            }
+            for family, name in POLICY["access"]["custom_domain_tls"]["firewall_rules"].items()
         ],
         "project_iam": {
             "bindings": [
@@ -323,6 +333,31 @@ class AuditTest(unittest.TestCase):
         self.assertIn("exposes the HTTP origin publicly", failures)
         self.assertIn("does not match pinned Cloudflare ipv4 ranges", failures)
         self.assertIn("is not limited to target tag", failures)
+
+
+    def test_custom_domain_exception_is_control_plane_only(self) -> None:
+        snap = healthy_snapshot()
+        snap["instances"][1]["tags"]["items"].append(POLICY["access"]["custom_domain_tls"]["target_tag"])
+        self.assertIn("must belong only", "\n".join(AUDIT.audit(POLICY, snap)))
+
+    def test_custom_domain_exception_rejects_broad_rules(self) -> None:
+        for changes in (
+            {"targetTags": []},
+            {"targetTags": ["gregale-custom-domain-edge", "another-host"]},
+            {"targetServiceAccounts": ["another-account"]},
+            {"allowed": [{"IPProtocol": "all"}]},
+            {"allowed": [{"IPProtocol": "tcp", "ports": ["80-443"]}]},
+            {"disabled": True},
+        ):
+            with self.subTest(changes=changes):
+                snap = healthy_snapshot()
+                snap["firewalls"][-1].update(changes)
+                self.assertIn("must allow only public TCP/80,443", "\n".join(AUDIT.audit(POLICY, snap)))
+
+    def test_custom_domain_public_rules_require_explicit_policy(self) -> None:
+        policy = copy.deepcopy(POLICY)
+        policy["access"]["custom_domain_tls"]["enabled"] = False
+        self.assertIn("exposes the HTTP origin publicly", "\n".join(AUDIT.audit(policy, healthy_snapshot())))
 
 
 if __name__ == "__main__":
