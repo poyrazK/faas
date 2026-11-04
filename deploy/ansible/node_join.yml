@@ -1547,6 +1547,26 @@
         state: started
       when: (faas_join_drain_base_generations.rc | default(0)) in [3, 4]
 
+    # ADR-1343: the edge socket stays open while the edge restarts, so tunnel
+    # requests queue, and a queued request starts the edge, which wants
+    # gatewayd-internal, which wants vmmd and realtimed. During a drained
+    # install that started the old release's daemons mid-install: on
+    # production-us (rc.319 fsn-3, 2026-11-04) the old gateway crash-looped
+    # into its start limit and the restart below was refused. A drained node
+    # takes no tunnel traffic: stop its connector so Cloudflare sends the
+    # cell's requests to the other replicas, then close the socket.
+    - name: Take the drained node's app edge out of the tunnel before the install
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      when:
+        - not (faas_join_skip_drain | bool)
+        - faas_edge_on_compute_nodes | default(false) | bool
+      loop:
+        - faas-cloudflared.service
+        - faas-gatewayd-public-edge.socket
+        - faas-gatewayd-public-edge.service
+
     # A no-drain rollout keeps every daemon serving through the install and
     # restarts them once below: stopping them here would stop vmmd, and the
     # node's gateway, for the whole install.
@@ -1893,6 +1913,19 @@
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
+
+    # The restarted gatewayd-internal already wants the edge; the connector
+    # (and the socket, on a node whose edge was taken out above) come back
+    # here. The connector stays inactive without its tunnel token.
+    - name: Return the node's app edge to the tunnel
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      when: faas_edge_on_compute_nodes | default(false) | bool
+      loop:
+        - faas-gatewayd-public-edge.socket
+        - faas-gatewayd-public-edge.service
+        - faas-cloudflared.service
 
     - name: Wait for vmmd's local socket on single-box targets
       ansible.builtin.wait_for:
