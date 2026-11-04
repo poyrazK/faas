@@ -3683,6 +3683,19 @@ const (
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
 	PublicObjectReadMaxAgeSeconds = 300
+	// PublicReadNewHostLookupsPerSecond and PublicReadNewHostLookupBurst are
+	// each edge's budget of public-read host lookups (store reads) for
+	// hostnames it has never seen name an app. The matcher runs in front of
+	// every GET and HEAD, so a flood of random names under the apps wildcard
+	// spends this budget instead of control-plane Postgres reads; past it the
+	// request is answered 503 traffic_policy_unavailable with Retry-After.
+	// Normal traffic spends it only on a host's first request after a
+	// restart, which the burst covers. PublicReadKnownHostsMax bounds the
+	// hostnames that skip the budget; a full set is dropped whole
+	// (ADR-20261103163954 §4).
+	PublicReadNewHostLookupsPerSecond = 25
+	PublicReadNewHostLookupBurst      = 500
+	PublicReadKnownHostsMax           = 100_000
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend

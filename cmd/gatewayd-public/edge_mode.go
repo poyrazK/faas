@@ -523,12 +523,12 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 // next: upload routes and their receipts are forwarded; public bucket reads
 // go to localReads when the edge serves them itself and are forwarded
 // otherwise; everything else goes to next.
-func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, hostLookups *objectstorage.HostLookupBudget, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
 	publicRead := localReads
 	if publicRead == nil {
 		var err error
 		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-			Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+			Store: store, HostLookups: hostLookups, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
 		})
 		if err != nil {
 			return nil, err
