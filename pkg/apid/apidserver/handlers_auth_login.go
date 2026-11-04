@@ -171,7 +171,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	acct, err := s.store.AccountByEmail(r.Context(), email)
+	_, err := s.store.AccountByEmail(r.Context(), email)
 	if err != nil {
 		// Email is unbound: create the account, set the password,
 		// sign in. CreateAccount on email uniqueness violation is
@@ -263,31 +263,14 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 	// Email is bound. Two sub-cases:
 	//   - Same password: sign in (idempotent retry).
 	//   - Different password: 401 invalid_credentials (NEVER 409).
-	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
+	// Signup is also a password sign-in for a bound address. Share its
+	// verification and failure accounting with /login and /v1/auth/signup.
+	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
 	if err != nil {
-		// Bound account with no password row (OAuth-only): pad.
-		if _, verr := auth.VerifyContext(r.Context(), auth.DummyPHC, password); passwordNotChecked(verr) {
-			writePasswordCheckUnavailable(w)
-			return
-		}
-		// Issue #286: emit failed-login (OAuth-only branch).
-		// Same payload shape as the postLoginEmail path so the
-		// audit row is indistinguishable from the /login
-		// wrong-password path — the discriminator is the email
-		// hash, not the route.
-		s.audit.EmitFailedLogin(
-			middleware.ClientIP(r),
-			auth.HashEmail(email),
-			r.UserAgent())
-		api.WriteProblem(w, api.ErrInvalidCredentials())
-		return
-	}
-	ok, err = auth.VerifyContext(r.Context(), hash, password)
-	if passwordNotChecked(err) {
 		writePasswordCheckUnavailable(w)
 		return
 	}
-	if err != nil || !ok {
+	if !ok {
 		// Issue #286: emit failed-login (wrong-password branch).
 		// This is the canonical "wrong password" audit row, hit
 		// by the bulk of credential-stuffing attempts. The
@@ -420,6 +403,7 @@ func (s *server) renderResetForm(w http.ResponseWriter, r *http.Request) {
 	page := dashboard.Page{
 		Title: "Reset password",
 		Body:  "password_reset_form",
+		Data:  map[string]any{"Token": tok},
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		s.log.Error("dashboard render reset form", "err", err)
@@ -857,9 +841,9 @@ func (s *server) claimAccountByEmailOwnership(ctx context.Context, acct state.Ac
 	if err := s.store.MarkAccountEmailVerified(ctx, acct.ID); err != nil {
 		return state.Account{}, err
 	}
-	verifiedAt := time.Now().UTC()
-	acct.EmailVerifiedAt = &verifiedAt
-	return acct, nil
+	// Revocation can also clear a pre-verification authenticator. Login must
+	// derive its MFA policy from the committed account, not the old snapshot.
+	return s.store.AccountByID(ctx, acct.ID)
 }
 
 func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID string) error {

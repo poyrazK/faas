@@ -124,17 +124,8 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 			// Walk the recent ledger for the most-recent export so the
 			// hint matches reality (not just "24h from now").
 			retryAfterS := api.ExportRateLimitWindowSeconds
-			if recents, lerr := s.store.ListGdprRequestsForAccount(r.Context(), acct.ID, n); lerr == nil {
-				for _, rec := range recents {
-					if rec.Action == state.GdprActionExport && !rec.RequestedAt.IsZero() {
-						resetAt := rec.RequestedAt.Add(api.ExportRateLimitWindow)
-						secs := int(time.Until(resetAt).Seconds())
-						if secs > retryAfterS {
-							retryAfterS = secs
-						}
-						break
-					}
-				}
+			if seconds, err := accountexport.RetryAfter(r.Context(), s.store, acct.ID, time.Now().UTC()); err == nil {
+				retryAfterS = seconds
 			}
 			api.WriteProblem(w, api.ErrExportRateLimited(retryAfterS))
 			return

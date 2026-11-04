@@ -22049,6 +22049,10 @@ func (m *MemStore) SetAccountPassword(_ context.Context, accountID, phc string) 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.setAccountPasswordLocked(accountID, phc)
+}
+
+func (m *MemStore) setAccountPasswordLocked(accountID, phc string) error {
 	if m.accountPasswords == nil {
 		m.accountPasswords = map[string]AccountPassword{}
 	}
@@ -27144,6 +27148,10 @@ type orgAccountKey struct {
 func (m *MemStore) CreateOrg(_ context.Context, o Org) (Org, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createOrgLocked(o)
+}
+
+func (m *MemStore) createOrgLocked(o Org) (Org, error) {
 	if o.ID == "" {
 		o.ID = newID()
 	}
@@ -27527,28 +27535,23 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	if !strings.EqualFold(inv.Email, acceptingAccount.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}
-	// IAM-6 / ADR-061 PR 2 cap check (load-bearing). Mirrors
-	// PgStore.ConsumeOrgInvitation. Free + unknown plans read 0
-	// (plan-policy fail-closed) so the `limit > 0` early-return keeps
-	// them quiet — the abuse-floor tier cannot host shared orgs in
-	// the first place, so reaching here is already a customer-flow
-	// fault, not a cap-arithmetic decision.
+	// Status, plan and member admission share this lock with org mutations.
 	org, ok := m.orgs[inv.OrgID]
 	if !ok {
 		return OrgMembership{}, OrgInvitation{}, ErrNotFound
 	}
-	limits, _ := api.LimitsFor(org.Plan)
-	limit := limits.OrgMembersMax
-	if limit > 0 {
-		active := 0
-		for _, existing := range m.memberships {
-			if existing.OrgID == inv.OrgID && existing.RemovedAt == nil {
-				active++
-			}
+	limit, err := orgInvitationLimit(org.Plan, org.Status, org.DeletedPending, org.AbuseHoldAt != nil)
+	if err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
+	}
+	active := 0
+	for _, existing := range m.memberships {
+		if existing.OrgID == inv.OrgID && existing.RemovedAt == nil {
+			active++
 		}
-		if active >= limit {
-			return OrgMembership{}, OrgInvitation{}, ErrOrgMemberCapExceeded
-		}
+	}
+	if active >= limit {
+		return OrgMembership{}, OrgInvitation{}, ErrOrgMemberCapExceeded
 	}
 	// Insert membership; surface ErrOrgAlreadyMember if a parallel
 	// accept beat us.
