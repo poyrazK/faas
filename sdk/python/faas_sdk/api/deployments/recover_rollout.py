@@ -17,10 +17,14 @@ def _get_kwargs(
     *,
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
+    service_abort_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(service_abort_attempt_id, Unset):
+        headers["Service-Abort-Attempt-ID"] = service_abort_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -108,6 +112,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
+    service_abort_attempt_id: str | Unset = UNSET,
 ) -> Response[Problem | RolloutTransitionResponse]:
     r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
 
@@ -161,6 +166,7 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        service_abort_attempt_id (str | Unset):
         body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
             RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
             `reason` is the operator-supplied free-text captured into the deployment_audit row's data
@@ -178,6 +184,7 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        service_abort_attempt_id=service_abort_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -193,6 +200,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
+    service_abort_attempt_id: str | Unset = UNSET,
 ) -> Problem | RolloutTransitionResponse | None:
     r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
 
@@ -246,6 +254,7 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        service_abort_attempt_id (str | Unset):
         body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
             RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
             `reason` is the operator-supplied free-text captured into the deployment_audit row's data
@@ -264,6 +273,7 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        service_abort_attempt_id=service_abort_attempt_id,
     ).parsed
 
 
@@ -273,6 +283,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
+    service_abort_attempt_id: str | Unset = UNSET,
 ) -> Response[Problem | RolloutTransitionResponse]:
     r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
 
@@ -326,6 +337,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        service_abort_attempt_id (str | Unset):
         body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
             RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
             `reason` is the operator-supplied free-text captured into the deployment_audit row's data
@@ -343,6 +355,7 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        service_abort_attempt_id=service_abort_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -356,6 +369,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
+    service_abort_attempt_id: str | Unset = UNSET,
 ) -> Problem | RolloutTransitionResponse | None:
     r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
 
@@ -409,6 +423,7 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        service_abort_attempt_id (str | Unset):
         body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
             RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
             `reason` is the operator-supplied free-text captured into the deployment_audit row's data
@@ -428,5 +443,6 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            service_abort_attempt_id=service_abort_attempt_id,
         )
     ).parsed

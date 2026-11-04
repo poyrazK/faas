@@ -69,6 +69,8 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var submissionReads atomic.Int32
 	var rollbackReceipt atomic.Pointer[api.RollbackOperation]
 	var rollbackReads atomic.Int32
+	var serviceAbortReceipt atomic.Pointer[api.ServiceAbortReceipt]
+	var serviceAbortReads atomic.Int32
 	var promotionReceipt atomic.Pointer[api.DeploymentPromotionReceipt]
 	var promotedDeployment atomic.Pointer[api.DeploymentResponse]
 	var promotionReads atomic.Int32
@@ -371,6 +373,28 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	f.apiHook = func(w http.ResponseWriter, req *http.Request, account string) bool {
 		// Route-budget requests require UUIDs; retain the older alpha fixture's
 		// identities and give budget planning its own consented app.
+		if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/v1/apps/alpha/service-aborts/") {
+			receipt := serviceAbortReceipt.Load()
+			if receipt == nil || req.URL.Path != "/v1/apps/alpha/service-aborts/"+receipt.AttemptID {
+				w.WriteHeader(404)
+				return true
+			}
+			if req.Header.Get(api.ServiceAbortAttemptHeader) != "" || req.Header.Get("Idempotency-Key") != "" {
+				t.Error("service abort lookup forwarded mutation metadata")
+			}
+			serviceAbortReads.Add(1)
+			_ = json.NewEncoder(w).Encode(receipt)
+			return true
+		}
+		if req.Method == http.MethodGet && req.URL.Path == "/v1/deployments/service-abort-target" {
+			receipt := serviceAbortReceipt.Load()
+			if receipt == nil {
+				w.WriteHeader(404)
+				return true
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: receipt.DeploymentID, AppID: receipt.AppID, Scope: receipt.Scope, Status: "live", RolloutState: "aborted", ServiceRolloutHandoff: &api.ServiceRolloutHandoffResponse{Action: "abort", Phase: "complete", PredecessorDeploymentID: receipt.PredecessorDeploymentID, BindingsCheck: &api.ServiceRolloutBindingGate{RequestID: "06cbbcca-b050-4ae3-adca-31a2547c983d", Action: "abort", DeploymentID: receipt.PredecessorDeploymentID, Status: "passed"}}})
+			return true
+		}
 		if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/v1/apps/alpha/rollbacks/") {
 			if receipt := rollbackReceipt.Load(); receipt != nil && req.URL.Path == "/v1/apps/alpha/rollbacks/"+receipt.ID {
 				if req.Header.Get(api.RollbackAttemptHeader) != "" || req.Header.Get("Idempotency-Key") != "" {
@@ -513,6 +537,16 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			return
 		}
 		switch req.URL.Path {
+		case "/service-abort-outcome-history":
+			receipt, err := seedCodexServiceAbortOutcome(currentRemote)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			serviceAbortReceipt.Store(&receipt)
+			writeOAuthJSON(w, 200, map[string]string{"plan_id": strings.Repeat("1", 64), "request_id": receipt.RequestID, "observed_request_id": "06cbbcca-b050-4ae3-adca-31a2547c983d"})
+			return
 		case "/rollback-outcome-history":
 			receipt, err := seedCodexRollbackOutcome(currentRemote)
 			if err != nil {
@@ -675,7 +709,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 		case "/evidence":
 			mu.Lock()
 			defer mu.Unlock()
-			writeOAuthJSON(w, 200, map[string]int{"rollback_reads": int(rollbackReads.Load()), "promotion_reads": int(promotionReads.Load()), "submission_reads": int(submissionReads.Load()), "outcome_reads": int(outcomeReads.Load()), "profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
+			writeOAuthJSON(w, 200, map[string]int{"service_abort_reads": int(serviceAbortReads.Load()), "rollback_reads": int(rollbackReads.Load()), "promotion_reads": int(promotionReads.Load()), "submission_reads": int(submissionReads.Load()), "outcome_reads": int(outcomeReads.Load()), "profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
 			return
 		default:
 			w.WriteHeader(404)
@@ -708,7 +742,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["rollback_outcomes"] != "passed" || rollbackReads.Load() == 0 || report["promotion_outcomes"] != "passed" || promotionReads.Load() == 0 || report["deployment_outcomes"] != "passed" || submissionReads.Load() == 0 || report["outcome_discovery"] != "passed" || outcomeReads.Load() == 0 || report["action_outcomes"] != "passed" || report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
+	if report["service_abort_outcomes"] != "passed" || serviceAbortReads.Load() == 0 || report["rollback_outcomes"] != "passed" || rollbackReads.Load() == 0 || report["promotion_outcomes"] != "passed" || promotionReads.Load() == 0 || report["deployment_outcomes"] != "passed" || submissionReads.Load() == 0 || report["outcome_discovery"] != "passed" || outcomeReads.Load() == 0 || report["action_outcomes"] != "passed" || report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

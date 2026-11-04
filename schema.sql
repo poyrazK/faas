@@ -96710,3 +96710,6 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+-- ADR-20261104144000: historical service-abort acceptance identity.
+CREATE UNIQUE INDEX deployment_audit_service_abort_attempt_idx ON public.deployment_audit USING btree (((data -> 'service_abort_receipt'::text) ->> 'app_id'::text), ((data -> 'service_abort_receipt'::text) ->> 'attempt_id'::text)) WHERE (data ? 'service_abort_receipt'::text);

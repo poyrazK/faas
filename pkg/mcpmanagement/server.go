@@ -55,24 +55,25 @@ type Options struct {
 }
 
 type management struct {
-	grantLifecycle     *Lifecycle
-	lifecycle          *Lifecycle
-	toolWrites         map[string]bool
-	toolNames          map[string]bool
-	admission          *requestAdmission
-	resourceServer     *mcp.Server
-	subscriptions      *resourceSubscriptions
-	client             *api.Client
-	opts               Options
-	mu                 sync.Mutex
-	plans              map[string]*releasePlan
-	environmentPlans   map[string]*environmentPlan
-	actions            map[string]actionRecord
-	environmentActions map[string]environmentActionRecord
-	budgetOutcomes     map[string]budgetOutcomeLookup
-	deploymentOutcomes map[string]deploymentOutcomeLookup
-	promotionOutcomes  map[string]promotionOutcomeLookup
-	rollbackOutcomes   map[string]rollbackOutcomeLookup
+	grantLifecycle       *Lifecycle
+	lifecycle            *Lifecycle
+	toolWrites           map[string]bool
+	toolNames            map[string]bool
+	admission            *requestAdmission
+	resourceServer       *mcp.Server
+	subscriptions        *resourceSubscriptions
+	client               *api.Client
+	opts                 Options
+	mu                   sync.Mutex
+	plans                map[string]*releasePlan
+	environmentPlans     map[string]*environmentPlan
+	actions              map[string]actionRecord
+	environmentActions   map[string]environmentActionRecord
+	budgetOutcomes       map[string]budgetOutcomeLookup
+	deploymentOutcomes   map[string]deploymentOutcomeLookup
+	promotionOutcomes    map[string]promotionOutcomeLookup
+	rollbackOutcomes     map[string]rollbackOutcomeLookup
+	serviceAbortOutcomes map[string]serviceAbortOutcomeLookup
 }
 
 // NewServer constructs a management server without making API calls.

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -119,6 +120,26 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 		return Deployment{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if serviceAbortAttempt(ctx) != "" {
+		hash, err := serviceAbortHash(ctx, appID, id, predecessorID, reason)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		// Preserve the ordinary route-snapshot/app/deployment lock order.
+		if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
+			return Deployment{}, 0, err
+		}
+		if _, err := sqlc.New().LockServiceAbortApp(ctx, tx, appID); err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+		prior, err := readServiceAbortReceipt(ctx, tx, appID, serviceAbortAttempt(ctx))
+		if err == nil {
+			return Deployment{}, 0, serviceAbortPrior(prior, hash)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Deployment{}, 0, err
+		}
+	}
 	if expected, ok := serviceRecoveryReview(ctx); ok && expected.EnvironmentID != "" {
 		params := sqlc.LockReviewedEnvironmentParams{AppID: mustPgUUID(appID), Scope: expected.Scope}
 		if _, err := sqlc.New().LockReviewedEnvironment(ctx, tx, params); err != nil {
@@ -148,11 +169,14 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 	if !found || previous.id != predecessorID {
 		return target, 0, ErrServiceRolloutInvalid
 	}
+	if serviceAbortAttempt(ctx) != "" && normalizedDeploymentScope(target.Scope) != api.DefaultEnvScope {
+		return target, 0, ErrInvalidArgument
+	}
 	target = queueServiceBindingCheck(target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	if err := saveServiceHandoff(ctx, tx, target); err != nil {
 		return target, 0, err
 	}
-	auditID, err := sqlc.New().AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(id), AppID: mustPgUUID(appID), Kind: string(DeployRolledBack), Actor: "operator:cli:recover_rollout", Data: serviceBindingIntentAudit(target, reason)})
+	auditID, err := sqlc.New().AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(id), AppID: mustPgUUID(appID), Kind: string(DeployRolledBack), Actor: "operator:cli:recover_rollout", Data: serviceAbortReceiptData(ctx, target, reason)})
 	if err != nil {
 		return target, 0, err
 	}

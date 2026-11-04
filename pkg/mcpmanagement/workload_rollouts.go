@@ -204,6 +204,10 @@ func (m *management) applyServiceAbort(ctx context.Context, args applyArgs) (any
 	if p.review == nil {
 		return nil, invalid("invalid_plan", "missing service recovery review")
 	}
+	ctx, err = m.prepareServiceAbortOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	// The native store checks configuration and both exact deployments inside its transaction.
 	p.attempted = true
 	if err := m.persistPlans(); err != nil {

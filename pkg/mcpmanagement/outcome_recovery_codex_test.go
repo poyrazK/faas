@@ -188,3 +188,51 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 	}
 	return api.RollbackOperation{}, errors.New("missing request rollback fixture plan")
 }
+
+// Synthetic service-abort acceptance survives expiry; no native write is made.
+func seedCodexServiceAbortOutcome(remote *remoteServer) (api.ServiceAbortReceipt, error) {
+	remote.mu.Lock()
+	var managers []*management
+	for _, grant := range remote.grants {
+		if !grant.revoked && grant.management != nil {
+			managers = append(managers, grant.management)
+		}
+	}
+	remote.mu.Unlock()
+	id := strings.Repeat("1", 64)
+	for _, m := range managers {
+		m.mu.Lock()
+		if _, found := m.actions[id]; !found {
+			for _, p := range m.plans {
+				if p.Action != "deploy" || p.App != "alpha" {
+					continue
+				}
+				seed := *p
+				seed.ID, seed.Action, seed.RolloutMode = id, "service_abort", api.ExecutionModeService
+				seed.TargetDeploymentID, seed.PredecessorDeploymentID = "service-abort-target", "service-abort-serving"
+				seed.Reason, seed.Source, seed.attempted, seed.result = "PRIVATE_SERVICE_ABORT_REASON", nil, false, nil
+				seed.ExpiresAt = time.Now().Add(-time.Minute)
+				if _, err := m.prepareServiceAbortOutcome(context.Background(), &seed); err != nil {
+					m.mu.Unlock()
+					return api.ServiceAbortReceipt{}, err
+				}
+				seed.attempted = true
+				m.plans[id] = &seed
+				if err := m.persistPlans(); err != nil {
+					m.mu.Unlock()
+					return api.ServiceAbortReceipt{}, err
+				}
+				break
+			}
+		}
+		entry, found := m.actions[id]
+		ref := m.serviceAbortOutcomes[id]
+		if found && validServiceAbortOutcomeLookup(ref) {
+			receipt := api.ServiceAbortReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, AppID: entry.AppID, Scope: entry.Scope, DeploymentID: ref.TargetID, PredecessorDeploymentID: ref.PredecessorID, RequestID: "d5c0a595-f6d7-415e-a9d8-d6634052f03a", AcceptedAt: entry.RecordedAt}
+			m.mu.Unlock()
+			return receipt, nil
+		}
+		m.mu.Unlock()
+	}
+	return api.ServiceAbortReceipt{}, errors.New("missing service abort fixture plan")
+}

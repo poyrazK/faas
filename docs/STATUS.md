@@ -7,6 +7,33 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP service-abort outcomes — 2026-11-04 (branch, not released)
+
+Reviewed default-scope service aborts now retain immutable acceptance evidence in
+native intent audit rows. An opaque attempt is saved before POST and cannot queue
+another handoff once accepted. Retained MCP history, resources and prompts discover
+read-only recovery after restart or expiry. Recovery returns the original native
+request ID and an exact rollout observation call; gateway ACK/drain completion and
+current health remain separate. Legacy attempted plans receive no new identity.
+Catalog counts remain 58 read/planning tools, 67 with writes, eight prompts and
+11 resource templates. A concurrent audit index is the only schema addition.
+
+Native memory/PostgreSQL and HTTP race tests pass, including concurrent
+attempts, audit-write rollback, lost replies, terminal retries and SDK UUID
+round trips. Full MCP race tests and all three pinned Codex recovery profiles
+pass through restart, refresh and revocation with zero model requests and zero
+native writes in those read-only profiles. Go SDK tests, Node build/transports,
+seven Python transport tests and deterministic Node/Python generation pass.
+Populated audit-index replay, duplicate rejection, interrupted-index refusal and
+cleanup/retry pass. API, state, HTTP-handler, MCP and shared-runner lint are green.
+Spec/docs parity, typed-client coverage, SQLC generation, version-skew, migration
+identity/collision, ADR, store and sealing gates pass.
+
+One existing cross-session subscription test hit its short deadline in the first
+full race run; it then passed ten isolated repeats and the unchanged full rerun.
+Native/provider deployment qualification remains separate from portable fixtures.
+See [ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
+
 ## Management MCP request rollback outcomes — 2026-10-26 (branch, not released)
 
 Exact default-scope request rollbacks persist an opaque attempt before POST.

@@ -3118,6 +3118,28 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP service-abort outcomes (ADR-20261104144000)
+
+Exact reviewed default-scope service aborts accept a stable opaque
+`Service-Abort-Attempt-ID`. The existing intent audit row atomically records the
+original request fingerprint, exact app/candidate/predecessor and native reverse
+handoff request ID. A concurrent unique audit index and the ordinary route/app
+locks prevent accepted attempts from queuing a second handoff. Accepted and
+conflicting repeats are distinguished before mutable review checks. Fresh intents
+retain all existing admission guards. Owned deployment-read lookup returns only
+retained evidence, independently of current traffic or handoff changes.
+
+The bridge atomically saves the encrypted lookup before POST. The default apply
+outcome verifies acceptance after expiry/restart, including with writes disabled,
+and returns the exact rollout observation call. Compare the recovered request ID
+with current handoff evidence; acceptance does not prove gateway ACK, request drain
+or completion. History/resources/prompts offer passive discovery without renewed
+write authority. Legacy attempted plans are never backfilled. Missing evidence
+remains unresolved. Retention, consent, immutable identities and storage are
+rechecked before release. No MCP tools or quotas are added. Named service aborts
+and service rollback remain separate. See
+[ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
+
 ## Management MCP request rollback outcomes (ADR-20261026090000)
 
 An exact default-scope manual request rollback may carry a 32-character lowercase

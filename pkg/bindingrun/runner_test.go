@@ -1,3 +1,4 @@
+// adr: 20261104144000 — retain shared SDK acceptance with canonical trimpath builds.
 package bindingrun
 
 import (
@@ -6,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -274,8 +273,8 @@ func runFake(ctx context.Context, f *fakeClient, o Options) (string, error) {
 }
 
 func TestRunnerSharedRecoveryContracts(t *testing.T) {
-	_, file, _, _ := runtime.Caller(0)
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../sdk/binding-runner-tests/contracts.json"))
+	// Go tests run in the package directory; source paths are trimmed in builds.
+	data, err := os.ReadFile("../../sdk/binding-runner-tests/contracts.json")
 	if err != nil {
 		t.Fatal(err)
 	}

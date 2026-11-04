@@ -57,6 +57,7 @@ import type { ScheduledRelease } from '../models/ScheduledRelease.js';
 import type { ScheduledReleaseListResponse } from '../models/ScheduledReleaseListResponse.js';
 import type { ScheduleReleaseRequest } from '../models/ScheduleReleaseRequest.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
+import type { ServiceAbortReceipt } from '../models/ServiceAbortReceipt.js';
 import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
 import type { SetReleaseApprovalPolicyRequest } from '../models/SetReleaseApprovalPolicyRequest.js';
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
@@ -345,6 +346,53 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `Staging storage is unavailable; the journal remains pending.`,
+      },
+    });
+  }
+  /**
+   * Read the immutable acceptance receipt for a service-abort attempt.
+   * Requires deployment-read access to the owned app. Returns immutable acceptance
+   * of an exact reviewed default-scope service abort, including the original native
+   * reverse-handoff request ID, even after the current handoff changes. Acceptance
+   * does not establish gateway acknowledgement, request draining, completion or
+   * current health. Compare the request ID separately with the observed handoff.
+   * A 404 means no retained evidence; it never proves rejection or permits replay.
+   * The receipt is retained with the candidate deployment audit and app.
+   *
+   * @returns ServiceAbortReceipt The immutable receipt for the original reviewed service abort.
+   * @throws ApiError
+   */
+  public static getServiceAbortReceipt({
+    slug,
+    attemptId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The opaque attempt ID persisted before reviewed service abort.
+     */
+    attemptId: string,
+  }): CancelablePromise<ServiceAbortReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/service-aborts/{attempt_id}',
+      path: {
+        'slug': slug,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Service-abort receipt storage is unavailable.`,
       },
     });
   }
@@ -1218,6 +1266,7 @@ export class DeploymentsService {
     slug,
     requestBody,
     idempotencyKey,
+    serviceAbortAttemptId,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1230,6 +1279,16 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Opaque identity saved before an exact reviewed default-scope service abort.
+     * Acceptance is recorded atomically with reverse-handoff intent. Accepted
+     * repeats return 409 service_abort_attempt_accepted; a changed reviewed
+     * request returns 409 service_abort_attempt_conflict. Read the retained
+     * service-aborts receipt after a lost response; never replay accepted intent.
+     * Unsupported recovery modes and named scopes reject this header.
+     *
+     */
+    serviceAbortAttemptId?: string,
   }): CancelablePromise<RolloutTransitionResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -1239,6 +1298,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Service-Abort-Attempt-ID': serviceAbortAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',

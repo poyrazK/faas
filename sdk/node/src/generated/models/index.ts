@@ -2780,6 +2780,7 @@ export type { SelectedTraceLookupResponse } from './SelectedTraceLookupResponse.
 export type { SelectedTraceRequest } from './SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './SendAppMessageResponse.js';
+export type { ServiceAbortReceipt } from './ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './ServiceBindingExplanation.js';
 export type { ServiceBindingInventoryContext } from './ServiceBindingInventoryContext.js';

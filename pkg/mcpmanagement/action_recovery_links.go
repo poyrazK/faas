@@ -105,6 +105,11 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 		if !found || !validBudgetOutcomeLookup(ref) || ref.Binding != budgetOutcomeBinding(entry) {
 			return nil
 		}
+	case entry.Action == "service_abort":
+		ref, found := m.serviceAbortOutcomes[entry.PlanID]
+		if !found || !serviceAbortReferenceMatches(entry, ref) || !serviceAbortReferenceMatches(current, ref) {
+			return nil
+		}
 	case entry.Action == "rollback":
 		ref, found := m.rollbackOutcomes[entry.PlanID]
 		if !found || !rollbackReferenceMatches(entry, ref) || !rollbackReferenceMatches(current, ref) {
