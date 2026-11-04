@@ -512,36 +512,6 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 		BucketProblem(w, err)
 		return
 	}
-	var bindingsToRevoke []state.ObjectS3Credential
-	if bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore); ok {
-		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
-		if err != nil {
-			BucketProblem(w, err)
-			return
-		}
-		for _, credential := range credentials {
-			if credential.ManagedAppID == b.AppID {
-				bindingsToRevoke = append(bindingsToRevoke, credential)
-			}
-		}
-	}
-	if len(bindingsToRevoke) > 0 {
-		bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
-		if !ok {
-			BucketProblem(w, objectstorage.ErrUnavailable)
-			return
-		}
-		for _, credential := range bindingsToRevoke {
-			changed, err := bindings.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, b.ID, credential.ID)
-			if err != nil {
-				BucketProblem(w, err)
-				return
-			}
-			if changed {
-				s.Host.NotifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
-			}
-		}
-	}
 	token := uuid.NewString()
 	b, err := st.ClaimObjectBucket(r.Context(), b.AccountID, b.AppID, b.ID, token, "deleting")
 	if err != nil {
@@ -556,11 +526,40 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// revokeDeletedBucketBindings revokes the owning app's compute bindings once
+// the provider has deleted the bucket. Deletion used to revoke them before the
+// claim; a claim refused for an open multipart upload, a pending write or a
+// fence then left a ready bucket whose app had lost its credentials. Running
+// it here, after the provider proved the bucket gone, means a refused or
+// retried deletion never strands the app, and every retry repeats it.
+func (s *Service) revokeDeletedBucketBindings(ctx context.Context, b state.ObjectBucket) error {
+	bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
+	if !ok {
+		return nil
+	}
+	credentials, err := bindings.ListObjectS3Credentials(ctx, b.AccountID, b.ID)
+	if err != nil {
+		return err
+	}
+	for _, credential := range credentials {
+		if credential.ManagedAppID != b.AppID {
+			continue
+		}
+		changed, err := bindings.RevokeObjectS3ComputeBinding(ctx, b.AccountID, b.ID, credential.ID)
+		if err != nil {
+			return err
+		}
+		if changed {
+			s.Host.NotifyRuntimeConfigChange(ctx, db.NotifySecretRotated, state.Account{ID: b.AccountID}, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
+		}
+	}
+	return nil
+}
+
 // customerBucketHasData reports whether a bucket the customer must empty
 // still holds objects or retained versions. Deletion revokes the app's compute
-// bindings before the provider is asked; when the provider then refused a
-// non-empty bucket, the bucket returned to ready with its bindings gone and the
-// app lost access to data that still existed (hunt #9). Owned buckets are
+// bindings once the provider deletes the bucket; checking first keeps a
+// non-empty bucket from being claimed at all (hunt #9). Owned buckets are
 // emptied by the deletion itself and are not checked.
 func (s *Service) customerBucketHasData(ctx context.Context, b state.ObjectBucket) (bool, error) {
 	if b.State != "ready" {

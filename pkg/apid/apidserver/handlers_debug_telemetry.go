@@ -1404,62 +1404,33 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	receivedFrom := now.Add(-retention)
-	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
-	// accepts up to one minute of future skew, so its matching window must too.
-	receivedUntil := now.Add(time.Minute)
-	journal, found, journalErr := s.findDebugRequestJournal(r.Context(), acct.ID, app.ID, identifier, receivedFrom, now)
-	if journalErr != nil {
-		api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
-		return
-	}
-	if found {
-		if journal.TraceID != "" {
-			row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-				AppID:         stringToPgUUID(app.ID),
-				Identifier:    journal.TraceID,
-				ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-				ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-			})
-			if telemetryErr == nil {
-				item := debugTelemetryGetRowToItem(row)
-				item.RequestID = identifier
-				s.linkRequestProfileCapture(r.Context(), acct, app, &item)
-				writeJSON(w, http.StatusOK, item)
-				return
-			}
-			if !errors.Is(telemetryErr, pgx.ErrNoRows) {
-				api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
-				return
-			}
-		}
-		item := api.DebugTelemetryRequestItem{
-			RequestID: identifier, EvidenceStatus: "request_id_only",
-			ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
-		}
-		if journal.TraceID != "" {
-			traceID := journal.TraceID
-			item.TraceID = &traceID
-		}
-		s.linkRequestProfileCapture(r.Context(), acct, app, &item)
-		writeJSON(w, http.StatusOK, item)
-		return
-	}
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
-		return
-	}
+	res, err := s.resolveDebugRequest(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now.Add(debugRequestJournalSkew), now)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
 		return
 	}
-	item := debugTelemetryGetRowToItem(row)
+	var item api.DebugTelemetryRequestItem
+	switch {
+	case res.found:
+		item = debugTelemetryGetRowToItem(res.row)
+		if res.journaled {
+			item.RequestID = identifier
+		}
+	case res.journaled:
+		// The request was served but its telemetry row was not kept (it was
+		// folded into a bucket, sampled out or rate limited).
+		item = api.DebugTelemetryRequestItem{
+			RequestID: identifier, EvidenceStatus: "request_id_only",
+			ReceivedAt: res.journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		}
+		if res.journal.TraceID != "" {
+			traceID := res.journal.TraceID
+			item.TraceID = &traceID
+		}
+	default:
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
+		return
+	}
 	s.linkRequestProfileCapture(r.Context(), acct, app, &item)
 	writeJSON(w, http.StatusOK, item)
 }
@@ -1497,7 +1468,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now, now)
+	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now.Add(debugRequestJournalSkew), now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
 		return
@@ -2478,7 +2449,7 @@ func (s *server) fetchRouteStats(ctx context.Context, appID string, deploymentID
 	}
 	out := make(map[string]routeStats, len(rows))
 	for _, row := range rows {
-		if route != "" && row.Route != route {
+		if !debugRouteMatches(route, row.Route) {
 			continue
 		}
 		out[row.Route] = routeStats{
@@ -2589,12 +2560,8 @@ func (s *server) enqueueDebugReplayForDeployment(ctx context.Context, app state.
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(api.MustLimitsFor(acct.Plan).DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-	})
+	// Replay accepts the public request ID get and evidence accept.
+	row, err := s.getDebugRequestTelemetry(ctx, acct.ID, app.ID, identifier, now.Add(-retention), now.Add(debugRequestJournalSkew), now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
 	}
@@ -2692,6 +2659,12 @@ func debugReplayRequestPath(method, route string) (string, bool) {
 	if !strings.HasPrefix(route, "/") || strings.HasPrefix(route, "//") || strings.ContainsAny(route, "?#") {
 		return "", false
 	}
+	// A declared route's label is its template ("/users/{id}"); the request's
+	// own path is not retained, so replaying the template would request a
+	// path the original never had.
+	if routeLabelIsTemplate(route) {
+		return "", false
+	}
 	parsed, err := url.ParseRequestURI(route)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Path == "" ||
@@ -2699,6 +2672,32 @@ func debugReplayRequestPath(method, route string) (string, bool) {
 		return "", false
 	}
 	return route, true
+}
+
+// debugRouteMatches applies a debugger route filter to a route label. Labels
+// carry their method ("GET /checkout"); a filter that is a bare path
+// ("/checkout") matches it under every method, as ListRequestTelemetryByApp
+// does. An empty filter matches everything.
+func debugRouteMatches(filter, label string) bool {
+	if filter == "" || filter == label {
+		return true
+	}
+	_, path, ok := strings.Cut(label, " ")
+	return ok && strings.HasPrefix(filter, "/") && path == filter
+}
+
+// routeLabelIsTemplate reports whether a route label names a pattern rather
+// than a path: a {param} segment, a :param segment or a * wildcard segment.
+func routeLabelIsTemplate(route string) bool {
+	if strings.ContainsAny(route, "{}") {
+		return true
+	}
+	for _, segment := range strings.Split(route, "/") {
+		if segment == "*" || strings.HasPrefix(segment, ":") {
+			return true
+		}
+	}
+	return false
 }
 
 // selectDebugReplayMirrorRule keeps replay target selection constrained to an

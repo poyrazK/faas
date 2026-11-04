@@ -1853,6 +1853,17 @@
     "kind": "operational"
   },
   {
+    "table": "app_scaling_receipts",
+    "columns": [
+      "app_id",
+      "request_hash",
+      "request_id",
+      "response",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_secret_revocation_targets",
     "columns": [
       "ack_at",
@@ -2680,6 +2691,7 @@
       "runtime",
       "scaling_policy",
       "scaling_policy_revision",
+      "scaling_revision",
       "security_policy",
       "service_address_index",
       "slug",

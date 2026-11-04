@@ -26232,7 +26232,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&publicAuthIPAllowlistText,
 		&a.AutoscaleTargetRPS, &a.AutoscaleTargetCPUPct,
 		&a.ProjectID, &a.RootDir, &a.WorkloadName, &workloadClassStr, &a.StartCommand,
-		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.ScalingPolicyRevision, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
+		&a.StreamingEnabled, &a.RequireSigned, &scalingPolicyBytes, &a.ScalingPolicyRevision, &a.ScalingRevision, &a.LastScaleOutAt, &a.LastScaleInAt, &a.NodeID, &a.ReassignedAt, &a.MigratedAt,
 		&a.WarmSnapshotEnabled, &a.WarmSnapshotMinRequests, &a.WarmSnapshotMinMs, &a.WarmPoolSize,
 		// Issue #475: per-app eviction tier. eviction_priority is
 		// NOT NULL DEFAULT 'best_effort' (migration 00135) so the
@@ -26435,7 +26435,7 @@ const appsSelectColumns = `
 	coalesce(autoscale_target_rps, 0), coalesce(autoscale_target_cpu_pct, 0),
 	coalesce(project_id::text, ''), coalesce(root_dir, ''), workload_name,
 	workload_class, coalesce(start_command, ''), streaming_enabled, require_signed,
-	scaling_policy, scaling_policy_revision, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
+	scaling_policy, scaling_policy_revision, scaling_revision, last_scale_out_at, last_scale_in_at, coalesce(node_id::text, ''),
 	reassigned_at, migrated_at,
 	warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size,
 	eviction_priority,
@@ -31394,6 +31394,12 @@ func (s *PgStore) RequestTelemetryCoverage(ctx context.Context, arg sqlc.Request
 // public trace id or the internal row id, preserving the tenant boundary.
 func (s *PgStore) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
 	return s.appErrorsQueries().GetRequestTelemetryByAppAndIdentifier(ctx, s.pool, arg)
+}
+
+// GetRequestTelemetryByAppTraceNearest resolves a journaled public request ID
+// to the row of its trace that started nearest the journaled start.
+func (s *PgStore) GetRequestTelemetryByAppTraceNearest(ctx context.Context, arg sqlc.GetRequestTelemetryByAppTraceNearestParams) (sqlc.GetRequestTelemetryByAppTraceNearestRow, error) {
+	return s.appErrorsQueries().GetRequestTelemetryByAppTraceNearest(ctx, s.pool, arg)
 }
 
 // ListRequestTelemetryByAccountTrace backs the account-wide trace lookup.
