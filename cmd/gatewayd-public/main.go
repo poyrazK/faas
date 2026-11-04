@@ -803,6 +803,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR-20261103163954 §4: inside cloudflareClientIP, so behind
 		// Cloudflare the request rate counts against CF-Connecting-IP.
 		publicHandler = edgeLimits.body(publicHandler)
+		publicHandler = edgeLimits.hosts(publicHandler)
 		publicHandler = edgeLimits.requests(publicHandler, trustedIngressCIDRs)
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)

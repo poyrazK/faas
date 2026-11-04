@@ -56,7 +56,7 @@ func (c *fakeClock) advance(d time.Duration) {
 
 func TestTableSpendsAndRefills(t *testing.T) {
 	clock := newFakeClock()
-	tab := newTable(1, 2, 10, clock.Now)
+	tab := newTable[netip.Prefix](1, 2, 10, clock.Now)
 	key := Key(netip.MustParseAddr("203.0.113.9"))
 	for i, want := range []bool{true, true, false} {
 		if ok, _ := tab.take(key); ok != want {
@@ -75,7 +75,7 @@ func TestTableSpendsAndRefills(t *testing.T) {
 
 func TestTableStaysWithinItsBound(t *testing.T) {
 	clock := newFakeClock()
-	tab := newTable(1, 1, 2, clock.Now)
+	tab := newTable[netip.Prefix](1, 1, 2, clock.Now)
 	a, b, c, d := Key(netip.MustParseAddr("192.0.2.1")), Key(netip.MustParseAddr("192.0.2.2")),
 		Key(netip.MustParseAddr("192.0.2.3")), Key(netip.MustParseAddr("192.0.2.4"))
 	tab.take(a)
@@ -344,5 +344,39 @@ func TestRequestsLimitEachAddress(t *testing.T) {
 	clock.advance(time.Second)
 	if got := do("203.0.113.9").Code; got != http.StatusNoContent {
 		t.Fatalf("a second later = %d, want it served", got)
+	}
+}
+
+// A flood on one hostname is refused on this node before routing, whoever
+// sends it, while other hostnames stay served (ADR-20261103163954 §4).
+func TestHostsLimitEachHostname(t *testing.T) {
+	clock := newFakeClock()
+	var refused refusals
+	h := Hosts(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		RequestLimits{PerSecond: 1, Burst: 2, TrackedAddrsMax: 10},
+		func(r *http.Request) (string, bool) { return r.Host, r.Host != "" }, refused.add, clock.Now)
+	do := func(host string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "https://x/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for i := range 2 {
+		if got := do("shop.gregale.dev").Code; got != http.StatusNoContent {
+			t.Fatalf("request %d = %d, want it served", i, got)
+		}
+	}
+	rec := do("shop.gregale.dev")
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("x-faas-rate-limit-scope") != "host" || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("third request = %d (scope %q, Retry-After %q), want 429 scoped to the host", rec.Code, rec.Header().Get("x-faas-rate-limit-scope"), rec.Header().Get("Retry-After"))
+	}
+	refused.wait(t, ReasonHostRequestRate)
+	if got := do("blog.gregale.dev").Code; got != http.StatusNoContent {
+		t.Fatalf("another host = %d, want it served", got)
+	}
+	clock.advance(time.Second)
+	if got := do("shop.gregale.dev").Code; got != http.StatusNoContent {
+		t.Fatalf("after a second = %d, want the refilled host served", got)
 	}
 }

@@ -18,10 +18,11 @@ const (
 	ReasonRequestRate     = "request_rate"
 	ReasonBodyRate        = "body_rate"
 	ReasonForwardInFlight = "forward_in_flight"
+	ReasonHostRequestRate = "host_request_rate"
 )
 
 // Reasons lists every refusal reason, so a counter can start each at zero.
-var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight}
+var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight, ReasonHostRequestRate}
 
 // ConnLimits bound one client address's connections to a listener.
 type ConnLimits struct {
@@ -41,7 +42,7 @@ type ConnLimits struct {
 type Listener struct {
 	net.Listener
 	limits  ConnLimits
-	table   *table
+	table   *table[netip.Prefix]
 	refused func(reason string)
 }
 
@@ -51,7 +52,7 @@ func NewListener(inner net.Listener, limits ConnLimits, refused func(reason stri
 	return &Listener{
 		Listener: inner,
 		limits:   limits,
-		table:    newTable(limits.NewPerSecond, limits.NewBurst, limits.TrackedAddrsMax, now),
+		table:    newTable[netip.Prefix](limits.NewPerSecond, limits.NewBurst, limits.TrackedAddrsMax, now),
 		refused:  refused,
 	}
 }

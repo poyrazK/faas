@@ -145,6 +145,11 @@ injected failure as soon as it is measured.
   `CF-Connecting-IP`; with no front it is the connection's peer, whatever the
   request claims. A refusal is `429 rate_limited` with `Retry-After: 1`,
   `x-faas-rate-limit-scope: client-address`, the limit and the observed value.
+- **Requests a second per hostname**, on any front, per node, before the
+  request is forwarded or wakes anything (`EdgeHostRequests*`): twice the
+  highest plan's per-app limit, so the gateway's plan limit answers an app
+  first. A refusal is `429 rate_limited` with
+  `x-faas-rate-limit-scope: host`.
 - **Open connections, new connections a second and TLS handshakes in
   progress**, only with `faas_edge_public_front: none`. A refused connection
   is reset before TLS; a handshake slot is held at most
@@ -159,7 +164,7 @@ injected failure as soon as it is measured.
 
 `gatewayd_public_edge_refused_total{reason}` counts refusals by
 `open_connections`, `connection_rate`, `handshakes`, `request_rate`,
-`body_rate` and `forward_in_flight`. A
+`host_request_rate`, `body_rate` and `forward_in_flight`. A
 burst on one reason from many addresses is a flood; a steady stream from one
 address may be carrier-grade NAT, where the starting values need raising.
 An edge with no front and the limits off logs a warning at start.
