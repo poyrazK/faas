@@ -1484,6 +1484,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.ResetApp(p.AppID)
 			inv.InvalidateRoutesForApp(p.AppID)
 			inv.InvalidateResponseCacheByApp(p.AppID)
+			if counts, ok := inv.(interface{ ForgetDeletedAppRequestCounts(string) }); ok {
+				counts.ForgetDeletedAppRequestCounts(p.AppID)
+			}
 		} else {
 			inv.FlushRoutes()
 			inv.InvalidateResponseCacheAll()
