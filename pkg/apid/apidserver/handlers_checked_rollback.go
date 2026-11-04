@@ -66,13 +66,17 @@ func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account,
 	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
 		return empty, target, problem
 	}
-	if _, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases); problem != nil {
+	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	if problem != nil {
 		return empty, target, problem
+	}
+	if req.AcknowledgeReleases {
+		ctx = state.WithCheckedRollbackReleaseReview(ctx, crossed)
 	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return empty, target, problem
 	}
-	if api.ApiContractDiffEnabled() && strings.EqualFold(target.Scope, "prod") {
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
 		return s.prepareCheckedRollbackWithContract(ctx, acct, app, req, target, currentID)
 	}
 	return s.persistCheckedRollback(ctx, acct, app, req, target, currentID)
@@ -137,7 +141,7 @@ func (s *server) getCheckedRollback(w http.ResponseWriter, r *http.Request, acct
 }
 
 func (s *server) prepareCheckedRollbackWithContract(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest, target state.Deployment, currentID string) (api.RollbackOperation, state.Deployment, *api.Problem) {
-	check, err := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
+	check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, currentID, target.Scope)
 	if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 		return api.RollbackOperation{}, target, api.ErrCapacity("could not evaluate API contract")
 	}

@@ -10554,6 +10554,13 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture route policy for %s: %w", dep.ID, err)
 	}
+	retained, err := sqlc.New().ReadRetainedDeploymentOpenAPISnapshot(ctx, tx, mustPgUUID(dep.ID))
+	if err == nil {
+		return OpenAPISnapshot{DeploymentID: dep.ID, AppID: uuidString(retained.AppID), Scope: retained.Scope, Snapshot: retained.Snapshot, SHA256: retained.Sha256, SchemaVersion: int(retained.SchemaVersion), CapturedAt: retained.CapturedAt.Time}, policySnapshot, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read retained deployment contract: %w", err)
+	}
 	var importedDoc []byte
 	err = tx.QueryRow(ctx, `
 		select doc

@@ -2846,8 +2846,8 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 			"Gregale could not load the current deployment right now.",
 			"Retry the request in a moment; if it continues, contact support.", err)
 	}
-	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
-		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
+		check, gateErr := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, current.ID, target.Scope)
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
 			return rollbackPlan{}, api.ErrCapacity("could not evaluate API contract")
 		}

@@ -210,6 +210,7 @@ type MemStore struct {
 	invocationAttemptHistory                   map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID                    int64
 	checkedRollbacks                           map[string]api.RollbackOperation
+	checkedRollbackReleaseReviews              map[string][]ReleaseRun
 	alertRollbacks                             map[string]api.AlertRollback
 	alertHistoricalClaims                      map[string]string
 	recoveryPredecessors                       map[string]string

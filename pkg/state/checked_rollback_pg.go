@@ -147,7 +147,7 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
 		return r, err
 	}
-	raw, _ := json.Marshal(r)
+	raw, _ := marshalCheckedRollback(ctx, r)
 	err = q.InsertCheckedRollback(ctx, tx, sqlc.InsertCheckedRollbackParams{ID: mustPgUUID(r.ID), AppID: mustPgUUID(app), Scope: r.Scope, TargetID: mustPgUUID(target), CurrentID: mustPgUUID(current), Status: r.Status, Receipt: raw})
 	if err != nil {
 		return r, mapErr(err)
@@ -208,7 +208,8 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 		return snapshot, err
 	}
 	q := sqlc.New()
-	r, err := decodeCheckedRollback(q.LockCheckedRollback(ctx, tx, sqlc.LockCheckedRollbackParams{ID: mustPgUUID(snapshot.ID), AppID: mustPgUUID(snapshot.AppID)}))
+	raw, readErr := q.LockCheckedRollback(ctx, tx, sqlc.LockCheckedRollbackParams{ID: mustPgUUID(snapshot.ID), AppID: mustPgUUID(snapshot.AppID)})
+	r, err := decodeCheckedRollback(raw, readErr)
 	if err != nil {
 		return r, err
 	}
@@ -228,6 +229,22 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if err = rollbackCurrentMatches(ctx, tx, r); err != nil {
 		return r, err
 	}
+	review, err := readCheckedRollbackReleaseReview(raw)
+	if err != nil {
+		return r, err
+	}
+	runs, err := releaseRunsCrossedByDBTX(ctx, tx, r.AppID, d.ID)
+	if err != nil {
+		return r, err
+	}
+	undone, err := q.ListReleasesUndoneByDatabaseSwitches(ctx, tx, sqlc.ListReleasesUndoneByDatabaseSwitchesParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope})
+	if err != nil {
+		return r, err
+	}
+	if err = checkRollbackReleaseReview(d.ID, runs, undone, review); err != nil {
+		return r, err
+	}
+	ctx = WithCheckedRollbackReleaseReview(ctx, review)
 	ctx = withCheckedRollback(ctx, r.ID)
 	if _, err = q.AuthorizeCheckedRollback(ctx, tx, r.ID); err != nil {
 		return r, err
@@ -261,7 +278,7 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 		if err = q.RetireCheckedRollbackSiblings(ctx, tx, sqlc.RetireCheckedRollbackSiblingsParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope, TargetID: mustPgUUID(d.ID)}); err != nil {
 			return r, err
 		}
-		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx)})
+		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx), "crossed_releases": checkedRollbackCrossedReleaseIDs(ctx)})
 		audit, err := q.AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(d.ID), AppID: mustPgUUID(r.AppID), Kind: string(DeployRolledBack), Actor: "apid:checked_rollback", Data: data})
 		if err != nil {
 			return r, err

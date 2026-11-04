@@ -20321,7 +20321,7 @@ SELECT wake_id,
 FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(row_limit);
 
 -- name: SaveCheckedRollback :exec
-UPDATE deployment_rollback_operations SET status=sqlc.arg(status),receipt=sqlc.arg(receipt),updated_at=clock_timestamp()
+UPDATE deployment_rollback_operations SET status=sqlc.arg(status),receipt=sqlc.arg(receipt)::jsonb || jsonb_build_object('_release_review',receipt->'_release_review'),updated_at=clock_timestamp()
  WHERE id=sqlc.arg(id);
 
 -- name: PrepareCheckedRollbackTarget :exec
@@ -28270,3 +28270,10 @@ WHERE d.verified_at IS NOT NULL AND d.domain=sqlc.arg(hostname)::text::citext
     THEN 'org:'||holder.org_id::text ELSE 'account:'||holder.account_id::text END)
   <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
     THEN 'org:'||claimant.org_id::text ELSE 'account:'||claimant.account_id::text END));
+
+-- name: ReadRetainedDeploymentOpenAPISnapshot :one
+SELECT app_id, scope, snapshot, sha256, schema_version, captured_at
+FROM deployment_openapi_snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ReadStartingReleaseApp :one
+SELECT app_id FROM app_tasks WHERE id=sqlc.arg(task_id)::text::uuid AND kind='release';

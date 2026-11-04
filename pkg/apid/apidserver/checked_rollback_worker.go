@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -85,6 +86,15 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if problem := s.supersededRollbackTargetProblem(ctx, app, target); problem != nil {
 		return rollbackProblemStatus(problem)
 	}
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
+		check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, operation.CurrentDeploymentID, target.Scope)
+		if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
+			return "", "", nil, err
+		}
+		if check.Diff.Blocking() {
+			return "failed", contractGateProblem(check.Diff).Code, nil, nil
+		}
+	}
 	var updated api.RollbackOperation
 	problem, err = s.withBindingReleaseObservations(r, acct, app, observations, func(writeCtx context.Context) error {
 		var writeErr error
@@ -93,6 +103,12 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	})
 	if problem != nil {
 		return rollbackProblemStatus(problem)
+	}
+	if errors.Is(err, state.ErrRollbackCrossesRelease) {
+		return "failed", api.CodeRollbackCrossesRelease, nil, nil
+	}
+	if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+		return "failed", api.CodeRollbackTargetDatabaseRestored, nil, nil
 	}
 	if errors.Is(err, state.ErrCheckedRollbackChanged) {
 		return "failed", "rollback_deployment_changed", nil, nil

@@ -87832,6 +87832,34 @@ func (q *Queries) ReadReleaseWorkerRunningProof(ctx context.Context, db DBTX, de
 	return items, nil
 }
 
+const readRetainedDeploymentOpenAPISnapshot = `-- name: ReadRetainedDeploymentOpenAPISnapshot :one
+SELECT app_id, scope, snapshot, sha256, schema_version, captured_at
+FROM deployment_openapi_snapshots WHERE deployment_id=$1::uuid
+`
+
+type ReadRetainedDeploymentOpenAPISnapshotRow struct {
+	AppID         pgtype.UUID
+	Scope         string
+	Snapshot      []byte
+	Sha256        string
+	SchemaVersion int32
+	CapturedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ReadRetainedDeploymentOpenAPISnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadRetainedDeploymentOpenAPISnapshotRow, error) {
+	row := db.QueryRow(ctx, readRetainedDeploymentOpenAPISnapshot, deploymentID)
+	var i ReadRetainedDeploymentOpenAPISnapshotRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Scope,
+		&i.Snapshot,
+		&i.Sha256,
+		&i.SchemaVersion,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
 const readRouteCheckHistoryEntry = `-- name: ReadRouteCheckHistoryEntry :one
 SELECT entry FROM route_check_history
 WHERE id = $1::text::uuid AND deployment_id = $2::text::uuid AND app_id = $3::text::uuid AND account_id = $4::text::uuid
@@ -89735,6 +89763,17 @@ func (q *Queries) ReadStagedProjectReleaseConfiguration(ctx context.Context, db 
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
+}
+
+const readStartingReleaseApp = `-- name: ReadStartingReleaseApp :one
+SELECT app_id FROM app_tasks WHERE id=$1::text::uuid AND kind='release'
+`
+
+func (q *Queries) ReadStartingReleaseApp(ctx context.Context, db DBTX, taskID string) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readStartingReleaseApp, taskID)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
 }
 
 const readSyntheticIngressAuthMode = `-- name: ReadSyntheticIngressAuthMode :one
@@ -101137,7 +101176,7 @@ func (q *Queries) SaveAutomationTestReport(ctx context.Context, db DBTX, arg Sav
 }
 
 const saveCheckedRollback = `-- name: SaveCheckedRollback :exec
-UPDATE deployment_rollback_operations SET status=$1,receipt=$2,updated_at=clock_timestamp()
+UPDATE deployment_rollback_operations SET status=$1,receipt=$2::jsonb || jsonb_build_object('_release_review',receipt->'_release_review'),updated_at=clock_timestamp()
  WHERE id=$3
 `
 

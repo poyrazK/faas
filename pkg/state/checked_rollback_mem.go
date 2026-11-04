@@ -122,6 +122,10 @@ func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, t
 		m.checkedRollbacks = map[string]api.RollbackOperation{}
 	}
 	m.checkedRollbacks[r.ID] = r
+	if m.checkedRollbackReleaseReviews == nil {
+		m.checkedRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.checkedRollbackReleaseReviews[r.ID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
 	return cloneRollback(r), nil
 }
 func (m *MemStore) markCheckedRollbackReadyLocked(ctx context.Context, d Deployment, r api.RollbackOperation) error {
@@ -162,6 +166,11 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 	if d.Status != DeployLive || d.TrafficPercent != 0 || !rollbackPairValid(r, d, m.deployments[r.CurrentDeploymentID], m.rollbackRowsLocked(r)) {
 		return r, ErrCheckedRollbackChanged
 	}
+	review := m.checkedRollbackReleaseReviews[r.ID]
+	if err := checkRollbackReleaseReview(d.ID, m.releaseRunsCrossedByLocked(r.AppID, d.ID), m.releasesUndoneByDatabaseSwitchesLocked(r.AppID, r.Scope), review); err != nil {
+		return r, err
+	}
+	ctx = WithCheckedRollbackReleaseReview(ctx, review)
 	ctx = withCheckedRollback(ctx, r.ID)
 	if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{d.ID: 100}); err != nil {
 		return r, err
@@ -179,7 +188,7 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 			return r, err
 		}
 		accountID := uuid.MustParse(m.apps[r.AppID].AccountID)
-		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx)})
+		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx), "crossed_releases": checkedRollbackCrossedReleaseIDs(ctx)})
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(d.ID), AccountID: &accountID, Kind: DeployRolledBack, Actor: "apid:checked_rollback", At: time.Now().UTC(), Data: data})
 		if err != nil {
 			return r, err

@@ -70,6 +70,7 @@ func serviceBindingAudit(ctx context.Context, d Deployment) []byte {
 		"deployment_id":             d.ServiceRolloutHandoff.BindingsCheck.DeploymentID,
 		"predecessor_deployment_id": d.ServiceRolloutHandoff.PredecessorDeploymentID,
 		"binding_fences":            bindingReleaseFences(ctx),
+		"crossed_releases":          checkedRollbackCrossedReleaseIDs(ctx),
 	})
 	return payload
 }
