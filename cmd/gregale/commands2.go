@@ -4122,7 +4122,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := savedSession.preparePolicyJournal(ctx, client, sourceDir); err != nil {
 		return savedSession.failure("Could not save deployment policy journal", "configuration", err)
 	}
-	if err := savedSession.prepareCronJournal(ctx, client, sourceDir, *noTriggers || *trafficPercent == 0); err != nil {
+	if err := savedSession.prepareCronJournal(ctx, client, sourceDir, !deployStagesManifestCrons(*noTriggers, *trafficPercent, *environment)); err != nil {
 		return savedSession.failure("Could not save deployment cron journal", "configuration", err)
 	}
 	ctx = api.ContextWithDeploymentSubmissionBoundary(ctx, savedSession.markSubmissionStarted)

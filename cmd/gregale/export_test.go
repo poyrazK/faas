@@ -2667,3 +2667,6 @@ var WithEntry = withEntry
 // GitHub connector commands (ADR-20261101160300).
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
+
+// Manifest cron staging stays with production deploys (ADR-20261104120000).
+var DeployStagesManifestCrons = deployStagesManifestCrons
