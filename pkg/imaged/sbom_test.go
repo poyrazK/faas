@@ -159,6 +159,23 @@ func TestSyftRun_DefaultSubprocessShellsOut(t *testing.T) {
 	}
 }
 
+// TestRunSyftAtExcludesPlatformFiles pins the excludes that keep
+// guest-init and the function runner out of a customer's SBOM.
+func TestRunSyftAtExcludesPlatformFiles(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "syft")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := RunSyftAt(context.Background(), bin, "/staging")
+	if err != nil {
+		t.Fatalf("RunSyftAt: %v", err)
+	}
+	want := "dir:/staging -o cyclonedx-json@1.5 --exclude ./sbin/init --exclude ./usr/local/bin/faas-runner\n"
+	if string(out) != want {
+		t.Fatalf("syft args = %q, want %q", out, want)
+	}
+}
+
 // errFakeSyft is a minimal error type used by the fail-closed test.
 // Lives here (not in sbom.go) because the test is the only caller.
 type errFakeSyft string

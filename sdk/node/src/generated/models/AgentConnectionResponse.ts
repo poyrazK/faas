@@ -7,13 +7,17 @@
  */
 export type AgentConnectionResponse = {
   /**
+   * Immutable app boundary of an app_agent connection.
+   */
+  app_id?: string;
+  /**
    * The agent's API key id.
    */
   id: string;
   /**
    * `hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the `agent` scope.
    */
-  kind: 'hosted_mcp' | 'agent_key';
+  kind: 'hosted_mcp' | 'agent_key' | 'app_agent';
   /**
    * The client name a hosted sign-in's consent page showed.
    */

@@ -1818,3 +1818,45 @@ A review of main after round 8 found these gaps.
    this release refuses (`api.EdgeRuleEnforcementProblem`, the same check the
    gateway runs). A release that tightens those bounds must first find the
    stored rules outside them (docs/release-compatibility.md).
+
+## Amendment (2026-11-04): review round 10 — preset references, list and preset scope, exports
+
+A review of main after round 9 found these gaps.
+
+1. **Rules kept no preset.** `ActionFromBody` copied only a cors action's
+   inline fields, so a rule naming `cors_preset_id`, written through the API
+   or the dashboard, was stored as an empty CORS rule; a preset that did not
+   exist was accepted; and `edge_rules.cors_preset_id`, which the preset's
+   fencing, authorization and `ON DELETE SET NULL` work from, was set only by
+   the manifest path. Rule writes now keep the reference in the action and
+   the column (an update that replaces a cors action sets or clears both),
+   and refuse a preset the account does not have, one scoped to another app,
+   or, for a company app, an account-wide preset of the member whose account
+   holds the app's rules. Rules written before this release lost their
+   reference and must be saved again with it. Deleting a preset that rules
+   use is refused (409 naming them), as for lists: it left those rules naming
+   a missing preset, failing their hosts closed.
+2. **A rule names only lists of its app's scope.** List references resolved
+   anywhere in the account's namespace, so naming the app creator's private
+   list from a company rule made it readable to the organization, the error
+   told which private names existed, and naming an organization list from a
+   personal rule froze it for the organization. A company app's rule now
+   names its organization's lists (and personal lists only its
+   organization's apps already use); a personal app's rule names personal
+   lists. Anything else reads as unknown. Lists keep their namespace, which
+   is where the gateway resolves them, so a list created through one
+   member's company app is not available to an app another member created;
+   the refusal says to create it with `--app` for that app. One namespace per
+   organization would need the gateway to resolve lists by organization and
+   is a separate decision.
+3. **Exports and presets of a company app stay with the organization.** The
+   account export carried the organization lists held in a member's
+   account, also after the member left; it now carries personal lists only,
+   and adds the account's CORS presets (account-wide and those of exported
+   apps; rules naming them were exported without them). On the personal
+   path, an app-scoped preset now passes the check of its app's route
+   permission, so a member who left can no longer read, change or delete a
+   company app's presets.
+4. **Each list scope has its own cap.** The per-account list cap counted
+   organization and personal lists together; it now counts the new list's
+   scope.

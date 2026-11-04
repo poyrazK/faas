@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.account_abuse_hold import AccountAbuseHold
     from ..models.account_limits import AccountLimits
+    from ..models.app_agent_binding import AppAgentBinding
     from ..models.key_org import KeyOrg
 
 
@@ -54,6 +55,8 @@ class AccountResponse:
     key_scopes: list[str] | Unset = UNSET
     """Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope
     agent) lists the tools the hosted MCP server offers it."""
+    key_app: AppAgentBinding | Unset = UNSET
+    """Immutable app binding of an app-scoped headless agent credential; absent for account keys."""
     key_org: KeyOrg | Unset = UNSET
     """The shared organization an API key acts in."""
     key_projects: list[str] | Unset = UNSET
@@ -112,6 +115,9 @@ class AccountResponse:
         if not isinstance(self.key_scopes, Unset):
             key_scopes = self.key_scopes
 
+        key_app: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.key_app, Unset):
+            key_app = self.key_app.to_dict()
         key_org: dict[str, Any] | Unset = UNSET
         if not isinstance(self.key_org, Unset):
             key_org = self.key_org.to_dict()
@@ -157,6 +163,8 @@ class AccountResponse:
             field_dict["tax_id"] = tax_id
         if key_scopes is not UNSET:
             field_dict["key_scopes"] = key_scopes
+        if key_app is not UNSET:
+            field_dict["key_app"] = key_app
         if key_org is not UNSET:
             field_dict["key_org"] = key_org
         if key_projects is not UNSET:
@@ -170,6 +178,7 @@ class AccountResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.account_abuse_hold import AccountAbuseHold
         from ..models.account_limits import AccountLimits
+        from ..models.app_agent_binding import AppAgentBinding
         from ..models.key_org import KeyOrg
 
         d = dict(src_dict)
@@ -231,6 +240,12 @@ class AccountResponse:
 
         key_scopes = cast(list[str], d.pop("key_scopes", UNSET))
 
+        _key_app = d.pop("key_app", UNSET)
+        key_app: AppAgentBinding | Unset
+        if isinstance(_key_app, Unset):
+            key_app = UNSET
+        else:
+            key_app = AppAgentBinding.from_dict(_key_app)
         _key_org = d.pop("key_org", UNSET)
         key_org: KeyOrg | Unset
         if isinstance(_key_org, Unset):
@@ -266,6 +281,7 @@ class AccountResponse:
             billing_address=billing_address,
             tax_id=tax_id,
             key_scopes=key_scopes,
+            key_app=key_app,
             key_org=key_org,
             key_projects=key_projects,
             abuse_hold=abuse_hold,

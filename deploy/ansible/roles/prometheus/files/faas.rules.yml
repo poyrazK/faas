@@ -2700,6 +2700,21 @@ groups:
           description: "lv-fc usage between 80% and 90% for 10m. Schedule the next LV-resize runbook before the page-tier crossing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
 
+      # ADR-20261103163954 §4: public connections share the conntrack table
+      # with tenant NAT; a full table drops new connections for both, and
+      # every guest loses new outbound connections.
+      - alert: FaasConntrackTableFilling
+        expr: max by (instance) (node_nf_conntrack_entries / node_nf_conntrack_entries_limit) > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: host
+          family: conntrack
+        annotations:
+          summary: "conntrack table over 80% full on {{ $labels.instance }}"
+          description: "The node's conntrack table, shared by public connections and tenant NAT, has been over 80% full for 5m. When it fills, new connections are dropped for both; a SYN flood on a public entry address is the usual cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConntrackTableFilling.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Build queue wait p95 (builderd)
       # Spec §12 row: "build_queue_wait_p95 < 60s target, > 300s warn".

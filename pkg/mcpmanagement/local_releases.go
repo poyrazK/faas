@@ -60,7 +60,6 @@ type envChangePlan struct {
 	ApplyMode        string          `json:"apply_mode"`
 	Restart          bool            `json:"restart,omitempty"`
 	ExpectedRevision int64           `json:"expected_revision"`
-	values           map[string]string
 }
 
 type planLocalDeployArgs struct {
@@ -71,10 +70,12 @@ type planLocalDeployArgs struct {
 }
 
 type planEnvChangeArgs struct {
-	App     string            `json:"app" jsonschema:"Existing Gregale app slug"`
-	Values  map[string]string `json:"values" jsonschema:"1 to 50 KEY: value pairs; keys match ^[A-Z][A-Z0-9_]*$, values hold no newlines"`
-	Reason  string            `json:"reason" jsonschema:"Reviewable change reason; at most 280 characters"`
-	Restart bool              `json:"restart,omitempty" jsonschema:"Restart so values apply now; otherwise on the next cold wake"`
+	App         string            `json:"app" jsonschema:"Existing Gregale app slug"`
+	Project     string            `json:"project,omitempty" jsonschema:"Project slug for a named environment"`
+	Environment string            `json:"environment,omitempty" jsonschema:"Named environment; omit for default"`
+	Values      map[string]string `json:"values" jsonschema:"1 to 50 KEY: value pairs; keys match ^[A-Z][A-Z0-9_]*$, values hold no newlines"`
+	Reason      string            `json:"reason" jsonschema:"Reviewable change reason; at most 280 characters"`
+	Restart     bool              `json:"restart,omitempty" jsonschema:"Restart so values apply now; otherwise on the next cold wake"`
 }
 
 func registerLocalReleases(s *mcp.Server, m *management) {
@@ -84,12 +85,10 @@ func registerLocalReleases(s *mcp.Server, m *management) {
 		return
 	}
 	register(s, m, "gregale_plan_local_deploy", "Review deploying a local directory as one app through this machine's gregale CLI, without uploading; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment. Functions, multi-service projects and linked project directories stay in the CLI.", m.planLocalDeploy)
-	register(s, m, "gregale_plan_env_change", "Review setting non-secret environment variables on an app's default scope through the gregale CLI; pins the config revision for 15 minutes. Credential-like values are refused: ask the user to run `gregale env set`, never for the value.", m.planEnvChange)
 	if !m.opts.AllowWrites {
 		return
 	}
 	registerTool(s, m, "gregale_apply_local_deploy", "Apply a reviewed local deploy plan: upload the unchanged directory with a stable idempotency key, creating the app if planned. This can incur build/runtime costs. Retry with the same plan ID after ambiguous errors; follow with gregale_wait_deployment.", false, m.applyLocalDeploy)
-	registerTool(s, m, "gregale_apply_env_change", "Apply a reviewed environment change if no other config change landed since planning. The config guard judges the change and can restore the previous values.", false, m.applyEnvChange)
 }
 
 func (m *management) planLocalDeploy(ctx context.Context, args planLocalDeployArgs) (any, error) {
@@ -161,6 +160,11 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 
 func (m *management) applyLocalDeploy(ctx context.Context, args applyArgs) (any, error) {
 	m.mu.Lock()
+	if p := m.plans[args.PlanID]; p != nil && p.localReceipt != nil && (p.Action == "deploy" || p.Action == "local_deploy") {
+		receipt, err := m.completedReceipt(ctx, p)
+		m.mu.Unlock()
+		return receipt, err
+	}
 	p, err := m.checkedLocalDeploy(ctx, args.PlanID)
 	if err != nil || p.localReceipt != nil {
 		m.mu.Unlock()
@@ -200,12 +204,18 @@ func (m *management) applyLocalDeploy(ctx context.Context, args applyArgs) (any,
 		return nil, err
 	}
 	p.localReceipt = receipt
+	if err := m.persistPlans(); err != nil {
+		return nil, err
+	}
 	return receipt, nil
 }
 
 // checkedLocalDeploy is checkedPlan for local deploy plans. Plans for an app
 // that does not serve yet cannot use checkedPlan's existing-app capture.
 func (m *management) checkedLocalDeploy(ctx context.Context, id string) (*releasePlan, error) {
+	if err := m.defaultAccess(true); err != nil {
+		return nil, err
+	}
 	p := m.plans[id]
 	if p != nil && p.Action == "deploy" && p.LocalSource != nil {
 		return m.checkedPlan(ctx, id, "deploy")
@@ -335,142 +345,6 @@ func (m *management) createdApp(p *releasePlan, app api.AppResponse) (any, error
 	return map[string]any{"plan_id": p.ID, "account_id": p.AccountID, "app": projectApp(app), "next": "Set variables with gregale_plan_env_change, then plan a local deploy without create_only."}, nil
 }
 
-func (m *management) planEnvChange(ctx context.Context, args planEnvChangeArgs) (any, error) {
-	if err := validateReason(args.App, args.Reason); err != nil {
-		return nil, err
-	}
-	keys, stdin, err := envChangeInput(args.Values)
-	if err != nil {
-		return nil, err
-	}
-	account, err := m.client.Whoami(ctx)
-	if err != nil {
-		return nil, err
-	}
-	app, err := m.client.GetApp(ctx, args.App)
-	if err != nil {
-		return nil, err
-	}
-	revision, err := m.latestConfigRevision(ctx, args.App)
-	if err != nil {
-		return nil, err
-	}
-	out, err := m.runCLI(ctx, envPushArgs(args.App, args.Restart, true), stdin)
-	if err != nil {
-		return nil, secretRefusal(err, args.App)
-	}
-	var preview struct {
-		App       string            `json:"app_slug"`
-		Scope     string            `json:"scope"`
-		CanPush   bool              `json:"can_push"`
-		Changes   json.RawMessage   `json:"changes"`
-		Findings  []json.RawMessage `json:"scan_findings"`
-		Blockers  []string          `json:"blockers"`
-		ApplyMode string            `json:"apply_mode"`
-	}
-	if err := json.Unmarshal(out, &preview); err != nil || preview.App != args.App || normalizedScope(preview.Scope) != api.DefaultEnvScope {
-		return nil, invalid("invalid_response", "the CLI returned an inconsistent environment preview")
-	}
-	if len(preview.Findings) > 0 {
-		return nil, secretRefusal(nil, args.App)
-	}
-	if !preview.CanPush {
-		return nil, invalid("env_change_blocked", "the change cannot be applied: "+strings.Join(preview.Blockers, "; "))
-	}
-	values := make(map[string]string, len(args.Values))
-	for key, value := range args.Values {
-		values[key] = value
-	}
-	effect := fmt.Sprintf("Set %d variable(s) on the default scope; running instances keep their values until the next cold wake. The config guard can restore the previous values.", len(keys))
-	if args.Restart {
-		effect = fmt.Sprintf("Set %d variable(s) on the default scope and restart the app. The config guard can restore the previous values.", len(keys))
-	}
-	return m.savePlan(&releasePlan{Action: "env_change", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, AppID: app.ID, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: effect, ExpiresAt: time.Now().Add(releasePlanTTL),
-		EnvChange: &envChangePlan{Keys: keys, Changes: preview.Changes, ApplyMode: preview.ApplyMode, Restart: args.Restart, ExpectedRevision: revision, values: values}})
-}
-
-func (m *management) applyEnvChange(ctx context.Context, args applyArgs) (any, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.opts.AllowWrites {
-		return nil, invalid("writes_disabled", "restart the connection with --allow-writes to enable reviewed release actions")
-	}
-	p := m.plans[args.PlanID]
-	if p == nil || p.Action != "env_change" || p.EnvChange == nil {
-		return nil, invalid("invalid_plan", "plan ID is unknown or belongs to a different action or connection")
-	}
-	if p.localReceipt != nil {
-		return p.localReceipt, nil
-	}
-	if time.Now().After(p.ExpiresAt) {
-		delete(m.plans, args.PlanID)
-		return nil, invalid("plan_expired", "plan expired; inspect the app's config history before creating a new plan")
-	}
-	account, err := m.client.Whoami(ctx)
-	if err != nil {
-		return nil, err
-	}
-	app, err := m.client.GetApp(ctx, p.App)
-	if err != nil {
-		return nil, err
-	}
-	if account.ID != p.AccountID || app.ID != p.AppID {
-		return nil, invalid("plan_stale", "account or app identity changed; create a new plan")
-	}
-	if !p.attempted {
-		revision, err := m.latestConfigRevision(ctx, p.App)
-		if err != nil {
-			return nil, err
-		}
-		if revision != p.EnvChange.ExpectedRevision {
-			return nil, invalid("plan_stale", "another config change landed since planning; review the config history and plan again")
-		}
-	}
-	// Setting the same values again is safe, so an ambiguous attempt retries.
-	p.attempted = true
-	_, stdin, err := envChangeInput(p.EnvChange.values)
-	if err != nil {
-		return nil, err
-	}
-	out, err := m.runCLI(ctx, envPushArgs(p.App, p.EnvChange.Restart, false), stdin)
-	if err != nil {
-		return nil, secretRefusal(err, p.App)
-	}
-	var receipt struct {
-		App         string   `json:"app_slug"`
-		Scope       string   `json:"scope"`
-		UpdatedKeys []string `json:"updated_keys"`
-		ApplyMode   string   `json:"apply_mode"`
-		WakeID      string   `json:"wake_id"`
-		Warnings    []string `json:"warnings"`
-	}
-	if err := json.Unmarshal(out, &receipt); err != nil || receipt.App != p.App || normalizedScope(receipt.Scope) != api.DefaultEnvScope {
-		return nil, invalid("invalid_response", "the CLI returned an inconsistent environment receipt; inspect the config history before retrying")
-	}
-	result := map[string]any{"plan_id": p.ID, "account_id": p.AccountID, "app": p.App, "scope": api.DefaultEnvScope, "updated_keys": receipt.UpdatedKeys, "apply_mode": receipt.ApplyMode}
-	if receipt.WakeID != "" {
-		result["wake_id"] = receipt.WakeID
-	}
-	if len(receipt.Warnings) > 0 {
-		result["warnings"] = receipt.Warnings
-	}
-	p.localReceipt, p.EnvChange.values = result, nil
-	return result, nil
-}
-
-func envPushArgs(app string, restart, dryRun bool) []string {
-	// An explicit app and scope keep a linked project context from choosing
-	// another target; strict scanning refuses credential-shaped values.
-	args := []string{"env", "push", "--app", app, "--scope", api.DefaultEnvScope, "--from-stdin", "--secret-scan", "strict"}
-	if restart {
-		args = append(args, "--restart")
-	}
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
-	return args
-}
-
 func envChangeInput(values map[string]string) ([]string, []byte, error) {
 	if len(values) == 0 || len(values) > maxEnvChangeKeys {
 		return nil, nil, invalid("invalid_argument", fmt.Sprintf("values must hold between 1 and %d variables", maxEnvChangeKeys))
@@ -501,14 +375,6 @@ func secretRefusal(err error, app string) error {
 		return invalid("secret_detected", "a value looks like a credential and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale env set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
 	}
 	return err
-}
-
-func (m *management) latestConfigRevision(ctx context.Context, app string) (int64, error) {
-	revisions, err := m.client.ListConfigRevisions(ctx, app, api.DefaultEnvScope, 1)
-	if err != nil || len(revisions.Revisions) == 0 {
-		return 0, err
-	}
-	return revisions.Revisions[0].Revision, nil
 }
 
 // runCLI returns stdout of a successful command. A failed command returns the

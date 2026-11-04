@@ -14,10 +14,11 @@ import (
 const flowCookieName = "__Host-gregale-mcp-flow"
 
 type consentView struct {
-	Client   string
-	Redirect string
-	APIBase  string
-	Account  string
+	MaximumToolsets []string
+	Client          string
+	Redirect        string
+	APIBase         string
+	Account         string
 	// ConsentAction is the consent endpoint, under /mcp on the hosted bridge.
 	ConsentAction string
 	// Capabilities describe the extra scopes chosen before sign-in.
@@ -94,7 +95,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
+	view := consentView{MaximumToolsets: r.opts.Toolsets, ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
 	if g := r.grants[flow.GrantID]; g != nil {
 		// The connection's key may carry less than the client asked for: an
 		// organization's agent policy caps it (ADR-20261101225122).
@@ -150,6 +151,12 @@ func (r *remoteServer) consent(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *remoteServer) verifyAccount(w http.ResponseWriter, req *http.Request, flow *authorizationRequest) {
+	toolsets, err := connectionToolsets(req.PostForm.Get("toolsets"), r.opts.Toolsets)
+	if err != nil {
+		oauthError(w, 400, "invalid_request", "Choose available agent tools")
+		return
+	}
+	flow.Toolsets = toolsets
 	key := req.PostForm.Get("api_key")
 	if flow.GrantID != "" || len(key) == 0 || len(key) > 4096 || strings.ContainsAny(key, " \r\n\t") {
 		oauthError(w, 400, "invalid_request", "Enter a valid dedicated Gregale API key")

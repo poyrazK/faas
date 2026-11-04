@@ -18,7 +18,7 @@ test('HTTP origin policy, tool errors, redacted logs and stream cancellation', {
     const config = JSON.parse(await readFile(join(source, 'gregale-mcp.json'), 'utf8'));
     config.allowed_origins = ['https://trusted.example'];
     await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify(config));
-    child = spawn(process.execPath, [join(fixture, 'server.js')], { env: { ...process.env, PORT: '0', MCP_BIND_ADDRESS: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, [join(fixture, 'server.js')], { env: { ...process.env, PORT: '0', MCP_BIND_ADDRESS: '127.0.0.1', FAAS_INSTANCE_ID: 'inst-at-boot' }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', chunk => { logs += chunk.toString(); });
     child.stderr.on('data', chunk => { logs += chunk.toString(); });
     let port;
@@ -47,6 +47,9 @@ test('HTTP origin policy, tool errors, redacted logs and stream cancellation', {
       assert.ok(data, text);
       return JSON.parse(data.slice(6)).result;
     }
+    // Instances restored from one snapshot share their boot env.
+    const health = await fetch(`http://127.0.0.1:${port}/healthz`, { headers: { 'X-Faas-Instance-Id': 'inst-restored' } });
+    assert.equal((await health.json()).instance_id, 'inst-restored');
     const denied = await call('greet', { name: 'visitor' }, { Origin: 'https://untrusted.example' });
     assert.equal(denied.status, 403);
     const preflight = await fetch(endpoint, { method: 'OPTIONS', headers: { Origin: 'https://trusted.example', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization, content-type, mcp-method, mcp-name' } });

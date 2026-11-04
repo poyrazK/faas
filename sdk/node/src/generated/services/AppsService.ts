@@ -15,7 +15,9 @@ import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
+import type { AppOperationPreview } from '../models/AppOperationPreview.js';
 import type { AppReleaseReview } from '../models/AppReleaseReview.js';
+import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
@@ -11166,6 +11168,124 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a bounded page of app resource metadata.
+   * Requires apps:read and current application access. App-bound readers may
+   * inspect only their immutable app. This is metadata access: object data,
+   * database connections, credentials and lifecycle operations retain their
+   * own permissions. Counts and offsets are filtered by app, kind and exact
+   * scope in the native catalog before pagination. Resource capability flags
+   * still apply. Domains and crons are app-wide; omit environment for them.
+   * Pages are individual read snapshots; concurrent changes may move offsets.
+   * Metadata state does not establish runtime readiness or connectivity.
+   * No provider calls, probes, reservations or writes are performed.
+   *
+   * @returns AppResourceInventoryResponse Filtered resource metadata and explicit continuation evidence.
+   * @throws ApiError
+   */
+  public static getAppResourceInventory({
+    slug,
+    kind,
+    environment,
+    limit = 20,
+    offset,
+  }: {
+    /**
+     * Application whose resource references are requested.
+     */
+    slug: string,
+    /**
+     * One metadata collection within the selected application.
+     */
+    kind: 'domains' | 'crons' | 'buckets' | 'storage_bindings' | 'databases',
+    /**
+     * Exact named environment in the app project; omit for default-scope inventory.
+     */
+    environment?: string,
+    /**
+     * Maximum metadata entries in this backend page.
+     */
+    limit?: number,
+    /**
+     * Offset within the selected app, resource kind and scope only.
+     */
+    offset?: number,
+  }): CancelablePromise<AppResourceInventoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/resource-inventory',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'kind': kind,
+        'environment': environment,
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview authorization for an application operation without writing intent.
+   * Requires application read or deployment scope and current application access.
+   * Evaluates the target operation's native scope, organization role and release
+   * policy. Authorization is a snapshot; admission remains unknown when exact
+   * request validation, quotas, approval or runtime capacity need apply-time checks.
+   * This endpoint creates no plan, approval, reservation or customer intent.
+   *
+   * @returns AppOperationPreview Native authorization snapshot and explicit admission limitations.
+   * @throws ApiError
+   */
+  public static getAppOperationPreview({
+    slug,
+    operation,
+    environment,
+  }: {
+    /**
+     * Application slug to inspect.
+     */
+    slug: string,
+    /**
+     * Native application operation whose current authorization is inspected.
+     */
+    operation: 'deploy' | 'restart' | 'scale' | 'env_change',
+    /**
+     * Named environment in the application's project; omit for default scope.
+     */
+    environment?: string,
+  }): CancelablePromise<AppOperationPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operation-preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'operation': operation,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

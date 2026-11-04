@@ -3683,6 +3683,19 @@ const (
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
 	PublicObjectReadMaxAgeSeconds = 300
+	// PublicReadNewHostLookupsPerSecond and PublicReadNewHostLookupBurst are
+	// each edge's budget of public-read host lookups (store reads) for
+	// hostnames it has never seen name an app. The matcher runs in front of
+	// every GET and HEAD, so a flood of random names under the apps wildcard
+	// spends this budget instead of control-plane Postgres reads; past it the
+	// request is answered 503 traffic_policy_unavailable with Retry-After.
+	// Normal traffic spends it only on a host's first request after a
+	// restart, which the burst covers. PublicReadKnownHostsMax bounds the
+	// hostnames that skip the budget; a full set is dropped whole
+	// (ADR-20261103163954 §4).
+	PublicReadNewHostLookupsPerSecond = 25
+	PublicReadNewHostLookupBurst      = 500
+	PublicReadKnownHostsMax           = 100_000
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -5269,6 +5282,13 @@ type Limits struct {
 	// expectations per tier (Free's "first-week demo", Hobby's
 	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
+	// LogBytesPerInstanceHour bounds the log line bytes one instance may
+	// write per UTC hour (ADR-20261104085150): Free 16 MiB, Hobby 64 MiB,
+	// Pro 256 MiB, Scale 1 GiB. Past it, vmmd drops the hour's remaining
+	// output after one notice line, so the live view, the archive and every
+	// drain carry a bounded stream. Logs have no separate charge, so this is
+	// what bounds their storage and delivery cost.
+	LogBytesPerInstanceHour int64
 
 	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
 	// error grouping) is the per-plan retention cap on
@@ -5900,6 +5920,7 @@ var planLimits = map[Plan]Limits{
 		// wake. The wider incident windows remain paid-tier benefits.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 1,
+		LogBytesPerInstanceHour:    16 << 20,
 		// ADR-096 error grouping. Free = 1-day retention, 50
 		// fingerprints, 25 request rows per fingerprint. Retention
 		// MUST be <= the one-day log-archive retention above.
@@ -6345,6 +6366,7 @@ var planLimits = map[Plan]Limits{
 		// S3 within the spec §4.1 latency budget.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 7,
+		LogBytesPerInstanceHour:    64 << 20,
 		// ADR-096 — Hobby = "last week" retention, 200 fingerprints,
 		// 100 request rows per fingerprint. Retention equals the
 		// log-archive retention.
@@ -6759,6 +6781,7 @@ var planLimits = map[Plan]Limits{
 		// rather than being a single shared cap.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 30,
+		LogBytesPerInstanceHour:    256 << 20,
 		// ADR-096 — Pro = "this month" retention, 1000 fingerprints,
 		// 500 request rows per fingerprint.
 		AppErrorsRetentionDays:                30,
@@ -7199,6 +7222,7 @@ var planLimits = map[Plan]Limits{
 		// generous at the top tier.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 90,
+		LogBytesPerInstanceHour:    1 << 30,
 		// ADR-096 — Scale = "this quarter" retention, 5000
 		// fingerprints, 1000 request rows per fingerprint.
 		AppErrorsRetentionDays:                90,
@@ -10812,6 +10836,24 @@ func (p Plan) LogArchiveEnabled() bool {
 	}
 	return l.LogArchiveEnabled
 }
+
+// LogBytesPerInstanceHour returns the plan's hourly log byte allowance per
+// instance (ADR-20261104085150); 0 for an unknown plan, which is unbounded.
+func (p Plan) LogBytesPerInstanceHour() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogBytesPerInstanceHour
+}
+
+// LogDrainBytesPerSecond and LogDrainBurstBytes bound what one log drain
+// delivers (ADR-20261104085150): a line past the budget is dropped and
+// counted, as a full outbox is.
+const (
+	LogDrainBytesPerSecond = 1 << 20
+	LogDrainBurstBytes     = 4 << 20
+)
 
 // LogArchiveRetentionDaysMax (issue #562) returns the
 // per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free's
@@ -17311,8 +17353,21 @@ const (
 	EdgeClientRequestsPerSecondPerAddr = 500
 	EdgeClientRequestsBurstPerAddr     = 1000
 	EdgeClientTrackedAddrsMax          = 200_000
-	EdgeTLSHandshakesInFlightPerCPU    = 128
-	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
+	// ceiling for one hostname, checked at the edge before the request is
+	// forwarded, routed or wakes anything (ADR-20261103163954 §4): every
+	// node takes every app host, so a flood on one app reaches every edge.
+	// They sit at twice the highest plan's per-app RateLimitRPS and
+	// RateLimitBurst, so the gateway's plan limit answers an app first;
+	// this ceiling bounds what one host costs an edge where no plan limit
+	// applies, such as public bucket reads served before the gateway. At
+	// most EdgeHostTrackedMax hostnames are tracked; the rest share one
+	// bucket.
+	EdgeHostRequestsPerSecond       = 1000
+	EdgeHostRequestsBurst           = 4000
+	EdgeHostTrackedMax              = 100_000
+	EdgeTLSHandshakesInFlightPerCPU = 128
+	EdgeTLSHandshakeTimeout         = 10 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17326,6 +17381,23 @@ const (
 	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
+// The host firewall's backstop for a compute edge's public entry address
+// (ADR-20261103163954 §4). The edge refuses a client past its own
+// per-address limits only after the kernel has accepted the connection; the
+// firewall drops a source's new connections to the entry address's 443 before
+// userspace sees them once it holds PublicEntryConnsPerSourceMax connections
+// or opens them faster than PublicEntryNewConnsPerSecondPerSource (burst
+// PublicEntryNewConnsBurstPerSource). Each is twice the edge's own limit, so
+// a client the edge would serve never meets it. The firewall tracks at most
+// PublicEntryTrackedSourcesMax sources per limit; past that a new source is
+// not limited by the kernel, only by the edge.
+const (
+	PublicEntryConnsPerSourceMax          = 2 * EdgeClientOpenConnsPerAddrMax
+	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
+	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
+	PublicEntryTrackedSourcesMax          = 65536
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.
@@ -17335,6 +17407,14 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// App resource metadata pages are filtered by immutable app and scope before
+// counting or pagination. Offsets are bounded request selectors, not quotas.
+const (
+	AppResourceInventoryDefaultPage = 20
+	AppResourceInventoryMaxPage     = 100
+	AppResourceInventoryMaxOffset   = 1000000
+)
 
 // Domain doctor DNS probes are bounded independently of the inventory size.
 // The query ceiling accommodates the maximum DNS label depth plus aliases.

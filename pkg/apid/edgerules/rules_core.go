@@ -162,7 +162,11 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := s.createReleaseProblem(acct, req); prob != nil {
 		return m, prob
 	}
-	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
+	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, app, req.Match); prob != nil {
+		return m, prob
+	}
+	presetID := corsPresetRef(req.Kind, req.Action)
+	if prob := s.CorsPresetRefProblem(ctx, acct.ID, app, presetID); prob != nil {
 		return m, prob
 	}
 	if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, app.ID, acct.ID, req.Kind, req.Action); prob != nil {
@@ -211,6 +215,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
 		Action:       withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty),
+		CorsPresetID: presetID,
 		// ValidateMode (ADR-128 D1): the top-level wire
 		// field is the source of truth for kind=validate.
 		// If the wire field is empty (client didn't send
@@ -321,7 +326,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
 		return m, prob
 	}
-	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
+	if prob := s.updateReferencesProblem(ctx, acct, row, req); prob != nil {
 		return m, prob
 	}
 	if req.Mode != nil {
