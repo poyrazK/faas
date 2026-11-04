@@ -1060,18 +1060,31 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
-	// (3.5) binding-hash mismatch = stolen-cookie auto-revoke
+	// (3.5) binding mismatch = stolen-cookie auto-revoke
 	// (IAM hardening mega-PR, logical change 5, ADR-076).
-	// Compare the envelope and live row, then recompute the fingerprint from
-	// this request. Two unchanged stored values cannot detect a copied cookie.
-	// Either side empty = "binding not armed" (pre-PR-076 cookie
-	// or unix-socket code path); cross-check is skipped in that
-	// case. Mismatch ⇒ auto-revoke + audit + 401.
-	presentedBinding := env.BindingHash
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" && env.BindingHash == sess.BindingHash {
-		presentedBinding = bindinghash.Compute(middleware.ClientIP(r), bindinghash.UAFamily(r.UserAgent()), m.BindingKeyFn)
+	// The envelope's binding hash (sealed at mint) must equal the
+	// live row's, and this request's browser family must equal the
+	// family the session was issued to, so a cookie copied into a
+	// different client (curl, another browser) is still caught.
+	//
+	// The client IP is deliberately NOT re-checked per request. The
+	// console reaches apid through a proxy (Vercel) whose egress
+	// address changes between requests, and browsers move between
+	// networks and between IPv4 and IPv6. rc.321 recomputed the
+	// IP-keyed hash on every request and revoked every console
+	// session on its first request from a new egress address.
+	//
+	// Either hash empty = "binding not armed" (pre-PR-076 cookie
+	// or unix-socket code path); the check is skipped in that
+	// case. An empty issued UA skips only the family comparison.
+	// Mismatch ⇒ auto-revoke + audit + 401.
+	bindingArmed := m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != ""
+	issuedFamily, presentedFamily := "", ""
+	if bindingArmed && sess.IssuedUA != "" {
+		issuedFamily = bindinghash.UAFamily(sess.IssuedUA)
+		presentedFamily = bindinghash.UAFamily(r.UserAgent())
 	}
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" && presentedBinding != sess.BindingHash {
+	if bindingArmed && (env.BindingHash != sess.BindingHash || issuedFamily != presentedFamily) {
 		// Best-effort revoke. Failure is logged but the
 		// 401 still returns — the request is rejected
 		// regardless of the revoke's success.
@@ -1084,11 +1097,13 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		// Audit emit (best-effort — never blocks the 401).
 		if m.Audit != nil {
 			m.Audit.Emit(ctx, "auth.session.binding_mismatch", &env.AccountID, map[string]any{
-				"sid":              env.Sid,
-				"method":           r.Method,
-				"path":             r.URL.Path,
-				"expected_prefix":  prefix8(sess.BindingHash),
-				"presented_prefix": prefix8(presentedBinding),
+				"sid":                 env.Sid,
+				"method":              r.Method,
+				"path":                r.URL.Path,
+				"expected_prefix":     prefix8(sess.BindingHash),
+				"presented_prefix":    prefix8(env.BindingHash),
+				"expected_ua_family":  issuedFamily,
+				"presented_ua_family": presentedFamily,
 			})
 		}
 		m.clearSessionCookie(w)
