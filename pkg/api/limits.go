@@ -2444,6 +2444,14 @@ const (
 	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
 	// uncached access tokens that run at once (ADR 20261027132936).
 	OutboundAIAccessTokenLookupsMax = 8
+	// OutboundAIAccessTokenGuessesPerWindow unknown access tokens a client
+	// network (IPv4 /24, IPv6 /64) may present on the public AI host per
+	// OutboundAIAccessTokenGuessWindow before it gets 429 without a lookup;
+	// OutboundAIAccessTokenGuessClientsMax bounds the networks tracked (bug
+	// hunt H82).
+	OutboundAIAccessTokenGuessesPerWindow = 30
+	OutboundAIAccessTokenGuessWindow      = time.Minute
+	OutboundAIAccessTokenGuessClientsMax  = 10_000
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
