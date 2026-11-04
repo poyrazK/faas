@@ -55,8 +55,30 @@ func assessMemory(out *api.AppHealthResponse, e Evidence) {
 			percent = p.LowestAvailableMB * 100 / p.TotalMB
 		}
 		hours := max(1, int(math.Ceil(e.Now.Sub(p.WindowStartedAt).Hours())))
-		add(out, "memory", Warning, fmt.Sprintf("Available memory fell to %d of %d MB (%d%%) %s in the last %s; anonymous memory peaked at %d MB.",
-			p.LowestAvailableMB, p.TotalMB, percent, times(p.Episodes), spoken(time.Duration(hours)*time.Hour), p.PeakAnonMB), "metrics", "")
+		detail := fmt.Sprintf("Available memory fell to %d of %d MB (%d%%) %s in the last %s; anonymous memory peaked at %d MB.",
+			p.LowestAvailableMB, p.TotalMB, percent, times(p.Episodes), spoken(time.Duration(hours)*time.Hour), p.PeakAnonMB)
+		action := "metrics"
+		if size, ok := api.RightSizeMemory(e.Plan, e.App.RAMMB, p.TotalMB, p.LowestAvailableMB); ok {
+			detail += " " + rightSizeAdvice(size)
+			action = "configuration"
+		}
+		add(out, "memory", Warning, detail, action, "")
+		out.Checks[len(out.Checks)-1].Reason = "memory_pressure"
+	}
+}
+
+// rightSizeAdvice says how much RAM would have left
+// api.ProfileMemoryPressureRearmAvailablePercent free at the low point, and
+// whether the plan allows it (ADR-20261102124306 step 3).
+func rightSizeAdvice(s api.MemoryRightSizing) string {
+	need := fmt.Sprintf("about %d MB would have kept %d%% free", s.SuggestedMB, api.ProfileMemoryPressureRearmAvailablePercent)
+	switch {
+	case s.FitsPlan:
+		return fmt.Sprintf("Raise ram_mb from %d MB: %s, and the %s plan allows up to %d MB.", s.CurrentMB, need, s.Plan, s.PlanMB)
+	case s.UpgradePlan != "":
+		return fmt.Sprintf("At %d MB, %s, more than the %s plan's %d MB; the %s plan allows %d MB.", s.CurrentMB, need, s.Plan, s.PlanMB, s.UpgradePlan, s.UpgradeMB)
+	default:
+		return fmt.Sprintf("At %d MB, %s, more than any plan allows; trim in-memory state such as caches and buffered request bodies.", s.CurrentMB, need)
 	}
 }
 

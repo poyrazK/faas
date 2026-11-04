@@ -113838,7 +113838,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -113847,7 +113847,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
