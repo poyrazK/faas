@@ -99,13 +99,27 @@
       or none (ADR-20261103163954).
   when: faas_edge_entry == 'both'
 
+- name: gatewayd_public_edge_service — check where the edge's certificate comes from
+  ansible.builtin.assert:
+    that:
+      - faas_edge_public_tls_cert_source in ['file', 'database']
+      - faas_edge_public_tls_cert_ca in ['letsencrypt', 'letsencrypt-staging']
+    fail_msg: >-
+      faas_edge_public_tls_cert_source is {{ faas_edge_public_tls_cert_source }}
+      (want file or database) and faas_edge_public_tls_cert_ca is
+      {{ faas_edge_public_tls_cert_ca }} (want letsencrypt or
+      letsencrypt-staging) (ADR-20261103163954 §3).
+  when: faas_edge_entry == 'both'
+
+# The database source reads no certificate or key file; it needs the
+# edge-tls identity instead.
 - name: gatewayd_public_edge_service — find the direct-entry TLS material
   ansible.builtin.stat:
     path: "{{ item }}"
-  loop:
-    - "{{ faas_edge_public_tls_cert }}"
-    - "{{ faas_edge_public_tls_key }}"
-    - "{{ faas_edge_public_tls_client_ca }}"
+  loop: >-
+    {{ [faas_edge_public_tls_identity, faas_edge_public_tls_client_ca]
+       if faas_edge_public_tls_cert_source == 'database'
+       else [faas_edge_public_tls_cert, faas_edge_public_tls_key, faas_edge_public_tls_client_ca] }}
   register: faas_edge_public_tls_files
   when: faas_edge_entry == 'both'
 
@@ -117,9 +131,10 @@
       public_edge.entry both needs
       {{ faas_edge_public_tls_files.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
       on this node: the certificate and key (the zone's Origin CA pair behind
-      Cloudflare, a publicly trusted pair with no front) and the zone's
-      Authenticated Origin Pulls CA (ADR-20261102081618 §2,
-      ADR-20261103163954 §2).
+      Cloudflare, a publicly trusted pair with no front), or with
+      faas_edge_public_tls_cert_source database the edge-tls identity
+      (seal_domains role), and the zone's Authenticated Origin Pulls CA
+      (ADR-20261102081618 §2, ADR-20261103163954 §2, §3).
   when: faas_edge_entry == 'both'
 
 # ADR-20261103163954 §4: the same pinned Cloudflare ranges as the host
