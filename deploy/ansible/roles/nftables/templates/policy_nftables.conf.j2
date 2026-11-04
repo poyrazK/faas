@@ -21,7 +21,7 @@ table inet faas {
   counter drop_v6_fc00___7 {}
   counter drop_v6_fe80___10 {}
   counter drop_v6_ff00___8 {}
-{% set faas_entry_v4 = [] %}{% set faas_entry_v6 = [] %}{% for addr in faas_public_entry_addrs | default([]) %}{% set _ = (faas_entry_v6 if ':' in addr else faas_entry_v4).append(addr) %}{% endfor %}{% set faas_entry_families = ([['v4', 'ipv4_addr']] if faas_entry_v4 else []) + ([['v6', 'ipv6_addr']] if faas_entry_v6 else []) %}{% for suffix, key_type in faas_entry_families %}  set public_entry_rate_{{ suffix }} {
+{% set faas_entry_v4 = [] %}{% set faas_entry_v6 = [] %}{% for addr in faas_public_entry_addrs | default([]) %}{% set _ = (faas_entry_v6 if ':' in addr else faas_entry_v4).append(addr) %}{% endfor %}{% set faas_entry_proxy_v4 = (faas_cloudflare_ipv4_cidrs | default([])) if faas_cloudflare_origin_only | default(false) else [] %}{% set faas_entry_proxy_v6 = (faas_cloudflare_ipv6_cidrs | default([])) if faas_cloudflare_origin_only | default(false) else [] %}{% set faas_entry_families = ([['v4', 'ipv4_addr', faas_entry_proxy_v4]] if faas_entry_v4 else []) + ([['v6', 'ipv6_addr', faas_entry_proxy_v6]] if faas_entry_v6 else []) %}{% for suffix, key_type, proxies in faas_entry_families %}  set public_entry_rate_{{ suffix }} {
     type {{ key_type }}
     size 65536
     flags dynamic,timeout
@@ -32,7 +32,13 @@ table inet faas {
     size 65536
     flags dynamic
   }
-{% endfor %}  chain input {
+{% if proxies %}  set public_entry_proxy_{{ suffix }} {
+    type {{ key_type }}
+    flags interval
+    auto-merge
+    elements = { {{ proxies | join(', ') }} }
+  }
+{% endif %}{% endfor %}  chain input {
     type filter hook input priority 0; policy drop;
     ct state established,related accept
     iif lo accept
@@ -40,8 +46,8 @@ table inet faas {
     iifname "br-tenants" tcp dport { 80,443 } accept
     iifname "br-tenants" meta l4proto { icmp, ipv6-icmp } accept
     iifname "br-tenants" drop
-{% if faas_public_entry_addrs | default([]) %}{% for addr in faas_public_entry_addrs %}{% set fam = 'ip6' if ':' in addr else 'ip' %}{% set suffix = 'v6' if ':' in addr else 'v4' %}    {{ fam }} daddr {{ addr }} tcp dport 443 ct state new add @public_entry_rate_{{ suffix }} { {{ fam }} saddr limit rate over 200/second burst 800 packets } counter drop comment "public entry new connections per source"
-    {{ fam }} daddr {{ addr }} tcp dport 443 ct state new add @public_entry_conns_{{ suffix }} { {{ fam }} saddr ct count over 1024 } counter drop comment "public entry connections per source"
+{% if faas_public_entry_addrs | default([]) %}{% for addr in faas_public_entry_addrs %}{% set fam = 'ip6' if ':' in addr else 'ip' %}{% set suffix = 'v6' if ':' in addr else 'v4' %}{% set exempt = (' ' ~ fam ~ ' saddr != @public_entry_proxy_' ~ suffix) if (faas_entry_proxy_v6 if ':' in addr else faas_entry_proxy_v4) else '' %}    {{ fam }} daddr {{ addr }} tcp dport 443{{ exempt }} ct state new add @public_entry_rate_{{ suffix }} { {{ fam }} saddr limit rate over 200/second burst 800 packets } counter drop comment "public entry new connections per source"
+    {{ fam }} daddr {{ addr }} tcp dport 443{{ exempt }} ct state new add @public_entry_conns_{{ suffix }} { {{ fam }} saddr ct count over 1024 } counter drop comment "public entry connections per source"
     {{ fam }} daddr {{ addr }} tcp dport 443 accept comment "public entry"
 {% endfor %}{% for addr in faas_public_entry_addrs %}    {{ 'ip6' if ':' in addr else 'ip' }} daddr {{ addr }} drop comment "public entry carries 443 only"
 {% endfor %}    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary

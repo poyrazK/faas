@@ -677,7 +677,7 @@ func (h HostPolicy) Render() string {
 		fmt.Fprintf(&b, "  counter %s {}\n", e.CounterName)
 	}
 	for _, family := range publicEntryFamilies(h.PublicEntryAddrs) {
-		writePublicEntrySets(&b, family)
+		writePublicEntrySets(&b, family, publicEntryProxies(h.PublicInputSourceCIDRs, family))
 	}
 	if h.TenantEgressIface != "" && len(h.StaticEgressRules) > 0 {
 		b.WriteString("  chain static_egress_route {\n")
@@ -716,7 +716,7 @@ func (h HostPolicy) Render() string {
 		// The drops come before sshd's accept, so the entry addresses carry
 		// 443 and nothing else.
 		for _, a := range h.PublicEntryAddrs {
-			writePublicEntryAccept(&b, a)
+			writePublicEntryAccept(&b, a, len(publicEntryProxies(h.PublicInputSourceCIDRs, addrFamily(a))) > 0)
 		}
 		for _, a := range h.PublicEntryAddrs {
 			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
@@ -952,10 +952,24 @@ func publicEntrySetSuffix(family string) string {
 	return "v6"
 }
 
+// publicEntryProxies is the part of the Cloudflare source list in family.
+func publicEntryProxies(sources []netip.Prefix, family string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range sources {
+		if (family == "ip") == p.Addr().Is4() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // writePublicEntrySets declares the sources the firewall counts on the
 // public entry addresses of one family (ADR-20261103163954 §4): their new
-// connections per second, and their open connections.
-func writePublicEntrySets(b *strings.Builder, family string) {
+// connections per second, and their open connections. proxies, Cloudflare's
+// ranges when the node keeps them, are exempt: a host moved back behind
+// Cloudflare reaches the edge from a few of its addresses, each carrying many
+// clients, and the edge limits those clients by CF-Connecting-IP instead.
+func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Prefix) {
 	suffix, keyType := publicEntrySetSuffix(family), "ipv4_addr"
 	if family == "ip6" {
 		keyType = "ipv6_addr"
@@ -964,18 +978,32 @@ func writePublicEntrySets(b *strings.Builder, family string) {
 		suffix, keyType, api.PublicEntryTrackedSourcesMax)
 	fmt.Fprintf(b, "  set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }\n",
 		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	if len(proxies) == 0 {
+		return
+	}
+	elements := make([]string, len(proxies))
+	for i, p := range proxies {
+		elements[i] = p.String()
+	}
+	fmt.Fprintf(b, "  set public_entry_proxy_%s {\n    type %s\n    flags interval\n    auto-merge\n    elements = { %s }\n  }\n",
+		suffix, keyType, strings.Join(elements, ", "))
 }
 
 // writePublicEntryAccept admits 443 on a public entry address, after dropping
 // a source's new connections past the kernel backstop: the edge's own
 // per-address limits act only on connections the kernel already accepted.
-func writePublicEntryAccept(b *strings.Builder, a netip.Addr) {
+// With exempt, Cloudflare's ranges skip the backstop.
+func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
 	family := addrFamily(a)
 	suffix := publicEntrySetSuffix(family)
-	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
-		family, a, suffix, family, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
-	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
-		family, a, suffix, family, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
+	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
+	if exempt {
+		match += fmt.Sprintf(" %s saddr != @public_entry_proxy_%s", family, suffix)
+	}
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
+		match, suffix, family, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
+		match, suffix, family, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
 	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
 }
 

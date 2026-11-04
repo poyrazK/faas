@@ -1160,14 +1160,44 @@ func TestHostPolicyPublicEntryAddrsLimitEachSource(t *testing.T) {
 
 // The vmmd drop-in sends Cloudflare's ranges beside the entry addresses, so a
 // vmmd that predates them stays Cloudflare-only; this one renders the entry
-// rules alone, as the nftables role does.
+// rules, as the nftables role does, and uses the ranges only to exempt
+// Cloudflare from the per-source backstop.
 func TestHostPolicyPublicEntryAddrsTakePrecedenceOverCloudflareSources(t *testing.T) {
 	entry := DefaultHostPolicy
 	entry.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
 	both := entry
 	both.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20")}
-	if got, want := both.Render(), entry.Render(); got != want {
-		t.Fatalf("with Cloudflare's sources beside the entry addresses the policy changed:\n%s\nwant:\n%s", got, want)
+	got := both.Render()
+	exemption := "  set public_entry_proxy_v4 {\n    type ipv4_addr\n    flags interval\n    auto-merge\n    elements = { 173.245.48.0/20 }\n  }\n"
+	if !strings.Contains(got, exemption) {
+		t.Fatalf("policy lacks the Cloudflare exemption set:\n%s", got)
+	}
+	got = strings.Replace(got, exemption, "", 1)
+	got = strings.ReplaceAll(got, " ip saddr != @public_entry_proxy_v4", "")
+	if want := entry.Render(); got != want {
+		t.Fatalf("with Cloudflare's sources beside the entry addresses the policy changed beyond the exemption:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A host moved back behind Cloudflare reaches the edge from a few Cloudflare
+// addresses, each carrying many clients, so Cloudflare's ranges skip the
+// per-source backstop; a family with no Cloudflare range keeps it whole.
+func TestHostPolicyPublicEntryBackstopExemptsCloudflare(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}
+	p.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20"), netip.MustParsePrefix("103.21.244.0/22")}
+	out := p.Render()
+	if !strings.Contains(out, "elements = { 173.245.48.0/20, 103.21.244.0/22 }") {
+		t.Fatalf("v4 exemption set lacks Cloudflare's ranges:\n%s", out)
+	}
+	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr != @public_entry_proxy_v4 ct state new add"); got != 2 {
+		t.Fatalf("v4 backstop rules exempting Cloudflare = %d, want 2:\n%s", got, out)
+	}
+	if strings.Contains(out, "public_entry_proxy_v6") {
+		t.Fatalf("v6 entry exempts a Cloudflare set with no v6 ranges:\n%s", out)
+	}
+	if got := strings.Count(out, "ip6 daddr 2001:db8::10 tcp dport 443 ct state new add"); got != 2 {
+		t.Fatalf("v6 backstop rules = %d, want 2 without an exemption:\n%s", got, out)
 	}
 }
 

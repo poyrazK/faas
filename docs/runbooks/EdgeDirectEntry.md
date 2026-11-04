@@ -170,8 +170,11 @@ On a node with entry addresses (`faas_public_entry_addrs`, vmmd's
 `FAAS_PUBLIC_ENTRY_ADDRS`) the host firewall also drops a source's new
 connections to an entry address's 443 before the edge sees them, at twice
 the edge's own limits (`PublicEntry*` in `pkg/api/limits.go`): open
-connections per source, and new connections a second per source. The drops
-are counted on their rules:
+connections per source, and new connections a second per source.
+Cloudflare's ranges are exempt when the node keeps them
+(`faas_cloudflare_origin_only`, which `front: none` keeps on): a host moved
+back behind Cloudflare arrives from a few of its addresses, each carrying many
+clients. The drops are counted on their rules:
 
 ```bash
 sudo nft list chain inet faas input | grep 'per source'
