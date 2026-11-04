@@ -186,7 +186,7 @@ func latencyWindow(c api.RouteHealthCounts, budget int64, unavailable string) (s
 	if unavailable != "" {
 		return "unknown", unavailable
 	}
-	if c.Requests < api.RouteHealthMinLatencyRequests {
+	if routehealth.LatencySamples(c) < api.RouteHealthMinLatencyRequests {
 		return "unknown", "insufficient_latency_requests"
 	}
 	if c.P95LatencyMS == nil {
