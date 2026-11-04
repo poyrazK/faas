@@ -488,11 +488,12 @@ took the client's `CF-Connecting-IP`. Basic auth allows 10 wrong
 passwords per client prefix and app a minute and new passwords are 12+ bytes
 (H76, #6498); the
 public_edge role refuses to deploy a Cloudflare-admitting site without the
-zone's own origin-pull certificate (opt-out
-`faas_public_edge_allow_any_cloudflare_zone`); and a site with no Cloudflare
+zone's own origin-pull certificate (manifest `dns.origin_pull: required`,
+or knowingly `any_zone`); and a site with no Cloudflare
 in front uses the peer address (ADR-20261103172551). The next control-plane
-deploy needs the origin-pull CA installed first (docs/runbooks/EdgeDirectEntry.md,
-"The control plane's Caddy").
+deploy needs `dns.origin_pull` set in the manifest, and for `required` the
+origin-pull CA installed first (docs/runbooks/EdgeDirectEntry.md, "The
+control plane's Caddy").
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

@@ -55,7 +55,9 @@ A sixth edge-security review found:
    (`origin-pull-ca.pem` from `deploy/scripts/cloudflare-origin-pull.sh`), the
    one the compute edges already trust. An operator who must deploy without
    it, for example during the certificate rollout, sets
-   `faas_public_edge_allow_any_cloudflare_zone: true`.
+   `faas_public_edge_allow_any_cloudflare_zone: true`. The manifest picks
+   one: `dns.origin_pull: required` renders the certificate check,
+   `dns.origin_pull: any_zone` the opt-out; unset renders neither.
 3. **No Cloudflare, no `CF-Connecting-IP`.** Without the Cloudflare-only
    abort, the platform site's hop is the peer address and a client-sent
    `CF-Connecting-IP` is removed, as on the customer-domain site.
@@ -65,8 +67,8 @@ A sixth edge-security review found:
 - The next control-plane deploy fails until the operator installs the
   zone's origin-pull CA at `faas_public_edge_origin_pull_ca`, turns on
   zone-level Authenticated Origin Pulls (docs/runbooks/EdgeDirectEntry.md
-  steps 1 and 3) and sets `faas_public_edge_authenticated_origin_pulls`, or
-  sets the opt-out. Every zone the platform site serves (the platform, apps,
+  steps 1 and 3) and sets `dns.origin_pull: required` in the manifest, or
+  sets `dns.origin_pull: any_zone`. Every zone the platform site serves (the platform, apps,
   deployment-preview and alias domains) needs the client certificate
   uploaded, signed by the same CA.
 - A client that mistypes a basic-auth password ten times in a minute waits

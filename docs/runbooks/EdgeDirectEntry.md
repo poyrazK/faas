@@ -59,12 +59,14 @@ without it.
    apps, deployment-preview and alias domains), all signed by the same CA.
 2. Install `origin-pull-ca.pem` on the control plane at
    `/etc/caddy/tls/cloudflare-origin-pull-ca.pem` (root-owned, 0644).
-3. Deploy with `faas_public_edge_authenticated_origin_pulls: true`.
+3. Set `dns.origin_pull: required` in the manifest and deploy (it renders
+   `faas_public_edge_authenticated_origin_pulls: true`).
 
 Never install Cloudflare's shared origin-pull CA there: Cloudflare presents
 that certificate for every zone, and the role refuses it. To deploy before
-the certificate is in place, set `faas_public_edge_allow_any_cloudflare_zone:
-true`, and remove it once the check is on.
+the certificate is in place, set `dns.origin_pull: any_zone` (it renders
+`faas_public_edge_allow_any_cloudflare_zone: true`), and change it to
+`required` once the check is on.
 
 ## 4. Check the edges' certificate for app hosts
 
