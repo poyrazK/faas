@@ -918,6 +918,7 @@ type App struct {
 	Labels                            []byte
 	GithubProductionTrigger           pgtype.Text
 	GithubPreviewEnabled              pgtype.Bool
+	ScalingRevision                   int64
 }
 
 type AppApiRoute struct {
@@ -1573,6 +1574,14 @@ type AppScalingPolicySchedulerStatus struct {
 	SchedulerNodeID  pgtype.UUID
 	ObservedRevision int64
 	ObservedAt       pgtype.Timestamptz
+}
+
+type AppScalingReceipt struct {
+	AppID       pgtype.UUID
+	Scope       string
+	RequestID   pgtype.UUID
+	RequestHash []byte
+	Response    []byte
 }
 
 type AppSecret struct {

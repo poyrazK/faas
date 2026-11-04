@@ -5,11 +5,14 @@
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
+import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationPreview } from '../models/AppOperationPreview.js';
 import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
+import type { AppScalingReceipt } from '../models/AppScalingReceipt.js';
+import type { AppScalingSnapshot } from '../models/AppScalingSnapshot.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
@@ -2841,6 +2844,152 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.`,
         403: `Log archive retention cap exceeded; \`?date=\` is outside the per-plan window.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read scaling settings and their revision.
+   * Requires read access. Named environments must have a materialized workload revision.
+   * @returns AppScalingSnapshot Current desired configuration; does not imply running instance convergence.
+   * @throws ApiError
+   */
+  public static getAppScaling({
+    slug,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named project environment; omit for the default app.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingSnapshot> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/scaling',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Commit reviewed scaling settings with a recoverable request ID.
+   * Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+   * The expected app UUID and revision are checked under the write lock. Default revisions advance for
+   * every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+   * Named environments use their workload revision, including no-op revision semantics.
+   * Settings and the receipt commit atomically. Reuse request_id with the exact original
+   * body after an interruption to recover the original receipt even after later writes.
+   * Changing the body under an accepted ID returns scaling_request_conflict; a stale
+   * revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+   * Named production and protected environments require their existing approved workflow.
+   * A receipt confirms desired configuration only; named settings require a subsequent
+   * deployment, and default settings do not prove guest readiness or replica convergence.
+   *
+   * @returns AppScalingReceipt Original durable configuration receipt, including on replay.
+   * @throws ApiError
+   */
+  public static applyAppScaling({
+    slug,
+    requestBody,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Reviewed scaling fields and the revision and request identity to preserve on retry.
+     */
+    requestBody: ApplyAppScalingRequest,
+    /**
+     * Named project environment; omit for the default app.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/scaling',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `Write permission, MFA, capability or plan admission denied.`,
+        404: `code: not_found`,
+        409: `Scaling revision changed, request ID reused, or environment protected.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Commit outcome uncertain; recover or retry the original request ID and body.`,
+      },
+    });
+  }
+  /**
+   * Recover a scaling configuration receipt without performing a write.
+   * Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+   * @returns AppScalingReceipt Original durable configuration receipt.
+   * @throws ApiError
+   */
+  public static getAppScalingReceipt({
+    slug,
+    requestId,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original scaling request UUID.
+     */
+    requestId: string,
+    /**
+     * Environment of the original scaling request; omit to recover a default-app request.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/scaling/requests/{request_id}',
+      path: {
+        'slug': slug,
+        'request_id': requestId,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

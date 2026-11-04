@@ -311,6 +311,9 @@ from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
 from .app_routes_response_source import AppRoutesResponseSource
+from .app_scaling_receipt import AppScalingReceipt
+from .app_scaling_settings import AppScalingSettings
+from .app_scaling_snapshot import AppScalingSnapshot
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
@@ -445,6 +448,7 @@ from .application_standard_version import ApplicationStandardVersion
 from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_app_scaling_request import ApplyAppScalingRequest
 from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_durable_entity_quota_policy_body import ApplyDurableEntityQuotaPolicyBody
 from .apply_durable_entity_quota_policy_body_limits import ApplyDurableEntityQuotaPolicyBodyLimits
@@ -6584,6 +6588,7 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyAppScalingRequest",
     "ApplyCachedProjectPlanRequest",
     "ApplyDurableEntityQuotaPolicyBody",
     "ApplyDurableEntityQuotaPolicyBodyLimits",
@@ -6704,6 +6709,9 @@ __all__ = (
     "ApproveRouteLifecycleRequest",
     "ApproveRouteRemovalRequest",
     "ApproveRouteRemovalRequestMappingsItem",
+    "AppScalingReceipt",
+    "AppScalingSettings",
+    "AppScalingSnapshot",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",

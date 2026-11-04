@@ -162,6 +162,9 @@ from .app_response_type import AppResponseType
 from .app_response_visibility import AppResponseVisibility
 from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
+from .app_scaling_receipt import AppScalingReceipt
+from .app_scaling_settings import AppScalingSettings
+from .app_scaling_snapshot import AppScalingSnapshot
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
@@ -213,6 +216,7 @@ from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
+from .apply_app_scaling_request import ApplyAppScalingRequest
 from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
@@ -2701,6 +2705,7 @@ __all__ = (
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyAppScalingRequest",
     "ApplyCachedProjectPlanRequest",
     "ApplyResponse",
     "ApplyResponseAppsItem",
@@ -2754,6 +2759,9 @@ __all__ = (
     "AppResponseVisibility",
     "AppResponseWorkloadClass",
     "AppRestartResponse",
+    "AppScalingReceipt",
+    "AppScalingSettings",
+    "AppScalingSnapshot",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",

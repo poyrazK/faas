@@ -1342,6 +1342,8 @@ type App struct {
 	// scaling input or the owning scheduler node changes; schedulers
 	// acknowledge observing this revision without creating a deployment.
 	ScalingPolicyRevision int64
+	// ScalingRevision guards RAM, CPU, concurrency and instance-floor edits.
+	ScalingRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns

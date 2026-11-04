@@ -112,6 +112,24 @@ func (s *PgStore) FailStuckDeployment(ctx context.Context, d StuckDeployment, qu
 }
 
 // stuckDeploymentLocked mirrors ListStuckDeployments for one deployment.
+// mayWaitForReleaseApprovalLocked mirrors ListStuckDeployments' exclusion of
+// a release that may be waiting for approval before its release command
+// (ADR-20261020085706 amendments 12-13).
+func (m *MemStore) mayWaitForReleaseApprovalLocked(d Deployment) bool {
+	if d.Status != DeploySnapshotting || len(d.ReleaseCommand) == 0 {
+		return false
+	}
+	if _, ok := m.releaseApprovalPolicies[d.AppID]; !ok {
+		return false
+	}
+	for _, task := range m.appTasks {
+		if task.DeploymentID == d.ID && task.Kind == AppTaskKindRelease {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *MemStore) stuckDeploymentLocked(d Deployment, queuedBefore, stalledBefore time.Time) (StuckDeployment, bool) {
 	switch d.Status {
 	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
@@ -125,6 +143,9 @@ func (m *MemStore) stuckDeploymentLocked(d Deployment, queuedBefore, stalledBefo
 		return StuckDeployment{}, false
 	}
 	if _, held := m.mcpTaskPromotionHolds[d.ID]; held {
+		return StuckDeployment{}, false
+	}
+	if m.mayWaitForReleaseApprovalLocked(d) {
 		return StuckDeployment{}, false
 	}
 	var stage struct {

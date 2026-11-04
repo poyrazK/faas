@@ -166,6 +166,7 @@ export type { AppLogDrainAnalyticsSummary } from './models/AppLogDrainAnalyticsS
 export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
 export type { ApplyAppOpenAPIPolicyRequest } from './models/ApplyAppOpenAPIPolicyRequest.js';
+export type { ApplyAppScalingRequest } from './models/ApplyAppScalingRequest.js';
 export type { ApplyCachedProjectPlanRequest } from './models/ApplyCachedProjectPlanRequest.js';
 export type { ApplyPlatformTenantConsumerRequest } from './models/ApplyPlatformTenantConsumerRequest.js';
 export type { ApplyPlatformTenantConsumerResponse } from './models/ApplyPlatformTenantConsumerResponse.js';
@@ -221,6 +222,9 @@ export type { ApproveEnvironmentGitRevisionRequest } from './models/ApproveEnvir
 export type { ApproveEnvironmentGitRevisionResponse } from './models/ApproveEnvironmentGitRevisionResponse.js';
 export type { ApproveRouteLifecycleRequest } from './models/ApproveRouteLifecycleRequest.js';
 export type { ApproveRouteRemovalRequest } from './models/ApproveRouteRemovalRequest.js';
+export type { AppScalingReceipt } from './models/AppScalingReceipt.js';
+export type { AppScalingSettings } from './models/AppScalingSettings.js';
+export type { AppScalingSnapshot } from './models/AppScalingSnapshot.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './models/AppSecretReferenceListResponse.js';

@@ -66,6 +66,9 @@ export type { AppResourceInventoryItem } from './AppResourceInventoryItem.js';
 export type { AppResourceInventoryResponse } from './AppResourceInventoryResponse.js';
 export type { AppResponse } from './AppResponse.js';
 export type { AppRestartResponse } from './AppRestartResponse.js';
+export type { AppScalingReceipt } from './AppScalingReceipt.js';
+export type { AppScalingSettings } from './AppScalingSettings.js';
+export type { AppScalingSnapshot } from './AppScalingSnapshot.js';
 export type { AppSecretExportResponse } from './AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './AppSecretReferenceListResponse.js';
@@ -89,6 +92,7 @@ export type { AppWebhookDeliveryResponse } from './AppWebhookDeliveryResponse.js
 export type { AppWebhookResponse } from './AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './AppWebhookRetryDeliveryResponse.js';
 export type { AppliedBuild } from './AppliedBuild.js';
+export type { ApplyAppScalingRequest } from './ApplyAppScalingRequest.js';
 export type { ApplyCachedProjectPlanRequest } from './ApplyCachedProjectPlanRequest.js';
 export type { ApplyResponse } from './ApplyResponse.js';
 export type { AppsMetricsResponse } from './AppsMetricsResponse.js';

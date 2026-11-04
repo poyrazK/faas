@@ -164,6 +164,9 @@ export type { AppResponse } from './AppResponse.js';
 export type { AppRestartResponse } from './AppRestartResponse.js';
 export type { AppRoutesResponse } from './AppRoutesResponse.js';
 export type { AppSLOResponse } from './AppSLOResponse.js';
+export type { AppScalingReceipt } from './AppScalingReceipt.js';
+export type { AppScalingSettings } from './AppScalingSettings.js';
+export type { AppScalingSnapshot } from './AppScalingSnapshot.js';
 export type { AppSecretExportResponse } from './AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './AppSecretReferenceListResponse.js';
@@ -228,6 +231,7 @@ export type { ApplicationStandardVersion } from './ApplicationStandardVersion.js
 export type { ApplicationStandardViolation } from './ApplicationStandardViolation.js';
 export type { AppliedBuild } from './AppliedBuild.js';
 export type { ApplyAppOpenAPIPolicyRequest } from './ApplyAppOpenAPIPolicyRequest.js';
+export type { ApplyAppScalingRequest } from './ApplyAppScalingRequest.js';
 export type { ApplyCachedProjectPlanRequest } from './ApplyCachedProjectPlanRequest.js';
 export type { ApplyPlatformTenantConsumerRequest } from './ApplyPlatformTenantConsumerRequest.js';
 export type { ApplyPlatformTenantConsumerResponse } from './ApplyPlatformTenantConsumerResponse.js';

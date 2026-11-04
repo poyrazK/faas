@@ -54,6 +54,7 @@ export type { AppLogDrainAnalyticsResponse } from './models/AppLogDrainAnalytics
 export type { AppLogDrainAnalyticsSummary } from './models/AppLogDrainAnalyticsSummary.js';
 export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
+export type { ApplyAppScalingRequest } from './models/ApplyAppScalingRequest.js';
 export type { ApplyCachedProjectPlanRequest } from './models/ApplyCachedProjectPlanRequest.js';
 export type { ApplyResponse } from './models/ApplyResponse.js';
 export type { AppManifest } from './models/AppManifest.js';
@@ -71,6 +72,9 @@ export type { AppResourceInventoryItem } from './models/AppResourceInventoryItem
 export type { AppResourceInventoryResponse } from './models/AppResourceInventoryResponse.js';
 export type { AppResponse } from './models/AppResponse.js';
 export type { AppRestartResponse } from './models/AppRestartResponse.js';
+export type { AppScalingReceipt } from './models/AppScalingReceipt.js';
+export type { AppScalingSettings } from './models/AppScalingSettings.js';
+export type { AppScalingSnapshot } from './models/AppScalingSnapshot.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './models/AppSecretReferenceListResponse.js';
