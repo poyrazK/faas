@@ -20147,12 +20147,15 @@ CREATE TABLE public.accounts (
     mfa_totp_last_step bigint,
     deletion_includes_managed_postgres boolean DEFAULT false NOT NULL,
     plan_changed_at timestamp with time zone,
+    egress_overage_enabled_at timestamp with time zone,
+    egress_overage_disabled_at timestamp with time zone,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
     CONSTRAINT accounts_deployment_mail_revision_check CHECK ((deployment_mail_revision > 0)),
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
+    CONSTRAINT accounts_egress_overage_chk CHECK ((((egress_overage_enabled_at IS NULL) OR isfinite(egress_overage_enabled_at)) AND ((egress_overage_disabled_at IS NULL) OR ((egress_overage_enabled_at IS NOT NULL) AND isfinite(egress_overage_disabled_at) AND (egress_overage_disabled_at >= egress_overage_enabled_at))))),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
     CONSTRAINT accounts_mfa_revision_check CHECK ((mfa_revision > 0)),
@@ -20173,6 +20176,20 @@ CREATE TABLE public.accounts (
 --
 
 COMMENT ON COLUMN public.accounts.plan_changed_at IS 'When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).';
+
+
+--
+-- Name: COLUMN accounts.egress_overage_enabled_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.accounts.egress_overage_enabled_at IS 'When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).';
+
+
+--
+-- Name: COLUMN accounts.egress_overage_disabled_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.accounts.egress_overage_disabled_at IS 'When the egress overage election ended; NULL while it is on (ADR-20261104204500).';
 
 
 --
@@ -20207,8 +20224,11 @@ CREATE TABLE public.orgs (
     overage_cap_cents bigint,
     deletion_requested_at timestamp with time zone,
     plan_changed_at timestamp with time zone,
+    egress_overage_enabled_at timestamp with time zone,
+    egress_overage_disabled_at timestamp with time zone,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
     CONSTRAINT orgs_deletion_requested_at_chk CHECK (((deletion_requested_at IS NULL) OR (deleted_pending AND isfinite(deletion_requested_at)))),
+    CONSTRAINT orgs_egress_overage_chk CHECK ((((egress_overage_enabled_at IS NULL) OR isfinite(egress_overage_enabled_at)) AND ((egress_overage_disabled_at IS NULL) OR ((egress_overage_enabled_at IS NOT NULL) AND isfinite(egress_overage_disabled_at) AND (egress_overage_disabled_at >= egress_overage_enabled_at))))),
     CONSTRAINT orgs_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_changed_at_chk CHECK (((plan_changed_at IS NULL) OR isfinite(plan_changed_at))),
@@ -20238,6 +20258,20 @@ COMMENT ON COLUMN public.orgs.deletion_requested_at IS 'When the organization wa
 --
 
 COMMENT ON COLUMN public.orgs.plan_changed_at IS 'When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).';
+
+
+--
+-- Name: COLUMN orgs.egress_overage_enabled_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.orgs.egress_overage_enabled_at IS 'When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).';
+
+
+--
+-- Name: COLUMN orgs.egress_overage_disabled_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.orgs.egress_overage_disabled_at IS 'When the egress overage election ended; NULL while it is on (ADR-20261104204500).';
 
 
 --
