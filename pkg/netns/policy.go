@@ -700,6 +700,13 @@ func (h HostPolicy) Render() string {
 	}
 	b.WriteString("  chain input {\n")
 	b.WriteString("    type filter hook input priority 0; policy drop;\n")
+	// A blocked source is cut off on the entry addresses before the
+	// established accept, so its open connections stop too.
+	for _, a := range h.PublicEntryAddrs {
+		family := addrFamily(a)
+		fmt.Fprintf(&b, "    %s daddr %s %s saddr @public_block_%s counter drop comment %q\n",
+			family, a, family, publicEntrySetSuffix(family), "public entry block list")
+	}
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    iif lo accept\n")
 	// A guest reaches the host only where platform services listen: the
@@ -978,6 +985,9 @@ func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Pre
 		suffix, keyType, api.PublicEntryTrackedSourcesMax)
 	fmt.Fprintf(b, "  set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }\n",
 		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	// The operator's block list: vmmd adds the elements, each with its own
+	// timeout, after every reload (public_block.go).
+	fmt.Fprintf(b, "  set public_block_%s {\n    type %s\n    flags interval,timeout\n  }\n", suffix, keyType)
 	if len(proxies) == 0 {
 		return
 	}
