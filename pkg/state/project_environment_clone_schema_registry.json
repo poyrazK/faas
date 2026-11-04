@@ -5709,6 +5709,24 @@
     }
   },
   {
+    "table": "edge_tls_certificates",
+    "columns": [
+      "account_uri",
+      "ca",
+      "chain_pem",
+      "id",
+      "issued_at",
+      "key_kid",
+      "key_sealed",
+      "names",
+      "not_after",
+      "not_before",
+      "serial",
+      "sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "edge_crawler_ip_ranges",
     "columns": [
       "crawler",
