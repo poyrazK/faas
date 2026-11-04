@@ -29233,6 +29233,42 @@ CREATE VIEW public.active_environment_git_sources AS
 
 
 --
+-- Name: agent_approval_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_approval_requests (
+    id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    category text NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    body_sha256 bytea,
+    status text DEFAULT 'pending'::text NOT NULL,
+    decided_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    decided_at timestamp with time zone,
+    consumed_at timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
+    CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
+    CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
+    CONSTRAINT agent_approval_requests_check1 CHECK (((status = 'consumed'::text) = (consumed_at IS NOT NULL))),
+    CONSTRAINT agent_approval_requests_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
+    CONSTRAINT agent_approval_requests_path_check CHECK (((length(path) >= 1) AND (length(path) <= 2048))),
+    CONSTRAINT agent_approval_requests_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'consumed'::text])))
+);
+
+
+--
+-- Name: TABLE agent_approval_requests; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_approval_requests IS 'ADR-20261104140058 agent requests awaiting or holding a person''s approval; apid is the only writer.';
+
+
+--
 -- Name: agent_callback_revocations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30456,6 +30492,25 @@ CREATE TABLE public.api_key_agent_clients (
 --
 
 COMMENT ON TABLE public.api_key_agent_clients IS 'ADR-20261030133644 agent client names for hosted MCP keys; apid is the only writer.';
+
+
+--
+-- Name: api_key_approval_categories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_approval_categories (
+    key_id uuid NOT NULL,
+    categories text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_key_approval_categories_categories_check CHECK ((categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))
+);
+
+
+--
+-- Name: TABLE api_key_approval_categories; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_approval_categories IS 'ADR-20261104140058 the action categories an agent key must have a person approve; apid is the only writer.';
 
 
 --
@@ -48291,7 +48346,9 @@ CREATE TABLE public.org_agent_policies (
     allowed_scopes text[] DEFAULT ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text] NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by uuid,
-    CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text]))
+    approval_categories text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text])),
+    CONSTRAINT org_agent_policies_approval_categories_check CHECK ((approval_categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))
 );
 
 
@@ -58039,6 +58096,14 @@ ALTER TABLE ONLY public.accounts
 
 
 --
+-- Name: agent_approval_requests agent_approval_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_callback_revocations agent_callback_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58444,6 +58509,14 @@ ALTER TABLE ONLY public.api_consumers
 
 ALTER TABLE ONLY public.api_key_agent_clients
     ADD CONSTRAINT api_key_agent_clients_pkey PRIMARY KEY (key_id);
+
+
+--
+-- Name: api_key_approval_categories api_key_approval_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_approval_categories
+    ADD CONSTRAINT api_key_approval_categories_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -70702,6 +70775,27 @@ CREATE INDEX accounts_mfa_required_pending_idx ON public.accounts USING btree (i
 --
 
 CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: agent_approval_requests_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_approval_requests_key_idx ON public.agent_approval_requests USING btree (key_id, created_at DESC);
+
+
+--
+-- Name: agent_approval_requests_pending_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_approval_requests_pending_account_idx ON public.agent_approval_requests USING btree (account_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: agent_approval_requests_pending_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_approval_requests_pending_org_idx ON public.agent_approval_requests USING btree (org_id) WHERE (status = 'pending'::text);
 
 
 --
@@ -88545,6 +88639,14 @@ ALTER TABLE ONLY public.account_spend_snapshot
 
 
 --
+-- Name: agent_approval_requests agent_approval_requests_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_callback_revocations agent_callback_revocations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -89230,6 +89332,14 @@ ALTER TABLE ONLY public.api_consumers
 
 ALTER TABLE ONLY public.api_key_agent_clients
     ADD CONSTRAINT api_key_agent_clients_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_key_approval_categories api_key_approval_categories_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_approval_categories
+    ADD CONSTRAINT api_key_approval_categories_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

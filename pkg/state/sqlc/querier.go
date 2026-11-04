@@ -637,6 +637,9 @@ type Querier interface {
 	// Enrollment and spending its proof commit together against the exact factor
 	// verified by the caller. A stale or repeated confirmation changes nothing.
 	ConfirmPendingMFA(ctx context.Context, db DBTX, arg ConfirmPendingMFAParams) (pgtype.UUID, error)
+	// Uses one approved, unexpired request with the same binding, in the same
+	// statement that finds it, so one approval allows exactly one request.
+	ConsumeAgentApproval(ctx context.Context, db DBTX, arg ConsumeAgentApprovalParams) (pgtype.UUID, error)
 	// The parent run lock serializes this consumption with guest reporting and
 	// coordinator transitions. A missing HTTP response never releases delivery.
 	ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error)
@@ -726,6 +729,7 @@ type Querier interface {
 	CountOperationsInFlight(ctx context.Context, db DBTX, arg CountOperationsInFlightParams) (int64, error)
 	CountOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg CountOwnedActiveOperationJobTasksForPurgeParams) (int64, error)
 	CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	CountPendingAgentApprovals(ctx context.Context, db DBTX, keyID pgtype.UUID) (int32, error)
 	CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
 	CountProductionPendingQueueWorkInLane(ctx context.Context, db DBTX, arg CountProductionPendingQueueWorkInLaneParams) (int64, error)
@@ -923,6 +927,8 @@ type Querier interface {
 	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
 	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
+	// A person approves or denies a request that is still pending and unexpired.
+	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (int64, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 	// separate method because every decrement site is a terminal event
@@ -1926,6 +1932,9 @@ type Querier interface {
 	// Inspect the rows actually copied in the clone transaction. Return only a
 	// scalar error verdict; oversized policy bodies never cross the store boundary.
 	FindOversizedClonedEnvironmentPolicy(ctx context.Context, db DBTX, arg FindOversizedClonedEnvironmentPolicyParams) (FindOversizedClonedEnvironmentPolicyRow, error)
+	// An undecided, unexpired request with the same binding, so a retried
+	// request reuses its review link.
+	FindPendingAgentApproval(ctx context.Context, db DBTX, arg FindPendingAgentApprovalParams) (FindPendingAgentApprovalRow, error)
 	FindProjectReleaseSecretVersions(ctx context.Context, db DBTX, arg FindProjectReleaseSecretVersionsParams) ([][]byte, error)
 	FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRuntimeReleaseParams) (RuntimeRelease, error)
 	FindTenantHostnameWildcardOverlap(ctx context.Context, db DBTX, names []string) (string, error)
@@ -2012,8 +2021,10 @@ type Querier interface {
 	// pins the deployment, or no release pins the app and the deployment is its
 	// only live production-lane deployment with traffic.
 	FrozenThawBasis(ctx context.Context, db DBTX, arg FrozenThawBasisParams) (FrozenThawBasisRow, error)
+	GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]string, error)
 	GetAPIKeyProjectLimit(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]pgtype.UUID, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID) (AgentApprovalRequest, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
 	GetAppConfigGuard(ctx context.Context, db DBTX, id pgtype.UUID) (AppConfigGuard, error)
 	GetAppConfigRevision(ctx context.Context, db DBTX, arg GetAppConfigRevisionParams) (GetAppConfigRevisionRow, error)
@@ -2459,10 +2470,13 @@ type Querier interface {
 	IncrementAppError(ctx context.Context, db DBTX, arg IncrementAppErrorParams) (bool, error)
 	InheritedDeploymentReleaseSecrets(ctx context.Context, db DBTX, arg InheritedDeploymentReleaseSecretsParams) ([]byte, error)
 	InitializeWorkflowForEach(ctx context.Context, db DBTX, arg InitializeWorkflowForEachParams) error
+	// ADR-20261104140058: the categories a key must have approved; set once, when it is minted.
+	InsertAPIKeyApprovalCategories(ctx context.Context, db DBTX, arg InsertAPIKeyApprovalCategoriesParams) error
 	// ADR-20261104085712: limits a key to projects; set once, when it is minted.
 	InsertAPIKeyProjectLimit(ctx context.Context, db DBTX, arg InsertAPIKeyProjectLimitParams) error
 	InsertActivatedManagedPostgresBinding(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresBindingParams) error
 	InsertActivatedManagedPostgresSecret(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresSecretParams) error
+	InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAgentApprovalParams) error
 	InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error
 	// Only channels owned by the rule's account are bound.
 	InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error
@@ -3328,6 +3342,7 @@ type Querier interface {
 	// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
 	// Read only after the node's epoch moves, so a scan of the live set is fine.
 	ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error)
+	ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg ListAgentApprovalsForKeyParams) ([]AgentApprovalRequest, error)
 	ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error)
 	ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
 	// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
@@ -3750,6 +3765,9 @@ type Querier interface {
 	// ADR-421: keyset paging advances even when a candidate cannot fit.
 	ListOrphanedAppsPage(ctx context.Context, db DBTX, arg ListOrphanedAppsPageParams) ([]ListOrphanedAppsPageRow, error)
 	ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error)
+	// Undecided requests of agents the account connected, or of agents acting in
+	// the organizations given (those the account owns or administers).
+	ListPendingAgentApprovals(ctx context.Context, db DBTX, arg ListPendingAgentApprovalsParams) ([]AgentApprovalRequest, error)
 	ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
 	ListPendingApplicationStandardEgress(ctx context.Context, db DBTX, arg ListPendingApplicationStandardEgressParams) ([][]byte, error)
 	ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
@@ -5388,6 +5406,8 @@ type Querier interface {
 	PromotionWorkerDeployment(ctx context.Context, db DBTX, arg PromotionWorkerDeploymentParams) (string, error)
 	ProvisionedStaticEgressIPExists(ctx context.Context, db DBTX, arg ProvisionedStaticEgressIPExistsParams) (bool, error)
 	PruneAccountCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneAccountCustomerOperationStreamsParams) error
+	// Requests of the key that expired a week ago or more.
+	PruneAgentApprovals(ctx context.Context, db DBTX, keyID pgtype.UUID) error
 	// Keeps the newest revisions and every watching guard's base revision.
 	PruneAppConfigRevisions(ctx context.Context, db DBTX, arg PruneAppConfigRevisionsParams) error
 	PruneAppHealthHistory(ctx context.Context, db DBTX, arg PruneAppHealthHistoryParams) error

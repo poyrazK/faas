@@ -230,6 +230,9 @@ type Middleware struct {
 	Audit                    Auditor             // nil-safe; nil disables audit emit
 	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
 	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// ApprovalReviewURL is the page where a person decides an agent's
+	// approval request (ADR-20261104140058).
+	ApprovalReviewURL func(id string) string
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -604,6 +607,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// ADR-20261104085712: an agent or mcp-login key limited to
 				// projects reaches only their apps and routes.
 				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
+				}
+				// ADR-20261104140058: an agent's risky request waits for a
+				// person's approval.
+				if m.requireAgentApproval(w, r, acct, key) {
 					return
 				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
