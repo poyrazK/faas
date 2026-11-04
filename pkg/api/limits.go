@@ -5269,6 +5269,13 @@ type Limits struct {
 	// expectations per tier (Free's "first-week demo", Hobby's
 	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
+	// LogBytesPerInstanceHour bounds the log line bytes one instance may
+	// write per UTC hour (ADR-20261104085150): Free 16 MiB, Hobby 64 MiB,
+	// Pro 256 MiB, Scale 1 GiB. Past it, vmmd drops the hour's remaining
+	// output after one notice line, so the live view, the archive and every
+	// drain carry a bounded stream. Logs have no separate charge, so this is
+	// what bounds their storage and delivery cost.
+	LogBytesPerInstanceHour int64
 
 	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
 	// error grouping) is the per-plan retention cap on
@@ -5900,6 +5907,7 @@ var planLimits = map[Plan]Limits{
 		// wake. The wider incident windows remain paid-tier benefits.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 1,
+		LogBytesPerInstanceHour:    16 << 20,
 		// ADR-096 error grouping. Free = 1-day retention, 50
 		// fingerprints, 25 request rows per fingerprint. Retention
 		// MUST be <= the one-day log-archive retention above.
@@ -6345,6 +6353,7 @@ var planLimits = map[Plan]Limits{
 		// S3 within the spec §4.1 latency budget.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 7,
+		LogBytesPerInstanceHour:    64 << 20,
 		// ADR-096 — Hobby = "last week" retention, 200 fingerprints,
 		// 100 request rows per fingerprint. Retention equals the
 		// log-archive retention.
@@ -6759,6 +6768,7 @@ var planLimits = map[Plan]Limits{
 		// rather than being a single shared cap.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 30,
+		LogBytesPerInstanceHour:    256 << 20,
 		// ADR-096 — Pro = "this month" retention, 1000 fingerprints,
 		// 500 request rows per fingerprint.
 		AppErrorsRetentionDays:                30,
@@ -7199,6 +7209,7 @@ var planLimits = map[Plan]Limits{
 		// generous at the top tier.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 90,
+		LogBytesPerInstanceHour:    1 << 30,
 		// ADR-096 — Scale = "this quarter" retention, 5000
 		// fingerprints, 1000 request rows per fingerprint.
 		AppErrorsRetentionDays:                90,
@@ -10812,6 +10823,24 @@ func (p Plan) LogArchiveEnabled() bool {
 	}
 	return l.LogArchiveEnabled
 }
+
+// LogBytesPerInstanceHour returns the plan's hourly log byte allowance per
+// instance (ADR-20261104085150); 0 for an unknown plan, which is unbounded.
+func (p Plan) LogBytesPerInstanceHour() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogBytesPerInstanceHour
+}
+
+// LogDrainBytesPerSecond and LogDrainBurstBytes bound what one log drain
+// delivers (ADR-20261104085150): a line past the budget is dropped and
+// counted, as a full outbox is.
+const (
+	LogDrainBytesPerSecond = 1 << 20
+	LogDrainBurstBytes     = 4 << 20
+)
 
 // LogArchiveRetentionDaysMax (issue #562) returns the
 // per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free's

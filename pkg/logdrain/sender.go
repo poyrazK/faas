@@ -87,7 +87,12 @@ type Config struct {
 	// DurableQueue, when set, makes Enqueue synchronous with a local fsync.
 	// The sender then acknowledges records only after a successful 2xx
 	// response, so a restart resumes at the first unacknowledged record.
-	DurableQueue   *Queue
+	DurableQueue *Queue
+	// BytesPerSecond and BurstBytes bound the line bytes the sender accepts
+	// (ADR-20261104085150): a record past the budget is dropped through
+	// OnDropped, as a full outbox's is. Zero BytesPerSecond is unbounded.
+	BytesPerSecond int64
+	BurstBytes     int64
 	QueueSize      int
 	RequestTimeout time.Duration
 	MaxAttempts    int
@@ -134,6 +139,35 @@ type Sender struct {
 	header   http.Header
 	queueMu  sync.Mutex
 	doneOnce sync.Once
+
+	rateMu     sync.Mutex
+	rateTokens float64
+	rateAt     time.Time
+	now        func() time.Time
+}
+
+// admitRate charges record's line to the byte budget and reports whether it
+// fits. Tokens refill at BytesPerSecond up to BurstBytes.
+func (s *Sender) admitRate(record Record) bool {
+	if s.cfg.BytesPerSecond <= 0 {
+		return true
+	}
+	burst := float64(max(s.cfg.BurstBytes, s.cfg.BytesPerSecond))
+	cost := float64(len(record.Line))
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	now := s.now()
+	if s.rateAt.IsZero() {
+		s.rateTokens = burst
+	} else if elapsed := now.Sub(s.rateAt).Seconds(); elapsed > 0 {
+		s.rateTokens = min(burst, s.rateTokens+elapsed*float64(s.cfg.BytesPerSecond))
+	}
+	s.rateAt = now
+	if cost > s.rateTokens {
+		return false
+	}
+	s.rateTokens -= cost
+	return true
 }
 
 type queuedRecord struct {
@@ -180,6 +214,7 @@ func New(cfg Config) (*Sender, error) {
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		header:  header,
+		now:     time.Now,
 	}
 	if cfg.DurableQueue == nil {
 		sender.queue = make(chan queuedRecord, cfg.QueueSize)
@@ -194,6 +229,10 @@ func New(cfg Config) (*Sender, error) {
 // local outbox before returning; false means shutdown, a full outbox, or a
 // storage failure, and the caller's drop hook is invoked in that case.
 func (s *Sender) Enqueue(record Record) bool {
+	if !s.admitRate(record) {
+		s.drop(record)
+		return false
+	}
 	if s.durable != nil {
 		s.queueMu.Lock()
 		select {
