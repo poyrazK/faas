@@ -32,3 +32,17 @@ func TestDeploymentStaticEgressIPProductionLaneOnly(t *testing.T) {
 		t.Errorf("unpinned app got static egress IP %q", got)
 	}
 }
+
+func TestStaticEgressWireRetainsProductionAndStagePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, pin string
+		excluded  bool
+	}{{"production", "203.0.113.7", false}, {"stage", "", true}, {"legacy", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			pin, excluded := sched.StaticEgressWirePolicyForTest(sched.AppSpec{StaticEgressIP: tc.pin, StaticEgressExcluded: tc.excluded})
+			if pin != tc.pin || excluded != tc.excluded {
+				t.Fatalf("wire lost egress eligibility: pin=%q excluded=%t", pin, excluded)
+			}
+		})
+	}
+}

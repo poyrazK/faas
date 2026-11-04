@@ -93,6 +93,10 @@ func (s *PgStore) prepareEnvironmentGitOpsCandidatesOnce(ctx context.Context, le
 	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 		return nil, mapErr(err)
 	}
+	snapshot, err = reconcileReleasedCandidateJobsTx(ctx, tx, lease.Source, revision, inputs, snapshot)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
 	for _, input := range inputs {
 		frozen := candidateFrozenInputs(input)

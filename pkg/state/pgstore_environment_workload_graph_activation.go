@@ -19,19 +19,9 @@ import (
 var _ EnvironmentGitOpsGraphActivationStore = (*PgStore)(nil)
 
 func environmentGitOpsManagedForScopeTx(ctx context.Context, tx pgx.Tx, appID, scope string) (bool, error) {
-	var managed bool
-	err := tx.QueryRow(ctx, `select exists (
-		select 1 from deployments where app_id=$1 and scope=$2 and environment_workload_runtime is not null
-	)`, appID, normalizedDeploymentScope(scope)).Scan(&managed)
-	return managed, err
-}
-
-func environmentGitOpsManagedForAppTx(ctx context.Context, tx pgx.Tx, appID string) (bool, error) {
-	var managed bool
-	err := tx.QueryRow(ctx, `select exists (
-		select 1 from deployments where app_id=$1 and environment_workload_runtime is not null
-	)`, appID).Scan(&managed)
-	return managed, err
+	return sqlc.New().EnvironmentGitOpsManagedForScope(ctx, tx, sqlc.EnvironmentGitOpsManagedForScopeParams{
+		AppID: mustPgUUID(appID), Scope: normalizedDeploymentScope(scope),
+	})
 }
 
 func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) (ProjectReleaseSet, bool, error) {

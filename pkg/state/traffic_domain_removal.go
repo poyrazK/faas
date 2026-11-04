@@ -374,7 +374,11 @@ func (s *PgStore) deleteTrafficCustomDomain(ctx context.Context, domain, expecte
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	changed, err := sqlc.New().DeleteTrafficCustomDomain(ctx, tx, sqlc.DeleteTrafficCustomDomainParams{Domain: domain, AppID: tx.appID})
+	claim, bound := CustomDomainProbe(ctx)
+	if bound && (probeDomainMatches(claim, domain) != nil || claim.AppID != tx.appID.String()) {
+		return 0, ErrNotFound
+	}
+	changed, err := sqlc.New().DeleteTrafficCustomDomain(ctx, tx, sqlc.DeleteTrafficCustomDomainParams{Domain: domain, AppID: tx.appID, ClaimBound: bound, Token: claim.ChallengeToken})
 	if err != nil {
 		return 0, mapErr(err)
 	}

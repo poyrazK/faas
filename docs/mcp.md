@@ -2644,6 +2644,13 @@ This currently performs two source builds for a catalog-aware deployment: one
 to discover the digest and one to verify the pinned revision. Both start with
 zero production traffic; only the verified pinned candidate is promoted.
 
+The deploy command's `--timeout` also bounds verification after the candidate
+builds and catalog pinning finish (default 1200 seconds). Independent role and
+replica checks run at most four at a time, with a separate 30-second budget for
+each check after it starts. A queued check does not lose its budget while other
+roles run. Per-request probe limits and the caller's overall deadline still
+apply; cancelled, incomplete or failed checks cannot authorize promotion.
+
 When a candidate exposes the starter catalog-health contract, the deployment
 receipt records per-replica `catalog_revision` and `catalog_sha256` values under
 `catalog_integrity.health`; `catalog_integrity.pin` contains the discovery
@@ -2780,6 +2787,25 @@ caller-owned task resource, split web and worker roles, task queue metrics, and
 task status subscriptions. Their workers can process version `1` rows created
 by older starters and version `2` `build_report` rows created by current
 starters.
+
+Go/Python web and worker startup authenticate all retained payloads within the
+10-second startup budget, streaming rows to bound memory. Keep every required
+payload key through Task TTL and allow for the database read cost of large
+histories. Observers require no payload secrets. Claims authenticate payloads
+before committing, so decryption failures preserve the Task and attempt count.
+All starters reject worker state writes after lease or Task expiry, including
+terminal writes delayed by a database row lock.
+
+Existing queues require their starter's Task migration command and refreshed data
+grants before rollout. Owner aliases now share execution capacity through a
+hash-only registry; drain and upgrade all workers in a shared namespace. Retained
+owners without a registry association share one conservative per-owner capacity
+bucket until their callers return. Go/Python native v2 Task payloads remain
+readable by Node when owner IDs and retained secrets match. See
+[the compatibility decision](adr/20261103204500-mcp-starter-owner-aliases-and-wire-validation.md)
+for rollout details. Go/Python honor `legacy: false` and validate modern MCP
+headers before execution. Gateway browser preflight allows requested,
+well-formed `MCP-Param-*` headers under the configured Origin policy.
 
 Tasks are disabled by default. Enable them in `gregale-mcp.json` and bind a
 PostgreSQL runtime binding. Use a separate migration account to create and alter
@@ -3752,6 +3778,10 @@ lifecycle reason `drain_timeout`. Runtime logs provide unfinished task counts.
 
 ### Running Task capacity
 
+Node, Go and Python workers enforce the same namespace and owner execution
+limits. Their claims and lease renewals share a PostgreSQL transaction lock,
+including when different runtimes consume one queue.
+
 `tasks.max_running` (default 16) limits live execution leases across all worker
 replicas in a namespace. `tasks.max_running_per_owner` (default 4) limits each
 owner within that namespace and must not exceed the namespace limit. These are
@@ -3785,6 +3815,26 @@ import { RetryableMcpTaskError } from './tasks.js';
 // Inside a Task handler, after classifying a transient provider failure:
 throw new RetryableMcpTaskError('Provider temporarily unavailable');
 ```
+
+Go handlers opt in by returning an error wrapping `ErrRetryableMCPTask`;
+Python handlers raise `RetryableTaskError` from `tasks`. Ordinary handler
+errors remain terminal in every runtime. All three honor persisted retry due
+times and the configured attempt budget, including final-attempt input resume.
+
+When lowering `tasks.max_attempts`, workers mark queued retries that have
+already exhausted the new budget as failed on their next poll, including retries
+scheduled for a future time. Active leases can finish. Input and drain resumptions
+continue their existing attempt without incrementing its count, even if that
+attempt started under a higher budget; a subsequent failure cannot start another
+attempt above the new budget. Update the policy consistently across workers and
+observers in the namespace.
+
+For `ttl_seconds`, `poll_interval_ms`, `worker_concurrency`,
+`shutdown_timeout_ms`, `max_attempts`, `retry_base_delay_ms` and
+`retry_max_delay_ms`, an explicit numeric zero uses the same default as an
+omitted setting. This matches CLI validation and startup behavior. Negative
+values and invalid types remain errors; `MCP_DRAIN_TIMEOUT_SECONDS` remains a
+separate positive environment override.
 
 Configure `tasks.max_attempts` (default 3, range 1–10, including the initial
 execution), `tasks.retry_base_delay_ms` (default 1000), and
@@ -4149,7 +4199,39 @@ serialize cooperating gate invocations; coordinate independent policy changes
 and all key-writing processes during rollout. No automatic cleanup follows a
 failed release; inspect the reported stage and reconcile candidate processes.
 
+#### Manual Go and Python worker upgrades
+
+Go/Python workers require a manual rollout. The automated release gate and its
+native deployment adapter currently support generated Node workers only.
+
+Run explicit schema migrations with the migration binding. Keep retained owner
+and payload keys, compatible handler versions and execution policy consistent
+across every writer sharing the namespace. Deploy replacements into a separate
+worker app with at least one replica while previous workers remain available.
+Verify that the replacements start successfully, publish fresh worker-handler
+registrations for every required version, and advance queue work.
+
+Retarget the observer and its app-scoped `metrics:write` credential to the
+replacement worker app. Verify its fresh heartbeat before enabling scale-to-zero
+for that app. Gracefully retire previous workers after checking compatibility and
+replacement readiness. Input pauses and drain resumptions retain their attempt
+counts. External effects must remain idempotent by Task ID because lease recovery
+can repeat work. This procedure does not provide the automated Node gate's
+admission checks, journal or worker retirement fences.
+
 #### Native deployment adapter and recovery
+
+This adapter supports generated Node worker projects. Go/Python Task workers
+require the manual upgrade procedure above. Unsupported projects are rejected
+before control-plane requests or release journal creation; read-only journal
+status remains available.
+
+The observer must have a non-secret `MCP_TASK_NAMESPACE` matching the local
+release binding and a non-secret `MCP_TASKS_SCALING_APP_SLUG` matching
+`observer_metric_app`. A fresh heartbeat from another namespace or destination
+cannot qualify the release. These bindings are checked again before previous
+workers are parked. Use the same `MCP_TASK_NAMESPACE` for release and recovery
+commands.
 
 Use `gregale mcp server tasks deploy --plan release.json --state release-state.json`
 to run the Task gate through Gregale's deployment APIs without custom hooks.
@@ -4181,9 +4263,14 @@ grace must exceed the Task shutdown deadline (30 seconds by default).
 
 The adapter deploys candidate workers into a separate app because an in-place
 worker deployment can retire the previous generation before readiness is checked.
-It deploys the web candidate with zero production traffic, checks MCP discovery,
-Origin rejection and optional role catalog baselines (`release_policy`), and
-requires a running observer plus a fresh server-reported observer heartbeat.
+It deploys the web candidate with zero production traffic and checks MCP
+initialization, stateless response headers and catalog metadata on every running
+candidate replica, followed by public readiness for every selected role. These
+checks also run when `release_policy` is absent or has no authorization
+expectations. Reviewed catalog baselines and authorization expectations add their
+checks to this required protocol gate. A release without role overrides uses its
+primary client token for the default role. Origin rejection, a running observer
+and a fresh server-reported observer heartbeat are also required.
 Worker IDs come from deployment-filtered runtime startup logs for every running
 candidate instance; their database heartbeats are independently checked by the
 Task gate. Old namespace worker IDs must belong to the listed previous apps.

@@ -76,3 +76,27 @@ that could take new names under it were the ones that creator had made.
 - The claim takeover by DNS proof is unchanged. It still lets a member move
   another account's unverified claim, including a colleague's, onto their own
   app by publishing the takeover record.
+
+## Amendment 3 (2026-11-03): check ownership at publication
+
+Public creates and DNS-proof takeovers repeat the foreign verified-wildcard
+check inside the domain publication transaction, after acquiring its locks.
+The early HTTP check alone leaves a gap in which another tenant's wildcard
+can verify before an unproved child claim is published. Storage now returns
+the same `409` conflict for that case, comparing shared organizations rather
+than app creators.
+
+This guard applies to public requests. ADR-570's internal repair operations
+retain their ability to publish shadow claims. Pending claims published before
+the parent verifies keep the deadline behavior described in the first amendment.
+
+## Amendment 4 (2026-11-03): serialize wildcard and tenant-hostname reservations
+
+Public wildcard claims repeat the tenant-hostname exclusion inside their
+publication transaction. Public tenant-hostname creates and DNS-proof takeovers
+repeat the inverse exclusion under the same traffic binding locks. This includes
+pending reservations and names on other accounts, and excludes deleted surfaces
+and expired, unverified wildcard claims. The existing hierarchical name locks
+serialize overlapping writes with either the fleet-wide or scoped binding guard.
+A conflict returns the existing wildcard/tenant-surface overlap problem. Internal
+repair writes retain their existing ability to represent overlapping claims.

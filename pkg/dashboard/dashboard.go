@@ -97,7 +97,7 @@ type DPAView struct {
 // MFAChallengeData is the /dashboard/mfa payload: the TOTP challenge an
 // mfa_pending session must pass before any other dashboard page. Enrolled
 // is false for an account an explicit policy requires to enroll; it has
-// no code to enter yet and is pointed at the CLI enrollment.
+// no code to enter yet and is linked to browser enrollment.
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool

@@ -3531,6 +3531,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("environment-scoped domain storage unavailable"))
 		return
 	}
+	claimCtx := state.WithPublicCustomDomainClaim(r.Context())
 	createDomain := func(ctx context.Context) (state.CustomDomain, error) {
 		if environmentID != "" {
 			return environmentCreator.CreateCustomDomainInEnvironmentIfUnderQuota(ctx, domain, app.ID, environmentID, token, perApp, perAccount)
@@ -3551,25 +3552,31 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		if prepareErr == nil {
 			activityMutationAtomic = true
 			if environmentID != "" {
-				d, activityOutboxID, err = mutationStore.CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(r.Context(), domain, app.ID, environmentID, token, perApp, perAccount, prepared)
+				d, activityOutboxID, err = mutationStore.CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(claimCtx, domain, app.ID, environmentID, token, perApp, perAccount, prepared)
 			} else {
-				d, activityOutboxID, err = mutationStore.CreateCustomDomainIfUnderQuotaWithActivity(r.Context(), domain, app.ID, token, perApp, perAccount, prepared)
+				d, activityOutboxID, err = mutationStore.CreateCustomDomainIfUnderQuotaWithActivity(claimCtx, domain, app.ID, token, perApp, perAccount, prepared)
 			}
 		} else {
-			d, err = createDomain(r.Context())
+			d, err = createDomain(claimCtx)
 		}
 	} else {
-		d, err = createDomain(r.Context())
+		d, err = createDomain(claimCtx)
 	}
-	if errors.Is(err, state.ErrConflict) {
+	var wildcardConflict *state.CustomDomainWildcardConflictError
+	var tenantOverlap *state.CustomDomainTenantOverlapError
+	if errors.Is(err, state.ErrConflict) && !errors.As(err, &wildcardConflict) && !errors.As(err, &tenantOverlap) {
 		// Another account's unverified claim yields to DNS proof
 		// (ADR-20261020090500). The takeover records its activity below,
 		// outside the create's activity transaction.
-		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
+		if d, err = s.takeOverDomainClaim(claimCtx, acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
 			activityOutboxID, activityMutationAtomic = 0, false
 		}
 	}
 	if err != nil {
+		if errors.As(err, &tenantOverlap) {
+			api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(tenantOverlap.Wildcard, tenantOverlap.Hostname))
+			return
+		}
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
 			return
@@ -3616,14 +3623,8 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 
 func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
-	d, err := s.store.DomainByName(r.Context(), domain)
-	if err != nil {
-		s.notFound(w, "no such domain")
-		return
-	}
-	app, err := s.store.AppByID(r.Context(), d.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such domain")
+	_, ok := s.loadDomain(w, r, acct, domain)
+	if !ok {
 		return
 	}
 	type retrier interface {
@@ -3680,7 +3681,12 @@ func (s *server) wildcardTenantSurfaceOverlap(ctx context.Context, accountID, do
 }
 
 func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	domains, err := s.store.ListDomainsForAccount(r.Context(), acct.ID)
+	inventory, ok := s.store.(state.CustomDomainInventoryStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("domain inventory unavailable"))
+		return
+	}
+	domains, err := inventory.ListDomainsForActor(r.Context(), actorAccount(r, acct).ID)
 	if err == nil {
 		domains, err = appaccess.VisibleResources(r, s.store, actorAccount(r, acct), domains, func(d state.CustomDomain) string { return d.AppID })
 	}
@@ -3702,9 +3708,8 @@ func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.
 
 func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	domain := strings.ToLower(r.PathValue("domain"))
-	d, err := s.store.DomainByName(r.Context(), domain)
-	if err != nil {
-		s.notFound(w, "no such domain")
+	d, ok := s.loadDomain(w, r, acct, domain)
+	if !ok {
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), d.AppID)
@@ -3860,11 +3865,16 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such domain")
 		return d, false
 	}
+	if authorized, bound := state.CustomDomainProbe(r.Context()); bound && !state.SameCustomDomainClaim(authorized, d) {
+		s.notFound(w, "no such domain")
+		return state.CustomDomain{}, false
+	}
 	app, err := s.store.AppByID(r.Context(), d.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such domain")
 		return d, false
 	}
+	*r = *r.WithContext(state.WithCustomDomainProbe(r.Context(), d))
 	return d, true
 }
 
@@ -3879,6 +3889,7 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 // → 422) or to keep the soft-fail shape (show → 200 with
 // CertStatus="dial_failed:<reason>").
 func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (api.CustomDomainResponse, error) {
+	ctx = state.WithCustomDomainProbe(ctx, d)
 	resp := s.domainResponseWithDefault(ctx, d)
 	if !d.Verified() {
 		if d.CertStatus != state.CustomDomainCertDNSDrifted {
@@ -4012,6 +4023,10 @@ func (s *server) getDomainDoctor(w http.ResponseWriter, r *http.Request, acct st
 	}
 	report, err := s.buildDoctorReport(r.Context(), d)
 	if err != nil {
+		if errors.Is(err, state.ErrStaleCustomDomainProbe) && !errors.Is(err, state.ErrStaleCustomDomainObservation) {
+			s.notFound(w, "no such domain")
+			return
+		}
 		logCustomerFailure(s.log, "build domain doctor report", err)
 		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, "a probe could not run"))
 		return
@@ -4032,6 +4047,7 @@ func (s *server) doctorTTL() time.Duration {
 // the live re-probe) so the response shape is stable — the
 // re-probe's only job is to refresh the row.
 func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (api.DomainDoctorReport, error) {
+	ctx = state.WithCustomDomainProbe(ctx, d)
 	obs, err := s.store.GetDoctorObservation(ctx, d.Domain)
 	if err == nil {
 		if time.Since(obs.ObservedAt) < s.doctorTTL() {
@@ -4043,7 +4059,9 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 		// is the load-bearing engine). A refreshed observation
 		// is fresh; only a failed refresh or reload reports the
 		// old row as stale (issue #2659).
-		if refreshErr := s.refreshDoctorObservation(ctx, d.Domain); refreshErr == nil {
+		if refreshErr := s.refreshDoctorObservation(ctx, d.Domain); errors.Is(refreshErr, state.ErrStaleCustomDomainProbe) {
+			return api.DomainDoctorReport{}, refreshErr
+		} else if refreshErr == nil {
 			if fresh, reloadErr := s.store.GetDoctorObservation(ctx, d.Domain); reloadErr == nil {
 				return doctorReportFromObs(d, fresh, false), nil
 			}
@@ -4143,6 +4161,11 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	case certStatusIssued:
 		if !obs.CertNotAfter.IsZero() {
 			tlsDetail = "certificate issued, expires " + obs.CertNotAfter.UTC().Format(time.RFC3339)
+			if !obs.CertNotAfter.After(time.Now()) {
+				tlsStatus, report.Healthy = probeFail, false
+				tlsDetail = "certificate expired at " + obs.CertNotAfter.UTC().Format(time.RFC3339)
+				tlsRem = "Check the cert engine renewal logs and restore a valid certificate."
+			}
 		}
 	case certStatusPending:
 		tlsStatus = probePending
@@ -4212,16 +4235,14 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 			caaStatus = probeFail
 			report.Healthy = false
 			caaDetail = "CAA denies certificate issuance for this CA"
-			caaRem = "Update CAA record at " + d.Domain + " to permit letsencrypt.org (e.g. '0 issue \"letsencrypt.org\"')"
+			caaRem = customDomainCAARemediation(d.Domain)
 		}
 	} else if obs.CAAObserved != "" {
-		// nil permits + observed CAA recordset = the resolver
-		// returned a CAA recordset but the parser couldn't
-		// decide issue vs issuewild. Surface as pending so
-		// the customer sees a transient signal.
+		// A resolver failure or an unconfirmed issuer restriction remains
+		// pending rather than being interpreted as permission to issue.
 		caaStatus = probePending
 		report.Healthy = false
-		caaDetail = "CAA lookup returned a transient error; re-poll"
+		caaDetail = "CAA permission could not be confirmed: " + obs.CAAObserved
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "caa_permits", Status: string(caaStatus), Detail: caaDetail,
@@ -6800,6 +6821,14 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	}
 	if d.Verified() {
 		r.VerifiedAt = d.VerifiedAt.UTC().Format(time.RFC3339)
+	}
+	if !d.VerificationExpiresAt.IsZero() {
+		r.VerificationExpiresAt = d.VerificationExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	r.VerificationExpired = r.VerificationExpiredAt(time.Now())
+	if r.VerificationExpired {
+		r.ChallengeToken = ""
+		d.ChallengeToken = ""
 	}
 	if d.ChallengeToken != "" {
 		r.TXTRecord = state.CustomDomainChallengeName(d.Domain) + `  TXT  "` + d.ChallengeToken + `"`

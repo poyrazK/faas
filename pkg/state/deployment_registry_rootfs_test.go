@@ -220,7 +220,9 @@ func registryRootfsDeletionLifecycle(t *testing.T, s registryRootfsTestStore) {
 	if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), in.AccountID, in.AppID, in.DeploymentID, ""); err != nil {
 		t.Fatalf("historical evidence lost after revocation: %v", err)
 	}
-	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), in); !errors.Is(err, imagepublisher.ErrSignatureInvalid) {
+	// Deleting the app cancelled this deploy in progress (#6413); restore
+	// does not bring it back, so its history cannot be published again.
+	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), in); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("history became renewed authority: %v", err)
 	}
 	if _, err := s.ScheduleAppDeletion(t.Context(), app.ID, time.Now().Add(-time.Hour)); err != nil {

@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"strings"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ OrgActivityAccessMutationStore = (*MemStore)(nil)
@@ -61,20 +59,21 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	if !ok {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrNotFound
 	}
-	limits, _ := api.LimitsFor(org.Plan)
-	if limit := limits.OrgMembersMax; limit > 0 {
-		active := 0
-		for _, existing := range m.memberships {
-			if existing.OrgID == invitation.OrgID && existing.RemovedAt == nil {
-				active++
-			}
-		}
-		if active >= limit {
-			return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgMemberCapExceeded
+	limit, err := orgInvitationLimit(org.Plan, org.Status, org.DeletedPending, org.AbuseHoldAt != nil)
+	if err != nil {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, err
+	}
+	active := 0
+	for _, existing := range m.memberships {
+		if existing.OrgID == invitation.OrgID && existing.RemovedAt == nil {
+			active++
 		}
 	}
+	if active >= limit {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgMemberCapExceeded
+	}
 	key := orgAccountKey{OrgID: invitation.OrgID, AccountID: accepting.ID}
-	if _, exists := m.memberships[key]; exists {
+	if existing, exists := m.memberships[key]; exists && existing.RemovedAt == nil {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgAlreadyMember
 	}
 
@@ -87,7 +86,7 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	invitation.ConsumedAt = &now
 	invitation.AcceptingAccountID = &acceptingID
 
-	acceptedActivity, err := withOrgActivityData(acceptedActivity, map[string]any{
+	acceptedActivity, err = withOrgActivityData(acceptedActivity, map[string]any{
 		"role": string(invitation.Role), "invitation_id": invitation.ID,
 	})
 	if err != nil {

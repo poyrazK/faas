@@ -42,6 +42,9 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeDashboardUnauthorized(w, r)
 		return
 	}
+	if !requireEnrolledMFA(w, acct) {
+		return
+	}
 	if pending, _ := authmw.MFAPendingFrom(r); !pending {
 		http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
 		return

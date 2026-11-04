@@ -732,7 +732,12 @@ func (q *Queries) ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, proje
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
-  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  )
 `
 
 func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error) {
@@ -5357,6 +5362,33 @@ func (q *Queries) ClaimComputeNodeVMMDEpoch(ctx context.Context, db DBTX, arg Cl
 	return vmmd_epoch, err
 }
 
+const claimCustomDomainProbeFailureEmail = `-- name: ClaimCustomDomainProbeFailureEmail :execrows
+UPDATE custom_domains SET last_cert_issuance_failed_email_at=$1::timestamptz
+WHERE domain=$2::text::citext AND app_id=$3::text::uuid AND challenge_token=$4::text
+ AND cert_status='failed' AND cert_failed_at<=$1::timestamptz-interval '15 minutes'
+ AND (last_cert_issuance_failed_email_at IS NULL OR last_cert_issuance_failed_email_at<$1::timestamptz-interval '24 hours')
+`
+
+type ClaimCustomDomainProbeFailureEmailParams struct {
+	At     pgtype.Timestamptz
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ClaimCustomDomainProbeFailureEmail(ctx context.Context, db DBTX, arg ClaimCustomDomainProbeFailureEmailParams) (int64, error) {
+	result, err := db.Exec(ctx, claimCustomDomainProbeFailureEmail,
+		arg.At,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimCustomerOperationBlobCleanup = `-- name: ClaimCustomerOperationBlobCleanup :one
 WITH candidate AS (
  SELECT b.id FROM customer_operation_result_blobs b
@@ -6845,6 +6877,34 @@ func (q *Queries) ClaimNotificationForNode(ctx context.Context, db DBTX, arg Cla
 	return i, err
 }
 
+const claimPrivateNetworkService = `-- name: ClaimPrivateNetworkService :one
+INSERT INTO private_network_service_owners(network_id,account_id,app_id,instance_id,service_address_id)
+VALUES($1,$2,$3,$4,$5)
+ON CONFLICT (network_id,app_id) DO UPDATE SET instance_id=excluded.instance_id
+WHERE private_network_service_owners.instance_id=excluded.instance_id RETURNING instance_id
+`
+
+type ClaimPrivateNetworkServiceParams struct {
+	NetworkID        string
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	InstanceID       string
+	ServiceAddressID pgtype.UUID
+}
+
+func (q *Queries) ClaimPrivateNetworkService(ctx context.Context, db DBTX, arg ClaimPrivateNetworkServiceParams) (string, error) {
+	row := db.QueryRow(ctx, claimPrivateNetworkService,
+		arg.NetworkID,
+		arg.AccountID,
+		arg.AppID,
+		arg.InstanceID,
+		arg.ServiceAddressID,
+	)
+	var instance_id string
+	err := row.Scan(&instance_id)
+	return instance_id, err
+}
+
 const claimProductionLegacyQueueInvocations = `-- name: ClaimProductionLegacyQueueInvocations :many
 with claimed as (
 			select i.id
@@ -7981,6 +8041,15 @@ func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearCustomDomainProbeObservation = `-- name: ClearCustomDomainProbeObservation :exec
+DELETE FROM domain_doctor_observations WHERE domain=$1::text::citext AND surface_id IS NULL
+`
+
+func (q *Queries) ClearCustomDomainProbeObservation(ctx context.Context, db DBTX, domain string) error {
+	_, err := db.Exec(ctx, clearCustomDomainProbeObservation, domain)
+	return err
 }
 
 const clearDatabaseStandbySlotDrop = `-- name: ClearDatabaseStandbySlotDrop :execrows
@@ -13159,7 +13228,7 @@ type CreateUploadSessionParams struct {
 	DeployOptions []byte
 }
 
-// ==============================================================
+// ================================================
 // Inserts a fresh upload_sessions row. The handler pre-validates
 // total_size against limits.SourceTarballMaxMB (pkg/api/limits.go)
 // and the per-account open-session cap (5 per (account_id, app_slug))
@@ -13289,6 +13358,27 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const customDomainTLSAdmissionAllowed = `-- name: CustomDomainTLSAdmissionAllowed :one
+SELECT ($1::boolean
+ OR NOT EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts h WHERE h.wildcard_domain=$2::text::citext)
+ OR EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts h WHERE h.wildcard_domain=$2::text::citext AND h.name=$3::text))::boolean AS allowed
+`
+
+type CustomDomainTLSAdmissionAllowedParams struct {
+	Probe  bool
+	Domain string
+	Name   string
+}
+
+// Run after locking the claim: an allowlist writer may have committed while
+// that lock was being acquired, so this read needs its own fresh snapshot.
+func (q *Queries) CustomDomainTLSAdmissionAllowed(ctx context.Context, db DBTX, arg CustomDomainTLSAdmissionAllowedParams) (bool, error) {
+	row := db.QueryRow(ctx, customDomainTLSAdmissionAllowed, arg.Probe, arg.Domain, arg.Name)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
 }
 
 const customerOperationAccountPlan = `-- name: CustomerOperationAccountPlan :one
@@ -13529,7 +13619,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd, labels FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd, labels, environment_git_source_id FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -13574,6 +13664,7 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.ImageEntrypoint,
 		&i.ImageCmd,
 		&i.Labels,
+		&i.EnvironmentGitSourceID,
 	)
 	return i, err
 }
@@ -15201,6 +15292,15 @@ func (q *Queries) DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuar
 	return err
 }
 
+const deleteLegacyStaticEgressProvisioning = `-- name: DeleteLegacyStaticEgressProvisioning :exec
+DELETE FROM provisioned_static_egress_ips
+`
+
+func (q *Queries) DeleteLegacyStaticEgressProvisioning(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, deleteLegacyStaticEgressProvisioning)
+	return err
+}
+
 const deleteLogArchiveErasure = `-- name: DeleteLogArchiveErasure :exec
 DELETE FROM log_archive_erasures WHERE account_id = $1::uuid
 `
@@ -15256,6 +15356,30 @@ func (q *Queries) DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deletePrivateNetworkPeeringForRevocation = `-- name: DeletePrivateNetworkPeeringForRevocation :one
+DELETE FROM private_network_peerings
+WHERE account_id = $1 AND id = $2
+RETURNING region, left_network_id, right_network_id
+`
+
+type DeletePrivateNetworkPeeringForRevocationParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type DeletePrivateNetworkPeeringForRevocationRow struct {
+	Region         string
+	LeftNetworkID  string
+	RightNetworkID string
+}
+
+func (q *Queries) DeletePrivateNetworkPeeringForRevocation(ctx context.Context, db DBTX, arg DeletePrivateNetworkPeeringForRevocationParams) (DeletePrivateNetworkPeeringForRevocationRow, error) {
+	row := db.QueryRow(ctx, deletePrivateNetworkPeeringForRevocation, arg.AccountID, arg.ID)
+	var i DeletePrivateNetworkPeeringForRevocationRow
+	err := row.Scan(&i.Region, &i.LeftNetworkID, &i.RightNetworkID)
+	return i, err
 }
 
 const deleteProductionDeadLetterEvent = `-- name: DeleteProductionDeadLetterEvent :execrows
@@ -15347,6 +15471,16 @@ func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const deleteStaticEgressProvisioningSource = `-- name: DeleteStaticEgressProvisioningSource :exec
+DELETE FROM static_egress_provisioning_grants
+WHERE source_id = $1::text
+`
+
+func (q *Queries) DeleteStaticEgressProvisioningSource(ctx context.Context, db DBTX, sourceID string) error {
+	_, err := db.Exec(ctx, deleteStaticEgressProvisioningSource, sourceID)
+	return err
+}
+
 const deleteSyntheticCheck = `-- name: DeleteSyntheticCheck :execrows
 DELETE FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
 `
@@ -15397,15 +15531,23 @@ func (q *Queries) DeleteTrafficAccountRedirectDomains(ctx context.Context, db DB
 
 const deleteTrafficCustomDomain = `-- name: DeleteTrafficCustomDomain :execrows
 DELETE FROM custom_domains WHERE domain=$1::text::citext AND app_id=$2::uuid
+ AND (NOT $3::boolean OR challenge_token=$4::text)
 `
 
 type DeleteTrafficCustomDomainParams struct {
-	Domain string
-	AppID  pgtype.UUID
+	Domain     string
+	AppID      pgtype.UUID
+	ClaimBound bool
+	Token      string
 }
 
 func (q *Queries) DeleteTrafficCustomDomain(ctx context.Context, db DBTX, arg DeleteTrafficCustomDomainParams) (int64, error) {
-	result, err := db.Exec(ctx, deleteTrafficCustomDomain, arg.Domain, arg.AppID)
+	result, err := db.Exec(ctx, deleteTrafficCustomDomain,
+		arg.Domain,
+		arg.AppID,
+		arg.ClaimBound,
+		arg.Token,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -15745,6 +15887,18 @@ func (q *Queries) DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const detachedEnvironmentJobWasDeleted = `-- name: DetachedEnvironmentJobWasDeleted :one
+SELECT (status='deleted' AND NOT environment_workload_job_owned(j))::boolean AS replace
+FROM jobs j WHERE id=$1::uuid
+`
+
+func (q *Queries) DetachedEnvironmentJobWasDeleted(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, detachedEnvironmentJobWasDeleted, jobID)
+	var replace bool
+	err := row.Scan(&replace)
+	return replace, err
 }
 
 const devBridgeByID = `-- name: DevBridgeByID :one
@@ -16661,11 +16815,29 @@ func (q *Queries) EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const environmentGitOpsJobHasActiveTasks = `-- name: EnvironmentGitOpsJobHasActiveTasks :one
+SELECT EXISTS(SELECT 1 FROM job_runs r JOIN job_tasks t ON t.run_id=r.id
+ WHERE r.job_id=$1::uuid AND t.status IN ('queued','claimed'))
+`
+
+func (q *Queries) EnvironmentGitOpsJobHasActiveTasks(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsJobHasActiveTasks, jobID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const environmentGitOpsLifecyclePending = `-- name: EnvironmentGitOpsLifecyclePending :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=$1::uuid AND phase='preparing')
- OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id WHERE g.source_id=$1::uuid) AS pending
+ OR EXISTS(SELECT 1 FROM environment_qualification_executions e
+   LEFT JOIN instances i ON i.id=e.instance_id
+   WHERE e.frame->>'source_id'=$1::uuid::text
+     AND (e.retired_at IS NULL OR i.state NOT IN ('parked','stopped','failed')))
+ OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+   JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN instances i ON i.id=q.reserved_instance_id
+   WHERE g.source_id=$1::uuid AND i.state NOT IN ('parked','stopped','failed')) AS pending
 `
 
 func (q *Queries) EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX, sourceID pgtype.UUID) (pgtype.Bool, error) {
@@ -16673,6 +16845,25 @@ func (q *Queries) EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX
 	var pending pgtype.Bool
 	err := row.Scan(&pending)
 	return pending, err
+}
+
+const environmentGitOpsManagedForScope = `-- name: EnvironmentGitOpsManagedForScope :one
+SELECT EXISTS (SELECT 1 FROM deployments d
+ WHERE d.app_id=$1::uuid AND d.scope=$2::text
+ AND environment_workload_ownership_active(d))::boolean AS managed
+`
+
+type EnvironmentGitOpsManagedForScopeParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+// Detached sources retain frozen history without owning new manual releases.
+func (q *Queries) EnvironmentGitOpsManagedForScope(ctx context.Context, db DBTX, arg EnvironmentGitOpsManagedForScopeParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsManagedForScope, arg.AppID, arg.Scope)
+	var managed bool
+	err := row.Scan(&managed)
+	return managed, err
 }
 
 const environmentGitOpsQueueForUpdate = `-- name: EnvironmentGitOpsQueueForUpdate :one
@@ -16713,6 +16904,48 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 		&i.DeploymentScope,
 		&i.EnvironmentID,
 		&i.OrgID,
+	)
+	return i, err
+}
+
+const environmentGitOpsRuntimeEffectTarget = `-- name: EnvironmentGitOpsRuntimeEffectTarget :one
+SELECT t.app_id,t.resource,t.environment_slug,t.required_at::timestamptz AS required_at,
+ t.stale_residents,t.starting_residents,t.stale_snapshots
+FROM environment_gitops_runtime_targets t
+JOIN environment_gitops_runtime_effects effect ON effect.source_id=t.source_id
+ AND effect.app_id=t.app_id AND effect.environment_slug=t.environment_slug
+WHERE effect.source_id=$1::uuid AND effect.id=$2::uuid
+ AND effect.completed_at IS NULL
+`
+
+type EnvironmentGitOpsRuntimeEffectTargetParams struct {
+	SourceID pgtype.UUID
+	EffectID pgtype.UUID
+}
+
+type EnvironmentGitOpsRuntimeEffectTargetRow struct {
+	AppID             pgtype.UUID
+	Resource          string
+	EnvironmentSlug   string
+	RequiredAt        pgtype.Timestamptz
+	StaleResidents    int64
+	StartingResidents int64
+	StaleSnapshots    int64
+}
+
+// Recovery observes the committed effect's original scope even when its
+// workload is absent from the current approved definition.
+func (q *Queries) EnvironmentGitOpsRuntimeEffectTarget(ctx context.Context, db DBTX, arg EnvironmentGitOpsRuntimeEffectTargetParams) (EnvironmentGitOpsRuntimeEffectTargetRow, error) {
+	row := db.QueryRow(ctx, environmentGitOpsRuntimeEffectTarget, arg.SourceID, arg.EffectID)
+	var i EnvironmentGitOpsRuntimeEffectTargetRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Resource,
+		&i.EnvironmentSlug,
+		&i.RequiredAt,
+		&i.StaleResidents,
+		&i.StartingResidents,
+		&i.StaleSnapshots,
 	)
 	return i, err
 }
@@ -16801,6 +17034,18 @@ func (q *Queries) EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg E
 		&i.OldestVerificationAgeSeconds,
 	)
 	return i, err
+}
+
+const environmentJobIsReleased = `-- name: EnvironmentJobIsReleased :one
+SELECT environment_workload_job_released(j)::boolean AS released
+FROM jobs j WHERE id=$1::uuid
+`
+
+func (q *Queries) EnvironmentJobIsReleased(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentJobIsReleased, jobID)
+	var released bool
+	err := row.Scan(&released)
+	return released, err
 }
 
 const environmentQualificationAdmissionInputs = `-- name: EnvironmentQualificationAdmissionInputs :one
@@ -17620,6 +17865,25 @@ func (q *Queries) EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX,
 	var context []byte
 	err := row.Scan(&context)
 	return context, err
+}
+
+const environmentWorkloadIntentForOwnedJob = `-- name: EnvironmentWorkloadIntentForOwnedJob :one
+SELECT to_jsonb(i)::jsonb AS intent
+FROM app_environment_workload_intents i JOIN jobs j ON j.id=i.job_id
+WHERE i.account_id=$1::uuid AND i.job_id=$2::uuid
+ AND environment_workload_job_owned(j)
+`
+
+type EnvironmentWorkloadIntentForOwnedJobParams struct {
+	AccountID pgtype.UUID
+	JobID     pgtype.UUID
+}
+
+func (q *Queries) EnvironmentWorkloadIntentForOwnedJob(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentForOwnedJobParams) ([]byte, error) {
+	row := db.QueryRow(ctx, environmentWorkloadIntentForOwnedJob, arg.AccountID, arg.JobID)
+	var intent []byte
+	err := row.Scan(&intent)
+	return intent, err
 }
 
 const environmentWorkloadIntentLockSource = `-- name: EnvironmentWorkloadIntentLockSource :many
@@ -21761,6 +22025,73 @@ func (q *Queries) FinalizeRetainedServiceRolloutAbortTarget(ctx context.Context,
 	return status, err
 }
 
+const findCustomDomainTenantOverlap = `-- name: FindCustomDomainTenantOverlap :one
+SELECT h.hostname::text FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+WHERE s.status <> 'deleted'
+ AND right(lower(h.hostname::text),length($1::text)+1)='.'||lower($1::text)
+ORDER BY h.hostname LIMIT 1
+`
+
+func (q *Queries) FindCustomDomainTenantOverlap(ctx context.Context, db DBTX, suffix string) (string, error) {
+	row := db.QueryRow(ctx, findCustomDomainTenantOverlap, suffix)
+	var h_hostname string
+	err := row.Scan(&h_hostname)
+	return h_hostname, err
+}
+
+const findForeignVerifiedDomainForTenantHostname = `-- name: FindForeignVerifiedDomainForTenantHostname :one
+SELECT d.domain::text FROM custom_domains d
+JOIN apps holder ON holder.id=d.app_id
+LEFT JOIN apps claimant ON claimant.id=nullif($1::text,'')::uuid
+LEFT JOIN orgs holder_org ON holder_org.id=holder.org_id
+LEFT JOIN orgs claimant_org ON claimant_org.id=claimant.org_id
+WHERE d.verified_at IS NOT NULL AND d.domain=$2::text::citext
+ AND (claimant.id IS NULL OR
+  (CASE WHEN holder.org_id IS NOT NULL AND NOT holder_org.personal_org
+    THEN 'org:'||holder.org_id::text ELSE 'account:'||holder.account_id::text END)
+  <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
+    THEN 'org:'||claimant.org_id::text ELSE 'account:'||claimant.account_id::text END))
+`
+
+type FindForeignVerifiedDomainForTenantHostnameParams struct {
+	AppID    string
+	Hostname string
+}
+
+func (q *Queries) FindForeignVerifiedDomainForTenantHostname(ctx context.Context, db DBTX, arg FindForeignVerifiedDomainForTenantHostnameParams) (string, error) {
+	row := db.QueryRow(ctx, findForeignVerifiedDomainForTenantHostname, arg.AppID, arg.Hostname)
+	var d_domain string
+	err := row.Scan(&d_domain)
+	return d_domain, err
+}
+
+const findForeignVerifiedWildcardForClaim = `-- name: FindForeignVerifiedWildcardForClaim :one
+SELECT d.domain::text FROM custom_domains d
+JOIN apps holder ON holder.id = d.app_id
+JOIN apps claimant ON claimant.id = $1::text::uuid
+LEFT JOIN orgs holder_org ON holder_org.id = holder.org_id
+LEFT JOIN orgs claimant_org ON claimant_org.id = claimant.org_id
+WHERE d.verified_at IS NOT NULL AND d.domain = ANY($2::text[]::citext[])
+  AND (CASE WHEN holder.org_id IS NOT NULL AND NOT holder_org.personal_org
+       THEN 'org:' || holder.org_id::text ELSE 'account:' || holder.account_id::text END)
+   <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
+       THEN 'org:' || claimant.org_id::text ELSE 'account:' || claimant.account_id::text END)
+ORDER BY length(d.domain) DESC, d.domain LIMIT 1
+`
+
+type FindForeignVerifiedWildcardForClaimParams struct {
+	AppID string
+	Names []string
+}
+
+// The caller holds the domain publication guard and destination app lock.
+func (q *Queries) FindForeignVerifiedWildcardForClaim(ctx context.Context, db DBTX, arg FindForeignVerifiedWildcardForClaimParams) (string, error) {
+	row := db.QueryRow(ctx, findForeignVerifiedWildcardForClaim, arg.AppID, arg.Names)
+	var d_domain string
+	err := row.Scan(&d_domain)
+	return d_domain, err
+}
+
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
 SELECT id FROM invoices
 WHERE account_id = $1::uuid
@@ -21967,6 +22298,20 @@ func (q *Queries) FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRunti
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const findTenantHostnameWildcardOverlap = `-- name: FindTenantHostnameWildcardOverlap :one
+SELECT domain::text FROM custom_domains
+WHERE domain=ANY($1::citext[])
+ AND (verified_at IS NOT NULL OR verification_expires_at IS NULL OR verification_expires_at>clock_timestamp())
+ORDER BY length(domain::text) DESC,domain LIMIT 1
+`
+
+func (q *Queries) FindTenantHostnameWildcardOverlap(ctx context.Context, db DBTX, names []string) (string, error) {
+	row := db.QueryRow(ctx, findTenantHostnameWildcardOverlap, names)
+	var domain string
+	err := row.Scan(&domain)
+	return domain, err
 }
 
 const finishAppFork = `-- name: FinishAppFork :one
@@ -28087,6 +28432,25 @@ func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const getPrivateNetworkTransportIdentity = `-- name: GetPrivateNetworkTransportIdentity :one
+SELECT t.vni FROM private_network_transport_identities t JOIN private_networks n ON n.id=t.network_id
+WHERE t.network_id=$1 AND t.account_id=$2 AND t.region=$3
+  AND n.account_id=t.account_id AND n.region=t.region
+`
+
+type GetPrivateNetworkTransportIdentityParams struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+}
+
+func (q *Queries) GetPrivateNetworkTransportIdentity(ctx context.Context, db DBTX, arg GetPrivateNetworkTransportIdentityParams) (int32, error) {
+	row := db.QueryRow(ctx, getPrivateNetworkTransportIdentity, arg.NetworkID, arg.AccountID, arg.Region)
+	var vni int32
+	err := row.Scan(&vni)
+	return vni, err
+}
+
 const getPublishedApplicationStandardInstance = `-- name: GetPublishedApplicationStandardInstance :one
 SELECT id,app_id,deployment_id,state,COALESCE(netns,'')::text AS netns,COALESCE(guest_uid,0)::integer AS guest_uid,
  COALESCE(host(host_ip),'')::text AS host_ip,ram_mb,started_at,last_request_at,parked_at,node_id,wake_id,
@@ -29355,10 +29719,7 @@ func (q *Queries) HasEarlierMCPNotification(ctx context.Context, db DBTX, arg Ha
 
 const hasEnvironmentGitOpsRuntimeDrift = `-- name: HasEnvironmentGitOpsRuntimeDrift :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
-AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
- UNION ALL
- SELECT 1 FROM environment_managed_fields WHERE source_id=$1::uuid
- AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted
 `
 
 func (q *Queries) HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
@@ -34832,6 +35193,30 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertPrivateNetworkTransportIdentity = `-- name: InsertPrivateNetworkTransportIdentity :one
+INSERT INTO private_network_transport_identities(network_id,account_id,region,vni)
+VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING vni
+`
+
+type InsertPrivateNetworkTransportIdentityParams struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+	Vni       int32
+}
+
+func (q *Queries) InsertPrivateNetworkTransportIdentity(ctx context.Context, db DBTX, arg InsertPrivateNetworkTransportIdentityParams) (int32, error) {
+	row := db.QueryRow(ctx, insertPrivateNetworkTransportIdentity,
+		arg.NetworkID,
+		arg.AccountID,
+		arg.Region,
+		arg.Vni,
+	)
+	var vni int32
+	err := row.Scan(&vni)
+	return vni, err
+}
+
 const insertProjectEnvironmentCloneCapturedEdgePolicy = `-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES($1::uuid, $2::uuid, $3::uuid, $4::text, $5::jsonb)
@@ -37393,6 +37778,23 @@ func (q *Queries) InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg Inse
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const insertStaticEgressProvisioningGrant = `-- name: InsertStaticEgressProvisioningGrant :exec
+INSERT INTO static_egress_provisioning_grants(source_id, account_id, customer_ip)
+VALUES($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertStaticEgressProvisioningGrantParams struct {
+	SourceID   string
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+}
+
+func (q *Queries) InsertStaticEgressProvisioningGrant(ctx context.Context, db DBTX, arg InsertStaticEgressProvisioningGrantParams) error {
+	_, err := db.Exec(ctx, insertStaticEgressProvisioningGrant, arg.SourceID, arg.AccountID, arg.CustomerIp)
+	return err
 }
 
 const insertSyntheticCheck = `-- name: InsertSyntheticCheck :one
@@ -41094,6 +41496,40 @@ func (q *Queries) JobTaskLogTarget(ctx context.Context, db DBTX, arg JobTaskLogT
 	return i, err
 }
 
+const knownCustomDomainTLSHost = `-- name: KnownCustomDomainTLSHost :one
+SELECT EXISTS (
+ SELECT 1 FROM custom_domain_tls_hosts h JOIN custom_domains d ON d.domain=h.wildcard_domain
+ WHERE h.host=$1::text AND d.domain=$2::text::citext AND d.verified_at IS NOT NULL
+ AND ($3::text='' OR (d.app_id=nullif($3::text,'')::uuid AND d.challenge_token=$4::text))
+ AND ($5::boolean
+   OR NOT EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts a WHERE a.wildcard_domain=d.domain)
+   OR EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts a WHERE a.wildcard_domain=d.domain AND a.name=$6::text))
+)::boolean AS known
+`
+
+type KnownCustomDomainTLSHostParams struct {
+	Host          string
+	Domain        string
+	ExpectedApp   string
+	ExpectedToken string
+	Probe         bool
+	Name          string
+}
+
+func (q *Queries) KnownCustomDomainTLSHost(ctx context.Context, db DBTX, arg KnownCustomDomainTLSHostParams) (bool, error) {
+	row := db.QueryRow(ctx, knownCustomDomainTLSHost,
+		arg.Host,
+		arg.Domain,
+		arg.ExpectedApp,
+		arg.ExpectedToken,
+		arg.Probe,
+		arg.Name,
+	)
+	var known bool
+	err := row.Scan(&known)
+	return known, err
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
@@ -42431,7 +42867,12 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 
 const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  )
 ORDER BY l.public_port
 `
 
@@ -45658,6 +46099,70 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 	return items, nil
 }
 
+const listCustomDomainsForActor = `-- name: ListCustomDomainsForActor :many
+select d.domain::text as domain, d.app_id::text as app_id, d.challenge_token,
+       d.verified_at, d.cert_status::text as cert_status, d.cert_expires_at,
+       coalesce(d.cert_last_error, '')::text as cert_last_error,
+       d.dns_last_checked_at, d.cert_failed_at, d.verification_next_check_at,
+       d.verification_expires_at, d.verification_attempts,
+       coalesce(d.environment_id::text, '')::text as environment_id
+from custom_domains d join apps a on a.id = d.app_id
+where a.account_id = $1 or exists (
+    select 1 from org_memberships m where m.org_id = a.org_id
+    and m.account_id = $1 and m.removed_at is null)
+order by d.domain
+`
+
+type ListCustomDomainsForActorRow struct {
+	Domain                  string
+	AppID                   string
+	ChallengeToken          string
+	VerifiedAt              pgtype.Timestamptz
+	CertStatus              string
+	CertExpiresAt           pgtype.Timestamptz
+	CertLastError           string
+	DnsLastCheckedAt        pgtype.Timestamptz
+	CertFailedAt            pgtype.Timestamptz
+	VerificationNextCheckAt pgtype.Timestamptz
+	VerificationExpiresAt   pgtype.Timestamptz
+	VerificationAttempts    int32
+	EnvironmentID           string
+}
+
+func (q *Queries) ListCustomDomainsForActor(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCustomDomainsForActorRow, error) {
+	rows, err := db.Query(ctx, listCustomDomainsForActor, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomDomainsForActorRow{}
+	for rows.Next() {
+		var i ListCustomDomainsForActorRow
+		if err := rows.Scan(
+			&i.Domain,
+			&i.AppID,
+			&i.ChallengeToken,
+			&i.VerifiedAt,
+			&i.CertStatus,
+			&i.CertExpiresAt,
+			&i.CertLastError,
+			&i.DnsLastCheckedAt,
+			&i.CertFailedAt,
+			&i.VerificationNextCheckAt,
+			&i.VerificationExpiresAt,
+			&i.VerificationAttempts,
+			&i.EnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
 SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
@@ -48222,7 +48727,12 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 
 const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  ))
 ORDER BY public_port ASC
 `
 
@@ -51953,6 +52463,151 @@ func (q *Queries) ListPreparedEventSubscriptionIntents(ctx context.Context, db D
 	return items, nil
 }
 
+const listPrivateNetworkAttachmentPage = `-- name: ListPrivateNetworkAttachmentPage :many
+SELECT id, account_id, app_id, network_id, region,
+       coalesce(cidrs::text, '{}')::text AS cidrs_text, coalesce(allowed_cidrs::text, '{}')::text AS allowed_cidrs_text,
+       status, status_detail, created_at, updated_at
+FROM app_private_network_attachments
+WHERE account_id = $1
+  AND ($2::text = '' OR region = $2)
+  AND ($3::text = '' OR network_id = $3)
+  AND ($4::text[] IS NULL OR status = ANY($4::text[]))
+  AND ($5::uuid IS NULL OR app_id > $5::uuid)
+ORDER BY app_id
+LIMIT $6
+`
+
+type ListPrivateNetworkAttachmentPageParams struct {
+	AccountID  pgtype.UUID
+	Region     string
+	NetworkID  string
+	Statuses   []string
+	AfterAppID pgtype.UUID
+	PageSize   int32
+}
+
+type ListPrivateNetworkAttachmentPageRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	NetworkID        string
+	Region           string
+	CidrsText        string
+	AllowedCidrsText string
+	Status           string
+	StatusDetail     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) ListPrivateNetworkAttachmentPage(ctx context.Context, db DBTX, arg ListPrivateNetworkAttachmentPageParams) ([]ListPrivateNetworkAttachmentPageRow, error) {
+	rows, err := db.Query(ctx, listPrivateNetworkAttachmentPage,
+		arg.AccountID,
+		arg.Region,
+		arg.NetworkID,
+		arg.Statuses,
+		arg.AfterAppID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPrivateNetworkAttachmentPageRow{}
+	for rows.Next() {
+		var i ListPrivateNetworkAttachmentPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.NetworkID,
+			&i.Region,
+			&i.CidrsText,
+			&i.AllowedCidrsText,
+			&i.Status,
+			&i.StatusDetail,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateNetworkInstanceNetworks = `-- name: ListPrivateNetworkInstanceNetworks :many
+SELECT DISTINCT network_id FROM private_network_addresses
+WHERE account_id=$1::uuid AND owner_type='instance' AND owner_id=$2::text
+UNION
+SELECT network_id FROM private_network_service_owners
+WHERE account_id=$1::uuid AND instance_id=$2::text
+`
+
+type ListPrivateNetworkInstanceNetworksParams struct {
+	AccountID  pgtype.UUID
+	InstanceID string
+}
+
+func (q *Queries) ListPrivateNetworkInstanceNetworks(ctx context.Context, db DBTX, arg ListPrivateNetworkInstanceNetworksParams) ([]string, error) {
+	rows, err := db.Query(ctx, listPrivateNetworkInstanceNetworks, arg.AccountID, arg.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var network_id string
+		if err := rows.Scan(&network_id); err != nil {
+			return nil, err
+		}
+		items = append(items, network_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateNetworkRuntimeMembers = `-- name: ListPrivateNetworkRuntimeMembers :many
+SELECT a.account_id, a.network_id, o.app_id
+FROM private_network_addresses a
+LEFT JOIN private_network_service_owners o ON o.network_id=a.network_id AND o.instance_id=a.owner_id
+WHERE a.owner_type='instance' AND a.owner_id=$1::text
+UNION
+SELECT account_id, network_id, app_id FROM private_network_service_owners
+WHERE instance_id=$1::text
+`
+
+type ListPrivateNetworkRuntimeMembersRow struct {
+	AccountID pgtype.UUID
+	NetworkID string
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ListPrivateNetworkRuntimeMembers(ctx context.Context, db DBTX, instanceID string) ([]ListPrivateNetworkRuntimeMembersRow, error) {
+	rows, err := db.Query(ctx, listPrivateNetworkRuntimeMembers, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPrivateNetworkRuntimeMembersRow{}
+	for rows.Next() {
+		var i ListPrivateNetworkRuntimeMembersRow
+		if err := rows.Scan(&i.AccountID, &i.NetworkID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductionDeadLetterEvents = `-- name: ListProductionDeadLetterEvents :many
 WITH anchor AS (SELECT last_failed_at,id FROM production_dead_letter_events
     WHERE id=$3::uuid AND ($1::uuid IS NULL OR account_id=$1::uuid)
@@ -55198,19 +55853,23 @@ FROM (
     and occurrence.schedule_revision=managed.schedule_revision and occurrence.status='running'
     and occurrence.created_at>=release.created_at and occurrence.started_at>=release.created_at
     and run.created_at>=release.created_at and run.started_at>=release.created_at
-    and managed.kind='recurring' and managed.status='active'
-    and intent.schedule is not null and intent.source->>'kind'='image'
-    and managed.image_ref=intent.source->>'image'
+    and managed.kind='recurring' and managed.status IN ('active','paused')
+    and intent.schedule is not null
     and managed.image_materialization_status='ready' and coalesce(managed.image_storage_key,'')<>''
-    and managed.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
+    and (
+      (intent.source->>'kind'='image' and managed.image_ref=intent.source->>'image'
+       and managed.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$'))
+      or (intent.source->>'kind' in ('source','dockerfile')
+          and environment_workload_source_job_deployment_matches(managed.id,deployment.id)
+          and managed.image_resolved_digest='gregale-deployment:'||deployment.id::text
+          and managed.image_storage_key=deployment.rootfs_key)
+    )
     and managed.cron_schedule=intent.schedule->>'cron'
     and managed.cron_timezone=intent.schedule->>'timezone'
     and managed.schedule_policy is not distinct from NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
     and managed.failure_rules is not distinct from NULLIF(intent.schedule->'failure_rules','null'::jsonb)
-    and source.mode='enforce' and not source.suspended and source.approved_revision_id is not null
-    and source.generation::text=deployment.environment_workload_runtime->>'generation'
-    and source.intent_version::text=deployment.environment_workload_runtime->>'intent_version'
-    and source.approved_revision_id::text=deployment.environment_workload_runtime->>'revision_id'
+    -- The exact active release authorizes serving. Controller suspension,
+    -- report mode and a newer approval do not withdraw that release.
     and source.id::text=deployment.environment_workload_runtime->>'source_id'
     and source.environment_id::text=deployment.environment_workload_runtime->>'environment_id'
     and deployment.environment_workload_runtime->>'app_id'=intent.app_id::text
@@ -55239,7 +55898,8 @@ FROM (
     and run.execution_class='standard' and run.failure_policy='continue'
     and run.input_manifest_version=0 and coalesce(run.input_digest,'')=''
     and run.input_manifest_uri is null and run.input_manifest_sha256 is null
-    and managed.max_parallelism=1 and managed.retry_max=0 and cardinality(managed.command)=0
+    and managed.max_parallelism=1 and managed.retry_max=0
+    and to_jsonb(managed.command)=coalesce(nullif(intent.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
     and managed.env_overrides=coalesce(deployment.environment_workload_runtime->'variables','{}'::jsonb)
     and coalesce(deployment.environment_workload_runtime->'queue_bindings','{}'::jsonb)='{}'::jsonb
   ) managed_job on true
@@ -56572,6 +57232,32 @@ func (q *Queries) LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, acc
 	return id, err
 }
 
+const lockCustomDomainTLSAdmissionClaim = `-- name: LockCustomDomainTLSAdmissionClaim :one
+SELECT (d.verified_at IS NOT NULL)::boolean AS verified, d.app_id::text AS app_id,
+ d.challenge_token::text AS token, coalesce(a.org_id,a.account_id)::text AS owner_id
+FROM custom_domains d JOIN apps a ON a.id=d.app_id
+WHERE d.domain=$1::text::citext FOR NO KEY UPDATE OF d
+`
+
+type LockCustomDomainTLSAdmissionClaimRow struct {
+	Verified bool
+	AppID    string
+	Token    string
+	OwnerID  string
+}
+
+func (q *Queries) LockCustomDomainTLSAdmissionClaim(ctx context.Context, db DBTX, domain string) (LockCustomDomainTLSAdmissionClaimRow, error) {
+	row := db.QueryRow(ctx, lockCustomDomainTLSAdmissionClaim, domain)
+	var i LockCustomDomainTLSAdmissionClaimRow
+	err := row.Scan(
+		&i.Verified,
+		&i.AppID,
+		&i.Token,
+		&i.OwnerID,
+	)
+	return i, err
+}
+
 const lockCustomerOperationAccount = `-- name: LockCustomerOperationAccount :one
 SELECT plan::text FROM accounts WHERE id = $1::uuid FOR UPDATE
 `
@@ -57323,6 +58009,32 @@ func (q *Queries) LockEnvironmentGitOpsIntentApps(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEnvironmentGitOpsJobUpdate = `-- name: LockEnvironmentGitOpsJobUpdate :one
+SELECT j.status FROM jobs j JOIN app_environment_workload_intents i ON i.job_id=j.id
+WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid
+ AND i.environment_id=$3::uuid AND j.id=$4::uuid
+ AND j.account_id=i.account_id FOR UPDATE OF j
+`
+
+type LockEnvironmentGitOpsJobUpdateParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	JobID         pgtype.UUID
+}
+
+func (q *Queries) LockEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsJobUpdateParams) (string, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsJobUpdate,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.JobID,
+	)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const lockEnvironmentGitOpsLease = `-- name: LockEnvironmentGitOpsLease :one
@@ -58927,6 +59639,66 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPrivateNetworkMemberAttachment = `-- name: LockPrivateNetworkMemberAttachment :one
+SELECT app_id FROM app_private_network_attachments
+WHERE account_id=$1 AND app_id=$2 AND network_id=$3 FOR SHARE
+`
+
+type LockPrivateNetworkMemberAttachmentParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	NetworkID string
+}
+
+func (q *Queries) LockPrivateNetworkMemberAttachment(ctx context.Context, db DBTX, arg LockPrivateNetworkMemberAttachmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockPrivateNetworkMemberAttachment, arg.AccountID, arg.AppID, arg.NetworkID)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
+const lockPrivateNetworkRuntimeDefinition = `-- name: LockPrivateNetworkRuntimeDefinition :one
+SELECT id FROM private_networks WHERE account_id=$1 AND id=$2 FOR UPDATE
+`
+
+type LockPrivateNetworkRuntimeDefinitionParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) LockPrivateNetworkRuntimeDefinition(ctx context.Context, db DBTX, arg LockPrivateNetworkRuntimeDefinitionParams) (string, error) {
+	row := db.QueryRow(ctx, lockPrivateNetworkRuntimeDefinition, arg.AccountID, arg.ID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPrivateNetworkTransportDefinition = `-- name: LockPrivateNetworkTransportDefinition :one
+SELECT id FROM private_networks WHERE id=$1 AND account_id=$2 AND region=$3 FOR KEY SHARE
+`
+
+type LockPrivateNetworkTransportDefinitionParams struct {
+	ID        string
+	AccountID pgtype.UUID
+	Region    string
+}
+
+func (q *Queries) LockPrivateNetworkTransportDefinition(ctx context.Context, db DBTX, arg LockPrivateNetworkTransportDefinitionParams) (string, error) {
+	row := db.QueryRow(ctx, lockPrivateNetworkTransportDefinition, arg.ID, arg.AccountID, arg.Region)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPrivateNetworkTransportRegion = `-- name: LockPrivateNetworkTransportRegion :exec
+SELECT pg_advisory_xact_lock(hashtextextended('private-network-transport:' || $1::text,0))
+`
+
+func (q *Queries) LockPrivateNetworkTransportRegion(ctx context.Context, db DBTX, region string) error {
+	_, err := db.Exec(ctx, lockPrivateNetworkTransportRegion, region)
+	return err
 }
 
 const lockProductionDeadLetterEvent = `-- name: LockProductionDeadLetterEvent :one
@@ -62043,6 +62815,45 @@ func (q *Queries) MarkCrashCaptureEncrypted(ctx context.Context, db DBTX, arg Ma
 	return i, err
 }
 
+const markCustomDomainProbeDrifted = `-- name: MarkCustomDomainProbeDrifted :execrows
+UPDATE custom_domains SET
+ verified_at=NULL, cert_status='dns_drifted', cert_expires_at=NULL,
+ cert_last_error=nullif($1::text,''), dns_last_checked_at=$2::timestamptz,
+ cert_failed_at=NULL, last_cert_issuance_failed_email_at=NULL,
+ verification_next_check_at=CASE WHEN $3::boolean THEN now() ELSE verification_next_check_at END,
+ verification_attempts=CASE WHEN $3::boolean THEN 0 ELSE verification_attempts END,
+ verification_expires_at=CASE WHEN $3::boolean THEN now()+interval '7 days' ELSE verification_expires_at END
+WHERE domain=$4::text::citext AND app_id=$5::text::uuid
+ AND challenge_token=$6::text
+ AND (($3::boolean AND verified_at IS NOT NULL)
+   OR (NOT $3::boolean AND verified_at IS NULL AND cert_status='dns_drifted'))
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at<=$2::timestamptz)
+`
+
+type MarkCustomDomainProbeDriftedParams struct {
+	Reason     string
+	CheckedAt  pgtype.Timestamptz
+	Transition bool
+	Domain     string
+	AppID      string
+	Token      string
+}
+
+func (q *Queries) MarkCustomDomainProbeDrifted(ctx context.Context, db DBTX, arg MarkCustomDomainProbeDriftedParams) (int64, error) {
+	result, err := db.Exec(ctx, markCustomDomainProbeDrifted,
+		arg.Reason,
+		arg.CheckedAt,
+		arg.Transition,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markDatabaseStandbySynced = `-- name: MarkDatabaseStandbySynced :execrows
 UPDATE database_vms SET standby_synced = $1::boolean
 WHERE database_id = $2
@@ -62224,24 +63035,29 @@ func (q *Queries) MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx conte
 }
 
 const markTrafficDomainVerified = `-- name: MarkTrafficDomainVerified :execrows
-UPDATE custom_domains SET verified_at=now()
-WHERE domain=$1::text::citext AND app_id=$2::uuid
-  AND (NOT $3::boolean OR
+UPDATE custom_domains SET verified_at=now(),
+ cert_status=CASE WHEN $1::boolean THEN 'pending' ELSE cert_status END,
+ cert_expires_at=CASE WHEN $1::boolean THEN NULL ELSE cert_expires_at END,
+ cert_last_error=CASE WHEN $1::boolean THEN NULL ELSE cert_last_error END,
+ cert_failed_at=CASE WHEN $1::boolean THEN NULL ELSE cert_failed_at END,
+ dns_last_checked_at=CASE WHEN $1::boolean THEN clock_timestamp() ELSE dns_last_checked_at END
+WHERE domain=$2::text::citext AND app_id=$3::uuid
+  AND (NOT $1::boolean OR
     (challenge_token=$4::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()))
 `
 
 type MarkTrafficDomainVerifiedParams struct {
+	ChallengeBound bool
 	Domain         string
 	AppID          pgtype.UUID
-	ChallengeBound bool
 	Token          string
 }
 
 func (q *Queries) MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg MarkTrafficDomainVerifiedParams) (int64, error) {
 	result, err := db.Exec(ctx, markTrafficDomainVerified,
+		arg.ChallengeBound,
 		arg.Domain,
 		arg.AppID,
-		arg.ChallengeBound,
 		arg.Token,
 	)
 	if err != nil {
@@ -72515,7 +73331,8 @@ SELECT jsonb_build_object(
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
         'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,
             'source_url',coalesce(d.source_url,''),'commit_sha',coalesce(d.commit_sha,''),'source_root',coalesce(d.source_root,''),
-            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id) FROM deployments d
+            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL,
+            'plan_hash',d.environment_workload_runtime->>'plan_hash') ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
@@ -73011,6 +73828,21 @@ type ParkCustomerOperationWorkflowRunParams struct {
 // fence. Preserve that earlier wake when the coordinator parks afterwards.
 func (q *Queries) ParkCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg ParkCustomerOperationWorkflowRunParams) error {
 	_, err := db.Exec(ctx, parkCustomerOperationWorkflowRun, arg.Status, arg.DueAt, arg.ID)
+	return err
+}
+
+const pauseEnvironmentGitOpsJobUpdate = `-- name: PauseEnvironmentGitOpsJobUpdate :exec
+UPDATE jobs SET status='paused',updated_at=$1::timestamptz
+WHERE id=$2::uuid AND status='active'
+`
+
+type PauseEnvironmentGitOpsJobUpdateParams struct {
+	UpdatedAt pgtype.Timestamptz
+	JobID     pgtype.UUID
+}
+
+func (q *Queries) PauseEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg PauseEnvironmentGitOpsJobUpdateParams) error {
+	_, err := db.Exec(ctx, pauseEnvironmentGitOpsJobUpdate, arg.UpdatedAt, arg.JobID)
 	return err
 }
 
@@ -73964,6 +74796,57 @@ func (q *Queries) PrepareMigrationContractRuntime(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const privateNetworkAttachmentByAppID = `-- name: PrivateNetworkAttachmentByAppID :one
+SELECT id,account_id,app_id,network_id,region,
+  coalesce(cidrs::text,'{}')::text AS cidrs_text,coalesce(allowed_cidrs::text,'{}')::text AS allowed_cidrs_text,
+  status,status_detail,created_at,updated_at
+FROM app_private_network_attachments WHERE app_id = $1
+`
+
+type PrivateNetworkAttachmentByAppIDRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	NetworkID        string
+	Region           string
+	CidrsText        string
+	AllowedCidrsText string
+	Status           string
+	StatusDetail     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) PrivateNetworkAttachmentByAppID(ctx context.Context, db DBTX, appID pgtype.UUID) (PrivateNetworkAttachmentByAppIDRow, error) {
+	row := db.QueryRow(ctx, privateNetworkAttachmentByAppID, appID)
+	var i PrivateNetworkAttachmentByAppIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.NetworkID,
+		&i.Region,
+		&i.CidrsText,
+		&i.AllowedCidrsText,
+		&i.Status,
+		&i.StatusDetail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const privateNetworkTransportIdentityExists = `-- name: PrivateNetworkTransportIdentityExists :one
+SELECT EXISTS(SELECT 1 FROM private_network_transport_identities WHERE network_id=$1)
+`
+
+func (q *Queries) PrivateNetworkTransportIdentityExists(ctx context.Context, db DBTX, networkID string) (bool, error) {
+	row := db.QueryRow(ctx, privateNetworkTransportIdentityExists, networkID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const probeManagedPostgresCredential = `-- name: ProbeManagedPostgresCredential :one
 SELECT session_user::text AS login, current_user::text AS effective_user,
  current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
@@ -74245,6 +75128,28 @@ func (q *Queries) ProjectWorkerGraphAdmission(ctx context.Context, db DBTX, arg 
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
+}
+
+const provisionedStaticEgressIPExists = `-- name: ProvisionedStaticEgressIPExists :one
+SELECT EXISTS (
+    SELECT 1 FROM provisioned_static_egress_ips AS legacy
+    WHERE legacy.account_id = $1::uuid AND legacy.customer_ip = $2::inet
+    UNION ALL
+    SELECT 1 FROM static_egress_provisioning_grants AS owned
+    WHERE owned.account_id = $1::uuid AND owned.customer_ip = $2::inet
+)
+`
+
+type ProvisionedStaticEgressIPExistsParams struct {
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+}
+
+func (q *Queries) ProvisionedStaticEgressIPExists(ctx context.Context, db DBTX, arg ProvisionedStaticEgressIPExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, provisionedStaticEgressIPExists, arg.AccountID, arg.CustomerIp)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const pruneAccountCustomerOperationStreams = `-- name: PruneAccountCustomerOperationStreams :exec
@@ -79170,6 +80075,7 @@ SELECT (jsonb_build_object(
     'customer_operation_code_pins_owner_fk', (SELECT count(*) FROM customer_operation_code_pins WHERE deployment_id = $1::uuid),
     'customer_operation_definitions_deployment_id_fkey', (SELECT count(*) FROM customer_operation_definitions WHERE deployment_id = $1::uuid),
     'deployment_aliases_deployment_id_fkey', (SELECT count(*) FROM deployment_aliases WHERE deployment_id = $1::uuid),
+    'deployment_event_subscription_intents_deployment_id_fkey', (SELECT count(*) FROM deployment_event_subscription_intents WHERE deployment_id = $1::uuid),
     'deployment_image_preparations_deployment_id_fkey', (SELECT count(*) FROM deployment_image_preparations WHERE deployment_id = $1::uuid),
     'deployment_logs_deployment_id_fkey', (SELECT count(*) FROM deployment_logs WHERE deployment_id = $1::uuid),
     'deployment_openapi_docs_deployment_id_fkey', (SELECT count(*) FROM deployment_openapi_docs WHERE deployment_id = $1::uuid),
@@ -79313,6 +80219,7 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.restored_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE restored_target_deployment_id=$1::uuid::text),
  'project_environment_promotion_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE source_deployment_id=$1::uuid::text),
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
+ 'request_analytics_minutes.deployment_id', (SELECT count(*) FROM request_analytics_minutes WHERE deployment_id=$1::uuid),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
  'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=$1::uuid),
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
@@ -79786,6 +80693,77 @@ func (q *Queries) ReadCronActivationDeployment(ctx context.Context, db DBTX, arg
 		&i.CompetingTraffic,
 	)
 	return i, err
+}
+
+const readCustomDomainProbeAllowedHosts = `-- name: ReadCustomDomainProbeAllowedHosts :one
+SELECT coalesce(array_agg(h.name::text ORDER BY h.name) FILTER (WHERE h.name IS NOT NULL), '{}')::text[] AS names
+FROM custom_domains d LEFT JOIN custom_domain_tls_allowed_hosts h ON h.wildcard_domain=d.domain
+WHERE d.domain=$1::text::citext AND d.app_id=$2::text::uuid
+ AND d.challenge_token=$3::text GROUP BY d.domain
+`
+
+type ReadCustomDomainProbeAllowedHostsParams struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ReadCustomDomainProbeAllowedHosts(ctx context.Context, db DBTX, arg ReadCustomDomainProbeAllowedHostsParams) ([]string, error) {
+	row := db.QueryRow(ctx, readCustomDomainProbeAllowedHosts, arg.Domain, arg.AppID, arg.Token)
+	var names []string
+	err := row.Scan(&names)
+	return names, err
+}
+
+const readCustomDomainProbeClaim = `-- name: ReadCustomDomainProbeClaim :one
+SELECT (verified_at IS NOT NULL)::boolean AS verified, cert_status::text AS status, dns_last_checked_at
+FROM custom_domains WHERE domain=$1::text::citext
+AND app_id=$2::text::uuid AND challenge_token=$3::text
+`
+
+type ReadCustomDomainProbeClaimParams struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+type ReadCustomDomainProbeClaimRow struct {
+	Verified         bool
+	Status           string
+	DnsLastCheckedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadCustomDomainProbeClaim(ctx context.Context, db DBTX, arg ReadCustomDomainProbeClaimParams) (ReadCustomDomainProbeClaimRow, error) {
+	row := db.QueryRow(ctx, readCustomDomainProbeClaim, arg.Domain, arg.AppID, arg.Token)
+	var i ReadCustomDomainProbeClaimRow
+	err := row.Scan(&i.Verified, &i.Status, &i.DnsLastCheckedAt)
+	return i, err
+}
+
+const readCustomDomainProbeObservation = `-- name: ReadCustomDomainProbeObservation :one
+SELECT CASE WHEN o.domain IS NULL THEN NULL ELSE jsonb_build_object(
+ 'Domain',o.domain,'SurfaceID',coalesce(o.surface_id::text,''),'ObservedAt',o.observed_at,
+ 'DNSRecordFound',o.dns_record_found,'PointsToGregale',o.points_to_gregale,'CAAPermits',o.caa_permits,
+ 'IPv6Conflict',o.ipv6_conflict,'ObservedTarget',coalesce(o.observed_target,''),'ObservedAAAA',coalesce(o.observed_aaaa,''),
+ 'CAAObserved',coalesce(o.caa_observed,''),'CertState',o.cert_state,'CertNotAfter',o.cert_not_after,
+ 'LastError',coalesce(o.last_error,''),'DNSCheckedAt',o.dns_checked_at,'CertCheckedAt',o.cert_checked_at
+ ) END::jsonb AS data FROM custom_domains d
+ LEFT JOIN domain_doctor_observations o ON o.domain=d.domain
+ WHERE d.domain=$1::text::citext AND d.app_id=$2::text::uuid
+ AND d.challenge_token=$3::text
+`
+
+type ReadCustomDomainProbeObservationParams struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ReadCustomDomainProbeObservation(ctx context.Context, db DBTX, arg ReadCustomDomainProbeObservationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCustomDomainProbeObservation, arg.Domain, arg.AppID, arg.Token)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
@@ -88810,6 +89788,23 @@ func (q *Queries) ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, 
 	return account_id, err
 }
 
+const readTenantSurfaceTrafficOwner = `-- name: ReadTenantSurfaceTrafficOwner :one
+SELECT account_id, coalesce(app_id::text,'')::text AS app_id
+FROM tenant_surfaces WHERE id=$1::uuid
+`
+
+type ReadTenantSurfaceTrafficOwnerRow struct {
+	AccountID pgtype.UUID
+	AppID     string
+}
+
+func (q *Queries) ReadTenantSurfaceTrafficOwner(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (ReadTenantSurfaceTrafficOwnerRow, error) {
+	row := db.QueryRow(ctx, readTenantSurfaceTrafficOwner, surfaceID)
+	var i ReadTenantSurfaceTrafficOwnerRow
+	err := row.Scan(&i.AccountID, &i.AppID)
+	return i, err
+}
+
 const readTrafficAliasHostnameConflict = `-- name: ReadTrafficAliasHostnameConflict :one
 SELECT EXISTS(SELECT 1 FROM apps WHERE slug=$1::text)::boolean AS conflict
 `
@@ -90608,6 +91603,33 @@ func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.ReservedByCutoverID,
 	)
 	return i, err
+}
+
+const recordCustomDomainVerificationCheck = `-- name: RecordCustomDomainVerificationCheck :execrows
+UPDATE custom_domains SET dns_last_checked_at=$1::timestamptz
+WHERE domain=$2::text::citext AND app_id=$3::text::uuid
+ AND challenge_token=$4::text AND verified_at IS NULL
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at<=$1::timestamptz)
+`
+
+type RecordCustomDomainVerificationCheckParams struct {
+	CheckedAt pgtype.Timestamptz
+	Domain    string
+	AppID     string
+	Token     string
+}
+
+func (q *Queries) RecordCustomDomainVerificationCheck(ctx context.Context, db DBTX, arg RecordCustomDomainVerificationCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCustomDomainVerificationCheck,
+		arg.CheckedAt,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordDatabaseVMBackup = `-- name: RecordDatabaseVMBackup :execrows
@@ -93357,6 +94379,29 @@ func (q *Queries) ReleaseConfigurationCandidateOwner(ctx context.Context, db DBT
 	return i, err
 }
 
+const releaseCustomDomainProbeFailureEmail = `-- name: ReleaseCustomDomainProbeFailureEmail :exec
+UPDATE custom_domains SET last_cert_issuance_failed_email_at=NULL
+WHERE domain=$1::text::citext AND app_id=$2::text::uuid
+ AND challenge_token=$3::text AND last_cert_issuance_failed_email_at=$4::timestamptz
+`
+
+type ReleaseCustomDomainProbeFailureEmailParams struct {
+	Domain string
+	AppID  string
+	Token  string
+	At     pgtype.Timestamptz
+}
+
+func (q *Queries) ReleaseCustomDomainProbeFailureEmail(ctx context.Context, db DBTX, arg ReleaseCustomDomainProbeFailureEmailParams) error {
+	_, err := db.Exec(ctx, releaseCustomDomainProbeFailureEmail,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+		arg.At,
+	)
+	return err
+}
+
 const releaseDatabaseStandby = `-- name: ReleaseDatabaseStandby :execrows
 UPDATE database_vms SET standby_running = false, standby_synced = standby_synced AND $1::boolean
 WHERE database_id = $2
@@ -93375,6 +94420,24 @@ func (q *Queries) ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg Relea
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const releaseDetachedPrivateNetworkServiceAddress = `-- name: ReleaseDetachedPrivateNetworkServiceAddress :exec
+DELETE FROM private_network_addresses a WHERE a.account_id=$1 AND a.network_id=$2
+ AND a.owner_type='app' AND a.owner_id=$3
+ AND NOT EXISTS(SELECT 1 FROM app_private_network_attachments x WHERE x.app_id::text=a.owner_id AND x.network_id=a.network_id)
+ AND NOT EXISTS(SELECT 1 FROM private_network_service_owners o WHERE o.app_id::text=a.owner_id AND o.network_id=a.network_id)
+`
+
+type ReleaseDetachedPrivateNetworkServiceAddressParams struct {
+	AccountID pgtype.UUID
+	NetworkID string
+	OwnerID   string
+}
+
+func (q *Queries) ReleaseDetachedPrivateNetworkServiceAddress(ctx context.Context, db DBTX, arg ReleaseDetachedPrivateNetworkServiceAddressParams) error {
+	_, err := db.Exec(ctx, releaseDetachedPrivateNetworkServiceAddress, arg.AccountID, arg.NetworkID, arg.OwnerID)
+	return err
 }
 
 const releaseEdgeRuleAccountMutationLock = `-- name: ReleaseEdgeRuleAccountMutationLock :one
@@ -93582,6 +94645,44 @@ func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg Relea
 	return err
 }
 
+const releasePrivateNetworkInstanceAddress = `-- name: ReleasePrivateNetworkInstanceAddress :exec
+DELETE FROM private_network_addresses WHERE account_id=$1 AND network_id=$2
+ AND owner_type='instance' AND owner_id=$3
+`
+
+type ReleasePrivateNetworkInstanceAddressParams struct {
+	AccountID pgtype.UUID
+	NetworkID string
+	OwnerID   string
+}
+
+func (q *Queries) ReleasePrivateNetworkInstanceAddress(ctx context.Context, db DBTX, arg ReleasePrivateNetworkInstanceAddressParams) error {
+	_, err := db.Exec(ctx, releasePrivateNetworkInstanceAddress, arg.AccountID, arg.NetworkID, arg.OwnerID)
+	return err
+}
+
+const releasePrivateNetworkService = `-- name: ReleasePrivateNetworkService :exec
+DELETE FROM private_network_service_owners WHERE account_id=$1 AND network_id=$2
+ AND app_id=$3 AND instance_id=$4
+`
+
+type ReleasePrivateNetworkServiceParams struct {
+	AccountID  pgtype.UUID
+	NetworkID  string
+	AppID      pgtype.UUID
+	InstanceID string
+}
+
+func (q *Queries) ReleasePrivateNetworkService(ctx context.Context, db DBTX, arg ReleasePrivateNetworkServiceParams) error {
+	_, err := db.Exec(ctx, releasePrivateNetworkService,
+		arg.AccountID,
+		arg.NetworkID,
+		arg.AppID,
+		arg.InstanceID,
+	)
+	return err
+}
+
 const releaseProductionNamedQueueClaims = `-- name: ReleaseProductionNamedQueueClaims :exec
 with targets as (
 		select unnest($3::text[]) as id, unnest($4::int[]) as attempt
@@ -93763,6 +94864,20 @@ func (q *Queries) ReleaseWorkerCandidateOwner(ctx context.Context, db DBTX, arg 
 	var i ReleaseWorkerCandidateOwnerRow
 	err := row.Scan(&i.Payload, &i.Status)
 	return i, err
+}
+
+const rememberDetachedEnvironmentJobOwners = `-- name: RememberDetachedEnvironmentJobOwners :exec
+UPDATE jobs j SET environment_git_source_id=s.id
+FROM environment_git_sources s
+JOIN environment_gitops_resources r ON r.source_id=s.id
+JOIN app_environment_workload_intents i ON i.app_id=r.app_id AND i.environment_id=s.environment_id AND i.account_id=s.account_id
+WHERE s.id=$1::uuid AND s.detached AND j.id=i.job_id
+ AND j.account_id=s.account_id AND j.environment_git_source_id IS NULL
+`
+
+func (q *Queries) RememberDetachedEnvironmentJobOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, rememberDetachedEnvironmentJobOwners, sourceID)
+	return err
 }
 
 const removeApplicationStandardUnselectedDrains = `-- name: RemoveApplicationStandardUnselectedDrains :exec
@@ -97831,6 +98946,32 @@ func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDat
 	return i, err
 }
 
+const retryCustomDomainVerificationClaim = `-- name: RetryCustomDomainVerificationClaim :execrows
+UPDATE custom_domains SET verification_next_check_at=now(),verification_attempts=0
+WHERE domain=$1::text::citext AND verified_at IS NULL AND verification_expires_at>now()
+ AND (NOT $2::boolean OR (app_id=nullif($3::text,'')::uuid AND challenge_token=$4::text))
+`
+
+type RetryCustomDomainVerificationClaimParams struct {
+	Domain     string
+	ClaimBound bool
+	AppID      string
+	Token      string
+}
+
+func (q *Queries) RetryCustomDomainVerificationClaim(ctx context.Context, db DBTX, arg RetryCustomDomainVerificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, retryCustomDomainVerificationClaim,
+		arg.Domain,
+		arg.ClaimBound,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryCustomerOperationBlobCleanup = `-- name: RetryCustomerOperationBlobCleanup :execrows
 UPDATE customer_operation_result_blobs SET lease_token = '',lease_until = NULL,next_attempt_at = $1::timestamptz
 WHERE id = $2::uuid AND state = 'deleting' AND lease_token = $3::text
@@ -101109,6 +102250,34 @@ func (q *Queries) SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg Set
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const setCustomDomainDefault = `-- name: SetCustomDomainDefault :one
+INSERT INTO app_default_domains(app_id,domain)
+SELECT $1::text::uuid,domain FROM custom_domains
+WHERE domain=$2::text::citext AND app_id=$1::text::uuid
+ AND environment_id IS NULL AND verified_at IS NOT NULL AND domain NOT LIKE '*.%'
+ AND (NOT $3::boolean OR challenge_token=$4::text)
+ON CONFLICT(app_id) DO UPDATE SET domain=excluded.domain,updated_at=now() RETURNING 1
+`
+
+type SetCustomDomainDefaultParams struct {
+	AppID      string
+	Domain     string
+	ClaimBound bool
+	Token      string
+}
+
+func (q *Queries) SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (int32, error) {
+	row := db.QueryRow(ctx, setCustomDomainDefault,
+		arg.AppID,
+		arg.Domain,
+		arg.ClaimBound,
+		arg.Token,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const setCustomerOperationExecutionIdentity = `-- name: SetCustomerOperationExecutionIdentity :exec
@@ -104529,6 +105698,17 @@ func (q *Queries) TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX
 	return column_1, err
 }
 
+const tryPrivateNetworkScopeLock = `-- name: TryPrivateNetworkScopeLock :one
+SELECT pg_try_advisory_lock(hashtextextended('private-network:' || $1::text, 0))::boolean
+`
+
+func (q *Queries) TryPrivateNetworkScopeLock(ctx context.Context, db DBTX, scopeKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryPrivateNetworkScopeLock, scopeKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -104582,7 +105762,12 @@ func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppU
 const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
 WHERE public_port = $1 AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  ))
 `
 
 func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error) {
@@ -104611,6 +105796,17 @@ WHERE managed_postgres_admission_cutover_id=$1::text::uuid
 func (q *Queries) UnfenceCancelledManagedPostgresCutover(ctx context.Context, db DBTX, cutoverID string) error {
 	_, err := db.Exec(ctx, unfenceCancelledManagedPostgresCutover, cutoverID)
 	return err
+}
+
+const unlockPrivateNetworkScope = `-- name: UnlockPrivateNetworkScope :one
+SELECT pg_advisory_unlock(hashtextextended('private-network:' || $1::text, 0))::boolean
+`
+
+func (q *Queries) UnlockPrivateNetworkScope(ctx context.Context, db DBTX, scopeKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockPrivateNetworkScope, scopeKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const unlockTrafficPolicySession = `-- name: UnlockTrafficPolicySession :one
@@ -104888,6 +106084,47 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateCustomDomainProbeCert = `-- name: UpdateCustomDomainProbeCert :execrows
+UPDATE custom_domains SET cert_status=$1::text,
+ cert_expires_at=$2::timestamptz,
+ cert_last_error=nullif($3::text,''),
+ dns_last_checked_at=$4::timestamptz,
+ cert_failed_at=CASE WHEN $1::text='failed' AND cert_status IS DISTINCT FROM 'failed'
+   THEN coalesce($4::timestamptz,now())
+   WHEN $1::text='failed' THEN cert_failed_at ELSE NULL END
+WHERE domain=$5::text::citext
+ AND (NOT $6::boolean OR (app_id=nullif($7::text,'')::uuid AND challenge_token=$8::text))
+ AND (NOT $6::boolean OR $4::timestamptz IS NULL OR dns_last_checked_at IS NULL OR dns_last_checked_at <= $4::timestamptz)
+`
+
+type UpdateCustomDomainProbeCertParams struct {
+	Status     string
+	ExpiresAt  pgtype.Timestamptz
+	LastError  string
+	CheckedAt  pgtype.Timestamptz
+	Domain     string
+	ClaimBound bool
+	AppID      string
+	Token      string
+}
+
+func (q *Queries) UpdateCustomDomainProbeCert(ctx context.Context, db DBTX, arg UpdateCustomDomainProbeCertParams) (int64, error) {
+	result, err := db.Exec(ctx, updateCustomDomainProbeCert,
+		arg.Status,
+		arg.ExpiresAt,
+		arg.LastError,
+		arg.CheckedAt,
+		arg.Domain,
+		arg.ClaimBound,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateCustomerAlertRule = `-- name: UpdateCustomerAlertRule :one
@@ -105217,6 +106454,71 @@ func (q *Queries) UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgSta
 	return err
 }
 
+const updatePrivateNetworkAttachmentStatusForIntent = `-- name: UpdatePrivateNetworkAttachmentStatusForIntent :one
+UPDATE app_private_network_attachments SET status = $1, status_detail = $2, updated_at = now()
+WHERE account_id = $3 AND app_id = $4 AND id = $5
+  AND network_id = $6 AND region = $7
+  AND cidrs = coalesce($8::cidr[],'{}') AND allowed_cidrs = coalesce($9::cidr[],'{}')
+RETURNING id, account_id, app_id, network_id, region,
+  coalesce(cidrs::text,'{}')::text AS cidrs_text,coalesce(allowed_cidrs::text,'{}')::text AS allowed_cidrs_text,
+  status,status_detail,created_at,updated_at
+`
+
+type UpdatePrivateNetworkAttachmentStatusForIntentParams struct {
+	Status       string
+	StatusDetail string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	ID           pgtype.UUID
+	NetworkID    string
+	Region       string
+	Cidrs        []netip.Prefix
+	AllowedCidrs []netip.Prefix
+}
+
+type UpdatePrivateNetworkAttachmentStatusForIntentRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	NetworkID        string
+	Region           string
+	CidrsText        string
+	AllowedCidrsText string
+	Status           string
+	StatusDetail     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) UpdatePrivateNetworkAttachmentStatusForIntent(ctx context.Context, db DBTX, arg UpdatePrivateNetworkAttachmentStatusForIntentParams) (UpdatePrivateNetworkAttachmentStatusForIntentRow, error) {
+	row := db.QueryRow(ctx, updatePrivateNetworkAttachmentStatusForIntent,
+		arg.Status,
+		arg.StatusDetail,
+		arg.AccountID,
+		arg.AppID,
+		arg.ID,
+		arg.NetworkID,
+		arg.Region,
+		arg.Cidrs,
+		arg.AllowedCidrs,
+	)
+	var i UpdatePrivateNetworkAttachmentStatusForIntentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.NetworkID,
+		&i.Region,
+		&i.CidrsText,
+		&i.AllowedCidrsText,
+		&i.Status,
+		&i.StatusDetail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updatePromotionFeatureFlagReceipt = `-- name: UpdatePromotionFeatureFlagReceipt :one
 UPDATE project_environment_promotion_feature_flags
 SET target_version = $1::bigint, rollback_version = $2::bigint
@@ -105439,9 +106741,9 @@ const updateTrafficDeploymentStatus = `-- name: UpdateTrafficDeploymentStatus :e
 UPDATE deployments SET status=$1::text, error=$2::text
 WHERE id=$3::uuid
   AND (status<>'cancelled' OR $1::text='cancelled')
-  AND NOT ($1::text='live' AND status<>'live' AND EXISTS (
+  AND NOT ($1::text='live' AND status<>'live' AND (environment_workload_runtime IS NOT NULL OR EXISTS (
     SELECT 1 FROM deployments managed WHERE managed.app_id=deployments.app_id
-      AND managed.scope=deployments.scope AND managed.environment_workload_runtime IS NOT NULL))
+      AND managed.scope=deployments.scope AND environment_workload_ownership_active(managed))))
   AND NOT (environment_workload_runtime IS NOT NULL AND status='live' AND $1::text NOT IN ('live', 'failed'))
 `
 
@@ -105681,6 +106983,55 @@ func (q *Queries) UpsertAutomationPublishReceipt(ctx context.Context, db DBTX, a
 		arg.Evidence,
 	)
 	return err
+}
+
+const upsertCustomDomainProbeObservation = `-- name: UpsertCustomDomainProbeObservation :execrows
+WITH claim AS (
+ SELECT domain FROM custom_domains WHERE domain=$2::text::citext
+ AND app_id=$3::text::uuid AND challenge_token=$4::text FOR SHARE
+)
+INSERT INTO domain_doctor_observations (domain,surface_id,observed_at,dns_record_found,points_to_gregale,
+ caa_permits,ipv6_conflict,observed_target,observed_aaaa,caa_observed,cert_state,cert_not_after,last_error,dns_checked_at,cert_checked_at)
+SELECT claim.domain,($1::jsonb->>'surface_id')::uuid,
+ ($1::jsonb->>'observed_at')::timestamptz,
+ ($1::jsonb->>'dns_record_found')::boolean,
+ ($1::jsonb->>'points_to_gregale')::boolean,
+ ($1::jsonb->>'caa_permits')::boolean,
+ ($1::jsonb->>'ipv6_conflict')::boolean,
+ $1::jsonb->>'observed_target',$1::jsonb->>'observed_aaaa',
+ $1::jsonb->>'caa_observed',$1::jsonb->>'cert_state',
+ ($1::jsonb->>'cert_not_after')::timestamptz,
+ $1::jsonb->>'last_error',($1::jsonb->>'dns_checked_at')::timestamptz,
+ ($1::jsonb->>'cert_checked_at')::timestamptz FROM claim
+ON CONFLICT (domain) DO UPDATE SET
+ surface_id=coalesce(excluded.surface_id,domain_doctor_observations.surface_id),
+ observed_at=excluded.observed_at,dns_record_found=excluded.dns_record_found,points_to_gregale=excluded.points_to_gregale,
+ caa_permits=excluded.caa_permits,ipv6_conflict=excluded.ipv6_conflict,
+ observed_target=excluded.observed_target,observed_aaaa=excluded.observed_aaaa,caa_observed=excluded.caa_observed,
+ cert_state=excluded.cert_state,cert_not_after=excluded.cert_not_after,last_error=excluded.last_error,
+ dns_checked_at=excluded.dns_checked_at,cert_checked_at=excluded.cert_checked_at
+`
+
+type UpsertCustomDomainProbeObservationParams struct {
+	Observation []byte
+	Domain      string
+	AppID       string
+	Token       string
+}
+
+// Hold the matching claim through the observation write, so a replacement
+// cannot be installed between the ownership check and the upsert.
+func (q *Queries) UpsertCustomDomainProbeObservation(ctx context.Context, db DBTX, arg UpsertCustomDomainProbeObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, upsertCustomDomainProbeObservation,
+		arg.Observation,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertCustomerOperationWorkflowState = `-- name: UpsertCustomerOperationWorkflowState :exec

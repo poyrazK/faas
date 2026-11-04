@@ -506,11 +506,14 @@ SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_secret_encrypted FROM a
 -- from replacing a factor after another request has confirmed it.
 -- name: SavePendingMFAEnrollment :execrows
 UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_revision=mfa_revision+1
+    ,mfa_totp_last_step=NULL
 WHERE id=$1 AND mfa_enrolled_at IS NULL;
 
 -- name: ConfirmMFAEnabledEnrollment :one
 UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,mfa_revision=mfa_revision+1
+    ,mfa_totp_last_step=sqlc.arg(step)::bigint
 WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted IS NOT NULL
+    AND (mfa_totp_last_step IS NULL OR mfa_totp_last_step<sqlc.arg(step)::bigint)
 RETURNING mfa_enrolled_at;
 
 -- name: PaymentFailedReady :one

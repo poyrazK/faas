@@ -17405,7 +17405,7 @@ Pin the candidate catalog, verify MCP discovery and promote
 | `--access-audit-algorithms <LIST>` | reviewed gateway algorithms for --access-audit (default RS256,ES256) |  |
 | `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
-| `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
+| `--timeout <SECONDS>` | deployment and verification wait timeout in seconds (default 1200) |  |
 
 Examples:
 
@@ -18398,62 +18398,58 @@ Manage your account, MFA and data exports
 
 Set up and manage multi-factor authentication
 
+MFA actions open a signed-in browser form. Enter codes and passwords there. No CLI API key is needed; --json returns the URL and requires_browser. Legacy code, password and QR-output arguments are accepted for compatibility but are not submitted or exported.
+
 #### account mfa enroll
 
-Begin TOTP enrolment
+Open authenticator setup in the browser
 
 `gregale account mfa enroll [--qr-out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--qr-out <PATH>` | write the QR PNG to this path |  |
+| `--qr-out <PATH>` | legacy option; the browser displays the QR code |  |
 
 #### account mfa confirm
 
-Confirm an enrolment code
+Open enrollment confirmation in the browser
 
 `gregale account mfa confirm [--code <CODE>] [<6-digit-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
-
-Pass the code as an argument or with --code.
+| `--code <CODE>` | legacy option; enter the code in the browser |  |
 
 #### account mfa verify
 
-Verify a TOTP code for step-up
+Open authenticator verification in the browser
 
 `gregale account mfa verify [--code <CODE>] [<6-digit-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
-
-Pass the code as an argument or with --code.
+| `--code <CODE>` | legacy option; enter the code in the browser |  |
 
 #### account mfa recover
 
-Use a recovery code
+Open recovery in the browser
 
 `gregale account mfa recover [--code <CODE>] [<recovery-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--code <CODE>` | recovery code (alternative to positional code) |  |
-
-Pass the code as an argument or with --code.
+| `--code <CODE>` | legacy option; enter the code in the browser |  |
 
 #### account mfa disable
 
-Disable MFA
+Open MFA removal in the browser
 
 `gregale account mfa disable [--password <PASSWORD>] [--recovery-code <CODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--password <PASSWORD>` | account password (prompts when omitted) |  |
-| `--recovery-code <CODE>` | single-use recovery code (alternative to password) |  |
+| `--password <PASSWORD>` | legacy option; enter the password in the browser |  |
+| `--recovery-code <CODE>` | legacy option; enter the recovery code in the browser |  |
 
 ### account dpa
 

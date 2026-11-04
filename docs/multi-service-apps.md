@@ -69,7 +69,7 @@ service.
 For an existing stage:
 
 ```sh
-gregale deploy --project --environment staging
+gregale deploy --project --env staging
 ```
 
 Deploying a project to a named stage updates the selected services in that

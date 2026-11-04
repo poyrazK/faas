@@ -48,6 +48,9 @@ export class MfaService {
    * cookie without the mfa_pending flag; future dashboard logins
    * will require a TOTP verification because enrollment is the
    * customer's explicit opt-in.
+   * If the account has a password, current_password is also required
+   * to authorize this new factor. An unconfirmed setup secret cannot
+   * be used for session verification or recovery.
    *
    * @returns MFAConfirmResponse Enrolled.
    * @throws ApiError
@@ -63,8 +66,9 @@ export class MfaService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        401: `Invalid TOTP code.`,
+        401: `Invalid TOTP code or missing/incorrect current password.`,
         404: `No in-flight enrollment. Call /enroll first.`,
+        409: `MFA is already enrolled; use /verify for a subsequent challenge.`,
       },
     });
   }
@@ -90,15 +94,16 @@ export class MfaService {
       mediaType: 'application/json',
       errors: {
         401: `Invalid code.`,
+        409: `MFA setup is incomplete; finish /confirm first.`,
       },
     });
   }
   /**
    * Burn a recovery code to regain access.
-   * Use when the customer's TOTP device is lost. Removes
-   * one matching SHA-256 hash from the stored set; if the
-   * customer burns the last code, /recover still works but
-   * /disable via recovery_code no longer does.
+   * Use when an enrolled customer's TOTP device is lost. Removes
+   * one matching recovery-code hash from the stored set. The last
+   * code is reserved for disabling MFA via recovery_code instead.
+   * Pending setup material does not authorize recovery.
    *
    * @returns MFARecoverResponse Recovered.
    * @throws ApiError
@@ -115,6 +120,7 @@ export class MfaService {
       mediaType: 'application/json',
       errors: {
         401: `No matching recovery code.`,
+        409: `MFA setup is incomplete, or only the last recovery code remains.`,
       },
     });
   }

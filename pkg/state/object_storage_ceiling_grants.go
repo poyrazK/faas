@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -36,7 +36,7 @@ type ObjectStorageCeilingGrantStore interface {
 	ClearObjectStorageCeilingGrant(ctx context.Context, ownerID string) error
 }
 
-var objectStorageCeilingGrantReason = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var objectStorageCeilingGrantReason = lazyregexp.New(`^[a-z0-9_]{1,64}$`)
 
 // validObjectStorageCeilingGrant holds a grant to the table's CHECKs.
 func validObjectStorageCeilingGrant(g ObjectStorageCeilingGrant) error {

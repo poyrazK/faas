@@ -1,6 +1,7 @@
 -- Minimal projections of platform-owned and maild-owned read dependencies.
 -- This is sqlc input, not an independently applied account migration.
 CREATE TABLE accounts (id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text,deletion_includes_managed_postgres boolean NOT NULL DEFAULT false);
+ALTER TABLE accounts ADD COLUMN mfa_totp_last_step bigint;
 CREATE TABLE resource_namespaces (id uuid PRIMARY KEY);
 CREATE TABLE managed_postgres_databases (id uuid PRIMARY KEY);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
