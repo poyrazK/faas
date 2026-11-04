@@ -804,6 +804,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RECOVERY_HMAC_KEY_FILE` | apid | `default` |  |  | `` |  |
+| `FAAS_REFERRAL_CONVERSION_DAYS` | apid, shared | `dropin` |  | 90 | `` | Ansible control_plane_service sales drop-in: Signup-to-payment conversion window in days; captured for each new attribution |
+| `FAAS_REFERRAL_CURRENCY` | apid, shared | `dropin` |  | usd | `` | Ansible control_plane_service sales drop-in: Referral estimate currency, usd or eur; captured for each new attribution |
+| `FAAS_REFERRAL_HOLD_DAYS` | apid, shared | `dropin` |  | 30 | `` | Ansible control_plane_service sales drop-in: Days after the first payment before referral estimate eligibility |
+| `FAAS_REFERRAL_NEW_CUSTOMER_REWARD_CENTS` | apid, shared | `dropin` |  | 0 | `` | Ansible control_plane_service sales drop-in: Configurable potential referred-customer reward in integer cents; no credit or payout is issued |
+| `FAAS_REFERRAL_REWARD_CENTS` | apid, shared | `dropin` |  | 0 | `` | Ansible control_plane_service sales drop-in: Configurable potential customer-referrer reward in integer cents; payouts remain disabled |
 | `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
 | `FAAS_REHEARSAL_ACTION_SIMULATION` | apid | `default` |  | 0 | `` | opt-in simulated outbound actions for contained rehearsals; keep disabled until native containment qualification |
 | `FAAS_REHEARSAL_COLD_START` | apid | `default` |  | 0 | `` | opt-in contained cold-start rehearsal; disabled pending native lifecycle qualification |
@@ -857,6 +862,14 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |
 | `FAAS_SAFE_RELEASE_DEFAULT_ENABLED` | apid | `default` |  | true | `` | ADR-1446 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy |
+| `FAAS_SALES_COMMISSION_BPS` | apid, shared | `dropin` |  | 0 | `` | Ansible control_plane_service sales drop-in: Configurable first-invoice sales commission estimate in basis points; payouts remain disabled |
+| `FAAS_SALES_EMAILS` | apid, shared | `dropin` |  |  | `` | Ansible control_plane_service sales drop-in: Comma-separated Gregale account emails allowed sales rep access; verified email and session MFA required |
+| `FAAS_SALES_ENABLED` | apid, shared | `dropin` |  | 0 | `` | Ansible control_plane_service sales drop-in: 1 enables the sales workspace and referral surfaces; staff access uses explicit email lists |
+| `FAAS_SALES_INTAKE_ENABLED` | apid, shared | `dropin` |  | 0 | `` | Ansible control_plane_service sales drop-in: 1 separately enables public contact/demo intake when sales is enabled |
+| `FAAS_SALES_INTAKE_FOLLOWUP_DAYS` | apid, shared | `dropin` |  | 1 | `` | Ansible control_plane_service sales drop-in: Calendar days until the initial website inquiry follow-up is due |
+| `FAAS_SALES_INTAKE_TIMEZONE` | apid, shared | `dropin` |  | UTC | `` | Ansible control_plane_service sales drop-in: IANA timezone used for initial website inquiry follow-up dates |
+| `FAAS_SALES_MANAGER_EMAILS` | apid, shared | `dropin` |  |  | `` | Ansible control_plane_service sales drop-in: Comma-separated Gregale account emails granted team-wide sales management; verified email and session MFA required |
+| `FAAS_SALES_STALE_DAYS` | apid, shared | `dropin` |  | 14 | `` | Ansible control_plane_service sales drop-in: Days without a recorded conversation before an open lead is marked stalled |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |

@@ -291,6 +291,9 @@ internal hosting service and Gregale Agents are already unreachable.
 | 154 | Customer feature flags | | `feature-flags` internal | `pf: customer_flags` | internal |
 | 155 | Product control | `product-control` | `product-control` internal | env flag | internal |
 
+| 169 | Referral codes and conversion estimates | `/v1/referrals/*`, `referral_*`, `pkg/referrals`; explicit customer and salesperson codes, first-payment estimates, no payouts | **MISSING** | `env: FAAS_SALES_ENABLED=0` | preview |
+| 170 | Website sales inquiries | `/v1/sales/inquiries*`; optional salesperson code, review queue and follow-up tasks | **MISSING** | `env: FAAS_SALES_ENABLED=0`, `FAAS_SALES_INTAKE_ENABLED=0` | preview |
+
 ## I. Developer tools
 
 | # | Capability | Where it lives | Catalog | Gate today | Tier |
@@ -312,3 +315,4 @@ internal hosting service and Gregale Agents are already unreachable.
 | 165 | Operator admin, compute nodes, `gregalectl` | `/v1/admin`, `/v1/compute-nodes` | n/a | admin auth | internal |
 | 166 | Platform OCI registry: internal snapshot and image storage backend | `pkg/oci/registry.go` (`/v2/`) | n/a | internal | internal |
 | 167 | Gregale Agents: agent runs, the automation agent step, agent triggers | `/v1/agents`, `/v1/agent-runs`, `/v1/agent-callbacks`, `/v1/agent-tools`, agentd | `agents` internal | `pf: agents` | internal |
+| 171 | Sales workspace and lead management | `sales.gregale.dev`, `/v1/sales/*`; explicit staff lists, CRM, reports, activity, qualification and message templates | **MISSING** | `env: FAAS_SALES_ENABLED=0`; verified email and session MFA | internal |

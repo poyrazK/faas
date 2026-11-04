@@ -49,6 +49,14 @@ class CoverageGateTest(unittest.TestCase):
                 run({"routes": {"/x"}})
         self.assertIn("matches 0 rows", str(raised.exception))
 
+    def test_sales_qualification_and_templates_are_staff_capabilities(self):
+        src = {"routes": {"/v1/sales/leads/{lead}/qualification", "/v1/sales/templates"}}
+        out = io.StringIO()
+        with mock.patch.object(cc, "collect", return_value=src), mock.patch.object(cc.sys, "argv", ["capability_coverage.py", "--show", "routes"]):
+            with contextlib.redirect_stdout(out):
+                cc.main()
+        self.assertEqual(out.getvalue().count("-> Sales workspace and lead management"), 2)
+
     def test_route_keys_drop_path_parameters(self):
         self.assertEqual(cc.normalize("routes", "/v1/apps/{slug}/Crons/{id}"), "/v1/apps/crons/")
         self.assertEqual(cc.route_key("/v1/apps/crons/"), "apps/crons crons")
