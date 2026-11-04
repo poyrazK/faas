@@ -20,7 +20,7 @@ func cmdAppScaling(slug string, args []string) int {
 	revision := fs.Int64("expected-revision", -1, "revision returned by app scaling")
 	ram := fs.Int("ram", 0, "RAM in MB")
 	cpu := fs.Int("cpu-millicores", 0, "CPU allowance in millicores")
-	concurrency := fs.Int("max-concurrency", 0, "maximum number of instances")
+	concurrency := fs.Int("max-concurrency", 0, "most instances the app runs at once")
 	minimum := fs.Int("min", 0, "minimum warm instance count, including zero")
 	if err := fs.Parse(args); err != nil {
 		return 1

@@ -3438,7 +3438,7 @@ Preview or delete a project
 
 ### project rollback
 
-Roll every service back to its previous live deployment
+Roll every service back to its previous deployment, dependencies first
 
 `gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
 
@@ -3448,8 +3448,6 @@ Roll every service back to its previous live deployment
 | `--yes` | roll every service back |  |
 | `--acknowledge-releases` | accept rolling back across release commands |  |
 | `--timeout <DURATION>` | wait per service (default 10m) |  |
-
-Services roll back in dependency order.
 
 Stops at the first service that fails and names the rest.
 
@@ -4815,7 +4813,7 @@ Read, guard or recover scaling configuration; prints JSON
 | `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <MILLICORES>` | CPU allowance |  |
-| `--max-concurrency <COUNT>` | maximum number of instances |  |
+| `--max-concurrency <COUNT>` | most instances the app runs at once |  |
 | `--min <COUNT>` | minimum warm instance count, including zero |  |
 
 Examples:
@@ -8363,11 +8361,9 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version
+Delete current data or an owned version; retry with the same UUID
 
 `gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
-
-Reuse the request UUID to retry.
 
 #### bucket deletion get
 
