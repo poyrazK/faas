@@ -65,6 +65,12 @@ func (m *MemStore) promotionWorkloadActivationsLocked(promotion ProjectEnvironme
 		if hash != targetHash {
 			projected.ScalingPolicyRevision++
 		}
+		if projected.ScalingRevision < 1 {
+			projected.ScalingRevision = 1
+		}
+		if scalingSettings(projected) != scalingSettings(app) {
+			projected.ScalingRevision++
+		}
 		changes = append(changes, promotionWorkloadActivation{environmentID: prepared.EnvironmentID,
 			appID: app.ID, specID: targetID, app: projected, projectApp: promotion.ToEnvironment == "production"})
 	}

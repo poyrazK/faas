@@ -1778,6 +1778,18 @@ var cliCommands = []cliCommand{
 				{Name: "apply", Short: "apply a saved scale plan JSON file", Value: "PATH"},
 				{Name: "confirm", Short: "confirm applying the saved plan (requires --apply)"},
 			}, appScaleCLIFlags()...)},
+			{Name: "scaling", Short: "Read, guard or recover scaling configuration; prints JSON", Flags: []cliFlag{
+				{Name: "environment", Short: "named project environment", Value: "ENV"},
+				{Name: "receipt", Short: "recover a request receipt without writing", Value: "UUID"},
+				{Name: "request-id", Short: "stable UUID reused with the original write body", Value: "UUID"},
+				{Name: "expected-revision", Short: "reviewed scaling revision", Value: "REVISION"},
+				{Name: "expected-app-id", Short: "immutable app UUID required for writes", Value: "UUID"},
+				{Name: "expected-environment-id", Short: "immutable environment UUID required for named writes", Value: "UUID"},
+				{Name: "ram", Short: "RAM in MB", Value: "MB"},
+				{Name: "cpu-millicores", Short: "CPU allowance", Value: "MILLICORES"},
+				{Name: "max-concurrency", Short: "maximum instance count", Value: "COUNT"},
+				{Name: "min", Short: "minimum warm instance count, including zero", Value: "COUNT"},
+			}, Examples: []string{"gregale app scaling my-api", "gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512", "gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b"}},
 			{Name: "costs", Short: "Show this app's attributed usage costs and source coverage", Flags: []cliFlag{
 				{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"},
 				{Name: "json", Short: "Print the machine-readable app cost report"},
