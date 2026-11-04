@@ -23,3 +23,11 @@ LIMIT 1;
 
 -- name: DeleteEdgeTLSCertificatesExpiredBefore :execrows
 DELETE FROM edge_tls_certificates WHERE not_after < @before;
+
+-- name: LiveEdgeTLSCertificates :many
+-- What a compute edge serves: for each set of names, the newest certificate
+-- from ca that is valid now, with its chain and sealed key.
+SELECT DISTINCT ON (names) id, names, chain_pem, key_sealed, not_before, not_after
+FROM edge_tls_certificates
+WHERE ca = @ca AND not_before <= now() AND not_after > now()
+ORDER BY names, not_after DESC, id DESC;
