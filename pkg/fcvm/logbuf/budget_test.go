@@ -19,7 +19,7 @@ func TestRingsShareTheNodeBudget(t *testing.T) {
 	}
 	for range 2000 {
 		for _, r := range rings {
-			if _, err := r.Write([]byte(line)); err != nil {
+			if _, err := r.Write("stdout", []byte(line)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -44,7 +44,7 @@ func TestRingsShareTheNodeBudget(t *testing.T) {
 	}
 	// Alone again, the remaining ring may grow back toward the whole budget.
 	for range 2000 {
-		_, _ = rings[0].Write([]byte(line))
+		_, _ = rings[0].Write("stdout", []byte(line))
 	}
 	if used := b.Used(); used <= share || used > total {
 		t.Fatalf("lone ring holds %d bytes, want more than its old share %d and at most %d", used, share, total)
