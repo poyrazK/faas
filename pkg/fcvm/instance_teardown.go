@@ -101,6 +101,10 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		if err := v.confirmNativeCleanup(ctx, lease, nativeLeaseNetwork(lease)); err != nil {
 			return err
 		}
+		if err := m.releaseAllPrivateNetworkMembers(ctx, retained.net, lease.Instance); err != nil {
+			retained.failed = true
+			return err
+		}
 		if err := m.settleCleanedFinancialCompute(ctx, lease.Instance); err != nil {
 			retained.failed = true
 			return err
@@ -115,6 +119,12 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			delete(m.pendingCleanup, lease.Instance)
 			m.mu.Unlock()
 			return nil
+		}
+	}
+	if m.nativeVMM() == nil {
+		if err := m.releaseAllPrivateNetworkMembers(ctx, retained.net, lease.Instance); err != nil {
+			retained.failed = true
+			return err
 		}
 	}
 	if m.resourceJournal != nil {

@@ -50261,6 +50261,37 @@ CREATE TABLE public.private_network_peerings (
 
 
 --
+-- Name: private_network_service_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.private_network_service_owners (
+    network_id text NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    service_address_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT private_network_service_owners_instance_id_check CHECK (((length(instance_id) >= 1) AND (length(instance_id) <= 128)))
+);
+
+
+--
+-- Name: private_network_transport_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.private_network_transport_identities (
+    network_id text NOT NULL,
+    account_id uuid NOT NULL,
+    region text NOT NULL,
+    vni integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT private_network_transport_identities_network_id_check CHECK (((length(network_id) >= 1) AND (length(network_id) <= 128))),
+    CONSTRAINT private_network_transport_identities_region_check CHECK (((length(region) >= 1) AND (length(region) <= 64))),
+    CONSTRAINT private_network_transport_identities_vni_check CHECK (((vni >= 1) AND (vni <= 16777214)))
+);
+
+
+--
 -- Name: private_networks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56172,6 +56203,20 @@ CREATE TABLE public.source_build_rootfs (
 CREATE TABLE public.source_build_rootfs_current (
     deployment_id uuid NOT NULL,
     artifact_id uuid NOT NULL
+);
+
+
+--
+-- Name: static_egress_provisioning_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.static_egress_provisioning_grants (
+    source_id text NOT NULL,
+    account_id uuid NOT NULL,
+    customer_ip inet NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT static_egress_provisioning_grants_customer_ip_check CHECK ((family(customer_ip) = 4)),
+    CONSTRAINT static_egress_provisioning_grants_source_id_check CHECK (((length(source_id) >= 1) AND (length(source_id) <= 128)))
 );
 
 
@@ -67122,6 +67167,38 @@ ALTER TABLE ONLY public.private_network_peerings
 
 
 --
+-- Name: private_network_service_owners private_network_service_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_service_owners
+    ADD CONSTRAINT private_network_service_owners_pkey PRIMARY KEY (network_id, app_id);
+
+
+--
+-- Name: private_network_service_owners private_network_service_owners_service_address_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_service_owners
+    ADD CONSTRAINT private_network_service_owners_service_address_id_key UNIQUE (service_address_id);
+
+
+--
+-- Name: private_network_transport_identities private_network_transport_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_transport_identities
+    ADD CONSTRAINT private_network_transport_identities_pkey PRIMARY KEY (network_id);
+
+
+--
+-- Name: private_network_transport_identities private_network_transport_identities_region_vni_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_transport_identities
+    ADD CONSTRAINT private_network_transport_identities_region_vni_key UNIQUE (region, vni);
+
+
+--
 -- Name: private_networks private_networks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69783,6 +69860,14 @@ ALTER TABLE ONLY public.source_build_rootfs
 
 ALTER TABLE ONLY public.source_build_rootfs
     ADD CONSTRAINT source_build_rootfs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: static_egress_provisioning_grants static_egress_provisioning_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.static_egress_provisioning_grants
+    ADD CONSTRAINT static_egress_provisioning_grants_pkey PRIMARY KEY (source_id, account_id, customer_ip);
 
 
 --
@@ -78412,6 +78497,13 @@ CREATE INDEX private_network_peerings_account_idx ON public.private_network_peer
 
 
 --
+-- Name: private_network_service_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX private_network_service_instance_idx ON public.private_network_service_owners USING btree (account_id, instance_id);
+
+
+--
 -- Name: private_networks_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80128,6 +80220,13 @@ CREATE INDEX snapshots_live_idx ON public.snapshots USING btree (deployment_id) 
 --
 
 COMMENT ON INDEX public.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::LatestSnapshotBytes inner scan — bounds to non-stale rows under live deployments. ADR-049 §B.3 + PR #428 review blocker #3.';
+
+
+--
+-- Name: static_egress_provisioning_account_ip_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX static_egress_provisioning_account_ip_idx ON public.static_egress_provisioning_grants USING btree (account_id, customer_ip);
 
 
 --
@@ -99398,6 +99497,30 @@ ALTER TABLE ONLY public.private_network_peerings
 
 ALTER TABLE ONLY public.private_network_peerings
     ADD CONSTRAINT private_network_peerings_right_network_id_fkey FOREIGN KEY (right_network_id) REFERENCES public.private_networks(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: private_network_service_owners private_network_service_owners_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_service_owners
+    ADD CONSTRAINT private_network_service_owners_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: private_network_service_owners private_network_service_owners_network_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_service_owners
+    ADD CONSTRAINT private_network_service_owners_network_id_fkey FOREIGN KEY (network_id) REFERENCES public.private_networks(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: private_network_service_owners private_network_service_owners_service_address_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.private_network_service_owners
+    ADD CONSTRAINT private_network_service_owners_service_address_id_fkey FOREIGN KEY (service_address_id) REFERENCES public.private_network_addresses(id) ON DELETE RESTRICT;
 
 
 --

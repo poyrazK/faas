@@ -5098,7 +5098,7 @@ FROM deployments
 WHERE id = $1
   AND snapshot_miss_backoff_until IS NOT NULL;
 
--- =======================================================
+-- ================================================
 
 -- name: CreateUploadSession :one
 -- Inserts a fresh upload_sessions row. The handler pre-validates
@@ -14622,7 +14622,12 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listene
 -- name: UDPListenerByPublicPort :one
 SELECT * FROM app_udp_listeners l
 WHERE public_port = sqlc.arg(public_port) AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal');
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  ));
 
 -- name: ListUDPListenersForApp :many
 SELECT * FROM app_udp_listeners
@@ -14630,7 +14635,12 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
 
 -- name: ListEnabledUDPListeners :many
 SELECT * FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  ))
 ORDER BY public_port ASC;
 
 -- name: SetUDPListenerEnabled :one
@@ -14646,11 +14656,21 @@ SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uu
 -- name: ActiveTCPListenerByPublicPort :one
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
-  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id;
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  );
 
 -- name: ListActiveTCPListeners :many
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  )
 ORDER BY l.public_port;
 -- name: LockExclusiveWorkAccount :one
 SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
@@ -27965,6 +27985,127 @@ FROM jobs j WHERE id=sqlc.arg(job_id)::uuid;
 -- name: EnvironmentJobIsReleased :one
 SELECT environment_workload_job_released(j)::boolean AS released
 FROM jobs j WHERE id=sqlc.arg(job_id)::uuid;
+
+-- name: DeletePrivateNetworkPeeringForRevocation :one
+DELETE FROM private_network_peerings
+WHERE account_id = sqlc.arg(account_id) AND id = sqlc.arg(id)
+RETURNING region, left_network_id, right_network_id;
+
+-- name: DeleteStaticEgressProvisioningSource :exec
+DELETE FROM static_egress_provisioning_grants
+WHERE source_id = sqlc.arg(source_id)::text;
+
+-- name: DeleteLegacyStaticEgressProvisioning :exec
+DELETE FROM provisioned_static_egress_ips;
+
+-- name: InsertStaticEgressProvisioningGrant :exec
+INSERT INTO static_egress_provisioning_grants(source_id, account_id, customer_ip)
+VALUES(sqlc.arg(source_id), sqlc.arg(account_id), sqlc.arg(customer_ip))
+ON CONFLICT DO NOTHING;
+
+-- name: ProvisionedStaticEgressIPExists :one
+SELECT EXISTS (
+    SELECT 1 FROM provisioned_static_egress_ips AS legacy
+    WHERE legacy.account_id = sqlc.arg(account_id)::uuid AND legacy.customer_ip = sqlc.arg(customer_ip)::inet
+    UNION ALL
+    SELECT 1 FROM static_egress_provisioning_grants AS owned
+    WHERE owned.account_id = sqlc.arg(account_id)::uuid AND owned.customer_ip = sqlc.arg(customer_ip)::inet
+);
+
+-- name: ListPrivateNetworkAttachmentPage :many
+SELECT id, account_id, app_id, network_id, region,
+       coalesce(cidrs::text, '{}')::text AS cidrs_text, coalesce(allowed_cidrs::text, '{}')::text AS allowed_cidrs_text,
+       status, status_detail, created_at, updated_at
+FROM app_private_network_attachments
+WHERE account_id = sqlc.arg(account_id)
+  AND (sqlc.arg(region)::text = '' OR region = sqlc.arg(region))
+  AND (sqlc.arg(network_id)::text = '' OR network_id = sqlc.arg(network_id))
+  AND (sqlc.narg(statuses)::text[] IS NULL OR status = ANY(sqlc.narg(statuses)::text[]))
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR app_id > sqlc.narg(after_app_id)::uuid)
+ORDER BY app_id
+LIMIT sqlc.arg(page_size);
+
+-- name: TryPrivateNetworkScopeLock :one
+SELECT pg_try_advisory_lock(hashtextextended('private-network:' || sqlc.arg(scope_key)::text, 0))::boolean;
+
+-- name: UnlockPrivateNetworkScope :one
+SELECT pg_advisory_unlock(hashtextextended('private-network:' || sqlc.arg(scope_key)::text, 0))::boolean;
+
+-- name: UpdatePrivateNetworkAttachmentStatusForIntent :one
+UPDATE app_private_network_attachments SET status = sqlc.arg(status), status_detail = sqlc.arg(status_detail), updated_at = now()
+WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id) AND id = sqlc.arg(id)
+  AND network_id = sqlc.arg(network_id) AND region = sqlc.arg(region)
+  AND cidrs = coalesce(sqlc.arg(cidrs)::cidr[],'{}') AND allowed_cidrs = coalesce(sqlc.arg(allowed_cidrs)::cidr[],'{}')
+RETURNING id, account_id, app_id, network_id, region,
+  coalesce(cidrs::text,'{}')::text AS cidrs_text,coalesce(allowed_cidrs::text,'{}')::text AS allowed_cidrs_text,
+  status,status_detail,created_at,updated_at;
+
+-- name: PrivateNetworkAttachmentByAppID :one
+SELECT id,account_id,app_id,network_id,region,
+  coalesce(cidrs::text,'{}')::text AS cidrs_text,coalesce(allowed_cidrs::text,'{}')::text AS allowed_cidrs_text,
+  status,status_detail,created_at,updated_at
+FROM app_private_network_attachments WHERE app_id = sqlc.arg(app_id);
+
+-- name: GetPrivateNetworkTransportIdentity :one
+SELECT t.vni FROM private_network_transport_identities t JOIN private_networks n ON n.id=t.network_id
+WHERE t.network_id=sqlc.arg(network_id) AND t.account_id=sqlc.arg(account_id) AND t.region=sqlc.arg(region)
+  AND n.account_id=t.account_id AND n.region=t.region;
+
+-- name: LockPrivateNetworkTransportRegion :exec
+SELECT pg_advisory_xact_lock(hashtextextended('private-network-transport:' || sqlc.arg(region)::text,0));
+
+-- name: LockPrivateNetworkTransportDefinition :one
+SELECT id FROM private_networks WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND region=sqlc.arg(region) FOR KEY SHARE;
+
+-- name: InsertPrivateNetworkTransportIdentity :one
+INSERT INTO private_network_transport_identities(network_id,account_id,region,vni)
+VALUES(sqlc.arg(network_id),sqlc.arg(account_id),sqlc.arg(region),sqlc.arg(vni)) ON CONFLICT DO NOTHING RETURNING vni;
+
+-- name: PrivateNetworkTransportIdentityExists :one
+SELECT EXISTS(SELECT 1 FROM private_network_transport_identities WHERE network_id=sqlc.arg(network_id));
+
+-- name: LockPrivateNetworkMemberAttachment :one
+SELECT app_id FROM app_private_network_attachments
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND network_id=sqlc.arg(network_id) FOR SHARE;
+
+-- name: ClaimPrivateNetworkService :one
+INSERT INTO private_network_service_owners(network_id,account_id,app_id,instance_id,service_address_id)
+VALUES(sqlc.arg(network_id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(instance_id),sqlc.arg(service_address_id))
+ON CONFLICT (network_id,app_id) DO UPDATE SET instance_id=excluded.instance_id
+WHERE private_network_service_owners.instance_id=excluded.instance_id RETURNING instance_id;
+
+-- name: LockPrivateNetworkRuntimeDefinition :one
+SELECT id FROM private_networks WHERE account_id=sqlc.arg(account_id) AND id=sqlc.arg(id) FOR UPDATE;
+
+-- name: ReleasePrivateNetworkService :exec
+DELETE FROM private_network_service_owners WHERE account_id=sqlc.arg(account_id) AND network_id=sqlc.arg(network_id)
+ AND app_id=sqlc.arg(app_id) AND instance_id=sqlc.arg(instance_id);
+
+-- name: ReleasePrivateNetworkInstanceAddress :exec
+DELETE FROM private_network_addresses WHERE account_id=sqlc.arg(account_id) AND network_id=sqlc.arg(network_id)
+ AND owner_type='instance' AND owner_id=sqlc.arg(owner_id);
+
+-- name: ReleaseDetachedPrivateNetworkServiceAddress :exec
+DELETE FROM private_network_addresses a WHERE a.account_id=sqlc.arg(account_id) AND a.network_id=sqlc.arg(network_id)
+ AND a.owner_type='app' AND a.owner_id=sqlc.arg(owner_id)
+ AND NOT EXISTS(SELECT 1 FROM app_private_network_attachments x WHERE x.app_id::text=a.owner_id AND x.network_id=a.network_id)
+ AND NOT EXISTS(SELECT 1 FROM private_network_service_owners o WHERE o.app_id::text=a.owner_id AND o.network_id=a.network_id);
+
+-- name: ListPrivateNetworkInstanceNetworks :many
+SELECT DISTINCT network_id FROM private_network_addresses
+WHERE account_id=sqlc.arg(account_id)::uuid AND owner_type='instance' AND owner_id=sqlc.arg(instance_id)::text
+UNION
+SELECT network_id FROM private_network_service_owners
+WHERE account_id=sqlc.arg(account_id)::uuid AND instance_id=sqlc.arg(instance_id)::text;
+
+-- name: ListPrivateNetworkRuntimeMembers :many
+SELECT a.account_id, a.network_id, o.app_id
+FROM private_network_addresses a
+LEFT JOIN private_network_service_owners o ON o.network_id=a.network_id AND o.instance_id=a.owner_id
+WHERE a.owner_type='instance' AND a.owner_id=sqlc.arg(instance_id)::text
+UNION
+SELECT account_id, network_id, app_id FROM private_network_service_owners
+WHERE instance_id=sqlc.arg(instance_id)::text;
 
 -- name: ReadCustomDomainProbeClaim :one
 SELECT (verified_at IS NOT NULL)::boolean AS verified, cert_status::text AS status, dns_last_checked_at
