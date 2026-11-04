@@ -69,8 +69,20 @@ func TestCmdCapabilitiesJSONOutput(t *testing.T) {
 	if got.Plan != string(api.PlanFree) || got.RegistryVersion != catalog.Version {
 		t.Fatalf("unexpected response: %+v", got)
 	}
+	// Any capability Free lacks will do; which ones it lacks changes with
+	// the plans (object storage reached Free in #6458).
+	planRestricted := ""
+	for _, capability := range capabilities.Capabilities {
+		if capability.UnavailableReason == api.CapabilityUnavailablePlan {
+			planRestricted = capability.Key
+			break
+		}
+	}
+	if planRestricted == "" {
+		t.Fatal("no capability is unavailable on the Free plan; pick another plan for this test")
+	}
 	for _, capability := range got.Capabilities {
-		if capability.Key == "object-storage" && (capability.Enabled || capability.UnavailableReason != api.CapabilityUnavailablePlan || capability.UnavailableDetail == "") {
+		if capability.Key == planRestricted && (capability.Enabled || capability.UnavailableReason != api.CapabilityUnavailablePlan || capability.UnavailableDetail == "") {
 			t.Fatalf("JSON output lost the plan explanation: %+v", capability)
 		}
 	}

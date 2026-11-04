@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,10 @@ type IssueReporterStats struct {
 // delivery worker stopped with events still queued.
 var ErrIssueReporterStopped = errors.New("gregale issue reporter stopped with events queued")
 
+// ErrIssueReporterDropped indicates that the reporter discarded at least one
+// event, including a local overflow or a permanent server rejection.
+var ErrIssueReporterDropped = errors.New("gregale issue reporter dropped events")
+
 type issueReport struct {
 	body []byte
 }
@@ -102,6 +107,7 @@ type IssueReporter struct {
 	client                *http.Client
 	timeout               time.Duration
 	retryDelay            time.Duration
+	retryAfter            time.Duration // owned by the delivery worker
 	maxQueue              int
 	groupingStrategy      string
 	symbolicationStrategy string
@@ -256,8 +262,9 @@ func (r *IssueReporter) RecoverAndRepanic(issueContext ...IssueContext) {
 	panic(value)
 }
 
-// Flush waits until all queued events have either been accepted or dropped by
-// the server. It returns ctx.Err when delivery cannot settle before ctx ends.
+// Flush waits until all queued events settle. It reports ErrIssueReporterDropped
+// if any event has been dropped during this reporter's lifetime, and ctx.Err
+// when delivery cannot settle before ctx ends.
 func (r *IssueReporter) Flush(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -268,7 +275,11 @@ func (r *IssueReporter) Flush(ctx context.Context) error {
 	for {
 		r.mu.Lock()
 		if len(r.queue) == 0 {
+			dropped := r.dropped
 			r.mu.Unlock()
+			if dropped != 0 {
+				return ErrIssueReporterDropped
+			}
 			return nil
 		}
 		changed := r.changed
@@ -360,6 +371,10 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 		return ""
 	}
 	frames, stack := issueStack(stackSkip)
+	status := ctx.HTTPStatus
+	if status < 400 || status > 599 {
+		status = 0
+	}
 	event := faas.IssueEvent{
 		EventID:             id,
 		OccurredAt:          time.Now().UTC(),
@@ -369,16 +384,16 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 		Frames:              frames,
 		FingerprintOverride: boundedIssueString(ctx.FingerprintOverride, issueReporterTypeBytes),
 		ErrorCode:           boundedIssueString(ctx.ErrorCode, issueReporterTypeBytes),
-		TraceID:             boundedIssueString(ctx.TraceID, 32),
-		SpanID:              boundedIssueString(ctx.SpanID, 16),
+		TraceID:             validIssueCorrelationID(ctx.TraceID, 32),
+		SpanID:              validIssueCorrelationID(ctx.SpanID, 16),
 		RequestID:           boundedIssueString(ctx.RequestID, issueReporterTypeBytes),
-		InvocationID:        boundedIssueString(ctx.InvocationID, 36),
+		InvocationID:        validIssueInvocationID(ctx.InvocationID),
 		Route:               boundedIssueString(ctx.Route, issueReporterTypeBytes),
-		HTTPStatus:          ctx.HTTPStatus,
+		HTTPStatus:          status,
 		SourceKind:          sourceKind,
 	}
 	event.SymbolicationStrategy = r.symbolicationStrategy
-	event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags = boundedIssueContext(ctx)
+	event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags = boundedIssueContext(ctx, event.OccurredAt)
 	if r.groupingStrategy == "failure-site-v1" || r.groupingStrategy == "cause-chain-v1" {
 		event.GroupingStrategy = r.groupingStrategy
 		event.FrameOrder = "newest-first"
@@ -386,8 +401,8 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 	if r.groupingStrategy == "cause-chain-v1" && len(original) > 0 {
 		event.Causes, event.CausesIncomplete = issueErrorCauses(original[0])
 	}
-	body, err := json.Marshal(event)
-	if err != nil || len(body) > issueReporterMaxPayload {
+	body, err := marshalBoundedIssueEvent(event)
+	if err != nil {
 		r.recordDrop()
 		return ""
 	}
@@ -401,6 +416,83 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 	r.queue = append(r.queue, &issueReport{body: body})
 	r.signalLocked()
 	return id
+}
+
+func validIssueCorrelationID(value string, length int) string {
+	value = strings.ToLower(value)
+	if len(value) != length || strings.Trim(value, "0") == "" {
+		return ""
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func validIssueInvocationID(value string) string {
+	original := strings.ToLower(value)
+	if len(value) == 36 {
+		if value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+			return ""
+		}
+		value = strings.ReplaceAll(value, "-", "")
+	}
+	if validIssueCorrelationID(value, 32) == "" {
+		return ""
+	}
+	return original
+}
+
+// Keep grouping evidence independent of optional context before making room
+// for breadcrumbs and tags within the ingress limit.
+func marshalBoundedIssueEvent(event faas.IssueEvent) ([]byte, error) {
+	occurredAt := event.OccurredAt
+	// RFC3339Nano omits trailing zeroes. Use a fixed-width timestamp while
+	// trimming so the capture instant cannot alter the grouping evidence.
+	event.OccurredAt = time.Date(2000, 1, 1, 0, 0, 0, 123456789, time.UTC)
+	optionalBreadcrumbs, optionalDropped, optionalTags := event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags
+	request, trace, span, invocation := event.RequestID, event.TraceID, event.SpanID, event.InvocationID
+	route, status := event.Route, event.HTTPStatus
+	event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags = nil, 0, nil
+	event.RequestID, event.TraceID, event.SpanID, event.InvocationID = "", "", "", ""
+	event.Route, event.HTTPStatus = "", 0
+	body, err := json.Marshal(event)
+	for err == nil && len(body) > issueReporterMaxPayload-4096 && len(event.Causes) > 0 {
+		event.Causes = event.Causes[:len(event.Causes)-1]
+		event.CausesIncomplete = true
+		body, err = json.Marshal(event)
+	}
+	if err == nil && len(body) > issueReporterMaxPayload-4096 {
+		event.StackTrace = ""
+		body, err = json.Marshal(event)
+	}
+	for err == nil && len(body) > issueReporterMaxPayload-4096 && len(event.Frames) > 1 {
+		event.Frames = event.Frames[:len(event.Frames)-1]
+		body, err = json.Marshal(event)
+	}
+	if err != nil || len(body) > issueReporterMaxPayload-4096 {
+		return nil, errors.New("issue grouping evidence exceeds payload limit")
+	}
+	event.OccurredAt = occurredAt
+	event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags = optionalBreadcrumbs, optionalDropped, optionalTags
+	event.RequestID, event.TraceID, event.SpanID, event.InvocationID = request, trace, span, invocation
+	event.Route, event.HTTPStatus = route, status
+	body, err = json.Marshal(event)
+	for err == nil && len(body) > issueReporterMaxPayload && len(event.Breadcrumbs) > 0 {
+		event.Breadcrumbs = event.Breadcrumbs[1:]
+		if event.BreadcrumbsDropped < 2147483647 {
+			event.BreadcrumbsDropped++
+		}
+		body, err = json.Marshal(event)
+	}
+	if err == nil && len(body) > issueReporterMaxPayload {
+		event.Tags = nil
+		body, err = json.Marshal(event)
+	}
+	if err != nil || len(body) > issueReporterMaxPayload {
+		return nil, errors.New("issue event exceeds payload limit")
+	}
+	return body, nil
 }
 
 func (r *IssueReporter) recoverCapturePanic(eventID *string) {
@@ -431,9 +523,11 @@ func (r *IssueReporter) run() {
 		item := r.queue[0]
 		r.mu.Unlock()
 
+		r.retryAfter = 0
 		outcome := r.deliver(item)
 		if outcome == issueDeliveryRetry {
-			timer := time.NewTimer(r.retryDelay)
+			delay := max(r.retryDelay, r.retryAfter)
+			timer := time.NewTimer(delay)
 			select {
 			case <-timer.C:
 			case <-r.ctx.Done():
@@ -482,10 +576,24 @@ func (r *IssueReporter) deliver(item *issueReport) (outcome issueDelivery) {
 	if resp.StatusCode == http.StatusAccepted {
 		return issueDeliveryAccepted
 	}
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+	if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("Retry-After") != "") {
+		r.retryAfter = issueRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		return issueDeliveryRetry
+	}
+	if resp.StatusCode >= 500 {
 		return issueDeliveryRetry
 	}
 	return issueDeliveryDropped
+}
+
+func issueRetryAfter(value string, now time.Time) time.Duration {
+	delay := time.Minute
+	if seconds, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32); err == nil {
+		delay = time.Duration(seconds) * time.Second
+	} else if date, err := http.ParseTime(value); err == nil {
+		delay = date.Sub(now)
+	}
+	return min(24*time.Hour, max(time.Second, delay))
 }
 
 func (r *IssueReporter) signalLocked() {

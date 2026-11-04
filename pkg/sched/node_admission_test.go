@@ -116,12 +116,7 @@ func TestNodeAdmissionRestoreRetryReleasesPressure(t *testing.T) {
 		t.Fatalf("restore retry: %+v %+v", ins, p)
 	}
 	readCounts := func() map[string]int {
-		session, err := fake.MemStore.AcquireSnapshotRestorePressure(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer session.Close()
-		counts, err := session.ActiveSnapshotRestoreCounts(t.Context())
+		counts, err := fake.MemStore.ActiveSnapshotRestoreCounts(t.Context(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

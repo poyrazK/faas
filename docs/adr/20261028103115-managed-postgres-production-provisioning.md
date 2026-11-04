@@ -2,6 +2,7 @@
 
 Date: 2026-10-28
 Status: Accepted
+Amended by: [ADR-20261103091657](20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md) — the approval gates new databases only; restore, resize, bindings, rotation and switches on existing databases follow `provisioning_enabled` alone.
 Related: [ADR-155](155-provider-neutral-managed-postgres.md) (staging qualification and canary), [ADR 20261023115741](20261023115741-every-capability-behind-a-platform-flag.md) (capability flags), [ADR 20261027123814](20261027123814-data-api-capability-tree.md) (the Data API sits under managed PostgreSQL)
 
 ## Context

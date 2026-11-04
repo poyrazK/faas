@@ -312,7 +312,7 @@ func (s *PgStore) PutManagedRealtimeEventSchema(ctx context.Context, row Managed
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var id string
-	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, row.EndpointID).Scan(&id); err != nil {
+	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for no key update`, row.EndpointID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}

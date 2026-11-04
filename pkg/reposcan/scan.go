@@ -508,8 +508,9 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads, opts.ImageListening)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
+	sourceTrees := make(map[string]string)
 	for i := range workloads {
-		digest, err := hashWorkloadSource(fsys, workloads[i])
+		digest, err := hashWorkloadSourceWithCache(fsys, workloads[i], sourceTrees)
 		if err != nil {
 			return Result{}, fmt.Errorf("reposcan: hash workload %q source: %w", workloads[i].Name, err)
 		}
@@ -561,18 +562,36 @@ func attachProcfileReleaseCommand(fsys fs.FS, workloads []Workload) error {
 }
 
 func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
+	return hashWorkloadSourceWithCache(fsys, workload, make(map[string]string))
+}
+
+func hashWorkloadSourceWithCache(fsys fs.FS, workload Workload, sourceTrees map[string]string) (string, error) {
 	root := workload.RootDir
 	cleanRoot := path.Clean(root)
 	if root != "" && root != "." && (!fs.ValidPath(root) || cleanRoot != root) {
 		return "", fmt.Errorf("invalid source root %q", root)
 	}
-	walkRoot := cleanRoot
-	if walkRoot == "" {
-		walkRoot = "."
+	// Workspace, convention and Railpack builds receive the repository, so
+	// root lockfiles and sibling packages are build inputs too. Only a Compose
+	// Dockerfile build narrows the staged archive to its declared context.
+	walkRoot := "."
+	if workload.DetectedBy.Detector == DetectorCompose && workload.Image == "" && cleanRoot != "." {
+		dockerfile := workload.Dockerfile
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		if info, err := fs.Stat(fsys, path.Join(cleanRoot, dockerfile)); err == nil && !info.IsDir() {
+			walkRoot = cleanRoot
+		}
 	}
-	relRoot := cleanRoot
-	if relRoot == "." {
-		relRoot = ""
+	tree, ok := sourceTrees[walkRoot]
+	if !ok {
+		var err error
+		tree, err = hashSourceTree(fsys, walkRoot)
+		if err != nil {
+			return "", err
+		}
+		sourceTrees[walkRoot] = tree
 	}
 	h := sha256.New()
 	// The accepted digest is also the retry checkpoint for build-affecting
@@ -592,7 +611,17 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	for _, arg := range workload.ReleaseCommand {
 		_, _ = fmt.Fprintf(h, "release_arg=%d:%s\x00", len(arg), arg)
 	}
-	err := fs.WalkDir(fsys, walkRoot, func(name string, entry fs.DirEntry, walkErr error) error {
+	_, _ = fmt.Fprintf(h, "context=%s\x00tree=%s\x00", walkRoot, tree)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func hashSourceTree(fsys fs.FS, root string) (string, error) {
+	h := sha256.New()
+	relRoot := root
+	if root == "." {
+		relRoot = ""
+	}
+	err := fs.WalkDir(fsys, root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

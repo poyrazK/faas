@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3426,7 +3427,10 @@ func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]
 	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at
 		   from crons c
 		   join apps a on a.id = c.app_id
-		  where a.node_id = $1 and c.suspended_reason = ''
+		  where a.node_id = $1 and c.suspended_reason = '' and c.enabled
+		    -- A disabled cron never fires; listing it cost the sweep an app
+		    -- read and a budget check every minute (crons audit 2026-11-03).
+		    -- MemStore already filtered it.
 		    -- A rehearsal fires crons only from its recipe, never from the
 		    -- clock (ADR-20261020200000).
 		    and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`
@@ -6128,6 +6132,11 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, app := range existing {
 		byID[app.ID] = app
 	}
+	environmentOnly, err := sqlc.New().EnvironmentOnlyProjectAppIDs(ctx, tx, sqlc.EnvironmentOnlyProjectAppIDsParams{
+		AccountID: mustPgUUID(project.AccountID), ProjectID: mustPgUUID(project.ID)})
+	if err != nil {
+		return ProjectReconcileResult{}, err
+	}
 
 	creates, removes := 0, 0
 	removeIDs := make(map[string]bool)
@@ -6156,6 +6165,9 @@ func (s *PgStore) ApplyProjectReconcile(
 				return ProjectReconcileResult{}, ErrNotFound
 			}
 			if mutation.Op == "remove" {
+				if slices.Contains(environmentOnly, mutation.App.ID) {
+					return ProjectReconcileResult{}, ErrConflict
+				}
 				removes++
 			}
 		default:
@@ -6222,6 +6234,10 @@ func (s *PgStore) ApplyProjectReconcile(
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
+			updated, err = syncProductionWorkloadSpecTx(ctx, tx, updated, projectReconcileSettingsParams(updated, mutation))
+			if err != nil {
+				return ProjectReconcileResult{}, err
+			}
 			out.Changed = append(out.Changed, updated)
 		case "remove":
 			removed, err := softDeleteAppInTx(ctx, tx, mutation.App.ID)
@@ -6246,6 +6262,10 @@ func (s *PgStore) ApplyProjectReconcile(
 				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
 				if restoreErr != nil {
 					return ProjectReconcileResult{}, mapErr(restoreErr)
+				}
+				restored, restoreErr = syncProductionWorkloadSpecTx(ctx, tx, restored, projectReconcileSettingsParams(restored, mutation))
+				if restoreErr != nil {
+					return ProjectReconcileResult{}, restoreErr
 				}
 				out.Added = append(out.Added, restored)
 				continue
@@ -10493,9 +10513,9 @@ func (s *PgStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) err
 // starts. A serialization failure has aborted the complete attempt; its
 // deferred rollback releases every row/session lock and pool connection.
 // Retry only that failure with a fresh snapshot and the same original guards.
-func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool) error {
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool, expectedServingID ...string) error {
 	for {
-		err := s.markDeploymentLiveOnce(ctx, id, fenceLatest, recovery)
+		err := s.markDeploymentLiveOnce(ctx, id, fenceLatest, recovery, expectedServingID...)
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure {
 			return err
@@ -10510,7 +10530,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 	}
 }
 
-func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLatest, recovery bool) (resultErr error) {
+func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLatest, recovery bool, expectedServingID ...string) (resultErr error) {
 	defer func() { resultErr = mapErr(resultErr) }()
 	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
@@ -10569,6 +10589,11 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	if len(expectedServingID) > 0 {
+		if err := deploymentActivationServingMatchesTx(ctx, tx, dep, expectedServingID[0]); err != nil {
+			return err
+		}
 	}
 	if recovery {
 		if dep.Status == DeploySuperseded {
@@ -14043,26 +14068,12 @@ func (s *pgCore) DomainByName(ctx context.Context, domain string) (CustomDomain,
 // ownership predicate is repeated here so callers cannot bypass the handler's
 // account check with a direct store call.
 func (s *PgStore) SetDefaultCustomDomain(ctx context.Context, appID, domain string) error {
-	var marker int
-	err := s.pool.QueryRow(ctx, `
-		insert into app_default_domains (app_id, domain)
-		select $1, domain
-		  from custom_domains
-		 where domain = $2
-		   and app_id = $1
-		   and environment_id is null
-		   and verified_at is not null
-		   and domain not like '*.%'
-		on conflict (app_id) do update
-		   set domain = excluded.domain, updated_at = now()
-		 returning 1`, appID, domain).Scan(&marker)
-	if errors.Is(err, pgx.ErrNoRows) {
+	claim, bound := CustomDomainProbe(ctx)
+	if bound && (probeDomainMatches(claim, domain) != nil || claim.AppID != appID) {
 		return ErrNotFound
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err := sqlc.New().SetCustomDomainDefault(ctx, s.pool, sqlc.SetCustomDomainDefaultParams{AppID: appID, Domain: domain, ClaimBound: bound, Token: claim.ChallengeToken})
+	return mapErr(err)
 }
 
 func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain string) (bool, error) {
@@ -14181,26 +14192,8 @@ func (s *PgStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, tok
 }
 
 func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
-	tag, err := s.pool.Exec(ctx, `
-		update custom_domains
-		   set cert_status = $2,
-		       cert_expires_at = $3,
-		       cert_last_error = $4,
-		       dns_last_checked_at = $5,
-		       cert_failed_at = case
-		         when $2 = 'failed' and cert_status is distinct from 'failed'
-		           then coalesce($5, now())
-		         when $2 = 'failed' then cert_failed_at
-		         else null
-		       end
-		 where domain = $1`, domain, string(status), nullableTime(expiresAt), nullableStr(lastError), nullableTime(dnsCheckedAt))
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	claim, _ := CustomDomainProbe(ctx)
+	return s.updateCustomDomainProbeCert(ctx, claim, domain, status, expiresAt, lastError, dnsCheckedAt)
 }
 
 func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
@@ -14213,10 +14206,8 @@ func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 // UpsertDoctorObservation writes (or refreshes) the
 // per-domain observation row. The poller is the sole
 // writer. ON CONFLICT (domain) DO UPDATE means a second
-// pass overwrites every field; the handler reads the
-// latest row, so "race" between poller and handler
-// is benign (the handler may see a slightly older row
-// or a slightly newer one, both are correct).
+// pass overwrites every field. Legacy custom-domain probes carry their
+// claim identity in ctx; their reads and writes reject replacement claims.
 //
 // The COALESCE on $2 keeps the surface_id stable across
 // passes: the poller enumerates both legacy custom_domains
@@ -14226,6 +14217,9 @@ func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 // The legacy case (surface_id="" passed in) is translated
 // to nil at the store boundary so the column gets NULL.
 func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorObservation) error {
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		return s.upsertCustomDomainProbe(ctx, claim, obs)
+	}
 	var surfaceID any
 	if obs.SurfaceID != "" {
 		surfaceID = obs.SurfaceID
@@ -14278,6 +14272,9 @@ func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorO
 // caller is responsible for the stale-check against
 // observed_at vs FAAS_DOMAIN_DOCTOR_TTL_SECONDS.
 func (s *PgStore) GetDoctorObservation(ctx context.Context, domain string) (DomainDoctorObservation, error) {
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		return s.readCustomDomainProbe(ctx, claim, domain)
+	}
 	var obs DomainDoctorObservation
 	var surfaceID, observedTarget, observedAAAA, caaObserved, lastError *string
 	var certNotAfter, dnsCheckedAt, certCheckedAt *time.Time
@@ -14699,8 +14696,13 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		createdAtArg = createdAt.UTC()
 	}
 	var retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg any
+	clearPolicy, clearRules := false, false
 	if len(retryOptions) > 0 {
 		opts := normalizeCronOptions(retryOptions[0])
+		if opts.ClearSchedulePolicy && opts.SchedulePolicy != nil || opts.ClearFailureRules && opts.FailureRules != nil {
+			return Cron{}, ErrInvalidArgument
+		}
+		clearPolicy, clearRules = opts.ClearSchedulePolicy, opts.ClearFailureRules
 		if opts.SchedulePolicy != nil || opts.FailureRules != nil {
 			var commandCron bool
 			if err := s.pool.QueryRow(ctx, `select cardinality(command) > 0 from crons where id = $1::uuid`, id).Scan(&commandCron); err != nil {
@@ -14740,11 +14742,11 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   created_at = coalesce($7, created_at),
 		   retry_max = coalesce($8, retry_max),
 		   retry_backoff_seconds = coalesce($9, retry_backoff_seconds),
-		   schedule_policy = coalesce($10::jsonb, schedule_policy),
-		   failure_rules = coalesce($11::jsonb, failure_rules)
+		   schedule_policy = case when $12::boolean then null else coalesce($10::jsonb, schedule_policy) end,
+		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end
 		 where id = $1
 		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at`,
-		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg)
+		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg, clearPolicy, clearRules)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -21959,6 +21961,9 @@ WHERE kind = 'wake.boot_started'
 // fallback here keeps the param semantics identical to the sqlc
 // version (no string-built queries, all parameters bound).
 //
+// The kind prefix is literal, and events_at_id_idx returns rows newest
+// first, so the limit stops the scan (ADR-20261103094121).
+//
 // Bounded by the handler to api.ObsAdminEventsLimitMax (500). The
 // interface{} params for the discriminator columns (actor, kind_prefix,
 // subject, since) match the sqlc-emitted shape — the SQL uses the
@@ -21974,7 +21979,7 @@ func (s *PgStore) ListAllEventsPaged(ctx context.Context, actor, kindPrefix, sub
 	rows, err := s.pool.Query(ctx,
 		`select id, at, actor, kind, subject, data from events
 		 where ($1 = '' or actor = $1)
-		   and ($2 = '' or kind like $2 || '%')
+		   and ($2 = '' or starts_with(kind, $2))
 		   and ($3 = '' or subject = $3::uuid)
 		   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
 		 order by at desc, id desc

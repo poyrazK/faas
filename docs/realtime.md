@@ -526,7 +526,9 @@ you do not operate always-on workers. It consumes an existing consumer
 group: create the group with `lease_seconds` of at least 120, then create a
 trigger with `kind: realtime` and `{"endpoint_id", "channel", "group"}` config.
 The group's ordering, filters, retry policy and dead-letter queue apply, and a
-parked app wakes for the first message.
+parked app wakes for the first message. A trigger whose group has been idle
+checks it every few seconds, so the first message after a quiet spell starts
+its function within about 5 seconds; later messages follow at once.
 
 Each message is one invocation. A 2xx response completes it; a failed or
 timed-out handler retries under the group's retry policy; a platform failure

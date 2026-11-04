@@ -93,14 +93,14 @@ func TestVerificationOutboxSignupWiringPreservesResponseAndAtomicIntent(t *testi
 				if bytes.Contains(cipher, raw) || strings.Contains(response.Body.String(), base64.RawURLEncoding.EncodeToString(raw)) {
 					t.Fatal("verification credential leaked into durable storage or auth response")
 				}
-				url := "https://auth.example.test/v1/auth/verify-email?token=" + base64.RawURLEncoding.EncodeToString(raw)
+				target, encoded := "https://auth.example.test/v1/auth/verify-email", base64.RawURLEncoding.EncodeToString(raw)
 				verified := httptest.NewRecorder()
-				handler.ServeHTTP(verified, httptest.NewRequest(http.MethodGet, url, nil))
+				handler.ServeHTTP(verified, verifyEmailPost(target, encoded))
 				if verified.Code != http.StatusOK {
 					t.Fatal("durable token was not accepted by the existing verification endpoint", verified.Code)
 				}
 				replayed := httptest.NewRecorder()
-				handler.ServeHTTP(replayed, httptest.NewRequest(http.MethodGet, url, nil))
+				handler.ServeHTTP(replayed, verifyEmailPost(target, encoded))
 				if replayed.Code == http.StatusOK {
 					t.Fatal("durable token could be consumed twice")
 				}

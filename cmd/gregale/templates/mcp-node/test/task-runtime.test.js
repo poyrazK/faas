@@ -20,6 +20,37 @@ const baseEnv = {
   FAAS_APP_ID: 'web-app-id',
 };
 
+test('zero-valued Task settings use the same defaults as omitted settings', async () => {
+  const fields = ['ttl_seconds', 'poll_interval_ms', 'worker_concurrency', 'shutdown_timeout_ms', 'max_attempts', 'retry_base_delay_ms', 'retry_max_delay_ms'];
+  const zeroTasks = { ...config.tasks };
+  const omittedTasks = { ...config.tasks };
+  for (const field of fields) {
+    zeroTasks[field] = 0;
+    delete omittedTasks[field];
+  }
+  const env = { ...baseEnv, MCP_TASK_NAMESPACE: 'storefront-prod' };
+  assert.deepEqual(resolveMcpTaskSettings({ tasks: zeroTasks }, { env, role: 'web' }),
+    resolveMcpTaskSettings({ tasks: omittedTasks }, { env, role: 'web' }));
+  const service = await startMcpTaskRuntime({ tasks: zeroTasks }, {
+    env, role: 'web',
+    createPool: () => ({ async end() {} }),
+    createStore: () => ({ async initialize() {}, async claim() {} }),
+  });
+  await service.close();
+});
+
+test('zero-default handling preserves invalid retry settings and explicit drain overrides', () => {
+  for (const field of ['max_attempts', 'retry_base_delay_ms', 'retry_max_delay_ms']) {
+    for (const value of [false, true, -1, '0']) {
+      assert.throws(() => resolveMcpTaskSettings({ tasks: { ...config.tasks, [field]: value } }, { env: baseEnv }));
+    }
+  }
+  const settings = resolveMcpTaskSettings({ tasks: { ...config.tasks, shutdown_timeout_ms: 0 } }, {
+    env: { ...baseEnv, MCP_DRAIN_TIMEOUT_SECONDS: '45' },
+  });
+  assert.equal(settings.shutdownTimeoutMs, 45_000);
+});
+
 test('a dedicated worker requires and uses the shared logical namespace override', () => {
   assert.throws(() => resolveMcpTaskSettings(config, { env: baseEnv, role: 'worker' }), /MCP_TASK_NAMESPACE/);
   const settings = resolveMcpTaskSettings(config, {
@@ -50,7 +81,7 @@ test('runtime startup selects the process role and closes the runtime and pool o
     async start() {},
     async stop() {},
   };
-  const service = await startMcpTaskRuntime(config, {
+  const service = await startMcpTaskRuntime({ ...config, tasks: { ...config.tasks, max_attempts: 5 } }, {
     env: { ...baseEnv, MCP_TASK_NAMESPACE: 'storefront-prod' },
     role: 'worker',
     createPool(options) {
@@ -60,6 +91,7 @@ test('runtime startup selects the process role and closes the runtime and pool o
     createStore(options) {
       assert.equal(options.namespace, 'storefront-prod');
       assert.equal(options.ownerKey, baseEnv.MCP_TASK_OWNER_KEY);
+      assert.equal(options.maxAttempts, 5);
       return {};
     },
     createRuntime(options) {
@@ -71,6 +103,7 @@ test('runtime startup selects the process role and closes the runtime and pool o
   assert.equal(service.taskRuntime, fakeRuntime);
   assert.equal(runtimeOptions.workerEnabled, true);
   assert.equal(runtimeOptions.keepAlive, true);
+  assert.equal(runtimeOptions.maxAttempts, 5);
   await service.close();
   await service.close();
   assert.equal(poolCloseCount, 1);
@@ -167,13 +200,16 @@ test('an external observer needs no payload key and never initializes schema or 
   let reads = 0;
   const env = { ...baseEnv, MCP_TASK_NAMESPACE: 'storefront-prod', MCP_TASKS_SCALING_APP_SLUG: 'storefront-worker', MCP_TASKS_SCALING_TOKEN: 'metrics-secret' };
   delete env.MCP_TASK_OWNER_KEY;
-  const service = await startMcpTaskRuntime(config, {
+  const service = await startMcpTaskRuntime({ ...config, tasks: { ...config.tasks, max_attempts: 5 } }, {
     env, role: 'observer',
     checkSchema: async () => {},
     createPool: () => ({ async end() {} }),
     createStore() { assert.fail('observer must not access encrypted task store'); },
     createRuntime() { assert.fail('observer must not initialize a worker'); },
-    createObserver: () => ({ async queueMetrics() { reads++; return { outstandingTasks: 2, oldestAgeSeconds: 1 }; } }),
+    createObserver: options => {
+      assert.equal(options.maxAttempts, 5);
+      return { async queueMetrics() { reads++; return { outstandingTasks: 2, oldestAgeSeconds: 1 }; } };
+    },
     createMetricsPublisher(options) { publishedSettings = options; return { async close() {} }; },
   });
   assert.equal(reads, 1);

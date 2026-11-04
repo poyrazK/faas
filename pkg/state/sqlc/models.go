@@ -92,6 +92,8 @@ type Account struct {
 	DeploymentMailRevision          int64
 	MfaTotpLastStep                 pgtype.Int8
 	DeletionIncludesManagedPostgres bool
+	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
+	PlanChangedAt pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -2788,6 +2790,7 @@ type CliAuthCode struct {
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
+	OrgID      pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -7298,6 +7301,16 @@ type IssueEvent struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
+}
+
+type IssueEventUsage struct {
+	AppID         pgtype.UUID
+	RetainedCount int64
+	Initialized   bool
 }
 
 type IssueFrequencyAlertReceipt struct {
@@ -10504,6 +10517,8 @@ type Org struct {
 	OverageCapCents pgtype.Int8
 	// When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).
 	DeletionRequestedAt pgtype.Timestamptz
+	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
+	PlanChangedAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
@@ -10542,6 +10557,15 @@ type OrgActivityOutbox struct {
 	DeliveredAt pgtype.Timestamptz
 	LastError   pgtype.Text
 	CreatedAt   pgtype.Timestamptz
+}
+
+// ADR-20261101225122 whether agents may act in an organization and with which capabilities; apid is the only writer.
+type OrgAgentPolicy struct {
+	OrgID         pgtype.UUID
+	AgentsAllowed bool
+	AllowedScopes []string
+	UpdatedAt     pgtype.Timestamptz
+	UpdatedBy     pgtype.UUID
 }
 
 type OrgAppQuotaFence struct {
@@ -13680,6 +13704,30 @@ type ReleaseSecretRekeyDocument struct {
 	Payload []byte
 }
 
+// Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).
+type RequestAnalyticsMinute struct {
+	AppID         pgtype.UUID
+	BucketStart   pgtype.Timestamptz
+	DimensionKind string
+	Dimension     string
+	Method        string
+	Status        int16
+	DeploymentID  pgtype.UUID
+	AccountID     pgtype.UUID
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	RequestTimeMs int64
+	LatencyMaxMs  int32
+	LatencyHist   []int64
+}
+
+// First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).
+type RequestAnalyticsRollupCoverage struct {
+	AppID        pgtype.UUID
+	CoveredSince pgtype.Timestamptz
+}
+
 type RequestAuditEvent struct {
 	EventID          pgtype.UUID
 	AccountID        pgtype.UUID
@@ -15431,6 +15479,15 @@ type WorkflowDispatchCursor struct {
 type WorkflowEvent struct {
 	ID         pgtype.UUID
 	RunID      pgtype.UUID
+	EventName  string
+	Payload    []byte
+	ReceivedAt pgtype.Timestamptz
+}
+
+type WorkflowEventArchive struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	AppID      pgtype.UUID
 	EventName  string
 	Payload    []byte
 	ReceivedAt pgtype.Timestamptz

@@ -11,5 +11,9 @@ export type CreateNativeIssueTicketRequest = {
   title: string;
   description?: string;
   recovery_url?: string;
+  /**
+   * Original slug for recovering a legacy receipt after an app rename.
+   */
+  original_app_slug?: string;
 };
 

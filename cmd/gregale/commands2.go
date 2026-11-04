@@ -5745,6 +5745,8 @@ func cmdCronsUpdate(args []string) int {
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
+	clearSchedulePolicy := fs.Bool("clear-schedule-policy", false, "remove the schedule policy")
+	clearFailureRules := fs.Bool("clear-failure-rules", false, "remove the failure rules")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -5787,12 +5789,16 @@ func cmdCronsUpdate(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale cron update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
 		return 1
 	}
+	if *clearSchedulePolicy && *schedulePolicyJSON != "" || *clearFailureRules && *failureRulesJSON != "" {
+		PrintUsage(os.Stderr, "usage: gregale cron update --schedule-policy JSON | --clear-schedule-policy, --failure-rules JSON | --clear-failure-rules (mutually exclusive)", "crons")
+		return 1
+	}
 	// Reject no-fields-set early; the server otherwise no-ops and
 	// emits a cron-changed notification — a footgun we'd rather
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] && !*clearSchedulePolicy && !*clearFailureRules {
 		PrintUsage(os.Stderr, "usage: gregale cron update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
@@ -5866,6 +5872,7 @@ func cmdCronsUpdate(args []string) int {
 		}
 		req.FailureRules = rules
 	}
+	req.ClearSchedulePolicy, req.ClearFailureRules = *clearSchedulePolicy, *clearFailureRules
 	return updateCronAndRender(context.Background(), client, id, req)
 }
 

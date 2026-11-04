@@ -137,6 +137,7 @@ func TestMCPNativeReleaseResumesPinnedDeploymentWithoutSubmitting(t *testing.T) 
 }
 
 func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
+	t.Setenv("MCP_TASK_NAMESPACE", mcpNativeTestNamespace)
 	oldCheck := (*main.McpNativeCheckWorkers)
 	(*main.McpNativeCheckWorkers) = func(context.Context, *main.Client, main.McpNativeReleasePlan, *main.McpNativeReleaseState) error {
 		return nil
@@ -185,7 +186,14 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 				}
 				json.NewDecoder(r.Body).Decode(&req)
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
 				switch req.Method {
+				case "initialize":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":%q,"capabilities":{"tools":{}}}}`, req.ID, mcphosting.ProtocolVersion)
+				case "notifications/initialized":
+					w.WriteHeader(http.StatusAccepted)
+				case "ping":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, req.ID)
 				case "server/discover":
 					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, req.ID, mcphosting.ProtocolVersion)
 				case "tools/list":
@@ -221,6 +229,10 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"worker-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
 				case "/v1/apps/web":
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
+				case "/v1/apps/web/instances":
+					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "web-instance", DeploymentID: "candidate", State: "running"}})
+				case "/v1/apps/web/deployments/candidate/instances/web-instance/mcp-probe":
+					writeMCPVerificationProbe(t, w, r, "web-id", "candidate", "web-instance")
 				case "/v1/apps/web/deployments":
 					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{dep, stable}})
 				case "/v1/deployments/candidate":
@@ -228,7 +240,7 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 				case "/v1/deployments/candidate/url":
 					json.NewEncoder(w).Encode(api.DeploymentPreviewURL{URL: endpoint.URL, Alive: true})
 				case "/v1/apps/observer":
-					json.NewEncoder(w).Encode(api.AppResponse{ID: "observer-id", Slug: "observer", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}}})
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "observer-id", Slug: "observer", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}, Env: mcpNativeObserverFixtureEnv()}})
 				case "/v1/apps/observer/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "obs", State: "running"}})
 				case "/v1/apps/metrics/custom-metrics":

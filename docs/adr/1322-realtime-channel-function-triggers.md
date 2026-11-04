@@ -123,3 +123,12 @@ ADR-20261030125501 (stateless agents on functions), rollout step 2.
   - Ordering, retries and dead letters stay the group's.
 - **Agent inboxes.** These are realtime triggers on an `agent-inbox` channel. They need nothing more: a slice runs for its app's request timeout.
 - **Tests.** `TestRealtimeTriggerRunsPastTheGroupLease`: a handler that runs 5 s on a 2 s lease completes on its first attempt, with one call.
+
+## Amendment (2026-11-03): idle triggers back off
+
+Every realtime trigger claimed from its group on every 1 s scheduler tick,
+and each claim is a transaction that locks the group row, so idle triggers
+cost one locking transaction per second each. A claim that finds nothing now
+waits 2 s, then 4 s, then 5 s before the next; a claim that returns messages
+resets it. A message reaching an idle trigger's group starts its function
+within about 5 seconds.

@@ -305,26 +305,57 @@ func TestPostgresStoreDeleteClaimSerializesRestoreReservation(t *testing.T) {
 			deleteResult <- claimErr
 		}()
 		close(started)
+		// A restore copy no longer refuses the delete (ADR-20261103091657),
+		// so the delete always wins; the lock still decides whether the
+		// restore committed before it or saw the source deleting.
 		restoreErr, deleteErr := <-restoreResult, <-deleteResult
-		if (restoreErr == nil) == (deleteErr == nil) {
-			t.Fatalf("race %d must have exactly one winner: restore=%v delete=%v", index, restoreErr, deleteErr)
+		if deleteErr != nil {
+			t.Fatalf("race %d delete error = %v", index, deleteErr)
 		}
 		if restoreErr != nil && !errors.Is(restoreErr, ErrConflict) {
 			t.Fatalf("race %d restore error = %v, want ErrConflict", index, restoreErr)
 		}
-		if deleteErr != nil && !errors.Is(deleteErr, ErrConflict) {
-			t.Fatalf("race %d delete error = %v, want ErrConflict", index, deleteErr)
-		}
 		current, err := store.Get(raceCtx, accountID, source.ID)
-		if err != nil {
-			t.Fatalf("race %d get source: %v", index, err)
+		if err != nil || current.State != StateDeleting {
+			t.Fatalf("race %d source = %s, %v; want deleting", index, current.State, err)
 		}
-		if restoreErr == nil && current.State != StateReady {
-			t.Fatalf("race %d restore won with source state %s", index, current.State)
+		copies, err := store.HasRestoreCopies(raceCtx, source.ID)
+		if err != nil || copies != (restoreErr == nil) {
+			t.Fatalf("race %d copies = %v, %v with restore error %v", index, copies, err, restoreErr)
 		}
-		if deleteErr == nil && current.State != StateDeleting {
-			t.Fatalf("race %d delete won with source state %s", index, current.State)
-		}
+	}
+}
+
+// adr: 20261103091657
+func TestPostgresStoreKeptSourceFreesItsDatabase(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 9, 22, 14, 0, 0, 0, time.UTC)
+	source := postgresReadyDatabase(t, store, accountID, "kept-source", at)
+	copyDatabase := postgresTestDatabase(accountID, "kept-copy", at.Add(time.Second))
+	copyDatabase.RestoreSourceDatabaseID = source.ID
+	copyDatabase.RestoreSourceResourceID = source.ProviderResourceID
+	copyDatabase.RestorePointInTime = at.Add(-time.Hour)
+	if _, _, err := store.Reserve(ctx, copyDatabase, 100); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, accountID); err != nil || count != 2 {
+		t.Fatalf("count before the delete = %d, %v; want 2", count, err)
+	}
+	purgeAfter := at.Add(7 * 24 * time.Hour)
+	if _, err := store.ClaimScheduledDelete(ctx, accountID, source.ID, uuid.NewString(), at.Add(2*time.Second), at.Add(time.Minute), purgeAfter); err != nil {
+		t.Fatalf("a source with a copy refused its scheduled delete: %v", err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, accountID); err != nil || count != 2 {
+		t.Fatalf("count during the undo window = %d, %v; want 2", count, err)
+	}
+	if _, err := store.ClaimDelete(ctx, accountID, source.ID, uuid.NewString(), purgeAfter, purgeAfter.Add(time.Minute)); err != nil {
+		t.Fatalf("purge claim: %v", err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, accountID); err != nil || count != 1 {
+		t.Fatalf("count with the source kept = %d, %v; want 1", count, err)
+	}
+	if copies, err := store.HasRestoreCopies(ctx, source.ID); err != nil || !copies {
+		t.Fatalf("copies = %v, %v; want true", copies, err)
 	}
 }
 

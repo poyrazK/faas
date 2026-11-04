@@ -122,6 +122,9 @@ type PendingHostnameRow = pendingHostnameRow
 type PgHandlerEnv = pgHandlerEnv
 type PlanCron = planCron
 type PlanTokenWire = planTokenWire
+
+var CachedProjectApplyFields = cachedProjectApplyFields
+
 type ProjectEnvironmentBindingClone = projectEnvironmentBindingClone
 type PrometheusTargetGroup = prometheusTargetGroup
 type PromoteFeatureFlagRolloutRequest = promoteFeatureFlagRolloutRequest
@@ -267,6 +270,8 @@ const UploadSessionOpenCap = uploadSessionOpenCap
 const VmmdMetricsDiscoveryPath = vmmdMetricsDiscoveryPath
 
 // Package-level vars
+var ProjectDashboardDomainsForTest = (*server).projectDashboardDomains
+var SendCertIssuanceFailedEmailForTest = (*server).sendCertIssuanceFailedEmail
 var AppsDomainFunc = &appsDomainFunc
 var BuildPlanCacheOnce = &buildPlanCacheOnce
 var CapsDecl = &capsDecl
@@ -2083,6 +2088,11 @@ func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.Accoun
 	return newOIDCAccountLookup(store, repos)
 }
 
+// WriteIssueErrorForTest exercises the public issue quota response mapping.
+func WriteIssueErrorForTest(w http.ResponseWriter, err error) {
+	writeIssueError(w, err)
+}
+
 // Inline security alerts (bug hunt H99).
 func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
 	r.alertPasswordChangedInline(ctx, acct, method)
@@ -2100,3 +2110,27 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
 	return resolved.command, resolved.shell, problem
 }
+
+var ALookupFunc = &aLookupFunc
+var AAAALookupFunc = &aaaaLookupFunc
+var CAALookupFunc = &caaLookupFunc
+var OwnedDomainsFunc = &ownedDomainsFunc
+var CheckPointsToGregale = checkPointsToGregale
+
+func (s *server) RunDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
+	return s.runDoctorForDomain(ctx, log, domain)
+}
+
+// WaitPasswordResetMail waits for forgot-password work started off the
+// request path (H86).
+func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }
+
+// Login failure limiter internals (bug hunt round 8: eviction when full).
+func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
+func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
+func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
+	return l.retryAfter(key)
+}
+
+// RouteProbeAccountQueues exposes the per-account probe ordering (H79).
+var RouteProbeAccountQueues = routeProbeAccountQueues

@@ -90,7 +90,7 @@ func (s *PgStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, pr
 	}
 	if !live {
 		var locked string
-		err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&locked)
+		err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for no key update`, ep).Scan(&locked)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ManagedRealtimeReadProgress{}, ErrNotFound
 		}
