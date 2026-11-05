@@ -22,7 +22,9 @@ func TestRequestTelemetryCoverage(t *testing.T) {
 		{"idle", true, 0, 4, 4, false, 0, 0},
 		{"disabled", false, 0, 4, 4, false, 0, 0},
 		{"delivered", true, 3, 4, 4, false, 0, 0},
-		{"backlog", true, 3, 4, 1, false, 0, 2},
+		// A backlog of full batches drains in one tick (ADR-20261103113952
+		// follow-up), so the report after it holds none.
+		{"backlog", true, 3, 4, 1, false, 0, 0},
 		{"rejected", true, 3, 4, 4, true, 3, 0},
 		{"overwrite", true, 3, 1, 4, false, 2, 0},
 	} {

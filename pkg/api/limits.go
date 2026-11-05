@@ -323,29 +323,37 @@ const (
 
 // Product Control internal contract bounds. Customer quotas are explicit grants.
 const (
-	ProductControlMaxFeatures                             = 32
-	ProductControlAccessMaxRoles                          = 32
-	ProductControlAccessRoleMaxBytes                      = 32
-	ProductControlAccessMaxPermissions                    = 6
-	ProductControlTeamMaxMembers                          = 500
-	ProductControlTeamMaxInvitations                      = 500
-	ProductControlTeamMaxAuthRoles                        = 64
-	ProductControlTeamMaxAuthPermissions                  = 64
-	ProductControlTeamAuthPermissionMaxBytes              = 64
-	ProductControlTeamResponseMaxBytes                    = 1 << 20
-	ProductControlTeamEmailMaxBytes                       = 320
-	ProductControlTeamContextMaxBytes                     = 4096
-	ProductControlTeamInvitationMinSeconds                = 300
-	ProductControlTeamInvitationMaxSeconds                = 14 * 24 * 60 * 60
-	ProductControlTeamInvitationDefaultSeconds            = 7 * 24 * 60 * 60
-	ProductControlTeamHistoryPageSize                     = 100
-	ProductControlPlanPolicyMaxSources                    = 32
-	ProductControlPlanPolicyMaxTargets                    = 32
-	ProductControlAuthBodyBytes                           = 16 << 10
-	ProductControlCookieTokenMaxBytes                     = 3500
-	ProductControlAuthResponseBytes                       = 256 << 10
-	ProductControlAuthMaxOrganizations                    = 100
-	ProductControlAuthTimeoutSeconds                      = 10
+	ProductControlMaxFeatures                  = 32
+	ProductControlAccessMaxRoles               = 32
+	ProductControlAccessRoleMaxBytes           = 32
+	ProductControlAccessMaxPermissions         = 6
+	ProductControlTeamMaxMembers               = 500
+	ProductControlTeamMaxInvitations           = 500
+	ProductControlTeamMaxAuthRoles             = 64
+	ProductControlTeamMaxAuthPermissions       = 64
+	ProductControlTeamAuthPermissionMaxBytes   = 64
+	ProductControlTeamResponseMaxBytes         = 1 << 20
+	ProductControlTeamEmailMaxBytes            = 320
+	ProductControlTeamContextMaxBytes          = 4096
+	ProductControlTeamInvitationMinSeconds     = 300
+	ProductControlTeamInvitationMaxSeconds     = 14 * 24 * 60 * 60
+	ProductControlTeamInvitationDefaultSeconds = 7 * 24 * 60 * 60
+	ProductControlTeamHistoryPageSize          = 100
+	ProductControlPlanPolicyMaxSources         = 32
+	ProductControlPlanPolicyMaxTargets         = 32
+	ProductControlAuthBodyBytes                = 16 << 10
+	ProductControlCookieTokenMaxBytes          = 3500
+	ProductControlAuthResponseBytes            = 256 << 10
+	ProductControlAuthMaxOrganizations         = 100
+	ProductControlAuthTimeoutSeconds           = 10
+	// ProductPortalSignInFailuresPerEmail failed sign-ins for one email
+	// address on one product's portal within ProductPortalSignInFailureWindow
+	// refuse the next with 429 before the product's login service is asked;
+	// ProductPortalSignInFailureKeysMax bounds the addresses tracked (bug hunt
+	// H81).
+	ProductPortalSignInFailuresPerEmail                   = 10
+	ProductPortalSignInFailureWindow                      = 15 * time.Minute
+	ProductPortalSignInFailureKeysMax                     = 50_000
 	ProductControlSessionMaxSeconds                       = 7 * 24 * 60 * 60
 	ProductControlReceiptMaxBytes                         = 8192
 	ProductControlRecoveryMaxEntries                      = 64
@@ -13770,12 +13778,38 @@ var tenantEgressForbiddenPorts = map[int]string{
 	53: "DNS is pinned to the platform resolver", 853: "DNS is pinned to the platform resolver",
 }
 
+// TenantEgressAllowlistBlockedPorts are the TCP ports that stay closed to an
+// app's allowlisted destinations, in ascending order: every forbidden port
+// but the SMTP submission ports 465 and 587, which ADR-031 opens to
+// explicitly listed mail providers. Allowlisted destinations used to skip
+// the ADR-361 port policy entirely, so a wide allowlist reopened SSH, SMB,
+// IRC and mining ports (bug hunt H69).
+func TenantEgressAllowlistBlockedPorts() []int {
+	ports := make([]int, 0, len(tenantEgressForbiddenPorts))
+	for port := range tenantEgressForbiddenPorts {
+		if port != 465 && port != 587 {
+			ports = append(ports, port)
+		}
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // TenantEgressForbiddenPort reports whether an app may not declare port as
 // extra egress (ADR-361), and why.
 func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	reason, forbidden = tenantEgressForbiddenPorts[port]
 	return reason, forbidden
 }
+
+// VmmdLogRingBudgetBytes bounds the customer log lines all live instances'
+// rings hold in one vmmd's memory, which the control-plane slice pays for,
+// split evenly across live instances but never below VmmdLogRingFloorBytes
+// each (bug hunt H47). Lines a ring evicts go to the log archive spool.
+const (
+	VmmdLogRingBudgetBytes int64 = 512 << 20
+	VmmdLogRingFloorBytes  int64 = 256 << 10
+)
 
 // UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
 // a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
@@ -14010,6 +14044,21 @@ const (
 	// without chaos for ServiceDNSChaosBackoff instead of retrying per question.
 	ServiceDNSChaosLookupTimeout = 250 * time.Millisecond
 	ServiceDNSChaosBackoff       = 5 * time.Second
+	// ServiceDNSChaosCacheTTL is how long a node keeps one caller address and
+	// name's chaos policy, found or not, and ServiceDNSChaosCacheMax how many
+	// it keeps: every guest *.svc.gregale question read the control plane
+	// for a test-only feature almost no app uses (bug hunt H33). A new or
+	// ended scenario run takes effect within the TTL.
+	ServiceDNSChaosCacheTTL = 2 * time.Second
+	ServiceDNSChaosCacheMax = 4096
+	// PlatformTenantJWTCacheTTL is how long a gateway keeps a JWT customer
+	// claim's platform tenant, found or not; a suspended tenant is refused
+	// within it. While the store is unavailable the last answer serves for
+	// PlatformTenantJWTOutageGrace instead of refusing every request.
+	// PlatformTenantJWTCacheMax bounds the claims kept (bug hunt H29).
+	PlatformTenantJWTCacheTTL    = 5 * time.Second
+	PlatformTenantJWTOutageGrace = 5 * time.Minute
+	PlatformTenantJWTCacheMax    = 20_000
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
@@ -14548,9 +14597,15 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
-	RequestAnalyticsRollupFlushInterval  = 10 * time.Second
-	RequestAnalyticsRollupFlushRowsMax   = 1000
-	RequestAnalyticsRollupDimensionsMax  = 50
+	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupFlushRowsMax  = 1000
+	RequestAnalyticsRollupDimensionsMax = 50
+	// The buffer holds up to this many values of a kind per app minute
+	// before folding new ones into __other__; the flush keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them.
+	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// App minutes whose lost rollups wait to be recorded as gaps.
+	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )

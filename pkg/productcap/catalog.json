@@ -563,9 +563,11 @@
         "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
+        "/v1/apps/{}/service-aborts",
         "/v1/deleted-apps",
         "/dashboard/apps/{}/deployment-submissions",
         "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-promotions",
         "/v1/apps/{}/deployment-submissions",
         "=/v1/apps/{}/deployments",
         "/v1/apps/{}/deployments/clear-obsolete",
@@ -702,6 +704,9 @@
       ],
       "docs_url": "/docs/scaling-policy",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero",
+      "routes": [
+        "/v1/apps/{}/scaling"
+      ],
       "settings": [
         "app.function_concurrency",
         "app.max_concurrency",
@@ -1250,6 +1255,7 @@
         "=/dashboard",
         "/dashboard/apps/new",
         "/dashboard/assets",
+        "/doctor.js",
         "/history.js",
         "/replacement.js",
         "/resolution.js",
