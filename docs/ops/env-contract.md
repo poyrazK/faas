@@ -89,6 +89,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
+| `FAAS_ASYNC_WAKE_FINALIZE` | schedd | `default` |  |  | `` | optional boolean switch for ADR-20261105090246: a booted wake answers after its RUNNING publication and records its workload class and secret delivery afterwards; production default is off |
 | `FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native service-addition qualification; operator opt-in only |
 | `FAAS_ATOMIC_WORKER_RELEASES_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
 | `FAAS_AUDIT_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
