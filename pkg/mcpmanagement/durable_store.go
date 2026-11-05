@@ -213,7 +213,7 @@ func (s *StateStore) updateManySnapshot(values map[string]any, sequences map[str
 	if snapshot, ok := values["oauth"].(oauthSnapshot); ok && (sequences["oauth"] == 0 || sequences["oauth"] >= s.seqs["oauth"]) {
 		now := time.Now()
 		for key := range s.records {
-			for _, prefix := range []string{"plans/", "environment-plans/", "actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, budgetOutcomeNamespace, deploymentOutcomeNamespace, promotionOutcomeNamespace, rollbackOutcomeNamespace, serviceRollbackOutcomeNamespace, serviceAbortOutcomeNamespace, namedServiceAbortOutcomeNamespace} {
+			for _, prefix := range []string{"plans/", "environment-plans/", "actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, budgetOutcomeNamespace, deploymentOutcomeNamespace, promotionOutcomeNamespace, rollbackOutcomeNamespace, serviceRollbackOutcomeNamespace, serviceAbortOutcomeNamespace, namedServiceAbortOutcomeNamespace, environmentRollbackOutcomeNamespace} {
 				if grantID, matched := strings.CutPrefix(key, prefix); matched {
 					if strings.HasPrefix(grantID, "agent-key/") && retainedAgentState(s.records, grantID, now) {
 						break

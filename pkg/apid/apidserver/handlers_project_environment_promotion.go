@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/apid/environmentrollback"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	promotionapi "github.com/onebox-faas/faas/pkg/apid/promotion"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -884,14 +885,19 @@ func (s *server) getProjectEnvironmentPromotionStatus(w http.ResponseWriter, r *
 }
 
 func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	attemptCtx, problem := environmentrollback.Attempt(r.Context(), r.Header)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 255 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Idempotency-Key required", "promotion rollbacks require an Idempotency-Key of 1..255 characters"))
 		return
 	}
-	idempotencyKey = projectaccess.IdempotencyKey(r, idempotencyKey)
-	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
+	idempotencyKey = environmentrollback.BoundedIdempotencyKey(projectaccess.IdempotencyKey(r, idempotencyKey))
+	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(attemptCtx, acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Environment promotion not found", "no promotion exists with that id"))
@@ -905,8 +911,12 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 			"Promotion is still running", "wait for the promotion to finish before requesting a rollback"))
 		return
 	}
-	started, err := s.store.StartProjectEnvironmentPromotionRollback(r.Context(), acct.ID, promotion.ID, idempotencyKey)
+	started, err := s.store.StartProjectEnvironmentPromotionRollback(attemptCtx, acct.ID, promotion.ID, idempotencyKey)
 	if err != nil {
+		if problem := environmentrollback.Problem(err); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Rollback idempotency key already used", "retry with the original rollback key or choose a new promotion"))
@@ -920,14 +930,14 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := s.applyProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workloads); err != nil {
-		_, _, loadErr := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err := s.applyProjectEnvironmentPromotionRollback(attemptCtx, acct, promotion, workloads); err != nil {
+		_, _, loadErr := s.store.ProjectEnvironmentPromotionByID(attemptCtx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
 		if loadErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			s.log.WarnContext(r.Context(), "project environment rollback stopped because target changed", "promotion_id", promotion.ID, "err", err)
+			s.log.WarnContext(attemptCtx, "project environment rollback stopped because target changed", "promotion_id", promotion.ID, "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Rollback stopped because the target changed",
 				"A target deployment changed after promotion. Review the current deployment state before retrying.").
@@ -940,12 +950,12 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 		}
 		return
 	}
-	completed, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	completed, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(attemptCtx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
 		return
 	}
-	s.audit.Emit(r.Context(), "project.environment.promotion_rolled_back", &acct.ID, map[string]any{
+	s.audit.Emit(attemptCtx, "project.environment.promotion_rolled_back", &acct.ID, map[string]any{
 		"promotion_id": promotion.ID, "project_slug": promotion.ProjectSlug,
 		"from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment,
 		"workload_count": len(finalWorkloads), "rollback_idempotency_key": idempotencyKey,

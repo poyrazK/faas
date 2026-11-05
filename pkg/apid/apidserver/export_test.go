@@ -2176,3 +2176,7 @@ var RouteProbeAccountQueues = routeProbeAccountQueues
 // ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
 // enforcement.
 var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
+
+func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentRollbackReceipt(w, r, acct)
+}

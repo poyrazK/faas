@@ -252,6 +252,10 @@ func (m *management) applyEnvironmentRollback(ctx context.Context, args applyArg
 	if p.result != nil {
 		return p.result, nil
 	}
+	ctx, err = m.prepareEnvironmentRollbackOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true
 	if err := m.persistEnvironmentPlans(); err != nil {
 		return nil, err

@@ -3419,3 +3419,33 @@ review uses `gregale_get_saved_plan`; operation receipts retain `gregale_get_pla
 Existing storage formats, limits and
 native APIs are unchanged. See
 [ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+
+
+### Original environment rollback acceptance (ADR-20261105102920)
+
+Project-level environment rollback accepts paired optional original-attempt and
+request-hash headers. The request fingerprint binds canonical project/source/target
+UUIDs and exact promotion UUID/hash. Admission locks and validates the original
+promotion and current environment identities, then atomically stores a minimal
+immutable acceptance receipt with rollback intent. Accepted attempt-bearing requests cannot admit work
+again, including after terminal failure. Explicit legacy retries preserve their
+original-key checkpoint continuation and cannot alter the acceptance receipt;
+legacy/automatic rollback state cannot be adopted into a new receipt. The additive receipt table retains one row
+per promotion and cascades with promotion/account/project deletion.
+
+Read-only personal and organization project receipt endpoints refuse foreign or
+replacement scope identities. Management MCP exposes exact acceptance through
+`gregale_get_environment_action_outcome` and passive environment history/recovery
+recipes after plan expiry and encrypted restart. Current source/target consent,
+all project workload identities, storage, retention and the unchanged reference
+remain mandatory at release. Missing evidence stays unresolved; lookup never
+changes history, reruns a write, reconstructs a request or renews authority.
+Restoration progress, each workload's handoff and health are explicit separate
+observations. Promotion acceptance recovery is separate work.
+
+Validation: `TestEnvironmentRollbackReceiptMem`,
+`TestEnvironmentRollbackReceiptPG`, `TestEnvironmentRollbackReceiptPGAtomicFailure`,
+`TestEnvironmentRollbackReceiptHTTPLostReply`,
+`TestEnvironmentRollbackOutcomeLostReplyExpiry`,
+`TestEnvironmentRollbackOutcomeEvidenceAndGuards`, and the pinned real-client
+acceptance fixture. Portable fixtures do not qualify provider deployment.

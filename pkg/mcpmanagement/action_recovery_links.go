@@ -159,8 +159,19 @@ func (m *management) addOutcomeRecoveryLinks(view actionView, now time.Time) act
 }
 
 func (m *management) currentEnvironmentRecoveryLinks(view environmentActionView, now time.Time) environmentActionView {
+	hadOutcome := view.Recovery != nil && view.Recovery.Outcome != nil
 	if view.PlanAvailable && !m.environmentActionPlanAvailable(view.environmentActionRecord, now) {
-		return m.environmentActionView(view.environmentActionRecord, now)
+		view = m.environmentActionView(view.environmentActionRecord, now)
+	}
+	if view.Recovery != nil {
+		links := *view.Recovery
+		if !hadOutcome || m.environmentOutcomeReference(view.environmentActionRecord, now) == nil {
+			links.Outcome = nil
+		}
+		view.Recovery = &links
+		if !view.PlanAvailable && links.Outcome == nil {
+			view.Recovery = nil
+		}
 	}
 	return view
 }

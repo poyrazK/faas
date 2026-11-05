@@ -7,6 +7,44 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP environment rollback outcomes — 2026-11-05 (branch, not released)
+
+Project-level rollback now has an original-attempt acceptance contract and an
+immutable receipt committed with native rollback admission. The receipt pins
+promotion/project/source/target identities and cannot authorize another execution.
+Retained encrypted bridge references expose a read-only environment outcome tool
+and passive history/prompt/resource recovery after restart and plan expiry.
+Acceptance, restoration, per-workload handoff and health remain separate.
+
+Focused API/MCP checks and native MemStore/PostgreSQL race checks pass, including
+concurrent admission, receipt insertion failure, legacy original-key continuation,
+scope replacement and lost HTTP replies. Personal/company PostgreSQL ownership
+and release checks pass. Previously storable scoped keys retain their spelling;
+overlength company keys use a stable digest within the existing ledger limit.
+
+The full MCP race suite passed in 325.224s. All three pinned Codex profiles pass
+expired environment rollback recovery through restart, refresh and revocation,
+with zero model requests and zero native writes. Full local discovery has 77 read
+tools; the remote read fixture has 74 (84 with writes). Core remains 18. Node
+generation/build and six transport tests pass; Python generation and four
+transport tests pass. Go SDK preview receipt transport and fixed fingerprint
+vectors pass, as do the full Go SDK tests and vet. Node/Python regeneration is
+clean. Serial lint passes for all changed packages. The final HTTP race rerun
+passed in 55.567s, including lost replies and personal/company ownership; an
+earlier rerun hit linker disk exhaustion and was repeated with unchanged checks
+after restoring headroom.
+
+Fresh canonical schema/SQLC generation, full migration apply/walk, populated
+legacy history and receipt-preserving replay, standard replay safety, migration
+expand/contract lint and capability coverage pass. Spec/docs parity, typed SDK
+coverage, SDK spec generation, SQLC, scope guards, shared runner sync, store-test,
+text-encoding, problem-detail and test-citation gates pass. Version-skew checks
+pass against base `72a924288`; no release tag is an ancestor of that base. The
+repository ADR-number gate still fails on `20261104143000` and `20261104170000`,
+reproduced from that base; this slice adds no collision. Provider deployment
+qualification remains separate from portable fixtures.
+See [ADR-20261105102920](adr/20261105102920-management-mcp-environment-rollback-outcomes.md).
+
 ## Management MCP default-scope service rollback outcomes — 2026-11-05 (branch, not released)
 
 Checked service rollback now persists an original attempt identity with its

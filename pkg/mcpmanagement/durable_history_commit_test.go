@@ -50,13 +50,13 @@ func TestStateStoreAgentHistorySurvivesReplayExpiry(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	until := time.Now().Add(time.Hour)
 	history := actionHistorySnapshot{Version: 1, Items: map[string]actionRecord{id: {RetainedUntil: until}}}
-	if err := s.updateMany(map[string]any{workloadActionsNamespace + grant: history, namedServiceAbortOutcomeNamespace + grant: map[string]int{"reference": 1}, serviceRollbackOutcomeNamespace + grant: map[string]int{"reference": 1}}); err != nil {
+	if err := s.updateMany(map[string]any{workloadActionsNamespace + grant: history, namedServiceAbortOutcomeNamespace + grant: map[string]int{"reference": 1}, serviceRollbackOutcomeNamespace + grant: map[string]int{"reference": 1}, environmentRollbackOutcomeNamespace + grant: map[string]int{"reference": 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.update("oauth", oauthSnapshot{Grants: map[string]storedGrant{}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.records[workloadActionsNamespace+grant]) == 0 || len(s.records[namedServiceAbortOutcomeNamespace+grant]) == 0 || len(s.records[serviceRollbackOutcomeNamespace+grant]) == 0 {
+	if len(s.records[workloadActionsNamespace+grant]) == 0 || len(s.records[namedServiceAbortOutcomeNamespace+grant]) == 0 || len(s.records[serviceRollbackOutcomeNamespace+grant]) == 0 || len(s.records[environmentRollbackOutcomeNamespace+grant]) == 0 {
 		t.Fatal("OAuth maintenance removed retained headless recovery")
 	}
 	history.Items[id] = actionRecord{RetainedUntil: time.Now().Add(-time.Minute)}
@@ -66,7 +66,7 @@ func TestStateStoreAgentHistorySurvivesReplayExpiry(t *testing.T) {
 	if err := s.update("oauth", oauthSnapshot{Grants: map[string]storedGrant{}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.records[workloadActionsNamespace+grant]) != 0 || len(s.records[namedServiceAbortOutcomeNamespace+grant]) != 0 || len(s.records[serviceRollbackOutcomeNamespace+grant]) != 0 {
+	if len(s.records[workloadActionsNamespace+grant]) != 0 || len(s.records[namedServiceAbortOutcomeNamespace+grant]) != 0 || len(s.records[serviceRollbackOutcomeNamespace+grant]) != 0 || len(s.records[environmentRollbackOutcomeNamespace+grant]) != 0 {
 		t.Fatal("expired headless recovery was not pruned")
 	}
 }

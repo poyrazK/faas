@@ -342,6 +342,9 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, err
 	}
+	if err := prepareEnvironmentRollbackReceipt(ctx, tx, current); err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	if current.RollbackIdempotencyKey != "" && current.RollbackIdempotencyKey != idempotencyKey {
 		return ProjectEnvironmentPromotion{}, ErrConflict
 	}

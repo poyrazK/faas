@@ -2453,7 +2453,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx c
 func (c *Client) RollbackProjectEnvironmentPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
 	var out ProjectEnvironmentPromotionStatusResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID) + "/rollback"
-	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, nil, &out, environmentRollbackHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback is the

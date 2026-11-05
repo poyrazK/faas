@@ -1638,6 +1638,7 @@ from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_rollback_receipt import EnvironmentRollbackReceipt
 from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
 from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
@@ -7895,6 +7896,7 @@ __all__ = (
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRollbackReceipt",
     "EnvironmentRouteBudgetReceipt",
     "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",

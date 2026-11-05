@@ -268,6 +268,10 @@ func (m *MemStore) StartProjectEnvironmentPromotionRollback(ctx context.Context,
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
 	}
+	receipt, err := m.prepareEnvironmentRollbackReceiptLocked(ctx, promotion)
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	if promotion.RollbackIdempotencyKey != "" && promotion.RollbackIdempotencyKey != idempotencyKey {
 		return ProjectEnvironmentPromotion{}, ErrConflict
 	}
@@ -283,6 +287,12 @@ func (m *MemStore) StartProjectEnvironmentPromotionRollback(ctx context.Context,
 	}
 	promotion.RollbackCompletedAt = nil
 	promotion.UpdatedAt = now
+	if receipt != nil {
+		if m.environmentRollbackReceipts == nil {
+			m.environmentRollbackReceipts = map[string]api.EnvironmentRollbackReceipt{}
+		}
+		m.environmentRollbackReceipts[id] = *receipt
+	}
 	m.projectEnvironmentPromotions[id] = promotion
 	return cloneProjectEnvironmentPromotion(promotion), nil
 }
