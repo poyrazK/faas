@@ -92,6 +92,15 @@ whose target the bucket's app may not reach is refused
 (`ErrObjectNotificationInvalid`, 400) when it is set. A rule written while the
 creator was a member stays stored but stops delivering once they leave.
 
+## Amendment 2026-11-05: Commit publications
+
+A Commit source with an event destination published under its app's reserved
+`app.<id>` source but carried no `producer`, so the reach filter passed every
+recipient and a company app's Commit events reached a departed creator's
+personal apps. Commit publications now carry `producer: app:<id>`, like an
+in-guest publish. Events accepted before the change keep their stored
+recipients.
+
 ## Alternatives
 
 - **Move company apps to an organization storage account.** The real fix for

@@ -4018,6 +4018,7 @@
       "acceptance_test": "cmd/gregale/commands_postgres_egress_test.go::TestPostgresBindingDeliveryGuidance",
       "parent": "managed-postgres",
       "routes": [
+        "/v1/apps/{}/postgres-bindings",
         "/v1/orgs/{}/postgres/bindings",
         "/v1/postgres/bindings",
         "/v1/postgres/databases/{}/bindings"
