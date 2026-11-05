@@ -391,6 +391,8 @@ type restoreArtifactResolution struct {
 // of timings in one value prevents pre-guest storage work from disappearing
 // behind Manager's aggregate bring_up phase.
 type coldBootTimingBreakdown struct {
+	// Backing (ADR-510) ran before this boot window and is outside TotalMs.
+	Backing          BackingCheckTimings
 	ResolveImagesMs  int64
 	ChrootMs         int64
 	ProvisionMs      int64
@@ -1277,7 +1279,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
 	}
-	breakdown := coldBootTimingBreakdown{}
+	breakdown := coldBootTimingBreakdown{Backing: spec.Backing}
 	kernelSrc, timing, err := v.resolveColdBootArtifact(ctx, l.Instance, "kernel", spec.KernelKey)
 	if err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
@@ -7399,6 +7401,10 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		EnvPrepareMs:         b.Prepare.EnvPrepareMs,
 		PreNetworkMs:         b.Prepare.PreNetworkMs,
 		SetupNetworkMs:       b.Prepare.SetupNetworkMs,
+		BackingCheckMs:       b.Prepare.Backing.TotalMs,
+		BackingSidecarMs:     b.Prepare.Backing.SidecarMs,
+		BackingFetchMs:       b.Prepare.Backing.FetchMs,
+		BackingHashMs:        b.Prepare.Backing.HashMs,
 		RestoreGateWaitMs:    b.RestoreGateWaitMs,
 		ChrootMs:             b.ChrootMs,
 		MaterializeMemMs:     b.MaterializeMemMs,
@@ -7452,6 +7458,10 @@ func (v *JailerVMM) emitColdBootBreakdown(ctx context.Context, l Lease, at time.
 		WakeID:           fields.WakeID,
 		AppID:            fields.AppID,
 		InstanceID:       l.Instance,
+		BackingCheckMs:   b.Backing.TotalMs,
+		BackingSidecarMs: b.Backing.SidecarMs,
+		BackingFetchMs:   b.Backing.FetchMs,
+		BackingHashMs:    b.Backing.HashMs,
 		ResolveImagesMs:  b.ResolveImagesMs,
 		ChrootMs:         b.ChrootMs,
 		ProvisionMs:      b.ProvisionMs,
@@ -7494,6 +7504,7 @@ func (v *JailerVMM) logColdBootBreakdown(ctx context.Context, l Lease, b coldBoo
 		"quota_restore_ms", b.QuotaRestoreMs,
 		"total_ms", b.TotalMs,
 	}
+	attrs = append(attrs, b.Backing.attrs()...)
 	if time.Duration(b.TotalMs)*time.Millisecond >= slowColdBootBreakdownThreshold {
 		slog.Default().Warn("slow cold boot timing breakdown", attrs...)
 		return
