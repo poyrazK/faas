@@ -13913,6 +13913,19 @@ const (
 	VmmdLogRingFloorBytes  int64 = 256 << 10
 )
 
+// A release that OOMs on every request looped forever: each kill re-staled
+// its snapshots and the next wake cold-booted into the same OOM (bug hunt
+// H34). Only the first kill in WorkloadOOMBackoffWindow re-stales them, and
+// WorkloadOOMBackoffKills kills in the window back off the deployment's
+// wakes with a 503, starting at WorkloadOOMBackoffInitial and doubling up
+// to WorkloadOOMBackoffMax while the kills continue.
+const (
+	WorkloadOOMBackoffWindow  = 5 * time.Minute
+	WorkloadOOMBackoffKills   = 5
+	WorkloadOOMBackoffInitial = 30 * time.Second
+	WorkloadOOMBackoffMax     = 5 * time.Minute
+)
+
 // VmmdScanRefusalRefreshTTL is how long one canonical re-read of a refused
 // base's scan sidecar answers the boots that follow it. Concurrent refusals
 // share the re-read, so a cold burst against a fail-closed sidecar costs one
