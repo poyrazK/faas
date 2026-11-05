@@ -351,11 +351,14 @@ jobs:
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
           python3 scripts/ci/binary_code_test.py
+          python3 scripts/ci/guest_init_reuse_test.py
+          python3 scripts/ci/guest_init_stability_test.py
           python3 scripts/ci/warm_unit_build_cache_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_host_config_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
           bash scripts/unit-release-verify_test.sh
+          bash scripts/reuse-release-guest-init_test.sh
           bash scripts/ci/unit_deploy_test.sh
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh

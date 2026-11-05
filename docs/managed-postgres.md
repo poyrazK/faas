@@ -1150,27 +1150,31 @@ live provisioning qualification (`FAAS_ENVIRONMENT=staging`,
 managed-postgres-qualify --compute-cap > compute-cap-qualification.json
 ```
 
-The run creates a disposable database, probes it, and deletes it. The probe:
+The run creates a disposable database, probes it, and deletes it. The probe
+checks what enforcement relies on (ADR-20261025094915 amendment 2026-11-05):
 
-1. Checks that Neon's consumption period starts within an hour of the UTC
-   month start.
-2. Holds the compute active for 90 seconds, then checks that
-   `compute_time_seconds` grew by the compute's size times its active seconds.
-   The ratio, `compute_unit_ratio_permille`, must be at least 800 and at most
-   the largest-to-smallest size ratio plus a quarter, so the quota and the
-   ledger count the same compute-unit seconds.
-3. Sets the quota to the counter and waits for the compute to suspend; a
-   connection must then fail. Neon suspends only when its counters next move,
-   so steps 2 and 3 each wait up to 35 minutes, and the run defaults to a
-   150-minute timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it).
-4. Raises the quota and waits for a connection to wake the compute.
-5. Checks that `logical_size_bytes` did not change.
+1. Neon's consumption period starts within an hour of the UTC month start.
+2. The consumption report is current. The probe keeps the compute active for
+   12 minutes and reads the report, open hour included, 3 and 11 minutes in.
+   It must grow between the two readings by the compute's size times the
+   time between them. The ratio, `compute_unit_ratio_permille`, must be at
+   least 800 and at most the largest-to-smallest size ratio plus a quarter,
+   so the sweep and the ledger count the same compute-unit seconds.
+3. The hold stops the compute: once held, it suspends and a new connection
+   is refused; once released, the next connection wakes it.
+4. A quota write leaves `logical_size_bytes` as it was.
+
+The probe takes about 20 minutes, and the run defaults to a 120-minute
+timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it). It does not
+wait for Neon to enforce a quota: Neon checks one only when its project
+counter moves, which can take over an hour. The artifact is version 2, and
+`on` refuses version 1.
 
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. The file is separate from the provisioning approval on purpose: an
 older apid decodes that approval strictly. Re-run it after a Neon plan or API
-change. A shadow week whose logged quotas match the ledger then completes
-ADR-20261025094915 decision 10.
+change. A shadow week whose logged quotas and holds match the ledger then
+completes ADR-20261025094915 decision 10.
 
 ### Storage pool
 
