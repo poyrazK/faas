@@ -144,8 +144,8 @@ func (s *server) cronRunRefusal(ctx context.Context, app state.App, c state.Cron
 	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
 		return prob
 	}
-	if cronrun.BudgetHeld(ctx, s.store, app, time.Now().UTC()) {
-		return cronrun.BudgetHeldProblem()
+	if _, held := cronrun.Held(ctx, s.store, app, time.Now().UTC()); held != nil {
+		return held
 	}
 	return nil
 }

@@ -123,6 +123,12 @@ the task's result is committed under that operation generation. Fire-now
 receipts expose the operation immediately and gain a task ID when the worker
 materializes the owned AppTask.
 
+A bound HTTP cron, with or without a schedule policy, runs as operations. Your
+app receives each run with `X-Faas-Invocation-Source: exclusive_operation`, not
+`cron`, and `gregale cron runs`, cron alerts and cron metrics do not include
+it; follow it with `gregale operations`. `gregale cron status` names the policy
+the cron runs through.
+
 Bind a recurring Job's native schedule using its Job ID:
 
 ```sh

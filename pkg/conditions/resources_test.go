@@ -1,6 +1,7 @@
 package conditions_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +125,10 @@ func TestCronConditions(t *testing.T) {
 			"Ready": {"False", "plan_limit", false}}, "", "plan_limit"},
 		{"owner suspended", enabled, nil, map[string]want{
 			"Ready": {"False", "account_suspended", false}}, "", "account_suspended"},
+		// The sweep skips a cron on an app at its spend cap (crons audit
+		// 2026-11-05).
+		{"spend cap reached", enabled, nil, map[string]want{
+			"Ready": {"False", "spend_cap_reached", false}}, "", "spend_cap_reached"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,6 +142,25 @@ func TestCronConditions(t *testing.T) {
 				t.Errorf("LastRunSucceeded since = %q, want %q", since, tc.since)
 			}
 		})
+	}
+}
+
+// A cron bound to an operation policy runs as operations its history does
+// not hold: status says so instead of "never run" (crons audit 2026-11-05).
+func TestCronThroughOperationPolicy(t *testing.T) {
+	enabled := api.CronResponse{ID: "c1", Enabled: true, Schedule: "*/5 * * * *"}
+	got := conditions.CronThroughOperationPolicy(conditions.Cron(enabled, nil, observed, ""), "crm-sync")
+	assertConditions(t, got, api.ResourceKindCron, map[string]want{
+		"Ready": {"True", "scheduled", false}, "LastRunSucceeded": {"Unknown", conditions.CronOperationPolicyReason, false}})
+	for _, c := range got.Conditions {
+		if !strings.Contains(c.Message, "crm-sync") || !strings.Contains(c.Message, "exclusive_operation") {
+			t.Errorf("%s message = %q, want the policy and the invocation source", c.Type, c.Message)
+		}
+	}
+	// A cron that does not fire keeps its reason; the note does not say it runs.
+	paused := conditions.CronThroughOperationPolicy(conditions.Cron(enabled, nil, observed, "plan_limit"), "crm-sync")
+	if ready := paused.Conditions[0]; ready.Reason != "plan_limit" || strings.Contains(ready.Message, "crm-sync") {
+		t.Errorf("paused Ready = %+v", ready)
 	}
 }
 

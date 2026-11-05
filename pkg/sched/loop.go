@@ -158,8 +158,10 @@ type Loop struct {
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
 	// dispatched (runCronSweep).
-	cronResume            chan struct{}
-	cronSweepTried        map[string]struct{}
+	cronResume     chan struct{}
+	cronSweepTried map[string]struct{}
+	// cronSweepMinute is the wall-clock minute cronSweepTried belongs to.
+	cronSweepMinute       time.Time
 	cronSweepSlice        time.Duration
 	audit                 *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog              *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
@@ -4729,8 +4731,21 @@ func (l *Loop) runWorkflowRetention(ctx context.Context) bool {
 const cronSweepSlice = 10 * time.Second
 
 // runCronTick starts the minute's cron sweep.
+// resetCronSweepTriedForMinute keeps the tried set to one wall-clock minute.
+// A pass that starts in a later minute begins a fresh set: the work pool keeps
+// only the newest coalesced rerun, so a resume could replace the minute's
+// tick, and that minute's crons were skipped as already tried (crons audit
+// 2026-11-05).
+func (l *Loop) resetCronSweepTriedForMinute() {
+	if minute := l.now().Truncate(time.Minute); l.cronSweepTried == nil || !minute.Equal(l.cronSweepMinute) {
+		l.cronSweepTried = map[string]struct{}{}
+		l.cronSweepMinute = minute
+	}
+}
+
 func (l *Loop) runCronTick(ctx context.Context) {
 	l.cronSweepTried = map[string]struct{}{}
+	l.cronSweepMinute = l.now().Truncate(time.Minute)
 	l.runCronSweep(ctx)
 }
 
@@ -4764,9 +4779,7 @@ func (l *Loop) resumeCronSweep() {
 // for one slice, and asks for another pass when the slice runs out. A cron
 // whose dispatch failed is tried again on the next minute, as before.
 func (l *Loop) runCronSweep(ctx context.Context) {
-	if l.cronSweepTried == nil {
-		l.cronSweepTried = map[string]struct{}{}
-	}
+	l.resetCronSweepTriedForMinute()
 	slice := l.cronSweepSlice
 	if slice <= 0 {
 		slice = cronSweepSlice
@@ -4948,6 +4961,15 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		// Already fired in the current window.
 		return
 	}
+	// An HTTP cron bound to an exclusive operation policy runs through it,
+	// with or without a schedule policy. The schedule-policy path used to
+	// return first, so those crons' scheduled runs bypassed the lock their
+	// manual runs took (crons audit 2026-11-05).
+	if len(c.Command) == 0 {
+		if handled := l.dispatchBoundHTTPCron(ctx, c, sched, scheduledFor, now); handled {
+			return
+		}
+	}
 	if len(c.Command) > 0 || c.SchedulePolicy != nil {
 		due, skipped := cronDueOccurrences(sched, scheduledFor, now, api.CronCatchUpRecordedMax)
 		if skipped > 0 {
@@ -4988,31 +5010,6 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		}
 		return
 	}
-	if len(c.Command) == 0 {
-		app, appErr := l.engine.Store().AppByID(ctx, c.AppID)
-		if appErr != nil {
-			l.log.Warn("cron: resolve app for exclusive binding", "cron_id", c.ID, "err", appErr)
-			return
-		}
-		_, bound, bindingErr := l.exclusiveCronBinding(ctx, c, app.AccountID)
-		if bindingErr != nil {
-			l.log.Warn("cron: load exclusive operation binding", "cron_id", c.ID, "err", bindingErr)
-			return
-		}
-		if bound {
-			scheduledAt := sched.NextFireAt(boundary)
-			run, dispatchErr := l.dispatchExclusiveCron(ctx, c, app.AccountID, TriggerSchedule, scheduledAt, exclusiveCronScheduleIdempotencyKey(c.ID, scheduledAt))
-			if dispatchErr != nil && !isExclusiveCronTerminalAdmissionError(dispatchErr) {
-				l.log.Warn("cron: admit exclusive operation", "cron_id", c.ID, "err", dispatchErr)
-				return
-			}
-			if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
-				l.log.Warn("cron: mark exclusive operation fire", "cron_id", c.ID, "err", err)
-			}
-			l.emitExclusiveCronFired(ctx, c, app.AccountID, scheduledAt, TriggerSchedule, run.ExclusiveOperationID, dispatchErr)
-			return
-		}
-	}
 	firedBoundary := now
 	if c.SchedulePolicy != nil {
 		firedBoundary = scheduledFor
@@ -5051,6 +5048,44 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	if err := l.engine.Store().MarkCronFired(ctx, c.ID, firedBoundary); err != nil {
 		l.log.Warn("cron: mark fired", "cron_id", c.ID, "err", err)
 	}
+}
+
+// dispatchBoundHTTPCron admits a due HTTP cron bound to an exclusive operation
+// policy as an operation and reports whether it was bound. A plain cron runs
+// its next boundary and moves its cursor to now, as before; a schedule-policy
+// cron runs its newest due time and moves its cursor there, so the times the
+// lock passed over are not replayed. A binding or app read error leaves the
+// cron due for the next sweep, reported as handled so it is never dispatched
+// around the lock.
+func (l *Loop) dispatchBoundHTTPCron(ctx context.Context, c state.Cron, sched *Schedule, scheduledFor, now time.Time) bool {
+	app, err := l.engine.Store().AppByID(ctx, c.AppID)
+	if err != nil {
+		l.log.Warn("cron: resolve app for exclusive binding", "cron_id", c.ID, "err", err)
+		return true
+	}
+	_, bound, err := l.exclusiveCronBinding(ctx, c, app.AccountID)
+	if err != nil {
+		l.log.Warn("cron: load exclusive operation binding", "cron_id", c.ID, "err", err)
+		return true
+	}
+	if !bound {
+		return false
+	}
+	scheduledAt, cursor := scheduledFor, now
+	if c.SchedulePolicy != nil {
+		due, _ := cronDueOccurrences(sched, scheduledFor, now, 1)
+		scheduledAt, cursor = due[len(due)-1], due[len(due)-1]
+	}
+	run, dispatchErr := l.dispatchExclusiveCron(ctx, c, app.AccountID, TriggerSchedule, scheduledAt, exclusiveCronScheduleIdempotencyKey(c.ID, scheduledAt))
+	if dispatchErr != nil && !isExclusiveCronTerminalAdmissionError(dispatchErr) {
+		l.log.Warn("cron: admit exclusive operation", "cron_id", c.ID, "err", dispatchErr)
+		return true
+	}
+	if err := l.engine.Store().MarkCronFired(ctx, c.ID, cursor); err != nil {
+		l.log.Warn("cron: mark exclusive operation fire", "cron_id", c.ID, "err", err)
+	}
+	l.emitExclusiveCronFired(ctx, c, app.AccountID, scheduledAt, TriggerSchedule, run.ExclusiveOperationID, dispatchErr)
+	return true
 }
 
 func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due []time.Time, now time.Time) {

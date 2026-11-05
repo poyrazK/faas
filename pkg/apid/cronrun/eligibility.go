@@ -49,13 +49,26 @@ const (
 	// PausedBudgetHeld is a preview app held by a compute budget: the
 	// scheduler leaves its crons due and each runs once when the hold lifts.
 	PausedBudgetHeld = "budget_held"
+	// PausedSpendCap is a billing subject at its monthly spend cap
+	// (ADR-1162 amendment 2026-11-03): the scheduler leaves its crons due
+	// and each runs once when the cap is raised or the month resets.
+	PausedSpendCap = "spend_cap_reached"
 )
 
-// BudgetHeld reports an app a compute budget holds, the hold the scheduler's
-// cron sweep and the invocation drain apply. A read error reports false, as
-// the sweep admits on one.
-func BudgetHeld(ctx context.Context, store state.Store, app state.App, now time.Time) bool {
-	return errors.Is(state.CheckFinancialBudgetAdmissionForScope(ctx, store, app, "", "", now), state.ErrFinancialBudgetHeld)
+// Held reports the hold the scheduler's cron sweep and the invocation drain
+// apply to app, as a status reason and the refusal of a manual run, or ""
+// and nil. A manual run on a held app would wait unstarted until the hold
+// lifts, possibly weeks at the spend cap (crons audit 2026-11-03 and
+// 2026-11-05). A read error reports no hold, as the sweep admits on one.
+func Held(ctx context.Context, store state.Store, app state.App, now time.Time) (string, *api.Problem) {
+	spend, err := state.SpendCapStatusFor(ctx, store, state.SpendCapSubject(ctx, store, app), now)
+	if err == nil && spend.Reached {
+		return PausedSpendCap, api.ErrAdmissionRefused(spend.ObservedCents, spend.CapCents)
+	}
+	if errors.Is(state.CheckFinancialBudgetAdmissionForScope(ctx, store, app, "", "", now), state.ErrFinancialBudgetHeld) {
+		return PausedBudgetHeld, BudgetHeldProblem()
+	}
+	return "", nil
 }
 
 // BudgetHeldProblem is the refusal of a manual run on an app a compute budget

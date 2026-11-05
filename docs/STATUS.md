@@ -533,6 +533,18 @@ ADR-20261026201726 amendment 2026-11-03 (2)):
 - A disabled cron's manual run is refused (`409`); the scheduler no longer
   lists disabled crons from PostgreSQL.
 
+Audit round 6, 2026-11-05 (branch `fix/crons-audit-round6`, no PR yet,
+ADR-20261026201726 amendment 2026-11-05):
+
+- An HTTP cron with a schedule policy that is bound to an operation policy
+  goes through the operation lock; it used to queue a plain run beside it.
+  `gregale cron status` names the policy a bound cron runs through.
+- The monthly spend cap holds crons visibly: status reports
+  `spend_cap_reached`, and a manual run (CLI, API, dashboard) is refused with
+  `402 admission_refused`. schedd and apid share `state.SpendCapStatusFor`.
+- The cron sweep's tried set lasts one wall-clock minute, so a coalesced
+  continuation can no longer swallow the next minute's tick.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of

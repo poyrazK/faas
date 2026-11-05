@@ -195,7 +195,7 @@ func (s *server) fireCronFromDashboard(ctx context.Context, acct state.Account, 
 	if s.cronRunOverPlan(ctx, app, c) != nil {
 		return ErrDashboardCronPlanBlocked
 	}
-	if cronrun.BudgetHeld(ctx, s.store, app, time.Now().UTC()) {
+	if _, held := cronrun.Held(ctx, s.store, app, time.Now().UTC()); held != nil {
 		return ErrDashboardCronBudgetHeld
 	}
 	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
@@ -253,9 +253,10 @@ var (
 	// ErrDashboardCronBusy covers a cron already holding
 	// api.CronFireNowActivePerCron manual runs; the v1 endpoint answers 429.
 	ErrDashboardCronBusy = errors.New("dashboard: cron has too many manual runs waiting")
-	// ErrDashboardCronBudgetHeld covers an app a compute budget holds; the
-	// v1 endpoint answers 402 financial_budget_held.
-	ErrDashboardCronBudgetHeld = errors.New("dashboard: app held by a compute budget")
+	// ErrDashboardCronBudgetHeld covers an app a compute budget or the
+	// monthly spend cap holds; the v1 endpoint answers 402
+	// financial_budget_held or admission_refused.
+	ErrDashboardCronBudgetHeld = errors.New("dashboard: app held by a compute budget or the spend cap")
 )
 
 // dashboardFireCronFlag is the ?fired= value naming why a dashboard

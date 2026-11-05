@@ -92,13 +92,23 @@ func (s *server) getCronStatus(w http.ResponseWriter, r *http.Request, acct stat
 	if store, ok := s.store.(cronrun.Store); ok {
 		paused = cronrun.Paused(r.Context(), store, app, c)
 	}
-	// The sweep skips crons on an app a compute budget holds (crons audit
-	// 2026-11-03); status said the cron fired on schedule.
-	if paused == "" && c.Enabled && c.SuspendedReason == "" && cronrun.BudgetHeld(r.Context(), s.store, app, time.Now().UTC()) {
-		paused = cronrun.PausedBudgetHeld
+	// The sweep skips crons on an app a compute budget or the spend cap holds
+	// (crons audit 2026-11-03 and 2026-11-05); status said the cron fired on
+	// schedule.
+	if paused == "" && c.Enabled && c.SuspendedReason == "" {
+		paused, _ = cronrun.Held(r.Context(), s.store, app, time.Now().UTC())
+	}
+	status := conditions.Cron(cronResponse(c), last, time.Now(), paused)
+	// A cron bound to an exclusive operation policy runs as operations its
+	// run history does not hold; say so instead of "never run" (crons audit
+	// 2026-11-05).
+	if bindings, ok := s.store.(state.ExclusiveTriggerBindingStore); ok && len(c.Command) == 0 {
+		if binding, err := bindings.ExclusiveTriggerBinding(r.Context(), app.AccountID, "cron", c.ID); err == nil && binding.AppID == c.AppID {
+			status = conditions.CronThroughOperationPolicy(status, binding.PolicyName)
+		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, conditions.Cron(cronResponse(c), last, time.Now(), paused))
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *server) newestCronRun(ctx context.Context, c state.Cron) (*api.CronRun, error) {

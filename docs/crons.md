@@ -134,6 +134,14 @@ time it missed. The same holds while a strict compute budget holds the app:
 its crons queue nothing, and each runs once when the hold lifts.
 `gregale cron status` reports such a cron as `budget_held`, and a manual run
 is refused with `402 financial_budget_held` instead of waiting for the hold.
+The monthly spend cap holds crons the same way: once the app's billing subject
+reaches it, crons queue nothing until the cap is raised or the month resets,
+`gregale cron status` reports `spend_cap_reached`, and a manual run is refused
+with `402 admission_refused`.
+
+A cron bound to an [operation policy](managed-exclusive-operations) runs as
+operations instead: your app receives `X-Faas-Invocation-Source:
+exclusive_operation`, and `gregale cron runs` does not list those runs.
 
 ### Schedule changes take effect from the next time
 

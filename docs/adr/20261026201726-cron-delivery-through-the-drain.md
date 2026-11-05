@@ -195,3 +195,29 @@ until the hold lifted. Status now reports `budget_held`, and a manual run is
 refused with `402 financial_budget_held`. A manual run of a disabled cron is
 refused with `409` instead of failing in the scheduler a moment later. The
 scheduler's PostgreSQL cron listing drops disabled crons, as MemStore did.
+
+## Amendment 2026-11-05: bound policy crons, the spend cap, the sweep minute
+
+An HTTP cron bound to an exclusive operation policy is admitted into the
+operation lane (ADR-387), but the schedule-policy branch ran before the
+binding check, so a bound cron with a schedule policy queued a plain cron run
+and bypassed the lock. The binding check now runs first for every HTTP cron;
+a schedule-policy cron admits its newest due occurrence and advances its
+cursor there. Bound runs stay operations: they are delivered with
+`X-Faas-Invocation-Source: exclusive_operation` and are not cron history.
+Making them cron runs would need a second delivery identity for one
+occurrence, so status instead names the policy (`operation_policy` replaces
+`never_run`) and the docs say where to follow the runs.
+
+The sweep skips crons on an app whose billing subject reached its monthly
+spend cap (ADR-1162 amendment 2026-11-03), but status said the cron fired on
+schedule and a manual run was accepted, then deferred by the drain. Status now
+reports `spend_cap_reached`, and manual runs from the API, CLI and dashboard
+are refused with `402 admission_refused`. schedd's overage checker and apid
+decide by one function, `state.SpendCapStatusFor`, which includes meterd's
+hold for the meters only it prices.
+
+The sweep's work-pool rerun keeps only the newest coalesced function, so a
+slice continuation could replace the next minute's tick, and that minute ran
+with the previous minute's tried set, skipping its crons until the next tick.
+The tried set now belongs to the wall-clock minute it was started in.

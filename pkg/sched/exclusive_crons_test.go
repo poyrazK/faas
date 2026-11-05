@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestExclusiveCronAndManualFireShareJoinExistingLane(t *testing.T) {
@@ -197,4 +198,67 @@ func TestExclusiveCommandCronScheduleAndFireNowShareFencedTaskLane(t *testing.T)
 		t.Fatalf("linked fire-now receipt=%+v err=%v; want task %s", receipt, err, task.ID)
 	}
 	cancel()
+}
+
+// A bound HTTP cron with a schedule policy goes through the operation lock
+// like a plain one. The policy branch used to queue an ordinary cron run and
+// bypass the lock (crons audit 2026-11-05).
+func TestExclusivePolicyCronGoesThroughTheLock(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "exclusive-policy-cron@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, cron := newAppAndCron(t, store, account.ID, true)
+	policy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "allow", MissedRuns: "skip"}
+	if _, err := store.UpdateCronWithOptions(ctx, cron.ID, nil, nil, nil, nil, nil, nil, state.CronOptions{SchedulePolicy: policy}); err != nil {
+		t.Fatal(err)
+	}
+	if cron, err = store.CronByID(ctx, cron.ID); err != nil || cron.SchedulePolicy == nil {
+		t.Fatalf("policy cron = %+v err=%v", cron, err)
+	}
+	if _, err := store.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{app.ID}, Contention: "join_existing",
+		LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertExclusiveTriggerBinding(ctx, state.ExclusiveTriggerBinding{
+		Source: "cron", TriggerID: cron.ID, AccountID: account.ID, PolicyName: "crm-sync",
+		Key: json.RawMessage(`"customer:acme:crm-sync"`), EquivalenceKey: "sync",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := makeEngine(t, store, &fakeWakeVMM{})
+	now := time.Now().UTC().Truncate(time.Minute)
+	loop := NewLoop(nil, engine, slog.Default()).WithClock(func() time.Time { return now })
+	loop.dispatchOneCron(ctx, cron, now)
+	ops, err := store.ListDueExclusiveOperations(ctx, 10)
+	if err != nil || len(ops) != 1 {
+		t.Fatalf("policy cron did not enter the operation lane: rows=%+v err=%v", ops, err)
+	}
+	if runs, err := store.ListCronRunsForCron(ctx, cron.ID, 10, ""); err != nil || len(runs) != 0 {
+		t.Fatalf("policy cron also queued a plain run beside the lock: runs=%d err=%v", len(runs), err)
+	}
+	if got, _ := store.CronByID(ctx, cron.ID); got.LastFiredAt.IsZero() {
+		t.Fatal("cursor not advanced after the operation was admitted")
+	}
+}
+
+// The tried set belongs to one minute: a pass in a later minute dispatches
+// crons the previous minute already tried, even when that minute's tick was
+// coalesced away (crons audit 2026-11-05).
+func TestCronSweepTriedSetResetsEachMinute(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 10, 0, time.UTC)
+	loop := NewLoop(nil, nil, slog.Default()).WithClock(func() time.Time { return now })
+	loop.cronSweepTried = map[string]struct{}{"c1": {}}
+	loop.cronSweepMinute = now.Truncate(time.Minute)
+	if loop.resetCronSweepTriedForMinute(); len(loop.cronSweepTried) != 1 {
+		t.Fatal("same-minute continuation dropped the tried set")
+	}
+	now = now.Add(time.Minute)
+	if loop.resetCronSweepTriedForMinute(); len(loop.cronSweepTried) != 0 {
+		t.Fatal("next-minute continuation kept the previous minute's tried set")
+	}
 }

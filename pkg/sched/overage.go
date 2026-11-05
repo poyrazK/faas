@@ -161,74 +161,34 @@ func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (O
 	return c.load(ctx, accountID, now)
 }
 
-// load reads accountID's cap status from the store and caches it.
+// load reads accountID's cap status from the store and caches it. The
+// decision is state.SpendCapStatusFor, which apid's manual cron runs share,
+// so both agree on when the cap is reached (crons audit 2026-11-05).
 func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now time.Time) (OverageStatus, int64, int64, error) {
-	// Slow path: re-read from the store. GetAccountOverageCapCents +
-	// CurrentMonthOverageCents is two round-trips; for the one-box
-	// FaaS scale both are bounded (~1ms each), so we do not batch.
-	capCents, ok, err := c.store.GetAccountOverageCapCents(ctx, accountID)
+	read, err := state.SpendCapStatusFor(ctx, c.store, accountID, now)
 	if err != nil {
 		// Fail open: a transient PG error must not freeze the wake
 		// hot path. The audit row's day-dedupe still kicks in if the
 		// store recovers before the next tick.
 		c.mu.Lock()
-		c.cache[accountID] = overageEntry{
-			status:        OverageOK,
-			observedCents: 0,
-			capCents:      0,
-			exp:           now.Add(c.ttl),
-		}
+		c.cache[accountID] = overageEntry{status: OverageOK, capCents: read.CapCents, exp: now.Add(c.ttl)}
 		c.mu.Unlock()
-		return OverageOK, 0, 0, err
-	}
-	if !ok {
-		// No cap (NULL). Cache the OK outcome for the TTL window so
-		// the next wake for the same account skips the round-trip.
-		c.mu.Lock()
-		c.cache[accountID] = overageEntry{
-			status:        OverageOK,
-			observedCents: 0,
-			capCents:      0,
-			exp:           now.Add(c.ttl),
-		}
-		c.mu.Unlock()
-		return OverageOK, 0, 0, nil
-	}
-	obsCents, err := c.store.CurrentMonthOverageCents(ctx, accountID)
-	if err != nil {
-		// Same fail-open treatment.
-		c.mu.Lock()
-		c.cache[accountID] = overageEntry{
-			status:        OverageOK,
-			observedCents: 0,
-			capCents:      capCents,
-			exp:           now.Add(c.ttl),
-		}
-		c.mu.Unlock()
-		return OverageOK, 0, capCents, err
+		return OverageOK, 0, read.CapCents, err
 	}
 	status := OverageOK
-	if obsCents >= capCents {
+	if read.Reached {
 		status = OverageReached
-	} else if holds, ok := c.store.(state.SpendCapHoldStore); ok {
-		// Compute alone is under the cap, but the cap also bounds live
-		// secondary meters (egress) that only meterd prices. Its hold counts
-		// while the cap and month it was computed for still apply
-		// (ADR-20261026120843). A read failure fails open like the reads above.
-		if hold, found, holdErr := holds.GetSpendCapHold(ctx, accountID); holdErr == nil && found && hold.Holds(capCents, now) {
-			status, obsCents = OverageReached, max(obsCents, hold.ObservedCents)
-		}
 	}
 	c.mu.Lock()
 	c.cache[accountID] = overageEntry{
 		status:         status,
-		observedCents:  obsCents,
-		capCents:       capCents,
+		observedCents:  read.ObservedCents,
+		capCents:       read.CapCents,
 		exp:            now.Add(c.ttl),
 		lastEmittedDay: c.cache[accountID].lastEmittedDay, // preserve prior day's emit stamp
 	}
 	c.mu.Unlock()
-	return status, obsCents, capCents, nil
+	return status, read.ObservedCents, read.CapCents, nil
 }
 
 // RecordReached emits overage.cap_reached audit row once per UTC day

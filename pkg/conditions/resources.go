@@ -194,6 +194,32 @@ func Cron(cron api.CronResponse, last *api.CronRun, observedAt time.Time, paused
 	}
 }
 
+// CronOperationPolicyReason is the last-run reason of a cron bound to an
+// exclusive operation policy: its runs are operations, not invocations, so
+// the cron's run history does not hold them.
+const CronOperationPolicyReason = "operation_policy"
+
+// CronThroughOperationPolicy notes on a cron's status that its runs go through
+// the exclusive operation policy it is bound to. Its last run is then not
+// known from the cron's history, which reported "never run" (crons audit
+// 2026-11-05).
+func CronThroughOperationPolicy(status api.ResourceStatus, policy string) api.ResourceStatus {
+	note := "Runs go through operation policy " + policy + " and are delivered as operations (X-Faas-Invocation-Source: exclusive_operation); gregale cron runs does not list them."
+	for i, c := range status.Conditions {
+		switch c.Type {
+		case api.ConditionReady:
+			if c.Status == api.ConditionTrue {
+				status.Conditions[i].Message = c.Message + " " + note
+			}
+		case api.ConditionLastRunSucceeded:
+			if c.Reason == api.ConditionReasonNeverRun {
+				status.Conditions[i].Reason, status.Conditions[i].Message = CronOperationPolicyReason, note
+			}
+		}
+	}
+	return status
+}
+
 func cronReady(cron api.CronResponse, paused string) api.Condition {
 	c := api.Condition{Type: api.ConditionReady, Status: api.ConditionFalse}
 	switch {
@@ -218,6 +244,8 @@ func cronPausedText(paused string) string {
 		return "the account that owns the app is suspended."
 	case "budget_held":
 		return "a compute budget holds the app; the cron runs once when the hold lifts."
+	case "spend_cap_reached":
+		return "the monthly spend cap is reached; the cron runs once when the cap is raised or the month resets."
 	}
 	return paused + "."
 }
