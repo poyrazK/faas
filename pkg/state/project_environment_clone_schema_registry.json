@@ -17023,6 +17023,17 @@
     }
   },
   {
+    "table": "sandbox_ports",
+    "columns": [
+      "account_id",
+      "created_at",
+      "port",
+      "sandbox_id",
+      "visibility"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_sessions",
     "columns": [
       "account_id",

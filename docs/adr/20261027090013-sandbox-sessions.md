@@ -43,7 +43,7 @@
   - An npm package, and plan limits in `pkg/api/limits.go`.
   - Sandbox sessions become eligible for quiet pause between commands, which amends ADR-1151's exclusion of exec sessions.
   - **Root inside the guest.** Root needs a per-netns anti-spoofing rule and a guest kernel that cannot load modules (§10).
-  - **Preview URLs.** Previews need a separate registrable domain, per-port DNAT in each VM's netns, and a gateway route keyed by host name (§11).
+  - **Preview URLs.** Previews need a separate registrable domain, a vsock relay from vmmd to the guest port, and a gateway route keyed by host name (§11).
   - **The shim.** Two packages (TypeScript and Python), and a template import from `e2b.Dockerfile` (§12).
 - **Rejected alternatives:**
   - **Only running whole harnesses (ADR-20261027090010).** Sellers' loops live in their own backends.
@@ -251,8 +251,8 @@ RAM per session follows `AgentRunRAMMBMax`.
   - Guest-init's own ports (the relay on 2774, profiles on 9191, and the metadata, identity and tracing listeners) are refused.
 - **Path.**
   1. The upstream TLS edge sends the request to `gatewayd-public`, still the only public listener (ADR-070).
-  2. `gatewayd-public` passes it to `gatewayd-internal`, which routes by host label `<port>-<id>` to the owning node's vmmd, using the same sandbox-to-node map as the data plane.
-  3. In the VM's netns, a per-port DNAT rule forwards it to the guest at `10.0.0.2:<port>`. This generalizes `appPortDNATRules` (`pkg/netns/config.go`) from `:8080` to each exposed port, and keeps the identical inner network world (ADR-009).
+  2. `gatewayd-public` passes it to `gatewayd-internal`, which routes by host label `<port>-<id>` to the owning node's vmmd.
+  3. vmmd opens a `SandboxCall` `port_connect` to the guest, and guest-init connects to the port on loopback. The connection is carried over vsock as data frames, so no netns rule changes per port and the guest port is never reachable on the host's network. (Amended 2026-11-05 by the owner: this replaces the per-port DNAT first proposed here, and works in every network mode, `none` included.)
 - **Wake and billing.**
   - A request to a quiet-paused or frozen session resumes it, as a forwarded app request does (ADR-1151).
   - The request counts as activity for the idle timers.
@@ -501,7 +501,25 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - A 20 GB archive streams for minutes; gatewayd-internal's response timeouts apply to persist and hydrate just as they do to long `exec` calls.
      - Snapshot bytes are not billed yet (step 11).
      - `sandbox_workspace_archive_bytes` is not emitted yet.
-8. Exposed ports and preview URLs: the preview domain, per-port DNAT, the gateway host route, tokens, and rate limits (§11).
+8. Exposed ports and preview URLs: the preview domain, the vsock relay, the gateway host route, tokens, and rate limits (§11).
+   - **As built (local branch, no PR yet).** The owner chose three things on 2026-11-05: the preview domain is configuration, the transport is a vsock relay, and routing is a cached lookup.
+   - **Domain.** `FAAS_SANDBOX_PREVIEW_DOMAIN` (apid and gatewayd-internal). While it is unset, previews are off: the port routes answer `503 sandbox_previews_off`, and gatewayd-internal serves no preview hosts. The domain's name is still open question 3. So are its wildcard DNS, the wildcard certificate at the upstream TLS edge, and its Public Suffix List entry.
+   - **Store.** `sandbox_ports(sandbox_id, account_id, port, visibility)` (migration `20261105081450000`, expand). apid is its only writer. A port is added under the live session's row lock, within the plan's `SandboxExposedPortsMax`, and exposing an exposed port again changes its visibility. Rows go when the session row goes.
+   - **API** (apid, agents capability): `POST /v1/sandboxes/{id}/ports {port, visibility}`, `GET …/ports`, `GET` and `DELETE …/ports/{port}`. A port's view carries `url`, and for a private port of a live session a preview token (`SandboxPreviewTokenTTLSec`, 1 h, at most the session's lifetime). The list carries no tokens. Ports in `SandboxReservedPorts` are refused. `public` needs `SandboxPublicPreview`; without it the request gets `402 plan_feature_gated`. `ports` at create is not built.
+   - **Tokens.** A preview token is its own format (`sbxp1`), signed by the same apid Ed25519 key, and grants one port of one session. A data-plane verifier refuses one by its prefix, old gateways included, and the preview handler refuses data tokens.
+   - **Guest.** `port_connect {port}` dials `127.0.0.1`, then `::1`, within 2 s. A port nothing listens on is `port_closed`, which the gateway answers as `502 sandbox_port_closed`. Each connection holds one of guest-init's operation slots.
+   - **Gateway** (`pkg/gateway/sandboxpreview`, carved out ahead of the apid proxy by host):
+     - The route (the session's account, plan, state, node and instance, and its ports) is read from Postgres once per `RouteCacheTTL` (5 s), misses included, with one read per session in flight. A removed port or an ended session stops answering within 5 s.
+     - Unknown hosts, unexposed ports, ended sessions and missing or wrong tokens answer 404. `?gregale_preview_token=` sets the host-only `__Host-gregale_preview` cookie and 303s to the URL without it.
+     - The preview cookie, a bearer preview token and `X-Faas-*`/`X-Gregale-*` headers are stripped. The app's own `Authorization` and cookies pass through. The `Host` header stays the preview host, with `X-Forwarded-Proto: https`.
+     - Each request is its own guest connection, without keep-alive, so no idle pooled connection keeps the session busy. WebSocket and other upgrades are spliced over the same call.
+     - Per session: `SandboxPreviewRequestsPerSec` (burst 2×) and `SandboxPreviewConnsPerSession` (32) open connections.
+   - **Wake.** vmmd's `SandboxCall` already thaws a frozen session and counts the call as activity while it is open, so an open WebSocket keeps the session from idling.
+   - **Known gaps:**
+     - The path through `gatewayd-public` and the upstream TLS edge for a preview domain is not yet tested end to end.
+     - The metal tests listed in §11 are not run yet.
+     - `sandbox_ports_open` and `sandbox_preview_requests_total` are not emitted yet.
+     - The `GregaleSandboxClient` and the shim (steps 9 and 10) do not call the port routes yet.
 9. `GregaleSandboxClient` (with `resolveExposedPort`) and the PR-triage example.
 10. The E2B-compatible shim, template import, and a migration guide with the coverage table (§12, §13).
 11. Billing, with ADR-20261027090011.

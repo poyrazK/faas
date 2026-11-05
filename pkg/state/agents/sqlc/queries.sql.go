@@ -332,6 +332,42 @@ func (q *Queries) CountQueuedSandboxSessions(ctx context.Context, db DBTX, accou
 	return column_1, err
 }
 
+const countSandboxPorts = `-- name: CountSandboxPorts :one
+SELECT count(*)::integer FROM sandbox_ports WHERE sandbox_id=$1::text::uuid AND port <> $2::integer
+`
+
+type CountSandboxPortsParams struct {
+	SandboxID string
+	Port      int32
+}
+
+// ADR-20261027090013 §11: a session's other exposed ports, against SandboxExposedPortsMax.
+func (q *Queries) CountSandboxPorts(ctx context.Context, db DBTX, arg CountSandboxPortsParams) (int32, error) {
+	row := db.QueryRow(ctx, countSandboxPorts, arg.SandboxID, arg.Port)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const deleteSandboxPort = `-- name: DeleteSandboxPort :execrows
+DELETE FROM sandbox_ports WHERE sandbox_id=$1::text::uuid AND account_id=$2::text::uuid
+ AND port=$3::integer
+`
+
+type DeleteSandboxPortParams struct {
+	SandboxID string
+	AccountID string
+	Port      int32
+}
+
+func (q *Queries) DeleteSandboxPort(ctx context.Context, db DBTX, arg DeleteSandboxPortParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteSandboxPort, arg.SandboxID, arg.AccountID, arg.Port)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSandboxSnapshot = `-- name: DeleteSandboxSnapshot :execrows
 DELETE FROM sandbox_workspace_snapshots WHERE id=$1::text::uuid
 `
@@ -963,6 +999,38 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+	)
+	return i, err
+}
+
+const getSandboxPreviewRoute = `-- name: GetSandboxPreviewRoute :one
+SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
+  coalesce(sb.instance_id, '')::text AS instance_id,
+  coalesce((SELECT string_agg(p.port::text || ':' || p.visibility, ',' ORDER BY p.port) FROM sandbox_ports p WHERE p.sandbox_id=sb.id), '')::text AS ports
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=$1::text::uuid
+`
+
+type GetSandboxPreviewRouteRow struct {
+	AccountID  string
+	Plan       string
+	State      string
+	NodeID     string
+	InstanceID string
+	Ports      string
+}
+
+// What gatewayd-internal caches to route a preview host: the session's
+// placement, its plan, and its exposed ports as port:visibility pairs.
+func (q *Queries) GetSandboxPreviewRoute(ctx context.Context, db DBTX, sessionID string) (GetSandboxPreviewRouteRow, error) {
+	row := db.QueryRow(ctx, getSandboxPreviewRoute, sessionID)
+	var i GetSandboxPreviewRouteRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.Plan,
+		&i.State,
+		&i.NodeID,
+		&i.InstanceID,
+		&i.Ports,
 	)
 	return i, err
 }
@@ -1838,6 +1906,42 @@ func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, max
 	return items, nil
 }
 
+const listSandboxPorts = `-- name: ListSandboxPorts :many
+SELECT p.port, p.visibility, p.created_at FROM sandbox_ports p
+ WHERE p.sandbox_id=$1::text::uuid AND p.account_id=$2::text::uuid ORDER BY p.port
+`
+
+type ListSandboxPortsParams struct {
+	SandboxID string
+	AccountID string
+}
+
+type ListSandboxPortsRow struct {
+	Port       int32
+	Visibility string
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListSandboxPorts(ctx context.Context, db DBTX, arg ListSandboxPortsParams) ([]ListSandboxPortsRow, error) {
+	rows, err := db.Query(ctx, listSandboxPorts, arg.SandboxID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxPortsRow{}
+	for rows.Next() {
+		var i ListSandboxPortsRow
+		if err := rows.Scan(&i.Port, &i.Visibility, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
@@ -2208,6 +2312,25 @@ func (q *Queries) LockDeliveringAgentRun(ctx context.Context, db DBTX, runID str
 	var i LockDeliveringAgentRunRow
 	err := row.Scan(&i.AccountID, &i.CancelRequested)
 	return i, err
+}
+
+const lockLiveSandboxSession = `-- name: LockLiveSandboxSession :one
+SELECT state FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+ AND state IN ('queued','starting','ready','frozen') AND close_requested_at IS NULL FOR UPDATE
+`
+
+type LockLiveSandboxSessionParams struct {
+	SessionID string
+	AccountID string
+}
+
+// Holds a live session's row while its ports change, so a port is never
+// added to a session as it ends.
+func (q *Queries) LockLiveSandboxSession(ctx context.Context, db DBTX, arg LockLiveSandboxSessionParams) (string, error) {
+	row := db.QueryRow(ctx, lockLiveSandboxSession, arg.SessionID, arg.AccountID)
+	var state string
+	err := row.Scan(&state)
+	return state, err
 }
 
 const markAgentDeleted = `-- name: MarkAgentDeleted :execrows
@@ -2829,4 +2952,37 @@ func (q *Queries) UpdateSandboxSessionTimeouts(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertSandboxPort = `-- name: UpsertSandboxPort :one
+INSERT INTO sandbox_ports (sandbox_id, account_id, port, visibility)
+VALUES ($1::text::uuid, $2::text::uuid, $3::integer, $4::text)
+ON CONFLICT (sandbox_id, port) DO UPDATE SET visibility=EXCLUDED.visibility
+RETURNING port, visibility, created_at
+`
+
+type UpsertSandboxPortParams struct {
+	SandboxID  string
+	AccountID  string
+	Port       int32
+	Visibility string
+}
+
+type UpsertSandboxPortRow struct {
+	Port       int32
+	Visibility string
+	CreatedAt  pgtype.Timestamptz
+}
+
+// Exposing an exposed port again changes its visibility.
+func (q *Queries) UpsertSandboxPort(ctx context.Context, db DBTX, arg UpsertSandboxPortParams) (UpsertSandboxPortRow, error) {
+	row := db.QueryRow(ctx, upsertSandboxPort,
+		arg.SandboxID,
+		arg.AccountID,
+		arg.Port,
+		arg.Visibility,
+	)
+	var i UpsertSandboxPortRow
+	err := row.Scan(&i.Port, &i.Visibility, &i.CreatedAt)
+	return i, err
 }

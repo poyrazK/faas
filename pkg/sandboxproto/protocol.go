@@ -24,10 +24,13 @@ import (
 	"net"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -74,6 +77,12 @@ const (
 	OpFileRename     = "file_rename"
 	OpArchiveCreate  = "archive_create"
 	OpArchiveExtract = "archive_extract"
+	// OpPortConnect opens a TCP connection to a guest port on loopback and
+	// splices it with the operation's data frames (ADR-20261027090013 §11):
+	// the host's data frames go to the port, a data-end frame half-closes
+	// it, and what the port sends comes back as data frames. The result
+	// follows once both directions are done.
+	OpPortConnect = "port_connect"
 )
 
 // Command users (ADR-20261027090013 §10).
@@ -119,6 +128,9 @@ const (
 	CodeUnsupported      = "unsupported"
 	CodeStartFailed      = "start_failed"
 	CodeInternal         = "internal"
+	// CodePortClosed: nothing listens on the guest port a port_connect
+	// names.
+	CodePortClosed = "port_closed"
 )
 
 var (
@@ -159,6 +171,9 @@ type Request struct {
 	MaxBytes  int64  `json:"max_bytes,omitempty"`
 	// MaxEntries bounds an extracted archive.
 	MaxEntries int `json:"max_entries,omitempty"`
+
+	// port_connect
+	Port int `json:"port,omitempty"`
 }
 
 // handleRE is a background command's handle.
@@ -196,6 +211,8 @@ func (r Request) Validate() error {
 	case OpArchiveExtract:
 		err = firstError(validPath("path", r.Path), positive("max_bytes", r.MaxBytes, MaxArchiveBytes),
 			positiveInt("max_entries", r.MaxEntries, MaxArchiveEntries))
+	case OpPortConnect:
+		err = ValidPreviewPort(r.Port)
 	default:
 		err = fmt.Errorf("unknown op %q", r.Op)
 	}
@@ -525,4 +542,22 @@ func guestError(e ErrorFrame) *GuestError {
 		message = strings.ToValidUTF8(message[:maxErrorMessageBytes], "")
 	}
 	return &GuestError{Code: code, Message: message}
+}
+
+// ValidPreviewPort reports whether a guest port may be exposed: a TCP port
+// that is not one of guest-init's own listeners.
+func ValidPreviewPort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port must be 1-65535; got %d", port)
+	}
+	if slices.Contains(api.SandboxReservedPorts, port) {
+		return fmt.Errorf("port %d is reserved for the platform", port)
+	}
+	return nil
+}
+
+// PortResult ends a port connection: the bytes sent each way.
+type PortResult struct {
+	BytesIn  int64 `json:"bytes_in"`
+	BytesOut int64 `json:"bytes_out"`
 }

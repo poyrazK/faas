@@ -34,6 +34,9 @@ type Store interface {
 	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
 	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
 	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
+	ExposeSandboxPort(ctx context.Context, accountID, sandboxID string, port int, visibility string, max int) (agentstore.SandboxPort, error)
+	SandboxPorts(ctx context.Context, accountID, sandboxID string) ([]agentstore.SandboxPort, error)
+	UnexposeSandboxPort(ctx context.Context, accountID, sandboxID string, port int) error
 }
 
 // Handler serves the sandbox routes. Without a store or a token signer they
@@ -44,6 +47,10 @@ type Handler struct {
 	Audit  func(ctx context.Context, action, accountID string, fields map[string]any)
 	Log    *slog.Logger
 	Now    func() time.Time
+	// PreviewDomain is FAAS_SANDBOX_PREVIEW_DOMAIN: preview hosts are
+	// <port>-<sandbox id>.<domain>. Without it the port routes answer
+	// sandbox_previews_off.
+	PreviewDomain string
 }
 
 // requestMaxBytes bounds a create or change request.
@@ -248,7 +255,7 @@ func (h *Handler) problem(acct state.Account, operation string, err error) *api.
 		return api.ErrAgentLimit(acct.Plan, limit.Limit, limit.Max, limit.Observed)
 	case errors.Is(err, agentstore.ErrNotFound):
 		return api.NewProblem(http.StatusNotFound, api.CodeSandboxNotFound, "Sandbox not found", "the account has no such sandbox session")
-	case errors.Is(err, agentstore.ErrFinished):
+	case errors.Is(err, agentstore.ErrFinished), errors.Is(err, agentstore.ErrSandboxNotLive):
 		return api.NewProblem(http.StatusConflict, api.CodeSandboxEnded, "Sandbox ended", "the session closed, expired or failed")
 	case errors.Is(err, agentstore.ErrTenantNotFound):
 		return api.NewProblem(http.StatusNotFound, api.CodeAgentTenantNotFound, "Tenant not found", "the account has no such platform tenant")

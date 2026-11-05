@@ -40,6 +40,8 @@ type fakeStore struct {
 	err      error
 	// snapshots are persisted workspaces, newest first.
 	snapshots []agentstore.SandboxSnapshot
+	// ports are exposed ports by session.
+	ports map[string][]agentstore.SandboxPort
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {

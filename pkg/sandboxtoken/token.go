@@ -24,6 +24,11 @@ import (
 // prefix versions the token format: sbx2.<key id>.<payload>.<signature>.
 const prefix = "sbx2"
 
+// previewPrefix marks a preview token (ADR-20261027090013 §11). It is its
+// own format, not a claim in a data token, so no verifier of data tokens,
+// old or new, accepts one.
+const previewPrefix = "sbxp1"
+
 // keyInfo separates the sandbox signing key from every other use of the key
 // it is derived from.
 const keyInfo = "gregale sandbox session ed25519 v2"
@@ -94,12 +99,27 @@ func NewIssuer(secret []byte) (*Issuer, error) {
 func (i *Issuer) PublicKey() PublicKey { return i.pub }
 
 // Sign returns the token for c.
-func (i *Issuer) Sign(c Claims) (string, error) {
-	body, err := json.Marshal(c)
+func (i *Issuer) Sign(c Claims) (string, error) { return i.sign(prefix, c) }
+
+// PreviewClaims is what a preview token grants: HTTP requests to one exposed
+// port of one session, through its preview host. Nothing else.
+type PreviewClaims struct {
+	SandboxID string    `json:"s"`
+	AccountID string    `json:"a"`
+	Port      int       `json:"p"`
+	IssuedAt  time.Time `json:"i"`
+	ExpiresAt time.Time `json:"x"`
+}
+
+// SignPreview returns the preview token for c.
+func (i *Issuer) SignPreview(c PreviewClaims) (string, error) { return i.sign(previewPrefix, c) }
+
+func (i *Issuer) sign(format string, claims any) (string, error) {
+	body, err := json.Marshal(claims)
 	if err != nil {
 		return "", err
 	}
-	signed := prefix + "." + i.pub.ID + "." + encoding.EncodeToString(body)
+	signed := format + "." + i.pub.ID + "." + encoding.EncodeToString(body)
 	return signed + "." + encoding.EncodeToString(ed25519.Sign(i.priv, []byte(signed))), nil
 }
 
@@ -137,34 +157,49 @@ func (v *Verifier) Ready() bool {
 // Verify checks a token's signature and expiry at now and returns what it
 // grants.
 func (v *Verifier) Verify(token string, now time.Time) (Claims, error) {
-	if len(token) > maxBytes {
-		return Claims{}, ErrToken
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 4 || parts[0] != prefix {
-		return Claims{}, ErrToken
-	}
-	m := v.keys.Load()
-	if m == nil {
-		return Claims{}, ErrToken
-	}
-	pub, ok := (*m)[parts[1]]
-	if !ok {
-		return Claims{}, ErrToken
-	}
-	sig, err := encoding.DecodeString(parts[3])
-	if err != nil || !ed25519.Verify(pub, []byte(parts[0]+"."+parts[1]+"."+parts[2]), sig) {
-		return Claims{}, ErrToken
-	}
-	body, err := encoding.DecodeString(parts[2])
-	if err != nil {
-		return Claims{}, ErrToken
-	}
 	var c Claims
-	if json.Unmarshal(body, &c) != nil || c.SandboxID == "" || c.AccountID == "" || !now.Before(c.ExpiresAt) {
+	if v.verify(prefix, token, &c) != nil || c.SandboxID == "" || c.AccountID == "" || !now.Before(c.ExpiresAt) {
 		return Claims{}, ErrToken
 	}
 	return c, nil
+}
+
+// VerifyPreview checks a preview token's signature and expiry at now and
+// returns what it grants.
+func (v *Verifier) VerifyPreview(token string, now time.Time) (PreviewClaims, error) {
+	var c PreviewClaims
+	if v.verify(previewPrefix, token, &c) != nil || c.SandboxID == "" || c.AccountID == "" || c.Port < 1 || c.Port > 65535 ||
+		!now.Before(c.ExpiresAt) {
+		return PreviewClaims{}, ErrToken
+	}
+	return c, nil
+}
+
+func (v *Verifier) verify(format, token string, claims any) error {
+	if len(token) > maxBytes {
+		return ErrToken
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 4 || parts[0] != format {
+		return ErrToken
+	}
+	m := v.keys.Load()
+	if m == nil {
+		return ErrToken
+	}
+	pub, ok := (*m)[parts[1]]
+	if !ok {
+		return ErrToken
+	}
+	sig, err := encoding.DecodeString(parts[3])
+	if err != nil || !ed25519.Verify(pub, []byte(parts[0]+"."+parts[1]+"."+parts[2]), sig) {
+		return ErrToken
+	}
+	body, err := encoding.DecodeString(parts[2])
+	if err != nil || json.Unmarshal(body, claims) != nil {
+		return ErrToken
+	}
+	return nil
 }
 
 // encoding decodes strictly, so a token has one spelling: unused bits in a

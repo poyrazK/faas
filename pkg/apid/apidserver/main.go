@@ -1756,7 +1756,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
 	srv.configureAgents(deps.pool)
-	srv.configureSandboxes(deps.pool)
+	if err := srv.configureSandboxes(deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid sandbox sessions: %w", err)
+	}
 	srv.configureDataAPIUsage(deps.pool)
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err

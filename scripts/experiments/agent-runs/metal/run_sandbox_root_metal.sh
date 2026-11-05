@@ -13,6 +13,10 @@
 # with Linux 6.1.134, its CI config). The run holds the host acceptance lock,
 # refuses to start while another session's Firecracker VMs run, runs
 # leakcheck before and after, and removes its work directory.
+#
+# KERNEL=<vmlinux> skips the kernel build and uses that kernel; with a
+# kernel that loads modules the "loads no kernel code" subtest fails, so
+# pair it with RUN=<-test.run pattern> to pick the subtests to run.
 set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -59,8 +63,8 @@ fc_kernel_config_sha256: "$kernel_config_sha256"
 EOF
 # The kernel is kept in DIR, beside its build script, so a rerun with the
 # same script reuses it.
-kernel=$dir/kernel/vmlinux
-if [[ ! -s $kernel || $dir/kernel/build-firecracker-kernel.sh -nt $kernel ]]; then
+kernel=${KERNEL:-$dir/kernel/vmlinux}
+if [[ -z ${KERNEL:-} && ( ! -s $kernel || $dir/kernel/build-firecracker-kernel.sh -nt $kernel ) ]]; then
   TMPDIR=$work FIRECRACKER_DEFAULTS_FILE="$work/firecracker-defaults.yml" \
     bash "$dir/kernel/build-firecracker-kernel.sh" --output "$kernel" > "$work/kernel-build.log" 2>&1 ||
     { tail -40 "$work/kernel-build.log" >&2; exit 1; }
@@ -80,6 +84,6 @@ echo "== metal test"
 rc=0
 env TMPDIR="$work" FAAS_TEST_KERNEL="$kernel" FAAS_TEST_FC_VERSION="$fc_version" \
   FAAS_TEST_AGENT_RUN_BASE="$work/agent-base.ext4" FAAS_TEST_VMMD_BINARY="$bin/vmmd" \
-  "$bin/fcvm.metal.test" -test.count=1 -test.run '^TestMetalSandboxRootStaysInsideTheVM$' -test.v -test.timeout 30m || rc=$?
+  "$bin/fcvm.metal.test" -test.count=1 -test.run "${RUN:-^TestMetalSandboxRootStaysInsideTheVM\$}" -test.v -test.timeout 30m || rc=$?
 bash "$dir/leakcheck/leakcheck.sh" || rc=1
 exit "$rc"

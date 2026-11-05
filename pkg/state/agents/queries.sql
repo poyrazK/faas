@@ -582,3 +582,36 @@ SELECT id::text AS id, storage_key FROM sandbox_workspace_snapshots
  WHERE expires_at <= now() OR delete_requested_at IS NOT NULL
   OR (state='pending' AND created_at < now()-make_interval(secs=>sqlc.arg(pending_ttl_seconds)::double precision))
  ORDER BY created_at LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: CountSandboxPorts :one
+-- ADR-20261027090013 §11: a session's other exposed ports, against SandboxExposedPortsMax.
+SELECT count(*)::integer FROM sandbox_ports WHERE sandbox_id=sqlc.arg(sandbox_id)::text::uuid AND port <> sqlc.arg(port)::integer;
+
+-- name: LockLiveSandboxSession :one
+-- Holds a live session's row while its ports change, so a port is never
+-- added to a session as it ends.
+SELECT state FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('queued','starting','ready','frozen') AND close_requested_at IS NULL FOR UPDATE;
+
+-- name: UpsertSandboxPort :one
+-- Exposing an exposed port again changes its visibility.
+INSERT INTO sandbox_ports (sandbox_id, account_id, port, visibility)
+VALUES (sqlc.arg(sandbox_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(port)::integer, sqlc.arg(visibility)::text)
+ON CONFLICT (sandbox_id, port) DO UPDATE SET visibility=EXCLUDED.visibility
+RETURNING port, visibility, created_at;
+
+-- name: ListSandboxPorts :many
+SELECT p.port, p.visibility, p.created_at FROM sandbox_ports p
+ WHERE p.sandbox_id=sqlc.arg(sandbox_id)::text::uuid AND p.account_id=sqlc.arg(account_id)::text::uuid ORDER BY p.port;
+
+-- name: DeleteSandboxPort :execrows
+DELETE FROM sandbox_ports WHERE sandbox_id=sqlc.arg(sandbox_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND port=sqlc.arg(port)::integer;
+
+-- name: GetSandboxPreviewRoute :one
+-- What gatewayd-internal caches to route a preview host: the session's
+-- placement, its plan, and its exposed ports as port:visibility pairs.
+SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
+  coalesce(sb.instance_id, '')::text AS instance_id,
+  coalesce((SELECT string_agg(p.port::text || ':' || p.visibility, ',' ORDER BY p.port) FROM sandbox_ports p WHERE p.sandbox_id=sb.id), '')::text AS ports
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=sqlc.arg(session_id)::text::uuid;

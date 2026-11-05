@@ -98,3 +98,34 @@ func TestVerifierKeysRotateAndRefuseMislabelledKeys(t *testing.T) {
 		t.Fatal("mislabelled keys were kept")
 	}
 }
+
+// adr: 20261027090013 §11 — a preview token grants one port of one session
+// and is never accepted as a data token, nor a data token as a preview token.
+func TestPreviewTokensAreTheirOwnKind(t *testing.T) {
+	issuer, _ := sandboxtoken.NewIssuer(bytes.Repeat([]byte{4}, 32))
+	verifier := sandboxtoken.NewVerifier(issuer.PublicKey())
+	now := time.Unix(1_800_000_000, 0).UTC()
+	preview := sandboxtoken.PreviewClaims{SandboxID: "sb-1", AccountID: "acct-1", Port: 3000, IssuedAt: now, ExpiresAt: now.Add(time.Hour)}
+	token, err := issuer.SignPreview(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := verifier.VerifyPreview(token, now); err != nil || got != preview {
+		t.Fatalf("verify preview = %+v, %v", got, err)
+	}
+	if _, err := verifier.Verify(token, now); !errors.Is(err, sandboxtoken.ErrToken) {
+		t.Fatalf("a preview token passed as a data token: %v", err)
+	}
+	if _, err := verifier.VerifyPreview(token, now.Add(time.Hour)); !errors.Is(err, sandboxtoken.ErrToken) {
+		t.Fatalf("an expired preview token passed: %v", err)
+	}
+	data, _ := issuer.Sign(sandboxtoken.Claims{SandboxID: "sb-1", AccountID: "acct-1", IssuedAt: now, ExpiresAt: now.Add(time.Hour)})
+	if _, err := verifier.VerifyPreview(data, now); !errors.Is(err, sandboxtoken.ErrToken) {
+		t.Fatalf("a data token passed as a preview token: %v", err)
+	}
+	if bad, _ := issuer.SignPreview(sandboxtoken.PreviewClaims{SandboxID: "sb-1", AccountID: "acct-1", ExpiresAt: now.Add(time.Hour)}); bad != "" {
+		if _, err := verifier.VerifyPreview(bad, now); !errors.Is(err, sandboxtoken.ErrToken) {
+			t.Fatalf("a preview token without a port passed: %v", err)
+		}
+	}
+}

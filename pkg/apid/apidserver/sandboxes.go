@@ -17,8 +17,15 @@ import (
 // Their routes belong to the agents capability, like the agent API. The
 // token key derives from the session key, which every apid replica shares;
 // the data plane (rollout step 4) verifies the same tokens.
-func (s *server) configureSandboxes(pool *pgxpool.Pool) {
+func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) string) error {
+	// ADR-20261027090013 §11: preview URLs are off until the operator
+	// names a preview domain.
+	domain, err := api.NormalizeSandboxPreviewDomain(getenv("FAAS_SANDBOX_PREVIEW_DOMAIN"))
+	if err != nil {
+		return err
+	}
 	h := &sandboxes.Handler{
+		PreviewDomain: domain,
 		Audit: func(ctx context.Context, action, accountID string, fields map[string]any) {
 			s.audit.Emit(ctx, action, &accountID, fields)
 		},
@@ -37,6 +44,7 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool) {
 		}
 	}
 	s.sandboxAPI = h
+	return nil
 }
 
 // sandboxRoute serves a sandbox route, or capacity_unavailable on an apid

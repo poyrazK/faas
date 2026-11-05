@@ -3208,9 +3208,6 @@
       ],
       "docs_url": "/docs/mcp",
       "acceptance_test": "pkg/mcpmanagement/server_test.go::TestManagementMCPJourney",
-      "routes": [
-        "/v1/agent-connections"
-      ],
       "cli": [
         "mcp serve",
         "mcp connections"

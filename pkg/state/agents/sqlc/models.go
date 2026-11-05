@@ -211,6 +211,14 @@ type PlatformTenant struct {
 	Status    string
 }
 
+type SandboxPort struct {
+	SandboxID  pgtype.UUID
+	AccountID  pgtype.UUID
+	Port       int32
+	Visibility string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type SandboxSession struct {
 	ID                  pgtype.UUID
 	AccountID           pgtype.UUID

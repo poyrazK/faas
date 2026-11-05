@@ -55553,6 +55553,28 @@ CREATE TABLE public.safe_release_worker_lease (
 
 
 --
+-- Name: sandbox_ports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_ports (
+    sandbox_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    port integer NOT NULL,
+    visibility text DEFAULT 'private'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_ports_port_check CHECK (((port >= 1) AND (port <= 65535))),
+    CONSTRAINT sandbox_ports_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'public'::text])))
+);
+
+
+--
+-- Name: TABLE sandbox_ports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_ports IS 'ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.';
+
+
+--
 -- Name: sandbox_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69583,6 +69605,14 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.safe_release_worker_lease
     ADD CONSTRAINT safe_release_worker_lease_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: sandbox_ports sandbox_ports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_ports
+    ADD CONSTRAINT sandbox_ports_pkey PRIMARY KEY (sandbox_id, port);
 
 
 --
@@ -102994,6 +103024,22 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.runtime_upgrade_verifications
     ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_ports sandbox_ports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_ports
+    ADD CONSTRAINT sandbox_ports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_ports sandbox_ports_sandbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_ports
+    ADD CONSTRAINT sandbox_ports_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

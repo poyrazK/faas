@@ -1315,8 +1315,11 @@ type runDeps struct {
 	trafficDeadlines       *trafficdeadline.Signer
 	// sandboxTokens verifies sandbox session tokens with apid's public keys
 	// (ADR-20261027090013); nil keeps the sandbox data plane off.
-	sandboxTokens      *sandboxtoken.Verifier
-	trafficRevocations *trafficrevocation.Registry
+	sandboxTokens *sandboxtoken.Verifier
+	// sandboxPreviewDomain is FAAS_SANDBOX_PREVIEW_DOMAIN (ADR-20261027090013
+	// §11); "" keeps sandbox previews off.
+	sandboxPreviewDomain string
+	trafficRevocations   *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
@@ -1644,6 +1647,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// key, fetched over the same channel; the gateway can mint none.
 	deps.sandboxTokens = sandboxtoken.NewVerifier()
 	go apidgrpc.RefreshSandboxKeys(ctx, credentialAuth, deps.sandboxTokens, log)
+	if deps.sandboxPreviewDomain, err = api.NormalizeSandboxPreviewDomain(osGetenv("FAAS_SANDBOX_PREVIEW_DOMAIN")); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	// Operation capabilities and dev-bridge tokens are keyed under rings this
 	// node never holds; apid matches them (amendment 1, decision 2).
 	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
@@ -3820,6 +3826,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// session's VM, so they are compute-owned like attach.
 	if sandbox := newSandboxDataHandler(deps, deps.sandboxTokens, log); sandbox != nil {
 		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
+	}
+	if preview := newSandboxPreviewHandler(deps, log); preview != nil {
+		apidHandler = sandboxPreviewCarveOut{preview: preview, next: apidHandler}
 	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy

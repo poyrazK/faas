@@ -941,6 +941,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SAFEDEPLOY_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189)"},
 	{Name: "FAAS_SAFE_RELEASE_DEFAULT_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "true", Note: "ADR-1446 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy"},
 	{Name: "FAAS_SAMPLE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_SANDBOX_PREVIEW_DOMAIN", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault, Default: "", Note: "ADR-20261027090013 §11 sandbox previews: the domain preview hosts <port>-<sandbox id>.<domain> live under (a wildcard DNS name routed to the nodes' public gateways); apid writes preview URLs with it and gatewayd-internal serves them; unset turns previews off"},
 	{Name: "FAAS_SBOM_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCAN_SPOOL_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_ADDR", Owners: []string{"meterd"}, Source: EnvSourceDefault},

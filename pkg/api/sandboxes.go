@@ -7,6 +7,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -89,6 +90,12 @@ const (
 	// CodeSandboxWorkspaceUnavailable: a session's persisted workspace could
 	// not be unpacked when it booted, or a persist could not be recorded.
 	CodeSandboxWorkspaceUnavailable = "sandbox_workspace_unavailable"
+
+	// Exposed ports (ADR-20261027090013 §11).
+	// CodeSandboxPortClosed: nothing listens on the exposed guest port.
+	CodeSandboxPortClosed = "sandbox_port_closed"
+	// CodeSandboxPreviewsOff: this installation has no preview domain.
+	CodeSandboxPreviewsOff = "sandbox_previews_off"
 )
 
 // CreateSandboxRequest creates a sandbox session from a harness preset.
@@ -229,4 +236,118 @@ func IsSandboxDataPath(p string) bool {
 		return true
 	}
 	return false
+}
+
+// Exposed ports and previews (ADR-20261027090013 §11).
+
+// Port visibilities. A private port answers only requests carrying its
+// preview token; a public one (SandboxPublicPreview) answers anyone.
+const (
+	SandboxPortPrivate = "private"
+	SandboxPortPublic  = "public"
+)
+
+// ExposeSandboxPortRequest exposes a guest port at its preview URL, or
+// changes an exposed port's visibility.
+type ExposeSandboxPortRequest struct {
+	Port       int    `json:"port"`
+	Visibility string `json:"visibility,omitempty"`
+}
+
+// SandboxPort is one exposed port. URL is its preview URL. A port's view
+// right after exposing it, or when read alone, carries a preview token for
+// a private port: send it as a bearer token, or open the URL with
+// ?gregale_preview_token=<token> once in a browser.
+type SandboxPort struct {
+	Port                  int        `json:"port"`
+	Visibility            string     `json:"visibility"`
+	URL                   string     `json:"url"`
+	CreatedAt             time.Time  `json:"created_at"`
+	PreviewToken          string     `json:"preview_token,omitempty"`
+	PreviewTokenExpiresAt *time.Time `json:"preview_token_expires_at,omitempty"`
+}
+
+// SandboxPortList is a session's exposed ports, by port.
+type SandboxPortList struct {
+	Items []SandboxPort `json:"items"`
+}
+
+// SandboxPreviewTokenParam is the query parameter a browser opens a private
+// preview with once; the gateway swaps it for a host-only cookie.
+const SandboxPreviewTokenParam = "gregale_preview_token"
+
+// SandboxPreviewHost is a port's preview host: <port>-<sandbox id>.<domain>.
+func SandboxPreviewHost(port int, sandboxID, domain string) string {
+	return strconv.Itoa(port) + "-" + sandboxID + "." + domain
+}
+
+// ParseSandboxPreviewHost reads a preview host under domain. It accepts
+// only the form SandboxPreviewHost writes, in lower case, without a port.
+func ParseSandboxPreviewHost(host, domain string) (port int, sandboxID string, ok bool) {
+	if domain == "" {
+		return 0, "", false
+	}
+	label, found := strings.CutSuffix(host, "."+domain)
+	if !found || strings.Contains(label, ".") {
+		return 0, "", false
+	}
+	p, id, found := strings.Cut(label, "-")
+	if !found || len(p) == 0 || len(p) > 5 || p[0] == '0' || len(id) != 36 {
+		return 0, "", false
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, "", false
+	}
+	for i, c := range id {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return 0, "", false
+			}
+		case (c < '0' || c > '9') && (c < 'a' || c > 'f'):
+			return 0, "", false
+		}
+	}
+	return n, id, true
+}
+
+// NormalizeSandboxPreviewDomain checks a preview domain (apid writes
+// preview URLs with it, gatewayd-internal serves them) and returns it in
+// lower case without a trailing dot. "" stays "" (previews off).
+func NormalizeSandboxPreviewDomain(raw string) (string, error) {
+	d := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
+	if d == "" {
+		return "", nil
+	}
+	labels := strings.Split(d, ".")
+	if len(labels) < 2 || len(d) > 200 {
+		return "", fmt.Errorf("sandbox preview domain %q: want a DNS name with at least two labels", raw)
+	}
+	for _, l := range labels {
+		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return "", fmt.Errorf("sandbox preview domain %q: invalid label %q", raw, l)
+		}
+		for _, c := range l {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return "", fmt.Errorf("sandbox preview domain %q: invalid label %q", raw, l)
+			}
+		}
+	}
+	return d, nil
+}
+
+// ErrSandboxPublicPreviewGated refuses a public port on a plan without
+// SandboxPublicPreview.
+func ErrSandboxPublicPreviewGated(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated, "Plan doesn't include public previews",
+		fmt.Sprintf("the %s plan exposes sandbox ports privately only, behind a preview token; upgrade to Pro or higher for public previews.", p)).
+		WithDocs(docsBase + "/plans#agents")
+}
+
+// ErrSandboxPreviewsOff answers port routes on an installation without a
+// preview domain.
+func ErrSandboxPreviewsOff() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeSandboxPreviewsOff, "Sandbox previews are off",
+		"this installation has no sandbox preview domain, so ports cannot be exposed")
 }

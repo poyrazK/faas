@@ -241,3 +241,11 @@ CREATE TABLE sandbox_workspace_snapshots (
  created_at timestamptz NOT NULL DEFAULT now(),
  ready_at timestamptz
 );
+CREATE TABLE sandbox_ports (
+ sandbox_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ port integer NOT NULL,
+ visibility text NOT NULL DEFAULT 'private',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (sandbox_id, port)
+);

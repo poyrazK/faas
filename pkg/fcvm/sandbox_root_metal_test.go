@@ -4,12 +4,14 @@
 // guest, and everything that enforces isolation stays outside it: root
 // cannot load kernel code, cannot send from another address or MAC, cannot
 // reach private, link-local or metadata addresses or mail ports, and cannot
-// take more memory than the VM's memory.max.
+// take more memory than the VM's memory.max. §11: a server root starts in
+// the guest answers through port_connect over vsock, in any network mode.
 package fcvm
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -227,6 +229,26 @@ for host, port in [("169.254.169.254", 80), ("10.100.0.1", 22), ("192.168.1.1", 
 		}
 	})
 
+	t.Run("a server in the guest answers through port_connect", func(t *testing.T) {
+		rootExec(t, m, instance, sandboxID, "setsid python3 -m http.server 3000 --bind 127.0.0.1 --directory /etc >/dev/null 2>&1 < /dev/null & "+
+			"for i in $(seq 50); do python3 -c 'import socket; socket.create_connection((\"127.0.0.1\", 3000), 1)' 2>/dev/null && break; sleep 0.1; done")
+		body, result := portRequest(t, m, instance, sandboxID, 3000, "GET / HTTP/1.0\r\nHost: preview\r\n\r\n")
+		if !strings.HasPrefix(body, "HTTP/1.0 200") || result.BytesOut == 0 {
+			t.Fatalf("port_connect answered %q (%+v)", body, result)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		conn, err := m.DialSandboxSession(ctx, instance, sandboxID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = sandboxproto.Do(ctx, conn, sandboxproto.Request{Op: sandboxproto.OpPortConnect, Port: 3999}, nil, nil)
+		var guest *sandboxproto.GuestError
+		if !errors.As(err, &guest) || guest.Code != sandboxproto.CodePortClosed {
+			t.Fatalf("a closed port = %v", err)
+		}
+	})
+
 	t.Run("cannot exceed memory.max", func(t *testing.T) {
 		scope := vmCgroupScope(inst.Lease)
 		max, err := readCgroupInt(scope, "memory.max")
@@ -258,4 +280,46 @@ while True:
 		}
 		t.Logf("memory.peak %s MiB of memory.max %s MiB", strconv.FormatInt(peak>>20, 10), strconv.FormatInt(max>>20, 10))
 	})
+}
+
+// portRequest sends raw to the guest port over port_connect and returns
+// what the port answered.
+func portRequest(t *testing.T, m *Manager, instance, sandboxID string, port int, raw string) (string, sandboxproto.PortResult) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := m.DialSandboxSession(ctx, instance, sandboxID)
+	if err != nil {
+		t.Fatalf("dial sandbox: %v", err)
+	}
+	c := sandboxproto.NewConn(conn)
+	defer func() { _ = c.Close() }()
+	if err := c.WriteJSON(ctx, sandboxproto.FrameRequest, sandboxproto.Request{Op: sandboxproto.OpPortConnect, Port: port}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, sandboxproto.FrameData, []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, sandboxproto.FrameDataEnd, nil); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	for {
+		frameType, body, err := c.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (so far %q)", err, out.String())
+		}
+		switch frameType {
+		case sandboxproto.FrameData:
+			out.Write(body)
+		case sandboxproto.FrameResult:
+			var r sandboxproto.PortResult
+			if err := json.Unmarshal(body, &r); err != nil {
+				t.Fatal(err)
+			}
+			return out.String(), r
+		case sandboxproto.FrameError:
+			t.Fatalf("port_connect error: %s", body)
+		}
+	}
 }

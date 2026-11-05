@@ -123,6 +123,8 @@ func (s *sandboxServer) handle(ctx context.Context, req sandboxproto.Request, ca
 		return s.archiveCreate(req, call)
 	case sandboxproto.OpArchiveExtract:
 		return s.archiveExtract(req, call)
+	case sandboxproto.OpPortConnect:
+		return portConnect(ctx, req, call)
 	}
 	return s.fileOp(req, call)
 }
