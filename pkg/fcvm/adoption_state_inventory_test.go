@@ -162,6 +162,7 @@ var adoptionInstanceInventory = map[string]string{
 	"HealthcheckPath":                 "rebuilt",
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
+	"RequestConcurrency":              "rebuilt",
 	"ExecutionMode":                   "rebuilt",
 	"WorkloadNames":                   "rebuilt",
 	"Characterization":                "rebuilt", // ObservedClass only: the liveness contract of an undeclared worker
