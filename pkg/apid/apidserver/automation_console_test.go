@@ -279,6 +279,10 @@ func TestAutomationConsoleFailedChecksAndRuntimeGate(t *testing.T) {
 		t.Fatalf("valid publication: %d %s", page.Code, page.Body.String())
 	}
 	(*e.S()).WithWorkflowRuntimeEnabled(false)
+	// Publishing advanced the version; a run names the published one, so a
+	// refusal here is the runtime gate rather than the stale-page fence.
+	published := consoleVersion(t, e, app.Slug, "checked-report")
+	form.Set("expected_version", strconv.FormatInt(published.Version, 10))
 	form.Set("confirm_run", "yes")
 	blocked := consolePost(e, cookie, page, base+"/run", form)
 	if blocked.Code != 501 {
