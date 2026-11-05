@@ -1276,6 +1276,12 @@ const (
 	InvocationRetentionBatchesPerPass = 20
 )
 
+// QueueCompletedPayloadRetention is how long a completed queue message keeps
+// its payload after its ack. Its history row stays for the plan's result
+// retention; failures and dead letters keep their payloads for replay
+// (ADR-20261018101500 amendment 2026-10-31).
+const QueueCompletedPayloadRetention = 24 * time.Hour
+
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
 // progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
 // backfill job whose processing fails backs off from EventJobFailureBackoffMin
@@ -1730,6 +1736,20 @@ const (
 	// RealtimeUsageQueryMaxHours (31 days).
 	RealtimeUsageQueryDefaultHours = 24
 	RealtimeUsageQueryMaxHours     = 744
+)
+
+// QueueStatusCountLimit bounds every count a queue status read or gauge
+// makes: queue state, binding status, the dashboard and schedd's queue
+// gauges. A larger backlog reads as this many (ADR-20261018101500 amendments
+// 2026-10-27 and 2026-10-31).
+const QueueStatusCountLimit = 100_000
+
+// A batch send carries at most QueueSendBatchMaxMessages messages in at most
+// QueueSendBatchMaxBytes of request body; each message still meets its plan's
+// message size (ADR-20261018101500 amendment 2026-10-31).
+const (
+	QueueSendBatchMaxMessages = 100
+	QueueSendBatchMaxBytes    = 8 << 20
 )
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and

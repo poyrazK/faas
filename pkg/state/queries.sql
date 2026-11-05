@@ -8311,6 +8311,51 @@ FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='
 SELECT count(*) FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
     AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
 
+-- name: TrimCompletedQueuePayloads :execrows
+-- A completed queue message keeps its payload for a day after its ack, then
+-- only its history; failures and dead letters keep theirs for replay
+-- (ADR-20261018101500 amendment 2026-10-31). Reads
+-- invocations_queue_completed_payload_idx in completion order.
+WITH due AS (
+    SELECT id FROM invocations
+    WHERE source='queue' AND state='completed' AND payload <> 'null'::jsonb
+      AND completed_at <= sqlc.arg(completed_before)::timestamptz
+    ORDER BY completed_at LIMIT sqlc.arg(row_limit)::integer
+    FOR UPDATE SKIP LOCKED)
+UPDATE invocations i SET payload='null'::jsonb FROM due WHERE i.id=due.id;
+
+-- name: ReadProductionQueueTelemetry :one
+-- ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
+-- status reads a customer can poll: each count stops at row_limit, and the
+-- oldest pending message is the first one due under each of the app's queue
+-- names, found one name at a time (ADR-20261018101500 amendment 2026-10-31).
+WITH RECURSIVE names AS (
+    (SELECT w.queue_name FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
+     ORDER BY w.queue_name LIMIT 1)
+  UNION ALL
+    SELECT (SELECT w.queue_name FROM production_invocation_work w
+            WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending' AND w.queue_name>n.queue_name
+            ORDER BY w.queue_name LIMIT 1)
+    FROM names n WHERE n.queue_name IS NOT NULL
+)
+SELECT
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state IN ('pending','dispatching')
+     LIMIT sqlc.arg(row_limit)::integer) live)::bigint AS depth,
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dispatching'
+       AND w.lease_expires_at IS NOT NULL AND w.lease_expires_at>now()
+     LIMIT sqlc.arg(row_limit)::integer) leased)::bigint AS in_flight,
+  (SELECT count(*) FROM (SELECT 1 FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='dead_letter'
+     LIMIT sqlc.arg(row_limit)::integer) dead)::bigint AS dead_letter,
+  (SELECT min(first.created_at) FROM names n CROSS JOIN LATERAL (
+     SELECT w.created_at FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending' AND w.queue_name=n.queue_name
+     ORDER BY w.due_at LIMIT 1) first
+   WHERE n.queue_name IS NOT NULL)::timestamptz AS oldest_pending_at;
+
 -- name: PeekProductionQueue :many
 WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=sqlc.narg(cursor_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND source='queue')
 SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id

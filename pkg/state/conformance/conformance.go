@@ -211,6 +211,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"completed_queue_payloads_are_trimmed_after_their_retention", testQueuePayloadTrim},
 		{"trigger_record_states_by_items", testTriggerRecordStatesByItems},
 		{"trigger_record_claims_renew_while_dispatching", testTriggerRecordClaimRenewal},
 		{"trigger_record_operator_verbs_are_scoped", testTriggerRecordOperatorScope},

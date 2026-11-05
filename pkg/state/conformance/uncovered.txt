@@ -464,7 +464,6 @@ PutManagedObjectStorageSecret
 PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
-QueueState
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions

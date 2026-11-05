@@ -53,6 +53,7 @@ type sourceRefManifestStaged struct {
 	eventVersionChanges   []sourceRefEventVersionsChange
 	workPolicyChanges     []sourceRefWorkPolicyChange
 	bindingIDs            []string
+	queueBindingChanges   []sourceRefQueueBindingChange
 	scalingChanged        bool
 	previousScalingPolicy *state.ScalingPolicy
 	appliedScalingPolicy  *state.ScalingPolicy
@@ -96,7 +97,7 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.cronIntent != nil || staged.scalingChanged || staged.retryPolicyChanged || staged.lifecycleChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
-		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 ||
+		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0 || len(staged.queueBindingChanges) > 0 ||
 		len(staged.eventSubscriptionsEnabled) > 0
 }
 
@@ -383,6 +384,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	staged.bindingIDs = bindingIDs
 	if problem := s.applySourceManifestSettings(ctx, acct, app, m, &staged); problem != nil {
+		return staged, problem
+	}
+	if problem := s.applySourceRefQueueBindings(ctx, acct, app, m.QueueBindings, deploymentScope, &staged); problem != nil {
 		return staged, problem
 	}
 	if len(m.WorkPolicies) > 0 {
@@ -1104,6 +1108,9 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
 		}
+	}
+	if err := s.rollbackSourceRefQueueBindings(ctx, staged); err != nil {
+		errs = append(errs, err)
 	}
 	if staged.lifecycleChanged {
 		if err := s.rollbackSourceRefLifecycle(ctx, staged); err != nil {
