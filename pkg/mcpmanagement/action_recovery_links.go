@@ -100,6 +100,21 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 		return nil
 	}
 	switch {
+	case entry.Action == "operation_config_rollback_guarded":
+		ref, found := m.configRollbacks[entry.PlanID]
+		if !found || !validConfigRollbackLookup(ref) || ref.Binding != actionOutcomeBinding(entry) {
+			return nil
+		}
+	case entry.Action == "operation_env":
+		ref, found := m.configOutcomes[entry.PlanID]
+		if !found || !validConfigOutcomeLookup(ref) || ref.Binding != configOutcomeBinding(entry) {
+			return nil
+		}
+	case entry.Action == "operation_scale":
+		ref, found := m.scalingOutcomes[entry.PlanID]
+		if !found || !validScalingOutcomeLookup(ref) || ref.Binding != actionOutcomeBinding(entry) {
+			return nil
+		}
 	case entry.Action == "route_budgets":
 		ref, found := m.budgetOutcomes[entry.PlanID]
 		if !found || !validBudgetOutcomeLookup(ref) || ref.Binding != budgetOutcomeBinding(entry) {

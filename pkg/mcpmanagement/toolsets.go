@@ -146,8 +146,10 @@ func toolsetIncludes(name, selected string) bool {
 		return true
 	}
 	switch name {
-	case "gregale_get_saved_plan", "gregale_check_plan", "gregale_list_actions", "gregale_get_action", "gregale_get_action_outcome":
-		return selected == ToolsetRelease || selected == ToolsetDiagnose
+	case "gregale_list_actions", "gregale_get_action":
+		return selected == ToolsetCore || selected == ToolsetRelease || selected == ToolsetDiagnose || selected == ToolsetProvision
+	case "gregale_get_saved_plan", "gregale_check_plan", "gregale_get_action_outcome":
+		return selected == ToolsetCore || selected == ToolsetRelease || selected == ToolsetDiagnose
 	case "gregale_get_plan", "gregale_list_plans", "gregale_verify_plan":
 		return selected == ToolsetCore || selected == ToolsetRelease || selected == ToolsetProvision
 	case "gregale_get_restart":

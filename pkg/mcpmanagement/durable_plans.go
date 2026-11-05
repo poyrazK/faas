@@ -16,6 +16,7 @@ type storedPlan struct {
 	ConfigReceipt      *api.EnvBatchResponse `json:",omitempty"`
 	Provision          *nativeProvision      `json:",omitempty"`
 	OperationRequest   json.RawMessage       `json:",omitempty"`
+	ConfigReceiptProof string                `json:",omitempty"`
 	LocalReceipt       json.RawMessage       `json:",omitempty"`
 	RegressionResult   *api.DebugRegressionReview
 	BudgetResult       *api.EnvironmentRouteBudgets
@@ -113,7 +114,18 @@ func (m *management) restorePlans() error {
 			if !operationKinds[p.Operation.Kind] || p.Action != "operation_"+p.Operation.Kind || !json.Valid(record.OperationRequest) {
 				return errors.New("stored operation binding mismatch")
 			}
+			if p.Operation.CronHistorySafe && p.Operation.Kind != "cron_update" && p.Operation.Kind != "cron_delete" {
+				return errors.New("stored cron history binding mismatch")
+			}
 			p.Operation.Request = record.OperationRequest
+			if p.Operation.EnvIdentityPinned || p.Operation.RollbackGuarded {
+				if (p.Operation.Kind != "env" || !p.Operation.EnvIdentityPinned) && (p.Operation.Kind != "config_rollback_guarded" || !p.Operation.RollbackGuarded) || !api.ValidEnvBatchReceiptProof(record.ConfigReceiptProof) {
+					return errors.New("stored configuration receipt proof mismatch")
+				}
+				p.Operation.EnvReceiptProof = record.ConfigReceiptProof
+			} else if record.ConfigReceiptProof != "" {
+				return errors.New("unexpected stored configuration receipt proof")
+			}
 		}
 		if len(record.LocalReceipt) > 0 {
 			p.localReceipt = record.LocalReceipt
@@ -162,6 +174,9 @@ func (m *management) persistPlans() error {
 		if p.Operation != nil {
 			r := records[id]
 			r.OperationRequest = p.Operation.Request
+			if p.Operation.EnvIdentityPinned || p.Operation.RollbackGuarded {
+				r.ConfigReceiptProof = p.Operation.EnvReceiptProof
+			}
 			records[id] = r
 		}
 		if p.Provision != nil && p.Provision.Native != nil {
@@ -170,12 +185,20 @@ func (m *management) persistPlans() error {
 			records[id] = r
 		}
 	}
-	legacy, workloads, budgets := make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord)
+	legacy, workloads, budgets, scaling, configs, configRollbacks, crons := make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord)
 	for id, entry := range m.actions {
 		if workloadHistoryAction(entry.Action) {
 			workloads[id] = entry
 		} else if entry.Action == "route_budgets" {
 			budgets[id] = entry
+		} else if entry.Action == "operation_scale" {
+			scaling[id] = entry
+		} else if entry.Action == "operation_env" {
+			configs[id] = entry
+		} else if entry.Action == "operation_config_rollback_guarded" {
+			configRollbacks[id] = entry
+		} else if cronHistoryAction(entry.Action) {
+			crons[id] = entry
 		} else {
 			legacy[id] = entry
 		}
@@ -197,6 +220,13 @@ func (m *management) persistPlans() error {
 		"actions/" + m.opts.planNamespace:                           actionHistorySnapshot{Version: 1, Items: legacy},
 		workloadActionsNamespace + m.opts.planNamespace:             actionHistorySnapshot{Version: 1, Items: workloads},
 		budgetActionsNamespace + m.opts.planNamespace:               actionHistorySnapshot{Version: 1, Items: budgets},
+		scalingOutcomeNamespace + m.opts.planNamespace:              scalingOutcomeSnapshot{Version: 1, Items: m.scalingOutcomes},
+		configOutcomeNamespace + m.opts.planNamespace:               configOutcomeSnapshot{Version: 1, Items: m.configOutcomes},
+		configRollbackOutcomeNamespace + m.opts.planNamespace:       configRollbackSnapshot{Version: 1, Items: m.configRollbacks},
+		scalingActionsNamespace + m.opts.planNamespace:              actionHistorySnapshot{Version: 1, Items: scaling},
+		configActionsNamespace + m.opts.planNamespace:               actionHistorySnapshot{Version: 1, Items: configs},
+		configRollbackActionsNamespace + m.opts.planNamespace:       actionHistorySnapshot{Version: 1, Items: configRollbacks},
+		cronActionsNamespace + m.opts.planNamespace:                 actionHistorySnapshot{Version: 1, Items: crons},
 	})
 }
 

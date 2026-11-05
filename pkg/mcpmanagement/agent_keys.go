@@ -73,6 +73,23 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 		r.challenge(w)
 		return
 	}
+	if r.opts.AgentKeyToolsetSelection {
+		values := req.Header.Values(agentKeyToolsetsHeader)
+		if len(values) > 1 || len(values) == 1 && (len(values[0]) > 256 || strings.TrimSpace(values[0]) == "") {
+			oauthError(w, http.StatusBadRequest, "invalid_request", "Provide one non-empty Gregale-MCP-Toolsets header")
+			return
+		}
+		spec := ""
+		if len(values) == 1 {
+			spec = values[0]
+		}
+		selection, err := connectionToolsets(spec, r.opts.Toolsets)
+		if err != nil {
+			oauthError(w, http.StatusBadRequest, "invalid_request", "Selected toolsets are invalid or unavailable on this server")
+			return
+		}
+		req = req.WithContext(context.WithValue(req.Context(), agentKeyToolsetsContextKey{}, selection))
+	}
 	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyApp)
 	if errors.Is(err, errKeyConnectionsPerAccount) {
 		w.Header().Set("Retry-After", "60")
@@ -144,12 +161,16 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 // for consent; journals are isolated by the account and full credential hash.
 func (r *remoteServer) keyOptions(c *keyConnection) Options {
 	var capabilities []string
+	toolsets := r.opts.Toolsets
+	if r.opts.AgentKeyToolsetSelection && toolsets == nil {
+		toolsets = []string{ToolsetAll}
+	}
 	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead} {
 		if slices.Contains(c.scopes, scope) {
 			capabilities = append(capabilities, scope)
 		}
 	}
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: r.opts.Toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
+	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
 }
 
 // dropIdleKeyConnectionsLocked forgets key connections (of accountID, or

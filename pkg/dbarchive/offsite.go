@@ -1,6 +1,7 @@
 package dbarchive
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,9 @@ type offsiteOp struct {
 	Op       string `json:"op"`
 	Database string `json:"database"`
 	Path     string `json:"path,omitempty"`
+	// Hold carries the pin itself: its primary PUT may still be in flight
+	// when this durable entry is replayed. Older entries read the bucket.
+	Hold *Hold `json:"hold,omitempty"`
 }
 
 const (
@@ -58,9 +62,13 @@ func (op offsiteOp) valid() bool {
 	}
 	switch op.Op {
 	case offsiteDrop:
-		return op.Path == ""
+		return op.Path == "" && op.Hold == nil
 	case offsiteCopy, offsiteDelete:
 		dir, name, ok := strings.Cut(op.Path, "/")
+		if op.Hold != nil && (op.Op != offsiteCopy || dir != "holds" || !ValidHoldName(name) ||
+			op.Hold.Name != name || op.Hold.PointInTime.IsZero() || op.Hold.CreatedAt.IsZero()) {
+			return false
+		}
 		return ok && name != "" && !strings.ContainsAny(name, "/\\") && name[0] != '.' && (dir == "wal" || dir == "base" || dir == "holds")
 	}
 	return false
@@ -77,8 +85,8 @@ func offsiteMarker(dir, databaseID, name string) string {
 
 // journalOffsite records op for the mirror; without one it does nothing.
 // The entry is durable before the caller acts, so a crash in between
-// leaves at worst an entry whose action had not happened yet: a copy of a
-// missing object, or a delete of an absent one.
+// leaves an entry whose primary action may not have happened yet. Hold copies
+// carry their complete pin; ordinary copies can refer to a missing object.
 func (s *LocalStore) journalOffsite(op offsiteOp) error {
 	if !s.offsite.Load() {
 		return nil
@@ -186,7 +194,8 @@ func NewOffsite(store *LocalStore, bucket Remote, bucketPrefix string, remote Re
 
 // RunOnce replays the journal, then uploads every local archive file the
 // mirror lacks. It returns how many files and entries it applied. An
-// application or upload failure stops the pass; the next resumes there.
+// application failure stops replay; the next resumes there. File upload
+// failures defer only their database, allowing unrelated archives to advance.
 // Protected or unverified file deletions stay queued while later entries,
 // including hold releases, can proceed. Failed retention checks are
 // reported after replaying those other entries.
@@ -310,6 +319,13 @@ func (o *Offsite) apply(ctx context.Context, op offsiteOp) error {
 		}
 		return nil
 	}
+	if op.Hold != nil {
+		body, err := json.Marshal(op.Hold)
+		if err != nil {
+			return err
+		}
+		return o.Remote.Put(ctx, op.key(o.Prefix), bytes.NewReader(body), int64(len(body)))
+	}
 	// A copy stages the object in an unlinked file: Put needs its size.
 	tmp, err := os.CreateTemp(o.Store.fetchDir(), "offsite-*")
 	if err != nil {
@@ -339,7 +355,15 @@ func (o *Offsite) apply(ctx context.Context, op offsiteOp) error {
 // before it went, deletes the mirror's copy on the next pass.
 func (o *Offsite) upload(ctx context.Context) (int, error) {
 	shipped := 0
+	failed := map[string]bool{}
+	var failures []error
 	for _, f := range o.waiting() {
+		if err := ctx.Err(); err != nil {
+			return shipped, errors.Join(append(failures, err)...)
+		}
+		if failed[f.database] {
+			continue
+		}
 		file, ok := o.open(f)
 		if !ok {
 			continue
@@ -347,11 +371,13 @@ func (o *Offsite) upload(ctx context.Context) (int, error) {
 		err := o.put(ctx, file, f)
 		_ = file.Close()
 		if err != nil {
-			return shipped, err
+			failed[f.database] = true
+			failures = append(failures, fmt.Errorf("dbarchive: mirror %s/%s: %w", f.database, f.name, err))
+			continue
 		}
 		shipped++
 	}
-	return shipped, nil
+	return shipped, errors.Join(failures...)
 }
 
 // offsiteFile is one local archive file the mirror lacks.

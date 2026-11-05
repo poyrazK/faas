@@ -4763,6 +4763,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/env", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listEnv)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.setEnv)))
 	mux.HandleFunc("POST /v1/apps/{slug}/env/batch", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.envBatchHandler())))
+	mux.HandleFunc("GET /v1/apps/{slug}/env/batch/requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.envBatchReceiptHandler())))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.deleteEnv)))
 
 	// ADR-117 PR-C: env-diff matrix endpoint. Read-only; not
@@ -4778,6 +4779,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions/{revision}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigRevision)))
 	mux.HandleFunc("GET /v1/apps/{slug}/config/guard", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigGuard)))
 	mux.HandleFunc("POST /v1/apps/{slug}/config/rollback", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.rollbackConfig)))
+	mux.HandleFunc("GET /v1/apps/{slug}/config/rollback/requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.configRollbackReceiptHandler())))
 	// ADR-20261019071733: deploy freezes and release windows. Lifting a
 	// freeze, deleting a release gate and changing or removing the approval
 	// policy need the admin scope (a person's session or CLI login): a

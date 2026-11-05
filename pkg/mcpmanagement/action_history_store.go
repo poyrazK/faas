@@ -22,6 +22,8 @@ type actionReceipt struct {
 	BudgetRevision      *int64 `json:"budget_revision,omitempty"`
 	AppPolicyRevision   *int64 `json:"app_policy_revision,omitempty"`
 	BudgetSource        string `json:"budget_source,omitempty"`
+	ScalingRevision     *int64 `json:"scaling_revision,omitempty"`
+	ConfigRevision      *int64 `json:"config_revision,omitempty"`
 }
 
 type actionPhase struct {
@@ -48,6 +50,19 @@ type actionRecord struct {
 	Promotion     *actionPhase    `json:"promotion,omitempty"`
 	Workload      *actionWorkload `json:"workload,omitempty"`
 	Budget        *actionBudget   `json:"budget,omitempty"`
+	Config        *actionConfig   `json:"config,omitempty"`
+	Cron          *actionCron     `json:"cron,omitempty"`
+}
+
+const cronActionsNamespace = "cron-actions/"
+
+// Cron history retains only the resource identity, never the schedule or path.
+type actionCron struct {
+	ID string `json:"id"`
+}
+
+func cronHistoryAction(action string) bool {
+	return action == "operation_cron_update" || action == "operation_cron_delete"
 }
 
 type actionHistorySnapshot struct {
@@ -61,12 +76,12 @@ func validActionID(id string) bool {
 }
 
 func supportedHistoryAction(action string) bool {
-	return action == "deploy" || action == "rollback" || action == "regression_action" || workloadHistoryAction(action) || action == "route_budgets"
+	return action == "deploy" || action == "rollback" || action == "regression_action" || workloadHistoryAction(action) || action == "route_budgets" || action == "operation_scale" || action == "operation_env" || action == "operation_config_rollback_guarded" || cronHistoryAction(action)
 }
 
 func (m *management) restoreActionHistory() error {
 	m.actions = make(map[string]actionRecord)
-	for _, namespace := range []string{"actions/", workloadActionsNamespace, budgetActionsNamespace} {
+	for _, namespace := range []string{"actions/", workloadActionsNamespace, budgetActionsNamespace, scalingActionsNamespace, configActionsNamespace, configRollbackActionsNamespace, cronActionsNamespace} {
 		var saved actionHistorySnapshot
 		if err := m.opts.planStore.read(namespace+m.opts.planNamespace, &saved); err != nil {
 			return err
@@ -75,7 +90,7 @@ func (m *management) restoreActionHistory() error {
 			return errors.New("invalid management action history format or capacity")
 		}
 		for id, entry := range saved.Items {
-			if id != entry.PlanID || validateActionRecord(entry) != nil || workloadHistoryAction(entry.Action) != (namespace == workloadActionsNamespace) || (entry.Action == "route_budgets") != (namespace == budgetActionsNamespace) || entry.APIBase != m.opts.APIBase || m.opts.accountID != "" && entry.AccountID != m.opts.accountID {
+			if id != entry.PlanID || validateActionRecord(entry) != nil || workloadHistoryAction(entry.Action) != (namespace == workloadActionsNamespace) || (entry.Action == "route_budgets") != (namespace == budgetActionsNamespace) || (entry.Action == "operation_scale") != (namespace == scalingActionsNamespace) || (entry.Action == "operation_env") != (namespace == configActionsNamespace) || (entry.Action == "operation_config_rollback_guarded") != (namespace == configRollbackActionsNamespace) || cronHistoryAction(entry.Action) != (namespace == cronActionsNamespace) || entry.APIBase != m.opts.APIBase || m.opts.accountID != "" && entry.AccountID != m.opts.accountID {
 				return errors.New("invalid management action history binding")
 			}
 			if _, duplicate := m.actions[id]; duplicate {
@@ -102,6 +117,15 @@ func (m *management) restoreActionHistory() error {
 		environmentRollbackBefore[id] = ref
 	}
 	if err := m.restoreBudgetOutcomeLookups(); err != nil {
+		return err
+	}
+	if err := m.restoreScalingOutcomeLookups(); err != nil {
+		return err
+	}
+	if err := m.restoreConfigOutcomeLookups(); err != nil {
+		return err
+	}
+	if err := m.restoreConfigRollbackLookups(); err != nil {
 		return err
 	}
 	if err := m.restoreDeploymentOutcomeLookups(); err != nil {
@@ -143,6 +167,18 @@ func (m *management) restoreActionHistory() error {
 	for id, lookup := range m.budgetOutcomes {
 		lookupsBefore[id] = lookup
 	}
+	scalingBefore := make(map[string]scalingOutcomeLookup, len(m.scalingOutcomes))
+	for id, lookup := range m.scalingOutcomes {
+		scalingBefore[id] = lookup
+	}
+	configBefore := make(map[string]configOutcomeLookup, len(m.configOutcomes))
+	for id, lookup := range m.configOutcomes {
+		configBefore[id] = lookup
+	}
+	configRollbacksBefore := make(map[string]configRollbackLookup, len(m.configRollbacks))
+	for id, lookup := range m.configRollbacks {
+		configRollbacksBefore[id] = lookup
+	}
 	environmentsBefore := make(map[string]environmentActionRecord, len(m.environmentActions))
 	for id, entry := range m.environmentActions {
 		environmentsBefore[id] = entry
@@ -154,7 +190,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(environmentPromotionBefore, m.environmentPromotionOutcomes) || !reflect.DeepEqual(environmentRollbackBefore, m.environmentRollbackOutcomes) || !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceRollbackBefore, m.serviceRollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) {
+	if !reflect.DeepEqual(environmentPromotionBefore, m.environmentPromotionOutcomes) || !reflect.DeepEqual(environmentRollbackBefore, m.environmentRollbackOutcomes) || !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceRollbackBefore, m.serviceRollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) || !reflect.DeepEqual(scalingBefore, m.scalingOutcomes) || !reflect.DeepEqual(configBefore, m.configOutcomes) || !reflect.DeepEqual(configRollbacksBefore, m.configRollbacks) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -196,6 +232,15 @@ func (m *management) syncActionHistory(now time.Time) error {
 	if err := m.syncBudgetOutcomeLookups(now); err != nil {
 		return err
 	}
+	if err := m.syncScalingOutcomeLookups(now); err != nil {
+		return err
+	}
+	if err := m.syncConfigOutcomeLookups(now); err != nil {
+		return err
+	}
+	if err := m.syncConfigRollbackLookups(now); err != nil {
+		return err
+	}
 	if err := m.syncDeploymentOutcomeLookups(now); err != nil {
 		return err
 	}
@@ -230,6 +275,18 @@ func recordAction(p *releasePlan) actionRecord {
 	}
 	if p.Action == "route_budgets" {
 		entry.Budget, entry.Apply = budgetActionPhase(p)
+	}
+	if p.Action == "operation_scale" {
+		entry.Apply = scalingActionPhase(p)
+	}
+	if p.Action == "operation_env" {
+		entry.Config, entry.Apply = configActionPhase(p)
+	}
+	if p.Action == "operation_config_rollback_guarded" {
+		entry.Apply = configRollbackActionPhase(p)
+	}
+	if cronHistoryAction(p.Action) {
+		entry.Cron, entry.Apply = cronActionPhase(p)
 	}
 	if p.Action == "deploy" {
 		phase := deploymentActionPhase(p, p.promotionAttempted, p.promoted)
@@ -275,9 +332,9 @@ func validateActionRecord(entry actionRecord) error {
 				return errors.New("unexpected action receipt")
 			}
 		case "accepted", "committed":
-			if entry.Action == "route_budgets" {
+			if entry.Action == "route_budgets" || entry.Action == "operation_scale" || entry.Action == "operation_env" || entry.Action == "operation_config_rollback_guarded" || cronHistoryAction(entry.Action) {
 				if phase.Receipt == nil {
-					return errors.New("missing action budget receipt")
+					return errors.New("missing committed action receipt")
 				}
 				continue
 			}
@@ -298,6 +355,18 @@ func validateActionRecord(entry actionRecord) error {
 		}
 	}
 	if err := validateBudgetAction(entry); err != nil {
+		return err
+	}
+	if err := validateScalingAction(entry); err != nil {
+		return err
+	}
+	if err := validateConfigAction(entry); err != nil {
+		return err
+	}
+	if err := validateConfigRollbackAction(entry); err != nil {
+		return err
+	}
+	if err := validateCronAction(entry); err != nil {
 		return err
 	}
 	return validateWorkloadAction(entry)

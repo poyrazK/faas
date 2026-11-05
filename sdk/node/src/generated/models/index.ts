@@ -415,6 +415,7 @@ export type { ConfigGuardQuery } from './ConfigGuardQuery.js';
 export type { ConfigGuardSummary } from './ConfigGuardSummary.js';
 export type { ConfigRevision } from './ConfigRevision.js';
 export type { ConfigRevisionDetail } from './ConfigRevisionDetail.js';
+export type { ConfigRollbackReceipt } from './ConfigRollbackReceipt.js';
 export type { ConfigRollbackRequest } from './ConfigRollbackRequest.js';
 export type { ConfigRollbackResponse } from './ConfigRollbackResponse.js';
 export type { ConfigSecretDifference } from './ConfigSecretDifference.js';

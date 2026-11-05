@@ -132,7 +132,7 @@ type Proxy struct {
 	handshakes  int
 
 	pools *poolSet
-	// statementSequence gives every fresh unnamed Parse its own backend name.
+	// statementSequence gives every fresh Parse its own backend name.
 	statementSequence atomic.Uint64
 
 	cancelMu sync.Mutex

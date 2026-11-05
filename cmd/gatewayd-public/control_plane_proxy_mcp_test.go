@@ -16,6 +16,9 @@ func TestControlPlaneProxyRoutesHostedMCPBridgeOnAPIHostOnly(t *testing.T) {
 		if got := r.Header.Get("Cookie"); got != mcpFlowCookie+"=flow" {
 			t.Errorf("bridge saw cookies %q", got)
 		}
+		if got := r.Header.Get("Gregale-MCP-Toolsets"); got != "core,operate" {
+			t.Errorf("bridge saw toolset header %q", got)
+		}
 		http.SetCookie(w, &http.Cookie{Name: mcpFlowCookie, Value: "next", Path: "/", Secure: true})
 		http.SetCookie(w, &http.Cookie{Name: "gregale_session", Value: "planted", Path: "/"})
 		_, _ = io.WriteString(w, "bridge")
@@ -61,6 +64,7 @@ func TestControlPlaneProxyRoutesHostedMCPBridgeOnAPIHostOnly(t *testing.T) {
 	} {
 		t.Run(tc.host+tc.path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "https://"+tc.host+tc.path, strings.NewReader("{}"))
+			req.Header.Set("Gregale-MCP-Toolsets", "core,operate")
 			req.AddCookie(&http.Cookie{Name: "gregale_session", Value: "secret"})
 			req.AddCookie(&http.Cookie{Name: mcpFlowCookie, Value: "flow"})
 			rec := httptest.NewRecorder()

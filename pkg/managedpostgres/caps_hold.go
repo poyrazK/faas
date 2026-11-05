@@ -19,7 +19,8 @@ type ComputeHoldProvider interface {
 // capHoldable keeps the databases the sweep holds and releases. A database
 // being created or changed is left to its lifecycle worker, which connects to
 // it; the next sweep after it settles decides. One in its delete grace period
-// is not in the sweep at all, so a cap never releases a deletion hold.
+// is not in the sweep. The lifecycle claim rechecks this before provider I/O,
+// so a stale sweep cannot release a deletion hold.
 func capHoldable(database Database) bool {
 	return database.State == StateReady || database.State == StateFailed
 }
@@ -52,47 +53,55 @@ func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, datab
 		if !ok {
 			continue
 		}
-		reason := all
-		if _, past := excess[database.ID]; past && reason == capHoldNone {
-			reason = "plan_excess"
-		}
-		hold := reason != capHoldNone
-		resourceID := databaseDataResource(database)
-		held, err := provider.ComputeHeld(ctx, resourceID)
-		if err != nil {
+		if err := e.withComputeHold(ctx, database, func(providerCtx context.Context, claimed Database) error {
+			return e.holdDatabase(providerCtx, subjectID, claimed, provider, all, excess, summary)
+		}); err != nil {
 			failures = append(failures, err)
-			continue
-		}
-		if held {
-			summary.HeldDatabases++
-		}
-		if held == hold {
-			continue
-		}
-		attrs := []any{"subject_id", subjectID, "database_id", database.ID, "hold", hold, "reason", reason}
-		if e.mode == CapEnforcementShadow {
-			summary.HoldsShadowed++
-			e.logger.Info("managed postgres compute hold (shadow)", attrs...)
-			continue
-		}
-		if hold {
-			err = provider.HoldForDeletion(ctx, resourceID)
-		} else {
-			err = provider.ReleaseDeletionHold(ctx, resourceID)
-		}
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if hold {
-			summary.HoldsApplied++
-			summary.HeldDatabases++
-			e.logger.Info("managed postgres compute held", attrs...)
-		} else {
-			summary.HoldsReleased++
-			summary.HeldDatabases--
-			e.logger.Info("managed postgres compute hold released", attrs...)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// holdDatabase observes and changes one hold while its lifecycle lease is held.
+func (e *CapEnforcer) holdDatabase(ctx context.Context, subjectID string, database Database, provider ComputeHoldProvider, all string, excess map[string]string, summary *CapSweepSummary) error {
+	reason := all
+	if _, past := excess[database.ID]; past && reason == capHoldNone {
+		reason = "plan_excess"
+	}
+	hold := reason != capHoldNone
+	resourceID := databaseDataResource(database)
+	held, err := provider.ComputeHeld(ctx, resourceID)
+	if err != nil {
+		return err
+	}
+	if held {
+		summary.HeldDatabases++
+	}
+	if held == hold {
+		return nil
+	}
+	attrs := []any{"subject_id", subjectID, "database_id", database.ID, "hold", hold, "reason", reason}
+	if e.mode == CapEnforcementShadow {
+		summary.HoldsShadowed++
+		e.logger.Info("managed postgres compute hold (shadow)", attrs...)
+		return nil
+	}
+	if hold {
+		err = provider.HoldForDeletion(ctx, resourceID)
+	} else {
+		err = provider.ReleaseDeletionHold(ctx, resourceID)
+	}
+	if err != nil {
+		return err
+	}
+	if hold {
+		summary.HoldsApplied++
+		summary.HeldDatabases++
+		e.logger.Info("managed postgres compute held", attrs...)
+	} else {
+		summary.HoldsReleased++
+		summary.HeldDatabases--
+		e.logger.Info("managed postgres compute hold released", attrs...)
+	}
+	return nil
 }

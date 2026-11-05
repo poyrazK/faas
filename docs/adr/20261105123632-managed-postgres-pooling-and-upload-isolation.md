@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-11-05
 - **Amends:** [ADR-1027](1027-native-managed-postgres-on-firecracker-database-nodes.md), transaction pooling and archive operations
+- **Amended by:** [ADR-20261105180352](20261105180352-managed-postgres-hold-publication-and-plan-lifetimes.md), which gives named Parses fresh backend identities and isolates mirror file upload failures.
 
 An unnamed prepared statement belongs to a PostgreSQL client connection. The
 native transaction pool previously passed its empty name to the shared backend.

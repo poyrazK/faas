@@ -35,12 +35,29 @@ func (s *PgStore) GetObjectBucketNotifications(ctx context.Context, account, app
 	}
 	return readObjectNotifications(ctx, s.pool, b)
 }
-func pgNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.ObjectNotificationTarget) (string, []byte, error) {
-	b, err := sqlc.New().ObjectNotificationTargetQueue(ctx, db, sqlc.ObjectNotificationTargetQueueParams{AccountID: mustPgUUID(t.AccountID), AppID: mustPgUUID(t.AppID), QueueName: t.QueueName})
+func pgNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.ObjectNotificationTarget) (QueueBinding, error) {
+	bindings, err := sqlc.New().ObjectNotificationTargetQueue(ctx, db, sqlc.ObjectNotificationTargetQueueParams{AccountID: mustPgUUID(t.AccountID), AppID: mustPgUUID(t.AppID), QueueName: t.QueueName})
 	if err != nil {
-		return "", nil, mapErr(err)
+		return QueueBinding{}, mapErr(err)
 	}
-	return pgUUIDString(b.ID), b.RetryPolicy, nil
+	if len(bindings) != 1 {
+		return QueueBinding{}, ErrNotFound
+	}
+	return queueConsumerBindingFromSQL(bindings[0]), nil
+}
+
+func pgObjectNotificationPolicy(ctx context.Context, db sqlc.DBTX, account, app string) (Account, error) {
+	owner, err := queuePolicyAccountDB(ctx, db, account, app, true)
+	if err != nil || owner.ResourceOwnershipEnabled {
+		return owner, err
+	}
+	// Personal and not-yet-adopted resources retain the legacy account lock.
+	row, err := sqlc.New().QueueConsumerLockAccount(ctx, db, mustPgUUID(account))
+	if err != nil {
+		return Account{}, mapErr(err)
+	}
+	owner.Plan = api.Plan(row.Plan)
+	return owner, nil
 }
 func (s *PgStore) SetObjectBucketNotifications(ctx context.Context, account, app, bucket string, rules []api.ObjectNotificationRule) (api.ObjectBucketNotifications, error) {
 	return s.changeObjectBucketNotifications(ctx, account, app, bucket, rules, nil)
@@ -59,7 +76,7 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	plan, err := q.ObjectNotificationLockAccount(ctx, tx, mustPgUUID(account))
+	owner, err := pgObjectNotificationPolicy(ctx, tx, account, app)
 	if err != nil {
 		return api.ObjectBucketNotifications{}, mapErr(err)
 	}
@@ -82,7 +99,7 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 	}
 	for _, r := range validateRules {
 		t, e := notificationTarget(r, b)
-		if e != nil || !notificationEntitled(api.Plan(plan), t.Kind) {
+		if e != nil || !notificationEntitled(owner.Plan, t.Kind) {
 			return p, ErrObjectNotificationInvalid
 		}
 		if _, e = q.ObjectNotificationTargetApp(ctx, tx, sqlc.ObjectNotificationTargetAppParams{ID: mustPgUUID(t.AppID), AccountID: mustPgUUID(account)}); e != nil {
@@ -98,7 +115,7 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 			}
 		}
 		if t.Kind == "queue" {
-			if _, _, e = pgNotificationQueue(ctx, tx, t); e != nil {
+			if _, e = pgNotificationQueue(ctx, tx, t); e != nil {
 				return p, mapNotificationDestinationError(e)
 			}
 		}
@@ -142,7 +159,7 @@ func captureObjectNotifications(ctx context.Context, db sqlc.DBTX, account, iden
 		return err
 	}
 	b := ObjectBucket{ID: d.BucketID, AccountID: account, AppID: pgUUIDString(r.AppID), Name: r.Name, Region: r.Region}
-	recipients, err := notificationRecipients(b, p, typ, d, func(t api.ObjectNotificationTarget) (string, []byte, error) { return pgNotificationQueue(ctx, db, t) })
+	recipients, err := notificationRecipients(b, p, typ, d, func(t api.ObjectNotificationTarget) (QueueBinding, error) { return pgNotificationQueue(ctx, db, t) })
 	if err != nil || len(recipients) == 0 {
 		return err
 	}
@@ -171,9 +188,9 @@ func (s *PgStore) EnqueueObjectNotification(ctx context.Context, in Invocation, 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	plan, err := q.ObjectNotificationLockAccount(ctx, tx, mustPgUUID(in.AccountID))
+	owner, err := pgObjectNotificationPolicy(ctx, tx, in.AccountID, in.AppID)
 	if err != nil {
-		return mapErr(err)
+		return err
 	}
 	// Check the exact previously committed admission before capacity or destination
 	// checks: a lost checkpoint must not require another queue slot.
@@ -187,8 +204,20 @@ func (s *PgStore) EnqueueObjectNotification(ctx context.Context, in Invocation, 
 	if !errors.Is(mapErr(err), ErrNotFound) {
 		return mapErr(err)
 	}
-	if !notificationEntitled(api.Plan(plan), t.Kind) {
+	if !notificationEntitled(owner.Plan, t.Kind) {
 		return ErrObjectNotificationCapacity
+	}
+	if t.Kind == "queue" {
+		binding, e := pgCapturedNotificationQueue(ctx, tx, t, snapshot.QueueBindingID)
+		if e != nil {
+			return e
+		}
+		// Environment admission precedes the app lock, matching queue mutations.
+		if binding.EnvironmentID != "" {
+			if _, e = q.ObjectNotificationLockQueueEnvironment(ctx, tx, sqlc.ObjectNotificationLockQueueEnvironmentParams{EnvironmentID: mustPgUUID(binding.EnvironmentID), DeploymentScope: binding.DeploymentScope, AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID)}); e != nil {
+				return mapErr(e)
+			}
+		}
 	}
 	// FOR UPDATE also conflicts with the app FK's key-share locks held by other
 	// invocation inserts, so counting and this admission share one critical section.
@@ -196,24 +225,38 @@ func (s *PgStore) EnqueueObjectNotification(ctx context.Context, in Invocation, 
 		return mapErr(err)
 	}
 	if t.Kind == "queue" {
-		id, _, e := pgNotificationQueue(ctx, tx, t)
+		row, e := q.QueueConsumerBindingForUpdate(ctx, tx, sqlc.QueueConsumerBindingForUpdateParams{ID: mustPgUUID(snapshot.QueueBindingID), AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID)})
 		if e != nil {
-			return e
+			return mapErr(e)
 		}
-		if id != snapshot.QueueBindingID {
+		binding := queueConsumerBindingFromSQL(row)
+		if !notificationCapturedQueue(binding, t) {
 			return ErrNotFound
 		}
+		in.QueueBindingID, in.DeploymentScope = binding.ID, binding.DeploymentScope
 		n, e := q.ObjectNotificationQueueDepth(ctx, tx, mustPgUUID(in.AppID))
 		if e != nil {
 			return e
 		}
-		if n >= int64(api.MustLimitsFor(api.Plan(plan)).MaxQueueDepth) {
+		if n >= int64(api.MustLimitsFor(owner.Plan).MaxQueueDepth) {
 			return ErrObjectNotificationCapacity
 		}
 	}
-	err = q.ObjectNotificationInvocationInsert(ctx, tx, sqlc.ObjectNotificationInvocationInsertParams{ID: mustPgUUID(in.ID), AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID), Source: string(in.Source), QueueName: in.QueueName, Payload: in.Payload, Headers: in.Headers, DueAt: objectUsageTime(in.DueAt), RetryPolicy: snapshot.RetryPolicy})
+	err = q.ObjectNotificationInvocationInsert(ctx, tx, sqlc.ObjectNotificationInvocationInsertParams{ID: mustPgUUID(in.ID), AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID), Source: string(in.Source), QueueName: in.QueueName, Payload: in.Payload, Headers: in.Headers, DueAt: objectUsageTime(in.DueAt), RetryPolicy: snapshot.RetryPolicy, DeploymentScope: in.DeploymentScope, QueueBindingID: mustPgUUID(in.QueueBindingID)})
 	if err != nil {
 		return mapErr(err)
 	}
 	return tx.Commit(ctx)
+}
+
+func pgCapturedNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.ObjectNotificationTarget, id string) (QueueBinding, error) {
+	row, err := sqlc.New().QueueBindingHistoryByID(ctx, db, sqlc.QueueBindingHistoryByIDParams{ID: mustPgUUID(id), AccountID: mustPgUUID(t.AccountID), AppID: mustPgUUID(t.AppID)})
+	if err != nil {
+		return QueueBinding{}, mapErr(err)
+	}
+	binding := queueConsumerBindingFromSQL(row)
+	if !notificationCapturedQueue(binding, t) {
+		return QueueBinding{}, ErrNotFound
+	}
+	return binding, nil
 }

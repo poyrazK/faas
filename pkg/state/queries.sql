@@ -14090,14 +14090,17 @@ SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
 -- Whether a bucket app's events may reach the target app (ADR-20261025211616).
 SELECT event_app_in_producer_reach(sqlc.arg(account_id)::uuid, sqlc.arg(producer)::text, sqlc.arg(target_app_id)::text)::boolean AS in_reach;
 
--- name: ObjectNotificationTargetQueue :one
-SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled;
-
--- name: ObjectNotificationLockAccount :one
-SELECT plan FROM accounts WHERE id=$1 FOR UPDATE;
+-- name: ObjectNotificationTargetQueue :many
+SELECT * FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2;
 
 -- name: ObjectNotificationLockApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted' FOR UPDATE;
+
+-- name: ObjectNotificationLockQueueEnvironment :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=sqlc.arg(environment_id)::uuid AND e.slug=sqlc.arg(deployment_scope)::text
+ AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+FOR SHARE OF e;
 
 -- name: ObjectNotificationInvocationExisting :one
 SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1;
@@ -14106,8 +14109,8 @@ SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1;
 SELECT count(*) FROM invocations WHERE app_id=$1 AND source='queue' AND state IN ('pending','dispatching');
 
 -- name: ObjectNotificationInvocationInsert :exec
-INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9);
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy,deployment_scope,queue_binding_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9,nullif(sqlc.arg(deployment_scope)::text,''),sqlc.narg(queue_binding_id)::uuid);
 
 -- name: ObjectTrackedUploadDue :many
 SELECT * FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
@@ -15526,6 +15529,31 @@ WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uu
         'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
         'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
 RETURNING d.*;
+
+-- name: ClaimManagedPostgresComputeHold :one
+WITH locked AS MATERIALIZED (
+    SELECT * FROM managed_postgres_databases
+    WHERE id=sqlc.arg(database_id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=sqlc.arg(lease_token)::text,
+    lease_until=clock_timestamp()+sqlc.arg(lease_milliseconds)::bigint*interval '1 millisecond'
+FROM locked l WHERE d.id=l.id
+    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed')
+    AND l.desired_generation=sqlc.arg(generation)::bigint
+    AND l.backend_id=sqlc.arg(backend_id)::text AND l.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
+    AND l.provider_resource_id=sqlc.arg(provider_resource_id)::text
+    AND COALESCE(l.data_resource_id,l.provider_resource_id)=sqlc.arg(data_resource_id)::text
+    AND (l.lease_until IS NULL OR l.lease_until<=clock_timestamp())
+RETURNING d.*;
+
+-- name: ReleaseManagedPostgresComputeHold :execrows
+WITH locked AS MATERIALIZED (
+    SELECT id,state,lease_token,lease_until FROM managed_postgres_databases
+    WHERE id=sqlc.arg(database_id)::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
+FROM locked l WHERE d.id=l.id AND l.lease_token=sqlc.arg(lease_token)::text
+    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp();
 
 -- name: ReleaseManagedPostgresLifecycleLease :execrows
 UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),
