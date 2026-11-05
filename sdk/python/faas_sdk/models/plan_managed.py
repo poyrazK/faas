@@ -41,7 +41,7 @@ class PlanManaged:
     set."""
     unbound: list[str] | Unset = UNSET
     """Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when
-    none (ADR-20261104221217)."""
+    none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

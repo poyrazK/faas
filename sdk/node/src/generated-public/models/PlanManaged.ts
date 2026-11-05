@@ -22,7 +22,7 @@ export type PlanManaged = {
    */
   not_provisioned_reason?: 'unavailable' | 'plan' | 'quota' | 'unsupported' | 'configured' | 'not_referenced' | 'permission';
   /**
-   * Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when none (ADR-20261104221217).
+   * Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when none.
    */
   unbound?: Array<string>;
 };
