@@ -100,8 +100,8 @@ as `Authorization: Bearer <key>`, so opening its URL in a browser shows
 `401 unauthorized`. `gregale invoke` sends the request with your login and is
 the way to test it; never put a key in a URL. To make the app public on
 purpose, run `gregale app update my-api --no-require-authn`. The public
-`/healthz` URL answers `{"status":"ok","source":"edge"}` from Gregale's edge
-without waking the app, so it does not show your code ran; use
+`/healthz` URL answers `{"status":"ok","source":"edge"}` from Gregale's edge,
+so it does not show your code ran; use
 `gregale invoke my-api --method GET --path /healthz` to reach your handler's own
 health route.
 
