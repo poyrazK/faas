@@ -337,7 +337,7 @@ func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]stat
 		if buckets, ok := h.mounts.get(host, now); ok && len(buckets) == 0 {
 			return buckets, nil
 		}
-		if !h.hostLookups.admit(host) {
+		if !h.hostLookups.admit(ctx, host) {
 			return nil, errHostLookupShed
 		}
 		b, err := storageTenantBinding(ctx, h.store, host)
@@ -415,12 +415,12 @@ func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App
 		if slug == "" || strings.Contains(slug, ".") {
 			return state.App{}, false, nil
 		}
-		if !h.hostLookups.admit(host) {
+		if !h.hostLookups.admit(ctx, host) {
 			return state.App{}, false, errHostLookupShed
 		}
 		app, err = h.store.AppBySlug(ctx, slug)
 	} else {
-		if !h.hostLookups.admit(host) {
+		if !h.hostLookups.admit(ctx, host) {
 			return state.App{}, false, errHostLookupShed
 		}
 		app, err = storageDomainApp(ctx, h.store, host, h.tenantSurfacesOn())

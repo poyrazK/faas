@@ -3916,7 +3916,11 @@ const (
 	// (ADR-20261103163954 §4).
 	PublicReadNewHostLookupsPerSecond = 25
 	PublicReadNewHostLookupBurst      = 500
-	PublicReadKnownHostsMax           = 100_000
+	// Wildcard recovery stays bounded while ordinary unknown-host floods cannot
+	// monopolize legacy wildcard customers' first lookup after a restart.
+	PublicReadWildcardRecoveryPerSecond = 5
+	PublicReadWildcardRecoveryBurst     = 50
+	PublicReadKnownHostsMax             = 100_000
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -9614,6 +9618,11 @@ const (
 	OnDemandTLSAskKnownHostPageSize  = 1024
 	OnDemandTLSAskKnownHostRefresh   = 5 * time.Minute
 	OnDemandTLSAskKnownHostRetry     = time.Second
+	// The admission ledger retains one week, with at most 150 new hosts
+	// per three hours. One extra window covers boundary timestamps.
+	OnDemandTLSAskRecentHostRows    = OnDemandTLSFleetNewHostsPer3h * (7*24/3 + 1)
+	OnDemandTLSAskRecentHostRetry   = time.Second
+	OnDemandTLSAskRecentHostWaiters = 512
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -13136,22 +13145,23 @@ const (
 	// a restart, each host's first request, which the burst covers. A flood
 	// of random names under the apps wildcard spends this budget instead of
 	// control-plane Postgres reads. A read waits up to
-	// GatewayNewHostLookupMaxWait for budget; past that the request is
-	// answered 503 traffic_policy_unavailable with Retry-After, never 404
-	// (ADR-20261103163954 §4).
-	GatewayNewHostLookupsPerSecond = 25
-	GatewayNewHostLookupBurst      = 500
-	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// GatewayNewHostLookupMaxWait for budget; past that it may wait for a
+	// shared recent-host catch-up before returning 503 with Retry-After,
+	// never 404 (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond   = 25
+	GatewayNewHostLookupBurst        = 500
+	GatewayWildcardRecoveryPerSecond = 5
+	GatewayWildcardRecoveryBurst     = 50
+	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
 	// The gateway and the edge preload every app slug and verified custom
-	// domain (at most KnownRouteHostsMax of each), refreshed every
-	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
-	// new-host budgets above or PublicReadNewHostLookups*. Only names that
-	// are not an app's do: after a restart a flood of random names no longer
-	// answers 503 for apps the process has not yet served. Wildcard custom
-	// domains are not preloaded (ADR-20261103163954 §4).
+	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
+	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
+	// can skip the lookup budget; wildcard patterns only qualify for the
+	// separately bounded recovery budget (ADR-520 amendment 14).
 	KnownRouteHostsMax             = 1_000_000
 	KnownRouteHostsRefreshInterval = time.Minute
 	KnownRouteHostsRefreshTimeout  = 20 * time.Second
+	KnownRouteRecentHostTimeout    = 3 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253

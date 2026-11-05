@@ -3533,7 +3533,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, problem)
 		return
 	}
-	if err := state.ValidateCustomDomainName(domain); err != nil {
+	if err := state.ValidateCustomDomainClaim(domain); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid domain", err.Error()))
 		return
@@ -3984,11 +3984,17 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 		return resp, nil
 	}
 	dialDomain, _ := state.WildcardProbeHost(d.Domain)
-	if points := checkPointsToGregale(ctx, dialDomain); points.Status == probeFail {
+	points, routingProbe := checkDomainRouting(ctx, d.Domain)
+	if points.Status == probeFail {
 		err := fmt.Errorf("%w: %w", errCertFailure, errCertRoutingMismatch)
 		resp.CertStatus = classifyCertError(err)
 		resp.CertLastError = errCertRoutingMismatch.Error()
 		return resp, err
+	}
+	if routingProbe != dialDomain {
+		resp.CertStatus = certStatusPending
+		resp.CertLastError = ""
+		return resp, nil
 	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
@@ -4348,6 +4354,23 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		Observed: ipObs, Remediation: ipRem,
 		CheckedAt: obs.DNSCheckedAt.UTC().Format(time.RFC3339),
 	})
+	if obs.DNSCheckedAt.IsZero() {
+		// At least one DNS probe was inconclusive. The legacy row stores only
+		// booleans, so conservatively mark all three DNS checks pending.
+		for i := range report.Checks {
+			check := &report.Checks[i]
+			if check.Name == "caa_permits" {
+				check.CheckedAt = obs.ObservedAt.UTC().Format(time.RFC3339)
+			}
+			if check.Name == "dns_record" || check.Name == "points_to_gregale" || check.Name == "ipv6_conflict" {
+				check.Status = string(probePending)
+				check.Detail = "DNS routing could not be confirmed; retry the check"
+				check.Remediation = ""
+				check.CheckedAt = obs.ObservedAt.UTC().Format(time.RFC3339)
+			}
+		}
+		report.Healthy = false
+	}
 	return report
 }
 

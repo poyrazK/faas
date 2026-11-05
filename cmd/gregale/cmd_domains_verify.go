@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,7 +27,7 @@ import (
 // cmdDomainsVerify is the `gregale domains verify <domain>` handler.
 // Calls apid's POST /v1/domains/{domain}/verify (idempotent) and
 // prints the result. A pending response remains visible but returns
-// exit 1 so scripts cannot treat an unverified domain as ready.
+// exit 1 so scripts cannot treat ownership or a pending certificate as ready.
 // JSON mode emits the CustomDomainResponse, including `verified`.
 func cmdDomainsVerify(args []string) int {
 	if len(args) != 1 {
@@ -57,9 +58,11 @@ func cmdDomainsVerify(args []string) int {
 		if !d.Verified {
 			PrintWarn(osStdout, "Domain is still pending verification; check DNS records and retry.")
 			printDomainDNSRecords(osStdout, d)
+		} else if !domainSetupReady(d) {
+			PrintWarn(osStdout, "The TLS certificate is still pending or unavailable; retry verification.")
 		}
 	}
-	if !d.Verified {
+	if !domainSetupReady(d) {
 		return 1
 	}
 	return 0
@@ -166,7 +169,7 @@ func printDomainRow(w io.Writer, d api.CustomDomainResponse, slugs map[string]st
 // custom domain (ADR-520). Older servers send only the TXT proof.
 func printDomainDNSRecords(w io.Writer, d api.CustomDomainResponse) {
 	if len(d.DNSRecords) == 0 {
-		_, _ = fmt.Fprintf(w, "  _faas-verify.%s  TXT  %s\n", d.Domain, d.ChallengeToken)
+		_, _ = fmt.Fprintf(w, "  _faas-verify.%s  TXT  %s\n", strings.TrimPrefix(d.Domain, "*."), d.ChallengeToken)
 		return
 	}
 	for _, r := range d.DNSRecords {
