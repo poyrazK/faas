@@ -27,7 +27,7 @@ type ProjectResolver interface {
 // ProjectLimitable reports whether a key may carry a project limit: agent
 // keys and hosted MCP sign-ins' mcp-login keys.
 func ProjectLimitable(key state.APIKey) bool {
-	return slices.Contains(key.Scopes, api.ScopeAgent) || key.Label == api.MCPLoginKeyLabel
+	return key.ProjectLimitable()
 }
 
 // AppOutsideKeyProjects reports whether a project-limited key may not reach

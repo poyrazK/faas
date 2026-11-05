@@ -35,13 +35,21 @@ func (m *MemStore) GetObjectBucketNotifications(ctx context.Context, account, ap
 	_, p, err := m.ownedNotificationsLocked(account, app, bucket)
 	return p, err
 }
-func (m *MemStore) notificationQueueLocked(t api.ObjectNotificationTarget) (string, []byte, error) {
+func (m *MemStore) notificationQueueLocked(t api.ObjectNotificationTarget) (QueueBinding, error) {
+	var selected QueueBinding
 	for _, b := range m.queueBindings {
-		if notificationSameIdentity(b.AccountID, t.AccountID) && notificationSameIdentity(b.AppID, t.AppID) && b.QueueName == t.QueueName && b.Enabled {
-			return b.ID, bytes.Clone(b.RetryPolicyJSON), nil
+		if notificationSameIdentity(b.AccountID, t.AccountID) && notificationSameIdentity(b.AppID, t.AppID) && b.QueueName == t.QueueName && b.Enabled && b.RetiredAt == nil {
+			if selected.ID != "" {
+				return QueueBinding{}, ErrNotFound // An unqualified ARN cannot choose between environments.
+			}
+			selected = b
 		}
 	}
-	return "", nil, ErrNotFound
+	if selected.ID == "" || !m.queueBindingEnvironmentAvailableLocked(selected) {
+		return QueueBinding{}, ErrNotFound
+	}
+	selected.RetryPolicyJSON = bytes.Clone(selected.RetryPolicyJSON)
+	return selected, nil
 }
 func (m *MemStore) SetObjectBucketNotifications(ctx context.Context, account, app, bucket string, rules []api.ObjectNotificationRule) (api.ObjectBucketNotifications, error) {
 	return m.changeObjectBucketNotifications(ctx, account, app, bucket, rules, nil)
@@ -65,6 +73,10 @@ func (m *MemStore) changeObjectBucketNotifications(ctx context.Context, account,
 	if err != nil {
 		return p, err
 	}
+	owner, ok := m.queuePolicyAccountLocked(account, app)
+	if !ok {
+		return p, ErrNotFound
+	}
 	next, err := objectNotificationChange(b, p, normal, request)
 	if err != nil {
 		return p, err
@@ -79,14 +91,14 @@ func (m *MemStore) changeObjectBucketNotifications(ctx context.Context, account,
 			return p, e
 		}
 		a, ok := m.eventSubscriptionAppLocked(t.AppID)
-		if !ok || !notificationSameIdentity(a.AccountID, account) || a.Status == AppDeleted || !notificationEntitled(m.accounts[account].Plan, t.Kind) {
+		if !ok || !notificationSameIdentity(a.AccountID, account) || a.Status == AppDeleted || !notificationEntitled(owner.Plan, t.Kind) {
 			return p, ErrObjectNotificationInvalid
 		}
 		if kept, e := m.recipientsInProducerReachLocked(account, objectNotificationProducer(b), []PublishedEventRecipient{{AppID: t.AppID}}); e != nil || len(kept) == 0 {
 			return p, ErrObjectNotificationInvalid
 		}
 		if t.Kind == "queue" {
-			if _, _, e = m.notificationQueueLocked(t); e != nil {
+			if _, e = m.notificationQueueLocked(t); e != nil {
 				return p, ErrObjectNotificationInvalid
 			}
 		}
@@ -128,23 +140,35 @@ func (m *MemStore) EnqueueObjectNotification(ctx context.Context, in Invocation,
 	if !ok || !notificationSameIdentity(a.AccountID, in.AccountID) || a.Status == AppDeleted {
 		return ErrNotFound
 	}
-	if !notificationEntitled(m.accounts[in.AccountID].Plan, t.Kind) {
+	owner, ok := m.queuePolicyAccountLocked(in.AccountID, in.AppID)
+	if !ok {
+		return ErrNotFound
+	}
+	if !notificationEntitled(owner.Plan, t.Kind) {
 		return ErrObjectNotificationCapacity
 	}
 	if t.Kind == "queue" {
-		binding, _, e := m.notificationQueueLocked(t)
-		if e != nil || binding != s.QueueBindingID {
+		binding, exists := m.queueBindings[s.QueueBindingID]
+		if !exists || !notificationCapturedQueue(binding, t) || !m.queueBindingEnvironmentAvailableLocked(binding) {
 			return ErrNotFound
 		}
+		in.QueueBindingID, in.DeploymentScope = binding.ID, binding.DeploymentScope
 		n := 0
 		for _, row := range m.invocations {
 			if row.AppID == in.AppID && row.Source == InvocationQueue && (row.State == InvocationPending || row.State == InvocationDispatching) {
 				n++
 			}
 		}
-		if n >= api.MustLimitsFor(m.accounts[in.AccountID].Plan).MaxQueueDepth {
+		if n >= api.MustLimitsFor(owner.Plan).MaxQueueDepth {
 			return ErrObjectNotificationCapacity
 		}
+	}
+	in.DeploymentScope, err = invocationDeploymentScope(a, in.DeploymentScope)
+	if err != nil {
+		return err
+	}
+	if err = m.captureInvocationQueueBindingLocked(&in); err != nil {
+		return err
 	}
 	if err = m.platformTenantInvocationAllowedLocked(in); err != nil {
 		return err
