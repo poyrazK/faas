@@ -3,6 +3,7 @@ package state_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -44,6 +45,51 @@ func TestCustomDomainCertificateWithoutDNSTimeCannotEraseRevocation(t *testing.T
 			current, err := store.DomainByName(ctx, host)
 			if err != nil || current.Verified() || current.CertStatus != state.CustomDomainCertDNSDrifted || !current.DNSLastCheckedAt.Equal(at) || !current.CertExpiresAt.IsZero() || current.CertLastError != "wrong CNAME" {
 				t.Fatalf("DNS revocation overwritten: %+v %v", current, err)
+			}
+		})
+	}
+}
+
+func TestCustomDomainTLSRecentHostsAreBoundedAndFollowClaim(t *testing.T) {
+	for name, open := range tlsHostStores() {
+		t.Run(name, func(t *testing.T) {
+			raw, ctx := open(t)
+			app := tlsHostApp(t, ctx, raw, "")
+			zone := "recent-" + uuid.NewString()[:8] + ".example.com"
+			wildcard := "*." + zone
+			verifiedTLSWildcard(t, ctx, raw, wildcard, app)
+			now := time.Now().UTC()
+			for i, prefix := range []string{"a", "b", "c"} {
+				if verdict, err := raw.AdmitCustomDomainTLSHost(ctx, roomyTLSAdmission(wildcard, prefix+"."+zone, now.Add(time.Duration(i)*time.Second))); err != nil || verdict != state.TLSHostAdmitted {
+					t.Fatalf("admit %s: %v %v", prefix, verdict, err)
+				}
+			}
+			_, known, err := raw.(state.KnownRouteHostStore).KnownRouteHosts(ctx, 100)
+			if err != nil || !slices.Contains(known, "a."+zone) || !slices.Contains(known, wildcard) {
+				t.Fatalf("known route inventory = %v, %v", known, err)
+			}
+			reader := raw.(state.CustomDomainTLSRecentHostReader)
+			hosts, err := reader.ListRecentCustomDomainTLSHosts(ctx, 2)
+			if err != nil || len(hosts) > 4 || !slices.Contains(hosts, "b."+zone) || !slices.Contains(hosts, "c."+zone) || !slices.Contains(hosts, wildcard) {
+				t.Fatalf("recent limit: %v %v", hosts, err)
+			}
+			exact := "exact-" + zone
+			verifiedTLSWildcard(t, ctx, raw, exact, app)
+			hosts, err = reader.ListRecentCustomDomainTLSHosts(ctx, 100)
+			if err != nil || !slices.Contains(hosts, exact) {
+				t.Fatalf("newly verified exact host missing from catch-up: %v %v", hosts, err)
+			}
+			if err := raw.DeleteCustomDomain(ctx, wildcard); err != nil {
+				t.Fatal(err)
+			}
+			hosts, err = reader.ListRecentCustomDomainTLSHosts(ctx, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, host := range hosts {
+				if state.WildcardMatchesHost(wildcard, host) {
+					t.Fatalf("deleted claim retained recent hint %s", host)
+				}
 			}
 		})
 	}

@@ -42025,10 +42025,17 @@ func (q *Queries) KnownRouteAppSlugs(ctx context.Context, db DBTX, limit int32) 
 }
 
 const knownRouteCustomDomains = `-- name: KnownRouteCustomDomains :many
-select domain::text from custom_domains where verified_at is not null limit $1
+select host::text from (
+ select domain::text as host from custom_domains where verified_at is not null
+ union all
+ select h.host::text as host from custom_domain_tls_hosts h
+ join custom_domains d on d.domain=h.wildcard_domain
+ where d.verified_at is not null and d.domain like '*.%'
+) known limit $1
 `
 
-// Every verified custom domain, for the same preload as KnownRouteAppSlugs.
+// Preload verified claims and concrete admitted wildcard hosts. Patterns only
+// qualify for a separately bounded recovery budget, never a free lookup.
 func (q *Queries) KnownRouteCustomDomains(ctx context.Context, db DBTX, limit int32) ([]string, error) {
 	rows, err := db.Query(ctx, knownRouteCustomDomains, limit)
 	if err != nil {
@@ -42037,11 +42044,11 @@ func (q *Queries) KnownRouteCustomDomains(ctx context.Context, db DBTX, limit in
 	defer rows.Close()
 	items := []string{}
 	for rows.Next() {
-		var domain string
-		if err := rows.Scan(&domain); err != nil {
+		var host string
+		if err := rows.Scan(&host); err != nil {
 			return nil, err
 		}
-		items = append(items, domain)
+		items = append(items, host)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -53966,6 +53973,41 @@ func (q *Queries) ListReadyCronActivations(ctx context.Context, db DBTX) ([]stri
 			return nil, err
 		}
 		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentCustomDomainTLSHosts = `-- name: ListRecentCustomDomainTLSHosts :many
+SELECT DISTINCT h.host::text AS host
+FROM (SELECT host FROM custom_domain_tls_admissions ORDER BY admitted_at DESC LIMIT $1::integer) recent
+JOIN custom_domain_tls_hosts h ON h.host=recent.host
+JOIN custom_domains d ON d.domain=h.wildcard_domain
+WHERE d.verified_at IS NOT NULL
+UNION
+SELECT host FROM (
+ SELECT d.domain::text AS host FROM custom_domains d
+ WHERE d.verified_at >= now() - interval '2 minutes'
+ ORDER BY d.verified_at DESC LIMIT $1::integer
+) verified
+`
+
+// Admission hints only; callers must still authorize the live claim.
+func (q *Queries) ListRecentCustomDomainTLSHosts(ctx context.Context, db DBTX, rowLimit int32) ([]string, error) {
+	rows, err := db.Query(ctx, listRecentCustomDomainTLSHosts, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

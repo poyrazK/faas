@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,6 +20,44 @@ func testHostLookupBudget(burst int) *HostLookupBudget {
 	b := NewHostLookupBudget("test_public_object")
 	b.budget = rate.NewLimiter(0, burst)
 	return b
+}
+
+type recentBudgetSource struct{}
+
+func (recentBudgetSource) KnownRouteHosts(context.Context, int) ([]string, []string, error) {
+	return nil, nil, nil
+}
+func (recentBudgetSource) ListRecentCustomDomainTLSHosts(context.Context, int) ([]string, error) {
+	return []string{"admitted.wild.example.com"}, nil
+}
+
+func TestHostLookupBudgetRecoversConcreteHostAfterFlood(t *testing.T) {
+	known := knownhosts.New("gregale.dev")
+	if err := known.Refresh(t.Context(), recentBudgetSource{}); err != nil {
+		t.Fatal(err)
+	}
+	budget := testHostLookupBudget(0)
+	budget.Preload(known)
+	if !budget.admit(t.Context(), "admitted.wild.example.com") {
+		t.Fatal("admitted wildcard host was shed")
+	}
+	if budget.admit(t.Context(), "random.wild.example.com") {
+		t.Fatal("unadmitted wildcard host bypassed the budget")
+	}
+}
+
+func TestHostLookupBudgetBoundsLegacyWildcardRecovery(t *testing.T) {
+	known := knownhosts.New("gregale.dev")
+	known.Replace(nil, []string{"*.wild.example.com"})
+	budget := testHostLookupBudget(0)
+	budget.wildcardBudget = rate.NewLimiter(0, 1)
+	budget.Preload(known)
+	if !budget.admit(t.Context(), "legacy.wild.example.com") {
+		t.Fatal("legacy wildcard was shed after unrelated host flood")
+	}
+	if budget.admit(t.Context(), "another.wild.example.com") || budget.admit(t.Context(), "unrelated.example.com") {
+		t.Fatal("wildcard recovery budget was bypassed")
+	}
 }
 
 // After a restart the edge had seen no host name an app, so random names
@@ -143,7 +182,7 @@ func TestHostLookupBudgetKnownSetIsBounded(t *testing.T) {
 	if len(b.known) != 1 {
 		t.Fatalf("known set holds %d hosts, want 1 after the drop", len(b.known))
 	}
-	if !b.admit("c.gregale.dev") || b.admit("a.gregale.dev") {
+	if !b.admit(context.Background(), "c.gregale.dev") || b.admit(context.Background(), "a.gregale.dev") {
 		t.Fatal("after the drop only the newest host should skip an empty budget")
 	}
 }
@@ -152,7 +191,7 @@ func TestHostLookupBudgetKnownSetIsBounded(t *testing.T) {
 func TestHostLookupBudgetNilAdmits(t *testing.T) {
 	var b *HostLookupBudget
 	b.found("a.gregale.dev")
-	if !b.admit("a.gregale.dev") {
+	if !b.admit(context.Background(), "a.gregale.dev") {
 		t.Fatal("nil budget refused a lookup")
 	}
 }

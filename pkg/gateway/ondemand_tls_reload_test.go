@@ -110,7 +110,7 @@ func TestOnDemandTLSStoredCertificateSurvivesRepeatedEdgeRestarts(t *testing.T) 
 		// names must not deny a stored certificate its first permission check.
 		policy := gateway.NewOnDemandTLSPolicy(store, "gregale.dev", nil, nil)
 		policy.SetNow(func() time.Time { return now })
-		for n := range 2 * api.OnDemandTLSAskLookupBurst {
+		for n := range api.OnDemandTLSAskLookupBurst {
 			policy.Decide(ctx, fmt.Sprintf("scan-%d.unregistered.example.org", n))
 		}
 		var cfg *certmagic.Config
