@@ -1601,6 +1601,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
 		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
+		filepath.Join(root, "pkg", "api", "data_api_status.go"),              // ADR-20261022121642 amd 1: Data API status and change hook reports.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
@@ -1812,6 +1813,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "source_review.go"),
 		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
 		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
+		filepath.Join(root, "pkg", "api", "deployment_promotion_receipts.go"),
+		filepath.Join(root, "pkg", "api", "service_abort_attempts.go"), // ADR-20261104144000
+		filepath.Join(root, "pkg", "api", "environment_route_budget_receipts.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),

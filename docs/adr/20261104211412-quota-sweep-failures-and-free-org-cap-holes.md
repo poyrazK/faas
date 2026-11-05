@@ -42,13 +42,14 @@ limits customers and the financial model rely on:
    it.
 2. Ownership transfer of a Free, non-personal, live organization fails with
    `OrgFreeLimitError` when the recipient already owns
-   `FreeOrganizationsOwnedMax` Free organizations. Postgres locks the
-   recipient's account row as creation does, so a concurrent create and
-   transfer cannot both pass. apid answers `403 org_free_limit_exceeded` with
-   the limit and the observed count. Paid organizations transfer freely.
+   `FreeOrganizationsOwnedMax` Free organizations. This landed on main
+   separately (#6604, which locks the recipient and the organization first);
+   this record adopts it and applies decision 3 to its count. apid answers
+   `403 org_free_limit_exceeded`. Paid organizations transfer freely.
 3. A Free organization whose deletion was requested in the current UTC month
-   still counts toward its owner's cap until the month ends. Both
-   `CountOwnedFreeSharedOrgs` and the memory store apply the rule.
+   still counts toward its owner's cap until the month ends, for creation
+   and for transfer. Both `CountOwnedFreeSharedOrgs` and the memory store's
+   `ownedFreeSharedOrgsLocked` apply the rule.
 
 ## Consequences
 

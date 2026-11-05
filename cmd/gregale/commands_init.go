@@ -122,6 +122,11 @@ func cmdInit(args []string) int {
 		PrintUsage(os.Stderr, initCmdUsage+"\n  error: --path is required", initCmdDocsTopic)
 		return 1
 	}
+	// A template --list leaves out still scaffolds when named; say before
+	// any deploy that this account cannot run it.
+	if what, capability, hidden := hiddenManifestCapability(context.Background(), *tpl, ""); hidden && !jsonOutput {
+		_, _ = fmt.Fprintf(osStderr, "warning: %s uses %s, which is not enabled for this account; gregale deploy will refuse it (see gregale feature list --early-access)\n", what, capability)
+	}
 	return runCmdInitWithSecrets(*tpl, *dest, *deploy, *name, *secretsFile, osStdout, os.Stderr)
 }
 

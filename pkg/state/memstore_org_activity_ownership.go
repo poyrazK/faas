@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -62,8 +61,12 @@ func orgOwnershipTransferMembersLocked(m *MemStore, orgID, fromAccountID, toAcco
 	if to.Role == OrgRoleOwner {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 	}
-	if org, ok := m.orgs[orgID]; ok && !org.Personal && !org.DeletedPending && org.Plan == api.PlanFree {
-		if owned := m.ownedFreeSharedOrgsLocked(toAccountID, time.Now()); owned >= api.FreeOrganizationsOwnedMax {
+	org, exists := m.orgs[orgID]
+	if !exists {
+		return OrgMembership{}, OrgMembership{}, ErrNotFound
+	}
+	if !org.Personal && !org.DeletedPending && org.Plan == api.PlanFree {
+		if owned := m.ownedFreeSharedOrgsLocked(toAccountID); owned >= api.FreeOrganizationsOwnedMax {
 			return OrgMembership{}, OrgMembership{}, &OrgFreeLimitError{Owned: owned}
 		}
 	}

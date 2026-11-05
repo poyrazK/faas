@@ -60,12 +60,15 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
-	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
-	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
-	nativeLaunchOwners            bool                          // ADR-2026101710 amendment 1: version-three launch records name this vmmd
-	chrootBase                    string                        // /srv/fc/jail
-	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	// environmentQualificationCapture opens qualification capture (ADR
+	// 20261023093000); it also needs native recovery and both roots above.
+	environmentQualificationCapture bool
+	nativeRuntimeCapture            bool                         // ADR 20261022184951: native park/warm capture; requires native recovery
+	nativeRuntimeSnapshots          *storage.LocalStorageBackend // ADR 20261022184951 amendment 1: the tree only vmmd writes
+	nativeLaunchOwners              bool                         // ADR-2026101710 amendment 1: version-three launch records name this vmmd
+	chrootBase                      string                       // /srv/fc/jail
+	fcName                          string                       // chroot dir name jailer derives from the exec-file basename
+	readyTimeout                    time.Duration                // WAKING/cold-boot readiness budget (spec §6)
 	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
 	// nil uses net.DialTimeout; configure only before the VMM is used.
 	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)
@@ -181,6 +184,8 @@ type JailerVMM struct {
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
 	// budget is released when the instance is gone (invariant §6.2-4).
 	rings map[string]*logbuf.Ring
+	// logBudget bounds the bytes every ring holds together (bug hunt H47).
+	logBudget *logbuf.Budget
 	// slowSubscriber (issue #309 / tier-2 DX) is the per-VMM
 	// callback installed at every ring that registerRing
 	// creates. Nil = no callback wired; registerRing skips the
@@ -821,6 +826,7 @@ func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string,
 		_ = old.Close()
 	}
 	r := logbuf.New(0) // 0 -> logbuf.DefaultMaxBytes (10 MiB)
+	r.SetBudget(v.logBudget)
 	if appID != "" {
 		r.SetHourlyByteAllowance(plan.LogBytesPerInstanceHour())
 	}
@@ -1063,6 +1069,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		characterizationReceipts: make(map[string]*characterizationReceipt),
 		recs:                     make(map[string]*instanceRecord),
 		rings:                    make(map[string]*logbuf.Ring),
+		logBudget:                logbuf.NewBudget(api.VmmdLogRingBudgetBytes, api.VmmdLogRingFloorBytes),
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
 		bindSourceModes:          make(map[bindSourceKey]bindSourceMode),
@@ -1867,7 +1874,7 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 	if l.IsBuilder || !l.Plan.Valid() {
 		return fmt.Errorf("vmm: update CPU limit: invalid app lease for instance %s", l.Instance)
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAppCPUCeilingMillicores(l.Plan, cpuMillicores) {
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
@@ -2367,6 +2374,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
+	}
+	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
+		return fmt.Errorf("vmm: %w", err)
 	}
 	v.observeInstancePause(l.Instance, spec.KeepPaused)
 	tLoad := time.Now()
@@ -3024,14 +3034,22 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 }
 
 func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64, observed *runtimeResumeHookAcknowledgment) error {
-	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, nil, observed)
+	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, qualificationRestoreReceiptControl{}, nil, observed)
 }
 
-func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error) error {
-	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, validatePeer, nil)
+func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, receipt qualificationRestoreReceiptControl, validatePeer func(net.Conn) error) error {
+	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, receipt, validatePeer, nil)
 }
 
-func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error, observed *runtimeResumeHookAcknowledgment) error {
+// resumeHookQualificationReceipt asks a restored qualification guest to
+// re-attest the configuration it loaded at boot under a fresh token. Only the
+// native qualification restore sends it, over its peer-checked connection.
+type resumeHookQualificationReceipt struct {
+	Token  string `json:"token"`
+	MACKey string `json:"macKey"` // hex; never logged
+}
+
+func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, receipt qualificationRestoreReceiptControl, validatePeer func(net.Conn) error, observed *runtimeResumeHookAcknowledgment) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -3129,6 +3147,10 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if _, err := rand.Read(entropy); err != nil {
 		return fmt.Errorf("vmm: read host entropy: %w", err)
 	}
+	var qualificationReceipt *resumeHookQualificationReceipt
+	if receipt != (qualificationRestoreReceiptControl{}) {
+		qualificationReceipt = &resumeHookQualificationReceipt{Token: receipt.token, MACKey: receipt.macKey}
+	}
 	body, err := json.Marshal(struct {
 		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
 		Entropy          string `json:"entropy"`     // base64; guest decodes + ioctl(RNDADDENTROPY)
@@ -3136,8 +3158,10 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// ADR-20261031102000: this vmmd answers in-guest event publishes. A
 		// restored guest follows the vmmd restoring it, not the one its
 		// snapshot booted under; an older vmmd omits the field.
-		EventPublishVerdict bool `json:"eventPublishVerdict,omitempty"`
-	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true})
+		EventPublishVerdict  bool                            `json:"eventPublishVerdict,omitempty"`
+		QualificationReceipt *resumeHookQualificationReceipt `json:"qualificationReceipt,omitempty"`
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
+		QualificationReceipt: qualificationReceipt})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3441,7 +3465,7 @@ func (v *JailerVMM) UpdateAppWorkloadCPULimit(ctx context.Context, l Lease, cpuM
 	if v == nil || l.Instance == "" || v.chrootBase == "" {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid VMM or instance")
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAppCPUCeilingMillicores(l.Plan, cpuMillicores) {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: cpuMillicores})

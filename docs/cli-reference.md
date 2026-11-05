@@ -3429,12 +3429,50 @@ Update repository or production branch
 
 Preview or delete a project
 
-`gregale project delete [--dry-run] [--yes] <slug>`
+`gregale project delete [--dry-run] [--yes] [--detach-services] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--dry-run` | preview affected state |  |
 | `--yes` | confirm project deletion |  |
+| `--detach-services` | delete even though its services call each other by name |  |
+
+### project rollback
+
+Roll every service back to its previous deployment, dependencies first
+
+`gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the rollback order |  |
+| `--yes` | roll every service back |  |
+| `--acknowledge-releases` | accept rolling back across release commands |  |
+| `--timeout <DURATION>` | wait per service (default 10m) |  |
+
+Stops at the first service that fails and names the rest.
+
+### project preview-secrets
+
+Set or remove a pull request preview value on every service
+
+Values are write-only; previews receive them at their next deploy.
+
+#### project preview-secrets set
+
+Set KEY=VALUE pairs in every service&#39;s pr-preview scope
+
+`gregale project preview-secrets set [--from-stdin] <project> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
+
+#### project preview-secrets unset
+
+Remove keys from every service&#39;s pr-preview scope
+
+`gregale project preview-secrets unset <project> <KEY...>`
 
 
 ## build
@@ -4798,7 +4836,7 @@ Read, guard or recover scaling configuration; prints JSON
 | `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <MILLICORES>` | CPU allowance |  |
-| `--max-concurrency <COUNT>` | maximum instance count |  |
+| `--max-concurrency <COUNT>` | most instances the app runs at once |  |
 | `--min <COUNT>` | minimum warm instance count, including zero |  |
 
 Examples:
@@ -8346,7 +8384,7 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version; reuse the request UUID to retry
+Delete current data or an owned version; retry with the same UUID
 
 `gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 
@@ -9218,10 +9256,11 @@ Creates the change event table, its trigger and the enable and disable helpers.
 
 Publish recorded changes as events from the Data API app&#39;s source
 
-`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
+`gregale data-api hooks enable [--drain-every <DURATION|off>] [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--drain-every <DURATION|off>` | wake a parked API this often to publish waiting changes (1m-30m dividing an hour, 1h-12h dividing a day, or 24h) |  |
 | `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
@@ -9229,11 +9268,14 @@ Examples:
 
 ```sh
 gregale data-api hooks enable shop-data
+gregale data-api hooks enable shop-data --drain-every 5m
 ```
+
+--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan&#39;s cron limits and each run is app time.
 
 #### data-api hooks status
 
-Show whether change hooks are on and their event source
+Show change hooks, their drain schedule and delivery
 
 `gregale data-api hooks status [--env <SCOPE>] <name>`
 
@@ -9243,7 +9285,7 @@ Show whether change hooks are on and their event source
 
 #### data-api hooks disable
 
-Stop publishing; recorded changes stay in the table
+Stop publishing and remove the drain schedule
 
 `gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
 
@@ -9474,6 +9516,8 @@ gregale data-api delete shop-data --yes
 ```
 
 Deleting the app alone is refused while its bindings are live.
+
+An API with storage buckets is refused before anything is revoked: delete its buckets first.
 
 ### data-api configure
 

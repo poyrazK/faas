@@ -47,6 +47,16 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	if fromAccountID == toAccountID {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 	}
+	// Share creation's recipient lock before membership writes. The org lock
+	// prevents a concurrent downgrade from changing the slot decision.
+	q := sqlc.New()
+	if _, err := q.LockSharedOrgCreator(ctx, tx, mustPgUUID(toAccountID)); err != nil {
+		return OrgMembership{}, OrgMembership{}, mapErr(err)
+	}
+	org, err := q.LockOrgOwnershipTransferTarget(ctx, tx, mustPgUUID(orgID))
+	if err != nil {
+		return OrgMembership{}, OrgMembership{}, mapErr(err)
+	}
 	from, err := scanOrgMembership(tx.QueryRow(ctx, `
 		select org_id, account_id, role, invited_by_account_id, joined_at, removed_at
 		  from org_memberships
@@ -74,8 +84,14 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	if to.Role == OrgRoleOwner {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 	}
-	if err := checkTransferFreeOrgSlotTx(ctx, tx, orgID, toAccountID); err != nil {
-		return OrgMembership{}, OrgMembership{}, err
+	if !org.PersonalOrg && !org.DeletedPending && org.Plan == string(api.PlanFree) {
+		owned, err := q.CountOwnedFreeSharedOrgs(ctx, tx, mustPgUUID(toAccountID))
+		if err != nil {
+			return OrgMembership{}, OrgMembership{}, err
+		}
+		if owned >= int64(api.FreeOrganizationsOwnedMax) {
+			return OrgMembership{}, OrgMembership{}, &OrgFreeLimitError{Owned: int(owned)}
+		}
 	}
 
 	// Demote first to preserve the one-active-owner partial unique index.
@@ -96,39 +112,4 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	from.Role = OrgRoleAdmin
 	to.Role = OrgRoleOwner
 	return from, to, nil
-}
-
-// checkTransferFreeOrgSlotTx refuses to make toAccountID the owner of a Free
-// organization when it already owns FreeOrganizationsOwnedMax of them
-// (ADR-20261104211412). The limit was checked only at creation, so creating
-// an organization and handing it to another account multiplied the Free
-// tier. The recipient's account row is locked as creation locks it.
-func checkTransferFreeOrgSlotTx(ctx context.Context, tx pgx.Tx, orgID, toAccountID string) error {
-	org, err := parsePgUUID(orgID)
-	if err != nil {
-		return err
-	}
-	to, err := parsePgUUID(toAccountID)
-	if err != nil {
-		return err
-	}
-	q := sqlc.New()
-	takesSlot, err := q.FreeSharedOrgForTransfer(ctx, tx, org)
-	if err != nil {
-		return mapErr(err)
-	}
-	if !takesSlot {
-		return nil
-	}
-	if _, err := q.LockSharedOrgCreator(ctx, tx, to); err != nil {
-		return mapErr(err)
-	}
-	owned, err := q.CountOwnedFreeSharedOrgs(ctx, tx, to)
-	if err != nil {
-		return fmt.Errorf("state: count recipient's Free orgs: %w", err)
-	}
-	if owned >= int64(api.FreeOrganizationsOwnedMax) {
-		return &OrgFreeLimitError{Owned: int(owned)}
-	}
-	return nil
 }

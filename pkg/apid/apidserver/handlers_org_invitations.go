@@ -137,11 +137,10 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		"new_owner_account_id":      newOwnerID,
 	})
 	if err := s.transferOrgOwnershipWithActivity(r.Context(), mem.OrgID, mem.AccountID, newOwnerID, activity); err != nil {
-		var freeLimit *state.OrgFreeLimitError
+		var limit *state.OrgFreeLimitError
 		switch {
-		case errors.As(err, &freeLimit):
-			// ADR-20261104211412: the new owner already owns its Free organizations.
-			api.WriteProblem(w, api.ErrOrgFreeLimitExceeded(api.FreeOrganizationsOwnedMax, freeLimit.Owned))
+		case errors.As(err, &limit):
+			api.WriteProblem(w, api.ErrOrgFreeTransferLimitExceeded(api.FreeOrganizationsOwnedMax, limit.Owned))
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 				"Member not found", "the new owner is not an active member of this org"))

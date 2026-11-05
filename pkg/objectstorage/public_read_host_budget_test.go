@@ -11,6 +11,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 )
 
 // testHostLookupBudget allows burst new-host reads and refills none.
@@ -18,6 +19,39 @@ func testHostLookupBudget(burst int) *HostLookupBudget {
 	b := NewHostLookupBudget("test_public_object")
 	b.budget = rate.NewLimiter(0, burst)
 	return b
+}
+
+// After a restart the edge had seen no host name an app, so random names
+// that spent the budget shed a real app's first public read. A preloaded app
+// host skips the spent budget; random names are still shed.
+func TestPublicReadPreloadedHostsSkipASpentBudget(t *testing.T) {
+	store := &countingPublicReadStore{Store: seedForwardBucket(t)}
+	budget := testHostLookupBudget(3)
+	known := knownhosts.New("gregale.dev")
+	known.Replace([]string{"assets-app"}, nil)
+	budget.Preload(known)
+	h, err := NewPublicReadForwarder(PublicReadForwardConfig{
+		Store: store, HostLookups: budget, AppsDomain: "gregale.dev", Forward: http.NotFoundHandler(), Next: http.NotFoundHandler(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shed := 0
+	for i := range 10 {
+		req := httptest.NewRequest(http.MethodGet, "http://x/assets/logo.png", nil)
+		req.Host = fmt.Sprintf("random-%d.gregale.dev", i)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusServiceUnavailable {
+			shed++
+		}
+	}
+	if shed != 7 {
+		t.Fatalf("shed %d of 10 random names, want 7 (budget 3)", shed)
+	}
+	if got := publicReadRoute(t, h, "assets-app.gregale.dev", "/assets/logo.png"); got != "forward" {
+		t.Fatalf("preloaded app's first public read after the flood went to %q, want forward", got)
+	}
 }
 
 // A flood of random names under the apps wildcard must spend the edge's

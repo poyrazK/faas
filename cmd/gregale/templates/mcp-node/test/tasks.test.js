@@ -253,6 +253,107 @@ test('task status subscriptions only acknowledge tasks visible to the caller and
   }
 });
 
+test('expired Task subscriptions close once and release all subscription slots', async () => {
+  const store = new MemoryTaskStore();
+  let notify, releases = 0, closed = 0;
+  store.subscribe = async listener => { notify = listener; return async () => { releases++; }; };
+  const runtime = createMcpTaskRuntime({ store, handlers: mcpTaskHandlers, workerEnabled: false });
+  const subscriptions = [];
+  await runtime.start();
+  try {
+    const task = await runtime.create('build_report', { report: 'expired', steps: 1 }, {}, 'open');
+    for (let i = 0; i < 64; i++) subscriptions.push(await runtime.subscribe([task.taskId], {}, 'open', undefined, () => {}, reason => { assert.equal(reason, 'empty'); closed++; }));
+    store.rows.get(task.taskId).expires_at = new Date(0);
+    notify({ taskID: task.taskId });
+    await eventually(() => closed === 64, 'expired subscriptions must close');
+    assert.equal(releases, 1, 'last subscription must release the database listener');
+    const fresh = await runtime.create('build_report', { report: 'fresh', steps: 1 }, {}, 'open');
+    const subscription = await runtime.subscribe([fresh.taskId], {}, 'open', undefined, () => {});
+    subscriptions.push(subscription);
+    assert.deepEqual(subscription.taskIds, [fresh.taskId]);
+    for (const old of subscriptions.slice(0, 64)) old.close();
+    assert.equal(closed, 64);
+  } finally { for (const subscription of subscriptions) subscription.close(); await runtime.stop(); }
+});
+
+test('expired Task streams finish while resource and catalog filters stay active', { timeout: 10000 }, async t => {
+  const config = JSON.parse(await readFile(new URL('../gregale-mcp.json', import.meta.url), 'utf8'));
+  config.tasks.enabled = true;
+  config.auth.tool_scopes.after_expiry = [];
+  const store = new MemoryTaskStore();
+  let notify, releases = 0;
+  store.subscribe = async listener => { notify = listener; return async () => { releases++; }; };
+  const runtime = createMcpTaskRuntime({ store, handlers: mcpTaskHandlers, workerEnabled: false });
+  await runtime.start();
+  const service = createApp(config, { taskRuntime: runtime, log: () => {} });
+  const listener = service.app.listen(0, '127.0.0.1');
+  await once(listener, 'listening');
+  const controllers = [];
+  t.after(async () => {
+    for (const controller of controllers) controller.abort();
+    service.closeTaskSubscriptions();
+    await runtime.stop();
+    await service.handler.close();
+    await new Promise(resolve => listener.close(resolve));
+  });
+  async function listen(taskId, filters) {
+    const controller = new AbortController();
+    controllers.push(controller);
+    const response = await fetch(`http://127.0.0.1:${listener.address().port}/mcp`, { method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'subscriptions/listen' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method: 'subscriptions/listen', params: {
+        notifications: { taskIds: [taskId], ...filters },
+        _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+          'io.modelcontextprotocol/clientInfo': { name: 'expiry-test', version: '1' },
+          'io.modelcontextprotocol/clientCapabilities': { extensions: { [MCP_TASKS_EXTENSION_ID]: {} } } },
+      } }),
+    });
+    assert.equal(response.status, 200, response.status === 200 ? '' : await response.text());
+    const reader = response.body.getReader();
+    let buffer = '';
+    return async () => {
+      for (;;) {
+        const boundary = buffer.indexOf('\n\n');
+        if (boundary >= 0) {
+          const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+          const data = frame.split('\n').find(line => line.startsWith('data: '));
+          if (data) return JSON.parse(data.slice(6));
+          continue;
+        }
+        const chunk = await reader.read();
+        if (chunk.done) return undefined;
+        buffer += new TextDecoder().decode(chunk.value);
+      }
+    };
+  }
+  for (const [index, filters] of [{}, { toolsListChanged: true }, { resourceSubscriptions: ['greeting://welcome'] }].entries()) {
+    const task = await runtime.create('build_report', { report: 'expires', steps: 1 }, {}, 'open');
+    const next = await listen(task.taskId, index === 0 ? { resourceSubscriptions: [`task://tasks/${task.taskId}`] } : filters);
+    assert.equal((await next()).method, 'notifications/subscriptions/acknowledged');
+    assert.equal((await next()).method, 'notifications/tasks');
+    store.rows.get(task.taskId).expires_at = new Date(0);
+    notify({ taskID: task.taskId });
+    await eventually(() => releases >= index + 1, 'expired Task watcher must release its listener');
+    if (filters.toolsListChanged) {
+      service.registerTool('after_expiry', { description: 'After expiry', inputSchema: {} }, async () => ({ content: [] }));
+      assert.equal((await next()).method, 'notifications/tools/list_changed');
+    } else if (filters.resourceSubscriptions) {
+      service.notifyResourceUpdated('greeting://welcome');
+      assert.equal((await next()).method, 'notifications/resources/updated');
+    } else {
+      assert.equal((await next()).result.resultType, 'complete');
+      assert.equal(await next(), undefined);
+    }
+    controllers.at(-1).abort();
+  }
+  const expired = await runtime.create('build_report', { report: 'already expired', steps: 1 }, {}, 'open');
+  store.rows.get(expired.taskId).expires_at = new Date(0);
+  const next = await listen(expired.taskId, {});
+  assert.deepEqual((await next()).params.notifications.taskIds, []);
+  assert.equal((await next()).result.resultType, 'complete');
+  assert.equal(await next(), undefined);
+});
+
 test('input-required tasks can be cancelled and task updates keep caller isolation', async () => {
   let executions = 0;
   const handlers = {

@@ -425,6 +425,7 @@ service Vmmd {
   // Atomically replaces the complete account/region L3 peering policy.
   // Callers must prepare every listed fabric before publishing app routes.
   rpc ReconcilePrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
+  rpc RestrictPrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
 
   // RemovePrivateNetworkFabric tears down the node-local bridge and optional
   // regional VXLAN link for a deleted Gregale-owned network. The operation is
@@ -3270,6 +3271,10 @@ message AllowResolvedEgressRequest {
   // app's bound managed databases (ADR 20261026150000): vmmd also opens that
   // TCP port to the addresses. An older resolver leaves it zero.
   uint32 database_port = 4;
+  // Captured from ResolveServiceCaller before starting the DNS lookup.
+  // Both fields fence a grant against slot reuse and daemon/VM replacement.
+  string instance_id = 5;
+  string network_generation = 6;
 }
 
 message AllowResolvedEgressAck {
@@ -3857,6 +3862,9 @@ message ResolveServiceCallerResponse {
   string deployment_id = 5;
   bool app_task = 6;
   bool job_task = 7;
+  // Opaque lifetime of this manager's current network owner, including
+  // occupied builder/job slots that have no service-caller app identity.
+  string network_generation = 8;
 }
 
 message DataRepairRehearsalIdentityRequest {}

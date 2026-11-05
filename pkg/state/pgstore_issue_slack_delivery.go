@@ -80,6 +80,19 @@ func (s *PgStore) ClaimIssueSlackDelivery(ctx context.Context) (IssueSlackClaim,
 func (s *PgStore) IssueSlackDeliveryReady(ctx context.Context, c IssueSlackClaim) (bool, error) {
 	return sqlc.New().IssueSlackReady(ctx, s.pool, sqlc.IssueSlackReadyParams{ID: issueUUID(c.ID), ClaimID: issueUUID(c.ClaimID), EntitledPlans: issueSlackEntitledPlans()})
 }
+func (s *PgStore) BeginIssueSlackAttempt(ctx context.Context, c IssueSlackClaim) error {
+	if c.Attempt < 1 || c.Attempt > api.IssueSlackMaxAttempts {
+		return ErrInvalidArgument
+	}
+	n, err := sqlc.New().IssueSlackAttemptStart(ctx, s.pool, sqlc.IssueSlackAttemptStartParams{ID: issueUUID(c.ID), ClaimID: issueUUID(c.ClaimID), PreviousAttempt: int32(c.Attempt - 1)})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrIssueSlackClaimLost
+	}
+	return nil
+}
 func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClaim, r IssueSlackResult) error {
 	if !validIssueSlackResult(r) {
 		return ErrInvalidArgument

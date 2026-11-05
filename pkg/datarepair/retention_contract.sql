@@ -61,6 +61,9 @@ BEGIN
  END IF;
  INSERT INTO gregale_repair.operations(id,scope,release,enrollment_id,schema_fingerprint,transaction_id,repair_of,capture_relation_filenode,type_fingerprint,capture_type_state,capture_contract_version)
  VALUES(operation,operation_scope,release_version,e.enrollment_id,e.fingerprint,pg_current_xact_id()::text,source_operation,pg_relation_filenode(e.relation),e.type_fingerprint,gregale_repair.type_fingerprint(e.relation,true),3);
+ -- Retain an indexed proof of this transaction's first relation fence through
+ -- deferred finalization, even after the active capture context is cleared.
+ PERFORM set_config('gregale.repair_guarded_'||e.relation::oid::text,operation::text,true);
  PERFORM set_config('gregale.repair_operation',operation::text,true);
 END $$;
 
@@ -180,13 +183,19 @@ BEGIN
   IF current_row IS NULL OR current_row->>'gregale_row_version'<>item->>'expected_version' OR values_match IS DISTINCT FROM true THEN
    RAISE EXCEPTION 'repair_row_conflict' USING ERRCODE='40001';
   END IF;
-  SELECT string_agg(format('%I=(jsonb_populate_record(t.*,$1)).%I',k,k),',' ORDER BY k) INTO assignments FROM jsonb_object_keys(item->'before') k;
-  EXECUTE format('UPDATE %s t SET %s WHERE gregale_row_identity=$2 AND gregale_row_version=$3',e.relation,assignments) USING item->'before',(item->>'row_identity')::uuid,(item->>'expected_version')::bigint;
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected<>1 THEN RAISE EXCEPTION 'repair_row_conflict' USING ERRCODE='40001'; END IF;
   total:=total+1;
  END LOOP;
  IF total<>(p.document->>'candidates')::int THEN RAISE EXCEPTION 'repair_plan_incomplete' USING ERRCODE='40001'; END IF;
+ -- Lock and validate the complete selection before writing. One statement
+ -- preserves statement-level deferrable constraints, including value swaps.
+ -- The native base retains fields absent from a particular row's inverse.
+ SELECT string_agg(format('%I=(jsonb_populate_record(t.*,repair_item.item->''before'')).%I',k,k),',' ORDER BY k)
+  INTO assignments FROM unnest(e.fields) k;
+ EXECUTE format('UPDATE %s t SET %s FROM jsonb_array_elements($1) repair_item(item)
+  WHERE repair_item.item->>''status''=''candidate'' AND t.gregale_row_identity=(repair_item.item->>''row_identity'')::uuid
+   AND t.gregale_row_version=(repair_item.item->>''expected_version'')::bigint',e.relation,assignments) USING p.document->'items';
+ GET DIAGNOSTICS affected=ROW_COUNT;
+ IF affected<>total THEN RAISE EXCEPTION 'repair_row_conflict' USING ERRCODE='40001'; END IF;
  PERFORM gregale_repair.finish_operation(repair_operation);
  SET CONSTRAINTS ALL IMMEDIATE;
  UPDATE gregale_repair.plans SET applied_at=clock_timestamp(),repair_operation_id=repair_operation WHERE id=plan;

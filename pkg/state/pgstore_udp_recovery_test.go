@@ -12,6 +12,7 @@ import (
 func TestPgStoreUDPListenerReadDeadlineAndRecovery(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	account, app, _ := seedLiveDeploy(t, s, ctx, "-udp-read-recovery")
+	declareUDPListener(t, s, app, "echo", 5353)
 	listener, err := s.CreateUDPListener(ctx, state.UDPListener{AccountID: account, AppID: app, ListenerName: "echo", GuestPort: 5353, PublicPort: 40129, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +52,7 @@ func TestPgStoreUDPListenerReadDeadlineAndRecovery(t *testing.T) {
 func TestPgStoreUDPListenerBackendLossRecovery(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	account, app, _ := seedLiveDeploy(t, s, ctx, "-udp-backend-recovery")
+	declareUDPListener(t, s, app, "echo", 5353)
 	listener, err := s.CreateUDPListener(ctx, state.UDPListener{AccountID: account, AppID: app, ListenerName: "echo", GuestPort: 5353, PublicPort: 40130, Enabled: true})
 	if err != nil {
 		t.Fatal(err)

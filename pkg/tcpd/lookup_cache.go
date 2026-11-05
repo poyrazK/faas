@@ -114,6 +114,15 @@ func (c *CachedInstanceSource) AppByID(ctx context.Context, appID string) (state
 	return c.next.AppByID(ctx, appID)
 }
 
+// Owner policy stays fresh so a warm lookup cache cannot bypass a new hold.
+func (c *CachedInstanceSource) AccountByID(ctx context.Context, accountID string) (state.Account, error) {
+	return c.next.AccountByID(ctx, accountID)
+}
+
+func (c *CachedInstanceSource) OrgByID(ctx context.Context, orgID string) (state.Org, error) {
+	return c.next.OrgByID(ctx, orgID)
+}
+
 func (c *CachedInstanceSource) TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (state.TCPListener, error) {
 	return c.next.TCPListenerByAppAndName(ctx, appID, listenerName)
 }

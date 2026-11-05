@@ -2354,7 +2354,7 @@ func flattenForTest(cmds [][]string) string {
 
 // fakeCaptureRunner is the stdout-aware runner stub used by the
 // UpdateEgressAllowlist unit tests. The real nft tool prints
-// `chain forward { ... iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 7 }`
+// `chain forward { ... iifname "tap0" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 7 }`
 // on success; the fake synthesises that output with a configurable
 // handle so the wake path's handle capture can be exercised.
 type fakeCaptureRunner struct {
@@ -2434,7 +2434,7 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	// delete-then-add appended it after them. Each argv is per-netns:
 	// `ip netns exec fc-i-1 nft …`. The tap name is "tap0" verbatim in
 	// argv (no quotes); nft's printer adds quotes when listing rules.
-	wantReplace := `ip netns exec fc-i-1 nft insert rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept ; delete rule ip faas forward handle 7`
+	wantReplace := `ip netns exec fc-i-1 nft insert rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != { ` + netns.AllowlistBlockedPortsSet() + ` } accept ; delete rule ip faas forward handle 7`
 	if !run.ran(wantReplace) {
 		t.Errorf("missing %q in command stream", wantReplace)
 	}
@@ -2448,8 +2448,8 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	if got := m.live["i-1"].Net.EgressAllowlist[0].String(); got != "8.8.8.0/24" {
 		t.Errorf("cached allowlist = %q, want 8.8.8.0/24", got)
 	}
-	if m.live["i-1"].AllowlistHandleV4 != 7 {
-		t.Errorf("cached v4 handle = %d, want 7 (capture is best-effort, no -a reader in tests)", m.live["i-1"].AllowlistHandleV4)
+	if m.live["i-1"].AllowlistHandleV4 != 0 {
+		t.Errorf("cached v4 handle = %d, want unknown without a reader", m.live["i-1"].AllowlistHandleV4)
 	}
 }
 
@@ -2506,7 +2506,7 @@ func TestUpdateEgressAllowlistRebuildsHostSMTPException(t *testing.T) {
 // The same allowlist twice should not run nft at all.
 func TestUpdateEgressAllowlist_SameAllowlistNoOp(t *testing.T) {
 	run := &fakeRunner{}
-	m := newTestManager(run, &fakeVMM{})
+	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(&handleSeqCaptureRunner{})
 	nc := netns.NewConfig("i-2", "fc-i-2", "vh2", "vp2", netip.MustParseAddr("10.100.0.3"))
 	inst := &Instance{
 		Lease:             Lease{Instance: "i-2", UID: 20002},
@@ -2632,13 +2632,13 @@ func TestCaptureAllowlistHandles(t *testing.T) {
 	out := []byte(`table ip faas {
 	chain forward {
 	 type filter hook forward priority 0; policy accept;
-	 iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
+	 iifname "tap0" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 42
 	}
 }
 table ip6 faas {
 	chain forward {
 	 type filter hook forward priority 0; policy accept;
-	 iifname "tap0" ip6 daddr { 2001:db8::/32 } accept # handle 99
+	 iifname "tap0" ip6 daddr { 2001:db8::/32 } tcp dport != 25 accept # handle 99
 	}
 }
 `)
@@ -2693,8 +2693,8 @@ func TestCaptureAllowlistHandlesForWake_SkipsEmptyAllowlist(t *testing.T) {
 
 func TestCaptureAllowlistHandlesForWake_CapturesConfiguredAllowlist(t *testing.T) {
 	out := []byte(`
- iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
- iifname "tap0" ip6 daddr { 2001:db8::/32 } accept # handle 99
+ iifname "tap0" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 42
+ iifname "tap0" ip6 daddr { 2001:db8::/32 } tcp dport != 25 accept # handle 99
 `)
 	cap := &fakeCaptureRunner{listChainOutput: out}
 	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap)
@@ -2718,7 +2718,7 @@ func TestCaptureAllowlistHandlesForWake_CapturesConfiguredAllowlist(t *testing.T
 
 func TestCaptureAllowlistHandlesForWake_SkipsUnrepresentedFamily(t *testing.T) {
 	out := []byte(`
- iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
+ iifname "tap0" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 42
 `)
 	cap := &fakeCaptureRunner{listChainOutput: out}
 	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithCaptureRunner(cap)
@@ -2750,15 +2750,8 @@ func TestCaptureAllowlistHandlesForWake_SkipsUnrepresentedFamily(t *testing.T) {
 // successful add and update the cached AllowlistHandleV4/V6
 // before the write-back.
 //
-// With a nil captureRunner we can't observe the kernel-assigned
-// handle, so the cached handle stays at the prior value. The
-// test sets the prior handle to 0 (the fresh-Wake state) and
-// asserts that two back-to-back patches BOTH succeed: the first
-// patch sees handleV4=0 → no delete step (just add); the second
-// patch sees handleV4=0 in the snapshot (because the unit suite
-// doesn't surface the kernel-assigned handle), emits no delete
-// step, and just adds the new rule. The live netns ends up with
-// the most recent allowlist argv.
+// With a nil captureRunner the first swap clears its deleted handle. The
+// second update reconstructs the policy instead of reusing that handle.
 func TestUpdateEgressAllowlist_TwoPatchesInRow(t *testing.T) {
 	run := &fakeRunner{}
 	m := newTestManager(run, &fakeVMM{})
@@ -2781,14 +2774,13 @@ func TestUpdateEgressAllowlist_TwoPatchesInRow(t *testing.T) {
 		t.Fatalf("patch 1: %v", err)
 	}
 	// Second patch: another different allowlist. With no capture
-	// runner the cached handle stays 5, and the rule is replaced in
-	// place again. The cached allowlist is the most recent.
+	// runner the handle is unknown, so the complete policy is rebuilt.
 	if err := m.UpdateEgressAllowlist(context.Background(), "app-2p", []netip.Prefix{
 		netip.MustParsePrefix("9.9.9.0/24"),
 	}); err != nil {
 		t.Fatalf("patch 2: %v", err)
 	}
-	// Both new rules must have been emitted as in-place replacements.
+	// Both desired policies must have been emitted.
 	// The 1.2.3.0/24 prior should NEVER appear.
 	if run.ran("1.2.3.0/24") {
 		t.Errorf("patch should not have re-emitted the prior CGI: 1.2.3.0/24")
@@ -2903,19 +2895,16 @@ func (f *handleSeqCaptureRunner) RunCapture(_ context.Context, argv []string) ([
 	return []byte(fmt.Sprintf(`table %s faas {
 	chain forward {
 	 type filter hook forward priority 0; policy accept;
-	 iifname "tap0" %s daddr { %s } accept # handle %d
+	 iifname "tap0" %s daddr { %s } tcp dport != 25 accept # handle %d
 	}
 }`, family, family, cidr, handle)), nil
 }
 
-// TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched — a v4 + v6
-// patch whose v6 replace fails: the v4 replace has landed, nothing is
-// re-emitted for either family (replace is atomic, so the v6 rule is
-// unchanged), and the error reaches the caller.
+// A failure anywhere in a dual-family transaction reaches the caller.
+// Both swaps must be present in that same transaction.
 func TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched(t *testing.T) {
 	// failOn matches the v6 argv (the new v6 prefix "fe80::/10"). The
-	// patch sequence is v4 first then v6, so the v4 replace succeeds and
-	// the v6 replace fails.
+	// transaction contains both families, so the entire replacement fails.
 	run := &fakeRunner{failOn: "fe80::/10"}
 	m := newTestManager(run, &fakeVMM{})
 	nc := netns.NewConfig("i-pf", "fc-i-pf", "vh-pf", "vp-pf", netip.MustParseAddr("10.100.0.30"))

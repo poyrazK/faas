@@ -39,18 +39,6 @@ func (q *Queries) CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, account
 	return count, err
 }
 
-const freeSharedOrgForTransfer = `-- name: FreeSharedOrgForTransfer :one
-SELECT (NOT personal_org AND plan='free' AND NOT deleted_pending)::boolean AS takes_free_slot FROM orgs WHERE id=$1
-`
-
-// Whether an organization takes a Free slot from whoever owns it.
-func (q *Queries) FreeSharedOrgForTransfer(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
-	row := db.QueryRow(ctx, freeSharedOrgForTransfer, id)
-	var takes_free_slot bool
-	err := row.Scan(&takes_free_slot)
-	return takes_free_slot, err
-}
-
 const insertFreeSharedOrg = `-- name: InsertFreeSharedOrg :one
 INSERT INTO orgs (id,slug,name) VALUES ($1,$2,$3)
 RETURNING id,slug,name,plan,status,created_at,updated_at,resource_ownership_enabled
@@ -126,6 +114,24 @@ func (q *Queries) LockOrgInvitationTarget(ctx context.Context, db DBTX, id pgtyp
 		&i.DeletedPending,
 		&i.AbuseHoldAt,
 	)
+	return i, err
+}
+
+const lockOrgOwnershipTransferTarget = `-- name: LockOrgOwnershipTransferTarget :one
+SELECT plan,personal_org,deleted_pending FROM orgs WHERE id=$1 FOR NO KEY UPDATE
+`
+
+type LockOrgOwnershipTransferTargetRow struct {
+	Plan           string
+	PersonalOrg    bool
+	DeletedPending bool
+}
+
+// Pin the incoming plan while deciding whether a transfer consumes a Free slot.
+func (q *Queries) LockOrgOwnershipTransferTarget(ctx context.Context, db DBTX, id pgtype.UUID) (LockOrgOwnershipTransferTargetRow, error) {
+	row := db.QueryRow(ctx, lockOrgOwnershipTransferTarget, id)
+	var i LockOrgOwnershipTransferTargetRow
+	err := row.Scan(&i.Plan, &i.PersonalOrg, &i.DeletedPending)
 	return i, err
 }
 

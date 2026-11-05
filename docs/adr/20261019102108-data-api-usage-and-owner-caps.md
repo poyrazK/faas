@@ -116,3 +116,17 @@ row-level security deciding the rows.
   instances.
 - **Plan quotas.** No Data API request quota exists in the financial model;
   owner caps protect owners without inventing business numbers.
+
+## Amendment (2026-11-03): caps need runtime reports
+
+An owner cap compares platform month-to-date totals plus the instance's
+unreported counts with the cap. A runtime learns the totals only from report
+answers, and each wake restores the counts captured in its snapshot. On an
+installation without workload trust (ADR-1141) no report is accepted, so a
+cap is never reached: it fails open. `gregale data-api configure
+--monthly-caps` now reads `runtime_reports` from `GET
+/v1/apps/{slug}/data-api/status` (ADR 20261022121642 amendment 1) and refuses
+caps before storing any setting when it is `unavailable`. `--usage-reporting
+on` and `gregale data-api live enable` are stored with a warning: they take
+effect once the installation accepts reports. A control plane without the
+status route is not second-guessed.

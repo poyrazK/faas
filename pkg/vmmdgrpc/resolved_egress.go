@@ -19,7 +19,7 @@ import (
 const maxResolvedEgressAddresses = 256
 
 type resolvedEgressAllower interface {
-	AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
+	AllowResolvedEgress(ctx context.Context, source netip.Addr, owner fcvm.ServiceCallerIdentity, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
 }
 
 // AllowResolvedEgress implements the ADR-373 DNS-gated egress hook: the
@@ -31,6 +31,9 @@ func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResol
 	allower, ok := s.vmm.(resolvedEgressAllower)
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "vmmd: AllowResolvedEgress not supported by this manager")
+	}
+	if req.GetInstanceId() == "" || req.GetNetworkGeneration() == "" {
+		return nil, status.Error(codes.InvalidArgument, "vmmd: resolved egress requires the original network owner")
 	}
 	source, err := netip.ParseAddr(req.GetSourceIp())
 	if err != nil {
@@ -55,7 +58,8 @@ func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResol
 	if _, forbidden := api.TenantEgressForbiddenPort(int(databasePort)); databasePort != 0 && forbidden {
 		return nil, status.Errorf(codes.InvalidArgument, "vmmd: AllowResolvedEgress: database_port %d is never opened", databasePort)
 	}
-	if err := allower.AllowResolvedEgress(ctx, source, addrs, ttl, uint16(databasePort)); err != nil {
+	owner := fcvm.ServiceCallerIdentity{InstanceID: req.GetInstanceId(), NetworkGeneration: req.GetNetworkGeneration()}
+	if err := allower.AllowResolvedEgress(ctx, source, owner, addrs, ttl, uint16(databasePort)); err != nil {
 		if errors.Is(err, fcvm.ErrResolvedEgressNoInstance) {
 			return &vmmdpb.AllowResolvedEgressAck{Matched: false}, nil
 		}

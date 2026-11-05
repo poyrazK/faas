@@ -122,7 +122,7 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 					main.WriteJSONTest(w, api.DataAPIConnectionBudgets{Version: 1, App: "notes", State: "not_applicable", Databases: []api.ManagedPostgresConnectionBudget{}})
 				case "/v1/apps/notes":
 					main.WriteJSONTest(w, api.AppResponse{Slug: "notes", CanonicalURL: serving.URL})
-				case "/v1/apps/notes/data-api/runtime":
+				case "/v1/apps/notes/data-api/status", "/v1/apps/notes/data-api/runtime":
 					// An older control plane: the runtime comparison is unknown
 					// and adds no finding (data_api_runtime_ext_test.go covers it).
 					api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Not found", "no such API route"))

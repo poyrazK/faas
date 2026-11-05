@@ -359,8 +359,9 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	// is the correct outcome for a warm fill (ADR-193).
 	restoreSnap := snap
 	placementRequest := Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUBookingMillicores(app, limits),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint, restoreSnapshot: &restoreSnap,
+		BookedCPUMillicores: e.appCPUBookingStamp(app, limits),
 	}
 	wakeID := uuid.NewString()
 	ins, placement, _, err := e.createWithNodePlacement(ctx, placementRequest, false, func(admitCtx context.Context, p Placement) (state.Instance, error) {
@@ -407,7 +408,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        runtimeEnvironmentAdmissionKey(owner.Scope, owner.EnvironmentID),
 		ProductionEnvironment: reaperProductionScope(owner.Scope),
-		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUBookingMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,
 	}); err != nil {
@@ -424,7 +425,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		cleanup("ephemeral_secret")
 		return fmt.Errorf("warm restore selected ephemeral secrets: %w", state.ErrConflict)
 	}
-	if int(spec.MemSizeMiB) != ins.RAMMB || int(spec.CPUMillicores) != effectiveAppCPUMillicores(app) {
+	if int(spec.MemSizeMiB) != ins.RAMMB || int(spec.CPUMillicores) != e.appCPUMillicores(app, limits) {
 		cleanup("resource_shape_changed")
 		return fmt.Errorf("warm restore resource shape changed: %w", state.ErrConflict)
 	}

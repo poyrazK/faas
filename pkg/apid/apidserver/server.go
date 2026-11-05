@@ -659,6 +659,12 @@ type server struct {
 	projectReleaseSecretsEnabled     bool
 	atomicServiceAdditionsEnabled    bool
 	appTaskAPIEnabled                bool
+	// releasePhaseOff refuses deployments that declare a release command and
+	// hides the release-commands capability while the release phase is off
+	// (FAAS_RELEASE_PHASE_ENABLED on apid, imaged and, with
+	// FAAS_APP_TASK_DISPATCH, schedd). The zero value keeps it on for tests;
+	// production wiring decides it from the environment.
+	releasePhaseOff bool
 	// ADR-435: keep standards intent/exception mutations disabled until
 	// consumer convergence, rollout recovery and native acceptance pass.
 	applicationStandardMutationsEnabled bool
@@ -1145,6 +1151,11 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+func (s *server) WithReleasePhaseEnabled(enabled bool) *server {
+	s.releasePhaseOff = !enabled
 	return s
 }
 
@@ -1779,6 +1790,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/postgres-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listAppPostgresBindings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings/services/{service}/explanation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.explainAppServiceBinding))))
 
 	// Internal static hosting remains default-off and operator-only. The
@@ -1934,6 +1946,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/runtime/data-api/connection-observations", s.reportDataAPIRuntimeConnections)
 	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
 	mux.HandleFunc("POST /v1/runtime/data-api/events", s.reportDataAPIChangeEvents)
+	mux.HandleFunc("POST /v1/runtime/data-api/change-status", s.reportDataAPIChangeStatus)
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api/status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIStatus)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))
 	// ADR-20261031095954: the CLI deploys the runtime apid serves.
@@ -2799,7 +2813,9 @@ func (s *server) handler() http.Handler {
 	// loadApp so cross-account probes collapse to the same 404 surface as
 	// the latest-deployment endpoint; pagination stays on the app's index.
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployment-promotions/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeploymentPromotionReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployment-submissions/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeploymentSubmission))))
+	mux.HandleFunc("GET /v1/apps/{slug}/service-aborts/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getServiceAbortReceipt))))
 	// Stable customer-managed names for immutable deployment rows. These
 	// control-plane operations do not change production traffic; the gateway
 	// hostname integration is a follow-up stack PR.
@@ -2916,6 +2932,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePriorities))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putRoutePriorities))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteRoutePriorities))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-budgets/receipts/{request_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentRouteBudgetReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-budgets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentRouteBudgets))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-budgets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putEnvironmentRouteBudgets))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteMonitor))))
@@ -5572,14 +5589,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
 	// ADR-1506: an app's customer reads its own billing with its consumer
 	// key; no account credential is involved.
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}", s.consumerBilling.Summary)
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}/usage", s.consumerBilling.Usage)
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}/statements", s.consumerBilling.Statements)
+	mux.Handle("GET /v1/consumer-billing/{slug}", selfVerified(s.consumerBilling.Summary))
+	mux.Handle("GET /v1/consumer-billing/{slug}/usage", selfVerified(s.consumerBilling.Usage))
+	mux.Handle("GET /v1/consumer-billing/{slug}/statements", selfVerified(s.consumerBilling.Statements))
 	// Customer self-service with a billing-scope key (ADR-20261021183000).
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}/plans", s.consumerBilling.Plans)
-	mux.HandleFunc("PUT /v1/consumer-billing/{slug}/plan", s.consumerBilling.ChangePlan)
-	mux.HandleFunc("POST /v1/consumer-billing/{slug}/portal", s.consumerBilling.Portal)
-	mux.HandleFunc("POST /v1/consumer-billing/{slug}/close", s.consumerBilling.Close)
+	mux.Handle("GET /v1/consumer-billing/{slug}/plans", selfVerified(s.consumerBilling.Plans))
+	mux.Handle("PUT /v1/consumer-billing/{slug}/plan", selfVerified(s.consumerBilling.ChangePlan))
+	mux.Handle("POST /v1/consumer-billing/{slug}/portal", selfVerified(s.consumerBilling.Portal))
+	mux.Handle("POST /v1/consumer-billing/{slug}/close", selfVerified(s.consumerBilling.Close))
 	// Consumer self-service sign-up (ADR-20261021143000): no credential; the
 	// service limits each client address and answers like an unregistered
 	// route unless the app's owner has API monetization.

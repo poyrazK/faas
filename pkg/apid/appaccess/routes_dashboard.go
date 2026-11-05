@@ -34,7 +34,7 @@ var dashboardRouteActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                           authz.OrgActionConfigureApp,
 	"POST /dashboard/apps/{slug}/issues/saved-views":                               authz.OrgActionConfigureApp,
 	"POST /dashboard/apps/{slug}/issues/teams":                                     authz.OrgActionConfigureApp,
-	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                     authz.OrgActionConfigureApp,
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                     authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                        authz.OrgActionConfigureApp,
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection":              authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                    authz.OrgActionConfigureApp,

@@ -2,13 +2,13 @@
 package apidserver
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appscaling"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,9 +36,17 @@ func (s *server) appScalingHandler() httpkit.AccountHandler {
 			return validateUpdateApp(&req, account, api.MustLimitsFor(account.Plan), app)
 		},
 		After: func(r *http.Request, account state.Account, app state.App, receipt api.AppScalingReceipt) {
-			_ = s.notif.Notify(r.Context(), db.NotifyAppChanged, fmt.Sprintf(`{"kind":"updated","slug":%q,"app_id":%q}`, app.Slug, app.ID))
+			_ = s.notif.Notify(r.Context(), db.NotifyAppChanged, string(safetext.JSONObject(appChangedNotice{Kind: "updated", Slug: app.Slug, AppID: app.ID})))
 			s.audit.Emit(r.Context(), "app.scaling", &account.ID, map[string]any{"app_id": app.ID, "scope": receipt.Scope, "request_id": receipt.RequestID, "revision": receipt.Revision})
 			s.recordAppActivity(r.Context(), r, account, app, state.OrgActivity{Kind: "app.updated", ResourceType: "app", ResourceID: app.ID, ResourceLabel: app.Slug, SourceType: "app.scaling", SourceID: receipt.RequestID, Data: activityData(map[string]any{"scope": receipt.Scope, "revision": receipt.Revision, "settings": receipt.Settings})})
 		},
 	})
+}
+
+// appChangedNotice is the app-changed payload; encoding/json keeps it valid
+// JSON for any slug, where fmt %q would emit escapes JSON does not have.
+type appChangedNotice struct {
+	Kind  string `json:"kind"`
+	Slug  string `json:"slug"`
+	AppID string `json:"app_id"`
 }

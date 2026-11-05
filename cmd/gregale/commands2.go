@@ -2627,6 +2627,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !templateAvailable(*templateName) {
 			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
 		}
+		// The data-api template is the bare runtime: it cannot start without a
+		// database binding and token settings, and its copy in this CLI may be
+		// older than the runtime the platform serves (ADR-20261031095954).
+		if *templateName == "data-api" {
+			return printErr("Deploy a Data API with gregale data-api", errors.New("gregale data-api create NAME --database DATABASE ... creates one, and gregale data-api deploy NAME upgrades an existing one to the runtime the platform serves"))
+		}
 		if rt, hnd, functionTemplate := templateFunctionConfig(*templateName); functionTemplate {
 			if deployApp {
 				return printErr("Invalid template shape", fmt.Errorf("function template %q cannot be deployed with --app", *templateName))
