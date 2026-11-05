@@ -12,7 +12,7 @@ import (
 )
 
 const issueApplicationEscalationApp = `-- name: IssueApplicationEscalationApp :one
-SELECT a.id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT a.id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN issue_application_reminder_policies rp ON rp.app_id=a.id AND rp.enabled
 JOIN issue_application_slack_policies ap ON ap.app_id=a.id AND ap.enabled
 JOIN issue_application_escalation_policies ep ON ep.app_id=a.id AND ep.enabled
@@ -22,7 +22,7 @@ JOIN LATERAL(SELECT GREATEST(tr.first_reminded_at,tr.snoozed_until,rp.updated_at
  AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
  AND GREATEST(tr.first_reminded_at,tr.snoozed_until,rp.updated_at,ep.updated_at)+ep.delay_minutes*interval '1 minute'<=statement_timestamp()
  ORDER BY due_at,i.id LIMIT 1) due ON true
-WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($1::text[])
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($1::text[])
 ORDER BY due.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
 `
 
@@ -46,13 +46,13 @@ func (q *Queries) IssueApplicationEscalationCancel(ctx context.Context, db DBTX,
 
 const issueApplicationEscalationDue = `-- name: IssueApplicationEscalationDue :one
 SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id, i.assignee_team_id,tr.incident_id AS response_id,rp.revision AS reminder_policy_revision,ep.revision AS escalation_policy_revision,ep.team_id AS backup_team_id,COALESCE(t.name,'')::text AS backup_team_name
-FROM apps a JOIN accounts owner ON owner.id=a.account_id
+FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN issue_application_reminder_policies rp ON rp.app_id=a.id AND rp.enabled
 JOIN issue_application_slack_policies ap ON ap.app_id=a.id AND ap.enabled
 JOIN issue_application_escalation_policies ep ON ep.app_id=a.id AND ep.enabled
 JOIN app_issues i ON i.app_id=a.id AND i.account_id=a.account_id JOIN issue_application_triage tr ON tr.issue_id=i.id
 LEFT JOIN app_issue_teams t ON t.id=ep.team_id AND t.app_id=a.id
-WHERE a.id=$1 AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($2::text[])
+WHERE a.id=$1 AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($2::text[])
 AND i.state='open' AND tr.first_reminded_at IS NOT NULL AND tr.acknowledged_at IS NULL AND tr.escalation_attempted_at IS NULL
 AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
 AND GREATEST(tr.first_reminded_at,tr.snoozed_until,rp.updated_at,ep.updated_at)+ep.delay_minutes*interval '1 minute'<=statement_timestamp()
