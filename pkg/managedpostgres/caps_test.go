@@ -47,6 +47,20 @@ func TestPlanComputeCaps(t *testing.T) {
 		{name: "a held suspension is not rewritten", ceiling: 25 * hour, ledger: 25 * hour,
 			scopes:   []computeCapScope{{used: 25 * hour, quota: 25 * hour}},
 			wantUsed: 25 * hour, wantRemaining: 0, wantTargets: []int64{25 * hour}, wantApply: []bool{false}},
+		// ADR-20261025094915 amendment 2026-11-04: the provider's counters
+		// trail use, so the quotas keep back what each scope can use unseen.
+		{name: "the counter lag is kept back", ceiling: 5 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: hour, lag: 1800}},
+			wantUsed: hour, wantRemaining: 4*hour - 1800, wantTargets: []int64{5*hour - 1800}, wantApply: []bool{true}},
+		{name: "every scope's lag is kept back", ceiling: 25 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: hour, lag: 1800}, {used: 2 * hour, lag: 3600}},
+			wantUsed: 3 * hour, wantRemaining: 22*hour - 5400, wantTargets: []int64{23*hour - 5400, 24*hour - 5400}, wantApply: []bool{true, true}},
+		{name: "use within the lag of the ceiling suspends", ceiling: 5 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 5*hour - 1800, quota: 5 * hour, lag: 1800}},
+			wantUsed: 5*hour - 1800, wantRemaining: 0, wantTargets: []int64{5*hour - 1800}, wantApply: []bool{true}},
+		{name: "a lag above the ceiling suspends without overflow", ceiling: 5 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 0, lag: 1 << 62}},
+			wantUsed: 0, wantRemaining: 0, wantTargets: []int64{1}, wantApply: []bool{true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
