@@ -717,6 +717,7 @@ export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.j
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './models/DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './models/DeploymentRelease.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
@@ -870,6 +871,7 @@ export type { EnvironmentPolicy } from './models/EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './models/EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './models/EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './models/EnvironmentRecoveryRetention.js';
+export type { EnvironmentRouteBudgetReceipt } from './models/EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './models/EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './models/EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './models/EnvironmentServiceBinding.js';
@@ -2946,6 +2948,7 @@ export type { SelectedTraceLookupResponse } from './models/SelectedTraceLookupRe
 export type { SelectedTraceRequest } from './models/SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './models/SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './models/SendAppMessageResponse.js';
+export type { ServiceAbortReceipt } from './models/ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './models/ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './models/ServiceBindingExplanation.js';
 export type { ServiceBindingInventoryContext } from './models/ServiceBindingInventoryContext.js';

@@ -120,6 +120,17 @@ const (
 	usageFinalCorrectionPending
 )
 
+// creationInFlight reports an unresolved obligation whose provider call is
+// still running: the resource is provisioning under a held lease and was
+// reserved inside the current window, so it cannot owe a completed window
+// yet (the H9-P113 rule). A lost reply lets the lease lapse, and the window
+// closing ends the exemption too; either way the obligation blocks again
+// until its identity is recovered (ADR-20261104203253, amending ADR-581).
+func (p UsageProgress) creationInFlight(policy UsagePolicy, now time.Time) bool {
+	return !p.Terminal && p.CreationLeaseUntil.After(now) && !p.CreatedAt.IsZero() &&
+		!p.CreatedAt.Before(now.UTC().Truncate(policy.Window))
+}
+
 // finalCorrectionDeadline is when every window of a deleted resource's final
 // correction tail, which ends at end, has been replayed (ADR-569).
 func finalCorrectionDeadline(end time.Time, window time.Duration) time.Time {
@@ -133,6 +144,9 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		return 0
 	}
 	if p.Unresolved {
+		if p.creationInFlight(policy, now) {
+			return 0
+		}
 		return usageIdentityUnknown
 	}
 	if p.Window == 0 || p.ObservedAt.IsZero() {

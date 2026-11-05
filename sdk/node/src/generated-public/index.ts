@@ -267,6 +267,7 @@ export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.j
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './models/DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './models/DeploymentRelease.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
@@ -1077,6 +1078,7 @@ export type { SecretReferenceEnvironment } from './models/SecretReferenceEnviron
 export type { SecretRevocationTarget } from './models/SecretRevocationTarget.js';
 export type { SecretRuntimeReloadObservation } from './models/SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './models/SecretScanResult.js';
+export type { ServiceAbortReceipt } from './models/ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './models/ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './models/ServiceBindingExplanation.js';
 export type { ServiceBindingInventoryContext } from './models/ServiceBindingInventoryContext.js';

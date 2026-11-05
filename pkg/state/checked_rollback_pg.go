@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -82,7 +83,7 @@ func rollbackCurrentMatches(ctx context.Context, tx pgx.Tx, r api.RollbackOperat
 	return nil
 }
 func (s *PgStore) lockRollbackApp(ctx context.Context, tx pgx.Tx, app string) error {
-	a, err := s.AppByID(ctx, app)
+	a, err := appByIDDB(ctx, tx, app)
 	if err != nil {
 		return err
 	}
@@ -106,11 +107,39 @@ func (s *PgStore) createCheckedRollbackOnce(ctx context.Context, acct, app, targ
 		return api.RollbackOperation{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	id, err := checkedRollbackAttemptID(ctx)
+	if err != nil {
+		return api.RollbackOperation{}, err
+	}
+	if id != "" {
+		q := sqlc.New()
+		if _, err = q.LockCheckedRollbackApp(ctx, tx, sqlc.LockCheckedRollbackAppParams{AppID: mustPgUUID(app), AccountID: mustPgUUID(acct)}); err != nil {
+			return api.RollbackOperation{}, mapErr(err)
+		}
+		prior, readErr := decodeCheckedRollback(q.ReadCheckedRollback(ctx, tx, sqlc.ReadCheckedRollbackParams{ID: mustPgUUID(id), AppID: mustPgUUID(app), AccountID: mustPgUUID(acct)}))
+		if readErr == nil {
+			return api.RollbackOperation{}, checkedRollbackAttemptError(prior, app, target, current, reason)
+		}
+		if !errors.Is(readErr, ErrNotFound) {
+			return api.RollbackOperation{}, readErr
+		}
+		a, appErr := appByIDDB(ctx, tx, app)
+		d, targetErr := rollbackFacts(ctx, tx, app, target)
+		if appErr != nil {
+			return api.RollbackOperation{}, appErr
+		}
+		if targetErr != nil {
+			return api.RollbackOperation{}, targetErr
+		}
+		if a.Manifest.ExecutionMode != "" && a.Manifest.ExecutionMode != api.ExecutionModeRequest || normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
+			return api.RollbackOperation{}, ErrInvalidArgument
+		}
+	}
 	var r api.RollbackOperation
 	if claim, ok := routeMonitorRollbackClaim(ctx); ok {
 		r, err = s.createMonitorRollbackTx(ctx, tx, acct, app, target, current, reason, claim)
 	} else {
-		r, err = s.createCheckedRollbackTx(ctx, tx, acct, app, target, current, reason, "")
+		r, err = s.createCheckedRollbackTx(ctx, tx, acct, app, target, current, reason, id)
 	}
 	if err != nil {
 		return r, err
@@ -133,7 +162,7 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target); err != nil {
 		return api.RollbackOperation{}, err
 	}
-	a, err := s.AppByID(ctx, app)
+	a, err := appByIDDB(ctx, tx, app)
 	if err != nil {
 		return api.RollbackOperation{}, err
 	}
