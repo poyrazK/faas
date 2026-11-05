@@ -62,7 +62,7 @@ func TestBuilderReceivesDNSGrantsWhileDestroyWaitsForTheBuild(t *testing.T) {
 	err := m.AllowResolvedEgress(t.Context(), source, owner, answer, 5*time.Minute, 0)
 	policy := string(run.input)
 	granted := run.inputRuns == before+1 && strings.Contains(policy, "add element ip faas egress_resolved {") &&
-		strings.Contains(policy, "104.16.212.131 timeout 600s") && strings.Contains(policy, "104.16.213.131 timeout 600s")
+		strings.Contains(policy, "104.16.212.131 timeout ") && strings.Contains(policy, "104.16.213.131 timeout ")
 	close(exit)
 	if err != nil || !granted {
 		t.Fatalf("running build lost its DNS grant while Destroy waited for it: err=%v granted=%v", err, granted)

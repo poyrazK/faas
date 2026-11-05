@@ -6,14 +6,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // A restarted vmmd adopts its predecessor's guests. Their namespaces still
 // drop new connections to unresolved addresses, but the adoption record does
-// not carry the DNS gate, so the adopted Instance looked ungated and every
-// grant was skipped without an nft call or an error. After the rc.324 release
-// and the rc.322 rollback on fsn-2, adopted VMs' egress_resolved sets stayed
-// empty while fresh VMs' sets filled.
+// not carry the DNS gate: an adopted Instance that looked ungated skipped
+// every grant without an nft call or an error. After the rc.324 release and
+// the rc.322 rollback on fsn-2, adopted VMs' egress_resolved sets stayed empty
+// while fresh VMs' sets filled. Adoption reads the gate from the surviving
+// namespace (restoreAdoptedEgress); the grant must then reach it end to end.
 func TestAdoptedInstanceReceivesDNSGrants(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -23,6 +26,11 @@ func TestAdoptedInstanceReceivesDNSGrants(t *testing.T) {
 			f := newAdoptionFixture(t)
 			m, vmm := adoptionManager(t, f, f.block())
 			m.WithDNSGatedEgress(tc.gated)
+			// The surviving namespace carries the gate exactly when the node did.
+			m.WithCaptureRunner(&adoptedPolicyCapture{byFamily: map[string][]byte{
+				"ip":  adoptedPolicyJSON("ip", api.TenantEgressBasePorts(), nil, nil, tc.gated),
+				"ip6": adoptedPolicyJSON("ip6", api.TenantEgressBasePorts(), nil, nil, tc.gated),
+			}})
 			rep, err := m.adoptClassified(t.Context(), vmm, f.classifier())
 			if err != nil || rep.Adopted != 1 {
 				t.Fatalf("adopt = %+v, %v", rep, err)

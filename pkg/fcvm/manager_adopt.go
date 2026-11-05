@@ -389,15 +389,6 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	nc.TapUID = l.UID
 	nc.GuestAppPort = a.Instance.Port
 	nc.ConntrackCap = m.conntrackCap
-	if !l.Networkless {
-		// Every networked guest is a tenant whose namespace carries the
-		// ADR-373 DNS gate and the bound-database set (applyTenantEgressPolicy,
-		// prepared namespaces), but the record does not carry them. An
-		// adopted guest without them was skipped by every DNS grant while its
-		// namespace kept dropping unresolved addresses.
-		nc.DNSGated = !m.dnsGatingOff
-		nc.DatabaseEgress = true
-	}
 	for _, p := range a.Network.EgressAllowlist {
 		if prefix, err := netip.ParsePrefix(p); err == nil {
 			nc.EgressAllowlist = append(nc.EgressAllowlist, prefix)

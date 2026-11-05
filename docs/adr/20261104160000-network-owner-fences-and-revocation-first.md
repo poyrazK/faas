@@ -89,10 +89,10 @@ An adopted guest (vmmd restart, release or rollback) is rebuilt from its
 adoption record, which does not carry the DNS gate or the bound-database set.
 The adopted Instance looked ungated, so every grant was skipped while its
 namespace kept dropping unresolved addresses; after the rc.322 rollback on
-fsn-2 the adopted VMs' egress_resolved sets stayed empty. Adoption now
-restores both for every networked guest, the gate following the node's
-current ADR-373 switch as a prepared namespace does. The record format is
-unchanged, so an N-1 vmmd still reads it.
+fsn-2 the adopted VMs' egress_resolved sets stayed empty. Adoption reads
+both from the surviving namespace before publishing the guest
+(ADR-20261105103000 restart policy recovery); a regression test drives the
+adoption path through a DNS grant.
 
 vmmd logs each refused grant with the check that refused it (owner not
 captured, instance not live, teardown started, source address changed,
