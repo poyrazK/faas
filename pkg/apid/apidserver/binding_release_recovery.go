@@ -61,11 +61,17 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if req.ExpectedReview != nil {
-		if !state.IsServiceRollout(candidate) || req.ExpectedReview.AppID != app.ID || recoveryScope(req.ExpectedReview.Scope) != recoveryScope(candidate.Scope) {
+		reviewAppID, reviewErr := uuid.Parse(req.ExpectedReview.AppID)
+		appID, appErr := uuid.Parse(app.ID)
+		if !state.IsServiceRollout(candidate) || reviewErr != nil || appErr != nil || reviewAppID != appID || recoveryScope(req.ExpectedReview.Scope) != recoveryScope(candidate.Scope) {
 			api.WriteProblem(w, api.ErrValidation("expected_review requires exact service recovery in the reviewed scope"))
 			return
 		}
 		r = r.WithContext(state.WithServiceRecoveryReview(ctx, *req.ExpectedReview))
+	}
+	if len(r.Header.Values(api.ServiceAbortAttemptHeader)) != 0 && !state.IsServiceRollout(candidate) {
+		api.WriteProblem(w, api.ErrValidation("service abort attempts require a service rollout"))
+		return
 	}
 	if state.IsServiceRollout(candidate) {
 		s.requestPinnedServiceAbort(w, r, acct, app, candidate, predecessor, req.Reason)

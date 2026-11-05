@@ -27954,6 +27954,44 @@ SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.a
 SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
 WHERE h.source_id=sqlc.arg(source_id)::uuid AND h.release_set_id=sqlc.arg(release_id)::uuid;
 
+-- name: ReadDeploymentPromotionReceipt :one
+SELECT r.attempt_id, r.request_hash, r.deployment_id::text AS deployment_id,
+ r.expected_serving_deployment_id, r.scope, r.project_id, r.environment_id, r.accepted_at
+FROM deployment_promotion_receipts r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id)::text::uuid AND r.attempt_id=sqlc.arg(attempt_id)
+ AND a.status <> 'deleted'
+ AND (r.scope='default' OR EXISTS(SELECT 1 FROM project_environments e
+ WHERE e.id::text=r.environment_id AND e.project_id::text=r.project_id
+ AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=r.scope));
+
+-- name: InsertDeploymentPromotionReceipt :exec
+INSERT INTO deployment_promotion_receipts(app_id,attempt_id,request_hash,deployment_id,
+ expected_serving_deployment_id,scope,project_id,environment_id)
+VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(attempt_id),sqlc.arg(request_hash),
+ sqlc.arg(deployment_id)::text::uuid,sqlc.arg(expected_serving_deployment_id),sqlc.arg(scope),sqlc.arg(project_id),sqlc.arg(environment_id));
+
+-- name: ReadServiceAbortReceipt :one
+SELECT (r.data->'service_abort_receipt')::jsonb AS receipt
+FROM deployment_audit r JOIN deployments d ON d.id=r.deployment_id JOIN apps a ON a.id=d.app_id
+WHERE r.data ? 'service_abort_receipt' AND r.data->'service_abort_receipt'->>'app_id'=sqlc.arg(app_id)::text::uuid::text
+ AND r.data->'service_abort_receipt'->>'attempt_id'=sqlc.arg(attempt_id)::text
+ AND d.app_id=sqlc.arg(app_id)::text::uuid AND a.status <> 'deleted'
+ AND d.scope=r.data->'service_abort_receipt'->>'scope'
+ AND ((d.scope='default' AND coalesce(r.data->'service_abort_receipt'->>'project_id','')='' AND coalesce(r.data->'service_abort_receipt'->>'environment_id','')='')
+ OR (d.scope <> 'default' AND EXISTS(SELECT 1 FROM project_environments e
+ WHERE e.id::text=r.data->'service_abort_receipt'->>'environment_id'
+ AND e.project_id::text=r.data->'service_abort_receipt'->>'project_id'
+ AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope)));
+
+-- name: LockServiceAbortApp :one
+SELECT id::text FROM apps WHERE id=sqlc.arg(app_id)::text::uuid AND status <> 'deleted' FOR UPDATE;
+
+-- name: ReadServiceAbortAcceptance :one
+SELECT (r.data->'service_abort_receipt')::jsonb AS receipt
+FROM deployment_audit r JOIN apps a ON a.id=sqlc.arg(app_id)::text::uuid
+WHERE r.data ? 'service_abort_receipt' AND r.data->'service_abort_receipt'->>'app_id'=sqlc.arg(app_id)::text::uuid::text
+ AND r.data->'service_abort_receipt'->>'attempt_id'=sqlc.arg(attempt_id)::text AND a.status <> 'deleted';
+
 -- name: ReserveIdempotentRequest :one
 -- Claims an Idempotency-Key bound to its request fingerprint
 -- (ADR-20261022204036). A new key, a key past its 24 h replay window, or an

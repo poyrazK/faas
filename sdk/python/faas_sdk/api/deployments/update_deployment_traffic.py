@@ -9,15 +9,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.deployment_response import DeploymentResponse
 from ...models.problem import Problem
 from ...models.update_deployment_traffic_request import UpdateDeploymentTrafficRequest
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
     *,
     body: UpdateDeploymentTrafficRequest,
+    deployment_promotion_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(deployment_promotion_attempt_id, Unset):
+        headers["Deployment-Promotion-Attempt-ID"] = deployment_promotion_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "patch",
@@ -104,6 +107,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateDeploymentTrafficRequest,
+    deployment_promotion_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Set the per-deployment traffic-split weight.
 
@@ -132,6 +136,7 @@ def sync_detailed(
 
     Args:
         id (str):
+        deployment_promotion_attempt_id (str | Unset):
         body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
             Optionally require a particular live sibling to remain the sole 100% serving deployment
             when the update commits.
@@ -147,6 +152,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         id=id,
         body=body,
+        deployment_promotion_attempt_id=deployment_promotion_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -161,6 +167,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateDeploymentTrafficRequest,
+    deployment_promotion_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Set the per-deployment traffic-split weight.
 
@@ -189,6 +196,7 @@ def sync(
 
     Args:
         id (str):
+        deployment_promotion_attempt_id (str | Unset):
         body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
             Optionally require a particular live sibling to remain the sole 100% serving deployment
             when the update commits.
@@ -205,6 +213,7 @@ def sync(
         id=id,
         client=client,
         body=body,
+        deployment_promotion_attempt_id=deployment_promotion_attempt_id,
     ).parsed
 
 
@@ -213,6 +222,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateDeploymentTrafficRequest,
+    deployment_promotion_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Set the per-deployment traffic-split weight.
 
@@ -241,6 +251,7 @@ async def asyncio_detailed(
 
     Args:
         id (str):
+        deployment_promotion_attempt_id (str | Unset):
         body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
             Optionally require a particular live sibling to remain the sole 100% serving deployment
             when the update commits.
@@ -256,6 +267,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         id=id,
         body=body,
+        deployment_promotion_attempt_id=deployment_promotion_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -268,6 +280,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: UpdateDeploymentTrafficRequest,
+    deployment_promotion_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Set the per-deployment traffic-split weight.
 
@@ -296,6 +309,7 @@ async def asyncio(
 
     Args:
         id (str):
+        deployment_promotion_attempt_id (str | Unset):
         body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
             Optionally require a particular live sibling to remain the sole 100% serving deployment
             when the update commits.
@@ -313,5 +327,6 @@ async def asyncio(
             id=id,
             client=client,
             body=body,
+            deployment_promotion_attempt_id=deployment_promotion_attempt_id,
         )
     ).parsed

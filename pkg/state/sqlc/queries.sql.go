@@ -33558,6 +33558,38 @@ func (q *Queries) InsertDeploymentEventSubscriptionIntent(ctx context.Context, d
 	return err
 }
 
+const insertDeploymentPromotionReceipt = `-- name: InsertDeploymentPromotionReceipt :exec
+INSERT INTO deployment_promotion_receipts(app_id,attempt_id,request_hash,deployment_id,
+ expected_serving_deployment_id,scope,project_id,environment_id)
+VALUES($1::text::uuid,$2,$3,
+ $4::text::uuid,$5,$6,$7,$8)
+`
+
+type InsertDeploymentPromotionReceiptParams struct {
+	AppID                       string
+	AttemptID                   string
+	RequestHash                 string
+	DeploymentID                string
+	ExpectedServingDeploymentID string
+	Scope                       string
+	ProjectID                   string
+	EnvironmentID               string
+}
+
+func (q *Queries) InsertDeploymentPromotionReceipt(ctx context.Context, db DBTX, arg InsertDeploymentPromotionReceiptParams) error {
+	_, err := db.Exec(ctx, insertDeploymentPromotionReceipt,
+		arg.AppID,
+		arg.AttemptID,
+		arg.RequestHash,
+		arg.DeploymentID,
+		arg.ExpectedServingDeploymentID,
+		arg.Scope,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
+	return err
+}
+
 const insertDeploymentRegistryRootfs = `-- name: InsertDeploymentRegistryRootfs :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
 INSERT INTO deployment_registry_rootfs(id,registry_verification_id,deployment_id,workload_name,input_snapshot,input_hash,published_at,expires_at)
@@ -61986,6 +62018,17 @@ func (q *Queries) LockSafeProjectSubmission(ctx context.Context, db DBTX, arg Lo
 	return i, err
 }
 
+const lockServiceAbortApp = `-- name: LockServiceAbortApp :one
+SELECT id::text FROM apps WHERE id=$1::text::uuid AND status <> 'deleted' FOR UPDATE
+`
+
+func (q *Queries) LockServiceAbortApp(ctx context.Context, db DBTX, appID string) (string, error) {
+	row := db.QueryRow(ctx, lockServiceAbortApp, appID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one
 SELECT id FROM apps WHERE id = $1::uuid AND account_id = $2::uuid
 FOR UPDATE
@@ -81796,6 +81839,49 @@ func (q *Queries) ReadDeploymentPolicyState(ctx context.Context, db DBTX, appID 
 	return i, err
 }
 
+const readDeploymentPromotionReceipt = `-- name: ReadDeploymentPromotionReceipt :one
+SELECT r.attempt_id, r.request_hash, r.deployment_id::text AS deployment_id,
+ r.expected_serving_deployment_id, r.scope, r.project_id, r.environment_id, r.accepted_at
+FROM deployment_promotion_receipts r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=$1::text::uuid AND r.attempt_id=$2
+ AND a.status <> 'deleted'
+ AND (r.scope='default' OR EXISTS(SELECT 1 FROM project_environments e
+ WHERE e.id::text=r.environment_id AND e.project_id::text=r.project_id
+ AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=r.scope))
+`
+
+type ReadDeploymentPromotionReceiptParams struct {
+	AppID     string
+	AttemptID string
+}
+
+type ReadDeploymentPromotionReceiptRow struct {
+	AttemptID                   string
+	RequestHash                 string
+	DeploymentID                string
+	ExpectedServingDeploymentID string
+	Scope                       string
+	ProjectID                   string
+	EnvironmentID               string
+	AcceptedAt                  pgtype.Timestamptz
+}
+
+func (q *Queries) ReadDeploymentPromotionReceipt(ctx context.Context, db DBTX, arg ReadDeploymentPromotionReceiptParams) (ReadDeploymentPromotionReceiptRow, error) {
+	row := db.QueryRow(ctx, readDeploymentPromotionReceipt, arg.AppID, arg.AttemptID)
+	var i ReadDeploymentPromotionReceiptRow
+	err := row.Scan(
+		&i.AttemptID,
+		&i.RequestHash,
+		&i.DeploymentID,
+		&i.ExpectedServingDeploymentID,
+		&i.Scope,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
 const readDeploymentReleaseSecrets = `-- name: ReadDeploymentReleaseSecrets :one
 SELECT values_json FROM deployment_release_secret_snapshots WHERE deployment_id=$1::uuid
 `
@@ -89492,6 +89578,51 @@ func (q *Queries) ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg R
 	var saved []byte
 	err := row.Scan(&saved)
 	return saved, err
+}
+
+const readServiceAbortAcceptance = `-- name: ReadServiceAbortAcceptance :one
+SELECT (r.data->'service_abort_receipt')::jsonb AS receipt
+FROM deployment_audit r JOIN apps a ON a.id=$1::text::uuid
+WHERE r.data ? 'service_abort_receipt' AND r.data->'service_abort_receipt'->>'app_id'=$1::text::uuid::text
+ AND r.data->'service_abort_receipt'->>'attempt_id'=$2::text AND a.status <> 'deleted'
+`
+
+type ReadServiceAbortAcceptanceParams struct {
+	AppID     string
+	AttemptID string
+}
+
+func (q *Queries) ReadServiceAbortAcceptance(ctx context.Context, db DBTX, arg ReadServiceAbortAcceptanceParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readServiceAbortAcceptance, arg.AppID, arg.AttemptID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
+const readServiceAbortReceipt = `-- name: ReadServiceAbortReceipt :one
+SELECT (r.data->'service_abort_receipt')::jsonb AS receipt
+FROM deployment_audit r JOIN deployments d ON d.id=r.deployment_id JOIN apps a ON a.id=d.app_id
+WHERE r.data ? 'service_abort_receipt' AND r.data->'service_abort_receipt'->>'app_id'=$1::text::uuid::text
+ AND r.data->'service_abort_receipt'->>'attempt_id'=$2::text
+ AND d.app_id=$1::text::uuid AND a.status <> 'deleted'
+ AND d.scope=r.data->'service_abort_receipt'->>'scope'
+ AND ((d.scope='default' AND coalesce(r.data->'service_abort_receipt'->>'project_id','')='' AND coalesce(r.data->'service_abort_receipt'->>'environment_id','')='')
+ OR (d.scope <> 'default' AND EXISTS(SELECT 1 FROM project_environments e
+ WHERE e.id::text=r.data->'service_abort_receipt'->>'environment_id'
+ AND e.project_id::text=r.data->'service_abort_receipt'->>'project_id'
+ AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope)))
+`
+
+type ReadServiceAbortReceiptParams struct {
+	AppID     string
+	AttemptID string
+}
+
+func (q *Queries) ReadServiceAbortReceipt(ctx context.Context, db DBTX, arg ReadServiceAbortReceiptParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readServiceAbortReceipt, arg.AppID, arg.AttemptID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
 }
 
 const readServiceBindingRevision = `-- name: ReadServiceBindingRevision :one

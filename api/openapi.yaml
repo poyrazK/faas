@@ -26004,6 +26004,78 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/service-aborts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before reviewed service abort.
+        schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    get:
+      tags: [deployments]
+      operationId: getServiceAbortReceipt
+      summary: Read the immutable acceptance receipt for a service-abort attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns immutable acceptance
+        of an exact reviewed default or named-environment service abort, including the original native
+        reverse-handoff request ID, even after the current handoff changes. Acceptance
+        does not establish gateway acknowledgement, request draining, completion or
+        current health. Compare the request ID separately with the observed handoff.
+        A 404 means no retained evidence; it never proves rejection or permits replay.
+        The receipt is retained with the candidate deployment audit and app. Named receipts
+        also require the original project/environment UUIDs to match the current app
+        and environment. Deleted, replaced or moved targets return no evidence.
+      responses:
+        '200':
+          description: The immutable receipt for the original reviewed service abort.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceAbortReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Service-abort receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/deployment-promotions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before guarded traffic promotion.
+        schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    get:
+      tags: [deployments]
+      operationId: getDeploymentPromotionReceipt
+      summary: Read the immutable acceptance receipt for a promotion attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns the original
+        candidate and original serving guard even after traffic changes. A 404 means no retained
+        receipt is available; it does not establish rejection and must never
+        trigger automatic resubmission. Receipts expire when their deployment
+        or app is purged. Named environment identities must still exist. This lookup never changes traffic.
+      responses:
+        '200':
+          description: The immutable receipt for the original guarded traffic promotion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentPromotionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Promotion receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/deployment-submissions/{attempt_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -27355,6 +27427,40 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-budgets/receipts/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: request_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Exact original nonzero request UUID.
+      - name: scope
+        in: query
+        schema: { type: string, enum: [default] }
+        description: Select scope=default or one registered environment; exactly one selector is required.
+      - name: environment
+        in: query
+        schema: { type: string }
+        description: Current named environment containing the original receipt; mutually exclusive with scope=default.
+    get:
+      tags: [apps]
+      operationId: getEnvironmentRouteBudgetReceipt
+      summary: Read an original durable environment budget receipt.
+      description: Requires current app read access and completed MFA. Matches account, app and current immutable project/environment identities. Returns historical committed policy revisions and the exact original request fingerprint, excluding configuration values. Later policy edits do not replace this receipt. A missing, inaccessible or unavailable receipt never proves non-commit. This endpoint performs no mutation, replay, approval or expiry renewal and does not establish runtime health.
+      responses:
+        '200':
+          description: Historical policy-intent receipt, not current configuration or runtime completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentRouteBudgetReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/route-monitor:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -28519,6 +28625,11 @@ paths:
         Stored binding enforcement requires this exact workflow.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Rollback-Attempt-ID
+          in: header
+          required: false
+          description: Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       requestBody:
         required: false
         content:
@@ -28539,7 +28650,7 @@ paths:
         '404': { $ref: '#/components/responses/RollbackTargetNotFound' }
         '409':
           $ref: '#/components/responses/RollbackConflict'
-          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required'
+          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required | rollback_attempt_accepted | rollback_attempt_conflict'
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/alert-rollbacks:
@@ -28744,6 +28855,18 @@ paths:
         request and never substitute a different predecessor.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Service-Abort-Attempt-ID
+          in: header
+          required: false
+          description: |
+            Opaque identity saved before an exact reviewed default or named-environment service abort.
+            Acceptance is recorded atomically with reverse-handoff intent. Accepted
+            repeats return 409 service_abort_attempt_accepted; a changed reviewed
+            request returns 409 service_abort_attempt_conflict. Read the retained
+            service-aborts receipt after a lost response; never replay accepted intent.
+            Named scopes require the complete project/environment release review and current
+            unprotected write admission. Unsupported recovery modes reject this header.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       requestBody:
         required: true
         content:
@@ -32431,6 +32554,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id32'
     patch:
+      parameters:
+        - name: Deployment-Promotion-Attempt-ID
+          in: header
+          required: false
+          description: Opaque durable identity for guarded 100 percent promotion. An accepted retry returns 409 deployment_promotion_attempt_accepted without changing traffic; read its receipt separately. Never reuse it with another body.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       tags: [deployments]
       operationId: updateDeploymentTraffic
       summary: Set the per-deployment traffic-split weight.
@@ -79593,6 +79722,20 @@ components:
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         config: { $ref: '#/components/schemas/RouteMonitorConfig' }
+    EnvironmentRouteBudgetReceipt:
+      description: Original durable policy-intent receipt. Request fingerprints bind exact bodies but grant no write authority. No configuration values are exposed.
+      type: object
+      required: [request_id, request_hash, app_id, scope, revision, app_revision, budget_source]
+      properties:
+        request_id: { type: string, format: uuid }
+        request_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        budget_source: { type: string, enum: [app_policy, environment_policy] }
     SetEnvironmentRouteBudgetsRequest:
       description: Compare-and-swap update of the selected environment route-budget override.
       type: object
@@ -94967,6 +95110,35 @@ components:
         app_id: { type: string, format: uuid }
         status: { type: string, enum: [staged, cleaned, prepared, activated, conflict, discarded] }
         revision: { type: integer, format: int64, minimum: 0 }
+    ServiceAbortReceipt:
+      description: Immutable acceptance of an original reviewed service-abort intent; ACK/drain completion and the current handoff remain separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, predecessor_deployment_id, request_id, scope, accepted_at]
+      properties:
+        attempt_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        request_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        predecessor_deployment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        scope: { type: string, description: Default scope or the original named environment slug. }
+        project_id: { type: string, format: uuid, description: Original project identity; present for named scopes. }
+        environment_id: { type: string, format: uuid, description: Original environment identity; present for named scopes. }
+        accepted_at: { type: string, format: date-time }
+    DeploymentPromotionReceipt:
+      description: Immutable acceptance of an original guarded 100 percent traffic promotion; current traffic and health are separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, expected_serving_deployment_id, scope, accepted_at]
+      properties:
+        attempt_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        request_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        expected_serving_deployment_id: { type: string, description: Original serving guard; empty requires no serving sibling. }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        accepted_at: { type: string, format: date-time }
     DeploymentSubmissionReceipt:
       description: Immutable acceptance evidence for one opaque deployment submission attempt.
       type: object

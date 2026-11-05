@@ -72,3 +72,12 @@ The app-agent deployed journey checks focused discovery, a multi-key batch,
 repeat receipts, explicit refusal and the recovery contract. Its execution
 requires a configured target and credentials. No native REST DTO or database
 migration changes are needed for this slice.
+
+## Main integration: schema wiring
+
+Fixed tool output contracts share immutable parsed JSON Schemas across bridge
+connections, and the SDK schema cache reuses schemas for fixed input types.
+Neither cache includes consent, credentials or connection data. Contract
+equivalence and concurrent reuse are checked under the race detector. Reusing
+wiring avoids parsing and resolving the entire tool catalog on every connection
+without changing tool selection, output validation or integer precision.
