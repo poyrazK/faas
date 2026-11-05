@@ -77,6 +77,10 @@ class IssueOccurrence:
     id: UUID | Unset = UNSET
     original_issue_id: UUID | Unset = UNSET
     """Original fingerprint provenance retained through occurrence-level splits and manual merges."""
+    occurrence_count: int | Unset = UNSET
+    """Number of failures represented by this record; customer identity applies to the sampled request only."""
+    occurrence_count_exact: bool | Unset = UNSET
+    """False when an older writer did not preserve the folded HTTP weight."""
     verified_consumer_id: UUID | Unset = UNSET
     verified_platform_tenant_id: UUID | Unset = UNSET
     debug_request_id: UUID | Unset = UNSET
@@ -180,6 +184,10 @@ class IssueOccurrence:
         if not isinstance(self.original_issue_id, Unset):
             original_issue_id = str(self.original_issue_id)
 
+        occurrence_count = self.occurrence_count
+
+        occurrence_count_exact = self.occurrence_count_exact
+
         verified_consumer_id: str | Unset = UNSET
         if not isinstance(self.verified_consumer_id, Unset):
             verified_consumer_id = str(self.verified_consumer_id)
@@ -255,6 +263,10 @@ class IssueOccurrence:
             field_dict["id"] = id
         if original_issue_id is not UNSET:
             field_dict["original_issue_id"] = original_issue_id
+        if occurrence_count is not UNSET:
+            field_dict["occurrence_count"] = occurrence_count
+        if occurrence_count_exact is not UNSET:
+            field_dict["occurrence_count_exact"] = occurrence_count_exact
         if verified_consumer_id is not UNSET:
             field_dict["verified_consumer_id"] = verified_consumer_id
         if verified_platform_tenant_id is not UNSET:
@@ -397,6 +409,10 @@ class IssueOccurrence:
         else:
             original_issue_id = UUID(_original_issue_id)
 
+        occurrence_count = d.pop("occurrence_count", UNSET)
+
+        occurrence_count_exact = d.pop("occurrence_count_exact", UNSET)
+
         _verified_consumer_id = d.pop("verified_consumer_id", UNSET)
         verified_consumer_id: UUID | Unset
         if isinstance(_verified_consumer_id, Unset):
@@ -456,6 +472,8 @@ class IssueOccurrence:
             redactions=redactions,
             id=id,
             original_issue_id=original_issue_id,
+            occurrence_count=occurrence_count,
+            occurrence_count_exact=occurrence_count_exact,
             verified_consumer_id=verified_consumer_id,
             verified_platform_tenant_id=verified_platform_tenant_id,
             debug_request_id=debug_request_id,

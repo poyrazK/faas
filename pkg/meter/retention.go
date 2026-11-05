@@ -297,10 +297,38 @@ const retentionRequestAnalyticsMinutesBatchSQL = `DELETE FROM public.request_ana
 // analytics rollups, in batches like RetentionOnceRequestTelemetry.
 func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExecer) (int64, error) {
 	var total int64
-	for i := 0; i < MaxRetentionBatches; i++ {
-		tag, err := db.Exec(ctx, retentionRequestAnalyticsMinutesBatchSQL, RetentionBatchSize)
+	for _, sweep := range []struct{ what, sql string }{
+		{"rollup", retentionRequestAnalyticsMinutesBatchSQL},
+		{"rollup gap", retentionRequestAnalyticsRollupGapsBatchSQL},
+	} {
+		n, err := retentionBatches(ctx, db, sweep.sql)
+		total += n
 		if err != nil {
-			return total, fmt.Errorf("request analytics rollup retention delete (batch %d, deleted so far %d): %w", i, total, err)
+			return total, fmt.Errorf("request analytics %s retention delete (deleted so far %d): %w", sweep.what, total, err)
+		}
+	}
+	return total, nil
+}
+
+// retentionRequestAnalyticsRollupGapsBatchSQL sweeps lost-rollup markers
+// past the longest telemetry retention (Scale's 14 days), which no analytics
+// window can reach. The table is not partitioned, so ctid is unique.
+const retentionRequestAnalyticsRollupGapsBatchSQL = `DELETE FROM public.request_analytics_rollup_gaps
+                                                     WHERE ctid IN (
+                                                         SELECT ctid FROM public.request_analytics_rollup_gaps
+                                                         WHERE bucket_start < now() - interval '15 days'
+                                                         ORDER BY bucket_start
+                                                         LIMIT $1
+                                                     )`
+
+// retentionBatches runs a bounded batch DELETE until a batch comes back
+// short, at most MaxRetentionBatches times.
+func retentionBatches(ctx context.Context, db retentionExecer, sql string) (int64, error) {
+	var total int64
+	for i := 0; i < MaxRetentionBatches; i++ {
+		tag, err := db.Exec(ctx, sql, RetentionBatchSize)
+		if err != nil {
+			return total, fmt.Errorf("batch %d: %w", i, err)
 		}
 		total += tag
 		if tag < RetentionBatchSize {

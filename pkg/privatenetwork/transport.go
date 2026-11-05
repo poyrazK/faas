@@ -2,10 +2,11 @@ package privatenetwork
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/netip"
 	"sort"
 	"strings"
@@ -17,8 +18,12 @@ const (
 	// short, deterministic name that is safe to use in iproute2 commands.
 	fabricTransportPrefix = "gpx-"
 	fabricTransportHexLen = 10
-	maxVXLANVNI           = 16_777_214 // reserve 0 and the all-ones value
+	maxVXLANVNI           = api.PrivateNetworkMaxTransportVNI
 	vxlanUDPPort          = 4789
+	// DefaultFabricMTU fits a 1280-byte encrypted overlay after the outer
+	// IPv4, UDP and VXLAN headers. All nodes in a region use one common MTU.
+	DefaultFabricMTU        = 1230
+	FabricTransportOverhead = 50
 )
 
 // FabricTransportSpec describes the node-local inputs needed to connect one
@@ -30,6 +35,10 @@ type FabricTransportSpec struct {
 	OverlayInterface string
 	LocalAddress     netip.Addr
 	PeerAddresses    []netip.Addr
+	MTU              int
+	// VNI is reserved durably per region. Zero retains the legacy preferred
+	// value for offline plans; production vmmd supplies the allocated value.
+	VNI uint32
 }
 
 // FabricTransportPlan is a deterministic host-side VXLAN plan. Every node in
@@ -67,6 +76,9 @@ func ParseFabricTransportPeers(output []byte) []netip.Addr {
 	seen := make(map[netip.Addr]struct{})
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "00:00:00:00:00:00" {
+			continue
+		}
 		for i := 0; i+1 < len(fields); i++ {
 			if fields[i] != "dst" {
 				continue
@@ -84,6 +96,21 @@ func ParseFabricTransportPeers(output []byte) []netip.Addr {
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].String() < peers[j].String() })
 	return peers
+}
+
+// FabricTransportPeerCommands reconciles the observed flood roster without
+// the bulk-flush operation, which older VXLAN kernels do not implement. A
+// replay of a converged roster emits no commands and never appends duplicates.
+func FabricTransportPeerCommands(linkName string, expected, observed []netip.Addr) [][]string {
+	missing, stale := FabricPeerDrift(expected, observed)
+	commands := make([][]string, 0, len(missing)+len(stale))
+	for _, peer := range stale {
+		commands = append(commands, []string{"bridge", "fdb", "del", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
+	}
+	for _, peer := range missing {
+		commands = append(commands, []string{"bridge", "fdb", "append", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
+	}
+	return commands
 }
 
 // FabricPeerDrift returns the expected peers missing from the kernel FDB and
@@ -121,6 +148,12 @@ func FabricPeerDrift(expected, observed []netip.Addr) (missing, stale []netip.Ad
 // same private-network CIDR, so a routed L3 overlay would create overlapping
 // connected routes on every node.
 func BuildFabricTransportPlan(spec FabricTransportSpec) (FabricTransportPlan, error) {
+	if spec.MTU == 0 {
+		spec.MTU = DefaultFabricMTU
+	}
+	if spec.MTU < 576 || spec.MTU > 1500 {
+		return FabricTransportPlan{}, errors.New("privatenetwork: transport MTU must be between 576 and 1500")
+	}
 	validatedFabric, err := NewFabricSpecFromValues(
 		spec.Fabric.AccountID,
 		spec.Fabric.NetworkID,
@@ -175,22 +208,30 @@ func BuildFabricTransportPlan(spec FabricTransportSpec) (FabricTransportPlan, er
 		OverlayInterface: iface,
 		LocalAddress:     local,
 		PeerAddresses:    canonicalPeers,
+		MTU:              spec.MTU,
 	}
 
 	linkName := FabricTransportLinkName(validatedFabric.AccountID, validatedFabric.NetworkID)
-	vni := fabricTransportVNI(validatedFabric.AccountID, validatedFabric.NetworkID)
+	vni := spec.VNI
+	if vni == 0 {
+		vni = fabricTransportVNI(validatedFabric.AccountID, validatedFabric.NetworkID)
+	}
+	if vni > maxVXLANVNI {
+		return FabricTransportPlan{}, errors.New("privatenetwork: invalid VXLAN identifier")
+	}
+	validated.VNI = vni
 	bridge := BridgeName(validatedFabric.AccountID, validatedFabric.NetworkID)
 	setup := [][]string{
-		{"ip", "link", "add", "dev", linkName, "type", "vxlan", "id", fmt.Sprintf("%d", vni), "dev", iface, "local", local.String(), "dstport", fmt.Sprintf("%d", vxlanUDPPort), "nolearning"},
+		{"ip", "link", "add", "dev", linkName, "mtu", fmt.Sprint(spec.MTU), "type", "vxlan", "id", fmt.Sprintf("%d", vni), "dev", iface, "local", local.String(), "dstport", fmt.Sprintf("%d", vxlanUDPPort), "nolearning"},
 		{"ip", "link", "set", "dev", linkName, "master", bridge},
 		{"ip", "link", "set", "dev", linkName, "up"},
 	}
 	for _, peer := range canonicalPeers {
-		setup = append(setup, []string{"bridge", "fdb", "replace", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
+		setup = append(setup, []string{"bridge", "fdb", "append", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
 	}
 	peerSync := [][]string{{"bridge", "fdb", "flush", "dev", linkName}}
 	for _, peer := range canonicalPeers {
-		peerSync = append(peerSync, []string{"bridge", "fdb", "replace", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
+		peerSync = append(peerSync, []string{"bridge", "fdb", "append", "00:00:00:00:00:00", "dev", linkName, "dst", peer.String()})
 	}
 	return FabricTransportPlan{
 		Spec:     validated,
@@ -211,9 +252,7 @@ func FabricTransportLinkName(accountID, networkID string) string {
 }
 
 func fabricTransportVNI(accountID, networkID string) uint32 {
-	sum := sha256.Sum256([]byte("transport-vni\x00" + strings.TrimSpace(accountID) + "\x00" + strings.TrimSpace(networkID)))
-	value := binary.BigEndian.Uint32(sum[:4]) % maxVXLANVNI
-	return value + 1
+	return state.PreferredPrivateNetworkVNI(accountID, networkID)
 }
 
 func isInterfaceNameRune(r rune) bool {

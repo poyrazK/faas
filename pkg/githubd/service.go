@@ -17,8 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -627,6 +629,12 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// A push never removes a service: an app whose service left the
 		// Compose file (or is hidden by an inactive profile) is excluded
 		// from the reconcile, keeps serving, and waits for a reviewed deploy.
+		// A new service whose app name a deleted (or another) app still
+		// holds is not created; the rest of the push goes ahead.
+		heldSlugs, slugErr := s.pushServicesWithHeldSlugs(ctx, project, &scan)
+		if slugErr != nil {
+			return reconcile.Result{}, slugErr
+		}
 		kept, keptErr := s.pushKeptServices(ctx, project, scan)
 		if keptErr != nil {
 			return reconcile.Result{}, keptErr
@@ -664,6 +672,17 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		for id, reason := range waiting {
 			held[id] = reason
+		}
+		// A service held for its slug has no app, so its check is written
+		// by slug here.
+		for _, slug := range slices.Sorted(maps.Keys(heldSlugs)) {
+			s.Log.Info("githubd: push holds service with a held slug", "slug", slug, "detail", heldSlugs[slug])
+			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+				if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					slug, deploymentScope, githubdgrpc.CheckPhaseFailed, heldSlugs[slug]); werr != nil {
+					s.Log.Warn("githubd: write held slug check", "slug", slug, "err", werr)
+				}
+			}
 		}
 	}
 

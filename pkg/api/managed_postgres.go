@@ -224,6 +224,9 @@ type ManagedPostgresUsageOperatorResponse struct {
 }
 
 type CreateManagedPostgresDatabaseRequest struct {
+	// RequestID reserves the database identity for a durable workflow. Reusing
+	// it with another name or configuration is a conflict.
+	RequestID            string `json:"request_id,omitempty"`
 	Name                 string `json:"name"`
 	Region               string `json:"region"`
 	PostgresMajor        int    `json:"postgres_major,omitempty"`
@@ -256,6 +259,22 @@ type ManagedPostgresBinding struct {
 
 type ManagedPostgresBindingList struct {
 	Items []ManagedPostgresBinding `json:"items"`
+}
+
+// AppPostgresBinding is one live managed PostgreSQL binding of an app, on any
+// database it is bound to: the account's, an organization's or an environment
+// copy's. Database is the database's name.
+type AppPostgresBinding struct {
+	ID             string `json:"id"`
+	Database       string `json:"database"`
+	Scope          string `json:"scope"`
+	EnvironmentKey string `json:"environment_key"`
+	Access         string `json:"access"`
+	State          string `json:"state"`
+}
+
+type AppPostgresBindingList struct {
+	Items []AppPostgresBinding `json:"items"`
 }
 
 type CreateManagedPostgresBindingRequest struct {

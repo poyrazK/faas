@@ -58,6 +58,7 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_agent_binding import AppAgentBinding
 from .app_binding_inventory import AppBindingInventory
 from .app_binding_inventory_item import AppBindingInventoryItem
 from .app_binding_inventory_item_type import AppBindingInventoryItemType
@@ -65,6 +66,9 @@ from .app_binding_inventory_service_binding_source import AppBindingInventorySer
 from .app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
+from .app_cost_coverage import AppCostCoverage
+from .app_cost_meter import AppCostMeter
+from .app_costs_response import AppCostsResponse
 from .app_deploy_settings_condition import AppDeploySettingsCondition
 from .app_deploy_settings_condition_expected_settings import AppDeploySettingsConditionExpectedSettings
 from .app_effective_limits import AppEffectiveLimits
@@ -126,9 +130,24 @@ from .app_manifest_secret_reload_signal_type_2_type_1 import AppManifestSecretRe
 from .app_manifest_secret_reload_signal_type_3_type_1 import AppManifestSecretReloadSignalType3Type1
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
+from .app_operation_check import AppOperationCheck
+from .app_operation_check_status import AppOperationCheckStatus
+from .app_operation_preview import AppOperationPreview
+from .app_operation_preview_admission import AppOperationPreviewAdmission
+from .app_operation_preview_authorization import AppOperationPreviewAuthorization
+from .app_operation_preview_checks import AppOperationPreviewChecks
+from .app_operation_preview_operation import AppOperationPreviewOperation
+from .app_operation_preview_schema_version import AppOperationPreviewSchemaVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_release_review import AppReleaseReview
+from .app_resource_inventory_binding import AppResourceInventoryBinding
+from .app_resource_inventory_item import AppResourceInventoryItem
+from .app_resource_inventory_response import AppResourceInventoryResponse
+from .app_resource_inventory_response_kind import AppResourceInventoryResponseKind
+from .app_resource_inventory_response_schema_version import AppResourceInventoryResponseSchemaVersion
 from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
@@ -143,6 +162,9 @@ from .app_response_type import AppResponseType
 from .app_response_visibility import AppResponseVisibility
 from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
+from .app_scaling_receipt import AppScalingReceipt
+from .app_scaling_settings import AppScalingSettings
+from .app_scaling_snapshot import AppScalingSnapshot
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
@@ -194,6 +216,7 @@ from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
+from .apply_app_scaling_request import ApplyAppScalingRequest
 from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
@@ -216,6 +239,7 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .billing_status_response_scheduled_plan import BillingStatusResponseScheduledPlan
 from .binding_adoption_counts import BindingAdoptionCounts
 from .binding_application_ack_target import BindingApplicationAckTarget
 from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
@@ -383,6 +407,7 @@ from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
+from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
 from .create_deployment_files_body import CreateDeploymentFilesBody
 from .create_deployment_files_body_kind import CreateDeploymentFilesBodyKind
 from .create_deployment_files_body_runtime import CreateDeploymentFilesBodyRuntime
@@ -537,6 +562,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -678,6 +704,9 @@ from .edge_waf_review_response import EdgeWAFReviewResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
+from .env_batch_request import EnvBatchRequest
+from .env_batch_request_values import EnvBatchRequestValues
+from .env_batch_response import EnvBatchResponse
 from .env_diff_cell import EnvDiffCell
 from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
@@ -820,10 +849,12 @@ from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
+from .get_app_operation_preview_operation import GetAppOperationPreviewOperation
 from .get_app_pre_auth_observations_range import GetAppPreAuthObservationsRange
 from .get_app_request_analytics_group_by import GetAppRequestAnalyticsGroupBy
 from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalyticsTimeseriesGroupBy
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
+from .get_app_resource_inventory_kind import GetAppResourceInventoryKind
 from .get_app_wake_timeline_pagination import GetAppWakeTimelinePagination
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
@@ -1835,6 +1866,14 @@ from .project_deployment_check_workload import ProjectDeploymentCheckWorkload
 from .project_deployment_readiness import ProjectDeploymentReadiness
 from .project_deployment_readiness_schema_version import ProjectDeploymentReadinessSchemaVersion
 from .project_deployment_readiness_status import ProjectDeploymentReadinessStatus
+from .project_environment_config_change import ProjectEnvironmentConfigChange
+from .project_environment_config_change_kind import ProjectEnvironmentConfigChangeKind
+from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
+from .project_environment_config_response import ProjectEnvironmentConfigResponse
+from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
+from .project_environment_shared_secret import ProjectEnvironmentSharedSecret
+from .project_environment_shared_secret_response import ProjectEnvironmentSharedSecretResponse
+from .project_environment_shared_secrets_response import ProjectEnvironmentSharedSecretsResponse
 from .project_initial_secrets import ProjectInitialSecrets
 from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
 from .project_migration_baseline_verification import ProjectMigrationBaselineVerification
@@ -2134,6 +2173,7 @@ from .secret_runtime_reload_observation_reload_support import SecretRuntimeReloa
 from .secret_runtime_reload_observation_runtime_state import SecretRuntimeReloadObservationRuntimeState
 from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
 from .secret_scan_result import SecretScanResult
+from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -2178,6 +2218,7 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_password_request import SetPasswordRequest
+from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
 from .set_workflow_recovery_policy_request import SetWorkflowRecoveryPolicyRequest
 from .severity_counts import SeverityCounts
@@ -2304,6 +2345,8 @@ from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpoin
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
+from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_request import UpdateProjectRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
@@ -2620,6 +2663,7 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppAgentBinding",
     "AppBindingInventory",
     "AppBindingInventoryItem",
     "AppBindingInventoryItemType",
@@ -2627,6 +2671,9 @@ __all__ = (
     "AppBindingInventoryServiceTargets",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
+    "AppCostCoverage",
+    "AppCostMeter",
+    "AppCostsResponse",
     "AppDeploySettingsCondition",
     "AppDeploySettingsConditionExpectedSettings",
     "AppEffectiveLimits",
@@ -2671,6 +2718,7 @@ __all__ = (
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyAppScalingRequest",
     "ApplyCachedProjectPlanRequest",
     "ApplyResponse",
     "ApplyResponseAppsItem",
@@ -2692,9 +2740,24 @@ __all__ = (
     "AppManifestSecretReloadSignalType3Type1",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
+    "AppOperationCheck",
+    "AppOperationCheckStatus",
+    "AppOperationPreview",
+    "AppOperationPreviewAdmission",
+    "AppOperationPreviewAuthorization",
+    "AppOperationPreviewChecks",
+    "AppOperationPreviewOperation",
+    "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppReleaseReview",
+    "AppResourceInventoryBinding",
+    "AppResourceInventoryItem",
+    "AppResourceInventoryResponse",
+    "AppResourceInventoryResponseKind",
+    "AppResourceInventoryResponseSchemaVersion",
     "AppResponse",
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
@@ -2709,6 +2772,9 @@ __all__ = (
     "AppResponseVisibility",
     "AppResponseWorkloadClass",
     "AppRestartResponse",
+    "AppScalingReceipt",
+    "AppScalingSettings",
+    "AppScalingSnapshot",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
@@ -2778,6 +2844,7 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BillingStatusResponseScheduledPlan",
     "BindingAdoptionCounts",
     "BindingApplicationAckTarget",
     "BindingApplicationAckTargetApplicationAck",
@@ -2955,6 +3022,7 @@ __all__ = (
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
     "CreateDeployTokenRequest",
+    "CreateDeployTokenRequestScopesItem",
     "CreateEdgeRuleListRequest",
     "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
@@ -3092,6 +3160,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",
@@ -3236,6 +3305,9 @@ __all__ = (
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableEdgeAttackModeRequest",
+    "EnvBatchRequest",
+    "EnvBatchRequestValues",
+    "EnvBatchResponse",
     "EnvDiffCell",
     "EnvDiffKind",
     "EnvDiffResponse",
@@ -3366,10 +3438,12 @@ __all__ = (
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
+    "GetAppOperationPreviewOperation",
     "GetAppPreAuthObservationsRange",
     "GetAppRequestAnalyticsGroupBy",
     "GetAppRequestAnalyticsTimeseriesGroupBy",
     "GetAppRequestAnalyticsTimeseriesMethod",
+    "GetAppResourceInventoryKind",
     "GetAppsMetricsRange",
     "GetAppWakeTimelinePagination",
     "GetBuildSbomResponse200",
@@ -4251,6 +4325,14 @@ __all__ = (
     "ProjectDeploymentReadiness",
     "ProjectDeploymentReadinessSchemaVersion",
     "ProjectDeploymentReadinessStatus",
+    "ProjectEnvironmentConfigChange",
+    "ProjectEnvironmentConfigChangeKind",
+    "ProjectEnvironmentConfigDiffResponse",
+    "ProjectEnvironmentConfigResponse",
+    "ProjectEnvironmentConfigResponseValues",
+    "ProjectEnvironmentSharedSecret",
+    "ProjectEnvironmentSharedSecretResponse",
+    "ProjectEnvironmentSharedSecretsResponse",
     "ProjectInitialSecrets",
     "ProjectInitialSecretsAdditionalProperty",
     "ProjectMigrationBaselineVerification",
@@ -4542,6 +4624,7 @@ __all__ = (
     "SecretRuntimeReloadObservationRuntimeState",
     "SecretRuntimeReloadObservationSignal",
     "SecretScanResult",
+    "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",
@@ -4586,6 +4669,7 @@ __all__ = (
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetPasswordRequest",
+    "SetProjectEnvironmentSharedSecretRequest",
     "SetServiceWakeAheadRequest",
     "SetWorkflowRecoveryPolicyRequest",
     "SeverityCounts",
@@ -4706,6 +4790,8 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateProjectEnvironmentConfigRequest",
+    "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",

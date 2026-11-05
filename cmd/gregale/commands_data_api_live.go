@@ -162,6 +162,8 @@ func readDataAPILive(ctx context.Context, client *api.Client, app api.AppRespons
 
 // enableDataAPILive turns on whatever readDataAPILive found missing.
 func enableDataAPILive(ctx context.Context, client *api.Client, app api.AppResponse, receipt *dataAPILiveReceipt) error {
+	// Live reads follow the access settings the runtime reports.
+	warnDataAPIRuntimeReports(ctx, client, app.Slug, "Live reads", "live clients are refused until it does")
 	if !receipt.LiveQueries {
 		// The issued live secret seals backend queries; Data API reads do not
 		// use it, so it is not stored. postgres live rotate --app issues one to keep.

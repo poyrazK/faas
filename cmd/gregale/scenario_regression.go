@@ -107,6 +107,18 @@ func finiteNonnegative(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
 }
 
+// Rate budgets are fractions. This tolerance is far below one sample at the
+// 100,000-request limit and absorbs rounding in rate arithmetic.
+const testRateTolerance = 1e-12
+
+func testRateAtMost(value, limit float64) bool {
+	return finiteNonnegative(value) && finiteNonnegative(limit) && value <= limit+testRateTolerance
+}
+
+func testRateAtLeast(value, limit float64) bool {
+	return finiteNonnegative(value) && finiteNonnegative(limit) && value+testRateTolerance >= limit
+}
+
 type testLoadWorkload struct {
 	Version int    `json:"version"`
 	SHA256  string `json:"sha256"`
@@ -198,7 +210,7 @@ func compareTestBaseline(baseline, current *testLoadEvidence, cfg testRegression
 		p95Limit := before.Latency.P95MS + before.Latency.P95MS*limits.P95Percent/100
 		add(step, "p95_ms", before.Latency.P95MS, after.Latency.P95MS, p95Limit, after.Latency.P95MS <= p95Limit)
 		errorLimit := math.Min(1, before.ErrorRate+limits.ErrorRateIncrease)
-		add(step, "error_rate", before.ErrorRate, after.ErrorRate, errorLimit, after.ErrorRate <= errorLimit)
+		add(step, "error_rate", before.ErrorRate, after.ErrorRate, errorLimit, testRateAtMost(after.ErrorRate, errorLimit))
 	}
 	compare("", baseline.testLoadMetrics, current.testLoadMetrics, cfg.testRegressionLimits)
 	for i, step := range current.Steps {
@@ -252,11 +264,11 @@ func compareTestStagedLoadRelative(baselineStep string, baseline, current *testL
 		}
 		if errorRateIncrease != nil {
 			limit := math.Min(1, before.ErrorRate+*errorRateIncrease)
-			add(step, baselineHTTPStep, currentHTTPStep, "error_rate", "<=", before.ErrorRate, after.ErrorRate, limit, after.ErrorRate <= limit)
+			add(step, baselineHTTPStep, currentHTTPStep, "error_rate", "<=", before.ErrorRate, after.ErrorRate, limit, testRateAtMost(after.ErrorRate, limit))
 		}
 		if successRateDrop != nil {
 			limit := math.Max(0, before.SuccessRate-*successRateDrop)
-			add(step, baselineHTTPStep, currentHTTPStep, "success_rate", ">=", before.SuccessRate, after.SuccessRate, limit, after.SuccessRate >= limit)
+			add(step, baselineHTTPStep, currentHTTPStep, "success_rate", ">=", before.SuccessRate, after.SuccessRate, limit, testRateAtLeast(after.SuccessRate, limit))
 		}
 	}
 	compareMetrics("", "", "", baseline.testLoadMetrics, current.testLoadMetrics, spec.MinSamples,

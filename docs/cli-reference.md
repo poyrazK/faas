@@ -3429,12 +3429,50 @@ Update repository or production branch
 
 Preview or delete a project
 
-`gregale project delete [--dry-run] [--yes] <slug>`
+`gregale project delete [--dry-run] [--yes] [--detach-services] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--dry-run` | preview affected state |  |
 | `--yes` | confirm project deletion |  |
+| `--detach-services` | delete even though its services call each other by name |  |
+
+### project rollback
+
+Roll every service back to its previous deployment, dependencies first
+
+`gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the rollback order |  |
+| `--yes` | roll every service back |  |
+| `--acknowledge-releases` | accept rolling back across release commands |  |
+| `--timeout <DURATION>` | wait per service (default 10m) |  |
+
+Stops at the first service that fails and names the rest.
+
+### project preview-secrets
+
+Set or remove a pull request preview value on every service
+
+Values are write-only; previews receive them at their next deploy.
+
+#### project preview-secrets set
+
+Set KEY=VALUE pairs in every service&#39;s pr-preview scope
+
+`gregale project preview-secrets set [--from-stdin] <project> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
+
+#### project preview-secrets unset
+
+Remove keys from every service&#39;s pr-preview scope
+
+`gregale project preview-secrets unset <project> <KEY...>`
 
 
 ## build
@@ -4490,10 +4528,12 @@ List an app&#39;s deploy tokens
 
 Mint a deploy token (shown once)
 
-`gregale app deploy-token create --app <SLUG> [--label <LABEL>] [--expires-at <RFC3339>]`
+`gregale app deploy-token create [--agent] [--scopes <SCOPES>] --app <SLUG> [--label <LABEL>] [--expires-at <RFC3339>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--agent` | mint an app-bound headless MCP credential |  |
+| `--scopes <SCOPES>` | comma-separated app-agent scopes (requires --agent) |  |
 | `--app <SLUG>` | app the token deploys | required |
 | `--label <LABEL>` | label shown in the list, for example the CI system |  |
 | `--expires-at <RFC3339>` | expiry as an RFC3339 time (default 90 days) |  |
@@ -4778,6 +4818,33 @@ Examples:
 gregale app scale my-api --interactive
 gregale app scale my-api --plan --ram 512 --out scale-change.json
 gregale app scale my-api --apply scale-change.json --confirm
+```
+
+### app scaling
+
+Read, guard or recover scaling configuration; prints JSON
+
+`gregale app scaling [--env <ENV>] [--receipt <UUID>] [--request-id <UUID>] [--expected-revision <REVISION>] [--expected-app-id <UUID>] [--expected-environment-id <UUID>] [--ram <MB>] [--cpu-millicores <MILLICORES>] [--max-concurrency <COUNT>] [--min <COUNT>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <ENV>` | named project environment (also --environment) |  |
+| `--receipt <UUID>` | recover a request receipt without writing |  |
+| `--request-id <UUID>` | stable UUID reused with the original write body |  |
+| `--expected-revision <REVISION>` | reviewed scaling revision |  |
+| `--expected-app-id <UUID>` | immutable app UUID required for writes |  |
+| `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
+| `--ram <MB>` | RAM in MB |  |
+| `--cpu-millicores <MILLICORES>` | CPU allowance |  |
+| `--max-concurrency <COUNT>` | most instances the app runs at once |  |
+| `--min <COUNT>` | minimum warm instance count, including zero |  |
+
+Examples:
+
+```sh
+gregale app scaling my-api
+gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512
+gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b
 ```
 
 ### app costs
@@ -8317,9 +8384,9 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version with a retry identity
+Delete current data or an owned version; retry with the same UUID
 
-`gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null]`
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 
 #### bucket deletion get
 
@@ -9189,10 +9256,11 @@ Creates the change event table, its trigger and the enable and disable helpers.
 
 Publish recorded changes as events from the Data API app&#39;s source
 
-`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
+`gregale data-api hooks enable [--drain-every <DURATION|off>] [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--drain-every <DURATION|off>` | wake a parked API this often to publish waiting changes (1m-30m dividing an hour, 1h-12h dividing a day, or 24h) |  |
 | `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
@@ -9200,11 +9268,14 @@ Examples:
 
 ```sh
 gregale data-api hooks enable shop-data
+gregale data-api hooks enable shop-data --drain-every 5m
 ```
+
+--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan&#39;s cron limits and each run is app time.
 
 #### data-api hooks status
 
-Show whether change hooks are on and their event source
+Show change hooks, their drain schedule and delivery
 
 `gregale data-api hooks status [--env <SCOPE>] <name>`
 
@@ -9214,7 +9285,7 @@ Show whether change hooks are on and their event source
 
 #### data-api hooks disable
 
-Stop publishing; recorded changes stay in the table
+Stop publishing and remove the drain schedule
 
 `gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
 
@@ -9445,6 +9516,8 @@ gregale data-api delete shop-data --yes
 ```
 
 Deleting the app alone is refused while its bindings are live.
+
+An API with storage buckets is refused before anything is revoked: delete its buckets first.
 
 ### data-api configure
 
@@ -15693,7 +15766,7 @@ List recent request telemetry
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15712,7 +15785,7 @@ Export metadata-only request telemetry
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--format <FORMAT>` | export format (default ndjson) | one of `ndjson` · `csv` |
 | `--limit <N>` | maximum exported rows (1..10000) |  |
 | `--output <PATH>` | destination file; - writes stdout |  |
@@ -15726,7 +15799,7 @@ Watch new or changed telemetry rows
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15775,7 +15848,7 @@ Inspect one retained request, or the latest one
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15963,7 +16036,7 @@ Per-route deployment-vs-deployment compare
 |---|---|---|
 | `--source <ID>` | source deployment ID | required |
 | `--mirror <ID>` | comparison deployment ID | required |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--since <DURATION>` | lookback window |  |
 | `--until <RFC3339>` | end of comparison window (RFC3339) |  |
 
@@ -16649,7 +16722,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
 | `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
-| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
+| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision, operate or all (default core) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
@@ -17405,7 +17478,7 @@ Pin the candidate catalog, verify MCP discovery and promote
 | `--access-audit-algorithms <LIST>` | reviewed gateway algorithms for --access-audit (default RS256,ES256) |  |
 | `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
-| `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
+| `--timeout <SECONDS>` | deployment and verification wait timeout in seconds (default 1200) |  |
 
 Examples:
 
@@ -18398,62 +18471,58 @@ Manage your account, MFA and data exports
 
 Set up and manage multi-factor authentication
 
+MFA actions open a signed-in browser form. Enter codes and passwords there. No CLI API key is needed; --json returns the URL and requires_browser. Legacy code, password and QR-output arguments are accepted for compatibility but are not submitted or exported.
+
 #### account mfa enroll
 
-Begin TOTP enrolment
+Open authenticator setup in the browser
 
 `gregale account mfa enroll [--qr-out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--qr-out <PATH>` | write the QR PNG to this path |  |
+| `--qr-out <PATH>` | legacy option; the browser displays the QR code |  |
 
 #### account mfa confirm
 
-Confirm an enrolment code
+Open enrollment confirmation in the browser
 
 `gregale account mfa confirm [--code <CODE>] [<6-digit-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
-
-Pass the code as an argument or with --code.
+| `--code <CODE>` | legacy option; enter the code in the browser |  |
 
 #### account mfa verify
 
-Verify a TOTP code for step-up
+Open authenticator verification in the browser
 
 `gregale account mfa verify [--code <CODE>] [<6-digit-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
-
-Pass the code as an argument or with --code.
+| `--code <CODE>` | legacy option; enter the code in the browser |  |
 
 #### account mfa recover
 
-Use a recovery code
+Open recovery in the browser
 
 `gregale account mfa recover [--code <CODE>] [<recovery-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--code <CODE>` | recovery code (alternative to positional code) |  |
-
-Pass the code as an argument or with --code.
+| `--code <CODE>` | legacy option; enter the code in the browser |  |
 
 #### account mfa disable
 
-Disable MFA
+Open MFA removal in the browser
 
 `gregale account mfa disable [--password <PASSWORD>] [--recovery-code <CODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--password <PASSWORD>` | account password (prompts when omitted) |  |
-| `--recovery-code <CODE>` | single-use recovery code (alternative to password) |  |
+| `--password <PASSWORD>` | legacy option; enter the password in the browser |  |
+| `--recovery-code <CODE>` | legacy option; enter the recovery code in the browser |  |
 
 ### account dpa
 
@@ -19064,13 +19133,14 @@ List org API keys
 
 Create an org API key; the plaintext is shown once
 
-`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>]`
+`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--org <SLUG>` | organization slug | required |
 | `--label <TEXT>` | key label | required |
 | `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
 
 #### org keys info
 
@@ -19156,16 +19226,18 @@ List API keys
 
 Mint a new API key
 
-`gregale key create [--scopes <SCOPE,...>] <label>`
+`gregale key create [--scopes <SCOPE,...>] [--projects <SLUG,...>] <label>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scopes <SCOPE,...>` | comma-separated API key scopes; omit for full admin access |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
 
 Examples:
 
 ```sh
 gregale key create agent-runner --scopes runs:write
+gregale key create ci-agent --scopes agent,deploy:write --projects api,web
 ```
 
 ### key delete

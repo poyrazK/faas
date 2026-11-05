@@ -52,12 +52,25 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" {
+		app, err := s.store.AppByID(r.Context(), p.Key.AppID)
+		if err != nil || app.AccountID != acct.ID {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "app-bound principal is no longer available"))
+			return
+		}
+		limits := s.accountResponse(r.Context(), acct, r).Limits
+		writeJSON(w, http.StatusOK, api.AccountResponse{ID: acct.ID, Plan: string(acct.Plan), Status: string(acct.Status), Limits: limits, KeyScopes: p.Key.Scopes, KeyApp: &api.AppAgentBinding{ID: app.ID, Slug: app.Slug}})
+		return
+	}
 	resp := s.accountResponse(r.Context(), acct, r)
 	// A key learns its own scopes; the hosted MCP server lists an agent
 	// key's tools from them (ADR-20261029085359). Sessions have none.
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		resp.KeyScopes = p.Key.Scopes
 		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
+		if p.Key.ProjectLimited {
+			resp.KeyProjects = s.projectSlugsByID(r.Context(), p.Key.ProjectIDs)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -889,6 +902,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
 		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
 		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+		if s.releasePhaseOff && len(dep.ReleaseCommand) > 0 {
+			api.WriteProblem(w, releasePhaseOffProblem())
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return
@@ -1026,7 +1043,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 // defaultCustomDomain is the app's usable default custom domain, or "".
 func (s *server) defaultCustomDomain(ctx context.Context, appID string) string {
 	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
-		if domain, err := resolver.DefaultCustomDomain(ctx, appID); err == nil {
+		if domain, err := resolver.DefaultCustomDomain(s.defaultDomainContext(ctx), appID); err == nil {
 			return domain
 		}
 	}
@@ -1045,7 +1062,7 @@ func (s *server) defaultCustomDomains(ctx context.Context, apps []state.App) (ma
 	for _, a := range apps {
 		ids = append(ids, a.ID)
 	}
-	domains, err := reader.DefaultCustomDomains(ctx, ids)
+	domains, err := reader.DefaultCustomDomains(s.defaultDomainContext(ctx), ids)
 	if err != nil {
 		s.log.Warn("apid: default custom domains lookup", "apps", len(ids), "err", err)
 		return nil, false

@@ -2,6 +2,32 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 
 const KEY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+// Legacy envelopes do not identify their key. Multiple retained native keys can
+// share that format, so authenticating one sample cannot prove queue readability.
+export async function authenticateRetainedMcpTaskPayloads(client, namespace, cipher) {
+  // All callers already hold a transaction. A cursor bounds memory even when
+  // terminal Tasks retain large results for the full TTL.
+  await client.query(`DECLARE gregale_mcp_payload_preflight NO SCROLL CURSOR FOR
+    SELECT task_id::text, encrypted.field, encrypted.payload
+      FROM gregale_mcp_tasks
+      CROSS JOIN LATERAL (VALUES ('arguments', arguments_encrypted), ('result', result_encrypted),
+        ('error', error_encrypted), ('input-state', input_state_encrypted)) AS encrypted(field, payload)
+     WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
+     ORDER BY task_id, encrypted.field
+  `, [namespace]);
+  try {
+    for (;;) {
+      const batch = await client.query('FETCH FORWARD 32 FROM gregale_mcp_payload_preflight');
+      for (const row of batch.rows) {
+        cipher.decrypt(row.payload, `gregale-mcp-task:v1:${namespace}:${row.task_id}:${row.field}`);
+      }
+      if (batch.rows.length < 32) break;
+    }
+  } finally {
+    await client.query('CLOSE gregale_mcp_payload_preflight');
+  }
+}
+
 export function parseMcpTaskEncryptionKeys(value) {
   let config;
   try { config = typeof value === 'string' ? JSON.parse(value) : value; }
@@ -21,7 +47,7 @@ export function parseMcpTaskEncryptionKeys(value) {
   return { activeKeyId: config.activeKeyId, keys: Object.fromEntries(entries) };
 }
 
-export function createMcpTaskPayloadCipher(ownerKey, encryptionKeys) {
+export function createMcpTaskPayloadCipher(ownerKey, encryptionKeys, nativeOwnerKeys = [{ id: 'default', key: ownerKey }]) {
   if (typeof ownerKey !== 'string' || Buffer.byteLength(ownerKey) < 32) throw new Error('MCP task owner key must contain at least 32 bytes');
   const keys = new Map([['legacy', createHmac('sha256', ownerKey).update('gregale-mcp-task-payload:v1').digest()]]);
   let activeKeyId = 'legacy';
@@ -32,8 +58,19 @@ export function createMcpTaskPayloadCipher(ownerKey, encryptionKeys) {
       keys.set(id, createHmac('sha256', secret).update(`gregale-mcp-task-payload:v2:${id}`).digest());
     }
   }
+  // Go/Python's native v2 envelope carries the key ID in its header but uses
+  // the v1 KDF and base AAD. Keep that authenticated format readable during
+  // runtime handoffs; Node's explicit ring retains its existing wire format.
+  const nativeKeys = new Map();
+  for (const { id, key } of nativeOwnerKeys) {
+    if (typeof id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(id) || nativeKeys.has(id) ||
+        typeof key !== 'string' || Buffer.byteLength(key) < 32) throw new Error('Invalid MCP task native owner key configuration');
+    nativeKeys.set(id, createHmac('sha256', key).update('gregale-mcp-task-payload:v1').digest());
+  }
   const fingerprints = new Map([['@owner', createHmac('sha256', ownerKey).update('gregale-mcp-task-identity:v1').digest()]]);
   for (const [id, key] of keys) fingerprints.set(id, createHash('sha256').update(key).digest());
+
+  for (const [id, key] of nativeKeys) fingerprints.set(`@native:${id}`, createHash('sha256').update(key).digest());
 
   function envelope(value) {
     if (!Buffer.isBuffer(value) || value.length < 30) throw new Error('Invalid encrypted MCP task payload');
@@ -41,7 +78,7 @@ export function createMcpTaskPayloadCipher(ownerKey, encryptionKeys) {
     const length = value[1];
     if (value[0] !== 2 || length < 1 || length > 64 || value.length < 31 + length) throw new Error('Invalid encrypted MCP task payload');
     const id = value.subarray(2, 2 + length).toString('ascii');
-    if (!KEY_ID.test(id) || !Buffer.from(id, 'ascii').equals(value.subarray(2, 2 + length))) throw new Error('Invalid encrypted MCP task payload');
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(id) || !Buffer.from(id, 'ascii').equals(value.subarray(2, 2 + length))) throw new Error('Invalid encrypted MCP task payload');
     return { id, offset: 2 + length, version: 2 };
   }
 
@@ -58,12 +95,20 @@ export function createMcpTaskPayloadCipher(ownerKey, encryptionKeys) {
     },
     decrypt(value, aad) {
       const { id, offset, version } = envelope(value);
-      const key = keys.get(id);
-      if (!key) throw new Error('MCP task encryption key is unavailable');
-      const decipher = createDecipheriv('aes-256-gcm', key, value.subarray(offset, offset + 12));
-      decipher.setAAD(Buffer.from(version === 1 ? aad : `${aad}:key:${id}`));
-      decipher.setAuthTag(value.subarray(offset + 12, offset + 28));
-      return Buffer.concat([decipher.update(value.subarray(offset + 28)), decipher.final()]);
+      const candidates = [];
+      if (keys.has(id)) candidates.push({ key: keys.get(id), aad: version === 1 ? aad : `${aad}:key:${id}` });
+      if (version === 2 && nativeKeys.has(id)) candidates.push({ key: nativeKeys.get(id), aad });
+      if (version === 1) for (const key of nativeKeys.values()) candidates.push({ key, aad });
+      if (!candidates.length) throw new Error('MCP task encryption key is unavailable');
+      for (const candidate of candidates) {
+        try {
+          const decipher = createDecipheriv('aes-256-gcm', candidate.key, value.subarray(offset, offset + 12));
+          decipher.setAAD(Buffer.from(candidate.aad));
+          decipher.setAuthTag(value.subarray(offset + 12, offset + 28));
+          return Buffer.concat([decipher.update(value.subarray(offset + 28)), decipher.final()]);
+        } catch { /* A different retained format/key may authenticate this payload. */ }
+      }
+      throw new Error('MCP task payload authentication failed');
     },
   };
 }

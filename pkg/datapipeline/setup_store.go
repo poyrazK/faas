@@ -16,6 +16,13 @@ func setupRow(r sqlc.DataPipelineSetup) (Setup, error) {
 	if json.Unmarshal(r.Request, &result.Request) != nil || json.Unmarshal(r.MirrorPlan, &result.MirrorPlan) != nil || json.Unmarshal(r.DataApiPlan, &result.DataAPIPlan) != nil {
 		return Setup{}, ErrUnavailable
 	}
+	result.Request = normalizeSetupIDs(result.Request)
+	// Earlier workers saved an invalid generated name for digit-led slugs.
+	// Such a name could never provision a database. Keep its reserved database
+	// ID and recognize only that exact legacy derivation when retrying it.
+	if result.Request.DatabaseID == "" && len(result.Request.Name) > 0 && len(result.ID) >= 8 && result.MirrorName == result.Request.Name+"-mirror-"+result.ID[:8] {
+		result.MirrorName = setupMirrorName(result.Request.Name, result.ID)
+	}
 	return result, nil
 }
 func (s *PostgresStore) SetupByName(ctx context.Context, account, name string) (Setup, error) {
@@ -51,6 +58,7 @@ func (s *PostgresStore) Setups(ctx context.Context, account string) ([]Setup, er
 	return items, nil
 }
 func (s *PostgresStore) EnqueueSetup(ctx context.Context, job Setup) (Setup, error) {
+	job.Request = normalizeSetupIDs(job.Request)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Setup{}, storeError(err)
@@ -130,11 +138,40 @@ func (s *PostgresStore) ControlSetup(ctx context.Context, account, id string, re
 	} else if action != "retry" {
 		return Setup{}, ErrInvalid
 	}
-	r, err := s.q.PipelineSetupControl(ctx, s.pool, sqlc.PipelineSetupControlParams{AccountID: account, ID: id, Revision: revision, State: state})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Setup{}, storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = s.q.PipelineAccountLock(ctx, tx, account); err != nil {
+		return Setup{}, storeError(err)
+	}
+	old, err := s.q.PipelineSetupLock(ctx, tx, sqlc.PipelineSetupLockParams{AccountID: account, ID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Setup{}, ErrConflict
 	}
 	if err != nil {
+		return Setup{}, storeError(err)
+	}
+	r, err := s.q.PipelineSetupControl(ctx, tx, sqlc.PipelineSetupControlParams{AccountID: account, ID: id, Revision: revision, State: state})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Setup{}, ErrConflict
+	}
+	if err != nil {
+		return Setup{}, storeError(err)
+	}
+	if action == "retry" && (old.Phase == "checking_source" || old.Phase == "checking_mirror" || old.Phase == "provisioning") &&
+		(old.Reason == "connection_check_blocked" || old.Reason == "capacity_needs_qualification" || old.Reason == "insufficient_capacity" || old.Reason == "connection_check_required") {
+		database := ""
+		if old.Phase == "checking_mirror" {
+			database = uid(old.DatabaseID)
+		}
+		capacityRetry := old.Reason == "capacity_needs_qualification" || old.Reason == "insufficient_capacity"
+		if err = s.q.PipelineSetupInvalidateFailedCheck(ctx, tx, sqlc.PipelineSetupInvalidateFailedCheckParams{AccountID: account, ConnectionID: uid(old.SourceConnectionID), DatabaseID: database, CapacityRetry: capacityRetry}); err != nil {
+			return Setup{}, storeError(err)
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return Setup{}, storeError(err)
 	}
 	return setupRow(r)

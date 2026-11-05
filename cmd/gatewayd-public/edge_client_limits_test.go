@@ -26,21 +26,27 @@ import (
 
 func TestEdgeClientLimitsFromEnv(t *testing.T) {
 	for _, tc := range []struct {
-		name, value string
-		mode        publicEdgeMode
-		wantOn      bool
-		wantErr     string
+		name, value, proxies string
+		mode                 publicEdgeMode
+		wantOn               bool
+		wantProxies          int
+		wantErr              string
 	}{
 		{name: "unset", mode: edgeModeCompute},
 		{name: "off", value: "0", mode: edgeModeCompute},
 		{name: "on", value: "1", mode: edgeModeCompute, wantOn: true},
 		{name: "on a control-plane edge", value: "1", mode: edgeModeControlPlane, wantErr: "for a compute edge"},
 		{name: "not a switch value", value: "yes", mode: edgeModeCompute, wantErr: edgeClientLimitsEnv},
+		{name: "on with Cloudflare ranges", value: "1", proxies: "173.245.48.0/20, 2400:cb00::/32", mode: edgeModeCompute, wantOn: true, wantProxies: 2},
+		{name: "a proxy entry is no prefix", value: "1", proxies: "173.245.48.1/20", mode: edgeModeCompute, wantErr: edgeProxyCIDRsEnv},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l, err := edgeClientLimitsFromEnv(tc.mode, func(k string) string {
-				if k == edgeClientLimitsEnv {
+				switch k {
+				case edgeClientLimitsEnv:
 					return tc.value
+				case edgeProxyCIDRsEnv:
+					return tc.proxies
 				}
 				return ""
 			})
@@ -53,8 +59,8 @@ func TestEdgeClientLimitsFromEnv(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if l.on != tc.wantOn {
-				t.Fatalf("on = %v, want %v", l.on, tc.wantOn)
+			if l.on != tc.wantOn || len(l.proxies) != tc.wantProxies {
+				t.Fatalf("on = %v with %d proxies, want %v with %d", l.on, len(l.proxies), tc.wantOn, tc.wantProxies)
 			}
 		})
 	}
@@ -191,6 +197,56 @@ func TestEdgeClientLimitsCapForwardsAndExemptGRPC(t *testing.T) {
 		req.Header.Set("Content-Type", contentType)
 		if got := isGRPC(req); got != want {
 			t.Errorf("isGRPC(%q) = %v, want %v", contentType, got, want)
+		}
+	}
+}
+
+// The per-host ceiling is off with the limits, keys on the hostname without
+// port, case or trailing dot, and sits above every plan's per-app limit so
+// the gateway's plan limit answers an app first (ADR-20261103163954 §4).
+func TestEdgeClientLimitsHostCeiling(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	refused := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "refused"}, []string{"reason"})
+	flood := func(h http.Handler) int {
+		for i := range 2 * api.EdgeHostRequestsBurst {
+			r := httptest.NewRequest(http.MethodGet, "https://shop.gregale.dev/", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+			if rec.Code != http.StatusNoContent {
+				return i
+			}
+		}
+		return -1
+	}
+	if got := flood(edgeClientLimits{}.hosts(next)); got != -1 {
+		t.Fatalf("with the limits off request %d to one host was refused", got)
+	}
+	// The bucket refills on the real clock while the loop runs, so the first
+	// refusal lands at or after the burst.
+	if got := flood(edgeClientLimits{on: true, refused: refused}.hosts(next)); got < api.EdgeHostRequestsBurst {
+		t.Fatalf("with the limits on the first refusal was request %d, want one at or after %d", got, api.EdgeHostRequestsBurst)
+	}
+	for in, want := range map[string]string{
+		"Shop.Gregale.DEV":     "shop.gregale.dev",
+		"shop.gregale.dev:443": "shop.gregale.dev",
+		"shop.gregale.dev.":    "shop.gregale.dev",
+		"[2001:db8::1]:443":    "2001:db8::1",
+		"":                     "",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "https://x/", nil)
+		r.Host = in
+		if got, ok := edgeRequestHost(r); got != want || ok != (want != "") {
+			t.Errorf("edgeRequestHost(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	for _, plan := range api.Plans {
+		l, ok := api.LimitsFor(plan)
+		if !ok {
+			t.Fatalf("no limits for plan %s", plan)
+		}
+		if api.EdgeHostRequestsPerSecond < 2*l.RateLimitRPS || api.EdgeHostRequestsBurst < 2*l.RateLimitBurst {
+			t.Fatalf("host ceiling %d/s burst %d is under twice plan %s's per-app %d/s burst %d",
+				api.EdgeHostRequestsPerSecond, api.EdgeHostRequestsBurst, plan, l.RateLimitRPS, l.RateLimitBurst)
 		}
 	}
 }

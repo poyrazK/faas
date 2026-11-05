@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -316,6 +317,14 @@ func (e *Engine) privateNetworkProjection(ctx context.Context, app state.App) pr
 	if network.Status != "" && network.Status != api.PrivateNetworkStatusReady {
 		return privateNetworkProjection{}
 	}
+	allowed, err := privatenetwork.MergePolicyCIDRs(network.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
+	if err != nil {
+		if e.log != nil {
+			e.log.Warn("sched: private network policy invalid; keeping attachment disconnected", "app_id", app.ID, "err", err)
+		}
+		return privateNetworkProjection{}
+	}
+	projection.AllowedCIDRs = prefixesToCIDRStrings(allowed)
 	address, err := privateStore.AllocatePrivateNetworkAddress(ctx, app.AccountID, attachment.NetworkID, "app", app.ID)
 	if err != nil {
 		if e.log != nil {
@@ -700,6 +709,13 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
+	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
+	// apps whose guest vCPU count follows their CPU quota
+	// (ADR-20261101160231, ADR-20261101215228).
+	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
+	// cpuShape holds the runtime-config values that shape a listed app's CPU
+	// (ADR-20261101215228); nil is the compiled shape.
+	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).
@@ -722,17 +738,18 @@ type Engine struct {
 	// operation and receives the same outcome.
 	restartMu        sync.Mutex
 	restartInFlight  map[string]*restartCall
-	restartCompleted map[string]string
+	restartCompleted map[string]completedRestart
+	restartPrunedAt  time.Time
 	// serviceAppMu serialises service replica allocation and worker singleton
 	// convergence across all live deployments for an app. It is distinct from
 	// appMu because lifecycle reconciliation invokes admission, which acquires
 	// appMu itself, and from serviceMu, which protects one deployment's state
 	// transition.
-	serviceAppMu map[string]*sync.Mutex
+	serviceAppMu keyedLocks
 	// serviceMu serialises replica reconciliation per deployment. It is
 	// separate from appMu because reconciliation invokes admission, which
 	// must acquire appMu itself.
-	serviceMu map[string]*sync.Mutex
+	serviceMu keyedLocks
 	// wakeCoord coordinates demand within one selected deployment (ADR-098/375).
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
@@ -860,6 +877,12 @@ type Engine struct {
 	// usageCache is the short TTL cache for the bulk store fallback used when
 	// a node has no fresh vmmd capacity report.
 	usageCache *NodeUsageCache
+	// cpuUsageCache and vcpuUsageCache bound placement's booked CPU and vCPU
+	// reads the same way. Each wake ran both aggregates over the candidate
+	// nodes' live instances (ADR 20261104143005); the local ledger's own
+	// bookings are still read fresh and win when higher.
+	cpuUsageCache  *NodeUsageCache
+	vcpuUsageCache *NodeUsageCache
 
 	// now is the clock source for the chooser's freshness check
 	// (applyLiveCapacityMB). Defaults to time.Now inside NewEngine.
@@ -1050,9 +1073,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		appMu:                    map[string]*appLock{},
 		restorePlacementInFlight: map[string]int{},
 		restartInFlight:          map[string]*restartCall{},
-		restartCompleted:         map[string]string{},
-		serviceAppMu:             map[string]*sync.Mutex{},
-		serviceMu:                map[string]*sync.Mutex{},
+		restartCompleted:         map[string]completedRestart{},
 		wakeCoord:                newWakeCoord(),
 		breaker:                  newNodeWakeBreaker(),
 		warmBroadcaster:          newWarmHintBroadcaster(),
@@ -1062,6 +1083,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		cpuUsageCache:            NewNodeUsageCache(),
+		vcpuUsageCache:           NewNodeUsageCache(),
 		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
 		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
@@ -2179,9 +2202,9 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		e.restartInFlight = make(map[string]*restartCall)
 	}
 	if e.restartCompleted == nil {
-		e.restartCompleted = make(map[string]string)
+		e.restartCompleted = make(map[string]completedRestart)
 	}
-	if wakeID != "" && e.restartCompleted[appID] == wakeID {
+	if wakeID != "" && e.restartCompleted[appID].wakeID == wakeID {
 		e.restartMu.Unlock()
 		return CoordOutcome{}, nil
 	}
@@ -2201,7 +2224,9 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		e.restartMu.Lock()
 		call.out, call.err = out, err
 		if err == nil && out.Instance != nil && wakeID != "" {
-			e.restartCompleted[appID] = wakeID
+			now := time.Now()
+			e.restartCompleted[appID] = completedRestart{wakeID: wakeID, at: now}
+			e.pruneCompletedRestartsLocked(now)
 		}
 		close(call.done)
 		delete(e.restartInFlight, appID)
@@ -3621,7 +3646,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", logsanitize.Field(appID), "err", rerr)
 		}
 	}
-	configuredCPU := effectiveAppCPUMillicores(app)
+	configuredCPU := e.appCPUBookingMillicores(app, limits)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
@@ -3630,8 +3655,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		AppID:                      appID,
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
-		VCPU:                       limits.VCPU,
+		VCPU:                       e.guestVCPUs(app, limits),
 		CPUMillicores:              startupCPU,
+		BookedCPUMillicores:        e.appCPUBookingStamp(app, limits),
 		MaxConcurrency:             app.MaxConcurrency,
 		PreferredNodeID:            warmHint,
 		PreferredNodeIDs:           snapshotNodes,
@@ -3778,7 +3804,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
-		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -3997,7 +4023,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
+		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
@@ -4044,7 +4070,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// their old netns — the app_changed pg_notify path
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
-		StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
 		// resolved from the explicit override or persisted source
 		// profile. The host-facing readiness port stays on 8080;
@@ -5058,6 +5085,14 @@ func (e *Engine) fallbackNodeUsage(ctx context.Context, nodes []state.ComputeNod
 	return used
 }
 
+// clockNow is the engine's clock: e.now when a test set it, else time.Now.
+func (e *Engine) clockNow() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
+}
+
 // nodeUsageForNodes merges fresh vmmd reports with the one-batch store
 // fallback. All callers that make a fleet-wide placement decision use this
 // helper so a new placement feature cannot accidentally reintroduce an N+1
@@ -5109,10 +5144,16 @@ func (e *Engine) nodeCPUUsageForNodes(ctx context.Context, nodes []state.Compute
 	if !ok || len(ids) == 0 {
 		return used
 	}
-	bulk, err := batcher.ComputeNodeUsedCPUMillicoresByNode(ctx, ids)
-	if err != nil {
-		e.log.Warn("sched: placement: bulk compute node used_cpu_millicores read failed", "err", err)
-		return used
+	now := e.clockNow()
+	bulk, cached := e.cpuUsageCache.Lookup(ids, now)
+	if !cached {
+		var err error
+		bulk, err = batcher.ComputeNodeUsedCPUMillicoresByNode(ctx, ids)
+		if err != nil {
+			e.log.Warn("sched: placement: bulk compute node used_cpu_millicores read failed", "err", err)
+			return used
+		}
+		e.cpuUsageCache.Replace(ids, bulk, now)
 	}
 	for _, id := range ids {
 		if bulk[id] > used[id] {
@@ -5135,11 +5176,16 @@ func (e *Engine) nodeVCPUUsageForNodes(ctx context.Context, nodes []state.Comput
 	for _, node := range nodes {
 		ids = append(ids, node.ID)
 	}
+	now := e.clockNow()
+	if cached, ok := e.vcpuUsageCache.Lookup(ids, now); ok {
+		return cached
+	}
 	used, err := batcher.ComputeNodeUsedVCPUByNode(ctx, ids)
 	if err != nil {
 		e.log.Warn("sched: placement: bulk compute node used_vcpu read failed", "err", err)
 		return nil
 	}
+	e.vcpuUsageCache.Replace(ids, used, now)
 	return used
 }
 
@@ -5504,8 +5550,8 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 		placement, err = e.choosePlacementLocked(ctx, Request{
 			AppID:          appID,
 			RAMMB:          app.RAMMB,
-			VCPU:           limits.VCPU,
-			CPUMillicores:  effectiveAppCPUMillicores(app),
+			VCPU:           e.guestVCPUs(app, limits),
+			CPUMillicores:  e.appCPUBookingMillicores(app, limits),
 			MaxConcurrency: app.MaxConcurrency,
 		})
 		if err != nil {
@@ -6081,9 +6127,9 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		WakeID:           ins.WakeID,
 		BaseKey:          pinnedBase,
 		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:        int32(limits.VCPU),
+		VCPUCount:        int32(e.guestVCPUs(app, limits)),
 		MemSizeMiB:       int32(app.RAMMB),
-		CPUMillicores:    int32(effectiveAppCPUMillicores(app)),
+		CPUMillicores:    int32(e.appCPUMillicores(app, limits)),
 		EgressMbit:       int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
@@ -6121,7 +6167,8 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
-		StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
 		Port: deploymentRuntimePort(dep),
@@ -6803,15 +6850,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// ceiling and there's no other active node.
 	// Keep the initial snapshot near the app's assigned node when it fits.
 	// The chooser still enforces liveness and CPU/RAM admission.
-	primeConfiguredCPU := effectiveAppCPUMillicores(app)
+	primeConfiguredCPU := e.appCPUBookingMillicores(app, limits)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
 		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
 	}
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
-		PreferredNodeID: app.NodeID,
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
+		BookedCPUMillicores: e.appCPUBookingStamp(app, limits),
+		PreferredNodeID:     app.NodeID,
 	}
 	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
 	// instance is being created for the first time as part of a fresh
@@ -6874,7 +6922,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
 		NodeCeilingMB:       placement.CeilingMB,
@@ -8266,7 +8314,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
-				RAMMB:                 ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
+				RAMMB:                 ins.RAMMB, VCPU: e.guestVCPUs(policy.app, limits), CPUMillicores: e.appCPUBookingMillicores(policy.app, limits), MaxConcurrency: policy.app.MaxConcurrency,
 				// Recovery must account for all already-resident serving rows,
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already

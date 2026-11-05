@@ -150,6 +150,10 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 		req.Header.Set("Mcp-Method", method)
 		if name, ok := p["name"].(string); ok {
 			req.Header.Set("Mcp-Name", encodeHeader(name))
+		} else if method == "resources/read" {
+			if uri, ok := p["uri"].(string); ok {
+				req.Header.Set("Mcp-Name", encodeHeader(uri))
+			}
 		} else if strings.HasPrefix(method, "tasks/") {
 			if taskID, ok := p["taskId"].(string); ok {
 				req.Header.Set("Mcp-Name", encodeHeader(taskID))

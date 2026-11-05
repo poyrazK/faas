@@ -89,7 +89,7 @@ func TestManagedServiceInventoryAPIUsesSelectedFrozenGraph(t *testing.T) {
 	if _, err := dep.ScopedWorkloadRuntime(); err != nil {
 		t.Fatalf("invalid managed deployment fixture: %v", err)
 	}
-	fake := &managedInventoryAPIStore{MemStore: *e.Store(), dep: dep, route: state.EnvironmentGitOpsServiceBindingRoute{AccountID: caller.AccountID, CallerAppID: caller.ID, CallerDeploymentID: dep.ID, TargetAppID: target.ID, TargetDeploymentID: uuid.NewString(), ReleaseSetID: uuid.NewString(), RequireHTTPS: true}}
+	fake := &managedInventoryAPIStore{MemStore: *e.Store(), dep: dep, route: state.EnvironmentGitOpsServiceBindingRoute{AccountID: caller.AccountID, CallerAppID: caller.ID, CallerDeploymentID: dep.ID, TargetAppID: target.ID, TargetDeploymentID: uuid.NewString(), ReleaseSetID: uuid.NewString(), RequireHTTPS: true, ReconciliationActive: true}}
 	zero := 0
 	now := time.Now().UTC()
 	fake.legacy = []state.BindingVerificationTask{{DeploymentID: dep.ID, Scope: "production", Pin: state.BindingVerificationPin{Type: api.BindingTypeService, Binding: "billing", Revision: "old-app-context"}, Status: string(state.AppTaskSucceeded), ExitCode: &zero, FinishedAt: &now, Stdout: `{"service":"billing","dns":{"status":"passed"},"tls":{"status":"passed"},"authorization":{"status":"passed"},"routing":{"status":"passed"}}`}}
@@ -210,7 +210,7 @@ func managedServiceProbeAPIAdmissionAndFreshEvidence(t *testing.T, worker bool) 
 	frozen.Runtime = map[string]json.RawMessage{}
 	frozen.AppID, frozen.Resource, frozen.ServiceBindings = target.ID, "workload/billing", nil
 	freeze(&targetDep, frozen)
-	fake := &managedInventoryAPIStore{MemStore: *e.Store(), dep: dep, targetDep: &targetDep, route: state.EnvironmentGitOpsServiceBindingRoute{AccountID: caller.AccountID, CallerAppID: caller.ID, CallerDeploymentID: dep.ID, TargetAppID: target.ID, TargetDeploymentID: targetDep.ID, ReleaseSetID: uuid.NewString(), RequireHTTPS: true}}
+	fake := &managedInventoryAPIStore{MemStore: *e.Store(), dep: dep, targetDep: &targetDep, route: state.EnvironmentGitOpsServiceBindingRoute{AccountID: caller.AccountID, CallerAppID: caller.ID, CallerDeploymentID: dep.ID, TargetAppID: target.ID, TargetDeploymentID: targetDep.ID, ReleaseSetID: uuid.NewString(), RequireHTTPS: true, ReconciliationActive: true}}
 	(*(*e.S()).Store()) = statetest.NewMem(fake)
 	path := "/v1/apps/" + caller.Slug
 	read := func() api.AppBindingInventoryItem {
@@ -254,5 +254,16 @@ func managedServiceProbeAPIAdmissionAndFreshEvidence(t *testing.T, worker bool) 
 	r = e.Do(t, http.MethodPost, path+"/tasks", api.CreateAppTaskRequest{VerificationDeploymentID: dep.ID, Command: []string{api.AppTaskServiceBindingTargetProbeCommand, "billing", uuid.NewString()}}, nil)
 	if r.Code != 409 || len(fake.admitted) != 1 {
 		t.Fatalf("override admitted: %d %s", r.Code, r.Body)
+	}
+	// Controller suspension leaves the frozen route usable, while new probes
+	// and historical verification receipts no longer authorize work.
+	fake.route.ReconciliationActive = false
+	item = read()
+	if item.ServiceContext.RoutingStatus != "resolved" || item.ServiceContext.VerificationSupported || item.VerificationStatus != "unsupported" {
+		t.Fatalf("paused source routing/verification: %+v", item)
+	}
+	r = e.Do(t, http.MethodPost, path+"/tasks", api.CreateAppTaskRequest{VerificationDeploymentID: dep.ID, Command: []string{api.AppTaskServiceBindingProbeCommand, "billing"}}, nil)
+	if r.Code != 409 || len(fake.admitted) != 1 {
+		t.Fatalf("paused source admitted probe: %d %s", r.Code, r.Body)
 	}
 }

@@ -280,7 +280,6 @@ ListAllAppSecrets
 ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
-ListAllEventsPaged
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
@@ -397,7 +396,6 @@ ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
-LiveDeploymentForScope
 LiveDeployments
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes

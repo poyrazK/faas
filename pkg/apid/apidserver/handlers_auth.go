@@ -115,11 +115,13 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 // consumed). No information leak between cases — they all return 410.
 //
 // A link opened straight from a mail app or the address bar signs in at
-// once. Any other navigation, such as a click in webmail or a page that
-// sends the browser here, gets a confirm page instead, whose POST must come
-// from Gregale itself: otherwise any site could sign a visitor into an
-// account of its choosing with a link it requested for itself (login CSRF,
-// security audit 2026-10-27).
+// once. Any other request, such as a click in webmail, a page that sends the
+// browser here, or a client that sends no Sec-Fetch-Site at all (mail
+// scanners that prefetch links, curl), gets a confirm page instead, whose
+// POST must come from Gregale itself: otherwise any site could sign a visitor
+// into an account of its choosing with a link it requested for itself (login
+// CSRF, security audit 2026-10-27), and a scanner's prefetch would use up the
+// single-use token before the customer clicks (bug hunt H19).
 func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	hash, ok := magicLinkHash(token)
@@ -153,10 +155,11 @@ func (a *authHandlers) verifyConfirmed(w http.ResponseWriter, r *http.Request) {
 // directNavigation reports whether the browser opened this URL itself
 // (address bar, bookmark, a desktop mail app) or from a Gregale page, rather
 // than following a link or redirect on another site. A client that sends no
-// Sec-Fetch-Site (old browsers, curl) is treated as direct.
+// Sec-Fetch-Site is not a current browser navigating (mail scanners, link
+// previews, curl), so it gets the confirm page and cannot use up the token.
 func directNavigation(r *http.Request) bool {
 	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) {
-	case "", "none", "same-origin":
+	case "none", "same-origin":
 		return true
 	}
 	return false
@@ -587,5 +590,6 @@ func dashboardMFANext(raw string) string {
 // dashboardMFARoute is what an mfa_pending session may reach: the TOTP
 // challenge and its form post.
 func dashboardMFARoute(method, path string) bool {
-	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost)
+	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost) ||
+		path == "/dashboard/account/mfa" && method == http.MethodGet
 }

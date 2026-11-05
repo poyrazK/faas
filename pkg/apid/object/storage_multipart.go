@@ -513,11 +513,29 @@ func (s *Service) executeObjectMultipartAbort(ctx context.Context, store state.O
 	if err != nil {
 		return err
 	}
+	verified := false
+	if settler, ok := store.(state.ObjectMultipartAbandonedPartSettler); !ready && ok {
+		// A part the client abandoned mid-transfer stays uncertain and
+		// would hold the abort forever. The verified native abort proves
+		// it wrote nothing once its transfer window has passed.
+		if err = objectstorage.VerifyMultipartAbort(ctx, provider, bucket.PhysicalName, request); err != nil {
+			return err
+		}
+		verified = true
+		if _, err = settler.SettleAbandonedObjectMultipartPartWriters(ctx, u.ID, u.LeaseToken); err != nil {
+			return err
+		}
+		if ready, err = transfers.ObjectMultipartAbortReady(ctx, u.ID, u.LeaseToken); err != nil {
+			return err
+		}
+	}
 	if !ready {
 		return objectstorage.ErrConflict
 	}
-	if err = objectstorage.VerifyMultipartAbort(ctx, provider, bucket.PhysicalName, request); err != nil {
-		return err
+	if !verified {
+		if err = objectstorage.VerifyMultipartAbort(ctx, provider, bucket.PhysicalName, request); err != nil {
+			return err
+		}
 	}
 	err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
 		return transfers.FinishVerifiedObjectMultipartAbort(finishCtx, u.ID, u.LeaseToken)

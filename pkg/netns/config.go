@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Inner-world constants (ADR-009, spec §7). Every guest sees the IDENTICAL
@@ -117,10 +119,14 @@ type Config struct {
 	// PrivateVethHost/PrivateVethPeer are an additive side-link for a
 	// Gregale-owned network. The public veth above remains attached to
 	// br-tenants; this pair is attached to the account-scoped gpn-* bridge.
-	PrivateVethHost       string
-	PrivateVethPeer       string
-	PrivateNetworkBridge  string
-	PrivateNetworkAddress netip.Addr
+	PrivateVethHost              string
+	PrivateVethPeer              string
+	PrivateNetworkBridge         string
+	PrivateNetworkAddress        netip.Addr
+	PrivateNetworkServiceAddress netip.Addr
+	PrivateNetworkID             string
+	PrivateNetworkAppID          string
+	PrivateNetworkAccountID      string
 	// GuestAppPort is the port the customer process binds inside the guest.
 	// The host-facing identity remains fixed at :8080; prerouting translates
 	// that stable port to this deployment-specific target. Zero or an invalid
@@ -188,6 +194,9 @@ type Config struct {
 	// they do not change the default public-egress policy: attaching a VPC
 	// augments connectivity rather than silently removing internet access.
 	PrivateNetworkCIDRs []netip.Prefix
+	// PrivateNetworkMTU is the common regional private-fabric MTU. Zero keeps
+	// the local/provider default. It affects only the private side-link.
+	PrivateNetworkMTU int
 	// PrivateNetworkAllowedCIDRs is an opt-in security policy for the
 	// Gregale-owned side-link. Empty means legacy allow-all within the
 	// attached network CIDRs; populated ranges are admitted symmetrically.
@@ -322,8 +331,10 @@ func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 		// Private ingress targets the stable allocated app address. DNAT
 		// happens before local-delivery routing, so the address can remain
 		// owned by the private veth while the guest keeps its fixed tap IP.
-		rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
-			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port, "dnat", "to", target))
+		for _, address := range c.privateIngressAddresses() {
+			rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+				"ip", "daddr", address.String(), "tcp", "dport", port, "dnat", "to", target))
+		}
 	}
 	return rules
 }
@@ -470,6 +481,10 @@ func privateNetworkRouteCommands(c Config) [][]string {
 		args := []string{"ip", "netns", "exec", c.Netns, "ip", "route", "replace", prefix.String()}
 		if c.privateNetworkEnabled() {
 			dev = c.PrivateVethPeer
+			if !prefix.Contains(c.PrivateNetworkAddress) {
+				gateway := c.PrivateNetworkCIDRs[0].Masked().Addr().Next()
+				args = append(args, "via", gateway.String())
+			}
 			args = append(args, "dev", dev, "src", c.PrivateNetworkAddress.String())
 		} else {
 			args = append(args, "via", c.HostBridgeIP.String(), "dev", dev)
@@ -522,7 +537,7 @@ func (c Config) PrivateNetworkSetupCommands() [][]string {
 	prefix := c.PrivateNetworkCIDRs[0]
 	nx := []string{"ip", "netns", "exec", c.Netns}
 	inNetns := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
-	return [][]string{
+	cmds := [][]string{
 		// The private side-link is deliberately additive: public egress
 		// keeps using VethHost/VethPeer and br-tenants.
 		{"ip", "link", "add", c.PrivateVethHost, "type", "veth", "peer", "name", c.PrivateVethPeer},
@@ -530,7 +545,30 @@ func (c Config) PrivateNetworkSetupCommands() [][]string {
 		{"ip", "link", "set", c.PrivateVethHost, "up"},
 		{"ip", "link", "set", c.PrivateVethPeer, "netns", c.Netns},
 		inNetns("ip", "addr", "add", fmt.Sprintf("%s/%d", c.PrivateNetworkAddress, prefix.Bits()), "dev", c.PrivateVethPeer),
-		inNetns("ip", "link", "set", c.PrivateVethPeer, "up"),
+	}
+	if c.PrivateNetworkServiceAddress.IsValid() {
+		cmds = append(cmds, inNetns("ip", "addr", "replace", c.PrivateNetworkServiceAddress.String()+"/32", "dev", c.PrivateVethPeer))
+	}
+	cmds = append(cmds, c.PrivateNetworkMTUCommands()...)
+	// NETDEV_UP sends gratuitous ARP for every bound IPv4 address. Bind
+	// the VIP and enable notification before bringing the peer up.
+	cmds = append(cmds, c.PrivateNetworkARPNotifyCommand(), inNetns("ip", "link", "set", c.PrivateVethPeer, "up"))
+	return cmds
+}
+
+func (c Config) PrivateNetworkARPNotifyCommand() []string {
+	return []string{"ip", "netns", "exec", c.Netns, "sysctl", "-qw", "net.ipv4.conf." + c.PrivateVethPeer + ".arp_notify=1"}
+}
+
+// PrivateNetworkAnnounceCommands triggers NETDEV_CHANGEADDR after a live VIP
+// bind. Linux announces every bound address with the new peer MAC, updating
+// both VIP and member neighbors without changing IPs, routes or conntrack.
+// The caller supplies a fresh locally administered MAC. The host-side veth's
+// journaled ownership marker stays unchanged.
+func (c Config) PrivateNetworkAnnounceCommands(mac string) [][]string {
+	return [][]string{
+		c.PrivateNetworkARPNotifyCommand(),
+		{"ip", "netns", "exec", c.Netns, "ip", "link", "set", "dev", c.PrivateVethPeer, "address", mac},
 	}
 }
 
@@ -571,13 +609,16 @@ func (c Config) privateNetworkEnabled() bool {
 func (c Config) NftCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
-	port := fmt.Sprintf("%d", AppPort)
 	// Builder (not a literal slice) so the optional §7 conntrack-cap
 	// rule can be appended without leaving a nil element when
 	// ConntrackCap == 0.
 	cmds := make([][]string, 0, 16)
 	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
 	add("add", "table", "ip", "faas")
+	// ADR-009 fixes every guest's IPv4 identity. Reject spoofing before
+	// conntrack, DNAT and established-flow exceptions, including local input.
+	add("add", "chain", "ip", "faas", "guest_source", "{", "type", "filter", "hook", "prerouting", "priority", "raw", ";", "policy", "accept", ";", "}")
+	add("add", "rule", "ip", "faas", "guest_source", "iifname", c.Tap, "ip", "saddr", "!=", GuestIP, "drop")
 	cmds = append(cmds, c.quarantineRules(nft, "ip")...)
 	// Chain policy (ADR-031). Empty EgressAllowlist → keep the
 	// historical `policy accept` (every non-deny-listed destination
@@ -652,6 +693,7 @@ func (c Config) NftCommands() [][]string {
 	// accept the deny would drop every reply and no published request would
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
+	cmds = append(cmds, c.privateNetworkMSSCommands(nft)...)
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
 	if c.QualificationOnly && c.HostBridgeIP.IsValid() {
 		// The node-local readiness and smoke probes use the bridge address as
@@ -749,7 +791,7 @@ func (c Config) NftCommands() [][]string {
 			if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 				args = append(args, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
 			}
-			args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
+			args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(c.guestAppPort()), "ct", "status", "dnat", "accept")
 			add(args...)
 			if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 				add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")
@@ -841,9 +883,9 @@ func (c Config) NftCommands() [][]string {
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// ADR-361 port policy: everything not accepted above must be TCP to an
-	// egress_ports port. Allowlisted destinations were accepted above and
-	// keep ADR-031's any-port-but-25 semantics; bound managed databases are
-	// accepted just before it on their own port.
+	// egress_ports port. Allowlisted destinations were accepted above on any
+	// TCP port but the forbidden ones (465/587 stay open, bug hunt H69);
+	// bound managed databases are accepted just before it on their own port.
 	if !c.QualificationOnly {
 		cmds = append(cmds, c.egressDatabaseRule(nft, "ip")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip"))
@@ -940,6 +982,7 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
+	cmds = append(cmds, c.privateConntrackPolicyCommands(nft)...)
 	cmds = append(cmds, c.RehearsalNftCommands()...)
 	return cmds
 }
@@ -1238,25 +1281,25 @@ func (c Config) PrivateNetworkNftCommands() [][]string {
 	port := strconv.Itoa(c.guestAppPort())
 	forward := []string{"insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
 	if len(c.PrivateNetworkFirewallRules) > 0 {
-		cmds := make([][]string, 0, len(c.PrivateNetworkFirewallRules)+2)
+		// Insert the drop first so later head-inserted accepts precede it.
+		cmds := [][]string{nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")}
 		for _, rule := range c.privateFirewallIngressRules(func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }) {
 			if len(rule) > 5 {
 				rule[5] = "insert"
 			}
 			cmds = append(cmds, rule)
 		}
-		cmds = append(cmds, nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop"))
 		cmds = append(cmds, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
 			"dnat", "to", fmt.Sprintf("%s:%s", GuestIP, port)))
 		cmds = append(cmds, nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.PrivateVethPeer,
 			"ip", "saddr", GuestIP, "snat", "to", c.PrivateNetworkAddress.String()))
-		return cmds
+		return append(cmds, c.privateServiceDNAT(nft)...)
 	}
 	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 		forward = append(forward, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
 	}
-	forward = append(forward, "ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(AppPort), "accept")
+	forward = append(forward, "ip", "daddr", GuestIP, "tcp", "dport", port, "ct", "status", "dnat", "accept")
 	cmds := [][]string{
 		nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
@@ -1268,7 +1311,7 @@ func (c Config) PrivateNetworkNftCommands() [][]string {
 	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 		cmds = append(cmds, nft("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop"))
 	}
-	return cmds
+	return append(cmds, c.privateServiceDNAT(nft)...)
 }
 
 // denySet returns the DenySet to render against. Falls back to
@@ -1422,7 +1465,10 @@ func (c Config) forwardChainPolicy() string {
 // Shape:
 //
 //	nft add rule ip faas forward
-//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != 25 accept
+//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != { 22,23,25,… } accept
+//
+// The excluded ports are api.TenantEgressAllowlistBlockedPorts: the ADR-361
+// forbidden ports but 465 and 587 (bug hunt H69).
 //
 // The CIDR set uses comma-joined values inside `{ … }` with NO
 // trailing whitespace, matching the modern-nft syntax gate at
@@ -1452,7 +1498,20 @@ func (c Config) ForwardAllowlistRule(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip", "faas", "forward",
-		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "25", "accept")
+		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "{", AllowlistBlockedPortsSet(), "}", "accept")
+}
+
+// AllowlistBlockedPortsSet renders api.TenantEgressAllowlistBlockedPorts as
+// an nft set body: allowlisted destinations get every TCP port except these
+// (port 25 included; 465 and 587 stay open), so an allowlist narrows egress
+// without reopening the ADR-361 abuse ports (bug hunt H69).
+func AllowlistBlockedPortsSet() string {
+	ports := api.TenantEgressAllowlistBlockedPorts()
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(parts, ",")
 }
 
 // ForwardAllowlistRule6 (ADR-032 — v6 mirror of ForwardAllowlistRule;
@@ -1481,7 +1540,7 @@ func (c Config) ForwardAllowlistRule6(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip6", "faas", "forward",
-		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "accept")
+		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "tcp", "dport", "!=", "{", AllowlistBlockedPortsSet(), "}", "accept")
 }
 
 // ForwardPrivateNetworkRule emits the v4 accept rule for provider-verified
@@ -1540,6 +1599,8 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 	return out
 }
 
+// The private-policy history table survives these resets: old conntrack
+// destinations must remain classified after policy withdrawal and restart.
 // NftResetCommands returns the best-effort argv list that brings the
 // per-netns nftables table to a clean slate before NftCommands runs.
 // Each `delete table` exits non-zero when the table is absent (first
@@ -1624,4 +1685,19 @@ func (c Config) TcResetCommands() [][]string {
 		{"tc", "qdisc", "del", "dev", c.VethHost, "root"},
 		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "del", "dev", c.VethPeer, "root"},
 	}
+}
+
+func (c Config) privateIngressAddresses() []netip.Addr {
+	addresses := []netip.Addr{c.PrivateNetworkAddress}
+	if c.PrivateNetworkServiceAddress.IsValid() && c.PrivateNetworkServiceAddress != c.PrivateNetworkAddress {
+		addresses = append(addresses, c.PrivateNetworkServiceAddress)
+	}
+	return addresses
+}
+
+func (c Config) privateServiceDNAT(nft func(...string) []string) [][]string {
+	if !c.PrivateNetworkServiceAddress.IsValid() {
+		return nil
+	}
+	return [][]string{nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer, "ip", "daddr", c.PrivateNetworkServiceAddress.String(), "tcp", "dport", strconv.Itoa(AppPort), "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))}
 }

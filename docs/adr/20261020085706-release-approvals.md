@@ -256,3 +256,49 @@ A release that served before stays a rollback target that freezes and the pause 
 ## Amendment 11 (2026-11-03): a rejection aborts the rejected release
 
 A rejected or timed-out release was aborted with the app-level rollout abort, which refuses when another environment of the app is also rolling out, so the rejected release kept serving its canary share until that other rollout ended (release review 2026-11-03). The abort now names the rejected release and the serving predecessor it returns traffic to; it falls back to the app-level abort only when no serving predecessor is found.
+
+## Amendment 12 (2026-11-04): a release waits for approval before its release command
+
+A release's release command (`release:` in a Procfile, `release.command`) runs right after the build, before the release goes live. A release that waits for approval waited only in its canary, after its migration had already changed production data (release review 2026-11-04). A rejection or timeout aborted the canary, but the migration stayed, so approvers were deciding on a change that had already happened. Now:
+
+- **When it waits.** A production release (amendment 1's lanes) of a request-mode app with a policy, whose rollout the policy gates and which has a release command, waits for its approvals before imaged admits the command. These are the releases that would wait in a canary: the app has a live production release. The app's first production release, which has no canary, runs its command at once, as do other environments, releases started before the policy, and releases without a command.
+- **The wait.** imaged builds and scans the release, then holds it in `snapshotting` without a release task. Approvers are asked once (`requested`), and the release appears in `gregale release approval pending` and on its approval page as for a canary wait. It waits from when it reached its release phase (`stage_state.current_started_at`) for the policy's `timeout_minutes`.
+- **Approved.** The release command runs, then the release goes live as usual. Its canary does not wait again: the release is already approved, and amendment 3 makes it decided.
+- **Rejected.** imaged fails the deployment (`release_approval_rejected`) without running the command. The serving release keeps its traffic.
+- **Timed out.** imaged fails the deployment (`release_approval_required`) without running the command. Approvers are told it expired.
+- **Resuming.** apid only records the decision. imaged re-checks held releases every 15 seconds and on any replayed handoff (`handleSnapshotBoot`), so a decision takes effect within one sweep. A preparation still in flight resumes through its own checkpoint, which keeps its scan freshness gate.
+- **Stuck-deployment sweeps.** apid's deployment watchdog (3-hour stall) and imaged's stale sweep (2 hours) leave a pending wait alone, because an approval may take up to `ReleaseApprovalTimeoutMax`. An expired wait is stuck like any other release.
+- **What approvers see.** The approval page already shows the release command and its diff (ADR-20261021101117). The `requested` notice sent by imaged carries no review link and no change summary, since imaged knows neither the console host nor the release diff. The page is reachable from the dashboard and from `pending`.
+
+Not changed: environment promotions run their migrations behind the protected environment's approval, which already stands in for the apps' policies (amendments 2 and 9). Graph-mode releases (held as environment workloads) are left to their environment coordinator, unchanged.
+
+## Amendment 13 (2026-11-04): a waiting release cannot stall the sweeps, run an outpaced migration, or skip a pause or freeze
+
+Amendment 12 left three gaps (release review 2026-11-04):
+
+- **Sweeps reached only the oldest batch.** imaged's resume sweep listed the oldest 64 deployments in their release phase platform-wide, then filtered them. imaged's stale sweep (64) and apid's deployment watchdog (100) skipped waiting releases after the batch was fetched. One account's waiting releases (up to 7 days each) could fill a batch, so approved releases elsewhere never resumed and expired, and stuck deployments were never cleaned up. Now:
+  - imaged pages through every candidate in both sweeps;
+  - the watchdog's query leaves out a release that may be waiting: `snapshotting` with a release command, no release task, and an app with an approval policy. imaged closes such a release at the policy's timeout.
+- **An outpaced release ran its migration.** The promotion fence (`MarkDeploymentLiveIfLatest`) supersedes a release that a newer revision overtook, but only at go-live, after its release command has run. Approving a release that waited while a newer one shipped ran the older migration against the newer schema. imaged now applies the fence's test (`SupersedeOutpacedRelease`) before admitting any release command:
+  - it covers latest-revision kinds with no release task yet, and never a prepared rollback;
+  - when a newer revision of the app and scope exists, the release is superseded and its command never runs.
+- **The pause and freezes were checked only at creation.** An approved release resuming later now rechecks them, as a scheduled release does when it starts:
+  - **Break-glass pause** (ADR-20261022140000): it waits until the pause is lifted, because its command runs with production secrets. imaged follows `platform_release_pause_enabled` with a runtime-config watcher, and its stale sweep leaves the release alone meanwhile.
+  - **Freeze:** a freeze that was not in force when the release was deployed (created since, or whose window opened since) fails the release with `release_frozen` before its command runs. A freeze in force at deploy time was overridden then and still does not stop it.
+
+## Amendment 14 (2026-11-05): schedules, outpaced and dead releases, rollbacks and gates
+
+A release review (2026-11-04) found:
+
+- **A schedule that ends while its release waits for approval closes the release.** A scheduled release with a release command waits for approval before the command (amendment 12). If its schedule ended first (expired after `ScheduledReleaseStartGrace`, blocked or cancelled), approving it later ran the migration at an unplanned time and left the release parked with no schedule. imaged now fails such a release without running its command. While it waits, the schedule says it is waiting for approval, not that its build had not finished.
+- **A newer release that failed or was cancelled does not outpace an older one.** The latest-revision fence (`HasNewerDeploymentRevision`: build claim, release command and go-live) counted any newer revision. A deploy that failed its build then silently superseded a release waiting for approval, and production stayed on the old release. Failed and cancelled revisions no longer count (ADR-20261029103512).
+- **Switching to the immediate release policy is refused while approvals are required.** A policy cannot be set on an app with the immediate release policy, but switching afterwards was allowed and left every default production deploy refused for want of a canary. It now answers `409`, like leaving request mode (amendment 5).
+- **A decision on a release that failed, was cancelled or was superseded is refused** (`409 release_approval_decided`). It decided nothing, yet announced "approved".
+- **A rollback cannot bring back an image the app's current trust list rejects.** A rollback target was verified when it was built, against the trusted signers of that time. After a signer was removed (say, a leaked key) or signing was turned on, a rollback put that image back into service until imaged next restarted. Now:
+  - after a rollback of an app that requires signed images, apid wakes imaged's signature revalidation (`trusted_signer_changed`), which quarantines an image that no longer verifies;
+  - imaged also revalidates every live signed image every 5 minutes. This is the durable fallback for a lost wake-up and for automatic rollbacks, and it covers signing turned on later.
+- **Expired scan evidence is rescanned before the enforce lease parks the app.** Rescans cover live releases only, so a release that serves again after a rollback carries evidence from when it last served, hours old. The lease parked the app (`evicted_cold`) about a minute into the rollback meant to end an incident. Now:
+  - when a live release's evidence has only expired, imaged starts a rescan and the lease waits up to 15 minutes for it;
+  - a rescan that fails leaves the evidence expired, and the lease parks the release when the grace ends;
+  - a rescan that finds the image unsafe parks it at once.
+- **Release gates need a judged release.** Gates are judged by the canary and by the post-release watch, which needs `rollback_on_5xx`. Deleting a gate takes an admin, but `--rollout immediate --rollback-on-5xx=false` turned off both judges with `deploy:write`. A production release of an app with gates that takes traffic without a canary and with `rollback_on_5xx` off is now refused (`409`).

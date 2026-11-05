@@ -63,6 +63,10 @@ func (s *server) captureProjectEnvironmentValues(ctx context.Context, acct state
 	if err != nil {
 		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, fmt.Errorf("list project workloads for resource clone: %w", err)
 	}
+	apps, err = state.ProjectAppsForEnvironment(ctx, s.store, acct.ID, project.ID, source, apps)
+	if err != nil {
+		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, err
+	}
 	snapshot, err := store.CaptureProjectEnvironmentCloneValues(ctx, acct.ID, project.ID, source)
 	if err != nil {
 		return nil, snapshot, err

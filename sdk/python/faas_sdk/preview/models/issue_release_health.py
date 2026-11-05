@@ -12,6 +12,7 @@ from ..models.issue_release_health_request_coverage import (
     IssueReleaseHealthRequestCoverage,
     check_issue_release_health_request_coverage,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="IssueReleaseHealth")
 
@@ -33,6 +34,8 @@ class IssueReleaseHealth:
     regressed_issue_groups: int
     identified_customers: int
     unattributed_events: int
+    unknown_http_batches: int | Unset = UNSET
+    """Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +66,8 @@ class IssueReleaseHealth:
 
         unattributed_events = self.unattributed_events
 
+        unknown_http_batches = self.unknown_http_batches
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -82,6 +87,8 @@ class IssueReleaseHealth:
                 "unattributed_events": unattributed_events,
             }
         )
+        if unknown_http_batches is not UNSET:
+            field_dict["unknown_http_batches"] = unknown_http_batches
 
         return field_dict
 
@@ -119,6 +126,8 @@ class IssueReleaseHealth:
 
         unattributed_events = d.pop("unattributed_events")
 
+        unknown_http_batches = d.pop("unknown_http_batches", UNSET)
+
         issue_release_health = cls(
             deployment_id=deployment_id,
             commit_sha=commit_sha,
@@ -133,6 +142,7 @@ class IssueReleaseHealth:
             regressed_issue_groups=regressed_issue_groups,
             identified_customers=identified_customers,
             unattributed_events=unattributed_events,
+            unknown_http_batches=unknown_http_batches,
         )
 
         issue_release_health.additional_properties = d

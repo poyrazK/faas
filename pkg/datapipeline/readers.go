@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/datapipeline/sqlc"
@@ -27,7 +28,7 @@ func validReaders(subjects []string) bool {
 	}
 	seen := map[string]bool{}
 	for _, subject := range subjects {
-		if subject == "" || len(subject) > api.DataPipelineSubjectMaxBytes || strings.ContainsAny(subject, "\x00\r\n") || seen[subject] {
+		if subject == "" || !utf8.ValidString(subject) || len(subject) > api.DataPipelineSubjectMaxBytes || strings.ContainsAny(subject, "\x00\r\n") || seen[subject] {
 			return false
 		}
 		seen[subject] = true
@@ -57,8 +58,8 @@ func canApproveReaders(p Pipeline) bool {
 // Readers previews, approves, or discards an exact reader set. Approval never
 // accepts a replacement list from the form; it uses only the stored preview.
 func (s *Service) Readers(ctx context.Context, account, id string, revision int64, action, approval string, subjects []string) error {
-	if err := s.admit(ctx, account); err != nil {
-		return err
+	if s == nil || s.Store == nil || s.Allowed == nil || !s.Allowed(ctx, account) {
+		return ErrUnavailable
 	}
 	if !validID(account) || !validID(id) || revision < 1 {
 		return ErrInvalid
@@ -69,6 +70,28 @@ func (s *Service) Readers(ctx context.Context, account, id string, revision int6
 	if action == "preview" && !validReaders(subjects) {
 		return ErrInvalid
 	}
+	if s.CanCreate != nil && !s.CanCreate(ctx, account) && action != "discard" {
+		p, err := s.Store.Get(ctx, account, id)
+		if errors.Is(err, ErrNotFound) {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		if p.Revision != revision {
+			return ErrConflict
+		}
+		before, after := p.ReadSubjects, subjects
+		if action == "approve" {
+			if !canApproveReaders(p) || approval != p.ReaderChange.ID {
+				return ErrConflict
+			}
+			before, after = p.ReaderChange.Before, p.ReaderChange.After
+		}
+		if len(after) >= len(before) || !validReaders(after) || !readerSubset(before, after) {
+			return ErrUnavailable
+		}
+	}
 	store, ok := s.Store.(interface {
 		Readers(context.Context, string, string, int64, string, string, []string) error
 	})
@@ -76,6 +99,15 @@ func (s *Service) Readers(ctx context.Context, account, id string, revision int6
 		return ErrUnavailable
 	}
 	return store.Readers(ctx, account, id, revision, action, approval, subjects)
+}
+
+func readerSubset(before, after []string) bool {
+	for _, subject := range after {
+		if !slices.Contains(before, subject) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *PostgresStore) Readers(ctx context.Context, account, id string, revision int64, action, approval string, subjects []string) error {

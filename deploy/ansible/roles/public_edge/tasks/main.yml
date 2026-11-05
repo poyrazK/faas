@@ -47,14 +47,61 @@
       - faas_public_edge_origin_pull_ca_stat.stat.size > 0
     fail_msg: >-
       faas_public_edge_authenticated_origin_pulls is on but
-      {{ faas_public_edge_origin_pull_ca }} is missing. Install Cloudflare's
-      origin-pull CA certificate there, and turn on Authenticated Origin Pulls
-      for the zone in Cloudflare first: Caddy refuses every request without
-      the client certificate.
+      {{ faas_public_edge_origin_pull_ca }} is missing. Install the zone's own
+      origin-pull CA there (origin-pull-ca.pem, docs/runbooks/EdgeDirectEntry.md
+      step 1), and turn on zone-level Authenticated Origin Pulls in Cloudflare
+      first: Caddy refuses every request without the client certificate.
   when:
     - faas_public_edge_enabled | bool
     - faas_public_edge_platform_tls | bool
     - faas_public_edge_authenticated_origin_pulls | bool
+
+# ADR-20261103172551: Cloudflare's shared origin-pull certificate is presented
+# for every Cloudflare customer's zone. Trusting its CA would let any zone
+# through, exactly what the client-certificate check is there to stop.
+- name: public_edge — read the origin-pull CA's subject and issuer
+  ansible.builtin.command:
+    argv: [openssl, x509, -in, "{{ faas_public_edge_origin_pull_ca }}", -noout, -subject, -issuer]
+  register: faas_public_edge_origin_pull_ca_names
+  changed_when: false
+  check_mode: false
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_platform_tls | bool
+    - faas_public_edge_authenticated_origin_pulls | bool
+
+- name: public_edge — refuse Cloudflare's shared origin-pull CA
+  ansible.builtin.assert:
+    that:
+      - "'origin-pull.cloudflare.net' not in (faas_public_edge_origin_pull_ca_names.stdout | lower)"
+    fail_msg: >-
+      {{ faas_public_edge_origin_pull_ca }} is Cloudflare's shared origin-pull
+      CA, which every Cloudflare zone's requests satisfy. Install the zone's own
+      origin-pull CA (origin-pull-ca.pem from deploy/scripts/cloudflare-origin-pull.sh
+      ca, docs/runbooks/EdgeDirectEntry.md) and upload its client certificate
+      to the zone.
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_platform_tls | bool
+    - faas_public_edge_authenticated_origin_pulls | bool
+
+- name: public_edge — require origin-pull certificates where Cloudflare is admitted
+  ansible.builtin.assert:
+    that:
+      - faas_public_edge_authenticated_origin_pulls | bool
+    fail_msg: >-
+      The platform site admits Cloudflare's address ranges, which every
+      Cloudflare customer's zone and Worker also uses, so anyone could reach
+      this origin through their own zone and skip the platform zone's WAF, bot
+      and rate-limit rules. Set faas_public_edge_authenticated_origin_pulls to
+      true with the zone's own origin-pull CA (docs/runbooks/EdgeDirectEntry.md),
+      or set faas_public_edge_allow_any_cloudflare_zone to true to deploy
+      knowingly without it (ADR-20261103172551).
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_platform_tls | default(true) | bool
+    - faas_public_edge_cloudflare_only | default(true) | bool or faas_custom_domain_tls | default(false) | bool
+    - not (faas_public_edge_allow_any_cloudflare_zone | bool)
 
 - name: public_edge — require an ACME contact for on-demand customer certificates
   ansible.builtin.assert:
@@ -170,7 +217,12 @@
 # CF-Connecting-IP, so that header is the single client hop. Customer-domain
 # connections arrive directly, so their hop is the peer address, and the
 # client-sent CF-Connecting-IP is removed: forwarded, it let any client choose
-# the IP that ip, geo, allowlist and throttle rules see.
+# the IP that ip, geo, allowlist and throttle rules see. The same holds for a
+# platform site with faas_public_edge_cloudflare_only off and no custom-domain
+# TLS: nothing aborts direct clients there, so its hop is the peer address too
+# (ADR-20261103172551). Where Cloudflare is admitted, the zone's origin-pull
+# certificate is required as well (see the assert above): Cloudflare's address
+# ranges carry every Cloudflare customer's traffic.
 #
 # The global options block must be the first thing in the Caddyfile, so it
 # lives in this block, which is inserted at the top. Other roles
@@ -231,15 +283,18 @@
           @grpc header Content-Type application/grpc*
           route {
               reverse_proxy @grpc h2c://{{ faas_public_edge_upstream }} {
-                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+                  header_up X-Forwarded-For {remote_host}
+                  header_up -CF-Connecting-IP
               }
               reverse_proxy {{ faas_public_edge_upstream }} {
-                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+                  header_up X-Forwarded-For {remote_host}
+                  header_up -CF-Connecting-IP
               }
           }
       {% else %}
           reverse_proxy {{ faas_public_edge_upstream }} {
-              header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              header_up X-Forwarded-For {remote_host}
+              header_up -CF-Connecting-IP
           }
       {% endif %}
       }
@@ -301,7 +356,13 @@
           @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
           route {
               abort @direct
-              reverse_proxy {{ faas_ai_gateway_public_upstream }}
+              # Only Cloudflare reaches this route: pin its client address
+              # as the one X-Forwarded-For outboundd's unknown-token limiter
+              # keys on (bug hunt H82). Without it every caller looks like
+              # its Cloudflare edge.
+              reverse_proxy {{ faas_ai_gateway_public_upstream }} {
+                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              }
           }
       {% else %}
           reverse_proxy {{ faas_ai_gateway_public_upstream }}

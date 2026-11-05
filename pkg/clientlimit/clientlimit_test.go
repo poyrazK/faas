@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -56,7 +57,7 @@ func (c *fakeClock) advance(d time.Duration) {
 
 func TestTableSpendsAndRefills(t *testing.T) {
 	clock := newFakeClock()
-	tab := newTable(1, 2, 10, clock.Now)
+	tab := newTable[netip.Prefix](1, 2, 10, clock.Now)
 	key := Key(netip.MustParseAddr("203.0.113.9"))
 	for i, want := range []bool{true, true, false} {
 		if ok, _ := tab.take(key); ok != want {
@@ -75,7 +76,7 @@ func TestTableSpendsAndRefills(t *testing.T) {
 
 func TestTableStaysWithinItsBound(t *testing.T) {
 	clock := newFakeClock()
-	tab := newTable(1, 1, 2, clock.Now)
+	tab := newTable[netip.Prefix](1, 1, 2, clock.Now)
 	a, b, c, d := Key(netip.MustParseAddr("192.0.2.1")), Key(netip.MustParseAddr("192.0.2.2")),
 		Key(netip.MustParseAddr("192.0.2.3")), Key(netip.MustParseAddr("192.0.2.4"))
 	tab.take(a)
@@ -193,6 +194,34 @@ func TestListenerLimitsOpenConnections(t *testing.T) {
 	case <-conns:
 	case <-time.After(5 * time.Second):
 		t.Fatal("a connection after one closed was not served")
+	}
+}
+
+// A proxy's connections each carry many clients, so its addresses are
+// neither limited nor tracked.
+func TestListenerExemptsProxyAddresses(t *testing.T) {
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refused refusals
+	ln := NewListener(inner, ConnLimits{MaxOpenPerAddr: 1, NewPerSecond: 1, NewBurst: 1, TrackedAddrsMax: 10,
+		Exempt: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}, refused.add, nil)
+	conns := acceptAll(t, ln)
+	for range 5 {
+		c, err := net.Dial("tcp", inner.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		select {
+		case <-conns:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a connection from an exempt address was not served")
+		}
+	}
+	if got := len(ln.table.entries); got != 0 {
+		t.Fatalf("exempt address tracked: %d entries", got)
 	}
 }
 
@@ -344,5 +373,81 @@ func TestRequestsLimitEachAddress(t *testing.T) {
 	clock.advance(time.Second)
 	if got := do("203.0.113.9").Code; got != http.StatusNoContent {
 		t.Fatalf("a second later = %d, want it served", got)
+	}
+}
+
+// A flood on one hostname is refused on this node before routing, whoever
+// sends it, while other hostnames stay served (ADR-20261103163954 §4).
+func TestHostsLimitEachHostname(t *testing.T) {
+	clock := newFakeClock()
+	var refused refusals
+	h := Hosts(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		RequestLimits{PerSecond: 1, Burst: 2, TrackedAddrsMax: 10},
+		func(r *http.Request) (string, bool) { return r.Host, r.Host != "" }, refused.add, clock.Now)
+	do := func(host string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "https://x/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for i := range 2 {
+		if got := do("shop.gregale.dev").Code; got != http.StatusNoContent {
+			t.Fatalf("request %d = %d, want it served", i, got)
+		}
+	}
+	rec := do("shop.gregale.dev")
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("x-faas-rate-limit-scope") != "host" || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("third request = %d (scope %q, Retry-After %q), want 429 scoped to the host", rec.Code, rec.Header().Get("x-faas-rate-limit-scope"), rec.Header().Get("Retry-After"))
+	}
+	refused.wait(t, ReasonHostRequestRate)
+	if got := do("blog.gregale.dev").Code; got != http.StatusNoContent {
+		t.Fatalf("another host = %d, want it served", got)
+	}
+	clock.advance(time.Second)
+	if got := do("shop.gregale.dev").Code; got != http.StatusNoContent {
+		t.Fatalf("after a second = %d, want the refilled host served", got)
+	}
+}
+
+// The Host header is the client's to choose. A flood of distinct random
+// hostnames filled the table and drained the one overflow bucket every
+// untracked hostname shared, so the node answered 429 for every other
+// tenant's host. An untracked hostname now passes; tracked ones stay limited.
+func TestHostsRandomHostnamesDoNotRefuseOtherHosts(t *testing.T) {
+	clock := newFakeClock()
+	var refused refusals
+	h := Hosts(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		RequestLimits{PerSecond: 1, Burst: 2, TrackedAddrsMax: 3},
+		func(r *http.Request) (string, bool) { return r.Host, r.Host != "" }, refused.add, clock.Now)
+	do := func(host string) int {
+		req := httptest.NewRequest(http.MethodGet, "https://x/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	// Fill the table with hot hosts whose buckets are empty, so no sweep
+	// can free a slot.
+	for i := range 3 {
+		host := fmt.Sprintf("random-%d.gregale.dev", i)
+		for range 2 {
+			if got := do(host); got != http.StatusNoContent {
+				t.Fatalf("%s = %d, want it served within its burst", host, got)
+			}
+		}
+	}
+	for i := range 10 {
+		if got := do(fmt.Sprintf("flood-%d.gregale.dev", i)); got != http.StatusNoContent {
+			t.Fatalf("untracked random host %d = %d, want it passed", i, got)
+		}
+	}
+	for i := range 5 {
+		if got := do("shop.gregale.dev"); got != http.StatusNoContent {
+			t.Fatalf("tenant host request %d = %d while the table is full, want it served", i, got)
+		}
+	}
+	if got := do("random-0.gregale.dev"); got != http.StatusTooManyRequests {
+		t.Fatalf("tracked hot host = %d, want it still limited", got)
 	}
 }

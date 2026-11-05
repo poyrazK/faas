@@ -20,7 +20,7 @@ func TestMemEnvironmentGitOpsJobBindingIsPausedAndRetiredWithSchedule(t *testing
 		Source: workload.Source, Runtime: map[string]json.RawMessage{"execution_mode": json.RawMessage(`"job"`)},
 		Variables: map[string]string{"MODE": "safe"}, Schedule: schedule}
 
-	linked, err := store.syncEnvironmentGitOpsJobLocked(row, app, workload, api.PlanHobby)
+	linked, err := store.syncEnvironmentGitOpsJobLocked(EnvironmentGitSource{ID: "source-1"}, row, app, workload, api.PlanHobby, true)
 	if err != nil {
 		t.Fatalf("create paused GitOps Job: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestMemEnvironmentGitOpsJobBindingIsPausedAndRetiredWithSchedule(t *testing
 
 	workload.Variables = map[string]string{"MODE": "strict"}
 	linked.Variables = map[string]string{"MODE": "strict"}
-	updated, err := store.syncEnvironmentGitOpsJobLocked(linked, app, workload, api.PlanHobby)
+	updated, err := store.syncEnvironmentGitOpsJobLocked(EnvironmentGitSource{ID: "source-1"}, linked, app, workload, api.PlanHobby, true)
 	if err != nil {
 		t.Fatalf("update reviewed Job variables: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestMemEnvironmentGitOpsJobBindingIsPausedAndRetiredWithSchedule(t *testing
 	linked = updated
 
 	linked.Schedule = nil
-	removed, err := store.syncEnvironmentGitOpsJobLocked(linked, app, api.EnvironmentWorkload{}, api.PlanHobby)
+	removed, err := store.syncEnvironmentGitOpsJobLocked(EnvironmentGitSource{ID: "source-1"}, linked, app, api.EnvironmentWorkload{}, api.PlanHobby, true)
 	if err != nil {
 		t.Fatalf("remove GitOps schedule: %v", err)
 	}

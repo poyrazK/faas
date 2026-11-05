@@ -1322,6 +1322,18 @@ class Run:
                 require(self.api.get("/v1/apps/" + slug, expected=(200, 404))[0] == 404, "app deletion did not converge")
             except Failure:
                 failures.append("owned app deletion needs inspection")
+        if resources.get("environment_id"):
+            # A project with a named stage refuses deletion (409), so the stage
+            # this run created goes first, and only when it is still that stage.
+            path = "/v1/projects/" + project + "/environments/" + self.target["named_environment"]
+            try:
+                status, environment = self.api.get(path, expected=(200, 404))
+                if status == 200:
+                    require(environment.get("id") == resources["environment_id"], "environment identity changed; refusing environment deletion")
+                    self.api.request("DELETE", path, expected=(202, 204))
+                require(self.api.get(path, expected=(200, 404))[0] == 404, "environment deletion did not converge")
+            except Failure:
+                failures.append("owned environment deletion needs inspection")
         if resources.get("project_id"):
             try:
                 status, project_row = self.api.get("/v1/projects/" + project, expected=(200, 404))

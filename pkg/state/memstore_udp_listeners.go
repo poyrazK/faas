@@ -85,7 +85,8 @@ func (m *MemStore) UDPListenerByPublicPort(_ context.Context, publicPort int) (U
 	defer m.mu.Unlock()
 	for _, listener := range m.udpListeners {
 		app, exists := m.apps[listener.AppID]
-		if listener.PublicPort == publicPort && listener.Enabled && exists && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID {
+		owner, owned := m.appResourceAccountLocked(app)
+		if listener.PublicPort == publicPort && listener.Enabled && exists && owned && owner.Active() && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && api.DeclaresPublicWorkloadPort(app.Manifest.Ports, listener.ListenerName, api.WorkloadPortUDP, listener.GuestPort) {
 			return listener, nil
 		}
 	}
@@ -118,7 +119,8 @@ func (m *MemStore) ListEnabledUDPListeners(_ context.Context) ([]UDPListener, er
 	listeners := make([]UDPListener, 0)
 	for _, listener := range m.udpListeners {
 		app, exists := m.apps[listener.AppID]
-		if listener.Enabled && exists && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID {
+		owner, owned := m.appResourceAccountLocked(app)
+		if listener.Enabled && exists && owned && owner.Active() && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && api.DeclaresPublicWorkloadPort(app.Manifest.Ports, listener.ListenerName, api.WorkloadPortUDP, listener.GuestPort) {
 			listeners = append(listeners, listener)
 		}
 	}

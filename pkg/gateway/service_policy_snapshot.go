@@ -31,13 +31,19 @@ type pinnedServicePolicy struct {
 	snapshot        ServicePolicySnapshot
 }
 
-func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, caller, service string, alias bool) bool {
+func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, caller, service string, alias bool, binding *ServiceProxyEnvironmentBinding) bool {
 	if p.policy == nil {
 		return false
 	}
 	defer measureTrafficPhase(r.Context(), trafficPolicy)()
 	ctx, cancel := context.WithTimeout(r.Context(), api.TrafficServicePolicyReadTimeout)
-	snapshot, err := p.policy(ctx, caller, service, alias)
+	var snapshot ServicePolicySnapshot
+	var err error
+	if binding != nil && binding.FrozenPolicy {
+		snapshot, err = p.frozenServicePolicy(ctx, caller, *binding)
+	} else {
+		snapshot, err = p.policy(ctx, caller, service, alias)
+	}
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -74,6 +80,39 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 	requestCtx := context.WithValue(r.Context(), pinnedServicePolicyKey{}, pinned)
 	*r = *r.WithContext(context.WithValue(requestCtx, effectiveTrafficPolicyKey{}, revision))
 	return false
+}
+
+// The exact graph was verified before policy pinning. Bind its immutable
+// selection and policy to the current tenant check; ordinary app discovery
+// cannot replace a scoped declaration or select another deployment.
+func (p *ServiceProxy) frozenServicePolicy(ctx context.Context, caller string, binding ServiceProxyEnvironmentBinding) (ServicePolicySnapshot, error) {
+	if p.authorizeBound == nil {
+		return ServicePolicySnapshot{}, ErrServiceProxyUnavailable
+	}
+	identity, err := p.authorizeBound(ctx, caller, binding.Target.AppID)
+	if err == nil && (identity.AppID != caller || identity.AccountID != binding.AccountID) {
+		err = ErrServiceProxyDenied
+	}
+	identity.RequireHTTPS, identity.CallScope, identity.Reliability = binding.RequireHTTPS, binding.CallScope, binding.Reliability
+	input, marshalErr := json.Marshal(struct {
+		Caller  string
+		Binding ServiceProxyEnvironmentBinding
+		Allowed bool
+	}{caller, binding, err == nil})
+	if marshalErr != nil {
+		return ServicePolicySnapshot{}, marshalErr
+	}
+	inputs, _ := ServicePolicyRoutingInputsFromContext(ctx)
+	return ServicePolicySnapshot{
+		InputRevision: "frozen-service-v1:" + policyDigest(input), AliasAllowed: true, Found: true,
+		Target: binding.Target, Caller: identity, AuthorizationError: err,
+		Routing: &ServiceRoutingSnapshot{
+			CallerDeploymentID: inputs.CallerDeploymentID, ReleaseResolved: true,
+			ReleaseID: binding.ReleaseSetID, ReleaseDeploymentID: binding.TargetDeploymentID,
+			RequestedReleaseID: inputs.RequestedReleaseID, ReleaseVerdict: "allowed",
+			SelectedDeploymentID: binding.TargetDeploymentID,
+		},
+	}, nil
 }
 
 func freezeServicePolicy(snapshot ServicePolicySnapshot, caller string) (ServicePolicySnapshot, error) {

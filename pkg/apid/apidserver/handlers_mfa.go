@@ -35,6 +35,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -206,10 +207,17 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
+	if acct.MFAEnrolled() {
+		s.writeMFAEnabledAlertError(w, r, acct, mailoutbox.ErrMFAEnrollmentAlreadyEnabled)
+		return
+	}
 	var req api.MFAConfirmRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid request", "malformed JSON body"))
+		return
+	}
+	if !s.confirmMFAFirstFactor(w, r, acct, req.CurrentPassword) {
 		return
 	}
 	if !s.totpAttemptAllowed(w, acct) {
@@ -226,15 +234,26 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 	if confirmSecret == "" {
 		return // readSealedSecret wrote the problem
 	}
-	if !auth.VerifyCode(confirmSecret, code) {
+	step, valid := auth.VerifyCodeStep(confirmSecret, code, time.Now())
+	if !valid {
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
 		return
 	}
-	if err := s.store.MarkMFAEnrolled(r.Context(), acct.ID); err != nil {
+	enrollments, ok := s.store.(state.MFAEnrollmentStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("MFA enrollment store unavailable"))
+		return
+	}
+	confirmed, err := enrollments.ConfirmPendingMFA(r.Context(), acct.ID, acct.MFASecretEncrypted, step)
+	if err != nil {
 		s.log.Error("mfa.confirm.mark_enrolled", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not finalize enrollment"))
+		return
+	}
+	if !confirmed {
+		s.writeMFAEnabledAlertError(w, r, acct, mailoutbox.ErrMFAEnrollmentAlreadyEnabled)
 		return
 	}
 	s.alertMFAEnabledInline(r.Context(), acct)
@@ -243,7 +262,7 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 
 func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.totp.reset(acct.ID) // a correct code clears the counted attempts
-	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
+	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		// Cookie re-issue failure is non-fatal — the customer's
 		// enrollment landed; the next request will trip
 		// requireMFA until they log in again. We log it but
@@ -274,6 +293,9 @@ func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, a
 // is missing (defense in depth — should never happen because
 // s.auth resolved it moments earlier).
 func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireEnrolledMFA(w, acct) {
+		return
+	}
 	var req api.MFAVerifyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -345,6 +367,9 @@ func (s *server) mfaRecover(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
+	if !requireEnrolledMFA(w, acct) {
+		return
+	}
 	var req api.MFARecoverRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -375,6 +400,44 @@ func (s *server) mfaRecover(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	// Step 2 — consume, reissue cookie, audit, email, write 200.
 	s.completeRecoveryCodeBurn(w, r, acct, presented)
+}
+
+// A new setup secret is handed to the calling session. It cannot establish
+// independent proof until the account's existing password authorizes enrollment.
+// OAuth-only accounts retain their session-based opt-in, as with set-password.
+func (s *server) confirmMFAFirstFactor(w http.ResponseWriter, r *http.Request, acct state.Account, password string) bool {
+	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not check enrollment credentials"))
+		return false
+	}
+	if wait := s.loginFailures.retryAfter(auth.HashEmail(acct.Email)); wait > 0 {
+		api.WriteProblem(w, api.ErrAuthRateLimited(int(wait.Seconds())+1))
+		return false
+	}
+	matched, err := auth.VerifyContext(r.Context(), hash, password)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return false
+	}
+	if err != nil || !matched {
+		s.recordLoginFailure(r.Context(), acct.Email, &acct)
+		api.WriteProblem(w, api.ErrInvalidCredentials())
+		return false
+	}
+	return true
+}
+
+func requireEnrolledMFA(w http.ResponseWriter, acct state.Account) bool {
+	if acct.MFAEnrolled() {
+		return true
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeMFARequired,
+		"MFA setup incomplete", "finish /v1/account/mfa/confirm before verifying or using recovery codes"))
+	return false
 }
 
 // refuseLastRecoveryCodeOrMatch is Step 1 of mfaRecover. It runs

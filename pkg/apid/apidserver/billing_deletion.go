@@ -42,6 +42,12 @@ func (s *server) endSubscriptionForDeletion(ctx context.Context, subject state.A
 		if !current.Status.Live() {
 			return nil
 		}
+		// Already scheduled to end: the provider refuses a second
+		// cancellation, which used to hold the deletion until the period
+		// ended (ADR-20261103131742 amendment 1).
+		if current.CancelAtPeriodEnd {
+			return nil
+		}
 	}
 	if _, err := s.billingProvider.CancelAtPeriodEnd(ctx, billingAcct); err != nil && !errors.Is(err, billing.ErrAlreadyCancelled) {
 		return fmt.Errorf("cancel billing subscription at period end: %w", err)

@@ -55,6 +55,15 @@
     "kind": "operational"
   },
   {
+    "table": "api_key_project_limits",
+    "columns": [
+      "created_at",
+      "key_id",
+      "project_ids"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
@@ -1240,6 +1249,19 @@
     }
   },
   {
+    "table": "app_env_batch_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "receipt",
+      "request_id",
+      "request_sha256",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_envs",
     "columns": [
       "account_id",
@@ -1827,6 +1849,17 @@
       "observed_at",
       "observed_revision",
       "scheduler_node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_scaling_receipts",
+    "columns": [
+      "app_id",
+      "request_hash",
+      "request_id",
+      "response",
+      "scope"
     ],
     "kind": "operational"
   },
@@ -2658,6 +2691,7 @@
       "runtime",
       "scaling_policy",
       "scaling_policy_revision",
+      "scaling_revision",
       "security_policy",
       "service_address_index",
       "slug",
@@ -3558,6 +3592,7 @@
       "device_hash",
       "expires_at",
       "org_id",
+      "project_ids",
       "status",
       "token_hash"
     ],
@@ -3982,6 +4017,7 @@
       "cert_expires_at",
       "cert_failed_at",
       "cert_last_error",
+      "cert_retry_at",
       "cert_status",
       "challenge_token",
       "dns_last_checked_at",
@@ -4499,6 +4535,20 @@
       "app_id",
       "config",
       "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_change_hook_reports",
+    "columns": [
+      "app_id",
+      "reported_at",
+      "pending",
+      "failed",
+      "oldest_pending_at",
+      "last_published_at",
+      "last_failure_code",
+      "publishing"
     ],
     "kind": "operational"
   },
@@ -5366,6 +5416,21 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_promotion_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id",
+      "environment_id",
+      "expected_serving_deployment_id",
+      "project_id",
+      "request_hash",
+      "scope"
+    ]
+  },
+  {
     "table": "deployment_submission_receipts",
     "kind": "operational",
     "columns": [
@@ -5684,6 +5749,24 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "edge_tls_certificates",
+    "columns": [
+      "account_uri",
+      "ca",
+      "chain_pem",
+      "id",
+      "issued_at",
+      "key_kid",
+      "key_sealed",
+      "names",
+      "not_after",
+      "not_before",
+      "serial",
+      "sha256"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "edge_crawler_ip_ranges",
@@ -8058,6 +8141,7 @@
       "app_id",
       "application_standard_boot_token",
       "application_standard_promotion_token",
+      "booked_cpu_millicores",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",
@@ -8876,14 +8960,27 @@
     "kind": "operational"
   },
   {
+    "table": "issue_event_usage",
+    "columns": [
+      "app_id",
+      "initialized",
+      "retained_count"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "issue_events",
     "columns": [
       "app_id",
       "attribution_checked_at",
+      "attribution_version",
       "deployment_id",
       "event_id",
+      "http_time_buckets",
       "id",
       "issue_id",
+      "occurrence_count",
+      "occurrence_weight_known",
       "occurred_at",
       "original_issue_id",
       "payload",
@@ -9600,6 +9697,7 @@
       "cron_schedule",
       "cron_timezone",
       "env_overrides",
+      "environment_git_source_id",
       "failure_rules",
       "id",
       "image_cmd",
@@ -14787,6 +14885,29 @@
     }
   },
   {
+    "table": "private_network_service_owners",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "instance_id",
+      "network_id",
+      "service_address_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "private_network_transport_identities",
+    "columns": [
+      "account_id",
+      "created_at",
+      "network_id",
+      "region",
+      "vni"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "private_networks",
     "columns": [
       "account_id",
@@ -16713,6 +16834,15 @@
     }
   },
   {
+    "table": "project_app_stage_admissions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "project_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "project_environments",
     "columns": [
       "account_id",
@@ -16720,6 +16850,7 @@
       "id",
       "project_id",
       "protected",
+      "shared_secret_generation",
       "slug",
       "updated_at"
     ],
@@ -16973,6 +17104,21 @@
     }
   },
   {
+    "table": "static_egress_provisioning_grants",
+    "columns": [
+      "account_id",
+      "created_at",
+      "customer_ip",
+      "source_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
     "table": "provisioned_static_egress_ips",
     "columns": [
       "account_id",
@@ -17195,6 +17341,14 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_rollup_gaps",
+    "columns": [
+      "app_id",
+      "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_rollup_coverage",
     "columns": [
       "app_id",
@@ -17228,6 +17382,7 @@
       "country",
       "deployment_created_at",
       "deployment_id",
+      "deployment_pinned",
       "deployment_tag",
       "flag_evidence",
       "guest_cpu_time_ms",
@@ -17241,6 +17396,7 @@
       "image_digest",
       "instance_id",
       "latency_ms",
+      "long_lived",
       "method",
       "node_id",
       "platform_refusal",

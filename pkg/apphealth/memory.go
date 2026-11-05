@@ -55,8 +55,35 @@ func assessMemory(out *api.AppHealthResponse, e Evidence) {
 			percent = p.LowestAvailableMB * 100 / p.TotalMB
 		}
 		hours := max(1, int(math.Ceil(e.Now.Sub(p.WindowStartedAt).Hours())))
-		add(out, "memory", Warning, fmt.Sprintf("Available memory fell to %d of %d MB (%d%%) %s in the last %s; anonymous memory peaked at %d MB.",
-			p.LowestAvailableMB, p.TotalMB, percent, times(p.Episodes), spoken(time.Duration(hours)*time.Hour), p.PeakAnonMB), "metrics", "")
+		detail := fmt.Sprintf("Available memory fell to %d of %d MB (%d%%) %s in the last %s; anonymous memory peaked at %d MB.",
+			p.LowestAvailableMB, p.TotalMB, percent, times(p.Episodes), spoken(time.Duration(hours)*time.Hour), p.PeakAnonMB)
+		action := "metrics"
+		if size, ok := api.RightSizeMemory(e.Plan, e.App.RAMMB, p.TotalMB, p.LowestAvailableMB); ok {
+			detail += " " + size.Advice()
+			action = "configuration"
+		}
+		add(out, "memory", Warning, detail, action, "")
+		out.Checks[len(out.Checks)-1].Reason = "memory_pressure"
+	}
+}
+
+// DebugMemory is the memory-pressure summary `gregale debug status` shows
+// (ADR-20261102124306 step 3): nil unless the app's guests ran short of
+// memory within api.AppHealthMemoryPressureWindow and the plan is known, so
+// a RAM suggestion can be made.
+func DebugMemory(p state.AppMemoryPressure, recorded bool, plan api.Plan, appRAMMB int, now time.Time) *api.DebugStatusMemory {
+	if !recorded || now.Sub(p.LastAt) > api.AppHealthMemoryPressureWindow {
+		return nil
+	}
+	size, ok := api.RightSizeMemory(plan, appRAMMB, p.TotalMB, p.LowestAvailableMB)
+	if !ok {
+		return nil
+	}
+	return &api.DebugStatusMemory{
+		Episodes: p.Episodes, LowestAvailableMB: p.LowestAvailableMB, TotalMB: p.TotalMB, PeakAnonMB: p.PeakAnonMB,
+		LastAt: p.LastAt.UTC().Format(time.RFC3339), CurrentMB: size.CurrentMB, SuggestedMB: size.SuggestedMB,
+		Plan: string(size.Plan), PlanMB: size.PlanMB, FitsPlan: size.FitsPlan,
+		UpgradePlan: string(size.UpgradePlan), UpgradeMB: size.UpgradeMB, Advice: size.Advice(),
 	}
 }
 

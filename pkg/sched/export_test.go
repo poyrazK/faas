@@ -335,6 +335,9 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
 
+// XRunReaper runs one reaper tick.
+func (l *Loop) XRunReaper(ctx context.Context) { l.runReaper(ctx) }
+
 // XBrokerLanesHeld is how many broker trigger lanes the account holds.
 // adr: 20261101093015 — the lanes are shared between accounts.
 func (l *Loop) XBrokerLanesHeld(accountID string) int {
@@ -1083,6 +1086,23 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
+// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
+func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
+
+// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
+// bookings (ADR-20261101160231).
+func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUBookingMillicores(app, limits)
+}
+func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
+	return e.appCPUBookingStamp(app, limits)
+}
+
+// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
+func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUMillicores(app, limits)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
@@ -1249,6 +1269,16 @@ func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
 	r.failInterruptedFireNowRequests(ctx)
 }
 
+func ProjectPrivateNetworkForTest(store state.Store, app state.App) AppSpec {
+	p := (&Engine{store: store}).privateNetworkProjection(context.Background(), app)
+	return AppSpec{PrivateNetworkCIDRs: p.CIDRs, PrivateNetworkAllowedCIDRs: p.AllowedCIDRs, PrivateNetworkFirewallRules: p.FirewallRules, PrivateNetworkID: p.NetworkID, PrivateNetworkAddress: p.Address}
+}
+
+func StaticEgressWirePolicyForTest(spec AppSpec) (string, bool) {
+	p := spec.toProto()
+	return p.GetStaticEgressIp(), p.GetStaticEgressExcluded()
+}
+
 // RealtimeIdleDelays observes claims of the given sizes on a fresh realtime
 // poller and returns the idle delay after each.
 func RealtimeIdleDelays(sizes []int) []time.Duration {
@@ -1265,3 +1295,9 @@ func RealtimeIdleDelays(sizes []int) []time.Duration {
 	}
 	return out
 }
+
+// KeyedLocks exposes keyedLocks to sched_test (ADR 20261104143005).
+type KeyedLocks = keyedLocks
+
+func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
+func (k *keyedLocks) Size() int              { return k.size() }

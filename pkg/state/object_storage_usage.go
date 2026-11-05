@@ -48,6 +48,11 @@ type ObjectBucketUsage struct {
 	// InventoryScan is the bucket's listing in progress, if any
 	// (ADR-20261030100835).
 	InventoryScan ObjectInventoryScan
+	// InventoryHeld is set while a versioning, Object Lock or capacity
+	// transition fences the bucket's capacity. The inventory sweep skips
+	// such a bucket, and no admitted write can grow it, so its last
+	// inventory remains the bound for admission until the transition ends.
+	InventoryHeld bool
 }
 
 type ObjectUsageSnapshot struct {

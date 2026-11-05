@@ -36,7 +36,7 @@ func ResolveManagedServiceProbe(ctx context.Context, store ManagedServiceProbeSt
 	if err != nil {
 		return zero, err
 	}
-	if !managed || !found || route.CallerAppID != appID || route.CallerDeploymentID != deploymentID || route.AccountID != app.AccountID {
+	if !managed || !found || !route.ReconciliationActive || route.CallerAppID != appID || route.CallerDeploymentID != deploymentID || route.AccountID != app.AccountID {
 		return zero, ErrConflict
 	}
 	targetApp, err := store.AppByID(ctx, route.TargetAppID)

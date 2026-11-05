@@ -193,7 +193,8 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !ok {
 		return state.Account{}, api.ErrCapacity("application authorization requires an authenticated principal")
 	}
-	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID) {
+	// A key limited to projects reaches only their apps (ADR-20261104085712).
+	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID || authmw.AppOutsideKeyProjects(key, app)) {
 		return state.Account{}, notFound(r)
 	}
 	if app.OrgID == "" {

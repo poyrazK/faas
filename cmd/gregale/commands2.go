@@ -2627,6 +2627,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !templateAvailable(*templateName) {
 			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
 		}
+		// The data-api template is the bare runtime: it cannot start without a
+		// database binding and token settings, and its copy in this CLI may be
+		// older than the runtime the platform serves (ADR-20261031095954).
+		if *templateName == "data-api" {
+			return printErr("Deploy a Data API with gregale data-api", errors.New("gregale data-api create NAME --database DATABASE ... creates one, and gregale data-api deploy NAME upgrades an existing one to the runtime the platform serves"))
+		}
 		if rt, hnd, functionTemplate := templateFunctionConfig(*templateName); functionTemplate {
 			if deployApp {
 				return printErr("Invalid template shape", fmt.Errorf("function template %q cannot be deployed with --app", *templateName))
@@ -3146,6 +3152,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			if len(queueCanaryBindings) > 0 {
 				return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single workload"))
+			}
+			// --plan/--preview stays local: the fan-out reserved each app
+			// before its child plan refused --runtime (rc.318 field report).
+			if *simplePlan {
+				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, out: osStdout}.printPlan()
 			}
 			return deployFunctionSet(ctx, functionSetDeploy{
 				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
@@ -5917,18 +5928,23 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...]", "keys")
+			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...]", "keys")
 			return 0
 		}
 		flags, positional := splitArgsForFlags(args[1:])
 		fs := newFlagSet("keys add", flag.ContinueOnError)
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
 		if err := fs.Parse(flags); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...]", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...]", "keys")
 			return 1
+		}
+		projects := splitList(*projectsCSV)
+		if flagWasSet(fs, "projects") && len(projects) == 0 {
+			return printErr("Invalid projects", errors.New("--projects must name at least one project"))
 		}
 		var scopes []string
 		if flagWasSet(fs, "scopes") {
@@ -5952,7 +5968,7 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), positional[0], scopes)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes, projects...)
 		if err != nil {
 			return printErr("Could not create API key", err)
 		}

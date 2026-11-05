@@ -408,6 +408,9 @@ func (m *MemStore) tenantHostnameQuotaLocked(ctx context.Context, surfaceID stri
 }
 
 func (m *MemStore) insertTenantHostnameLocked(ctx context.Context, account string, in CreateTenantHostnameParams) (TenantHostname, error) {
+	if err := m.checkPublicTenantHostnameClaimLocked(ctx, in.Hostname, m.tenantSurfaces[in.SurfaceID].AppID); err != nil {
+		return TenantHostname{}, err
+	}
 	if _, exists := m.tenantHostnames[in.Hostname]; exists {
 		return TenantHostname{}, ErrConflict
 	}

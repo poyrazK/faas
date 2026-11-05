@@ -345,7 +345,7 @@ func (m *MemStore) functionDestinationShapeLocked(ins Instance) capacityResource
 	if !ok {
 		return capacityResources{RAM: int64(api.RAMAdmissionCeilingMB), CPU: int64(api.RAMAdmissionCeilingMB), VCPU: int64(api.VCPUSlots)}
 	}
-	return capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(max(app.CPUMillicores, api.DefaultAppCPUMillicores)) + cpu, VCPU: int64(limits.VCPU)}
+	return capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: int64(limits.VCPU)}
 }
 func (m *MemStore) functionDestinationInstanceCapacityLocked(ins Instance) error {
 	if !capacityResident(State(ins.State)) && State(ins.State) != StateFrozen {

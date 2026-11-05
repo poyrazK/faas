@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
@@ -97,7 +99,7 @@ func cmdDeployCheck(args []string) int {
 			return printErr("Cannot inspect selected source", sourceErr)
 		}
 		defer cleanup()
-		if err = deploymentCheckWorkloads(selected, *secretsFile, &request); err != nil {
+		if err = deploymentCheckWorkloads(selected, *secretsFile, func() api.Limits { return deployCheckLimits(client) }, &request); err != nil {
 			return printErr("Cannot inspect project", err)
 		}
 	}
@@ -138,13 +140,43 @@ func deploymentCheckSource(root, sourcePath string, mode deploySourceMode) (stri
 	return selected, cleanup, err
 }
 
-func deploymentCheckWorkloads(root, secretsFile string, request *api.ProjectDeploymentCheckRequest) error {
-	scan, err := reposcan.Scan(os.DirFS(root))
+// deployCheckLimits are the account plan's limits, which bound the Compose
+// values an env import writes. An unreadable account checks with Free's.
+func deployCheckLimits(client *Client) api.Limits {
+	if acct, err := client.Whoami(context.Background()); err == nil {
+		if limits, ok := api.LimitsFor(api.Plan(acct.Plan)); ok {
+			return limits
+		}
+	}
+	limits, _ := api.LimitsFor(api.PlanFree)
+	return limits
+}
+
+// limits is read only when the Compose file opts in to the env import.
+func deploymentCheckWorkloads(root, secretsFile string, limits func() api.Limits, request *api.ProjectDeploymentCheckRequest) error {
+	fsys := os.DirFS(root)
+	scan, err := reposcan.Scan(fsys)
 	if err != nil {
 		return err
 	}
 	if len(scan.Workloads) == 0 {
 		return errors.New("no deployable project workloads were detected")
+	}
+	// The deploy writes opted-in plain Compose values
+	// (x-gregale-env-import), so their keys are provided, as in the
+	// project plan; only key names leave this machine. An unreadable
+	// environment imports nothing, as on the server.
+	composeEnv, envErr := reposcan.ReadComposeEnv(fsys)
+	if envErr != nil {
+		composeEnv = reposcan.ComposeEnv{}
+	}
+	var importLimits api.Limits
+	if composeEnv.ImportsAny() {
+		importLimits = limits()
+	}
+	callable := make([]string, 0, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		callable = append(callable, workload.Name)
 	}
 	var provided []string
 	if secretsFile != "" {
@@ -157,7 +189,14 @@ func deploymentCheckWorkloads(root, secretsFile string, request *api.ProjectDepl
 		}
 	}
 	for _, workload := range scan.Workloads {
-		item := api.ProjectDeploymentCheckWorkload{Workload: reposcan.PlanWorkload(workload), CommandShell: workload.CommandShell, ReleaseCommand: workload.ReleaseCommand, ReleaseCommandShell: workload.ReleaseCommandShell, ProvidedKeys: provided}
+		keys := slices.Clone(provided)
+		imported := projectsetup.PlanEnvImport(composeEnv, workload.Name, callable, importLimits, true).Values
+		for _, key := range slices.Sorted(maps.Keys(imported)) {
+			if !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
+		item := api.ProjectDeploymentCheckWorkload{Workload: reposcan.PlanWorkload(workload), CommandShell: workload.CommandShell, ReleaseCommand: workload.ReleaseCommand, ReleaseCommandShell: workload.ReleaseCommandShell, ProvidedKeys: keys}
 		manifest, present, err := gregalemanifest.Load(filepath.Join(root, filepath.FromSlash(workload.RootDir)))
 		if err != nil {
 			return errors.New("a workload manifest could not be parsed")

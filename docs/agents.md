@@ -70,8 +70,8 @@ gregale key create coding-agent --scopes apps:read,deploy:write
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `secrets:write` only if the agent should set environment
-variables or ask you for secrets: `gregale env push` stores them through the
+and crons. Add `env:write` for the MCP non-secret configuration tools. Add
+`secrets:write` only for the CLI secrets workflow or secret entry: `gregale env push` stores them through the
 secrets API. Add `storage:manage` for buckets, and `postgres:manage` with
 `postgres:read` for databases. A key without `--scopes` is a full-access
 `admin` key.
@@ -80,6 +80,31 @@ Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
 it into a prompt, a command argument or a committed file. Remove it with
 `gregale key delete <id>` when the agent no longer needs it.
+
+For an agent restricted to one existing app, create an app-bound credential:
+
+```sh
+gregale app deploy-token create --app my-api --agent \
+  --label app-inspector --scopes usage:read
+```
+
+This adds `agent` and `apps:read` automatically. Explicit `usage:read` enables
+native app-cost inspection through MCP without a local CLI. It grants no
+account billing or other-app access. Cost results report retained attributed
+usage, with coverage limitations; they are not invoice estimates.
+
+`gregale_preflight` in the release tool group accepts `operation` (`deploy`,
+`restart`, `scale`, `env_change`). It reports native operation authorization
+separately from the connection's write consent. Quota and exact request admission
+remain unknown until the native mutation validates them again.
+
+An app-bound `--scopes apps:read` token can also inspect domains, crons, buckets,
+storage bindings and bound database metadata through the MCP `provision` tool
+group. These reads use native app/scope pagination and require no management
+scope. Use `gregale mcp serve --tools core,provision` with the token in
+`FAAS_TOKEN`; the connection stays read-only unless write access is enabled.
+Metadata grants no object data, SQL connections or credential access. Resource
+capability flags remain enforced.
 
 ## Run the CLI non-interactively
 
@@ -161,13 +186,16 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back. About a fifth of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness. About a quarter of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
-| `all` | Everything (the default) |
+| `operate` | Configuration, restart, scaling, plan receipts and costs |
+| `all` | Everything allowed by the server operator (explicit opt-in) |
 
 Combine them with commas, for example `--tools core,diagnose`.
+Use `--tools all` for the full catalog. Hosted connections select additional
+toolsets during onboarding, within the operator's configured selection.
 
 The tools are read-only by default. They list apps and deployments, read logs,
 metrics and health, explain a failed deployment and group recurring errors;
@@ -186,12 +214,21 @@ from a directory to a live app:
    `gregale_apply_local_deploy` uploads it, creating the app on its first
    deploy.
 2. `gregale_plan_env_change` and `gregale_apply_env_change` set non-secret
-   variables; the key also needs `secrets:write` for these.
+   variables; the key also needs `env:write` for these.
 3. Later deploys of a serving app are staged at 0% traffic until
    `gregale_promote_deployment`.
 
-These tools run the `gregale` CLI on your machine, so they do exactly what the
-matching commands do.
+Directory deployments run the `gregale` CLI on your machine. Configuration
+changes use the native non-secret variable API and also work on hosted
+connections with `env:write` consent. Add `operate` for configuration history,
+reviewed rollback, restart/scaling and completed-plan receipt recovery.
+
+After applying, follow `verification.next` when present. A completed mutation
+receipt records the change or accepted request; `gregale_verify_plan` separately
+checks restart processing and fresh app health, or the exact deployment's
+readiness. Honor its polling delay and report its goal and observation time.
+Staged deployments require explicit promotion. Worker verification confirms
+resident generation convergence; queue processing needs separate evidence.
 
 The agent never handles a secret value. With `--allow-writes`,
 `gregale_request_secret` opens a one-time Gregale page where you type the

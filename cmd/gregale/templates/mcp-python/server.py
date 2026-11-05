@@ -1,5 +1,8 @@
 """Minimal stateless MCP Streamable HTTP server for Gregale."""
 
+from protocol_headers import validate_mcp_headers
+from http_body import RequestBodyError, read_request_body
+
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
@@ -375,7 +378,7 @@ def accepts_event_stream(header):
     return False
 
 
-def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None):
+def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None, legacy=True):
     request_id = message.get("id")
     method = message.get("method")
     params = message.get("params", {})
@@ -386,12 +389,12 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
         if protocol != CURRENT_PROTOCOL:
             return 404, rpc_error(request_id, -32601, "method not found")
         return 200, rpc_response(request_id, {
-            "supportedVersions": [CURRENT_PROTOCOL, LEGACY_PROTOCOL],
+            "supportedVersions": [CURRENT_PROTOCOL, LEGACY_PROTOCOL] if legacy else [CURRENT_PROTOCOL],
             "capabilities": server_capabilities(task_runtime, modern=True),
         })
     if method == "initialize":
         requested = params.get("protocolVersion")
-        if requested not in SUPPORTED_PROTOCOLS:
+        if requested not in SUPPORTED_PROTOCOLS or (requested == LEGACY_PROTOCOL and not legacy):
             return 400, rpc_error(request_id, -32602, "unsupported protocol version")
         return 200, rpc_response(request_id, {
             "protocolVersion": requested,
@@ -819,7 +822,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 self.server.app_config.get("auth", {}),
             )
             health["ok"] = health["ready"]
-            health["instance_id"] = os.environ.get("FAAS_INSTANCE_ID", "").strip()
+            health["instance_id"] = self.headers.get("X-Faas-Instance-Id", "").strip()
             self.send_json(200 if health["ready"] else 503, {key: value for key, value in health.items() if key != "ready"})
             return
         if path == self.server.app_config["endpoint"]:
@@ -887,16 +890,14 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_text(415, "content type must be application/json")
             return
         try:
-            length = int(self.headers.get("Content-Length", ""))
-        except ValueError:
-            self.send_text(400, "invalid content length")
-            return
-        if length <= 0 or length > MAX_REQUEST_BYTES:
-            self.send_text(413, "request body is missing or exceeds 1 MiB")
+            body = read_request_body(self.rfile, self.headers, MAX_REQUEST_BYTES)
+        except RequestBodyError as error:
+            self.close_connection = True
+            self.send_text(error.status, str(error))
             return
         try:
             message = json.loads(
-                self.rfile.read(length),
+                body,
                 parse_constant=reject_json_constant,
             )
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError):
@@ -904,6 +905,14 @@ class MCPHandler(BaseHTTPRequestHandler):
             return
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or not isinstance(message.get("method"), str) or not message["method"]:
             self.send_rpc(400, rpc_error(None, -32600, "invalid JSON-RPC request"))
+            return
+        protocol = self.headers.get("MCP-Protocol-Version", CURRENT_PROTOCOL)
+        legacy = self.server.app_config.get("legacy", True)
+        if len(self.headers.get_all("MCP-Protocol-Version", [])) > 1 or protocol not in SUPPORTED_PROTOCOLS or (protocol == LEGACY_PROTOCOL and not legacy):
+            self.send_rpc(400, rpc_error(message.get("id"), -32600, "unsupported MCP protocol version"))
+            return
+        if not validate_mcp_headers(self.headers, message, protocol, MCP_CATALOG):
+            self.send_rpc(400, rpc_error(message.get("id"), -32020, "MCP headers do not match the request"))
             return
         failure = self.server.authenticator.authorize_request(
             message["method"], message.get("params", {}), granted_scopes
@@ -929,10 +938,6 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        protocol = self.headers.get("MCP-Protocol-Version", CURRENT_PROTOCOL)
-        if protocol not in SUPPORTED_PROTOCOLS:
-            self.send_rpc(400, rpc_error(message.get("id"), -32600, "unsupported MCP protocol version"))
-            return
         params = message.get("params", {})
         if message["method"] == "subscriptions/listen":
             self.serve_task_subscription(message["id"], params, protocol, granted_scopes)
@@ -944,7 +949,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 return
             self.serve_stream_demo(message["id"], params, protocol)
             return
-        status, response = dispatch(message, protocol, self.server.authenticator, granted_scopes, self.server.task_runtime)
+        status, response = dispatch(message, protocol, self.server.authenticator, granted_scopes, self.server.task_runtime, legacy=legacy)
         self.send_rpc(status, response, protocol)
 
     def serve_stream_demo(self, request_id, params, protocol):
@@ -1498,6 +1503,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 

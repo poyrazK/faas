@@ -28,8 +28,9 @@ func clampResolvedTTL(ttl time.Duration) time.Duration {
 	return min(max(ttl, lo), hi)
 }
 
-// AllowResolvedEgress lets the instance whose host-side address is source
-// open TCP to addrs for the answer's ttl, clamped (ADR-373). The bridge
+// AllowResolvedEgress lets the captured owner of source open TCP to addrs for
+// the answer's ttl, clamped (ADR-373). Its network generation must still own
+// that source when the grant arrives. The bridge
 // resolver calls it before returning an answer, so the guest never sees an
 // address it cannot reach yet. Addresses already allowed for more than half
 // the TTL are skipped, so repeated lookups of a name cost no nft call.
@@ -37,20 +38,26 @@ func clampResolvedTTL(ttl time.Duration) time.Duration {
 // A non-zero databasePort means the name is one of the app's bound managed
 // databases (ADR 20261026150000): the addresses are also allowed on that
 // port, outside the plan's egress ports, in the same nft transaction.
-func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, owner ServiceCallerIdentity, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	// Cleanup records its intent before joining this lock in circuit unregister.
+	// Finish an admitted grant before namespace teardown can recycle its name.
+	m.egressCircuitMu.Lock()
+	defer m.egressCircuitMu.Unlock()
 	ttl = clampResolvedTTL(ttl)
 	now := time.Now()
 	source = source.Unmap()
 	m.mu.Lock()
-	var id string
-	var inst *Instance
-	for k, v := range m.live {
-		if v.Net.HostIP == source {
-			id, inst = k, v
-			break
-		}
+	id := owner.InstanceID
+	inst := m.live[id]
+	if inst == nil || m.pendingCleanup[id] != nil || inst.Net.HostIP != source || owner.NetworkGeneration == "" || inst.resolvedEgressGeneration != owner.NetworkGeneration {
+		m.mu.Unlock()
+		return ErrResolvedEgressNoInstance
 	}
-	if inst == nil {
+	m.mu.Unlock()
+	unlock := m.lockInstanceNetworkPolicy(inst)
+	defer unlock()
+	m.mu.Lock()
+	if m.live[id] != inst || m.pendingCleanup[id] != nil || inst.Net.HostIP != source || inst.resolvedEgressGeneration != owner.NetworkGeneration {
 		m.mu.Unlock()
 		return ErrResolvedEgressNoInstance
 	}
@@ -171,32 +178,42 @@ func (m *Manager) rememberAppDatabaseLocked(appID string, addrs []netip.Addr, po
 // seed retries its SYN, and a fresh lookup through the resolver allows the
 // address anyway.
 func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
-	now := time.Now()
+	m.egressCircuitMu.Lock()
+	defer m.egressCircuitMu.Unlock()
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if !ok || inst.AppID == "" || inst.Net.Netns == "" || !inst.Net.DNSGated && !inst.Net.DatabaseEgress {
 		m.mu.Unlock()
 		return
 	}
-	var addrs []netip.Addr
+	m.mu.Unlock()
+	unlock := m.lockInstanceNetworkPolicy(inst)
+	defer unlock()
+	m.mu.Lock()
+	if m.live[instance] != inst || m.pendingCleanup[instance] != nil {
+		m.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	addrs := map[netip.Addr]time.Time{}
 	if inst.Net.DNSGated {
 		for a, until := range m.appResolved[inst.AppID] {
-			if until.After(now) {
-				addrs = append(addrs, a)
+			if until.Sub(now) >= time.Second {
+				addrs[a] = until
 			}
 		}
 	}
-	byPort := map[uint16][]netip.Addr{}
+	pairs := map[databaseEgressKey]time.Time{}
 	if inst.Net.DatabaseEgress {
 		for k, until := range m.appDatabaseResolved[inst.AppID] {
-			if until.After(now) {
-				byPort[k.port] = append(byPort[k.port], k.addr)
+			if until.Sub(now) >= time.Second {
+				pairs[k] = until
 			}
 		}
 	}
 	nc := inst.Net
 	m.mu.Unlock()
-	if len(addrs) == 0 && len(byPort) == 0 {
+	if len(addrs) == 0 && len(pairs) == 0 {
 		return
 	}
 	ctx, err := m.nativeInstanceNetworkContext(ctx, instance, inst.nativeGeneration)
@@ -206,34 +223,43 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 		}
 		return
 	}
-	ttl := time.Duration(api.DNSGatedEgressMinTTLSeconds) * time.Second
-	cmds := nc.ResolvedEgressAddCommands(addrs, ttl)
-	for port, pairs := range byPort {
-		cmds = append(cmds, nc.DatabaseEgressAddCommands(pairs, port, ttl)...)
+	var cmds [][]string
+	for address, until := range addrs {
+		remaining := time.Until(until)
+		if remaining < time.Second {
+			delete(addrs, address)
+			continue
+		}
+		cmds = append(cmds, nc.ResolvedEgressAddCommands([]netip.Addr{address}, remaining)...)
+	}
+	for pair, until := range pairs {
+		remaining := time.Until(until)
+		if remaining < time.Second {
+			delete(pairs, pair)
+			continue
+		}
+		cmds = append(cmds, nc.DatabaseEgressAddCommands([]netip.Addr{pair.addr}, pair.port, remaining)...)
 	}
 	if err := m.runNftCommands(ctx, nc.Netns, cmds); err != nil {
 		if m.log != nil {
-			m.log.Warn("fcvm: seed resolved egress failed", "instance", instance, "addresses", len(addrs), "databases", len(byPort), "err", err)
+			m.log.Warn("fcvm: seed resolved egress failed", "instance", instance, "addresses", len(addrs), "databases", len(pairs), "err", err)
 		}
 		return
 	}
-	until := now.Add(ttl)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cur, ok := m.live[instance]; ok && cur == inst {
 		if inst.resolvedEgress == nil {
 			inst.resolvedEgress = make(map[netip.Addr]time.Time, len(addrs))
 		}
-		for _, a := range addrs {
+		for a, until := range addrs {
 			inst.resolvedEgress[a] = until
 		}
-		if inst.databaseEgress == nil && len(byPort) > 0 {
+		if inst.databaseEgress == nil && len(pairs) > 0 {
 			inst.databaseEgress = make(map[databaseEgressKey]time.Time)
 		}
-		for port, pairs := range byPort {
-			for _, a := range pairs {
-				inst.databaseEgress[databaseEgressKey{a, port}] = until
-			}
+		for pair, until := range pairs {
+			inst.databaseEgress[pair] = until
 		}
 	}
 }

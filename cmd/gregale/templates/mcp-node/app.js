@@ -70,6 +70,20 @@ function jsonRpcError(response, requestID, code, message, status = 200, data) {
   });
 }
 
+function createCatalogServer(info, options) {
+  const server = new McpServer(info, options);
+  // SDK 2.4.0 uses object dictionaries for caller-defined names. Keep this
+  // compatibility shim and its HTTP regressions aligned with SDK upgrades.
+  for (const key of ['_registeredTools', '_registeredPrompts', '_registeredResources', '_registeredResourceTemplates', '_toolInputSchemaJson']) {
+    const registry = server[key];
+    if (!Object.hasOwn(server, key) || !registry || typeof registry !== 'object' || Array.isArray(registry)) {
+      throw new Error('Unsupported MCP SDK catalog registry layout');
+    }
+    Object.setPrototypeOf(registry, null);
+  }
+  return server;
+}
+
 function installDefaultCatalog(catalog) {
   const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   catalog.registerTool('greet', {
@@ -114,6 +128,9 @@ function installDefaultCatalog(catalog) {
   catalog.registerResource('welcome', 'greeting://welcome', {
     title: 'Welcome', description: 'A public example resource.', mimeType: 'text/plain',
   }, async uri => ({ contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'Welcome to the Gregale MCP starter.' }] }));
+  const sampleCustomerRecord = async (uri, { recordId }) => ({
+    contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }],
+  });
   catalog.registerResource('customer_record', new ResourceTemplate('customer://records/{recordId}', {
     list: undefined,
     complete: {
@@ -121,9 +138,7 @@ function installDefaultCatalog(catalog) {
     },
   }), {
     title: 'Customer record', description: 'Example customer-record resource; enforce ownership in your own data lookup.', mimeType: 'application/json',
-  }, async (uri, { recordId }) => ({
-    contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }],
-  }));
+  }, sampleCustomerRecord);
   catalog.registerPrompt('summarize', {
     title: 'Summarize text', description: 'Create a concise summary request.',
     argsSchema: z.object({
@@ -134,6 +149,7 @@ function installDefaultCatalog(catalog) {
     description: style ? `Ask for a ${style} summary.` : 'Ask for a concise summary.',
     messages: [{ role: 'user', content: { type: 'text', text: `${style ? `Summarize this text in a ${style} style:` : 'Summarize this text concisely:'}\n\n${text}` } }],
   }));
+  return { sampleCustomerRecord };
 }
 
 export function createApp(config, { keyResolver, log = console.log, taskRuntime, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
@@ -156,12 +172,14 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     const normalized = { ...definition };
     for (const key of ['inputSchema', 'outputSchema', 'argsSchema']) {
       const schema = normalized[key];
-      if (schema && typeof schema.safeParse === 'function') normalized[key] = z.toJSONSchema(schema);
+      if (schema?.['~standard']?.jsonSchema) {
+        normalized[key] = schema['~standard'].jsonSchema[key === 'outputSchema' ? 'output' : 'input']({ target: 'draft-2020-12' });
+      }
     }
     return normalized;
   };
   const catalog = createRuntimeCatalog({ normalizeDefinition: normalizeCatalogDefinition });
-  installDefaultCatalog(catalog);
+  const { sampleCustomerRecord } = installDefaultCatalog(catalog);
   if (expectedCatalogSHA256 !== undefined && typeof expectedCatalogSHA256 !== 'string') throw new TypeError('MCP_CATALOG_EXPECTED_SHA256 must be a string');
   expectedCatalogSHA256 = expectedCatalogSHA256?.trim().toLowerCase() || '';
   if (expectedCatalogSHA256 && !/^[a-f0-9]{64}$/.test(expectedCatalogSHA256)) {
@@ -194,7 +212,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     const caller = verifiedCallerIdentity(authInfo);
     const canReadSampleRecord = recordID => Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
       && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
-    const server = new McpServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
+    const server = createCatalogServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
       capabilities: {
         tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
         ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {} } } : {}),
@@ -221,12 +239,13 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     }
     for (const entry of catalog.resources()) {
       if (!auth.resourcePolicy.canAccess(entry.policyKey, authInfo)) continue;
-      const uriOrTemplate = entry.name === 'customer_record'
+      const isSampleCustomerRecord = entry.handler === sampleCustomerRecord;
+      const uriOrTemplate = isSampleCustomerRecord
         ? new ResourceTemplate('customer://records/{recordId}', { list: undefined, complete: {
             recordId: value => SAMPLE_RECORD_IDS.filter(id => canReadSampleRecord(id) && id.startsWith(value.toLowerCase())),
           } }) : entry.uriOrTemplate;
       const callback = (uri, variables, ctx) => {
-        if (entry.name === 'customer_record' && !canReadSampleRecord(variables.recordId)) throw new Error('Resource not found');
+        if (isSampleCustomerRecord && !canReadSampleRecord(variables.recordId)) throw new Error('Resource not found');
         return typeof uriOrTemplate === 'string' ? entry.handler(uri, ctx || variables, {authInfo,config,taskRuntime})
           : entry.handler(uri,variables,ctx,{authInfo,config,taskRuntime});
       };
@@ -304,32 +323,8 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     if (notifications.resourcesListChanged === true) honored.resourcesListChanged = true;
     const resourceTaskIDs = new Map();
     const genericResourceURIs = new Set();
-    for (const uri of uniqueResourceURIs) {
-      if (!auth.resourcePolicy.canAccess(uri, req.auth)) continue;
-      if (!uri.startsWith('task://tasks/')) {
-        if (isConfiguredResourceURI(uri, new Set(catalog.resourcePatterns()))) genericResourceURIs.add(uri);
-        continue;
-      }
-      const taskID = taskIDFromResourceURI(uri);
-      if (!taskRuntime || typeof taskRuntime.subscribe !== 'function' || !taskID) continue;
-      try {
-        await taskRuntime.get(taskID, req.auth, config.auth.mode, name => auth.toolPolicy.canAccess(name, req.auth));
-        resourceTaskIDs.set(uri, taskID);
-      } catch {
-        // Acknowledgements must not reveal task IDs outside the caller's access.
-      }
-    }
     const requestedTaskIDSet = new Set(uniqueTaskIDs);
     const resourceURIsByTaskID = new Map();
-    for (const [uri, taskID] of resourceTaskIDs) {
-      const uris = resourceURIsByTaskID.get(taskID) || [];
-      uris.push(uri);
-      resourceURIsByTaskID.set(taskID, uris);
-    }
-    const allTaskIDs = [...new Set([...uniqueTaskIDs, ...resourceTaskIDs.values()])];
-    if (allTaskIDs.length > 64) {
-      return jsonRpcError(res, requestID, -32602, 'Invalid params: task and resource subscription filters exceed 64 distinct task IDs', 400);
-    }
     let subscription;
     let unsubscribeBus;
     let unsubscribeCatalog;
@@ -340,22 +335,31 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     let ready = false;
     let closeAfterSetup = false;
     const queued = [];
+    const dispose = callback => {
+      try { Promise.resolve(callback?.()).catch(() => {}); } catch { /* One failed disposal must not retain other registrations or capacity. */ }
+    };
     const cleanup = endResponse => {
       if (ended) return;
       ended = true;
       clearInterval(keepAlive);
       clearTimeout(authDeadline);
-      unsubscribeBus?.();
-      unsubscribeCatalog?.();
-      for (const unsubscribe of unsubscribeResourceUpdates.values()) unsubscribe();
-      unsubscribeResourceUpdates.clear();
-      subscription?.close();
+      res.removeListener('close', closeNow);
+      req.removeListener('aborted', closeNow);
       taskSubscriptionStreams.delete(closeGracefully);
+      dispose(unsubscribeBus);
+      dispose(unsubscribeCatalog);
+      for (const unsubscribe of unsubscribeResourceUpdates.values()) dispose(unsubscribe);
+      unsubscribeResourceUpdates.clear();
+      const current = subscription;
+      subscription = undefined;
+      dispose(() => current?.close());
+      queued.length = 0;
       if (endResponse && !res.writableEnded && !res.destroyed) res.end();
     };
     const closeNow = () => cleanup(true);
-    const closeGracefully = () => {
+    const closeGracefully = (closePending = false) => {
       if (ended) return;
+      if (closePending && !ready) { closeNow(); return; }
       const result = { jsonrpc: '2.0', id: requestID, result: {
         resultType: 'complete',
         _meta: {
@@ -411,9 +415,11 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       catalogFingerprints.set(kind, fingerprint);
       sendChange(change[1]);
     }
+    // Reserve capacity and observe cancellation before any asynchronous setup.
     taskSubscriptionStreams.add(closeGracefully);
     res.once('close', closeNow);
     req.once('aborted', closeNow);
+    if (res.destroyed || req.aborted) { closeNow(); return; }
     // Streams may survive a token's lifetime (including snapshot restore).
     // Recheck the clock when delivering as well as when the deadline fires.
     function expireAuthentication() {
@@ -424,8 +430,37 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       authDeadline.unref?.();
     }
     expireAuthentication();
+    if (ended) return;
 
     try {
+      for (const uri of uniqueResourceURIs) {
+        if (ended) return;
+        if (!auth.resourcePolicy.canAccess(uri, req.auth)) continue;
+        if (!uri.startsWith('task://tasks/')) {
+          if (isConfiguredResourceURI(uri, new Set(catalog.resourcePatterns()))) genericResourceURIs.add(uri);
+          continue;
+        }
+        const taskID = taskIDFromResourceURI(uri);
+        if (!taskRuntime || typeof taskRuntime.subscribe !== 'function' || !taskID) continue;
+        try {
+          await taskRuntime.get(taskID, req.auth, config.auth.mode, name => auth.toolPolicy.canAccess(name, req.auth));
+          if (ended) return;
+          resourceTaskIDs.set(uri, taskID);
+        } catch {
+          // Acknowledgements must not reveal task IDs outside the caller's access.
+          if (ended) return;
+        }
+      }
+      const allTaskIDs = [...new Set([...uniqueTaskIDs, ...resourceTaskIDs.values()])];
+      if (allTaskIDs.length > 64) {
+        cleanup(false);
+        return jsonRpcError(res, requestID, -32602, 'Invalid params: task and resource subscription filters exceed 64 distinct task IDs', 400);
+      }
+      for (const [uri, taskID] of resourceTaskIDs) {
+        const uris = resourceURIsByTaskID.get(taskID) || [];
+        uris.push(uri);
+        resourceURIsByTaskID.set(taskID, uris);
+      }
       for (const kind of Object.keys(listChangeMethods)) {
         const [filter] = listChangeMethods[kind];
         if (honored[filter]) catalogFingerprints.set(kind, catalogFingerprint(kind));
@@ -437,6 +472,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
         else if (event.kind === 'resources_list_changed' && honored.resourcesListChanged) sendChange('notifications/resources/list_changed');
       });
       for (const uri of new Set([...genericResourceURIs, ...resourceTaskIDs.keys()])) {
+        if (ended) return;
         const unsubscribe = await resourceUpdateAdapter.subscribe(uri, () => {
           if (uri.startsWith('task://tasks/')) {
             if (resourceTaskIDs.has(uri)) sendChange('notifications/resources/updated', { uri });
@@ -447,6 +483,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
             sendChange('notifications/resources/updated', { uri });
           }
         });
+        if (ended) { if (typeof unsubscribe === 'function') dispose(unsubscribe); return; }
         if (typeof unsubscribe === 'function') unsubscribeResourceUpdates.set(uri, unsubscribe);
       }
       let acceptedTaskIDs = new Set();
@@ -457,14 +494,31 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
             const taskID = task.taskId.toLowerCase();
             if (requestedTaskIDSet.has(taskID)) sendTask(task);
             for (const uri of resourceURIsByTaskID.get(taskID) || []) sendChange('notifications/resources/updated', { uri });
-          }, closeGracefully,
+          }, reason => {
+            if (reason !== 'empty') { closeGracefully(); return; }
+            for (const uri of resourceTaskIDs.keys()) {
+              dispose(unsubscribeResourceUpdates.get(uri));
+              unsubscribeResourceUpdates.delete(uri);
+            }
+            resourceTaskIDs.clear();
+            resourceURIsByTaskID.clear();
+            requestedTaskIDSet.clear();
+            if (!honored.toolsListChanged && !honored.promptsListChanged
+                && !honored.resourcesListChanged && genericResourceURIs.size === 0) closeGracefully();
+          },
         );
+        if (ended) {
+          const current = subscription;
+          subscription = undefined;
+          dispose(() => current?.close());
+          return;
+        }
         acceptedTaskIDs = new Set(subscription.taskIds.map(taskID => taskID.toLowerCase()));
       }
       for (const [uri, taskID] of resourceTaskIDs) {
         if (!acceptedTaskIDs.has(taskID)) {
           resourceTaskIDs.delete(uri);
-          unsubscribeResourceUpdates.get(uri)?.();
+          dispose(unsubscribeResourceUpdates.get(uri));
           unsubscribeResourceUpdates.delete(uri);
         }
       }
@@ -479,7 +533,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       if (Object.hasOwn(notifications, 'taskIds') && allTaskIDs.length > 0) {
         honored.taskIds = (subscription?.taskIds || []).filter(taskID => requestedTaskIDSet.has(taskID.toLowerCase()));
       }
-      if (ended) { subscription?.close(); return; }
+      if (ended) return;
 
       res.status(200).set({
         'Content-Type': 'text/event-stream',
@@ -505,7 +559,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       }
     } catch {
       cleanup(res.headersSent);
-      if (!res.headersSent) return jsonRpcError(res, requestID, -32603, 'Could not establish task subscription');
+      if (!res.headersSent && !res.destroyed && !res.writableEnded) return jsonRpcError(res, requestID, -32603, 'Could not establish task subscription');
     }
   }
 
@@ -532,11 +586,11 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     }
     next();
   });
-  app.get('/healthz', (_req, res) => {
+  app.get('/healthz', (req, res) => {
     const catalogState = catalogStatus();
     res.status(catalogState.ready ? 200 : 503).json({
       status: catalogState.ready ? 'ok' : 'degraded',
-      instance_id: process.env.FAAS_INSTANCE_ID || '',
+      instance_id: (req.get('x-faas-instance-id') || '').trim(),
       catalog_revision: catalogState.revision,
       catalog_sha256: catalogState.sha256,
     });
@@ -583,7 +637,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     },
     beginDrain() { draining = true; },
     closeTaskSubscriptions() {
-      for (const close of [...taskSubscriptionStreams]) close();
+      for (const close of [...taskSubscriptionStreams]) close(true);
     },
   };
 }

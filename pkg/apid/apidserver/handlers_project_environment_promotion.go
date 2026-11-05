@@ -153,10 +153,17 @@ func (s *server) buildProjectEnvironmentPromotionSecretPlan(ctx context.Context,
 	if err != nil {
 		return plan, api.ErrCapacity("could not list project workloads")
 	}
+	apps, err = promotionapi.Membership(ctx, s.store, acct.ID, project.ID, fromEnvironment, toEnvironment, apps)
+	if err != nil {
+		return plan, api.ErrCapacity("could not inspect promotion environment membership")
+	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
 
 	changes := make([]api.ProjectEnvironmentPromotionChange, 0, len(apps))
 	blockingReasons := make([]string, 0)
+	if len(apps) == 0 {
+		blockingReasons = append(blockingReasons, "source environment has no workloads to promote")
+	}
 	if reason := s.promotionWorkerOptions(plan, len(verify) > 0 && verify[0], toEnvironment); reason != "" {
 		blockingReasons = append(blockingReasons, reason)
 	}
@@ -416,12 +423,12 @@ func projectEnvironmentSecretRevisionHashes(ctx context.Context, store state.Sto
 		hashes[app.Slug] = hash
 	}
 	// ADR-1139: qualifications record the environment's shared secrets too.
-	if secrets, ok := store.(state.ProjectEnvironmentSecretStore); ok {
-		shared, err := secrets.ListProjectEnvironmentSecrets(ctx, accountID, release.ProjectID, environment)
+	if secrets, ok := store.(state.ProjectSharedSecretRevisionReader); ok {
+		shared, err := secrets.ProjectEnvironmentSharedSecretRevision(ctx, accountID, release.ProjectID, environment)
 		if err != nil {
 			return nil, err
 		}
-		return state.WithProjectSecretRevision(hashes, shared)
+		return shared.WithWorkloads(hashes), nil
 	}
 	return hashes, nil
 }
@@ -488,6 +495,10 @@ func (s *server) buildProjectEnvironmentPromotionResumePlan(ctx context.Context,
 	apps, err := s.store.AppsForProject(ctx, acct.ID, project.ID)
 	if err != nil {
 		return plan, api.ErrCapacity("could not list project workloads")
+	}
+	apps, err = promotionapi.Membership(ctx, s.store, acct.ID, project.ID, from.Slug, to.Slug, apps)
+	if err != nil {
+		return plan, api.ErrCapacity("could not inspect promotion environment membership")
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
 	workloadBySlug := make(map[string]state.ProjectEnvironmentPromotionWorkload, len(workloads))

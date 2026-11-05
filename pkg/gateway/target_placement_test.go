@@ -100,12 +100,18 @@ func TestTargetPlacementIncompleteRefusesWithoutEvictionAndRecovers(t *testing.T
 			if err := b.ReconcileTargetPlacements(t.Context()); (err != nil) != (loadErr != nil) {
 				t.Fatal(err)
 			}
-			if b.Pick("app").OK || b.CapacityCount("app") != 1 || b.TargetPlacementRefreshStatus().Succeeded {
-				t.Fatal("partial/error evicted or routed resident")
+			// A failed read keeps the leased target routable (ADR-570
+			// amendment 2026-11-03); an answer that cannot prove absence
+			// refuses it at once. Neither evicts the resident.
+			readFailed := loadErr != nil
+			if b.Pick("app").OK != readFailed || b.CapacityCount("app") != 1 || b.TargetPlacementRefreshStatus().Succeeded {
+				t.Fatal("partial/error evicted the resident or routed an unproven one")
 			}
-			b.RecordTarget("app", target) // A replay cannot clear a failed verification.
-			if b.Pick("app").OK {
-				t.Fatal("duplicate publication renewed failed placement")
+			if !readFailed {
+				b.RecordTarget("app", target) // A replay cannot clear a failed verification.
+				if b.Pick("app").OK {
+					t.Fatal("duplicate publication renewed failed placement")
+				}
 			}
 			loaded, loadErr = good, nil
 			if err := b.ReconcileTargetPlacements(t.Context()); err != nil || !b.Pick("app").OK || b.CapacityCount("app") != 1 {
@@ -279,7 +285,9 @@ func TestTargetPlacementDeadlineLeaseAndWorkerCancellation(t *testing.T) {
 		return map[string]TargetPlacementSnapshot{"app": placementSnapshot("app", target)}, nil // Late success is invalid.
 	})
 	b.RecordTarget("app", target)
-	if err := b.ReconcileTargetPlacements(t.Context()); !errors.Is(err, context.DeadlineExceeded) || b.Pick("app").OK || b.CapacityCount("app") != 1 {
+	// A read past its deadline is a failed read: the result is discarded,
+	// and the target routes on its lease until the lease runs out.
+	if err := b.ReconcileTargetPlacements(t.Context()); !errors.Is(err, context.DeadlineExceeded) || !b.Pick("app").OK || b.CapacityCount("app") != 1 {
 		t.Fatalf("late success: %v", err)
 	}
 	b.tgtMu.Lock()
