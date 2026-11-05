@@ -22,11 +22,12 @@ type recordingResolvedEgressClient struct {
 	identity *vmmdpb.ResolveServiceCallerResponse
 	req      *vmmdpb.AllowResolvedEgressRequest
 	err      error
+	refused  bool
 }
 
 func (c *recordingResolvedEgressClient) AllowResolvedEgress(_ context.Context, in *vmmdpb.AllowResolvedEgressRequest, _ ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error) {
 	c.req = in
-	return &vmmdpb.AllowResolvedEgressAck{Matched: true}, c.err
+	return &vmmdpb.AllowResolvedEgressAck{Matched: !c.refused}, c.err
 }
 
 func TestAllowResolvedEgressRequest(t *testing.T) {
@@ -46,6 +47,11 @@ func TestAllowResolvedEgressRequest(t *testing.T) {
 	cli.err = errors.New("unavailable")
 	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err == nil {
 		t.Fatal("a real failure must surface")
+	}
+	// rc.324: vmmd refused every builder's grants and nothing said so.
+	cli.err, cli.refused = nil, true
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); !errors.Is(err, errResolvedEgressRefused) {
+		t.Fatalf("a refused grant must surface, got %v", err)
 	}
 }
 

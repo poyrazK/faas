@@ -178,6 +178,7 @@ var adoptionInstanceInventory = map[string]string{
 	"networkPolicyMu":                 "reset",
 	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
 	"resolvedEgressGeneration":        "reset", // restart invalidates outstanding DNS grants
+	"awaitingExit":                    "reset", // only set while a teardown call waits on the guest
 	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
 	"TailCount":                       "reset", // the host only ever sees decrements
 	"tailSecondsAccum":                "reset", // informational, not billed

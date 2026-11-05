@@ -68,3 +68,34 @@ missing ownership proof, original DNS/database expiry, complete and partial
 revocation during unrelated endpoint failure, CIDR changes, restart defaults,
 and restriction ordering and failure across multiple nodes. Native kernel and
 VM lifecycle acceptance still require the dedicated Linux KVM hosts.
+
+## Amendment (2026-11-05): running builders and adopted guests keep their DNS grants
+
+Release rc.324 refused every builder's DNS grants, so no build on the node
+could reach a registry. builderd waits for a build by calling vmmd's Destroy
+as soon as the builder boots. Destroy records its cleanup intent, then the VMM
+waits for the builder to exit by itself; that intent refused every grant for
+the whole build. Refusals were silent on both sides.
+
+Cleanup intent no longer refuses grants while the VMM waits for the guest to
+exit by itself: a builder, or any teardown with an export target. The waiting
+call clears that state as soon as the guest has exited, before cleanup
+proper. From then on grants are refused as before, and cleanup still waits
+for an admitted grant before recycling the namespace. Stops and kills, which
+do not wait for a natural exit, refuse grants from the moment cleanup intent
+is recorded, as before.
+
+An adopted guest (vmmd restart, release or rollback) is rebuilt from its
+adoption record, which does not carry the DNS gate or the bound-database set.
+The adopted Instance looked ungated, so every grant was skipped while its
+namespace kept dropping unresolved addresses; after the rc.322 rollback on
+fsn-2 the adopted VMs' egress_resolved sets stayed empty. Adoption now
+restores both for every networked guest, the gate following the node's
+current ADR-373 switch as a prepared namespace does. The record format is
+unchanged, so an N-1 vmmd still reads it.
+
+vmmd logs each refused grant with the check that refused it (owner not
+captured, instance not live, teardown started, source address changed,
+network generation changed), once per instance and reason per minute. The
+bridge resolver treats a refused grant as a warning, once per guest per
+minute.
