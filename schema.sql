@@ -590,6 +590,27 @@ $$;
 
 
 --
+-- Name: advance_project_shared_secret_generation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_project_shared_secret_generation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p uuid; environment text;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        p := OLD.project_id; environment := OLD.environment_slug;
+    ELSE
+        p := NEW.project_id; environment := NEW.environment_slug;
+    END IF;
+    UPDATE project_environments SET shared_secret_generation = shared_secret_generation + 1
+    WHERE project_id = p AND slug = environment;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: advance_regression_review_version(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5614,10 +5635,10 @@ BEGIN
  SELECT id::text INTO latest FROM project_release_sets WHERE project_id=target_project AND environment_slug=target_environment AND active;
  IF coalesce(latest,'') <> prior_release THEN RAISE EXCEPTION 'active graph changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
  PERFORM authorize_binding_release_traffic(fences);
- IF (SELECT count(*) FROM apps WHERE project_id=target_project AND status<>'deleted' AND coalesce(preview_of_slug,'')='') <> (SELECT count(*) FROM jsonb_each(members)) THEN
+ IF (SELECT count(*) FROM project_release_environment_apps(target_project,target_environment)) <> (SELECT count(*) FROM jsonb_each(members)) THEN
   RAISE EXCEPTION 'graph membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
  END IF;
- FOR a IN SELECT * FROM apps WHERE project_id=target_project AND status<>'deleted' AND coalesce(preview_of_slug,'')='' ORDER BY id LOOP
+ FOR a IN SELECT * FROM project_release_environment_apps(target_project,target_environment) ORDER BY id LOOP
   SELECT value INTO f FROM jsonb_array_elements(fences) WHERE value->>'app_id'=a.id::text;
   IF f IS NULL OR f->>'deployment_id' IS DISTINCT FROM members->>a.id::text OR f->>'account_id' IS DISTINCT FROM a.account_id::text OR f->>'scope' IS DISTINCT FROM target_environment OR
     NOT EXISTS (SELECT 1 FROM app_binding_release_policies p WHERE p.app_id=a.id AND p.scope=target_environment AND p.mode='enforce') THEN
@@ -23327,6 +23348,35 @@ $$;
 
 
 --
+-- Name: project_release_environment_apps(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_environment_apps(target_project uuid, target_environment text) RETURNS SETOF public.apps
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT a.* FROM apps a
+ WHERE a.project_id=target_project AND a.status<>'deleted' AND coalesce(a.preview_of_slug,'')=''
+ AND CASE WHEN target_environment IN ('', 'default', 'production') THEN NOT (
+   coalesce(a.manifest->>'project_source_sha256', '')=''
+   AND (EXISTS (SELECT 1 FROM project_app_stage_admissions origin
+     WHERE origin.app_id=a.id AND origin.project_id=a.project_id)
+     OR EXISTS (SELECT 1 FROM project_environment_workload_heads h
+     JOIN project_environments e ON e.id=h.environment_id
+     WHERE h.app_id=a.id AND e.project_id=a.project_id AND e.slug<>'production'))
+   AND NOT EXISTS (SELECT 1 FROM project_environment_workload_heads h
+     JOIN project_environments e ON e.id=h.environment_id
+     WHERE h.app_id=a.id AND e.project_id=a.project_id AND e.slug='production')
+   AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope IN ('', 'default', 'production'))
+ ) ELSE (
+   EXISTS (SELECT 1 FROM project_environment_workload_heads h
+     JOIN project_environments e ON e.id=h.environment_id
+     WHERE h.app_id=a.id AND e.project_id=a.project_id AND e.slug=target_environment)
+   OR EXISTS (SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=target_environment AND d.deleted_at IS NULL)
+ ) END
+$$;
+
+
+--
 -- Name: project_release_member_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -25525,6 +25575,24 @@ BEGIN
  END LOOP;
  RETURN result;
 END $$;
+
+
+--
+-- Name: remember_project_app_stage_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.remember_project_app_stage_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO project_app_stage_admissions(app_id, project_id)
+    SELECT a.id, e.project_id FROM project_environments e
+    JOIN apps a ON a.id = NEW.app_id AND a.project_id = e.project_id
+    WHERE e.id = NEW.environment_id AND e.slug <> 'production'
+    ON CONFLICT(app_id) DO UPDATE SET project_id = excluded.project_id;
+    RETURN NULL;
+END;
+$$;
 
 
 --
@@ -28788,10 +28856,10 @@ BEGIN
  IF selected IS DISTINCT FROM g->'members' OR jsonb_array_length(receipt->'fallback_members')<>(SELECT count(*) FROM jsonb_each(g->'members')) THEN
   RAISE EXCEPTION 'deactivation recipients changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
  END IF;
- IF (SELECT count(*) FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='')<>(SELECT count(*) FROM jsonb_each(selected)) THEN
+ IF (SELECT count(*) FROM project_release_environment_apps(NEW.project_id,NEW.environment_slug))<>(SELECT count(*) FROM jsonb_each(selected)) THEN
   RAISE EXCEPTION 'fallback membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
  END IF;
- FOR a IN SELECT * FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='' ORDER BY id LOOP
+ FOR a IN SELECT * FROM project_release_environment_apps(NEW.project_id,NEW.environment_slug) ORDER BY id LOOP
   expected:=selected->>a.id::text;
   SELECT jsonb_object_agg(id::text,traffic_percent) INTO actual FROM deployments WHERE app_id=a.id AND scope=NEW.environment_slug AND status='live' AND traffic_percent>0;
   IF expected IS NULL OR actual IS DISTINCT FROM jsonb_build_object(expected,100) OR NOT EXISTS (SELECT 1 FROM deployments WHERE id=expected::uuid AND app_id=a.id AND scope=NEW.environment_slug AND status='live' AND NOT environment_workload_held AND coalesce(rootfs_key,'')<>'' AND coalesce(image_digest,'')<>'') THEN
@@ -35348,6 +35416,34 @@ COMMENT ON TABLE public.data_api_access_configs IS 'ADR-20261016151947 Data API 
 
 
 --
+-- Name: data_api_change_hook_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_change_hook_reports (
+    app_id uuid NOT NULL,
+    reported_at timestamp with time zone NOT NULL,
+    pending bigint NOT NULL,
+    failed bigint NOT NULL,
+    oldest_pending_at timestamp with time zone,
+    last_published_at timestamp with time zone,
+    last_failure_code text,
+    publishing text NOT NULL,
+    CONSTRAINT data_api_change_hook_reports_check CHECK (((pending = 0) = (oldest_pending_at IS NULL))),
+    CONSTRAINT data_api_change_hook_reports_failed_check CHECK (((failed >= 0) AND (failed <= '1000000000000'::bigint))),
+    CONSTRAINT data_api_change_hook_reports_last_failure_code_check CHECK ((last_failure_code ~ '^[a-z0-9_]{1,64}$'::text)),
+    CONSTRAINT data_api_change_hook_reports_pending_check CHECK (((pending >= 0) AND (pending <= '1000000000000'::bigint))),
+    CONSTRAINT data_api_change_hook_reports_publishing_check CHECK ((publishing = ANY (ARRAY['ok'::text, 'retrying'::text])))
+);
+
+
+--
+-- Name: TABLE data_api_change_hook_reports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_change_hook_reports IS 'ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).';
+
+
+--
 -- Name: data_api_runtime_connection_observations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37736,6 +37832,8 @@ CREATE TABLE public.project_environments (
     protected boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    shared_secret_generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environments_shared_secret_generation_check CHECK ((shared_secret_generation >= 0)),
     CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
 );
 
@@ -51271,6 +51369,17 @@ CREATE TABLE public.profile_route_alert_state (
 
 
 --
+-- Name: project_app_stage_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_app_stage_admissions (
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: project_binding_verification_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61027,6 +61136,14 @@ ALTER TABLE ONLY public.data_api_access_configs
 
 
 --
+-- Name: data_api_change_hook_reports data_api_change_hook_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_change_hook_reports
+    ADD CONSTRAINT data_api_change_hook_reports_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67808,6 +67925,14 @@ ALTER TABLE ONLY public.profile_periodic_monitors
 
 ALTER TABLE ONLY public.profile_route_alert_state
     ADD CONSTRAINT profile_route_alert_state_pkey PRIMARY KEY (context_key);
+
+
+--
+-- Name: project_app_stage_admissions project_app_stage_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_app_stage_admissions
+    ADD CONSTRAINT project_app_stage_admissions_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -79169,6 +79294,13 @@ CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_sta
 
 
 --
+-- Name: project_app_stage_admissions_project_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_app_stage_admissions_project_id_idx ON public.project_app_stage_admissions USING btree (project_id);
+
+
+--
 -- Name: project_binding_verification_runs_listing_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -87149,6 +87281,13 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 
 
 --
+-- Name: project_environment_workload_heads project_app_stage_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_app_stage_admission AFTER INSERT OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.remember_project_app_stage_admission();
+
+
+--
 -- Name: project_release_sets project_deactivation_receipt_identity; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -87286,6 +87425,20 @@ CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.pr
 --
 
 CREATE TRIGGER project_resource_owner BEFORE INSERT OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.bind_project_resource_owner();
+
+
+--
+-- Name: project_environment_secrets project_shared_secret_set_membership; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_shared_secret_set_membership AFTER INSERT OR DELETE ON public.project_environment_secrets FOR EACH ROW EXECUTE FUNCTION public.advance_project_shared_secret_generation();
+
+
+--
+-- Name: project_environment_secrets project_shared_secret_set_value; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_shared_secret_set_value AFTER UPDATE ON public.project_environment_secrets FOR EACH ROW WHEN (((old.secret_version IS DISTINCT FROM new.secret_version) OR (old.value_hash IS DISTINCT FROM new.value_hash))) EXECUTE FUNCTION public.advance_project_shared_secret_generation();
 
 
 --
@@ -92641,6 +92794,14 @@ ALTER TABLE ONLY public.dashboards
 
 ALTER TABLE ONLY public.data_api_access_configs
     ADD CONSTRAINT data_api_access_configs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_change_hook_reports data_api_change_hook_reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_change_hook_reports
+    ADD CONSTRAINT data_api_change_hook_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -100545,6 +100706,22 @@ ALTER TABLE ONLY public.profile_route_alert_state
 
 ALTER TABLE ONLY public.profile_route_alert_state
     ADD CONSTRAINT profile_route_alert_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_app_stage_admissions project_app_stage_admissions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_app_stage_admissions
+    ADD CONSTRAINT project_app_stage_admissions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_app_stage_admissions project_app_stage_admissions_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_app_stage_admissions
+    ADD CONSTRAINT project_app_stage_admissions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

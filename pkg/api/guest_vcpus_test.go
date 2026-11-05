@@ -59,3 +59,47 @@ func TestValidAppCPUCeilingMillicores(t *testing.T) {
 		t.Error("ValidAppCPUMillicores(2000) = true; the customer shapes change only at launch")
 	}
 }
+
+// adr: 20261101215228 — the zero CPUShape is the compiled shape; config can
+// lower a ceiling but never raise it past what vmmd accepts for the plan.
+func TestCPUShape(t *testing.T) {
+	compiled := api.CPUShape{}
+	for _, p := range api.Plans {
+		l := api.MustLimitsFor(p)
+		if got, want := compiled.BaselineForPlanRAM(l.RAMMB), api.AppCPUBaselineMillicoresForPlanRAM(l.RAMMB); got != want {
+			t.Errorf("%s compiled baseline = %d, want %d", p, got, want)
+		}
+		ceiling := compiled.CeilingForPlanRAM(l.RAMMB)
+		if want := api.AppCPUCeilingMillicoresForPlanRAM(l.RAMMB); ceiling != want {
+			t.Errorf("%s compiled ceiling = %d, want %d", p, ceiling, want)
+		}
+		if got, want := compiled.VCPUs(ceiling, l.VCPU), api.GuestVCPUsForCPUMillicores(ceiling); got != want {
+			t.Errorf("%s compiled vCPUs = %d, want %d", p, got, want)
+		}
+	}
+	for _, tc := range []struct {
+		name                     string
+		shape                    api.CPUShape
+		plan                     api.Plan
+		baseline, ceiling, vcpus int
+	}{
+		{"floor lowered", api.CPUShape{CeilingFloorMillicores: 500}, api.PlanFree, 250, 500, 1},
+		{"floor at 250", api.CPUShape{CeilingFloorMillicores: 250}, api.PlanHobby, 500, 500, 1},
+		{"baseline halved", api.CPUShape{BaselineMillicoresPerGB: 500, CeilingFloorMillicores: 250}, api.PlanScale, 1000, 1000, 1},
+		{"baseline rounds up to a shape", api.CPUShape{BaselineMillicoresPerGB: 750, CeilingFloorMillicores: 250}, api.PlanScale, 1500, 2000, 2},
+		{"raise capped at compiled", api.CPUShape{BaselineMillicoresPerGB: 2000}, api.PlanPro, 2000, 1000, 1},
+		{"floor raise capped", api.CPUShape{CeilingFloorMillicores: 2000}, api.PlanHobby, 500, 1000, 1},
+		{"half-core vCPUs", api.CPUShape{VCPUMillicores: 500}, api.PlanPro, 1000, 1000, 2},
+		{"vCPUs capped at plan", api.CPUShape{VCPUMillicores: 500}, api.PlanScale, 2000, 2000, 4},
+	} {
+		l := api.MustLimitsFor(tc.plan)
+		baseline, ceiling := tc.shape.BaselineForPlanRAM(l.RAMMB), tc.shape.CeilingForPlanRAM(l.RAMMB)
+		vcpus := tc.shape.VCPUs(ceiling, l.VCPU)
+		if baseline != tc.baseline || ceiling != tc.ceiling || vcpus != tc.vcpus {
+			t.Errorf("%s: baseline/ceiling/vCPUs = %d/%d/%d, want %d/%d/%d", tc.name, baseline, ceiling, vcpus, tc.baseline, tc.ceiling, tc.vcpus)
+		}
+		if !api.ValidAppCPUCeilingMillicores(tc.plan, ceiling) {
+			t.Errorf("%s: ceiling %d is one vmmd refuses on %s", tc.name, ceiling, tc.plan)
+		}
+	}
+}

@@ -138,6 +138,8 @@ from .app_operation_preview_authorization import AppOperationPreviewAuthorizatio
 from .app_operation_preview_checks import AppOperationPreviewChecks
 from .app_operation_preview_operation import AppOperationPreviewOperation
 from .app_operation_preview_schema_version import AppOperationPreviewSchemaVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_release_review import AppReleaseReview
@@ -2746,6 +2748,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppReleaseReview",

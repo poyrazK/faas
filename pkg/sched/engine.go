@@ -446,7 +446,12 @@ type Engine struct {
 	// notifyInPublication sends a wake's instance_changed from its RUNNING
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
-	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
+	// asyncWakeFinalize runs a published boot's bookkeeping after the wake
+	// answers (WithAsyncWakeFinalize, ADR-20261105090246); wakeFinalizers
+	// counts the bookkeeping still running.
+	asyncWakeFinalize atomic.Bool
+	wakeFinalizers    wakeFinalizerSet
+	fcVer             string // running Firecracker version — snapshots load only on a match (ADR-005)
 	// capabilities holds a capability's background work while its platform
 	// flag is off for the owning account (ADR-20261023115741); nil allows all.
 	capabilities *capflags.Decider
@@ -709,9 +714,13 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
-	// guestVCPUApps (schedd `guest_vcpu_from_cpu_apps`) lists the apps whose
-	// guest vCPU count follows their CPU quota (ADR-20261101160231).
+	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
+	// apps whose guest vCPU count follows their CPU quota
+	// (ADR-20261101160231, ADR-20261101215228).
 	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
+	// cpuShape holds the runtime-config values that shape a listed app's CPU
+	// (ADR-20261101215228); nil is the compiled shape.
+	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).
@@ -4599,58 +4608,18 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", applicationStandardRuntimeProblem(publishErr))
 	}
 
-	// ADR-051 Phase 4 / PR-D: persist the workload class the
-	// characterize probe observed on the cold boot. On restore we
-	// inherit from the apps row (no observation here — the warm
-	// path runs the same scan-hint class the original cold boot
-	// committed). On cold-boot timeouts the report is empty and we
-	// keep the scan-hint class (no row mutation). Best-effort:
-	// a failed write doesn't block the RUNNING transition — the
-	// class is metadata, not the boot path. The class is part of
-	// the runtime configuration this boot's proof covers, so the
-	// same write moves the proof to the class it observed (ADR-051
-	// amendment 2026-10-22); otherwise the instance could never
-	// freeze, thaw or be promoted from the warm pool.
-	if out.Characterization.ObservedClass != "" {
-		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
-		if shouldPersistObservedClass(bootInput.appType, bootInput.spec.ExecutionMode, observedClass) {
-			if _, err := e.store.RecordObservedWorkloadClass(ctx, bootInput.accountID, bootInput.appID, bootInput.insID, observedClass); err != nil {
-				e.log.Warn("wake: record observed workload class", "app", logsanitize.Field(bootInput.appID), "err", err)
-			}
-		} else {
-			e.log.Warn("wake: ignoring incompatible characterization",
-				"app", logsanitize.Field(bootInput.appID), "app_type", bootInput.appType,
-				"execution_mode", bootInput.spec.ExecutionMode, "observed_class", observedClass)
-		}
-		// PR-D review finding #6: emit an `app.characterized` audit
-		// row so an operator tailing events can pin the observed
-		// class back to the boot that surfaced it. Carries the
-		// guest's class hint, the observed port, exit code, and
-		// the chosen portnorm rung — enough to reconstruct "why is
-		// this app now classed http" from the event log alone
-		// (no vmmd slog archaeology). Best-effort per ADR-035:
-		// audit.Emit never returns an error and never blocks the
-		// RUNNING transition. nil auditor (pre-PR-D fixtures) is
-		// tolerated via the nil check.
-		if e.audit != nil {
-			e.audit.Emit(ctx, "app.characterized", nil, map[string]any{
-				"app_id":          bootInput.appID,
-				"wake_id":         bootInput.wakeID,
-				"observed_class":  out.Characterization.ObservedClass,
-				"observed_port":   out.Characterization.ObservedPort,
-				"exit_code":       out.Characterization.ExitCode,
-				"listening_addrs": out.Characterization.ListeningAddrs,
-				"port_norm_mode":  out.Characterization.PortNormalizationMode,
-				"log_tail_chars":  len(out.Characterization.LogTail),
-			})
-		}
-	}
-
 	// A completed wake proves that the deployment can boot again: a recorded
 	// snapshot-miss backoff is cleared so a later miss starts a fresh
 	// sequence, without delaying the newly routable target.
 	e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, bootInput.appID, bootInput.depID, bookkeeping)
-	e.recordAppSecretDelivery(ctx, bootInput, state.SecretDeliveryDelivered, "")
+	// ADR-20261105090246: what the boot proved (its observed workload class
+	// and the secrets it delivered) is recorded before the wake answers, or
+	// after it when async_wake_finalize is on. Both records are best-effort.
+	finalized, characterization := bootInput, out.Characterization
+	e.finalizeBootedWake(ctx, func(ctx context.Context) {
+		e.recordBootCharacterization(ctx, finalized, characterization)
+		e.recordAppSecretDelivery(ctx, finalized, state.SecretDeliveryDelivered, "")
+	})
 	deliveryFinalized = true
 	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
@@ -4767,6 +4736,57 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	bootInput.identity.InstanceID = fresh.ID
 	bootInput.identity.NodeID = fresh.NodeID
 	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
+}
+
+// recordBootCharacterization persists the workload class a cold boot's
+// characterize probe observed and audits it (ADR-051 Phase 4 / PR-D).
+func (e *Engine) recordBootCharacterization(ctx context.Context, boot bootInput, c api.CharacterizationReport) {
+	// ADR-051 Phase 4 / PR-D: persist the workload class the
+	// characterize probe observed on the cold boot. On restore we
+	// inherit from the apps row (no observation here — the warm
+	// path runs the same scan-hint class the original cold boot
+	// committed). On cold-boot timeouts the report is empty and we
+	// keep the scan-hint class (no row mutation). Best-effort:
+	// a failed write doesn't block the RUNNING transition — the
+	// class is metadata, not the boot path. The class is part of
+	// the runtime configuration this boot's proof covers, so the
+	// same write moves the proof to the class it observed (ADR-051
+	// amendment 2026-10-22); otherwise the instance could never
+	// freeze, thaw or be promoted from the warm pool.
+	if c.ObservedClass != "" {
+		observedClass := state.WorkloadClass(c.ObservedClass)
+		if shouldPersistObservedClass(boot.appType, boot.spec.ExecutionMode, observedClass) {
+			if _, err := e.store.RecordObservedWorkloadClass(ctx, boot.accountID, boot.appID, boot.insID, observedClass); err != nil {
+				e.log.Warn("wake: record observed workload class", "app", logsanitize.Field(boot.appID), "err", err)
+			}
+		} else {
+			e.log.Warn("wake: ignoring incompatible characterization",
+				"app", logsanitize.Field(boot.appID), "app_type", boot.appType,
+				"execution_mode", boot.spec.ExecutionMode, "observed_class", observedClass)
+		}
+		// PR-D review finding #6: emit an `app.characterized` audit
+		// row so an operator tailing events can pin the observed
+		// class back to the boot that surfaced it. Carries the
+		// guest's class hint, the observed port, exit code, and
+		// the chosen portnorm rung — enough to reconstruct "why is
+		// this app now classed http" from the event log alone
+		// (no vmmd slog archaeology). Best-effort per ADR-035:
+		// audit.Emit never returns an error and never blocks the
+		// RUNNING transition. nil auditor (pre-PR-D fixtures) is
+		// tolerated via the nil check.
+		if e.audit != nil {
+			e.audit.Emit(ctx, "app.characterized", nil, map[string]any{
+				"app_id":          boot.appID,
+				"wake_id":         boot.wakeID,
+				"observed_class":  c.ObservedClass,
+				"observed_port":   c.ObservedPort,
+				"exit_code":       c.ExitCode,
+				"listening_addrs": c.ListeningAddrs,
+				"port_norm_mode":  c.PortNormalizationMode,
+				"log_tail_chars":  len(c.LogTail),
+			})
+		}
+	}
 }
 
 // markRuntimeArtifactMissing closes a live deployment that cannot ever boot

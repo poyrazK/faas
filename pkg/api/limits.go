@@ -3379,6 +3379,108 @@ func ValidAnyAppCPUCeilingMillicores(v int) bool {
 	return false
 }
 
+// Runtime-config bounds for the values that shape a listed app's CPU
+// (ADR-20261101215228): `app_cpu_baseline_millicores_per_gb`,
+// `app_cpu_ceiling_floor_millicores` and `guest_vcpu_millicores`. An unset
+// key takes the compiled value above, which is also each key's default.
+const (
+	AppCPUBaselineMillicoresPerGBMin = 125
+	AppCPUBaselineMillicoresPerGBMax = 2000
+	AppCPUCeilingFloorMillicoresMin  = 250
+	AppCPUCeilingFloorMillicoresMax  = 2000
+	GuestVCPUMillicoresMin           = 500
+	GuestVCPUMillicoresMax           = 2000
+)
+
+// ValidAppCPUBaselineMillicoresPerGB reports whether v is a valid
+// `app_cpu_baseline_millicores_per_gb`.
+func ValidAppCPUBaselineMillicoresPerGB(v int) bool {
+	return v >= AppCPUBaselineMillicoresPerGBMin && v <= AppCPUBaselineMillicoresPerGBMax
+}
+
+// ValidAppCPUCeilingFloorMillicores reports whether v is a valid
+// `app_cpu_ceiling_floor_millicores`: a ceiling the host and guest cgroups
+// enforce, so a customer shape or whole cores, within the key's bounds.
+func ValidAppCPUCeilingFloorMillicores(v int) bool {
+	if v < AppCPUCeilingFloorMillicoresMin || v > AppCPUCeilingFloorMillicoresMax {
+		return false
+	}
+	return ValidAppCPUMillicores(v) || v%1000 == 0
+}
+
+// ValidGuestVCPUMillicores reports whether v is a valid `guest_vcpu_millicores`.
+func ValidGuestVCPUMillicores(v int) bool {
+	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
+}
+
+// CPUShape holds the runtime-config values that shape the CPU of an app on
+// schedd's `guest_vcpu_from_cpu_apps` list (ADR-20261101215228). A zero field
+// takes the compiled value, so the zero CPUShape is ADR-20261101160231 as
+// compiled.
+//
+// A ceiling is never above the plan's compiled ceiling
+// (AppCPUCeilingMillicores), which vmmd and guest-init of this release
+// accept, and vCPUs never above the plan's compiled count. Config can lower a
+// plan's CPU or move its booking; raising a ceiling past the compiled one
+// needs a release whose vmmd accepts it.
+type CPUShape struct {
+	BaselineMillicoresPerGB int
+	CeilingFloorMillicores  int
+	VCPUMillicores          int
+}
+
+func (s CPUShape) baselinePerGB() int {
+	if s.BaselineMillicoresPerGB > 0 {
+		return s.BaselineMillicoresPerGB
+	}
+	return AppCPUBaselineMillicoresPerGB
+}
+
+func (s CPUShape) ceilingFloor() int {
+	if s.CeilingFloorMillicores > 0 {
+		return s.CeilingFloorMillicores
+	}
+	return AppCPUCeilingFloorMillicores
+}
+
+func (s CPUShape) vcpuMillicores() int {
+	if s.VCPUMillicores > 0 {
+		return s.VCPUMillicores
+	}
+	return GuestVCPUMillicores
+}
+
+// BaselineForPlanRAM is the CPU an instance of a plan with planRAMMB books.
+func (s CPUShape) BaselineForPlanRAM(planRAMMB int) int {
+	return planRAMMB * s.baselinePerGB() / 1024
+}
+
+// CeilingForPlanRAM is the burst ceiling (cpu.max) of a plan with planRAMMB:
+// max(floor, baseline), rounded up to a value the cgroups enforce and capped
+// at the plan's compiled ceiling.
+func (s CPUShape) CeilingForPlanRAM(planRAMMB int) int {
+	want := roundUpAppCPUCeiling(max(s.ceilingFloor(), s.BaselineForPlanRAM(planRAMMB)))
+	return min(want, AppCPUCeilingMillicoresForPlanRAM(planRAMMB))
+}
+
+// VCPUs is the guest vCPU count for a ceiling: one per VCPUMillicores, at
+// least one and at most planVCPUs.
+func (s CPUShape) VCPUs(ceilingMillicores, planVCPUs int) int {
+	per := s.vcpuMillicores()
+	return max(1, min(planVCPUs, (ceilingMillicores+per-1)/per))
+}
+
+// roundUpAppCPUCeiling rounds v up to the next customer shape, or past one
+// core to whole cores.
+func roundUpAppCPUCeiling(v int) int {
+	for _, shape := range []int{250, 500, DefaultAppCPUMillicores} {
+		if v <= shape {
+			return shape
+		}
+	}
+	return (v + 999) / 1000 * 1000
+}
+
 // BlockRateLimit is a VM's sustained limit on its writable app-layer drive
 // (ADR-910): Firecracker token buckets on bandwidth and on operations. It
 // keeps one tenant's disk flood from starving its neighbours' I/O; the
@@ -15147,6 +15249,11 @@ const (
 	// largest DATA_API_POOL an owner may set.
 	DataAPIDefaultPoolConnections = 2
 	DataAPIMaxPoolConnections     = 8
+	// A pool above the default needs an app of at least this much RAM. The
+	// runtime (Node gateway + PostgREST 14.3) measured 96 MB idle and 151 MB
+	// at peak with the default pool, 197 MB at peak with 8 connections, before
+	// guest overhead: the default fits a 256 MB app, a larger pool does not.
+	DataAPILargePoolMinRAMMB = 512
 	// Read-only connection-budget planning, not SQL quotas or reservations.
 	DataAPIConnectionBudgetMaxDatabases      = 100
 	DataAPIConnectionBudgetMaxBindings       = 1024
@@ -15203,6 +15310,23 @@ const (
 	DataAPIChangeEventsPublishTimeout = 10 * time.Second
 	DataAPIChangeEventsIdleMin        = time.Second
 	DataAPIChangeEventsIdleMax        = 30 * time.Second
+	// Change hook delivery reports, mirrored in the runtime's limits: the
+	// report body bound, the largest count it carries, the clock skew its
+	// times may show, how often a runtime reports a change in delivery and how
+	// often it reports while nothing changes.
+	DataAPIChangeHookReportMaxBytes  = 4 << 10
+	DataAPIChangeHookReportCountMax  = 1_000_000_000_000
+	DataAPIChangeHookReportClockSkew = 5 * time.Minute
+	DataAPIChangeHookReportInterval  = time.Minute
+	DataAPIChangeHookReportHeartbeat = 10 * time.Minute
+	// A drain schedule (a cron the CLI creates) wakes a parked Data API so
+	// changes recorded by other writers publish: each run waits at most
+	// DataAPIChangeHooksDrainWait for the backlog and the cron allows
+	// DataAPIChangeHooksDrainCronTimeout. DataAPIChangeHooksDrainPath is the
+	// runtime route, answered only for platform cron requests.
+	DataAPIChangeHooksDrainWait        = 45 * time.Second
+	DataAPIChangeHooksDrainCronTimeout = 60 * time.Second
+	DataAPIChangeHooksDrainPath        = "/__gregale/hooks/drain"
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

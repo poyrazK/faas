@@ -330,7 +330,7 @@ type bringUpTimings struct {
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
-	// (ADR-192).
+	// (ADR-192). bringUp adds the ADR-510 backing check to it.
 	prepare WakePrepareTimings
 }
 
@@ -1182,6 +1182,12 @@ type Manager struct {
 	// beforeBackingHash, when set, runs before a file version is hashed.
 	// Tests use it to hold a hash in flight.
 	beforeBackingHash func(path string)
+	// backingRecorder keeps digests with the files across vmmd restarts
+	// (ADR-510 amendment 2); nil uses the platform's (a trusted xattr on
+	// Linux). backingKeys are the base keys this vmmd attached, which the
+	// digest primer follows. Both guarded by backingMu where mutable.
+	backingRecorder backingDigestRecorder
+	backingKeys     map[string]struct{}
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -5559,6 +5565,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
 		"restore_prefetch_bytes", restorePrefetchBytes,
 	}
+	// ADR-510: the backing check runs inside bring_up but outside restore_ms
+	// and cold_boot_ms; without it the gap between them was unattributed.
+	wakeAttrs = append(wakeAttrs, timings.prepare.Backing.attrs()...)
 	// Include every outer phase measurement on successes too. A
 	// fallback can spend most of its wall time before Firecracker Boot (for
 	// example materializing runtime files); reporting only cold_boot_ms hid
@@ -5641,7 +5650,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// than the ones it was captured with. The refusal happens before any
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
-		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+		backing, refusal := m.checkSnapshotBacking(ctx, req.Snapshot, req.BaseKey)
+		if timings != nil {
+			timings.prepare.Backing = backing
+		}
+		if refusal != nil {
 			if sealed {
 				return WakeRestore, fmt.Errorf("sealed crash capture: %w", refusal)
 			}
@@ -5808,6 +5821,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	}
 
 	spec := m.coldBootSpecForWake(nc, req, serviceDiscoveryIP)
+	if timings != nil {
+		// A check that refused the restore, or accepted one that then
+		// failed, delayed this cold boot too.
+		spec.Backing = timings.prepare.Backing
+	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.bootColdBootWithSources(ctx, lease, spec, req.ArtifactSources)
 	if timings != nil {

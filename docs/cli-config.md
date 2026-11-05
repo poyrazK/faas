@@ -230,6 +230,20 @@ credentials, and Gregale API key strings are redacted, including nested error
 fields. This protects recognized credentials, not arbitrary secrets in user
 messages. Successful command output remains on stdout.
 
+Successful `--json` output takes one of two shapes, and a command keeps its
+shape across releases:
+
+- **One JSON document**: an object (or, for a few lists, an array) that a
+  JSON parser reads whole, such as `gregale billing usage --json`.
+- **JSON Lines**: list commands such as `gregale app list --json`,
+  `gregale domain list --json` and `gregale cron list --json` write one object
+  per line, so `jq -r .slug` and line-by-line readers work while the list is
+  still arriving. An empty list writes no lines.
+
+Decide success from the exit code, not from whether stdout is empty: an empty
+JSON Lines list exits 0 with no output, and a failure writes its Problem to
+stderr. To read a JSON Lines list as one array, use `jq -s .`.
+
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:
 
