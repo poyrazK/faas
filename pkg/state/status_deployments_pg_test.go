@@ -94,7 +94,7 @@ func TestPgListDeploymentsWithStatusForNodeScopesToOwner(t *testing.T) {
 		}
 		return d.ID
 	}
-	own, foreign, orphaned := liveOn(mine.ID), liveOn(other.ID), liveOn(retired.ID)
+	own, foreign, orphaned := liveOn(mine), liveOn(other.ID), liveOn(retired.ID)
 
 	ids := func(nodeID string) []string {
 		t.Helper()
@@ -112,7 +112,7 @@ func TestPgListDeploymentsWithStatusForNodeScopesToOwner(t *testing.T) {
 		node          string
 		want, notWant []string
 	}{
-		{mine.ID, []string{own, orphaned}, []string{foreign}},
+		{mine, []string{own, orphaned}, []string{foreign}},
 		{other.ID, []string{foreign, orphaned}, []string{own}},
 	} {
 		got := ids(tc.node)
