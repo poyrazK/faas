@@ -154,6 +154,21 @@
      schedd, with unset keys keeping today's behavior. Replace
      ADR-20261101160231's `FAAS_GUEST_VCPU_FROM_CPU_APPS` environment switch
      with `guest_vcpu_from_cpu_apps` before that switch is released.
+     - **2a (done): the CPU keys.** schedd applies
+       `guest_vcpu_from_cpu_apps`, `app_cpu_baseline_millicores_per_gb`,
+       `app_cpu_ceiling_floor_millicores` and `guest_vcpu_millicores`
+       (`api.CPUShape`); the environment switch is gone. Each numeric key's
+       default is its compiled value, so an unset or rolled-back key is the
+       compiled behavior, and the list's default is empty. schedd caps every
+       ceiling at the plan's compiled one (`api.AppCPUCeilingMillicores`) and
+       every vCPU count at the plan's, which vmmd of the same release
+       accepts: config can lower a plan's CPU and move its booking, and
+       raising a ceiling past the compiled one waits for vmmd's compiled
+       safety bounds (decision 3). A ceiling is rounded up to a value the
+       cgroups enforce (250, 500, then whole cores). apid only validates and
+       stores the keys; reporting them in `effective_limits` comes with 2b.
+     - **2b: the request keys,** read by apid, gatewayd-internal and
+       schedd, and the wake's request-limit field for vmmd.
   3. **In production, set `app_request_concurrency_default` and the maximum.**
      Watch instances per app, in-flight requests per instance, p99 latency,
      and warm-queue and 429 outcomes.

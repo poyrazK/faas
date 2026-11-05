@@ -56,6 +56,8 @@ export type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 export type { AppMetricsResponse } from './AppMetricsResponse.js';
 export type { AppOperationCheck } from './AppOperationCheck.js';
 export type { AppOperationPreview } from './AppOperationPreview.js';
+export type { AppPostgresBinding } from './AppPostgresBinding.js';
+export type { AppPostgresBindingList } from './AppPostgresBindingList.js';
 export type { AppRegistryCredentialListResponse } from './AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './AppRegistryCredentialResponse.js';
 export type { AppReleaseReview } from './AppReleaseReview.js';

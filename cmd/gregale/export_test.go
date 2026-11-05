@@ -842,6 +842,11 @@ var DataAPIHooksSQL = dataAPIHooksSQL
 var EnableDataAPIHooks = enableDataAPIHooks
 var DisableDataAPIHooks = disableDataAPIHooks
 var DataAPIHooksStatus = dataAPIHooksStatus
+var DataAPIHooksDelivery = dataAPIHooksDelivery
+var ApplyDataAPIDrainSchedule = applyDataAPIDrainSchedule
+var DataAPIDrainSchedule = dataAPIDrainSchedule
+var DataAPIDrainEvery = dataAPIDrainEvery
+var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -2183,6 +2188,7 @@ var UploadedSourceFiles = uploadedSourceFiles
 var UploadedServerHas = uploadedServerHas
 var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
 var AttachDataAPIRuntime = attachDataAPIRuntime
+var CurrentDataAPIRuntimeVersion = currentDataAPIRuntimeVersion
 
 type DataAPIHealthProbe = dataAPIHealthProbe
 
@@ -2531,6 +2537,8 @@ const UsageSynopsisLimit = usageSynopsisLimit
 var InvokedCommandPath = &invokedCommandPath
 
 var AppArgumentEnabled = &appArgumentEnabled
+var AppArgumentAsFlag = appArgumentAsFlag
+var AppFlagAsArgument = appFlagAsArgument
 
 // AppArgumentPaths lists every visible command path whose leaf takes the
 // app as its first argument.
@@ -2538,7 +2546,7 @@ func AppArgumentPaths() [][]string {
 	var paths [][]string
 	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
 	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
-		if takesAppArgument(flags, positionals, children) {
+		if takesAppArgument(flags, positionals, children, "app") {
 			paths = append(paths, append([]string{}, path...))
 		}
 		for _, child := range children {

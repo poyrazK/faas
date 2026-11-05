@@ -2597,7 +2597,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff)
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -3303,7 +3303,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3330,7 +3330,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings)
 	return srv, lis, nil
 }
 

@@ -214,6 +214,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	}
 	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
 	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
+	if check, found := doctorCheckCapabilities(context.Background(), abs); found {
+		report.Checks = append([]doctorCheck{check}, report.Checks...)
+	}
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
 	// exit semantics stay in sync with `gregale deploy --doctor-strict`

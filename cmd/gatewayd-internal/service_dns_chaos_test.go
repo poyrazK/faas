@@ -145,3 +145,42 @@ func TestServiceDNSChaosResolverTreatsUnaddressableTargetsAsNoPolicy(t *testing.
 		}
 	}
 }
+
+// Repeated questions from one caller for one name read the store once per
+// api.ServiceDNSChaosCacheTTL, found or not; a store error is never kept
+// (bug hunt H33).
+func TestServiceDNSChaosResolverCachesLookups(t *testing.T) {
+	var reads int
+	var fail bool
+	resolve := newServiceDNSChaosResolver(dnsChaosPolicyStoreFunc(func(_ context.Context, _, hostIP, target string) (state.ScenarioTestDNSChaosPolicy, error) {
+		reads++
+		if fail {
+			return state.ScenarioTestDNSChaosPolicy{}, errors.New("store unavailable")
+		}
+		if hostIP == "10.100.0.6" {
+			return state.ScenarioTestDNSChaosPolicy{RunID: "run", CallerAppID: "app"}, nil
+		}
+		return state.ScenarioTestDNSChaosPolicy{}, nil
+	}), "node-a")
+	ctx := context.Background()
+	for range 5 {
+		if policy, err := resolve(ctx, "10.100.0.6:53", "cache"); err != nil || policy.RunID != "run" {
+			t.Fatalf("policy = %+v, %v", policy, err)
+		}
+		if policy, err := resolve(ctx, "10.100.0.7:53", "cache"); err != nil || policy.RunID != "" {
+			t.Fatalf("no-policy caller = %+v, %v", policy, err)
+		}
+	}
+	if reads != 2 {
+		t.Fatalf("store reads = %d, want 2 (one per caller and name)", reads)
+	}
+	fail = true
+	for range 2 {
+		if _, err := resolve(ctx, "10.100.0.8:53", "cache"); err == nil {
+			t.Fatal("store error was hidden")
+		}
+	}
+	if reads != 4 {
+		t.Fatalf("store reads after errors = %d, want 4: errors must not be cached", reads)
+	}
+}

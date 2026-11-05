@@ -7673,8 +7673,13 @@ type PlanManaged struct {
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
 	// provided: unavailable, plan, quota, unsupported, configured,
-	// not_referenced or permission. Empty for other datastores.
+	// not_referenced or permission. Empty for other datastores, which have
+	// no managed equivalent.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+	// Unbound names the selected services' keys that point at a datastore
+	// apply does not provide and will have no value ("api.REDIS_URL"), so a
+	// reviewer sees which services start without it (ADR-20261104221217).
+	Unbound []string `json:"unbound,omitempty"`
 }
 
 // PlanManagedProvision is a managed database a project apply provides.

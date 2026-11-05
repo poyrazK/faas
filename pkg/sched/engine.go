@@ -709,9 +709,13 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
-	// guestVCPUApps (schedd `guest_vcpu_from_cpu_apps`) lists the apps whose
-	// guest vCPU count follows their CPU quota (ADR-20261101160231).
+	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
+	// apps whose guest vCPU count follows their CPU quota
+	// (ADR-20261101160231, ADR-20261101215228).
 	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
+	// cpuShape holds the runtime-config values that shape a listed app's CPU
+	// (ADR-20261101215228); nil is the compiled shape.
+	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).

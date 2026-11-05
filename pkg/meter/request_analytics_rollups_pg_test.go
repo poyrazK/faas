@@ -84,15 +84,21 @@ func TestRequestAnalyticsRollupsAddUpAndAgeOutOnThePlanLadder(t *testing.T) {
 		t.Fatal("a one-bucket histogram was added to a full-width one")
 	}
 
+	// Lost-rollup markers past the longest retention go with the sweep.
+	if err := store.RecordRequestAnalyticsRollupGaps(ctx, []state.RequestAnalyticsGap{
+		{AppID: appID, Minute: now.Add(-20 * 24 * time.Hour)}, {AppID: appID, Minute: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	deleted, err := RetentionOnceRequestAnalyticsMinutes(ctx, rollupRetentionPG{pool})
 	if err != nil {
 		t.Fatalf("retention: %v", err)
 	}
-	var left int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM request_analytics_minutes WHERE app_id = $1`, appID).Scan(&left); err != nil {
+	var left, gapsLeft int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM request_analytics_minutes WHERE app_id = $1), (SELECT count(*) FROM request_analytics_rollup_gaps WHERE app_id = $1)`, appID).Scan(&left, &gapsLeft); err != nil {
 		t.Fatal(err)
 	}
-	if deleted != 1 || left != 1 {
-		t.Fatalf("retention deleted %d, left %d; want the 4-day-old Hobby row gone and the current one kept", deleted, left)
+	if deleted != 2 || left != 1 || gapsLeft != 1 {
+		t.Fatalf("retention deleted %d, left %d rows and %d gaps; want the 4-day-old Hobby row and the 20-day-old gap gone", deleted, left, gapsLeft)
 	}
 }
