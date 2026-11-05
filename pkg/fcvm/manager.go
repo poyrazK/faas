@@ -425,6 +425,10 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	resolvedEgressGeneration string // immutable once captured, guarded by Manager.mu
+	// awaitingExit: teardown has recorded its cleanup intent but is waiting
+	// for the guest to exit by itself (a builder finishing its build), so
+	// its DNS answers are still granted. Guarded by Manager.mu.
+	awaitingExit bool
 	// Cached contents do not establish convergence after an uncertain nft write.
 	egressAllowlistUncertain bool // guarded by Manager.mu
 	egressPortsUncertain     bool // guarded by Manager.mu
@@ -6640,11 +6644,20 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
 	m.retireHTTPForwards(inst.Lease)
+	// The VMM lets a builder run to its own exit (builderd waits for a build
+	// with this call), so the guest keeps its DNS grants until it exits
+	// (ADR-373). A retried teardown has no running guest to wait for.
+	m.mu.Lock()
+	inst.awaitingExit = (exportDir != "" || inst.Lease.IsBuilder) && m.pendingCleanup[instance] == nil
+	m.mu.Unlock()
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
 	m.beginAdoptionOp(instance, adoptionOpStop)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
+	m.mu.Lock()
+	inst.awaitingExit = false // Teardown proper refuses grants from here.
+	m.mu.Unlock()
 	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
 		return exitCode, err
