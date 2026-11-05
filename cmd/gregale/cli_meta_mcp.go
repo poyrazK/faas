@@ -42,6 +42,7 @@ func mcpCLICommand() cliCommand {
 	taskWaitFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
 		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
+		cliFlag{Name: "cancel-on-timeout", Short: "request cancellation when the resumed wait times out"},
 	)
 	for i := range taskWaitFlags {
 		if taskWaitFlags[i].Name == "timeout" {

@@ -15,15 +15,15 @@ import (
 // `gregale deploy --plan`. It intentionally shares the same source detector
 // and hosting override file as the real deploy path, while keeping the
 // resulting contract independent of authentication and remote state.
-func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool) (simpleapp.Plan, error) {
-	plan, _, err := resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile, source, explicitApp, explicitFunction)
+func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool, executionMode string) (simpleapp.Plan, error) {
+	plan, _, err := resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile, source, explicitApp, explicitFunction, executionMode)
 	return plan, err
 }
 
 // resolveSimpleAppPlanWithWarnings also returns the source's actionable
 // profile warnings, which --plan did not show for a malformed package.json
 // (#6640).
-func resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool) (simpleapp.Plan, []frameworkprofile.Warning, error) {
+func resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool, executionMode string) (simpleapp.Plan, []frameworkprofile.Warning, error) {
 	var warnings []frameworkprofile.Warning
 	frameworkName := ""
 	port, health := 0, ""
@@ -47,12 +47,13 @@ func resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile string, source si
 		warnings = filterActionableProfileWarnings(inferred.Warnings)
 	}
 	plan, err := simpleapp.Resolve(simpleapp.Spec{
-		Slug:       slug,
-		Source:     source,
-		Framework:  frameworkName,
-		Profile:    profile,
-		Port:       port,
-		HealthPath: health,
+		Slug:          slug,
+		Source:        source,
+		Framework:     frameworkName,
+		Profile:       profile,
+		Port:          port,
+		HealthPath:    health,
+		ExecutionMode: executionMode,
 	})
 	return plan, warnings, err
 }

@@ -95,7 +95,7 @@ func TestDeployPlanShowsProfileWarnings(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{\"name\": }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plan, warnings, err := main.ResolveSimpleAppPlanWithWarnings(dir, "demo", "", "directory", true, false)
+	plan, warnings, err := main.ResolveSimpleAppPlanWithWarnings(dir, "demo", "", "directory", true, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

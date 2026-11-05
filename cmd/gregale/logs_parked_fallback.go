@@ -62,10 +62,16 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	}
 	instances, err := client.ListInstancesWithHistory(ctx, slug, true)
 	if err != nil {
+		if code, handled := noLiveDeploymentLogs(ctx, client, slug); handled {
+			return code
+		}
 		return parkedLogsUnavailable(appLogsDegradedMessage(`{"code":"not_found"}`))
 	}
 	instance, selector, ok := parkedLogsSelection(instances, since)
 	if !ok {
+		if code, handled := noLiveDeploymentLogs(ctx, client, slug); handled {
+			return code
+		}
 		return parkedLogsUnavailable(fmt.Sprintf("%s has no running instance and no instance with activity in the requested window; wake it with `gregale app wake %s`.", slug, slug))
 	}
 	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
@@ -76,6 +82,43 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	_, _ = fmt.Fprintln(osStderr, header)
 	return runLogsExplainingMissingArchive(ctx, slug, deployment, api.LogFilter{Grep: filter.Grep}, &selector, false, explain,
 		parkedNoOutputMessage(instance))
+}
+
+// noLiveDeploymentLogs explains missing runtime logs for an app with no live
+// deployment. Waking cannot help such an app, yet logs told the customer to
+// wake one whose first release was still building (CLI journey 2026-11-05,
+// #6627). It names the deployment to follow instead: an in-flight one
+// (503, exit 3: retry once it serves), else the latest failed one or a first
+// deploy (409, exit 5). handled is false when the app has a live deployment
+// or its state cannot be read, so the parked-app reply stands.
+func noLiveDeploymentLogs(ctx context.Context, client *Client, slug string) (code int, handled bool) {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil || app.DeploymentAvailability != api.AppDeploymentAvailabilityMissing {
+		return 0, false
+	}
+	page, err := client.ListAppDeployments(ctx, slug, "", 1)
+	if err != nil {
+		return 0, false
+	}
+	status, message := http.StatusConflict, fmt.Sprintf("%s has no deployment yet, so it has no runtime logs. Deploy it with `gregale deploy`.", slug)
+	if len(page.Items) > 0 {
+		dep := page.Items[0]
+		switch {
+		case dep.Status == statusLive:
+			message = fmt.Sprintf("%s has no deployment receiving traffic, so it has no runtime logs. Deployment %s is live at 0%%: check it with `gregale inspect %s`.", slug, dep.ID, slug)
+		case isTerminalDeploymentStatus(dep.Status):
+			message = fmt.Sprintf("%s has no live deployment, so it has no runtime logs; waking it cannot help. Its latest deployment %s is %s: read why with `gregale logs %s --deployment %s`.", slug, dep.ID, dep.Status, slug, dep.ID)
+		default:
+			status = http.StatusServiceUnavailable
+			message = fmt.Sprintf("%s has no live deployment yet: deployment %s is %s. Runtime logs start once it serves. Follow its build with `gregale logs %s --deployment %s --follow`, or wait for it with `gregale release wait %s`.", slug, dep.ID, dep.Status, slug, dep.ID, dep.ID)
+		}
+	}
+	if jsonOutput {
+		_ = writeJSONProblem(*api.NewProblem(status, api.CodeNoLiveDeployment, "No live deployment", message).WithDocs(cliDocsURL))
+	} else {
+		_, _ = fmt.Fprintln(osStderr, message)
+	}
+	return exitCodeForStatus(status), true
 }
 
 // parkedLogsUnavailable reports why no retained logs can be shown: under
