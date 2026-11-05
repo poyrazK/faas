@@ -2497,8 +2497,24 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.revalidateRolledBackSignature(r.Context(), app)
 	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// revalidateRolledBackSignature asks imaged to verify the app's live signed
+// images again after a rollback (ADR-20261020085706 amendment 14). A rollback
+// target was verified when it was built, against the trusted signers of the
+// time; a signer removed since (a leaked key) or signing turned on since must
+// not bring it back into service. imaged's revalidation reads the trust table
+// and quarantines an image that no longer verifies; its periodic sweep is the
+// durable fallback when this wake-up is lost.
+func (s *server) revalidateRolledBackSignature(ctx context.Context, app state.App) {
+	if s.notif == nil || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
+		return
+	}
+	_ = s.notif.Notify(ctx, db.NotifyTrustedSignerChanged,
+		fmt.Sprintf(`{"kind":"rollback","app_id":"%s"}`, app.ID))
 }
 
 // warnRollbackCrons tells the caller which crons outlive a rollback
@@ -3783,7 +3799,12 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("default domain storage unavailable"))
 		return
 	}
-	if err := setter.SetDefaultCustomDomain(r.Context(), d.AppID, d.Domain); err != nil {
+	if err := setter.SetDefaultCustomDomain(s.defaultDomainContext(r.Context()), d.AppID, d.Domain); err != nil {
+		if errors.Is(err, state.ErrCustomDomainNotRoutable) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Domain unavailable as default", "This hostname currently routes to another app or a suspended tenant."))
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
 			return
@@ -3948,7 +3969,7 @@ func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDo
 		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
 	}
 	if lookup, ok := s.store.(defaultLookup); ok {
-		if isDefault, err := lookup.IsDefaultCustomDomain(ctx, d.AppID, d.Domain); err == nil {
+		if isDefault, err := lookup.IsDefaultCustomDomain(s.defaultDomainContext(ctx), d.AppID, d.Domain); err == nil {
 			resp.Default = isDefault
 		}
 	}

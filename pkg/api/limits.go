@@ -176,6 +176,12 @@ const AgentKeyLifetime = 90 * 24 * time.Hour
 // before it gets 429 without a lookup.
 const InboundWebhookFailuresPerIPPerMinute = 30
 
+// SelfVerifiedRouteFailuresPerIPPerMinute is how many refused requests (401,
+// 403, 404) one client IP may send a minute to the other unauthenticated
+// routes that check their own credential with a database lookup (consumer
+// billing keys) before it gets 429 without one (bug hunt H15).
+const SelfVerifiedRouteFailuresPerIPPerMinute = 30
+
 // AppWebhookMaxInFlightPerAccount bounds one account's concurrent outbound
 // webhook requests across every scheduler (ADR-20261101093517). Each
 // scheduler runs 64 delivery slots and each subscription may hold 4, so an
@@ -2444,6 +2450,14 @@ const (
 	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
 	// uncached access tokens that run at once (ADR 20261027132936).
 	OutboundAIAccessTokenLookupsMax = 8
+	// OutboundAIAccessTokenGuessesPerWindow unknown access tokens a client
+	// network (IPv4 /24, IPv6 /64) may present on the public AI host per
+	// OutboundAIAccessTokenGuessWindow before it gets 429 without a lookup;
+	// OutboundAIAccessTokenGuessClientsMax bounds the networks tracked (bug
+	// hunt H82).
+	OutboundAIAccessTokenGuessesPerWindow = 30
+	OutboundAIAccessTokenGuessWindow      = time.Minute
+	OutboundAIAccessTokenGuessClientsMax  = 10_000
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
@@ -9403,6 +9417,15 @@ const (
 	// quadratic region.
 	CertRenewTickBatchLimit = 1000
 
+	// Legacy DNS-01 wildcard recovery shares a durable per-claim cooldown
+	// between eager notifications and periodic retries. Each pass is bounded
+	// and completes before another replica may acquire the same claim.
+	CustomDomainCertRetryBatchLimit  = 16
+	CustomDomainCertRetryWorkers     = 4
+	CustomDomainCertRetryTimeout     = 2 * time.Minute
+	CustomDomainCertRetryPassTimeout = 4 * time.Minute
+	CustomDomainCertRetryDelay       = 5 * time.Minute
+
 	// On-demand custom-domain TLS (ADR-520). The public edge (Caddy)
 	// asks gatewayd-public before it loads, obtains or renews a
 	// certificate for a customer hostname.
@@ -9461,6 +9484,13 @@ const (
 	OnDemandTLSAskNegativeCacheEntries = 10000
 	OnDemandTLSAskKnownHostSeconds     = 7 * 24 * 60 * 60
 	OnDemandTLSAskKnownHostEntries     = 100000
+	// Durable membership hints protect existing certificates after an edge
+	// restart. A fixed-size Bloom filter covers every paged admission; a
+	// possible match only bypasses the unknown-host lookup bucket.
+	OnDemandTLSAskKnownHostHintBytes = 2 << 20
+	OnDemandTLSAskKnownHostPageSize  = 1024
+	OnDemandTLSAskKnownHostRefresh   = 5 * time.Minute
+	OnDemandTLSAskKnownHostRetry     = time.Second
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -17585,4 +17615,9 @@ const (
 const (
 	DomainDoctorDNSTimeout    = 5 * time.Second
 	DomainDoctorCAAMaxQueries = 128
+	// One verification pass shares workers between custom domains and tenant
+	// hostnames, leaving time for the doctor on the same 30-second ticker.
+	DomainVerificationWorkers        = 16
+	DomainVerificationPassTimeout    = 25 * time.Second
+	DomainVerificationCleanupTimeout = 3 * time.Second
 )

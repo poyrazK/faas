@@ -374,6 +374,15 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 	`, org.ID, acct.ID); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, mapErr(err)
 	}
+	if params.InitialPasswordHash != "" {
+		changed, err := sqlc.New().SetAccountPassword(ctx, tx, sqlc.SetAccountPasswordParams{ID: mustPgUUID(acct.ID), Hash: params.InitialPasswordHash})
+		if err != nil {
+			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: initialize account password: %w", mapErr(err))
+		}
+		if changed != 1 {
+			return CreateAccountWithPersonalOrgResult{}, ErrNotFound
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: commit: %w", err)
@@ -1470,7 +1479,12 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := sqlc.New().LockBillingIdentityAccount(ctx, tx, identity.AccountID); err != nil {
+	q := sqlc.New()
+	_, err = q.LockBillingIdentityAccount(ctx, tx, identity.AccountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_, err = q.LockBillingIdentityOrg(ctx, tx, mustPgUUID(identity.AccountID))
+	}
+	if err != nil {
 		return mapErr(err)
 	}
 	_, err = tx.Exec(ctx,
@@ -1968,9 +1982,15 @@ func (s *PgStore) GetAccountKeyGraceWindow(ctx context.Context, accountID string
 //
 // Issue #189 / IAM-5.
 func (s *PgStore) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
-	_, err := s.pool.Exec(ctx,
+	changed, err := s.pool.Exec(ctx,
 		`update accounts set key_grace_window_days = $1 where id = $2`, days, accountID)
-	return err
+	if err != nil {
+		return err
+	}
+	if changed.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // GetAccountEgressAllowlistExtra returns the per-account
@@ -14165,20 +14185,25 @@ func (s *PgStore) SetDefaultCustomDomain(ctx context.Context, appID, domain stri
 	if bound && (probeDomainMatches(claim, domain) != nil || claim.AppID != appID) {
 		return ErrNotFound
 	}
-	_, err := sqlc.New().SetCustomDomainDefault(ctx, s.pool, sqlc.SetCustomDomainDefaultParams{AppID: appID, Domain: domain, ClaimBound: bound, Token: claim.ChallengeToken})
-	return mapErr(err)
+	routable, err := sqlc.New().SetCustomDomainDefault(ctx, s.pool, sqlc.SetCustomDomainDefaultParams{AppID: appID, Domain: domain, ClaimBound: bound, Token: claim.ChallengeToken, TenantSurfaces: customDomainTenantRouting(ctx)})
+	if err != nil {
+		return mapErr(err)
+	}
+	if !routable {
+		return ErrCustomDomainNotRoutable
+	}
+	return nil
 }
 
 func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain string) (bool, error) {
-	var isDefault bool
-	err := s.pool.QueryRow(ctx, `
-		select exists(
-			select 1 from app_default_domains ad
-			join custom_domains d on d.domain = ad.domain
-			 where ad.app_id = $1 and ad.domain = $2 and d.app_id = ad.app_id
-			   and ad.domain not like '*.%' and d.environment_id is null
-		)`, appID, domain).Scan(&isDefault)
-	return isDefault, err
+	selected, err := s.DefaultCustomDomain(ctx, appID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(selected, domain), nil
 }
 
 // DefaultCustomDomain returns the app's selected canonical host when the
@@ -14186,21 +14211,13 @@ func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain strin
 // makes URL consumers fall back to the platform hostname if a domain is
 // removed or its verification is cleared by an operator migration.
 func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
-	var domain string
-	err := s.pool.QueryRow(ctx, `
-		select d.domain
-		  from app_default_domains ad
-		join custom_domains d on d.domain = ad.domain
-		 where ad.app_id = $1
-		   and d.app_id = ad.app_id
-		   and d.verified_at is not null
-		   and d.environment_id is null
-		   and d.domain not like '*.%'`, appID).Scan(&domain)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
-	}
+	domains, err := s.DefaultCustomDomains(ctx, []string{appID})
 	if err != nil {
 		return "", err
+	}
+	domain, ok := domains[appID]
+	if !ok {
+		return "", ErrNotFound
 	}
 	return domain, nil
 }
@@ -14321,7 +14338,7 @@ func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorO
 	if obs.CAAPermits != nil {
 		caaPermits = *obs.CAAPermits
 	}
-	_, err := s.pool.Exec(ctx, `
+	result, err := s.pool.Exec(ctx, `
 		INSERT INTO domain_doctor_observations (
 			domain, surface_id, observed_at,
 			dns_record_found, points_to_gregale, caa_permits, ipv6_conflict,
@@ -14350,11 +14367,19 @@ func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorO
 			last_error        = EXCLUDED.last_error,
 			dns_checked_at    = EXCLUDED.dns_checked_at,
 			cert_checked_at   = EXCLUDED.cert_checked_at
+		WHERE domain_doctor_observations.observed_at <= EXCLUDED.observed_at
+		  AND (domain_doctor_observations.dns_checked_at IS NULL OR EXCLUDED.dns_checked_at IS NULL
+		       OR domain_doctor_observations.dns_checked_at <= EXCLUDED.dns_checked_at)
+		  AND (domain_doctor_observations.cert_checked_at IS NULL OR EXCLUDED.cert_checked_at IS NULL
+		       OR domain_doctor_observations.cert_checked_at <= EXCLUDED.cert_checked_at)
 	`, obs.Domain, surfaceID, obs.ObservedAt,
 		obs.DNSRecordFound, obs.PointsToGregale, caaPermits, obs.IPv6Conflict,
 		nullableStr(obs.ObservedTarget), nullableStr(obs.ObservedAAAA), nullableStr(obs.CAAObserved),
 		obs.CertState, nullableTime(obs.CertNotAfter), nullableStr(obs.LastError),
 		nullableTime(obs.DNSCheckedAt), nullableTime(obs.CertCheckedAt))
+	if err == nil && result.RowsAffected() == 0 {
+		return ErrStaleCustomDomainObservation
+	}
 	return err
 }
 
@@ -14427,90 +14452,27 @@ func (s *PgStore) GetDoctorObservation(ctx context.Context, domain string) (Doma
 	return obs, nil
 }
 
-// ListAllCustomDomainsForDoctor returns the union of
-// custom_domains.domain and tenant_hostnames.hostname
-// so the poller has a single enumeration seam. The poller
-// does NOT need the app_id or surface_id at enumeration
-// time — those are joined lazily inside the per-domain
-// probe pass to avoid carrying app/surface state on the
-// poller goroutine.
-//
-// UNION ALL (not UNION) so Postgres skips the sort+hash
-// dedup pass: the consumer is runDoctorForDomain, which
-// upserts on domain_doctor_observations keyed by citext,
-// so a duplicate row is a no-op. Dedup is the caller's
-// job (the citext PK on the upsert target), not the
-// query's.
+// ListAllCustomDomainsForDoctor enumerates verified custom claims and
+// hostnames on non-deleted tenant surfaces, deduplicated by hostname.
 func (s *PgStore) ListAllCustomDomainsForDoctor(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT domain FROM custom_domains WHERE verified_at IS NOT NULL
-		UNION ALL
-		SELECT hostname FROM tenant_hostnames
-	`)
+	domains, err := sqlc.New().ListDoctorDomains(ctx, s.pool)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list doctor domains: %w", err)
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var d string
-		if err := rows.Scan(&d); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return domains, nil
 }
 
-// ListCustomDomainsForDoctorBatch returns a bounded, durable, account-fair
-// doctor work set. The observation timestamp is the cursor: a successful
-// upsert moves that domain behind older or never-observed rows, so restarts do
-// not reset progress and no separate cursor row can drift from the work.
+// ListCustomDomainsForDoctorBatch selects live registry entries fairly across
+// accounts. Deleted surfaces cannot consume slots without advancing the cursor.
 func (s *PgStore) ListCustomDomainsForDoctorBatch(ctx context.Context, limit int) ([]string, error) {
 	if limit <= 0 {
 		return []string{}, nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		WITH raw AS (
-			SELECT cd.domain::text AS domain, a.account_id,
-			       COALESCE(o.observed_at, 'epoch'::timestamptz) AS observed_at
-			FROM custom_domains cd
-			JOIN apps a ON a.id = cd.app_id
-			LEFT JOIN domain_doctor_observations o ON o.domain = cd.domain
-			WHERE cd.verified_at IS NOT NULL
-			UNION ALL
-			SELECT th.hostname::text AS domain, ts.account_id,
-			       COALESCE(o.observed_at, 'epoch'::timestamptz) AS observed_at
-			FROM tenant_hostnames th
-			JOIN tenant_surfaces ts ON ts.id = th.surface_id
-			LEFT JOIN domain_doctor_observations o ON o.domain = th.hostname
-		), candidates AS (
-			SELECT DISTINCT ON (domain) domain, account_id, observed_at
-			FROM raw
-			ORDER BY domain, observed_at
-		), ranked AS (
-			SELECT domain, observed_at,
-			       row_number() OVER (PARTITION BY account_id ORDER BY observed_at, domain) AS account_rank
-			FROM candidates
-		)
-		SELECT domain
-		FROM ranked
-		ORDER BY account_rank, observed_at, domain
-		LIMIT $1
-	`, limit)
+	domains, err := sqlc.New().ListDoctorDomainBatch(ctx, s.pool, int32(min(limit, math.MaxInt32)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list doctor domain batch: %w", err)
 	}
-	defer rows.Close()
-	out := make([]string, 0, limit)
-	for rows.Next() {
-		var domain string
-		if err := rows.Scan(&domain); err != nil {
-			return nil, err
-		}
-		out = append(out, domain)
-	}
-	return out, rows.Err()
+	return domains, nil
 }
 
 // nullableStr returns nil for "" so the doctor's empty

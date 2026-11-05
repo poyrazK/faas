@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/sealsig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -1125,6 +1126,9 @@ type Manager struct {
 	lifecycleCtx         context.Context
 	frameworkReadyReader func(context.Context, string) (frameworkready.Status, error)
 	frameworkReadyRuns   map[string]*frameworkReadyRun
+	// qualificationFrameworkReadyRecorder stores a restored qualification
+	// target's framework-ready receipt (ADR 20261023093000).
+	qualificationFrameworkReadyRecorder func(context.Context, state.EnvironmentQualificationExecution, string, int64) error
 	// hostIdentities is the slice of X25519 secret keys used to
 	// unseal per-app sealed env blobs at wake time (spec §11/G2).
 	// Holds the current identity alone in the normal pre-rotation
@@ -3890,6 +3894,12 @@ type WakeRequest struct {
 	// FIFO. They are deliberately unexported and never cross the gRPC wire.
 	preparedSecretsEnvJSON []byte
 	preparedAPIEnvJSON     []byte
+	// qualificationRestoreReceipt is a native qualification restore's fresh
+	// guest receipt control. It is sent with the resume hook, never staged.
+	// The restore consumes the waiter's receipt before its private guest
+	// channels close.
+	qualificationRestoreReceipt       qualificationRestoreReceiptControl
+	qualificationRestoreReceiptWaiter *qualificationConfigReceiptWaiter
 	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
 	// outbound IPv4/v6 allowlist. Each entry is a CIDR string (e.g.
 	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule
@@ -6901,9 +6911,23 @@ func (m *Manager) NetnsFor(instance string) (string, bool) {
 	defer m.mu.Unlock()
 	inst, ok := m.live[instance]
 	if !ok {
-		return "", false
+		if inst = m.restoredQualificationTargetLocked(instance); inst == nil {
+			return "", false
+		}
 	}
 	return inst.Lease.Netns, true
+}
+
+// restoredQualificationTargetLocked returns a restored qualification target
+// from the private registry. It stays out of the serving index, but its
+// isolated smoke must reach it the way a source candidate's does (ADR
+// 20261023093000). Held qualification Jobs stay unreachable. Caller holds m.mu.
+func (m *Manager) restoredQualificationTargetLocked(instance string) *Instance {
+	inst := m.qualificationInstances[instance]
+	if inst == nil || !inst.QualificationOnly || inst.Method != WakeRestore || inst.IsJob {
+		return nil
+	}
+	return inst
 }
 
 // operatorBundleSnapshot returns a copy of the current

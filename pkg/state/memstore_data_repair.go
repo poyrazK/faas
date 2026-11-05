@@ -35,32 +35,40 @@ func (m *MemStore) CreateDataRepairOperation(_ context.Context, in DataRepairAdm
 	var parent Operation
 	var parentEvent api.OperationEvent
 	parentPending := false
+	now := time.Now().UTC()
 	if in.Plan.ReplacesPlanID != "" {
 		parent = cloneOperation(d.operations[in.Plan.ReplacesPlanID])
-		parentPending = !parent.State.Terminal()
+		parentPending = operationCountsPending(parent, now)
 		var err error
-		parentEvent, err = finishDataRepairReplacement(&parent, in, time.Now().UTC())
+		parentEvent, err = finishDataRepairReplacement(&parent, in, now)
 		if err != nil {
 			return Operation{}, false, err
 		}
 	}
 	limits := api.MustLimitsFor(m.accounts[in.AccountID].Plan).Operations
-	if !limits.Allowed {
+	recovery := expiredReplacementRecovery(in, now)
+	if recovery {
+		var err error
+		limits, err = replacementRecoveryLimits(source)
+		if err != nil {
+			return Operation{}, false, err
+		}
+	} else if !limits.Allowed {
 		return Operation{}, false, NewOperationLimitError("plan_admission", 0, 1)
 	}
 	pending := 0
 	for _, existing := range d.operations {
-		if existing.AccountID == in.AccountID && !existing.State.Terminal() {
+		if existing.AccountID == in.AccountID && operationCountsPending(existing, now) {
 			pending++
 		}
 	}
 	if parentPending {
 		pending-- // Child admission replaces its reserved nonterminal parent.
 	}
-	if pending >= limits.PendingPerAccount {
+	if !recovery && pending >= limits.PendingPerAccount {
 		return Operation{}, false, NewOperationLimitError("pending_per_account", int64(limits.PendingPerAccount), int64(pending)+1)
 	}
-	op, err := newDataRepairOperation(source, in, limits, time.Now().UTC())
+	op, err := newDataRepairOperation(source, in, limits, now)
 	if err != nil {
 		return Operation{}, false, err
 	}

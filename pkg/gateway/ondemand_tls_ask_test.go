@@ -286,8 +286,8 @@ func TestOnDemandTLSPolicyLookupBudgetSparesKnownHosts(t *testing.T) {
 	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
 		p.Decide(ctx, fmt.Sprintf("flood-again-%d.example.org", i))
 	}
-	if _, decision := p.Decide(ctx, "a.tenants.example.net"); decision != OnDemandTLSDenyOverload {
-		t.Fatalf("known host after its bypass expired, bucket drained = %q, want %q", decision, OnDemandTLSDenyOverload)
+	if allowed, decision := p.Decide(ctx, "a.tenants.example.net"); !allowed {
+		t.Fatalf("durable host after its recent-host cache expired, bucket drained = %q, want allow", decision)
 	}
 }
 

@@ -40,7 +40,7 @@ func validateTestRestartInFlight(scenario testScenario, index int, spec *testRes
 		return nil
 	}
 	r := spec.Request
-	if (r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch) || r.JSON == nil || len(r.Capture) > 0 {
+	if (r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch) || !r.hasJSONBody() || len(r.Capture) > 0 {
 		return errors.New("restart.in_flight.request requires POST, PUT or PATCH with JSON and no captures")
 	}
 	if len(spec.Checkpoints) < 1 || len(spec.Checkpoints) > 5 {
@@ -54,17 +54,12 @@ func validateTestRestartInFlight(scenario testScenario, index int, spec *testRes
 			}
 		}
 		probe := c.Request
-		if probe.Method != http.MethodGet || probe.JSON != nil || len(probe.Capture) > 0 || len(probe.Expect.JSON) == 0 || probe.Expect.Status < 200 || probe.Expect.Status >= 300 || (c.Workload != "app" && probe.As != "") {
+		if probe.Method != http.MethodGet || probe.hasJSONBody() || len(probe.Capture) > 0 || len(probe.Expect.JSON) == 0 || probe.Expect.Status < 200 || probe.Expect.Status >= 300 || (c.Workload != "app" && probe.As != "") {
 			return errors.New("in-flight checkpoints require read-only 2xx GET JSON assertions without captures; service probes cannot use primary credentials")
 		}
 		requests = append(requests, probe)
 	}
-	prior := []testHTTPRequest{}
-	for _, step := range scenario.Steps[:index] {
-		prior = append(prior, step.Requests...)
-		prior = append(prior, step.Checks...)
-	}
-	return validateTestHTTPRequestsWithData(testScenario{Consumers: scenario.Consumers, Requests: append(prior, requests...)}, dataFields)
+	return validateTestHTTPRequestsWithCaptures(testScenario{Consumers: scenario.Consumers, Requests: requests}, dataFields, testScenarioStepCaptures(scenario.Steps[:index]))
 }
 
 func startTestRestartFlight(ctx context.Context, baseURL string, env, consumerEnv []string, runID string, spec testRestartInFlightSpec, captures map[string]string, evidence *testRestartInFlightEvidence) (*testRestartFlight, error) {
@@ -77,7 +72,9 @@ func startTestRestartFlight(ctx context.Context, baseURL string, env, consumerEn
 		r := spec.Request
 		result := testHTTPRequestEvidence{Name: r.Name, Method: r.Method, Path: strings.SplitN(r.Path, "?", 2)[0]}
 		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		err := runOneTestHTTPRequest(requestCtx, client, baseURL, r, testHTTPValues(runID, copied, nil), testHTTPConsumerKeys(consumerEnv), copied, nil, &result)
+		// Headers alone do not complete an in-flight write: consume its bounded
+		// response body even when only a status expectation was declared.
+		err := runOneTestHTTPRequestWithBody(requestCtx, client, baseURL, r, testHTTPValues(runID, copied, nil), testHTTPConsumerKeys(consumerEnv), copied, nil, &result, true)
 		result.Passed = err == nil
 		flight.done <- result
 	}()

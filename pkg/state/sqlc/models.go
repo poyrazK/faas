@@ -3146,6 +3146,7 @@ type CustomDomain struct {
 	VerificationAttempts          int32
 	VerificationExpiresAt         pgtype.Timestamptz
 	EnvironmentID                 pgtype.UUID
+	CertRetryAt                   pgtype.Timestamptz
 }
 
 type CustomDomainTlsAdmission struct {

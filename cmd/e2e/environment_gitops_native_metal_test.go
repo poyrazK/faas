@@ -77,6 +77,9 @@ func runEnvironmentGitOpsNative(t *testing.T, providerName string) {
 	daemonEnv := []string{"FAAS_STORAGE_ROOT=" + storageRoot,
 		"GREGALE_GITOPS_ACCEPTANCE=1", "FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT=1",
 		"FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH=1",
+		// Serving convergence waits for route acknowledgements from the
+		// serving gateways; without a named gateway it never completes.
+		"FAAS_E2E_GATEWAY_NODE_NAME=" + state.DefaultLocalNodeName,
 		"FAAS_AUDIT_HMAC_KEY_FILE=" + gitOpsAcceptanceHMACKeyFile(t, "audit-hmac.key"),
 		"FAAS_RECOVERY_HMAC_KEY_FILE=" + gitOpsAcceptanceHMACKeyFile(t, "recovery-hmac.key")}
 	h := e2etest.StartWithAPIDEnv(t, pool, e2etest.DeployWake, providerEnv, daemonEnv...)
@@ -96,16 +99,23 @@ func runEnvironmentGitOpsNative(t *testing.T, providerName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Graph activation publishes a project release set, which requires a
+	// revision pin TTL on every project app; without one it never activates.
+	// Queue deliveries route through the app's node, which apid would assign.
+	node, err := store.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api",
-		WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive,
-		RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080, StartupDeadlineS: 30}})
+		WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive, NodeID: node.ID,
+		RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080, StartupDeadlineS: 30, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	worker, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-worker",
-		WorkloadName: "worker", Type: state.AppTypeApp, Status: state.AppActive,
+		WorkloadName: "worker", Type: state.AppTypeApp, Status: state.AppActive, NodeID: node.ID,
 		WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 1,
-		Manifest: state.AppManifest{Port: 8080, ExecutionMode: api.ExecutionModeWorker, StartupDeadlineS: 30}})
+		Manifest: state.AppManifest{Port: 8080, ExecutionMode: api.ExecutionModeWorker, StartupDeadlineS: 30, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}

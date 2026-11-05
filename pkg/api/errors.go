@@ -7158,6 +7158,13 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 		WithDocs(docsBase + "/orgs#free-organizations")
 }
 
+// ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
+func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
+	p := ErrOrgFreeLimitExceeded(limit, observed)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	return p
+}
+
 // ErrOrgInvitationCapExceeded is the 403 returned when the
 // plan's OrgPendingInvitationsMax is reached. Independent of the
 // member cap — defends against the N-invites × fast-accept botnet
