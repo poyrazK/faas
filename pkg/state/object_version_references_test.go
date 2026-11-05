@@ -102,6 +102,58 @@ func objectVersionReferencesSuite(t *testing.T, st accountingStore) {
 	}
 }
 
+// adr: 20261105120000
+func TestGenerationVersionObservationMem(t *testing.T) {
+	generationVersionObservation(t, state.NewMemStore())
+}
+func TestGenerationVersionObservationPG(t *testing.T) {
+	st, _ := pgStore(t)
+	generationVersionObservation(t, st)
+}
+
+// generationVersionObservation records the generation every GCS object
+// carries: it gets a durable version ID but does not mark the bucket as
+// keeping versions, so later writes are still admitted. A noncurrent
+// generation does mark it.
+func generationVersionObservation(t *testing.T, st accountingStore) {
+	b, _ := seedAccounting(t, st)
+	refs := st.(state.ObjectVersionReferenceStore)
+	current := state.ObjectVersionIdentity{Key: "key", ProviderVersionID: "1730800000000001", GenerationVersion: true}
+	out, err := refs.RecordObjectVersions(t.Context(), b.AccountID, b.ID, []state.ObjectVersionIdentity{current})
+	if err != nil || len(out) != 1 || !state.ValidObjectVersionID(out[0].ID) || out[0].ID == "null" {
+		t.Fatal(out, err)
+	}
+	status, err := st.(state.ObjectVersionInventoryStore).ObjectVersionAccountingStatus(t.Context(), b.AccountID, b.ID)
+	if err != nil || status.VersionsObserved {
+		t.Fatal("a current generation marked the bucket as versioned", status, err)
+	}
+	if err = st.AdmitObjectURL(t.Context(), b.AccountID, b.ID, "second-key", 1, true, accountingPolicy()); err != nil {
+		t.Fatal("a current generation fenced the next write", err)
+	}
+	noncurrent := state.ObjectVersionIdentity{Key: "key", ProviderVersionID: "1730800000000000"}
+	if _, err = refs.RecordObjectVersions(t.Context(), b.AccountID, b.ID, []state.ObjectVersionIdentity{noncurrent}); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ = st.(state.ObjectVersionInventoryStore).ObjectVersionAccountingStatus(t.Context(), b.AccountID, b.ID); !status.VersionsObserved {
+		t.Fatal("a noncurrent generation was not observed", status)
+	}
+}
+
+func TestProviderVersionObserved(t *testing.T) {
+	for _, tc := range []struct {
+		id         string
+		generation bool
+		want       bool
+	}{
+		{"", false, false}, {"null", false, false}, {"3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY", false, true},
+		{"", true, false}, {"1730800000000001", true, false}, {"1730800000000001", false, true},
+	} {
+		if got := state.ProviderVersionObserved(tc.id, tc.generation); got != tc.want {
+			t.Errorf("ProviderVersionObserved(%q, %v) = %v, want %v", tc.id, tc.generation, got, tc.want)
+		}
+	}
+}
+
 func TestNullVersionObservationMem(t *testing.T) { nullVersionObservation(t, state.NewMemStore()) }
 func TestNullVersionObservationPG(t *testing.T)  { st, _ := pgStore(t); nullVersionObservation(t, st) }
 func nullVersionObservation(t *testing.T, st accountingStore) {

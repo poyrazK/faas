@@ -2144,3 +2144,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261105000511: Management MCP saved-plan recovery prompts](20261105000511-management-mcp-saved-plan-recovery-prompts.md)
 - [ADR-20261105000512: Durable request promotion outcome recovery](20261105000512-management-mcp-promotion-outcomes.md)
 - [ADR-20261105000513: Durable request rollback acceptance recovery](20261105000513-management-mcp-rollback-outcomes.md)
+- [ADR-20261105120000: GCS generations are not retained-version evidence](20261105120000-gcs-generations-are-not-version-evidence.md)
