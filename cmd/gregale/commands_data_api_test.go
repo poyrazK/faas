@@ -164,7 +164,9 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, rea
 		t.Fatal("create did not deploy the runtime the control plane serves")
 	}
 	for name := range uploaded {
-		if strings.Contains(name, "/test/") || strings.Contains(name, "/.") {
+		// Runtime tests stay out of deployments. Vendored dependencies may
+		// include their own test files in the control plane's runtime bundle.
+		if strings.HasPrefix(name, "data-api/test/") || strings.Contains(name, "/.") {
 			t.Fatalf("create uploaded %s", name)
 		}
 	}

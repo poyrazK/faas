@@ -17318,6 +17318,7 @@ const (
 	DataPipelineRequestMaxBytes            = 32768
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
+	DataPipelineNativeConnectTimeout       = 5 * time.Second
 	DataPipelinePollInterval               = 15 * time.Second
 	DataPipelineReconcileConcurrency       = 8
 	DataPipelineCheckConcurrency           = 2
