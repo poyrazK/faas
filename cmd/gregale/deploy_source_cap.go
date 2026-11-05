@@ -68,5 +68,5 @@ func (c sourceUploadCap) explain(err error) error {
 	if c.verified || !errors.As(err, &over) {
 		return err
 	}
-	return fmt.Errorf("packed source is over %d MB, the smallest plan's limit, used because the account's plan could not be read (%v). Run the command again once the account lookup succeeds; your plan's own limit may be higher", c.mb, c.lookup)
+	return fmt.Errorf("packed source is over %d MB, the smallest plan's limit, used because the account's plan could not be read (%w). Run the command again once the account lookup succeeds; your plan's own limit may be higher", c.mb, c.lookup)
 }

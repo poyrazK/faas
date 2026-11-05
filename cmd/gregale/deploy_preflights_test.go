@@ -175,7 +175,7 @@ func TestResolveSourceUploadCap(t *testing.T) {
 			mu.Unlock()
 			over := main.SourceUploadLimitError(mb)
 			if verified {
-				if warning != "" || explain(over) != over {
+				if warning != "" || !errors.Is(explain(over), over) {
 					t.Errorf("verified cap warned %q or rewrote %v", warning, explain(over))
 				}
 				return
@@ -188,7 +188,7 @@ func TestResolveSourceUploadCap(t *testing.T) {
 				t.Errorf("over-cap explanation = %q", explained)
 			}
 			other := errors.New("disk full")
-			if explain(other) != other {
+			if !errors.Is(explain(other), other) {
 				t.Errorf("explain rewrote an unrelated error")
 			}
 		})
