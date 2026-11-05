@@ -5,7 +5,7 @@
 - **Amends:** [ADR-1448](1448-releases-that-change-the-database.md),
   [ADR-601](601-binding-checked-historical-rollback.md),
   [ADR-20261104140000](20261104140000-rollback-execution-fences-and-outcomes.md),
-  [ADR-20261104160000](20261104160000-graph-and-service-rollback-safety.md).
+  [ADR-20261104160001](20261104160001-graph-and-service-rollback-safety.md).
 
 ## Serving windows
 

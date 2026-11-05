@@ -140,6 +140,10 @@ type App struct {
 	// limiting, or capacity admission. Undeclared paths are answered directly
 	// by the gateway and never wake an application.
 	OnlyAllowDeclaredRoutes bool
+	// TracingEnabled is the app's in-guest tracing setting (ADR-958). Its
+	// request telemetry keeps per-request identity (a bounded sample per
+	// collapse bucket) so guest spans have a row to land on.
+	TracingEnabled bool
 	// PreAuthRateLimit limits requests from one trusted source before
 	// consumer-key lookup. Empty/off preserves existing behavior.
 	PreAuthRateLimit *api.PreAuthRateLimitConfig
@@ -6559,6 +6563,9 @@ haveApp:
 			}
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
+		if app.TracingEnabled {
+			r = withExactRequestTelemetry(r)
+		}
 		if h.APIMonetizationEnabledFor(app.AccountID) {
 			ownUsageHeader(r)
 		}
@@ -7447,6 +7454,13 @@ haveApp:
 	}
 	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
 		return
+	}
+	// A deployment preview or alias URL, or a revision pin, names the
+	// deployment itself; an environment URL, a project release and production
+	// routing do not (ADR-20261028110044 amendment 5).
+	if !deploymentSmoke && !routeProbe && projectReleaseDeploymentID == "" &&
+		(clientRevisionID != "" || app.PinnedDeploymentID != "" && app.PublicEnvironmentID == "") {
+		recordTrafficDeploymentPinned(r.Context())
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
@@ -8705,6 +8719,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 				PlatformRefusal:                      decision.platformRefusal(status),
+				DeploymentPinned:                     decision.deploymentPinned,
+				LongLived:                            decision.streamDetached,
+				exactSample:                          status >= http.StatusInternalServerError || exactRequestTelemetryFrom(r.Context()),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {

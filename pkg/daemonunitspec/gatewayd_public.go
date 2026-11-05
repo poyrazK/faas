@@ -58,7 +58,11 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		MemoryMax:       "512M",
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env -/etc/faas/otel.env -/etc/faas/tcpd.env -/etc/faas/udpd.env",
 
-		AmbientCapabilities: []string{""}, // explicit empty body: "no caps elevated"
+		// The compute edge's direct-entry drop-in raises
+		// CAP_NET_BIND_SERVICE to bind 443 itself; nothing else is ever
+		// granted (ADR-20261103163954 §4).
+		CapabilityBoundingSet: []string{"CAP_NET_BIND_SERVICE"},
+		AmbientCapabilities:   []string{""}, // explicit empty body: "no caps elevated"
 
 		Environment: []daemonunit.KV{
 			// Leave 128 MiB outside Go's soft limit for cgroup-charged stacks,
@@ -85,8 +89,17 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		PrivateDevices:          true,
 		ProtectKernelTunables:   true,
 		ProtectKernelModules:    true,
+		ProtectKernelLogs:       true,
 		ProtectControlGroups:    true,
 		SystemCallArchitectures: "native",
+		// ADR-20261103163954 §4: the public listeners take untrusted
+		// traffic (the compute edge from the internet with nothing in
+		// front), so a compromise gets the system-service call set only.
+		// A filtered call fails with EPERM rather than killing the edge;
+		// a Go TLS/HTTP/2 server ran clean under the same filter in kill
+		// mode on systemd 255 (2026-11-04).
+		SystemCallFilter:        []string{"@system-service", "~@privileged @resources"},
+		SystemCallErrorNumber:   "EPERM",
 		LockPersonality:         true,
 		RestrictNamespaces:      true,
 		RestrictRealtime:        true,

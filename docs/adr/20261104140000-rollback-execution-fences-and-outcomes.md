@@ -5,7 +5,7 @@
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md),
   [ADR-1448](1448-releases-that-change-the-database.md),
   [ADR-20261023181931](20261023181931-rollbacks-that-restore-the-database.md),
-  and [ADR-20261104110000](20261104110000-rollback-release-and-contract-evidence.md).
+  and [ADR-20261104110001](20261104110001-rollback-release-and-contract-evidence.md).
 - **Decision:** Validate a database switch's lease inside code mutations,
   persist plain rollback release reviews with their preparation attempt, retain
   contract checks during project rollback, and reconcile outcomes under the

@@ -80,7 +80,12 @@ func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, l
 			}
 		}
 		reason := envSkipReason(key, value, services, limits)
-		if reason == "" && !env.OptedIn(service) {
+		// A Compose value that calls a sibling service imports without the
+		// opt-in (ADR-20261104221217): it is the address Gregale gives that
+		// service, never a credential, and without it the service called a
+		// Docker host that does not resolve here.
+		siblingAddress := out.Rewritten[key] != "" && !env.Kubernetes[service]
+		if reason == "" && !siblingAddress && !env.OptedIn(service) {
 			reason = EnvSkipNotOptedIn
 			if env.Kubernetes[service] {
 				reason = EnvSkipNotAnnotated

@@ -809,6 +809,13 @@ type ApiKeyAgentClient struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
+type ApiKeyProjectLimit struct {
+	KeyID      pgtype.UUID
+	ProjectIds []pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -911,6 +918,7 @@ type App struct {
 	Labels                            []byte
 	GithubProductionTrigger           pgtype.Text
 	GithubPreviewEnabled              pgtype.Bool
+	ScalingRevision                   int64
 }
 
 type AppApiRoute struct {
@@ -1566,6 +1574,14 @@ type AppScalingPolicySchedulerStatus struct {
 	SchedulerNodeID  pgtype.UUID
 	ObservedRevision int64
 	ObservedAt       pgtype.Timestamptz
+}
+
+type AppScalingReceipt struct {
+	AppID       pgtype.UUID
+	Scope       string
+	RequestID   pgtype.UUID
+	RequestHash []byte
+	Response    []byte
 }
 
 type AppSecret struct {
@@ -2801,6 +2817,7 @@ type CliAuthCode struct {
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
 	OrgID      pgtype.UUID
+	ProjectIds []pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -3129,6 +3146,7 @@ type CustomDomain struct {
 	VerificationAttempts          int32
 	VerificationExpiresAt         pgtype.Timestamptz
 	EnvironmentID                 pgtype.UUID
+	CertRetryAt                   pgtype.Timestamptz
 }
 
 type CustomDomainTlsAdmission struct {
@@ -3526,6 +3544,18 @@ type DataApiAccessConfig struct {
 	AppID      pgtype.UUID
 	Config     []byte
 	ReportedAt pgtype.Timestamptz
+}
+
+// ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).
+type DataApiChangeHookReport struct {
+	AppID           pgtype.UUID
+	ReportedAt      pgtype.Timestamptz
+	Pending         int64
+	Failed          int64
+	OldestPendingAt pgtype.Timestamptz
+	LastPublishedAt pgtype.Timestamptz
+	LastFailureCode pgtype.Text
+	Publishing      string
 }
 
 type DataApiRuntimeConnectionObservation struct {
@@ -4192,6 +4222,18 @@ type DeploymentProjectReleaseWorker struct {
 	AttemptID    string
 }
 
+type DeploymentPromotionReceipt struct {
+	AppID                       pgtype.UUID
+	AttemptID                   string
+	RequestHash                 string
+	DeploymentID                pgtype.UUID
+	ExpectedServingDeploymentID string
+	Scope                       string
+	ProjectID                   string
+	EnvironmentID               string
+	AcceptedAt                  pgtype.Timestamptz
+}
+
 type DeploymentPublicBuildUrl struct {
 	DeploymentID pgtype.UUID
 	Urls         []byte
@@ -4601,6 +4643,22 @@ type EdgeRuleSetVersion struct {
 	RulesSha256 string
 	RuleCount   int32
 	CreatedAt   pgtype.Timestamptz
+}
+
+// ADR-20261103163954 the apps domains' certificates; edgednsd is the only writer, the key is sealed to the edge-tls seal domain.
+type EdgeTlsCertificate struct {
+	ID         int64
+	Names      []string
+	Ca         string
+	AccountUri string
+	Serial     string
+	Sha256     string
+	ChainPem   string
+	KeySealed  []byte
+	KeyKid     string
+	NotBefore  pgtype.Timestamptz
+	NotAfter   pgtype.Timestamptz
+	IssuedAt   pgtype.Timestamptz
 }
 
 type EgressFlowLog struct {
@@ -6585,6 +6643,7 @@ type Instance struct {
 	CapacityRamMb                     int64
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
+	BookedCpuMillicores               pgtype.Int4
 }
 
 type InstanceApplicationStandardAdmission struct {
@@ -12201,6 +12260,12 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectAppStageAdmission struct {
+	AppID     pgtype.UUID
+	ProjectID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type ProjectBindingVerificationRun struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -12213,13 +12278,14 @@ type ProjectBindingVerificationRun struct {
 }
 
 type ProjectEnvironment struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	ProjectID pgtype.UUID
-	Slug      string
-	Protected bool
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	Slug                   string
+	Protected              bool
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SharedSecretGeneration int64
 }
 
 type ProjectEnvironmentApproval struct {
@@ -13758,6 +13824,12 @@ type RequestAnalyticsRollupCoverage struct {
 	CoveredSince pgtype.Timestamptz
 }
 
+// App minutes whose analytics rollups apid lost; written only by apid, swept only by meterd (ADR-20261103113952 amendment 1).
+type RequestAnalyticsRollupGap struct {
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+}
+
 type RequestAuditEvent struct {
 	EventID          pgtype.UUID
 	AccountID        pgtype.UUID
@@ -13825,6 +13897,8 @@ type RequestTelemetry struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13865,6 +13939,8 @@ type RequestTelemetry202611 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13905,6 +13981,8 @@ type RequestTelemetry202612 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13945,6 +14023,8 @@ type RequestTelemetry202701 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -14010,6 +14090,8 @@ type RequestTelemetryDefault struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type ReservedIpInventory struct {

@@ -191,7 +191,28 @@ func (s *server) applyManifestWorkloads(
 // stored as a single shell command, matching Heroku's Procfile semantics.
 // A source that declares neither keeps the release command its project's
 // Compose file gave the app (ADR-20261102192943).
-func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+//
+// A deployment that declares one is refused while this installation cannot
+// run release commands (releasePhaseOff), rather than failing in imaged after
+// its build.
+func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, releasePhaseOff bool) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := resolveSourceReleaseDeclaration(sourcePath, app, manifest)
+	if problem == nil && releasePhaseOff && len(resolved.command) > 0 {
+		return deploymentReleaseCommand{}, releasePhaseOffProblem()
+	}
+	return resolved, problem
+}
+
+// releasePhaseOffProblem refuses a deployment that declares a release command
+// while FAAS_RELEASE_PHASE_ENABLED is off on apid: imaged would fail it after
+// the build with the same code.
+func releasePhaseOffProblem() *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeReleasePhaseUnavailable, "Release commands unavailable",
+		"This deployment declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file), "+
+			"but release commands are not available on this Gregale installation yet. Remove the declaration and run the command from the app or a machine you control.")
+}
+
+func resolveSourceReleaseDeclaration(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}
@@ -361,68 +382,8 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		return staged, problem
 	}
 	staged.bindingIDs = bindingIDs
-	if m.RetryPolicy != nil {
-		desiredDTO := retryPolicyDTOFromManifest(m.RetryPolicy)
-		desired, retryProblem := marshalAppRetryPolicy(desiredDTO)
-		if retryProblem != nil {
-			return staged, retryProblem
-		}
-		if !retryPoliciesEqual(app.RetryPolicyJSON, desired) {
-			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
-				RetryPolicyJSON: &desired,
-				SetRetryPolicy:  true,
-			})
-			if err != nil {
-				return staged, sourceRefRetryPolicyStoreProblem(err)
-			}
-			staged.retryPolicyChanged = true
-			staged.previousRetryPolicy = cloneRetryPolicyJSON(app.RetryPolicyJSON)
-			staged.appliedRetryPolicy = cloneRetryPolicyJSON(updated.RetryPolicyJSON)
-			if len(staged.appliedRetryPolicy) == 0 {
-				staged.appliedRetryPolicy = cloneRetryPolicyJSON(desired)
-			}
-			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
-				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
-		}
-	}
-	// A worker block's scale applies here too, as the CLI applies it
-	// (ADR-20261018101500 amendment 2026-10-27).
-	if policy := m.ScalingPolicyRequest(); policy != nil {
-		limits, ok := api.LimitsFor(acct.Plan)
-		if !ok {
-			return staged, api.ErrCapacity("could not resolve account plan limits")
-		}
-		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
-		if lifecycle, ok := m.LifecycleRequest(); ok {
-			// The lifecycle step below sets the mode a queue target needs.
-			scalingReq.ExecutionMode = lifecycle.ExecutionMode
-		}
-		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
-			return staged, prob
-		}
-		desired := policyPtrFromReq(scalingReq)
-		if !scalingPoliciesEqual(app.ScalingPolicy, desired) {
-			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
-				ScalingPolicy:    desired,
-				SetScalingPolicy: true,
-			})
-			if err != nil {
-				return staged, sourceRefScalingStoreProblem(err)
-			}
-			staged.scalingChanged = true
-			staged.previousScalingPolicy = cloneScalingPolicy(app.ScalingPolicy)
-			staged.appliedScalingPolicy = cloneScalingPolicy(updated.ScalingPolicy)
-			if staged.appliedScalingPolicy == nil {
-				staged.appliedScalingPolicy = cloneScalingPolicy(desired)
-			}
-			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
-				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
-		}
-	}
-	if req, ok := m.LifecycleRequest(); ok {
-		if problem := s.applySourceRefLifecycle(ctx, acct, app, req, &staged); problem != nil {
-			return staged, problem
-		}
+	if problem := s.applySourceManifestSettings(ctx, acct, app, m, &staged); problem != nil {
+		return staged, problem
 	}
 	if len(m.WorkPolicies) > 0 {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)
@@ -855,6 +816,102 @@ func sourceRefEventSubscriptionProblem(err error) *api.Problem {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 	}
 	return api.ErrCapacity("could not apply manifest event subscription")
+}
+
+// applySourceManifestSettings applies a gregale.yaml's app settings: its retry
+// policy, its scaling policy and its lifecycle block (after_restore,
+// before_checkpoint, restart policy, timeouts, replicas). Single-app deploys
+// apply them through applySourceRefManifest; project applies and GitHub
+// deploys apply them per service (ADR-20261104221217), since a project
+// service's own gregale.yaml was otherwise ignored. staged records each change
+// so rollbackSourceRefManifest can undo it.
+func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, staged *sourceRefManifestStaged) *api.Problem {
+	if m.RetryPolicy != nil {
+		desiredDTO := retryPolicyDTOFromManifest(m.RetryPolicy)
+		desired, retryProblem := marshalAppRetryPolicy(desiredDTO)
+		if retryProblem != nil {
+			return retryProblem
+		}
+		if !retryPoliciesEqual(app.RetryPolicyJSON, desired) {
+			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
+				RetryPolicyJSON: &desired,
+				SetRetryPolicy:  true,
+			})
+			if err != nil {
+				return sourceRefRetryPolicyStoreProblem(err)
+			}
+			staged.retryPolicyChanged = true
+			staged.previousRetryPolicy = cloneRetryPolicyJSON(app.RetryPolicyJSON)
+			staged.appliedRetryPolicy = cloneRetryPolicyJSON(updated.RetryPolicyJSON)
+			if len(staged.appliedRetryPolicy) == 0 {
+				staged.appliedRetryPolicy = cloneRetryPolicyJSON(desired)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
+		}
+	}
+	// A worker block's scale applies here too, as the CLI applies it
+	// (ADR-20261018101500 amendment 2026-10-27).
+	if policy := m.ScalingPolicyRequest(); policy != nil {
+		limits, ok := api.LimitsFor(acct.Plan)
+		if !ok {
+			return api.ErrCapacity("could not resolve account plan limits")
+		}
+		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
+		if lifecycle, ok := m.LifecycleRequest(); ok {
+			// The lifecycle step below sets the mode a queue target needs.
+			scalingReq.ExecutionMode = lifecycle.ExecutionMode
+		}
+		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
+			return prob
+		}
+		desired := policyPtrFromReq(scalingReq)
+		if !scalingPoliciesEqual(app.ScalingPolicy, desired) {
+			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
+				ScalingPolicy:    desired,
+				SetScalingPolicy: true,
+			})
+			if err != nil {
+				return sourceRefScalingStoreProblem(err)
+			}
+			staged.scalingChanged = true
+			staged.previousScalingPolicy = cloneScalingPolicy(app.ScalingPolicy)
+			staged.appliedScalingPolicy = cloneScalingPolicy(updated.ScalingPolicy)
+			if staged.appliedScalingPolicy == nil {
+				staged.appliedScalingPolicy = cloneScalingPolicy(desired)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
+		}
+	}
+	if req, ok := m.LifecycleRequest(); ok {
+		if problem := s.applySourceRefLifecycle(ctx, acct, app, req, staged); problem != nil {
+			return problem
+		}
+	}
+	return nil
+}
+
+// applyBridgeSourceSettings applies a GitHub deploy's gregale.yaml settings
+// for the githubd bridge, which has no server of its own. It returns the app
+// as it now is and the undo for a failed enqueue.
+func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	undo := func(ctx context.Context) {
+		if err := s.rollbackSourceRefManifest(ctx, staged); err != nil {
+			s.log.Warn("apid: roll back GitHub deploy settings", "app_id", app.ID, "err", err)
+		}
+	}
+	if problem := s.applySourceManifestSettings(ctx, acct, app, m, &staged); problem != nil {
+		undo(context.WithoutCancel(ctx))
+		return app, func(context.Context) {}, problem
+	}
+	if staged.lifecycleChanged || staged.scalingChanged || staged.retryPolicyChanged {
+		if reloaded, err := s.store.AppByID(ctx, app.ID); err == nil {
+			app = reloaded
+		}
+	}
+	return app, undo, nil
 }
 
 // applySourceRefLifecycle applies a manifest's lifecycle and worker blocks with

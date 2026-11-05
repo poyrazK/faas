@@ -407,14 +407,12 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			// A remote grant lists the secret request pair only with consented
-			// secrets:request (ADR-20261026195952).
-			if err != nil || len(aliceCatalog.Tools) < 58 {
+			if err != nil || len(aliceCatalog.Tools) != 83 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) < 49 {
-				t.Fatalf("bob tools=%+v error=%v", bobCatalog, err)
+			if err != nil || len(bobCatalog.Tools) != 73 {
+				t.Fatalf("bob count=%d tools=%+v error=%v", len(bobCatalog.Tools), bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)
 			bobContext := callTool(t, ctx, bobSession, "gregale_context", map[string]any{}, false)

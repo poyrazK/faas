@@ -47,6 +47,9 @@ gregale bucket list my-api
 app with `read_write` access (`--permission read` or `write` to narrow it). It
 is idempotent: running it again reuses the bucket and the binding.
 `gregale bucket list` shows the bucket IDs that other commands take.
+If a create or delete fails, Gregale keeps retrying it. While it does, the
+bucket stays `provisioning` or `deleting`, and `bucket list` (and the API's
+`retry` field) says why, how many attempts ran and when the next one starts.
 
 With the API, `POST /v1/apps/{app}/buckets` creates a bucket:
 
@@ -132,7 +135,9 @@ POST /v1/apps/{app}/upload-routes
 ```
 
 Clients then `POST /uploads/avatar` on your app's hostname with an API key that
-has `storage:write`. Send an `Idempotency-Key` header so retries cannot store a
+has `storage:write`. The route itself authorizes writes to its bucket, so the key
+needs no bucket grant; each key's uploads land under its own key ID below the
+route's prefix. Send an `Idempotency-Key` header so retries cannot store a
 file twice; `GET /uploads/avatar/receipts/{id}` reports an upload's status.
 
 ## Use an S3 SDK
@@ -309,26 +314,32 @@ gregale bucket protection retention my-api BUCKET_ID notes.txt VERSION_ID GOVERN
 ```
 
 A bucket or account holding protected versions cannot be deleted until the
-protection ends. See the [CLI reference](cli-reference.md#bucket-object-lock)
-for the bucket defaults.
+protection ends. Run `gregale bucket object-lock set --help` for the bucket
+defaults. (Object storage is in preview, so the public CLI reference does not
+list its commands.)
 
 ## Encryption
 
 Objects are encrypted at rest by the storage provider. You can also choose a
 bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`) or, where
-enabled for your account, your own enrolled keys. See the
-[CLI reference](cli-reference.md#bucket-encryption).
+enabled for your account, your own enrolled keys. Run
+`gregale bucket encryption set --help` for the options.
 
 ## Tags, copies and checksums
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
-  the S3 credential a copy-source grant on it (`gregale bucket copy-source`).
+  the S3 credential a copy-source grant on it (`gregale bucket copy-source`) and
+  name the source by its bucket ID, as `x-amz-copy-source: <source-bucket-id>/<key>`;
+  a source named by its bucket name answers `NoSuchKey`.
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
   completing a multipart upload can be conditional. Otherwise the endpoint
-  answers `NotImplemented`.
+  answers `NotImplemented`. Recent AWS CLI and SDK releases add a checksum to
+  every multipart upload by default; where your storage lacks them, set
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` (or
+  `request_checksum_calculation = when_required` in `~/.aws/config`).
 
 ## Events and notifications
 

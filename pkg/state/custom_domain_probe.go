@@ -68,7 +68,14 @@ func (s *PgStore) updateCustomDomainProbeCert(ctx context.Context, claim CustomD
 			_, err := s.DomainByName(ctx, domain)
 			return err
 		}
-		return s.checkCustomDomainProbeClaim(ctx, claim)
+		current, err := sqlc.New().ReadCustomDomainProbeClaim(ctx, s.pool, sqlc.ReadCustomDomainProbeClaimParams{Domain: domain, AppID: claim.AppID, Token: claim.ChallengeToken})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrStaleCustomDomainProbe
+		}
+		if err == nil && current.DnsLastCheckedAt.Valid && (checked.IsZero() || current.DnsLastCheckedAt.Time.After(checked)) {
+			return ErrStaleCustomDomainObservation
+		}
+		return err
 	}
 	return nil
 }
@@ -174,9 +181,18 @@ func (s *PgStore) upsertCustomDomainProbe(ctx context.Context, claim CustomDomai
 		return err
 	}
 	if n == 0 {
-		return ErrStaleCustomDomainProbe
+		if err := s.checkCustomDomainProbeClaim(ctx, claim); err != nil {
+			return err
+		}
+		return ErrStaleCustomDomainObservation
 	}
 	return nil
+}
+
+func staleDoctorObservation(current, next DomainDoctorObservation) bool {
+	return next.ObservedAt.Before(current.ObservedAt) ||
+		(!next.DNSCheckedAt.IsZero() && next.DNSCheckedAt.Before(current.DNSCheckedAt)) ||
+		(!next.CertCheckedAt.IsZero() && next.CertCheckedAt.Before(current.CertCheckedAt))
 }
 
 func (s *PgStore) readCustomDomainProbe(ctx context.Context, claim CustomDomain, domain string) (DomainDoctorObservation, error) {

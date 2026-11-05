@@ -14,7 +14,7 @@ func verificationSchema() map[string]any {
 	statuses := []string{"required", "pending", "verified", "failed", "blocked", "unknown", "not_required"}
 	return map[string]any{"type": "object", "required": []string{"status", "goal", "checks"}, "additionalProperties": false, "properties": map[string]any{
 		"status": map[string]any{"type": "string", "enum": statuses},
-		"goal":   map[string]any{"type": "string", "enum": []string{"manual_review", "configuration_commit", "restart_processing_and_health", "release_readiness", "worker_generation_residency"}},
+		"goal":   map[string]any{"type": "string", "enum": []string{"manual_review", "configuration_commit", "scaling_configuration", "restart_processing_and_health", "release_readiness", "worker_generation_residency"}},
 		"checks": map[string]any{"type": "array", "items": map[string]any{"type": "object", "required": []string{"criterion", "status", "reason"}, "additionalProperties": false, "properties": map[string]any{
 			"criterion": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": statuses}, "reason": map[string]any{"type": "string"}, "resource_id": map[string]any{"type": "string"},
 		}}},

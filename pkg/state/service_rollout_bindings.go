@@ -75,16 +75,6 @@ func serviceBindingAudit(ctx context.Context, d Deployment) []byte {
 	return payload
 }
 
-func serviceBindingIntentAudit(d Deployment, reason string) []byte {
-	payload, _ := json.Marshal(map[string]string{
-		"action": "abort_requested", "reason": normalizeRolloutReason(reason),
-		"deployment_id":             d.ID,
-		"predecessor_deployment_id": d.ServiceRolloutHandoff.PredecessorDeploymentID,
-		"request_id":                d.ServiceRolloutHandoff.BindingsCheck.RequestID,
-	})
-	return payload
-}
-
 func passedServiceBindingGate(ctx context.Context, d Deployment, auditID string) *api.ServiceRolloutBindingGate {
 	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID == "" {
 		return d.ServiceRolloutHandoff.BindingsCheck

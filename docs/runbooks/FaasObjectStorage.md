@@ -1,7 +1,8 @@
 # FaasObjectStorage
 
 Alerts: `FaasObjectStorageProviderRefusingCredentials`,
-`FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
+`FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`,
+`FaasObjectStorageInventorySweepStopped`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
@@ -14,6 +15,7 @@ Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 Metrics: `faas_object_storage_provider_refusing_credentials`,
 `faas_object_storage_recovery_attempts_total{operation,outcome}`,
 `faas_object_storage_inventory_scans_total{outcome}`,
+`faas_object_storage_inventory_sweep_last_success_timestamp_seconds`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
 `faas_object_storage_usage_export_last_success_timestamp_seconds{backend}`,
@@ -52,6 +54,11 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
   temporarily unavailable` on one bucket while the account's other buckets
   work. A bucket needs a successful inventory every 900 s, or a listing that
   is still advancing and an inventory under an hour old.
+- **Inventory sweep stopped.** No sweep has completed for 10 minutes, so
+  every bucket heads for the 900 s limit together and reads and writes start
+  answering 503. The sweep runs on its own loop, apart from billing; check
+  apid is running and its database pool is not exhausted, then look for
+  `object storage inventory sweep failed` in apid's log.
 - **Gateway 5xx.** S3 clients get `ServiceUnavailable` (provider unreachable
   or accounting stale) or `SlowDown` (another delete or write of the same
   key, or an inventory scan of the bucket, is still settling). Both count as

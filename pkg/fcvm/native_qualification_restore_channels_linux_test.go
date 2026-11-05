@@ -18,7 +18,7 @@ import (
 func nativeRestoreChannelsOwnerFixture(t *testing.T) (*nativeLoadSequenceFixture, *nativeQualificationRestoreChannels) {
 	t.Helper()
 	f := nativeRestoreLoadSequenceFixture(t)
-	loaded, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0")
+	loaded, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{})
 	if err != nil {
 		t.Fatal(err)
 	}

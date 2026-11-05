@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Inner-world constants (ADR-009, spec §7). Every guest sees the IDENTICAL
@@ -543,12 +545,31 @@ func (c Config) PrivateNetworkSetupCommands() [][]string {
 		{"ip", "link", "set", c.PrivateVethHost, "up"},
 		{"ip", "link", "set", c.PrivateVethPeer, "netns", c.Netns},
 		inNetns("ip", "addr", "add", fmt.Sprintf("%s/%d", c.PrivateNetworkAddress, prefix.Bits()), "dev", c.PrivateVethPeer),
-		inNetns("ip", "link", "set", c.PrivateVethPeer, "up"),
 	}
 	if c.PrivateNetworkServiceAddress.IsValid() {
 		cmds = append(cmds, inNetns("ip", "addr", "replace", c.PrivateNetworkServiceAddress.String()+"/32", "dev", c.PrivateVethPeer))
 	}
-	return append(cmds, c.PrivateNetworkMTUCommands()...)
+	cmds = append(cmds, c.PrivateNetworkMTUCommands()...)
+	// NETDEV_UP sends gratuitous ARP for every bound IPv4 address. Bind
+	// the VIP and enable notification before bringing the peer up.
+	cmds = append(cmds, c.PrivateNetworkARPNotifyCommand(), inNetns("ip", "link", "set", c.PrivateVethPeer, "up"))
+	return cmds
+}
+
+func (c Config) PrivateNetworkARPNotifyCommand() []string {
+	return []string{"ip", "netns", "exec", c.Netns, "sysctl", "-qw", "net.ipv4.conf." + c.PrivateVethPeer + ".arp_notify=1"}
+}
+
+// PrivateNetworkAnnounceCommands triggers NETDEV_CHANGEADDR after a live VIP
+// bind. Linux announces every bound address with the new peer MAC, updating
+// both VIP and member neighbors without changing IPs, routes or conntrack.
+// The caller supplies a fresh locally administered MAC. The host-side veth's
+// journaled ownership marker stays unchanged.
+func (c Config) PrivateNetworkAnnounceCommands(mac string) [][]string {
+	return [][]string{
+		c.PrivateNetworkARPNotifyCommand(),
+		{"ip", "netns", "exec", c.Netns, "ip", "link", "set", "dev", c.PrivateVethPeer, "address", mac},
+	}
 }
 
 func (c Config) privateNetworkEnabled() bool {
@@ -594,6 +615,10 @@ func (c Config) NftCommands() [][]string {
 	cmds := make([][]string, 0, 16)
 	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
 	add("add", "table", "ip", "faas")
+	// ADR-009 fixes every guest's IPv4 identity. Reject spoofing before
+	// conntrack, DNAT and established-flow exceptions, including local input.
+	add("add", "chain", "ip", "faas", "guest_source", "{", "type", "filter", "hook", "prerouting", "priority", "raw", ";", "policy", "accept", ";", "}")
+	add("add", "rule", "ip", "faas", "guest_source", "iifname", c.Tap, "ip", "saddr", "!=", GuestIP, "drop")
 	cmds = append(cmds, c.quarantineRules(nft, "ip")...)
 	// Chain policy (ADR-031). Empty EgressAllowlist → keep the
 	// historical `policy accept` (every non-deny-listed destination
@@ -858,9 +883,9 @@ func (c Config) NftCommands() [][]string {
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// ADR-361 port policy: everything not accepted above must be TCP to an
-	// egress_ports port. Allowlisted destinations were accepted above and
-	// keep ADR-031's any-port-but-25 semantics; bound managed databases are
-	// accepted just before it on their own port.
+	// egress_ports port. Allowlisted destinations were accepted above on any
+	// TCP port but the forbidden ones (465/587 stay open, bug hunt H69);
+	// bound managed databases are accepted just before it on their own port.
 	if !c.QualificationOnly {
 		cmds = append(cmds, c.egressDatabaseRule(nft, "ip")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip"))
@@ -957,6 +982,7 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
+	cmds = append(cmds, c.privateConntrackPolicyCommands(nft)...)
 	cmds = append(cmds, c.RehearsalNftCommands()...)
 	return cmds
 }
@@ -1439,7 +1465,10 @@ func (c Config) forwardChainPolicy() string {
 // Shape:
 //
 //	nft add rule ip faas forward
-//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != 25 accept
+//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != { 22,23,25,… } accept
+//
+// The excluded ports are api.TenantEgressAllowlistBlockedPorts: the ADR-361
+// forbidden ports but 465 and 587 (bug hunt H69).
 //
 // The CIDR set uses comma-joined values inside `{ … }` with NO
 // trailing whitespace, matching the modern-nft syntax gate at
@@ -1469,7 +1498,20 @@ func (c Config) ForwardAllowlistRule(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip", "faas", "forward",
-		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "25", "accept")
+		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "{", AllowlistBlockedPortsSet(), "}", "accept")
+}
+
+// AllowlistBlockedPortsSet renders api.TenantEgressAllowlistBlockedPorts as
+// an nft set body: allowlisted destinations get every TCP port except these
+// (port 25 included; 465 and 587 stay open), so an allowlist narrows egress
+// without reopening the ADR-361 abuse ports (bug hunt H69).
+func AllowlistBlockedPortsSet() string {
+	ports := api.TenantEgressAllowlistBlockedPorts()
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(parts, ",")
 }
 
 // ForwardAllowlistRule6 (ADR-032 — v6 mirror of ForwardAllowlistRule;
@@ -1498,7 +1540,7 @@ func (c Config) ForwardAllowlistRule6(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip6", "faas", "forward",
-		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "accept")
+		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "tcp", "dport", "!=", "{", AllowlistBlockedPortsSet(), "}", "accept")
 }
 
 // ForwardPrivateNetworkRule emits the v4 accept rule for provider-verified
@@ -1557,6 +1599,8 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 	return out
 }
 
+// The private-policy history table survives these resets: old conntrack
+// destinations must remain classified after policy withdrawal and restart.
 // NftResetCommands returns the best-effort argv list that brings the
 // per-netns nftables table to a clean slate before NftCommands runs.
 // Each `delete table` exits non-zero when the table is absent (first

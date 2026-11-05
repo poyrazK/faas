@@ -6,7 +6,6 @@ import (
 	"errors"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -225,32 +224,16 @@ func (e *Engine) scheduleServiceReconcile(ctx context.Context, deploymentID stri
 	go e.ReconcileServiceDeployment(detachedServiceContext(ctx), deploymentID)
 }
 
-func (e *Engine) serviceMutex(deploymentID string) *sync.Mutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.serviceMu == nil {
-		e.serviceMu = make(map[string]*sync.Mutex)
-	}
-	mu, ok := e.serviceMu[deploymentID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.serviceMu[deploymentID] = mu
-	}
-	return mu
+// lockServiceDeployment takes deploymentID's replica reconciliation lock
+// and returns its unlock.
+func (e *Engine) lockServiceDeployment(deploymentID string) func() {
+	return e.serviceMu.lock(deploymentID)
 }
 
-func (e *Engine) serviceAppMutex(appID string) *sync.Mutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.serviceAppMu == nil {
-		e.serviceAppMu = make(map[string]*sync.Mutex)
-	}
-	mu, ok := e.serviceAppMu[appID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.serviceAppMu[appID] = mu
-	}
-	return mu
+// lockServiceApp takes appID's service convergence lock and returns its
+// unlock.
+func (e *Engine) lockServiceApp(appID string) func() {
+	return e.serviceAppMu.lock(appID)
 }
 
 // allocateServiceReplicaTargets distributes one scope's app-level service
@@ -1302,9 +1285,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	if desired < 0 {
 		desired = 0
 	}
-	reconcileMu := e.serviceMutex(deploymentID)
-	reconcileMu.Lock()
-	defer reconcileMu.Unlock()
+	defer e.lockServiceDeployment(deploymentID)()
 
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {

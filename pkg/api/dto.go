@@ -4263,6 +4263,9 @@ type AccountResponse struct {
 	// KeyOrg is the shared organization that key acts in; absent for a
 	// personal key or a session (ADR-20261101225122).
 	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+	// KeyProjects are the slugs of the projects that key is limited to;
+	// absent for an unlimited key or a session (ADR-20261104085712).
+	KeyProjects []string `json:"key_projects,omitempty"`
 }
 
 // KeyOrg names the shared organization an API key acts in.
@@ -4365,6 +4368,9 @@ type APIKeyResponse struct {
 	RotatedFromID string   `json:"rotated_from_id,omitempty"` // predecessor key id
 	// Plaintext appears ONLY on the create + rotate responses, never persisted.
 	Plaintext string `json:"plaintext,omitempty"`
+	// Projects are the slugs of the projects an agent key is limited to;
+	// absent for an unlimited key (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4469,6 +4475,9 @@ type GraceWindowResponse struct {
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4483,6 +4492,9 @@ type CreateKeyRequest struct {
 type CreateOrgAPIKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys
@@ -7661,8 +7673,13 @@ type PlanManaged struct {
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
 	// provided: unavailable, plan, quota, unsupported, configured,
-	// not_referenced or permission. Empty for other datastores.
+	// not_referenced or permission. Empty for other datastores, which have
+	// no managed equivalent.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+	// Unbound names the selected services' keys that point at a datastore
+	// apply does not provide and will have no value ("api.REDIS_URL"), so a
+	// reviewer sees which services start without it (ADR-20261104221217).
+	Unbound []string `json:"unbound,omitempty"`
 }
 
 // PlanManagedProvision is a managed database a project apply provides.

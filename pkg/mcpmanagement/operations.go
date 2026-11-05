@@ -19,14 +19,15 @@ import (
 // Requests are private journal inputs, not agent-facing plan contents. The
 // encrypted storedPlan explicitly saves them; plans expose only affected keys.
 type operationPlan struct {
-	Changes          json.RawMessage `json:"changes,omitempty"`
-	Kind             string          `json:"kind"`
-	Request          json.RawMessage `json:"-"`
-	Keys             []string        `json:"keys,omitempty"`
-	ResourceID       string          `json:"resource_id,omitempty"`
-	ExpectedRevision int64           `json:"expected_revision,omitempty"`
-	AppHash          string          `json:"app_configuration_hash"`
-	ResourceHash     string          `json:"resource_hash,omitempty"`
+	Changes          json.RawMessage         `json:"changes,omitempty"`
+	Kind             string                  `json:"kind"`
+	Request          json.RawMessage         `json:"-"`
+	Keys             []string                `json:"keys,omitempty"`
+	ResourceID       string                  `json:"resource_id,omitempty"`
+	ExpectedRevision int64                   `json:"expected_revision,omitempty"`
+	ScalingBefore    *api.AppScalingSnapshot `json:"scaling_before,omitempty"`
+	AppHash          string                  `json:"app_configuration_hash"`
+	ResourceHash     string                  `json:"resource_hash,omitempty"`
 }
 
 var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
@@ -78,7 +79,7 @@ func registerOperations(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_config_history", "List bounded configuration history and guard decisions without values.", m.listConfigHistory)
 	register(s, m, "gregale_plan_restart", "Review a fresh cold restart of the default app scope so current variables and secrets reach running processes. Native restart is app-wide; named-environment-only connections cannot use it.", m.planRestart)
 	register(s, m, "gregale_get_restart", "Inspect native durable restart processing by wake_id. Completion is separate from application health.", m.getRestart)
-	register(s, m, "gregale_plan_scale", "Review RAM, CPU, concurrency or warm-instance changes. Pins configuration and named workload revision; native plan and residency limits apply.", m.planScale)
+	register(s, m, "gregale_plan_scale", "Review RAM, CPU, concurrency or warm-instance changes. Pins a native scaling revision and immutable target. Apply recovers the same request after interruption; native plan and residency limits apply.", m.planScale)
 	if m.hasCapability(api.ScopeEnvWrite) {
 		register(s, m, "gregale_plan_config_rollback", "Review restoring non-secret variables to an exact configuration revision. Secret values cannot be restored. Protected environments require their approved workflow.", m.planConfigRollback)
 		register(s, m, "gregale_plan_env_change", "Review setting non-secret variables in a consented default or named scope. Credential-like inputs are rejected. No secret-write scope is required; apply with gregale_apply_env_change.", m.planNativeEnvChange)
@@ -164,6 +165,15 @@ func (m *management) planScale(ctx context.Context, a scalePlanArgs) (any, error
 	if err != nil {
 		return nil, err
 	}
+	before, err := m.client.GetAppScaling(ctx, p.App, p.Scope)
+	if err != nil {
+		return nil, err
+	}
+	if before.AppID != p.AppID || before.Scope != p.Scope || before.EnvironmentID != p.EnvironmentID || before.Revision < 1 {
+		return nil, invalid("invalid_response", "native scaling snapshot does not identify a materialized target")
+	}
+	p.Operation.ExpectedRevision = before.Revision
+	p.Operation.ScalingBefore = &before
 	p.TrafficEffect = "Change selected app resource settings. Warm instances and increased resource sizes can increase usage charges; native quotas and residency rules remain enforced."
 	p.Operation.Changes = p.Operation.Request
 	return m.savePlan(p)
@@ -327,29 +337,7 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 	case "restart":
 		return m.client.RestartAppFresh(ctx, p.App)
 	case "scale":
-		var req api.UpdateAppRequest
-		if err := json.Unmarshal(p.Operation.Request, &req); err != nil {
-			return nil, err
-		}
-		if retry {
-			app, _, err := m.appEnvironment(ctx, p.App, p.Project, namedScope(p.Scope), true)
-			if err != nil {
-				return nil, err
-			}
-			matches := (req.RAMMB == nil || app.RAMMB == *req.RAMMB) && (req.CPUMillicores == nil || app.CPUMillicores == *req.CPUMillicores) && (req.MaxConcurrency == nil || app.MaxConcurrency == *req.MaxConcurrency) && (req.MinInstances == nil || app.MinInstances == *req.MinInstances)
-			if !matches {
-				return nil, invalid("outcome_unknown", "inspect scaling settings before replanning; an ambiguous update will not overwrite another writer")
-			}
-			return projectApp(app), nil
-		}
-		var app api.AppResponse
-		var err error
-		if p.EnvironmentID != "" {
-			app, err = m.client.UpdateAppInEnvironmentAtRevision(ctx, p.App, p.Scope, p.WorkloadRevision, req)
-		} else {
-			app, err = m.client.UpdateApp(ctx, p.App, req)
-		}
-		return projectApp(app), err
+		return m.applyNativeScaling(ctx, p, retry)
 	case "env":
 		return m.applyNativeEnv(ctx, p, retry)
 	case "config_rollback":

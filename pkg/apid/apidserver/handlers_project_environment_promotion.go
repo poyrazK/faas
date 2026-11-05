@@ -424,12 +424,12 @@ func projectEnvironmentSecretRevisionHashes(ctx context.Context, store state.Sto
 		hashes[app.Slug] = hash
 	}
 	// ADR-1139: qualifications record the environment's shared secrets too.
-	if secrets, ok := store.(state.ProjectEnvironmentSecretStore); ok {
-		shared, err := secrets.ListProjectEnvironmentSecrets(ctx, accountID, release.ProjectID, environment)
+	if secrets, ok := store.(state.ProjectSharedSecretRevisionReader); ok {
+		shared, err := secrets.ProjectEnvironmentSharedSecretRevision(ctx, accountID, release.ProjectID, environment)
 		if err != nil {
 			return nil, err
 		}
-		return state.WithProjectSecretRevision(hashes, shared)
+		return shared.WithWorkloads(hashes), nil
 	}
 	return hashes, nil
 }

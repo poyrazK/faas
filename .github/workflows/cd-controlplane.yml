@@ -690,7 +690,7 @@ jobs:
               rm -f /tmp/grype.tar.gz /tmp/grype
             }
             install_syft() {
-              local v=1.0.0 sha=27dfeaca134cd8aeff6135ba349ff922109bd89b955755459601667d69fed88e
+              local v=1.49.0 sha=7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe
               local t=/usr/local/bin/syft
               [[ -x "$t" && "$(sha256sum "$t" | cut -d" " -f1)" == "$sha" ]] && return 0
               curl -fsSL -o /tmp/syft.tar.gz "https://github.com/anchore/syft/releases/download/v${v}/syft_${v}_linux_amd64.tar.gz"
@@ -864,6 +864,8 @@ jobs:
           SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
@@ -1367,6 +1369,55 @@ jobs:
           exit 1
           REMOTE
 
+      # edgednsd_service converges before the release activates, so it starts
+      # edgednsd only when the binary is already current. This step starts
+      # (or restarts) it from the release just activated and checks its
+      # metrics listener (ADR-20261102081618; rc.323 failed without it).
+      - name: Restart configured optional edge DNS daemon
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          dropin=/etc/systemd/system/faas-edgednsd.service.d/50-faas-edgednsd.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-edgednsd.service"
+          installed_unit=/etc/systemd/system/faas-edgednsd.service
+
+          # edgednsd_service writes the drop-in only where faas_edgednsd_enabled
+          # is set. Without it a release leaves edgednsd off.
+          if [[ ! -s "$dropin" ]]; then
+            echo "faas-edgednsd is not configured; edge DNS remains off"
+            exit 0
+          fi
+          test -f "$source_unit"
+          test -x "/opt/faas/releases/${release_id}/bin/edgednsd"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-edgednsd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          metrics_addr="$(sed -n 's/^Environment=FAAS_EDGEDNS_METRICS_ADDR=//p' "$dropin" | tail -1)"
+          [[ -n "$metrics_addr" ]] || metrics_addr=127.0.0.1:9113
+          systemctl daemon-reload
+          systemctl reset-failed faas-edgednsd.service || true
+          systemctl enable faas-edgednsd.service
+          systemctl restart faas-edgednsd.service
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 2 --output /dev/null "http://${metrics_addr}/metrics"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-edgednsd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
       - name: Converge Prometheus config and rules
         run: |
           set -euo pipefail
@@ -1677,6 +1728,8 @@ jobs:
           SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}

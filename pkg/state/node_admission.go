@@ -23,6 +23,11 @@ type NodeAdmission struct {
 	// and CPU budgets, checked under the same lock as the RAM reservation
 	// (ADR-20261027220445). The zero value skips that check.
 	Compute NodeCompute
+	// BookedCPUMillicores, when positive, is stored on the admitted instance
+	// as what it books against the node's CPU budget once its startup boost
+	// ends, in place of its app's cpu_millicores (ADR-20261101160231 step
+	// 5b). Zero keeps the app's value.
+	BookedCPUMillicores int
 }
 
 // NodeCompute is an admission's guest vCPUs and sustained CPU millicores, and
@@ -80,6 +85,16 @@ func thawAdmission(ctx context.Context, nodeID string) (percent int, compute Nod
 		VCPU: max(c.VCPU, 0), CPUMillicores: max(c.CPUMillicores, 0),
 		QuietVCPU: max(c.QuietVCPU, 0), QuietCPUMillicores: max(c.QuietCPUMillicores, 0),
 	}
+}
+
+// nodeBookedCPUMillicores is the CPU booking ctx's placement binding stamps
+// on an instance admitted to nodeID; zero when there is none.
+func nodeBookedCPUMillicores(ctx context.Context, nodeID string) int {
+	expected, present := ctx.Value(nodeAdmissionKey{}).(NodeAdmission)
+	if !present || expected.NodeID != nodeID {
+		return 0
+	}
+	return min(max(expected.BookedCPUMillicores, 0), api.AppCPUBookingMaxMillicores)
 }
 
 // nodeReservationPercent is the reservation allowance ctx grants an admission

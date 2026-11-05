@@ -31,10 +31,15 @@ operation receipts alone cannot reconstruct uncaptured old values. Identity
 primary keys are supported; identity columns cannot be selected as repair fields.
 Columns included in a covering primary-key index remain ordinary mutable fields.
 
-Selected fields and primary keys cannot contain arrays or PostgreSQL `json`,
-including through domains or composite members: JSON journals lose array bounds
-and duplicate JSON keys. JSONB and supported scalar fields remain available.
-Unselected array/json columns are preserved as native values during repair.
+Selected fields and primary keys cannot contain arrays, PostgreSQL `json`, or
+catalog-reference aliases (`regclass`, `regcollation`, `regconfig`,
+`regdictionary`, `regnamespace`, `regoper`, `regoperator`, `regproc`,
+`regprocedure`, `regrole`, `regtype`), including through domains, composite members,
+ranges or multiranges. JSON journals lose array bounds and duplicate JSON keys;
+catalog names can resolve a different object after renames or name reuse. JSONB,
+ordinary `oid` values and supported scalar fields remain available. Unselected
+array/json columns and catalog references are preserved as native values during
+repair.
 Existing enrollments with lossy selected types are blocked, and validation or
 verification reports `schema_changed`; old journals cannot recover the lost
 details. No upgrade turns that evidence into an exact restoration guarantee.
@@ -42,6 +47,12 @@ details. No upgrade turns that evidence into an exact restoration guarantee.
 Limits are defined in `pkg/api/limits.go`. Capture failure aborts the business
 transaction. Readiness and rehearsal establish mechanical/database checks;
 application semantics depend on the checks and dependencies the owner declares.
+
+Apply locks and validates every candidate before restoring the selection in one
+UPDATE statement. Deferrable, initially immediate unique and exclusion constraints
+can therefore validate a complete value swap at statement end. Fields absent
+from a row's inverse retain their native values. Nondeferrable constraints,
+fresh row versions and business checks remain enforced.
 
 ## Inspect repair readiness
 
@@ -311,6 +322,10 @@ Observations contain only fields changed by the recorded operation. They are
 bounded to 16 KiB per row and 256 KiB across the plan; an observation over either
 budget is omitted with `observation_omitted: true`. Its reason, version and
 classification remain available. Omission does not make a conflict eligible.
+The hosted review keeps a pending preparation ID across failed submissions.
+Retrying the same source reuses that ID; Refresh reads the pending operation,
+including when preparation began from retained history.
+
 Exact JSON text preserves large integer keys and numeric values in the browser.
 
 These values describe preparation time. Loading or replaying a saved plan never
@@ -505,7 +520,25 @@ multiranges. Callback and pooled-session settings are preserved. Older captures
 with selected interval values or keys cannot prove their original interpretation;
 planning, replacement and apply reject them, and validation/verification report
 `schema_changed`. Historical evidence, approvals and committed receipts remain
-readable and are never rewritten. New version-3 captures can authorize repairs.
+readable and are never rewritten. Version-3 and later captures retain this interval proof.
+
+Capture contract version 4 also uses function-local `lc_monetary=C` when
+recording, comparing and restoring `money` values and keys, including nested
+types. This preserves the native value across locales with different currency
+symbols, separators or fractional digits. The application's callback and pooled
+connection keep their own settings. Captures before version 4 with selected
+`money` fields or keys lack this interpretation proof: planning, replacement and
+apply reject them, while validation and verification report `schema_changed`.
+Historical journals, plans, approvals and committed receipts remain unchanged;
+receipt recovery remains available.
+
+New enrollments save `fingerprint_monetary=C`. The explicit owner upgrade fills
+this setting for older enrollments only when the upgrade connection reproduces
+the saved fingerprint. If it remains unknown, review the schema and repeat the
+upgrade under its original `lc_monetary`. This preserves existing defaults and
+checks containing monetary constants. Apply the owner upgrade before updating
+executors and SDKs. See [preparation recovery and monetary
+locales](adr/20261105110000-repair-prepare-recovery-and-money-locales.md).
 
 Range qualification checks canonicalization, subtype-difference functions,
 subtype operator classes and subtype constraints even without an index. Custom
@@ -544,14 +577,20 @@ GRANT SELECT, INSERT ON public.gregale_operation_inbox TO application_writer;
 
 The owner must first install the selected SDK receipt schema. Optional outboxes
 need separate grants. PostgreSQL trigger invocation does not require caller
-EXECUTE grants on trigger functions. Capture's enrollment check takes a
-`SHARE UPDATE EXCLUSIVE` lock: column-only UPDATE is insufficient. PostgreSQL
-accepts table-level UPDATE, DELETE or TRUNCATE for that lock; the example uses
+EXECUTE grants on trigger functions. READ COMMITTED captures take a
+`ROW EXCLUSIVE` enrollment lock, allowing independent captured writes to share a
+table. An already running concurrent index build or other SHARE UPDATE EXCLUSIVE
+maintenance causes a retryable conflict before capture begins. A later build
+waits for the capture transaction before building its index. REPEATABLE READ and
+SERIALIZABLE retain the stronger `SHARE UPDATE EXCLUSIVE` lock. Column-only UPDATE
+is insufficient for enrollment locking; the example uses table-level
 UPDATE and grants no unnecessary DELETE/TRUNCATE privileges. These are trusted
 backend grants, not end-user database permissions. Do not grant evidence,
 approval, plan-table writes or apply authority to untrusted clients. Database
 owners remain part of the trust boundary. Captured values require an explicit
-retention policy. The reviewed maintenance flow below removes eligible old
+retention policy. Writer and executor roles also need SELECT on
+`pg_catalog.pg_locks`, normally available through PUBLIC; readiness reports it
+if an administrator revoked that grant. The reviewed maintenance flow below removes eligible old
 payloads while preserving identities and receipts; no automatic purge runs.
 
 ## Repair payload retention
@@ -1017,6 +1056,12 @@ recover an existing matching source result for a resolving reservation; it
 never closes a source plan itself. Settlement starts the normal bounded
 result/event retention window again, without refreshing source plan expiry.
 
+Hosted `applying` and `outcome_unknown` repairs also retain their identities,
+events and idempotency records until a source receipt or explicit closure settles
+them. An elapsed result window cannot remove access to reconciliation or
+resolution. Late receipt recovery starts the ordinary result/event retention
+window again; settled repairs expire normally afterward.
+
 Existing installations need the explicit owner `schema --upgrade`. No table
 reenrollment is required. Closure alone keeps source payload held; a verified
 saved replacement can later make its parent eligible for reviewed compaction
@@ -1076,7 +1121,20 @@ and accepts only the same UUID/digest; replays may use the original sequence.
 It appears in operator health with recovery guidance and survives normal ledger
 cleanup. Child admission and the parent's `replaced` phase commit together. An
 expired child recovered after response loss is recorded as failed; its expiry
-and approval authority are not refreshed.
+and approval authority are not refreshed. This historical recovery remains
+available after a plan downgrade or while pending-operation quota is full,
+using the parent's stored limits for result/event retention. Fresh executable
+children still require the current plan and available capacity. Completing a
+replacement restarts the parent's result/event retention windows so a lost
+response can be retried; replays return the same child without extending those
+windows.
+
+Expired, unapproved hosted plans in `prepared` with no active rehearsal stop
+counting toward pending-operation quota immediately. The existing minute-based
+apid operation cleanup loop marks them failed in bounded batches and emits one
+failure event. Ordinary retention then applies. It preserves the saved source
+expiry and does not settle approved plans, active native rehearsals or
+unresolved reservations.
 
 Existing installations require the explicit owner `schema --upgrade`, which adds
 a nullable unique plan reference and replaces the guarded SQL functions. No table
@@ -1107,6 +1165,15 @@ Approval records the authenticated operator, exact digest and timestamp. Apply
 uses the original candidate list and checks every identity/version again. A
 later edit aborts all selected inverse writes, with no repair receipt. Prepare a
 new plan and review its changed candidate/conflict selection.
+
+Outcome resolution also works after an expired, unapproved source plan's
+payload and journal have been compacted. It uses the retained identity, digest
+and source row lock to record `not_committed`, without reconstructing values or
+restoring write authority. A matching committed receipt still takes precedence.
+The hosted operation can then settle and release its pending-operation slot.
+Apply the explicit owner `schema --upgrade` before updating executors and SDKs.
+See [catalog references and retained outcome
+resolution](adr/20261105120000-repair-catalog-references-and-retained-resolution.md).
 
 After a network failure, inspect `get PLAN_UUID`. `applied_at` and
 `repair_operation_id` establish a committed correction. Repeat apply only with

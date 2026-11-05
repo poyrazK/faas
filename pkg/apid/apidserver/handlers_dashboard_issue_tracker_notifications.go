@@ -33,13 +33,10 @@ func (s *server) dashboardTrackerNotificationsAccess(w http.ResponseWriter, r *h
 		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "no such app"))
 		return nil, app, false
 	}
-	owner := acct
-	if acct.ID != app.AccountID {
-		owner, err = s.store.AccountByID(r.Context(), app.AccountID)
-		if err != nil {
-			writeIssueError(w, err)
-			return nil, app, false
-		}
+	owner, err := state.AppResourceAccount(r.Context(), s.store, app)
+	if err != nil {
+		writeIssueError(w, err)
+		return nil, app, false
 	}
 	if _, ok = s.issueStore(w, owner); !ok {
 		return nil, app, false
