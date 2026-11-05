@@ -120,6 +120,8 @@ def sync_detailed(
     must be true: bound endpoints start automations instead of app delivery.
     Callback and managed-operation bindings must be removed first.
     Event types accept edge wildcards; filters use the existing event language.
+    Normalized filters, including PostgreSQL numeric expansion, are limited
+    to 32 KiB. The request body allows escaped filter representations.
 
     Args:
         slug (str):
@@ -165,6 +167,8 @@ def sync(
     must be true: bound endpoints start automations instead of app delivery.
     Callback and managed-operation bindings must be removed first.
     Event types accept edge wildcards; filters use the existing event language.
+    Normalized filters, including PostgreSQL numeric expansion, are limited
+    to 32 KiB. The request body allows escaped filter representations.
 
     Args:
         slug (str):
@@ -205,6 +209,8 @@ async def asyncio_detailed(
     must be true: bound endpoints start automations instead of app delivery.
     Callback and managed-operation bindings must be removed first.
     Event types accept edge wildcards; filters use the existing event language.
+    Normalized filters, including PostgreSQL numeric expansion, are limited
+    to 32 KiB. The request body allows escaped filter representations.
 
     Args:
         slug (str):
@@ -248,6 +254,8 @@ async def asyncio(
     must be true: bound endpoints start automations instead of app delivery.
     Callback and managed-operation bindings must be removed first.
     Event types accept edge wildcards; filters use the existing event language.
+    Normalized filters, including PostgreSQL numeric expansion, are limited
+    to 32 KiB. The request body allows escaped filter representations.
 
     Args:
         slug (str):

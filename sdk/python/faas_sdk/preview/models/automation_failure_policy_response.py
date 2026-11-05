@@ -45,7 +45,8 @@ class AutomationFailurePolicyResponse:
     paused_at: datetime.datetime | Unset = UNSET
     """Time the current failure pause was latched; absent while unpaused."""
     retained_events_incomplete: bool | Unset = UNSET
-    """True when the advisory count was unavailable within its time budget; retained_events is then not an exact count."""
+    """True when the advisory count was unavailable within its time budget; retained_events is then not an exact
+    count."""
 
     def to_dict(self) -> dict[str, Any]:
         policy = self.policy.to_dict()
@@ -66,8 +67,6 @@ class AutomationFailurePolicyResponse:
 
         retained_events = self.retained_events
 
-        retained_events_incomplete = self.retained_events_incomplete
-
         history = []
         for history_item_data in self.history:
             history_item = history_item_data.to_dict()
@@ -80,6 +79,8 @@ class AutomationFailurePolicyResponse:
         paused_at: str | Unset = UNSET
         if not isinstance(self.paused_at, Unset):
             paused_at = self.paused_at.isoformat()
+
+        retained_events_incomplete = self.retained_events_incomplete
 
         field_dict: dict[str, Any] = {}
 
@@ -130,8 +131,6 @@ class AutomationFailurePolicyResponse:
 
         retained_events = d.pop("retained_events")
 
-        retained_events_incomplete = d.pop("retained_events_incomplete", UNSET)
-
         history = []
         _history = d.pop("history")
         for history_item_data in _history:
@@ -152,6 +151,8 @@ class AutomationFailurePolicyResponse:
             paused_at = UNSET
         else:
             paused_at = datetime.datetime.fromisoformat(_paused_at)
+
+        retained_events_incomplete = d.pop("retained_events_incomplete", UNSET)
 
         automation_failure_policy_response = cls(
             policy=policy,
