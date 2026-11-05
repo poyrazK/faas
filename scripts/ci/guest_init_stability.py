@@ -10,8 +10,8 @@ helps if an edit elsewhere in the repository does not change the code.
 
 This check builds guest-init at HEAD with the release recipe (the Makefile's
 GO_BUILD_FLAGS and GUEST_TAGS, linux/amd64, CGO off), adds a file to pkg/api
-that nothing references (a function, a constant, a type without methods), builds
-it again, and fails if the code digest differs. pkg/api is the package every
+that nothing references (a function and a constant), builds it again, and
+fails if the code digest differs. pkg/api is the package every
 fix touches and guest-init links code from 26 of its files. What it catches:
 
   * a build tag or flag that stamps something per build;
@@ -21,9 +21,9 @@ fix touches and guest-init links code from 26 of its files. What it catches:
     method body changes the code;
   * anything else that ties the code of guest-init to code it does not run.
 
-A type with a method, new or added to a linked type, changes the code in any
-Go program (the type descriptor lists the method's name, even when nothing
-uses the type), which is why the probe adds none.
+A new type changes the code even when nothing uses it (measured on the real
+guest-init: a struct with two fields changed 145 bytes of .rodata; with a
+method it does so in any Go program), so the probe declares none.
 
 Usage: scripts/ci/guest_init_stability.py            (builds twice; ~2 minutes warm)
 """
@@ -45,8 +45,6 @@ PROBE = """package api
 // Written by scripts/ci/guest_init_stability.py. Nothing references it.
 
 func GuestInitStabilityProbeFunc() int { return 42 }
-
-type GuestInitStabilityProbeType struct{ A, B int }
 
 const GuestInitStabilityProbeConst = "never used"
 """

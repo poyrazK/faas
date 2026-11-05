@@ -72,11 +72,11 @@ Four things make guest-init's bytes follow its closure instead of its code:
    `Plan.LogBytesPerInstanceHour` is gone: a change to the body of a method
    nothing in guest-init calls no longer changes its code. The method's name
    still sits in its type's descriptor, so adding a method to a type guest-init
-   links still changes it, and so does declaring a new type with methods in a
-   package it links, even if nothing uses the type (measured on a tiny module:
-   a new function, a constant, a type without methods and a comment each leave
-   the code digest alone; a type with one method changes `.rodata` and
-   `.typelink`). Most pkg/api additions are not of that kind.
+   links still changes it, and so does declaring a new type in a package it
+   links, even if nothing uses the type: on the real guest-init a new struct
+   with two fields changed 145 bytes of `.rodata`, while a new function or
+   constant left the code digest alone. New types are common in `pkg/api`
+   additions, which is part of why so few releases qualify.
 4. **Real code.** `.text` differs in rc.318 → rc.319, rc.319 → rc.320 and
    rc.321 → rc.322 (the 23 KB of `datarepair` above): the guest changed.
 
@@ -132,12 +132,12 @@ guest-init calls.
 **3. A nightly check keeps it that way.** `scripts/ci/guest_init_stability.py`
 (`make guest-init-stability-check`, `guest-init-stability.yml`, nightly and on
 changes to the recipe) builds guest-init with the release recipe, adds a file
-to `pkg/api` that nothing references (a function, a constant, a type without
-methods), builds it again, and fails if the code differs. It catches a new
+to `pkg/api` that nothing references (a function and a constant), builds it
+again, and fails if the code differs. It catches a new
 stamp, a flag, or a dependency that ties PID 1 to code it does not run. It
-was not run on the finished probe here (the disk was nearly full): the
-first run is the pull request's own. On a tiny module each of the three
-leaves the code alone.
+first failed on CI because its probe also declared a type; bisected on the
+real build, a function and a constant each leave the code alone, a type does
+not.
 
 ADR-510's check is unchanged: vmmd still compares the exact content identity
 of the kernel and the base and refuses any difference. Nothing here makes a
