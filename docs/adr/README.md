@@ -2080,6 +2080,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261104212930: MCP live worker receipts and schema snapshots](20261104212930-mcp-live-worker-receipts-and-schema-snapshots.md) — recover native handoffs after log eviction, accept empty previous pools and isolate Zod metadata through Standard Schema snapshots
 - [ADR-20261104220400: MCP subscription setup ownership](20261104220400-mcp-subscription-setup-ownership.md) — reserve pending stream capacity, handle early disconnects and dispose registrations that finish after cancellation
 - [ADR-20261104222700: MCP catalog SDK keys and HTTP framing](20261104222700-mcp-catalog-sdk-keys-and-http-framing.md) — support prototype-property catalog names, honor sample resource replacements and decode bounded Python chunked requests
+- [ADR-20261105104950: MCP subscription output and rejected request framing](20261105104950-mcp-subscription-output-and-rejected-request-framing.md) — bound notification buffers and writes, preserve retry framing after early rejection and classify JSON parser errors
+- [ADR-20261105161206: Durable MCP Task output contracts](20261105161206-mcp-task-output-contracts.md) — preserve accepted handles, await admission validators and validate worker results against the saved schema
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
 - [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)
