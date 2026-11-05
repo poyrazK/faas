@@ -221,7 +221,7 @@ func TestDomainsShow_MissingArgExitsOne(t *testing.T) {
 // through to the "unknown subcommand" branch.
 func TestDomainsDispatch_VerifyAndShowRegistered(t *testing.T) {
 	main.ResetJSONOut(t)
-	f := main.AuthedFakeAPI(t, `{"domain":"x","app_id":"y","verified":true}`, http.StatusOK)
+	f := main.AuthedFakeAPI(t, `{"domain":"x","app_id":"y","verified":true,"cert_status":"issued","cert_not_after":"2099-09-18T00:00:00Z"}`, http.StatusOK)
 	// Capture the dispatched handler by hitting the parent
 	// cmdDomains with "verify" as the first arg.
 	if code := main.CmdDomains([]string{"verify", "app.example.com"}); code != 0 {
