@@ -80601,6 +80601,7 @@ SELECT (jsonb_build_object(
     'platform_tenant_workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM platform_tenant_workflow_schedule_cursors WHERE deployment_id = $1::uuid),
     'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = $1::uuid)
 ) || jsonb_build_object(
+    'deployment_promotion_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_promotion_receipts WHERE deployment_id = $1::uuid),
     -- ADR-595 application-standard artifact evidence
     'environment_workload_retirements_route_deployment_id_fkey', (SELECT count(*) FROM environment_workload_retirements WHERE route_deployment_id = $1::uuid),
     'application_standard_snapshot_captures_deployment_id_fkey', (SELECT count(*) FROM application_standard_snapshot_captures WHERE deployment_id = $1::uuid),
@@ -80663,6 +80664,7 @@ func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, opera
 const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
 SELECT jsonb_build_object(
  'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE $1::uuid=ANY(deployment_ids)),
+ 'deployment_promotion_receipts.expected_serving_deployment_id', (SELECT count(*) FROM deployment_promotion_receipts WHERE expected_serving_deployment_id=$1::uuid::text),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=$1::uuid::text),
