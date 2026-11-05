@@ -348,7 +348,9 @@ func TestPostgresThawStatements(t *testing.T) {
 // ADR-1740: a ticketed thaw is one guarded statement; none of the ordinary
 // path's reads. The gateway's coordinated wake (EnsureWake) first selects the
 // production deployment from fresh reads, and then thaws the same way
-// (ADR-1740 amendment 2026-10-21).
+// (ADR-1740 amendment 2026-10-21). Since ADR 20261102072403 the guarded
+// statement shares a transaction with the durable node reservation: begin,
+// admission_reserve_node, ThawFrozenInstance, commit.
 func TestPostgresTicketedThawStatements(t *testing.T) {
 	// The ordinary thaw path's statements, and the gate the ticket stands in
 	// for; a ticketed thaw runs none of them.
@@ -357,12 +359,13 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		wake func(ctx context.Context, e *Engine, appID string) (string, error)
-		// maxRoundTrips bounds the sequential round trips before the answer.
+		// maxRoundTrips bounds the sequential round trips before the answer:
+		// the reads that run at once, then the thaw's four-statement transaction.
 		maxRoundTrips int
 	}{
 		// The scheduler's Wake RPC checks the budget and the standards rule
 		// before the resume, at once, then thaws.
-		{name: "wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		{name: "wake", maxRoundTrips: 6, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			result, err := e.Wake(ctx, appID, "", "", "")
 			return result.InstanceID, err
 		}},
@@ -370,7 +373,7 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		// 2026-10-22): the app read, the budget check and the standards
 		// rule at once, then the thaw. It read ten rows one after another
 		// before.
-		{name: "coordinated wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		{name: "coordinated wake", maxRoundTrips: 6, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			out, err := e.EnsureWake(ctx, appID, TriggerGateway)
 			if err != nil || out.Instance == nil {
 				return "", err
