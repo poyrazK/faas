@@ -15,7 +15,7 @@ import (
 // `gregale deploy --plan`. It intentionally shares the same source detector
 // and hosting override file as the real deploy path, while keeping the
 // resulting contract independent of authentication and remote state.
-func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool) (simpleapp.Plan, error) {
+func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool, executionMode string) (simpleapp.Plan, error) {
 	frameworkName := ""
 	port, health := 0, ""
 	if source == simpleapp.SourceDirectory {
@@ -37,12 +37,13 @@ func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.Sour
 		health = inferred.HealthPath
 	}
 	return simpleapp.Resolve(simpleapp.Spec{
-		Slug:       slug,
-		Source:     source,
-		Framework:  frameworkName,
-		Profile:    profile,
-		Port:       port,
-		HealthPath: health,
+		Slug:          slug,
+		Source:        source,
+		Framework:     frameworkName,
+		Profile:       profile,
+		Port:          port,
+		HealthPath:    health,
+		ExecutionMode: executionMode,
 	})
 }
 

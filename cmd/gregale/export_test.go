@@ -2714,3 +2714,14 @@ var ResolveTestRegressionConfig = resolveTestRegressionConfig
 var CompareTestStagedLoadRelative = compareTestStagedLoadRelative
 var CompareTestGateErrorRate = compareTestGateErrorRate
 var CompareRepeatedTestGateErrorRate = compareRepeatedTestGateErrorRate
+
+// Deploy preflights (#6625, #6631).
+var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var SourceCapLookupBudgets = &sourceCapLookupBudgets
+var SourceUploadLimitError = sourceUploadLimitError
+
+// ResolveSourceUploadCapForTest exposes resolveSourceUploadCap's result.
+func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, verified bool, warning string, explain func(error) error) {
+	got := resolveSourceUploadCap(ctx, c)
+	return got.mb, got.verified, got.warning(), got.explain
+}
