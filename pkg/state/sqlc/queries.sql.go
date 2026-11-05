@@ -683,6 +683,27 @@ func (q *Queries) ActiveEnvironmentWorkloadReleaseSet(ctx context.Context, db DB
 	return release_id, err
 }
 
+const activeGraphBlocksAppRollback = `-- name: ActiveGraphBlocksAppRollback :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN project_release_sets r
+ ON r.project_id=a.project_id AND r.account_id=a.account_id AND r.active
+ AND r.environment_slug=$1::text
+ WHERE a.id=$2::uuid AND a.preview_of_slug IS NULL AND NOT EXISTS(SELECT 1 FROM project_release_members m
+ WHERE m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=$3::uuid))
+`
+
+type ActiveGraphBlocksAppRollbackParams struct {
+	Scope    string
+	AppID    pgtype.UUID
+	TargetID pgtype.UUID
+}
+
+func (q *Queries) ActiveGraphBlocksAppRollback(ctx context.Context, db DBTX, arg ActiveGraphBlocksAppRollbackParams) (bool, error) {
+	row := db.QueryRow(ctx, activeGraphBlocksAppRollback, arg.Scope, arg.AppID, arg.TargetID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const activeManagedPostgresResize = `-- name: ActiveManagedPostgresResize :one
 SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
 `
@@ -732,7 +753,10 @@ func (q *Queries) ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, proje
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND l.public_port = $1 AND l.enabled
-  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND EXISTS (
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.status = 'live' AND d.traffic_percent > 0 AND d.parked_reason = 'security_scan_regressed'
+    AND (d.scope = 'production' OR (d.scope IN ('default', '') AND NOT EXISTS (
+      SELECT 1 FROM deployments production WHERE production.app_id = a.id
+        AND production.status = 'live' AND production.scope = 'production' AND production.traffic_percent > 0)))) AND a.account_id = l.account_id AND EXISTS (
     SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
     WHERE coalesce(p->>'internal', 'false') <> 'true'
       AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
@@ -3681,6 +3705,16 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const bumpReleaseHistoryAdmission = `-- name: BumpReleaseHistoryAdmission :exec
+INSERT INTO workflow_code_admission_guard(app_id) VALUES($1::uuid)
+ON CONFLICT(app_id) DO UPDATE SET generation=workflow_code_admission_guard.generation+1
+`
+
+func (q *Queries) BumpReleaseHistoryAdmission(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, bumpReleaseHistoryAdmission, appID)
+	return err
+}
+
 const cancelAppFork = `-- name: CancelAppFork :one
 UPDATE app_forks
 SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
@@ -4261,6 +4295,39 @@ func (q *Queries) CheckedRollbackForTarget(ctx context.Context, db DBTX, targetI
 	return receipt, err
 }
 
+const checkedRollbackReuseLive = `-- name: CheckedRollbackReuseLive :one
+SELECT d.status='live' AND d.traffic_percent=0 AND (
+ (d.serving_ended_at IS NOT NULL AND d.rollout_completed_at IS NOT NULL)
+ OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp())
+ OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs r WHERE r.deployment_id=d.id)
+ OR EXISTS(SELECT 1 FROM project_release_members m JOIN project_release_sets r ON r.id=m.release_id WHERE m.deployment_id=d.id AND (r.active OR r.expires_at>clock_timestamp()))) AS reusable
+FROM deployments d WHERE d.id=$1::uuid
+`
+
+func (q *Queries) CheckedRollbackReuseLive(ctx context.Context, db DBTX, targetID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, checkedRollbackReuseLive, targetID)
+	var reusable pgtype.Bool
+	err := row.Scan(&reusable)
+	return reusable, err
+}
+
+const checkedRollbackServiceModeMatches = `-- name: CheckedRollbackServiceModeMatches :one
+SELECT EXISTS(SELECT 1 FROM apps WHERE id=$1::uuid
+AND (coalesce(manifest->>'execution_mode','request')='service')=$2::boolean)
+`
+
+type CheckedRollbackServiceModeMatchesParams struct {
+	AppID   pgtype.UUID
+	Service bool
+}
+
+func (q *Queries) CheckedRollbackServiceModeMatches(ctx context.Context, db DBTX, arg CheckedRollbackServiceModeMatchesParams) (bool, error) {
+	row := db.QueryRow(ctx, checkedRollbackServiceModeMatches, arg.AppID, arg.Service)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const checkedRollbackSourceForShare = `-- name: CheckedRollbackSourceForShare :one
 SELECT (to_jsonb(rs) || jsonb_build_object('environment',rs.environment_slug,
  'members',COALESCE((SELECT jsonb_agg(jsonb_build_object('app_id',rm.app_id,'deployment_id',rm.deployment_id)) FROM project_release_members rm WHERE rm.release_id=rs.id),'[]'::jsonb)))::jsonb AS release
@@ -4290,7 +4357,7 @@ func (q *Queries) CheckedRollbackSourceForShare(ctx context.Context, db DBTX, ar
 const checkedRollbackTargetFacts = `-- name: CheckedRollbackTargetFacts :one
 SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,'traffic_percent',d.traffic_percent,
  'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
- 'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,
+ 'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,'rollout_completed_at',d.rollout_completed_at,
  'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
  WHERE d.id=$1 AND d.app_id=$2 AND d.deleted_at IS NULL FOR UPDATE
 `
@@ -14345,9 +14412,18 @@ func (q *Queries) DatabaseUsageRows(ctx context.Context, db DBTX, arg DatabaseUs
 }
 
 const deactivateProjectReleaseSets = `-- name: DeactivateProjectReleaseSets :exec
-UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
-WHERE project_id=$1::uuid AND environment_slug=$2::text AND active
-AND ($3::uuid IS NULL OR id=$3::uuid)
+WITH retired AS (
+UPDATE project_release_sets rs SET active=false,expires_at=clock_timestamp()+(rs.ttl_seconds*interval '1 second')
+WHERE rs.project_id=$1::uuid AND rs.environment_slug=$2::text AND rs.active
+AND ($3::uuid IS NULL OR rs.id=$3::uuid)
+RETURNING rs.id,rs.expires_at
+)
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,r.expires_at FROM retired r
+JOIN project_release_members m ON m.release_id=r.id JOIN deployments d ON d.id=m.deployment_id
+WHERE d.status='live' AND d.traffic_percent=0
+ON CONFLICT(deployment_id) DO UPDATE
+SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
 `
 
 type DeactivateProjectReleaseSetsParams struct {
@@ -21633,7 +21709,12 @@ func (q *Queries) FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg Fail
 }
 
 const failCheckedRollbackTarget = `-- name: FailCheckedRollbackTarget :exec
-UPDATE deployments SET status='superseded',rollout_state='pending' WHERE id=$1 AND traffic_percent=0
+UPDATE deployments d SET status=CASE WHEN d.status='live' AND (
+ EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp())
+ OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs r WHERE r.deployment_id=d.id)
+ OR EXISTS(SELECT 1 FROM project_release_members m JOIN project_release_sets r ON r.id=m.release_id WHERE m.deployment_id=d.id AND (r.active OR r.expires_at>clock_timestamp())))
+ THEN 'live' ELSE 'superseded' END,rollout_state='pending'
+WHERE d.id=$1 AND d.traffic_percent=0
 `
 
 func (q *Queries) FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error {
@@ -41953,6 +42034,35 @@ func (q *Queries) KnownRouteCustomDomains(ctx context.Context, db DBTX, limit in
 	return items, nil
 }
 
+const lastGraphMemberServingEnd = `-- name: LastGraphMemberServingEnd :one
+SELECT max(r.expires_at - r.ttl_seconds * interval '1 second')::timestamptz AS ended_at
+FROM project_release_sets r JOIN project_release_members m ON m.release_id=r.id
+WHERE r.project_id=$1::uuid AND r.environment_slug=$2::text
+ AND NOT r.active AND m.app_id=$3::uuid AND m.deployment_id=$4::uuid
+ -- Unpromoted canaries retain until a future deadline; that is not a serving end.
+ AND NOT EXISTS (SELECT 1 FROM project_release_canaries c WHERE c.project_id=r.project_id
+   AND c.policy->>'candidate_release_id'=r.id::text AND c.policy->>'percent'<>'100')
+`
+
+type LastGraphMemberServingEndParams struct {
+	ProjectID    pgtype.UUID
+	Scope        string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) LastGraphMemberServingEnd(ctx context.Context, db DBTX, arg LastGraphMemberServingEndParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, lastGraphMemberServingEnd,
+		arg.ProjectID,
+		arg.Scope,
+		arg.AppID,
+		arg.DeploymentID,
+	)
+	var ended_at pgtype.Timestamptz
+	err := row.Scan(&ended_at)
+	return ended_at, err
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
@@ -43291,7 +43401,10 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 
 const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id
-WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND EXISTS (
+WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.status = 'live' AND d.traffic_percent > 0 AND d.parked_reason = 'security_scan_regressed'
+    AND (d.scope = 'production' OR (d.scope IN ('default', '') AND NOT EXISTS (
+      SELECT 1 FROM deployments production WHERE production.app_id = a.id
+        AND production.status = 'live' AND production.scope = 'production' AND production.traffic_percent > 0)))) AND a.account_id = l.account_id AND EXISTS (
     SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
     WHERE coalesce(p->>'internal', 'false') <> 'true'
       AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
@@ -49295,7 +49408,10 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 
 const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND EXISTS (
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.status = 'live' AND d.traffic_percent > 0 AND d.parked_reason = 'security_scan_regressed'
+    AND (d.scope = 'production' OR (d.scope IN ('default', '') AND NOT EXISTS (
+      SELECT 1 FROM deployments production WHERE production.app_id = a.id
+        AND production.status = 'live' AND production.scope = 'production' AND production.traffic_percent > 0)))) AND EXISTS (
     SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
     WHERE coalesce(p->>'internal', 'false') <> 'true'
       AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
@@ -50646,7 +50762,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at, d.rollback_release_review
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -50773,6 +50889,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.MailFailureAppRevision,
 			&i.MailFailureSuccessRevision,
 			&i.PromotedAt,
+			&i.RollbackReleaseReview,
 		); err != nil {
 			return nil, err
 		}
@@ -53030,6 +53147,42 @@ func (q *Queries) ListPreparedEventSubscriptionIntents(ctx context.Context, db D
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPreparingRollbackOutcomes = `-- name: ListPreparingRollbackOutcomes :many
+SELECT jsonb_build_object('ID',id,'AccountID',account_id,'AppID',app_id,'Scope',scope,
+ 'TargetDeploymentID',target_deployment_id,'FromDeploymentID',coalesce(from_deployment_id::text,''),
+ 'Trigger',trigger,'Status',status,'RequestedAt',requested_at,'FinishedAt',finished_at,
+ 'RecoveryMS',recovery_ms,'AuditID',coalesce(audit_id,0),'ErrorCode',error_code,'Error',error) AS record
+FROM deployment_rollbacks WHERE status='preparing'
+ AND ($1::text='' OR (requested_at,id::text)>($2::timestamptz,$1::text))
+ORDER BY requested_at,id LIMIT $3::integer
+`
+
+type ListPreparingRollbackOutcomesParams struct {
+	AfterID  string
+	AfterAt  pgtype.Timestamptz
+	RowLimit int32
+}
+
+func (q *Queries) ListPreparingRollbackOutcomes(ctx context.Context, db DBTX, arg ListPreparingRollbackOutcomesParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listPreparingRollbackOutcomes, arg.AfterID, arg.AfterAt, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var record []byte
+		if err := rows.Scan(&record); err != nil {
+			return nil, err
+		}
+		items = append(items, record)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -58338,6 +58491,42 @@ func (q *Queries) LockDatabaseNode(ctx context.Context, db DBTX, id string) (Loc
 	return i, err
 }
 
+const lockDatabaseSwitchExecution = `-- name: LockDatabaseSwitchExecution :one
+WITH locked AS MATERIALIZED (
+ SELECT id,app_id,scope,lease_token,lease_until,phase,target_deployment_id,from_deployment_id
+ FROM release_database_switches WHERE id=$6::uuid FOR SHARE
+)
+SELECT id FROM locked
+WHERE app_id=$1::uuid AND scope=$2::text
+ AND lease_token=$3::text AND lease_until>clock_timestamp()
+ AND phase=$4::text AND phase NOT IN ('completed','failed','cancelled')
+ AND (target_deployment_id=$5::uuid OR from_deployment_id=$5::uuid)
+`
+
+type LockDatabaseSwitchExecutionParams struct {
+	AppID        pgtype.UUID
+	Scope        string
+	Token        string
+	Phase        string
+	DeploymentID pgtype.UUID
+	ID           pgtype.UUID
+}
+
+// Acquire ownership's row lock before evaluating the clock, including after a wait.
+func (q *Queries) LockDatabaseSwitchExecution(ctx context.Context, db DBTX, arg LockDatabaseSwitchExecutionParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockDatabaseSwitchExecution,
+		arg.AppID,
+		arg.Scope,
+		arg.Token,
+		arg.Phase,
+		arg.DeploymentID,
+		arg.ID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockDeploymentArtifactScan = `-- name: LockDeploymentArtifactScan :one
 SELECT lock_deployment_artifact_scan_with_verification($1::uuid,$2::uuid)::jsonb AS inputs
 `
@@ -61273,6 +61462,22 @@ func (q *Queries) LockRetainedRollbackDeployment(ctx context.Context, db DBTX, a
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockRollbackOutcomeTarget = `-- name: LockRollbackOutcomeTarget :one
+SELECT status,rollout_completed_at FROM deployments WHERE id=$1::uuid FOR UPDATE
+`
+
+type LockRollbackOutcomeTargetRow struct {
+	Status             string
+	RolloutCompletedAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockRollbackOutcomeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockRollbackOutcomeTargetRow, error) {
+	row := db.QueryRow(ctx, lockRollbackOutcomeTarget, deploymentID)
+	var i LockRollbackOutcomeTargetRow
+	err := row.Scan(&i.Status, &i.RolloutCompletedAt)
+	return i, err
 }
 
 const lockRouteCheckCompletionAccount = `-- name: LockRouteCheckCompletionAccount :one
@@ -65146,6 +65351,15 @@ SELECT pg_notify('customer_operation_changed',$1::text)
 
 func (q *Queries) NotifyCustomerOperation(ctx context.Context, db DBTX, operationID string) error {
 	_, err := db.Exec(ctx, notifyCustomerOperation, operationID)
+	return err
+}
+
+const notifyRetainedCheckedRollback = `-- name: NotifyRetainedCheckedRollback :exec
+SELECT pg_notify('deployment_changed',$1::text)
+`
+
+func (q *Queries) NotifyRetainedCheckedRollback(ctx context.Context, db DBTX, payload string) error {
+	_, err := db.Exec(ctx, notifyRetainedCheckedRollback, payload)
 	return err
 }
 
@@ -74976,6 +75190,59 @@ func (q *Queries) PendingLogArchiveErasureInstances(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const pendingRollbackSuccessesForTarget = `-- name: PendingRollbackSuccessesForTarget :many
+SELECT id::text,account_id::text,app_id::text,scope,target_deployment_id::text,
+ coalesce(from_deployment_id::text,'')::text AS from_id,trigger,requested_at
+FROM deployment_rollbacks WHERE target_deployment_id=$1::uuid
+ AND status='preparing' AND requested_at<=$2::timestamptz+interval '1 second'
+ORDER BY requested_at,id FOR UPDATE
+`
+
+type PendingRollbackSuccessesForTargetParams struct {
+	TargetID    pgtype.UUID
+	CompletedAt pgtype.Timestamptz
+}
+
+type PendingRollbackSuccessesForTargetRow struct {
+	ID                 string
+	AccountID          string
+	AppID              string
+	Scope              string
+	TargetDeploymentID string
+	FromID             string
+	Trigger            string
+	RequestedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) PendingRollbackSuccessesForTarget(ctx context.Context, db DBTX, arg PendingRollbackSuccessesForTargetParams) ([]PendingRollbackSuccessesForTargetRow, error) {
+	rows, err := db.Query(ctx, pendingRollbackSuccessesForTarget, arg.TargetID, arg.CompletedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingRollbackSuccessesForTargetRow{}
+	for rows.Next() {
+		var i PendingRollbackSuccessesForTargetRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.TargetDeploymentID,
+			&i.FromID,
+			&i.Trigger,
+			&i.RequestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const perAccountRateLimitAggregate = `-- name: PerAccountRateLimitAggregate :many
 select coalesce(subject, '00000000-0000-0000-0000-000000000000'::uuid) as account_id,
        count(*)::int as hits,
@@ -75455,22 +75722,28 @@ func (q *Queries) PinnedProjectReleaseWorkers(ctx context.Context, db DBTX, appI
 }
 
 const prepareCheckedRollbackTarget = `-- name: PrepareCheckedRollbackTarget :exec
-UPDATE deployments SET status='snapshotting',error='',error_code='',traffic_percent=0,traffic_percent_explicit=true,
+UPDATE deployments SET status=CASE WHEN $1::boolean THEN 'live' ELSE 'snapshotting' END,error='',error_code='',traffic_percent=0,traffic_percent_explicit=true,
  canary_preset='none',canary_step=0,canary_total_steps=0,canary_stages=null,canary_step_started_at=clock_timestamp(),
- rollout_state=$1,rollout_started_at=null,rollout_completed_at=null,rollout_aborted_at=null,rollout_aborted_reason='',
- service_rollout_handoff=$2,api_hosting_receipt='{}'::jsonb,
- stage_state=jsonb_build_object('current','snapshot_prepare','current_started_at',clock_timestamp(),'history',coalesce(stage_state->'history','[]'::jsonb))
- WHERE id=$3
+ rollout_state=$2,rollout_started_at=CASE WHEN $1::boolean AND $2::text='rolling_out' THEN clock_timestamp() ELSE NULL END,rollout_completed_at=CASE WHEN $1::boolean THEN rollout_completed_at ELSE NULL END,rollout_aborted_at=null,rollout_aborted_reason='',
+ service_rollout_handoff=$3,api_hosting_receipt=CASE WHEN $1::boolean THEN api_hosting_receipt ELSE '{}'::jsonb END,
+ stage_state=CASE WHEN $1::boolean THEN stage_state ELSE jsonb_build_object('current','snapshot_prepare','current_started_at',clock_timestamp(),'history',coalesce(stage_state->'history','[]'::jsonb)) END
+ WHERE id=$4
 `
 
 type PrepareCheckedRollbackTargetParams struct {
+	ReuseLive    bool
 	RolloutState string
 	Handoff      []byte
 	TargetID     pgtype.UUID
 }
 
 func (q *Queries) PrepareCheckedRollbackTarget(ctx context.Context, db DBTX, arg PrepareCheckedRollbackTargetParams) error {
-	_, err := db.Exec(ctx, prepareCheckedRollbackTarget, arg.RolloutState, arg.Handoff, arg.TargetID)
+	_, err := db.Exec(ctx, prepareCheckedRollbackTarget,
+		arg.ReuseLive,
+		arg.RolloutState,
+		arg.Handoff,
+		arg.TargetID,
+	)
 	return err
 }
 
@@ -75491,6 +75764,56 @@ func (q *Queries) PrepareMigrationContractRuntime(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const preserveRollbackSuccessAudit = `-- name: PreserveRollbackSuccessAudit :one
+INSERT INTO deployment_audit(deployment_id,account_id,kind,actor,at,data)
+VALUES($1::uuid,$2::uuid,$3::text,
+ 'apid:rollback_outcome',$4::timestamptz,$5::jsonb) RETURNING id
+`
+
+type PreserveRollbackSuccessAuditParams struct {
+	TargetID  pgtype.UUID
+	AccountID pgtype.UUID
+	Kind      string
+	At        pgtype.Timestamptz
+	Data      []byte
+}
+
+func (q *Queries) PreserveRollbackSuccessAudit(ctx context.Context, db DBTX, arg PreserveRollbackSuccessAuditParams) (int64, error) {
+	row := db.QueryRow(ctx, preserveRollbackSuccessAudit,
+		arg.TargetID,
+		arg.AccountID,
+		arg.Kind,
+		arg.At,
+		arg.Data,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const preserveRollbackSuccessReceipt = `-- name: PreserveRollbackSuccessReceipt :exec
+UPDATE deployment_rollbacks SET status='complete',finished_at=$1::timestamptz,
+ recovery_ms=$2::bigint,audit_id=$3::bigint,error_code='',error=''
+WHERE id=$4::uuid AND status='preparing'
+`
+
+type PreserveRollbackSuccessReceiptParams struct {
+	At         pgtype.Timestamptz
+	RecoveryMs int64
+	AuditID    int64
+	ID         pgtype.UUID
+}
+
+func (q *Queries) PreserveRollbackSuccessReceipt(ctx context.Context, db DBTX, arg PreserveRollbackSuccessReceiptParams) error {
+	_, err := db.Exec(ctx, preserveRollbackSuccessReceipt,
+		arg.At,
+		arg.RecoveryMs,
+		arg.AuditID,
+		arg.ID,
+	)
+	return err
 }
 
 const privateNetworkAttachmentByAppID = `-- name: PrivateNetworkAttachmentByAppID :one
@@ -75742,6 +76065,26 @@ func (q *Queries) ProjectEnvironmentHasActiveDeployments(ctx context.Context, db
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const projectFallbackServingEnd = `-- name: ProjectFallbackServingEnd :one
+SELECT coalesce(r.fallback_hidden_at,d.created_at)::timestamptz AS ended_at
+FROM project_release_sets r JOIN deployments d ON d.id=$1::uuid
+WHERE r.id=$2::uuid
+`
+
+type ProjectFallbackServingEndParams struct {
+	TargetID  pgtype.UUID
+	ReleaseID pgtype.UUID
+}
+
+// An older writer cannot prove the interval. Use the target's creation as a
+// conservative bound, rather than silently accepting migrations it never saw.
+func (q *Queries) ProjectFallbackServingEnd(ctx context.Context, db DBTX, arg ProjectFallbackServingEndParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, projectFallbackServingEnd, arg.TargetID, arg.ReleaseID)
+	var ended_at pgtype.Timestamptz
+	err := row.Scan(&ended_at)
+	return ended_at, err
 }
 
 const projectMigrationAdmissionAllowed = `-- name: ProjectMigrationAdmissionAllowed :one
@@ -84405,6 +84748,20 @@ func (q *Queries) ReadPendingRuntimeUpgradePublicEdgeWithdrawals(ctx context.Con
 	return items, nil
 }
 
+const readPreparedRollbackReleaseReview = `-- name: ReadPreparedRollbackReleaseReview :one
+SELECT CASE WHEN rollback_prepared_at IS NULL THEN NULL::jsonb
+ WHEN rollback_release_review->'prepared_epoch'=to_jsonb(extract(epoch FROM rollback_prepared_at))
+ THEN rollback_release_review->'runs' ELSE '[]'::jsonb END AS review
+FROM deployments WHERE id=$1::uuid
+`
+
+func (q *Queries) ReadPreparedRollbackReleaseReview(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readPreparedRollbackReleaseReview, deploymentID)
+	var review []byte
+	err := row.Scan(&review)
+	return review, err
+}
+
 const readProductionDeadLetterEvent = `-- name: ReadProductionDeadLetterEvent :one
 SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_id, d.event_payload, d.headers, d.error_kind, d.error_detail, d.retry_count, d.first_failed_at, d.last_failed_at, d.replayed_at, d.created_at, d.environment_owned FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
 WHERE d.id=$1::uuid
@@ -88612,6 +88969,45 @@ func (q *Queries) ReadReleaseWorkerRunningProof(ctx context.Context, db DBTX, de
 	return items, nil
 }
 
+const readRetainedDeploymentOpenAPISnapshot = `-- name: ReadRetainedDeploymentOpenAPISnapshot :one
+SELECT app_id, scope, snapshot, sha256, schema_version, captured_at
+FROM deployment_openapi_snapshots WHERE deployment_id=$1::uuid
+`
+
+type ReadRetainedDeploymentOpenAPISnapshotRow struct {
+	AppID         pgtype.UUID
+	Scope         string
+	Snapshot      []byte
+	Sha256        string
+	SchemaVersion int32
+	CapturedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ReadRetainedDeploymentOpenAPISnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadRetainedDeploymentOpenAPISnapshotRow, error) {
+	row := db.QueryRow(ctx, readRetainedDeploymentOpenAPISnapshot, deploymentID)
+	var i ReadRetainedDeploymentOpenAPISnapshotRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Scope,
+		&i.Snapshot,
+		&i.Sha256,
+		&i.SchemaVersion,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
+const readRollbackOutcomeApp = `-- name: ReadRollbackOutcomeApp :one
+SELECT app_id FROM deployment_rollbacks WHERE id=$1::uuid
+`
+
+func (q *Queries) ReadRollbackOutcomeApp(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readRollbackOutcomeApp, id)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const readRouteCheckHistoryEntry = `-- name: ReadRouteCheckHistoryEntry :one
 SELECT entry FROM route_check_history
 WHERE id = $1::text::uuid AND deployment_id = $2::text::uuid AND app_id = $3::text::uuid AND account_id = $4::text::uuid
@@ -90562,6 +90958,17 @@ func (q *Queries) ReadStagedProjectReleaseConfiguration(ctx context.Context, db 
 	return payload, err
 }
 
+const readStartingReleaseApp = `-- name: ReadStartingReleaseApp :one
+SELECT app_id FROM app_tasks WHERE id=$1::text::uuid AND kind='release'
+`
+
+func (q *Queries) ReadStartingReleaseApp(ctx context.Context, db DBTX, taskID string) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readStartingReleaseApp, taskID)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const readSyntheticIngressAuthMode = `-- name: ReadSyntheticIngressAuthMode :one
 SELECT public_auth_mode FROM apps
 WHERE id = $1::uuid AND status <> 'deleted' AND deleted_at IS NULL
@@ -92277,7 +92684,16 @@ func (q *Queries) RecordApplicationStandardSnapshotCapture(ctx context.Context, 
 }
 
 const recordCheckedProjectDeactivation = `-- name: RecordCheckedProjectDeactivation :exec
-UPDATE project_release_sets SET active=false,expires_at=clock_timestamp()+(ttl_seconds*interval '1 second'),deactivation=$1::jsonb WHERE id=$2 AND active AND deactivation IS NULL
+WITH retired AS (
+UPDATE project_release_sets rs SET active=false,expires_at=clock_timestamp()+(rs.ttl_seconds*interval '1 second'),deactivation=$1::jsonb WHERE rs.id=$2::uuid AND rs.active AND rs.deactivation IS NULL
+RETURNING rs.id,rs.expires_at
+)
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,r.expires_at FROM retired r
+JOIN project_release_members m ON m.release_id=r.id JOIN deployments d ON d.id=m.deployment_id
+WHERE d.status='live' AND d.traffic_percent=0
+ON CONFLICT(deployment_id) DO UPDATE
+SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
 `
 
 type RecordCheckedProjectDeactivationParams struct {
@@ -94266,6 +94682,30 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresVerificationMatch(ctx con
 	return i, err
 }
 
+const recordProjectFallbackWindow = `-- name: RecordProjectFallbackWindow :exec
+WITH recorded AS (
+UPDATE project_release_sets SET fallback_hidden_at = CASE
+ WHEN $1::uuid IS NULL THEN clock_timestamp()
+ ELSE (SELECT previous.fallback_hidden_at FROM project_release_sets previous WHERE previous.id=$1::uuid) END
+WHERE id=$2::uuid RETURNING id
+)
+INSERT INTO workflow_code_admission_guard(app_id)
+SELECT m.app_id FROM recorded r JOIN project_release_members m ON m.release_id=r.id ORDER BY m.app_id
+ON CONFLICT(app_id) DO UPDATE SET generation=workflow_code_admission_guard.generation+1
+`
+
+type RecordProjectFallbackWindowParams struct {
+	PreviousID pgtype.UUID
+	ReleaseID  pgtype.UUID
+}
+
+// Publish the routing epoch with the graph. A repeatable-read app rollback
+// that waited on its app lock must retry its earlier graph snapshot.
+func (q *Queries) RecordProjectFallbackWindow(ctx context.Context, db DBTX, arg RecordProjectFallbackWindowParams) error {
+	_, err := db.Exec(ctx, recordProjectFallbackWindow, arg.PreviousID, arg.ReleaseID)
+	return err
+}
+
 const recordRequestIDJournal = `-- name: RecordRequestIDJournal :one
 INSERT INTO request_id_journal (
     id, account_id, app_id, request_id, trace_id, received_at, expires_at
@@ -95045,6 +95485,17 @@ INSERT INTO layer_artifact_retention(storage_key) VALUES ($1::text) ON CONFLICT 
 func (q *Queries) RegisterLayerArtifactRetention(ctx context.Context, db DBTX, storageKey string) error {
 	_, err := db.Exec(ctx, registerLayerArtifactRetention, storageKey)
 	return err
+}
+
+const releaseAdmissionTime = `-- name: ReleaseAdmissionTime :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) ReleaseAdmissionTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, releaseAdmissionTime)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const releaseApplicationStandardEnrollmentWorker = `-- name: ReleaseApplicationStandardEnrollmentWorker :execrows
@@ -99064,7 +99515,7 @@ INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
  SELECT d.id,d.app_id,clock_timestamp()+((a.manifest->>'revision_pin_ttl_seconds')::integer*interval '1 second')
  FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=$1
  AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer,0) BETWEEN 1 AND 604800
- ON CONFLICT(deployment_id) DO NOTHING
+ ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
 `
 
 func (q *Queries) RetainCheckedRollbackPredecessor(ctx context.Context, db DBTX, currentID pgtype.UUID) error {
@@ -99156,6 +99607,32 @@ func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Cont
 	return i, err
 }
 
+const retainServingDeploymentSiblings = `-- name: RetainServingDeploymentSiblings :exec
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,clock_timestamp()+($1::integer*interval '1 second')
+FROM deployments d WHERE d.app_id=$2::uuid AND d.scope=$3::text
+AND d.status='live' AND d.id<>$4::uuid AND d.traffic_percent>0
+ON CONFLICT(deployment_id) DO UPDATE
+SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
+`
+
+type RetainServingDeploymentSiblingsParams struct {
+	Ttl      int32
+	AppID    pgtype.UUID
+	Scope    string
+	TargetID pgtype.UUID
+}
+
+func (q *Queries) RetainServingDeploymentSiblings(ctx context.Context, db DBTX, arg RetainServingDeploymentSiblingsParams) error {
+	_, err := db.Exec(ctx, retainServingDeploymentSiblings,
+		arg.Ttl,
+		arg.AppID,
+		arg.Scope,
+		arg.TargetID,
+	)
+	return err
+}
+
 const retainStagedProjectRelease = `-- name: RetainStagedProjectRelease :execrows
 UPDATE project_release_sets SET active=false,expires_at=$1::timestamptz WHERE id=$2::uuid
 `
@@ -99175,7 +99652,7 @@ func (q *Queries) RetainStagedProjectRelease(ctx context.Context, db DBTX, arg R
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at, d.rollback_release_review FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=d.id)
@@ -100374,6 +100851,52 @@ func (q *Queries) RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionP
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const rollbackReleaseRunsAfter = `-- name: RollbackReleaseRunsAfter :many
+SELECT deployment_id::text AS deployment_id, started_at
+FROM app_tasks WHERE app_id=$1::uuid AND kind='release'
+ AND deployment_id<>$2::uuid
+ AND coalesce(nullif(deployment_scope,''),'default')=$3::text
+ AND started_at>$4::timestamptz
+ORDER BY started_at,id
+`
+
+type RollbackReleaseRunsAfterParams struct {
+	AppID    pgtype.UUID
+	TargetID pgtype.UUID
+	Scope    string
+	Since    pgtype.Timestamptz
+}
+
+type RollbackReleaseRunsAfterRow struct {
+	DeploymentID string
+	StartedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) RollbackReleaseRunsAfter(ctx context.Context, db DBTX, arg RollbackReleaseRunsAfterParams) ([]RollbackReleaseRunsAfterRow, error) {
+	rows, err := db.Query(ctx, rollbackReleaseRunsAfter,
+		arg.AppID,
+		arg.TargetID,
+		arg.Scope,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RollbackReleaseRunsAfterRow{}
+	for rows.Next() {
+		var i RollbackReleaseRunsAfterRow
+		if err := rows.Scan(&i.DeploymentID, &i.StartedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const rollupMirrorResults = `-- name: RollupMirrorResults :execrows
@@ -102043,7 +102566,7 @@ func (q *Queries) SaveAutomationTestReport(ctx context.Context, db DBTX, arg Sav
 }
 
 const saveCheckedRollback = `-- name: SaveCheckedRollback :exec
-UPDATE deployment_rollback_operations SET status=$1,receipt=$2,updated_at=clock_timestamp()
+UPDATE deployment_rollback_operations SET status=$1,receipt=$2::jsonb || jsonb_build_object('_release_review',receipt->'_release_review'),updated_at=clock_timestamp()
  WHERE id=$3
 `
 
@@ -106683,7 +107206,10 @@ func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppU
 const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
 WHERE public_port = $1 AND enabled
-AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND EXISTS (
+AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id WHERE ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL) AND a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.status = 'live' AND d.traffic_percent > 0 AND d.parked_reason = 'security_scan_regressed'
+    AND (d.scope = 'production' OR (d.scope IN ('default', '') AND NOT EXISTS (
+      SELECT 1 FROM deployments production WHERE production.app_id = a.id
+        AND production.status = 'live' AND production.scope = 'production' AND production.traffic_percent > 0)))) AND EXISTS (
     SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
     WHERE coalesce(p->>'internal', 'false') <> 'true'
       AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
@@ -110037,6 +110563,22 @@ type WriteEnvironmentGitNotificationStateParams struct {
 
 func (q *Queries) WriteEnvironmentGitNotificationState(ctx context.Context, db DBTX, arg WriteEnvironmentGitNotificationStateParams) error {
 	_, err := db.Exec(ctx, writeEnvironmentGitNotificationState, arg.NotificationState, arg.SourceID)
+	return err
+}
+
+const writePreparedRollbackReleaseReview = `-- name: WritePreparedRollbackReleaseReview :exec
+UPDATE deployments SET rollback_release_review=jsonb_build_object(
+ 'prepared_epoch',extract(epoch FROM rollback_prepared_at),'runs',$1::jsonb)
+WHERE id=$2::uuid AND rollback_prepared_at IS NOT NULL
+`
+
+type WritePreparedRollbackReleaseReviewParams struct {
+	Review       []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) WritePreparedRollbackReleaseReview(ctx context.Context, db DBTX, arg WritePreparedRollbackReleaseReviewParams) error {
+	_, err := db.Exec(ctx, writePreparedRollbackReleaseReview, arg.Review, arg.DeploymentID)
 	return err
 }
 

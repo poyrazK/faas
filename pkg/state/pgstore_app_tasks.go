@@ -774,9 +774,32 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		return AppTask{}, mapErr(err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// Take lifecycle parent locks before the task row, matching traffic writes
+	// and app cancellation. Release starts serialize with rollback cutover.
+	parentID, err := sqlc.New().ReadStartingReleaseApp(ctx, tx, taskID)
+	if err == nil {
+		if err = pgLockProductionLifecycleApp(ctx, tx, uuidString(parentID)); err != nil {
+			return AppTask{}, mapErr(err)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, mapErr(err)
+	}
 	current, err := scanAppTask(tx.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1 for update`, taskID))
+	if err == nil && current.Kind == AppTaskKindRelease {
+		admitted, clockErr := sqlc.New().ReleaseAdmissionTime(ctx, tx)
+		if clockErr != nil {
+			return AppTask{}, clockErr
+		}
+		if admitted.Time.After(startedAt) {
+			startedAt = admitted.Time
+		}
+	}
+
 	if err != nil || current.Status != AppTaskRestoring || current.LeaseToken == nil || *current.LeaseToken != leaseToken ||
 		current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(startedAt) {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if current.Kind == AppTaskKindRelease && (!parentID.Valid || current.AppID != uuidString(parentID)) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
@@ -816,6 +839,11 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	task, err := appTaskFromSQLC(row)
 	if err != nil {
 		return AppTask{}, err
+	}
+	if current.Kind == AppTaskKindRelease {
+		if err := sqlc.New().BumpReleaseHistoryAdmission(ctx, tx, mustPgUUID(current.AppID)); err != nil {
+			return AppTask{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppTask{}, mapErr(err)

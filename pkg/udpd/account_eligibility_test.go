@@ -3,6 +3,7 @@ package udpd_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ type rawOwnerFixture struct {
 	udp     udpd.Route
 }
 
-func newRawOwnerFixture(t *testing.T, running bool) rawOwnerFixture {
+func newRawOwnerFixture(t *testing.T, running bool, probed ...bool) rawOwnerFixture {
 	t.Helper()
 	s := state.NewMemStore()
 	account, err := s.CreateAccount(t.Context(), "raw-owner@example.com", api.PlanPro)
@@ -40,7 +41,11 @@ func newRawOwnerFixture(t *testing.T, running bool) rawOwnerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateDeployment(t.Context(), state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive, TrafficPercent: 100}); err != nil {
+	var probe json.RawMessage
+	if len(probed) > 0 && probed[0] {
+		probe = json.RawMessage(`{"path":"/readyz"}`)
+	}
+	if _, err := s.CreateDeployment(t.Context(), state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive, TrafficPercent: 100, OverrideReadinessProbe: probe}); err != nil {
 		t.Fatal(err)
 	}
 	if running {

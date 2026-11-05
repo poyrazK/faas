@@ -3,6 +3,8 @@ package gateway
 
 import (
 	"context"
+	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -110,6 +112,55 @@ func TestServiceTCPProxyRetainsZeroTrafficReleasePin(t *testing.T) {
 			}
 			if len(h.hops) != 2 || h.hops[1].InstanceID != "new" || h.hops[1].DeploymentID != "current" {
 				t.Fatalf("zero-traffic retained deployment leaked into ordinary traffic: %+v", h.hops)
+			}
+		})
+	}
+}
+
+func TestServiceTCPProxyChecksPinnedDeploymentPortsBeforeWake(t *testing.T) {
+	for _, parked := range []bool{false, true} {
+		t.Run(fmt.Sprint(parked), func(t *testing.T) {
+			h := newTCPTestHarness(t)
+			address := netip.MustParseAddr("198.19.0.7")
+			target := h.targets[address]
+			target.TCPPorts = []int{6379}
+			h.targets[address] = target
+			h.release = "retained"
+			h.proxy.cfg.ResolvePinnedPorts = func(_ context.Context, app, deployment string) ([]int, error) {
+				if app != "db" || deployment != "retained" {
+					t.Fatalf("unexpected pin %s/%s", app, deployment)
+				}
+				return []int{5432}, nil
+			}
+			retained := ServiceEndpoint{InstanceID: "old", NodeID: "node", DeploymentID: "retained", Port: 5432}
+			current := ServiceEndpoint{InstanceID: "new", NodeID: "node", DeploymentID: "current", Port: 6379}
+			if parked {
+				h.provider.set("db", current)
+			} else {
+				h.provider.set("db", retained, current)
+			}
+			h.proxy.cfg.Services.wakeDeployment = func(_ context.Context, app, deployment string) error {
+				if app != "db" || deployment != "retained" {
+					t.Fatalf("unscoped wake %s/%s", app, deployment)
+				}
+				h.wakes++
+				h.provider.set("db", retained, current)
+				return nil
+			}
+			// A sibling release's port must not be borrowed, even though it is in
+			// the ordinary target's allowlist. Refusal must precede any wake.
+			if _, reason := h.serve(t, "caller", "198.19.0.7:6379"); reason != "undeclared_port" || h.wakes != 0 || len(h.hops) != 0 {
+				t.Fatalf("sibling port admitted: %q", reason)
+			}
+			if outcome, reason := h.serve(t, "caller", "198.19.0.7:5432"); outcome != "success" || reason != "" {
+				t.Fatalf("retained port: %s/%s", outcome, reason)
+			}
+			if len(h.hops) != 1 || h.hops[0].InstanceID != "old" || h.hops[0].Port != 5432 {
+				t.Fatalf("wrong target: %+v", h.hops)
+			}
+			h.release = ""
+			if _, reason := h.serve(t, "caller", "198.19.0.7:5432"); reason != "undeclared_port" {
+				t.Fatalf("unpinned caller borrowed retained port: %s", reason)
 			}
 		})
 	}
