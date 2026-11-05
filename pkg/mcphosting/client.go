@@ -546,6 +546,13 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, optio
 			task, err = c.waitForTask(ctx, tool.Name, task, options)
 			x.DurationMS = time.Since(startedAt).Milliseconds()
 			if err != nil {
+				// Preserve the terminal failure or cancellation, including the
+				// server's structured error, rather than the initial task handle.
+				if task.Status == "failed" || task.Status == "cancelled" || task.Status == "completed" {
+					if snapshot, marshalErr := json.Marshal(task); marshalErr == nil {
+						x.Result = snapshot
+					}
+				}
 				return x, err
 			}
 			x.Result = task.Result

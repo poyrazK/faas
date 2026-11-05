@@ -17900,7 +17900,7 @@ gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320
 
 Resume waiting for a task to finish
 
-`gregale mcp client wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>] [<slug>]`
+`gregale mcp client wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>] [--cancel-on-timeout] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -17920,6 +17920,7 @@ Resume waiting for a task to finish
 | `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
 | `--interactive` | answer modern MCP task input forms in the terminal |  |
 | `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+| `--cancel-on-timeout` | request cancellation when the resumed wait times out |  |
 
 Examples:
 
