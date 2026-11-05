@@ -16619,6 +16619,21 @@
     ]
   },
   {
+    "table": "project_environment_promotion_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "attempt_id",
+      "environment_id",
+      "from_environment_id",
+      "project_id",
+      "promotion_hash",
+      "promotion_id",
+      "request_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_promotion_release_config",
     "kind": "operational",
     "columns": [
@@ -16753,6 +16768,21 @@
       "settings_hash",
       "state",
       "workload_spec_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_rollback_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "attempt_id",
+      "environment_id",
+      "from_environment_id",
+      "project_id",
+      "promotion_hash",
+      "promotion_id",
+      "request_hash"
     ],
     "kind": "operational"
   },
