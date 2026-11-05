@@ -64,12 +64,14 @@ type ComputeCapProvider interface {
 	SetComputeCap(ctx context.Context, providerResourceID string, quotaUnitSeconds int64) error
 }
 
-// ComputeCapLagger is implemented by a provider whose consumption counters,
-// and so its quota enforcement, trail use. CounterLagUnitSeconds is the most
-// a database of spec can use, at its largest size, before the provider's
-// counter shows it (ADR-20261025094915 amendment 2026-11-04).
-type ComputeCapLagger interface {
-	CounterLagUnitSeconds(spec Spec) int64
+// ComputeUseReporter is implemented by a provider whose quota counters trail
+// use while its consumption report is current. ComputeUnitSecondsSince
+// returns what the resource's quota scope used from from, a ledger window
+// boundary, until now, the open window included. The sweep then counts use as
+// the ledger plus each scope's use since the ledger's coverage, not the
+// counters (ADR-20261025094915 amendment 2026-11-05).
+type ComputeUseReporter interface {
+	ComputeUnitSecondsSince(ctx context.Context, providerResourceID string, from time.Time) (int64, error)
 }
 
 // ComputeCapObservation is one provider object's quota state for the
@@ -95,10 +97,14 @@ const capPeriodTolerance = time.Hour
 type computeCapScope struct {
 	resourceID  string
 	databaseIDs []string
-	used        int64
-	quota       int64
-	// lag is what the scope's databases can use before its counter shows it.
-	lag int64
+	// used is the provider's quota counter, which the quota is written
+	// against.
+	used  int64
+	quota int64
+	// reported marks a scope whose provider reports use since the ledger's
+	// coverage; unreported is that use.
+	reported   bool
+	unreported int64
 }
 
 type computeCapDecision struct {
@@ -111,34 +117,40 @@ type computeCapDecision struct {
 }
 
 type computeCapPlan struct {
-	ceiling, used, lag, remaining int64
-	decisions                     []computeCapDecision
+	ceiling, used, remaining int64
+	decisions                []computeCapDecision
 }
 
 func (p computeCapPlan) suspended() bool { return p.remaining == 0 }
 
-// planComputeCaps gives each scope the quota u_i + R, where R is what the
-// account has left of its ceiling. The account's use is the larger of the
-// ledger (which still counts databases deleted this month) and the provider
-// counters (which have no ledger lag). The counters still trail use, and the
-// provider enforces a quota only when they move, so R also keeps back what
-// every scope can use before its counter shows it.
+// planComputeCaps gives each scope the quota u_i + R, where u_i is its
+// provider counter and R is what the account has left of its ceiling. When
+// every scope's provider reports use, the account's use is the ledger (which
+// still counts databases deleted this month) plus each scope's use since the
+// ledger's coverage (ADR-20261025094915 amendment 2026-11-05). Otherwise the
+// counters are taken as current, and use is the larger of the ledger and
+// their sum (decision 5).
 func planComputeCaps(ceiling, ledgerUsed int64, scopes []computeCapScope) (computeCapPlan, error) {
 	if ceiling <= 0 || ledgerUsed < 0 {
 		return computeCapPlan{}, ErrInvalid
 	}
-	var live, lag int64
+	var counters int64
+	reported, unreported := len(scopes) > 0, ledgerUsed
 	for _, scope := range scopes {
 		var err error
-		if live, err = addUsage(live, scope.used); err != nil {
+		if counters, err = addUsage(counters, scope.used); err != nil {
 			return computeCapPlan{}, err
 		}
-		if lag, err = addUsage(lag, scope.lag); err != nil {
+		if unreported, err = addUsage(unreported, scope.unreported); err != nil {
 			return computeCapPlan{}, err
 		}
+		reported = reported && scope.reported
 	}
-	plan := computeCapPlan{ceiling: ceiling, used: max(ledgerUsed, live), lag: lag}
-	plan.remaining = max(0, ceiling-min(lag, ceiling)-plan.used)
+	plan := computeCapPlan{ceiling: ceiling, used: max(ledgerUsed, counters)}
+	if reported {
+		plan.used = unreported
+	}
+	plan.remaining = max(0, ceiling-plan.used)
 	for _, scope := range scopes {
 		target, err := addUsage(scope.used, plan.remaining)
 		if err != nil {
@@ -240,7 +252,7 @@ const capMailWindow = 24 * time.Hour
 
 // capThresholds lists the thresholds used reaches: 80% of the allowance, the
 // allowance, 80% of the ceiling when overage raises it, and the ceiling.
-func capThresholds(used int64, limits CapLimits, ceiling int64, suspended bool) []string {
+func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
 	var reached []string
 	if limits.Allowance > 0 && used >= limits.Allowance-limits.Allowance/5 {
 		reached = append(reached, CapThresholdWarning)
@@ -251,9 +263,7 @@ func capThresholds(used int64, limits CapLimits, ceiling int64, suspended bool) 
 	if limits.Overage && ceiling > limits.Allowance && used >= ceiling-ceiling/5 {
 		reached = append(reached, CapThresholdCeilingWarning)
 	}
-	// The quotas keep back the provider's counter lag, so the databases can
-	// be suspended before use reaches the ceiling.
-	if used >= ceiling || suspended {
+	if used >= ceiling {
 		reached = append(reached, CapThresholdSuspended)
 	}
 	return reached
@@ -542,6 +552,9 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if err != nil {
 		return err
 	}
+	if err := e.readUnreportedUse(ctx, databases, snapshot, now, scopes, providers); err != nil {
+		return err
+	}
 	plan, err := planComputeCaps(ceiling, snapshot.ComputeUnitSeconds, scopes)
 	if err != nil {
 		return err
@@ -616,7 +629,7 @@ func (e *CapEnforcer) recordCapEvents(ctx context.Context, subjectID string, now
 		return nil
 	}
 	used, ceiling := plan.used, plan.ceiling
-	for _, threshold := range capThresholds(used, limits, ceiling, plan.suspended()) {
+	for _, threshold := range capThresholds(used, limits, ceiling) {
 		recorded, err := store.RecordCapEvent(ctx, CapEvent{
 			SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: threshold, ReachedAt: now,
 			Used: used, Allowance: max(limits.Allowance, 1), Ceiling: max(ceiling, limits.Allowance, 1), Overage: limits.Overage,
@@ -667,15 +680,61 @@ func (e *CapEnforcer) observeScopes(ctx context.Context, databases []Database, n
 			order = append(order, observed.Scope)
 		}
 		scope.databaseIDs = append(scope.databaseIDs, database.ID)
-		if lagger, ok := provider.(ComputeCapLagger); ok {
-			if scope.lag, err = addUsage(scope.lag, lagger.CounterLagUnitSeconds(database.Spec)); err != nil {
-				return nil, nil, err
-			}
-		}
+		_, scope.reported = provider.(ComputeUseReporter)
 	}
 	scopes := make([]computeCapScope, 0, len(order))
 	for _, key := range order {
 		scopes = append(scopes, *byScope[key])
 	}
 	return scopes, providers, nil
+}
+
+// readUnreportedUse asks each reporting scope's provider for its use since
+// the ledger's coverage of it (ADR-20261025094915 amendment 2026-11-05). A
+// scope's coverage is the furthest any of its databases is collected: a
+// restore inside its source's project resolves to the source's coverage. A
+// scope the ledger has not collected this month reads from the month start,
+// or from the hour its first database was created.
+func (e *CapEnforcer) readUnreportedUse(ctx context.Context, databases []Database, snapshot UsageSnapshot, now time.Time, scopes []computeCapScope, providers map[string]ComputeCapProvider) error {
+	collected := make(map[string]time.Time, len(snapshot.Databases))
+	for _, progress := range snapshot.Databases {
+		if progress.DatabaseID != "" && progress.CollectedUntil.After(collected[progress.DatabaseID]) {
+			collected[progress.DatabaseID] = progress.CollectedUntil
+		}
+	}
+	created := make(map[string]time.Time, len(databases))
+	for _, database := range databases {
+		created[database.ID] = database.CreatedAt
+	}
+	month := monthStart(now)
+	for i := range scopes {
+		scope := &scopes[i]
+		if !scope.reported {
+			continue
+		}
+		var from, first time.Time
+		for _, id := range scope.databaseIDs {
+			if collected[id].After(from) {
+				from = collected[id]
+			}
+			if at := created[id]; !at.IsZero() && (first.IsZero() || at.Before(first)) {
+				first = at
+			}
+		}
+		if from.IsZero() {
+			from = first.UTC().Truncate(time.Hour)
+		}
+		if from.Before(month) {
+			from = month
+		}
+		if open := now.UTC().Truncate(time.Hour); from.After(open) {
+			from = open
+		}
+		used, err := providers[scope.resourceID].(ComputeUseReporter).ComputeUnitSecondsSince(ctx, scope.resourceID, from.Truncate(time.Hour))
+		if err != nil {
+			return err
+		}
+		scope.unreported = used
+	}
+	return nil
 }

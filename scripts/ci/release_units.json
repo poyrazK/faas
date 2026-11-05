@@ -5,7 +5,9 @@
       "lane": "control-plane",
       "services": [
         {"name": "apid", "readyz": "http://127.0.0.1:9101/readyz"},
-        {"name": "apid-clone-worker", "optional": true}
+        {"name": "apid-clone-worker", "optional": true},
+        {"name": "apid-data-pipeline-worker", "optional": true},
+        {"name": "apid-data-pipeline-alert-worker", "optional": true}
       ]
     },
     "meterd": {

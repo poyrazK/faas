@@ -11,6 +11,10 @@ import type { ProjectReleaseSetResponse } from './ProjectReleaseSetResponse.js';
  */
 export type ProjectEnvironmentStateResponse = {
   /**
+   * Opaque shared-secret set identity observed before qualification probes. Submit it as the project:secrets entry in secret_revision_hashes; it changes on secret additions, rotations, and deletions, but not master-key reseals. Omitted by older servers.
+   */
+  project_secrets_revision_hash?: string;
+  /**
    * Fingerprint of the environment identity, current flag version, and configuration observed before qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released workload settings hash when submitting workload_config_hashes.
    */
   feature_flags_hash?: string;
