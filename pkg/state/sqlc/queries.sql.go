@@ -70676,20 +70676,22 @@ func (q *Queries) ObjectNotificationInvocationExisting(ctx context.Context, db D
 }
 
 const objectNotificationInvocationInsert = `-- name: ObjectNotificationInvocationInsert :exec
-INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9)
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy,deployment_scope,queue_binding_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9,nullif($10::text,''),$11::uuid)
 `
 
 type ObjectNotificationInvocationInsertParams struct {
-	ID          pgtype.UUID
-	AppID       pgtype.UUID
-	AccountID   pgtype.UUID
-	Source      string
-	QueueName   string
-	Payload     []byte
-	Headers     []byte
-	DueAt       pgtype.Timestamptz
-	RetryPolicy []byte
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	Source          string
+	QueueName       string
+	Payload         []byte
+	Headers         []byte
+	DueAt           pgtype.Timestamptz
+	RetryPolicy     []byte
+	DeploymentScope string
+	QueueBindingID  pgtype.UUID
 }
 
 func (q *Queries) ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error {
@@ -70703,19 +70705,10 @@ func (q *Queries) ObjectNotificationInvocationInsert(ctx context.Context, db DBT
 		arg.Headers,
 		arg.DueAt,
 		arg.RetryPolicy,
+		arg.DeploymentScope,
+		arg.QueueBindingID,
 	)
 	return err
-}
-
-const objectNotificationLockAccount = `-- name: ObjectNotificationLockAccount :one
-SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
-`
-
-func (q *Queries) ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
-	row := db.QueryRow(ctx, objectNotificationLockAccount, id)
-	var plan string
-	err := row.Scan(&plan)
-	return plan, err
 }
 
 const objectNotificationLockApp = `-- name: ObjectNotificationLockApp :one
@@ -70729,6 +70722,32 @@ type ObjectNotificationLockAppParams struct {
 
 func (q *Queries) ObjectNotificationLockApp(ctx context.Context, db DBTX, arg ObjectNotificationLockAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, objectNotificationLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectNotificationLockQueueEnvironment = `-- name: ObjectNotificationLockQueueEnvironment :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=$1::uuid AND e.slug=$2::text
+ AND a.id=$3::uuid AND a.account_id=$4::uuid AND a.status<>'deleted'
+FOR SHARE OF e
+`
+
+type ObjectNotificationLockQueueEnvironmentParams struct {
+	EnvironmentID   pgtype.UUID
+	DeploymentScope string
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationLockQueueEnvironment(ctx context.Context, db DBTX, arg ObjectNotificationLockQueueEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectNotificationLockQueueEnvironment,
+		arg.EnvironmentID,
+		arg.DeploymentScope,
+		arg.AppID,
+		arg.AccountID,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -70779,8 +70798,8 @@ func (q *Queries) ObjectNotificationTargetInReach(ctx context.Context, db DBTX, 
 	return in_reach, err
 }
 
-const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :one
-SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled
+const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :many
+SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2
 `
 
 type ObjectNotificationTargetQueueParams struct {
@@ -70789,16 +70808,41 @@ type ObjectNotificationTargetQueueParams struct {
 	QueueName string
 }
 
-type ObjectNotificationTargetQueueRow struct {
-	ID          pgtype.UUID
-	RetryPolicy []byte
-}
-
-func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) (ObjectNotificationTargetQueueRow, error) {
-	row := db.QueryRow(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
-	var i ObjectNotificationTargetQueueRow
-	err := row.Scan(&i.ID, &i.RetryPolicy)
-	return i, err
+func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error) {
+	rows, err := db.Query(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QueueBinding{}
+	for rows.Next() {
+		var i QueueBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.QueueName,
+			&i.Mode,
+			&i.WorkloadClass,
+			&i.Enabled,
+			&i.MaxConcurrency,
+			&i.RetryPolicy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetiredAt,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
+			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows

@@ -69,6 +69,11 @@ gregale bucket delete my-api BUCKET_ID
 Deleting a non-empty bucket is refused. An app that still has buckets cannot be
 deleted; delete its buckets first.
 
+Full environment clones currently copy objects up to 5 GiB each on qualified
+S3-compatible backends. A larger selected object is refused during capture with
+`object_storage_copy_size_unsupported`, before object copying begins. Multipart
+uploads keep their separate total object limit.
+
 ### Public buckets
 
 A bucket created with `--public --serve-at /assets` serves its objects at
@@ -79,6 +84,20 @@ use at most 75% of your account's monthly request and egress ceilings, and each
 bucket serves at most 100 reads per second (bursts to 200); past either limit,
 readers get `429`. The mount path cannot change after creation. Buckets are
 private unless created public.
+
+When public mount paths overlap, the longest matching path serves the request.
+For example, `/assets/images/logo.png` uses the bucket mounted at
+`/assets/images`, regardless of when the bucket at `/assets` was created.
+
+Conditional public reads return `304` when unchanged and `412` when a
+precondition fails. An unsatisfiable range returns `416` with `Content-Range`
+when the provider supplies it. These failures do not expose provider error
+documents and are not cached.
+
+Resumed public downloads honor `If-Range`: a matching strong ETag or modification
+date permits a partial response; a stale validator returns the full current
+object. If the provider ignores the condition, the full-read fallback counts as
+another request and must fit the remaining read and egress allowances.
 
 ## Upload and download files
 
@@ -139,6 +158,10 @@ has `storage:write`. The route itself authorizes writes to its bucket, so the ke
 needs no bucket grant; each key's uploads land under its own key ID below the
 route's prefix. Send an `Idempotency-Key` header so retries cannot store a
 file twice; `GET /uploads/avatar/receipts/{id}` reports an upload's status.
+Organization-bound keys must match the app's organization, and project-limited
+keys can upload and read receipts only for apps in their allowed projects.
+Each request is one PUT and must fit the configured single-upload limit,
+including when the route's stored byte policy is larger.
 
 ## Use an S3 SDK
 
@@ -148,6 +171,10 @@ Each bucket can have S3 credentials that work with standard S3 tools:
 - region: `us-east-1`
 - path-style addressing: `https://s3.gregale.dev/{bucket}/{key}`
 - Signature Version 4 only
+
+Presigned PUT URLs from S3 SDKs can carry object metadata, tags and checksums in
+their signed query parameters. Gregale preserves that metadata and validates
+the checksum before writing; conflicting or duplicate values are rejected.
 
 Create credentials for one bucket with
 `POST /v1/apps/{app}/buckets/{bucket-id}/s3-credentials` and a body such as
@@ -293,6 +320,10 @@ gregale bucket lifecycle get my-api BUCKET_ID
 
 Rules are checked hourly. Storage-class transitions are not supported. S3 SDKs
 can use `PutBucketLifecycleConfiguration` instead.
+On GCS, older-version age starts when the generation becomes noncurrent.
+Older-version rules continue to apply after the last live object is deleted.
+Current-object age starts when the upload completes; changing tags does not
+restart its expiration clock.
 
 ## Object Lock, retention and legal holds
 
@@ -325,13 +356,23 @@ bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`) or, whe
 enabled for your account, your own enrolled keys. Run
 `gregale bucket encryption set --help` for the options.
 
+Public asset GET and HEAD responses also validate provider encryption metadata.
+An unknown or another account's KMS key, customer-supplied encryption, or ambiguous
+encryption headers returns a temporary-unavailability response before object data
+is served.
+
 ## Tags, copies and checksums
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
+  On GCS, a concurrent object replacement or metadata change can return a
+  conflict; retry the tag operation against the current object. Each GCS tag
+  write uses two requests from the native request allowance.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
   the S3 credential a copy-source grant on it (`gregale bucket copy-source`) and
   name the source by its bucket ID, as `x-amz-copy-source: <source-bucket-id>/<key>`;
-  a source named by its bucket name answers `NoSuchKey`.
+  a source named by its bucket name answers `NoSuchKey`. A project-limited API
+  key may grant copy access only when both buckets' apps are in its allowed
+  projects.
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
@@ -354,7 +395,11 @@ gregale bucket notifications set my-api BUCKET_ID notifications.json
 ```
 
 Notifications and compute triggers run app code, so they need a paid plan;
-Free answers `402`, like other triggers.
+Free answers `402`, like other triggers. Company apps use the organization's
+plan, including its queue depth limit, after resource ownership is adopted.
+Queue destinations must have a unique enabled queue name across the app's
+environments. Notifications enter the captured queue's environment and retain
+that destination if the queue is renamed.
 
 ## Browser access (CORS)
 

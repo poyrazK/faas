@@ -2707,6 +2707,19 @@ const ObjectOwnedCleanupBucketBatch = 20
 
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
+// Operator usage evidence is bounded independently of customer plan allowances.
+// Access-log identities remain in memory only for one complete export attempt.
+const (
+	MaxObjectStorageUsageReportBytes       = 4 << 20
+	MaxObjectStorageUsageReportRows        = 10_000
+	MaxObjectStorageUsagePriceBytes        = 128
+	MaxObjectStorageAccessLogObjects       = 10_000
+	MaxObjectStorageAccessLogBytes         = 64 << 20
+	MaxObjectStorageAccessLogRecords       = 1_000_000
+	MaxObjectStorageAccessLogLineBytes     = 1 << 20
+	MaxObjectStorageAccessLogCoverageBytes = 8 << 20
+)
+
 // Permanent immutable deletion is a single bounded provider attempt. Its
 // durable public selector makes retry safe after an uncertain acknowledgment.
 const ObjectVersionDeleteOperationTimeout = time.Minute

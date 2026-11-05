@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -197,10 +198,7 @@ func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, r
 			return false
 		}
 	}
-	limit := min(route.MaxBytes, h.registry.MaxUploadBytes)
-	if !route.Encryption.Empty() {
-		limit = min(limit, h.registry.MaxSinglePutBytes)
-	}
+	limit := min(route.MaxBytes, h.registry.MaxUploadBytes, h.registry.MaxSinglePutBytes)
 	status, code, detail := 0, "", ""
 	switch {
 	case !allowedUploadContentType(route.AllowedContentTypes, c.ContentType) || ValidateContentType(c.ContentType) != nil:
@@ -208,7 +206,7 @@ func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, r
 	case r.ContentLength < 0:
 		status, code, detail = http.StatusLengthRequired, "content_length_required", "Content-Length is required for bounded uploads"
 	case r.ContentLength > limit:
-		status, code, detail = http.StatusRequestEntityTooLarge, "size_limit_exceeded", "upload exceeds the route byte limit"
+		status, code, detail = http.StatusRequestEntityTooLarge, "size_limit_exceeded", fmt.Sprintf("upload exceeds the route byte limit: limit %d bytes, observed %d; see %s", limit, r.ContentLength, api.ObjectStorageLimitsDocsURL)
 	}
 	if status == 0 {
 		return true
@@ -377,12 +375,15 @@ func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app
 	}
 	sum := api.HashAPIKey(token)
 	acct, key, err := h.authenticator.AuthenticateKey(r.Context(), sum)
-	if err != nil || acct.ID != app.AccountID {
+	if err != nil || acct.ID != app.AccountID || key.OrgID != "" && key.OrgID != app.OrgID {
 		uploadProblem(w, http.StatusUnauthorized, "the presented API key is not valid for this app")
 		return state.Account{}, state.APIKey{}, nil, false
 	}
 	if !acct.Active() || key.AppID != "" && key.AppID != app.ID || !slices.Contains(key.Scopes, api.ScopeAdmin) && !slices.Contains(key.Scopes, api.ScopeStorageWrite) {
 		uploadProblem(w, http.StatusForbidden, "an active account and storage write permission for this app are required")
+		return state.Account{}, state.APIKey{}, nil, false
+	}
+	if !h.authorizeUploadProjects(w, r, app, key) {
 		return state.Account{}, state.APIKey{}, nil, false
 	}
 	return acct, key, sum, true
