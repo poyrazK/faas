@@ -73253,6 +73253,13 @@ CREATE INDEX custom_domains_org_id_idx ON public.custom_domains USING btree (org
 
 
 --
+-- Name: custom_domains_recent_verified_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_recent_verified_idx ON public.custom_domains USING btree (verified_at DESC) WHERE (verified_at IS NOT NULL);
+
+
+--
 -- Name: custom_domains_redirect_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 

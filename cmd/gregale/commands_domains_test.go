@@ -14,6 +14,7 @@ package main_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ import (
 func TestDomainsVerify_HappyPath(t *testing.T) {
 	main.ResetJSONOut(t)
 	f := main.AuthedFakeAPI(t,
-		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2026-09-18T00:00:00Z","cert_sans":["app.example.com"]}`,
+		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2099-09-18T00:00:00Z","cert_sans":["app.example.com"]}`,
 		http.StatusOK,
 	)
 	if code := main.CmdDomainsVerify([]string{"app.example.com"}); code != 0 {
@@ -35,6 +36,34 @@ func TestDomainsVerify_HappyPath(t *testing.T) {
 	}
 	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/domains/app.example.com/verify" {
 		t.Errorf("route = %s %s, want POST /v1/domains/app.example.com/verify", (*f.SawMethod()), (*f.SawPath()))
+	}
+}
+
+func TestDomainsVerify_OwnershipVerifiedCertificatePending(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", jsonMode), func(t *testing.T) {
+			main.ResetJSONOut(t)
+			previousOut := *main.OsStdout
+			var out bytes.Buffer
+			*main.OsStdout = &out
+			t.Cleanup(func() { *main.OsStdout = previousOut })
+			main.AuthedFakeAPI(t, `{"domain":"app.example.com","app_id":"app-1","verified":true,"cert_status":"pending"}`, http.StatusOK)
+			args := []string{"domains", "verify", "app.example.com"}
+			if jsonMode {
+				args = append([]string{"--json"}, args...)
+			}
+			if code := main.Run(args); code != 1 {
+				t.Fatalf("pending TLS exit = %d, want 1", code)
+			}
+			if jsonMode {
+				var got api.CustomDomainResponse
+				if err := json.Unmarshal(out.Bytes(), &got); err != nil || !got.Verified || got.CertStatus != "pending" {
+					t.Fatalf("pending JSON = %s, %v", out.String(), err)
+				}
+			} else if !strings.Contains(out.String(), "certificate is still pending") {
+				t.Fatalf("missing TLS warning: %s", out.String())
+			}
+		})
 	}
 }
 

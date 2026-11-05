@@ -1418,8 +1418,15 @@ from custom_domains where domain = $1;
 select slug from apps limit $1;
 
 -- name: KnownRouteCustomDomains :many
--- Every verified custom domain, for the same preload as KnownRouteAppSlugs.
-select domain::text from custom_domains where verified_at is not null limit $1;
+-- Preload verified claims and concrete admitted wildcard hosts. Patterns only
+-- qualify for a separately bounded recovery budget, never a free lookup.
+select host::text from (
+ select domain::text as host from custom_domains where verified_at is not null
+ union all
+ select h.host::text as host from custom_domain_tls_hosts h
+ join custom_domains d on d.domain=h.wildcard_domain
+ where d.verified_at is not null and d.domain like '*.%'
+) known limit $1;
 
 -- name: ListDomainsForApp :many
 select domain, app_id, challenge_token, verified_at, environment_id
@@ -28459,6 +28466,20 @@ SELECT EXISTS (
 -- Membership hints only: certificate admission still checks the live claim.
 SELECT h.host::text AS host FROM custom_domain_tls_hosts h
 WHERE h.host > sqlc.arg(after_host)::text::citext ORDER BY h.host LIMIT sqlc.arg(page_size)::integer;
+
+-- name: ListRecentCustomDomainTLSHosts :many
+-- Admission hints only; callers must still authorize the live claim.
+SELECT DISTINCT h.host::text AS host
+FROM (SELECT host FROM custom_domain_tls_admissions ORDER BY admitted_at DESC LIMIT sqlc.arg(row_limit)::integer) recent
+JOIN custom_domain_tls_hosts h ON h.host=recent.host
+JOIN custom_domains d ON d.domain=h.wildcard_domain
+WHERE d.verified_at IS NOT NULL
+UNION
+SELECT host FROM (
+ SELECT d.domain::text AS host FROM custom_domains d
+ WHERE d.verified_at >= now() - interval '2 minutes'
+ ORDER BY d.verified_at DESC LIMIT sqlc.arg(row_limit)::integer
+) verified;
 
 -- name: LockCustomDomainTLSAdmissionClaim :one
 SELECT (d.verified_at IS NOT NULL)::boolean AS verified, d.app_id::text AS app_id,
