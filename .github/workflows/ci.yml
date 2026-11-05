@@ -2612,6 +2612,7 @@ jobs:
       GO_TEST_MEMLIMIT: 3GiB
       GOMAXPROCS: 2
       DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
       FAAS_RESILIENCE_DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
       FAAS_RESILIENCE_REDIS_URL: redis://127.0.0.1:6379
     steps:
