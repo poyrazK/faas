@@ -50,9 +50,10 @@ func (a *appErrorsReceiver) RecordHTTPIssue(ctx context.Context, req *apidpb.Inc
 		return nil, status.Error(codes.InvalidArgument, "HTTP issue rejected")
 	}
 	result := "accepted"
-	if outcome == httpIssueDuplicate {
+	switch outcome {
+	case httpIssueDuplicate:
 		result = "duplicate"
-	} else if outcome == httpIssueSkipped {
+	case httpIssueSkipped:
 		result = "retry_skipped"
 	}
 	a.ops.ObserveIssueEvent(result)
