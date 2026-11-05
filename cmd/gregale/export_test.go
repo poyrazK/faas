@@ -2715,6 +2715,11 @@ var CompareTestStagedLoadRelative = compareTestStagedLoadRelative
 var CompareTestGateErrorRate = compareTestGateErrorRate
 var CompareRepeatedTestGateErrorRate = compareRepeatedTestGateErrorRate
 
+// Profile warnings in doctor --strict and deploy --plan (#6640).
+var CmdDoctor = cmdDoctor
+var ResolveSimpleAppPlanWithWarnings = resolveSimpleAppPlanWithWarnings
+var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
+
 // Deploy preflights (#6625, #6631).
 var PreflightDeploySessionStorage = preflightDeploySessionStorage
 var SourceCapLookupBudgets = &sourceCapLookupBudgets
