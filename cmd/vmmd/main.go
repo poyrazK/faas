@@ -413,7 +413,13 @@ func defaultDeps() runDeps {
 		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
 		capacityInterval:    durationPtr(CapacityInterval),
 		prepareJailHelper: func(jailer *fcvm.JailerVMM) error {
-			return jailer.PrepareJailHelper()
+			if err := jailer.PrepareJailHelper(); err != nil {
+				return err
+			}
+			// Best effort: a launch stages on demand and falls back to the
+			// installed jailer and firecracker (ADR-20261105100000).
+			jailer.PrepareResidentBinaries()
+			return nil
 		},
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
