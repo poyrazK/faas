@@ -713,11 +713,25 @@ func (q *Queries) ReadMCPAccessPolicyAppAccount(ctx context.Context, db DBTX, ap
 }
 
 const readMCPAccessPolicyRules = `-- name: ReadMCPAccessPolicyRules :many
-SELECT id, account_id, app_id, match_host, match_path, match_methods,
-       match_headers, priority, enabled, kind, action, expires_at, match_expr, mode
-FROM edge_rules WHERE account_id = $1::uuid AND kind = 'jwt'
-ORDER BY id
+SELECT r.id, r.account_id, r.app_id, r.match_host, r.match_path, r.match_methods,
+       r.match_headers, r.priority, r.enabled, r.kind, r.action, r.expires_at, r.match_expr, r.mode
+FROM edge_rules r
+WHERE r.account_id = $1::uuid AND r.kind = 'jwt'
+  AND (r.app_id = $2::uuid
+       OR (lower(btrim(r.match_host)) <> '@app'
+           AND EXISTS (SELECT 1 FROM apps ra
+                        WHERE ra.id = r.app_id AND ra.status <> 'deleted'
+                          AND (SELECT ro.id FROM orgs ro WHERE ro.id = ra.org_id AND NOT ro.personal_org)
+                              IS NOT DISTINCT FROM
+                              (SELECT so.id FROM apps sa JOIN orgs so ON so.id = sa.org_id AND NOT so.personal_org
+                                WHERE sa.id = $2::uuid))))
+ORDER BY r.id
 `
+
+type ReadMCPAccessPolicyRulesParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
 
 type ReadMCPAccessPolicyRulesRow struct {
 	ID           pgtype.UUID
@@ -736,8 +750,13 @@ type ReadMCPAccessPolicyRulesRow struct {
 	Mode         string
 }
 
-func (q *Queries) ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ReadMCPAccessPolicyRulesRow, error) {
-	rows, err := db.Query(ctx, readMCPAccessPolicyRules, accountID)
+// The account's JWT rules the gateway can apply to the app's hosts (ADR-091
+// amendment 2026-11-02, review round 8): the app's own, and those of its live
+// sibling apps in the same owner scope (the company organization, or none for
+// a personal app) other than "@app" ones. The CLI reads the same set from
+// GET /v1/apps/{slug}/edge-rules?covering=true.
+func (q *Queries) ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, arg ReadMCPAccessPolicyRulesParams) ([]ReadMCPAccessPolicyRulesRow, error) {
+	rows, err := db.Query(ctx, readMCPAccessPolicyRules, arg.AccountID, arg.AppID)
 	if err != nil {
 		return nil, err
 	}

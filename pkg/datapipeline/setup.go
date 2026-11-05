@@ -24,6 +24,13 @@ type SetupRequest struct {
 	AuthAppID          string
 }
 
+func normalizeSetupIDs(r SetupRequest) SetupRequest {
+	r.SourceConnectionID = canonicalID(r.SourceConnectionID)
+	r.DatabaseID = canonicalID(r.DatabaseID)
+	r.AuthAppID = canonicalID(r.AuthAppID)
+	return r
+}
+
 // DataAPIPlan contains only metadata. Credentials remain in managed bindings
 // and the ordinary encrypted app-secret store.
 type DataAPIPlan struct {
@@ -73,6 +80,7 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if err := s.admit(ctx, account); err != nil {
 		return Setup{}, err
 	}
+	r = normalizeSetupIDs(r)
 	if s.PlanMirror == nil || s.EnsureMirror == nil || s.MirrorState == nil {
 		return Setup{}, ErrUnavailable
 	}
@@ -105,6 +113,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if !errors.Is(err, ErrNotFound) {
 		return Setup{}, err
 	}
+	if r.DatabaseID != "" {
+		state, err := s.MirrorState(ctx, account, r.DatabaseID)
+		if err != nil {
+			return Setup{}, err
+		}
+		if state == "deleting" || state == "deleted" {
+			return Setup{}, ErrConflict
+		}
+	}
 	check, err := s.Store.Check(ctx, account, r.SourceConnectionID)
 	if err != nil {
 		return Setup{}, ErrCheckRequired
@@ -128,7 +145,7 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 		}
 		setup.DataAPIPlan.IntentID = uuid.NewString()
 	}
-	setup.MirrorName = r.Name + "-mirror-" + setup.ID[:8]
+	setup.MirrorName = setupMirrorName(r.Name, setup.ID)
 	if r.DatabaseID == "" {
 		setup.MirrorPlan, err = s.PlanMirror(ctx, account, r.Region)
 		if err != nil {
@@ -136,6 +153,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 		}
 	}
 	return store.EnqueueSetup(ctx, setup)
+}
+
+func setupMirrorName(name, id string) string {
+	generated := name + "-mirror-" + id[:8]
+	// Pipeline slugs may start with a digit; managed database names may not.
+	if name[0] >= '0' && name[0] <= '9' {
+		generated = "p-" + generated
+	}
+	return generated
 }
 
 func sourceSetupCheck(c api.DataConnectionCheck, tables []string) error {
@@ -156,17 +182,18 @@ func sourceSetupCheck(c api.DataConnectionCheck, tables []string) error {
 
 // SetupTick advances a single persisted step. Remote/provider calls occur only
 // after the claim transaction commits. IDs and definitions survive lost replies.
-func (s *Service) SetupTick(ctx context.Context) error {
+// The result reports whether a job was claimed, allowing the worker to drain it.
+func (s *Service) SetupTick(ctx context.Context) (bool, error) {
 	store, err := s.setupStore()
 	if err != nil {
-		return err
+		return false, err
 	}
 	job, err := store.ClaimSetup(ctx, uuid.NewString())
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	op, cancel := context.WithTimeout(ctx, api.DataPipelineOperationTimeout)
 	defer cancel()
@@ -174,14 +201,14 @@ func (s *Service) SetupTick(ctx context.Context) error {
 	if err = s.admit(op, job.AccountID); err == nil {
 		current, getErr := store.Setup(op, job.AccountID, job.ID)
 		if getErr != nil || current.Revision != job.Revision || current.LeaseToken != job.LeaseToken || !current.LeaseUntil.After(time.Now()) {
-			return ErrConflict
+			return true, ErrConflict
 		}
 		err = s.advanceSetup(op, &next)
 	}
 	if err != nil {
 		next.State, next.Reason = "blocked", setupErrorCode(err)
 	}
-	return store.FinishSetup(ctx, job, next)
+	return true, store.FinishSetup(ctx, job, next)
 }
 
 func (s *Service) advanceSetup(ctx context.Context, job *Setup) error {

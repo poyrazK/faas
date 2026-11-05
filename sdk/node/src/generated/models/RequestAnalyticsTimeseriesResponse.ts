@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RequestAnalyticsTelemetryGap } from './RequestAnalyticsTelemetryGap.js';
 import type { RequestAnalyticsTimeseriesPoint } from './RequestAnalyticsTimeseriesPoint.js';
 import type { RequestAnalyticsTimeseriesSeries } from './RequestAnalyticsTimeseriesSeries.js';
 /**
@@ -47,5 +48,13 @@ export type RequestAnalyticsTimeseriesResponse = {
    * UTC time when the series response was assembled.
    */
   as_of: string;
+  /**
+   * Same as on the analytics overview: true when every gateway delivered the series window, judged up to two minutes before `as_of`.
+   */
+  telemetry_complete?: boolean;
+  /**
+   * Why requests in the series window may be missing. Empty or absent when the window is complete.
+   */
+  telemetry_gaps?: Array<RequestAnalyticsTelemetryGap>;
 };
 

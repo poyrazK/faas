@@ -29,7 +29,10 @@ func enrollRehearsalApp(t *testing.T, fx *Fixture) state.App {
 }
 
 // testRehearsalAppLogsStayInsideTheRun pins that no log drain worker starts
-// for a rehearsal-enrolled app, while an ordinary app's drain still does.
+// for a rehearsal-enrolled app, while an ordinary app's drain still does. The
+// gateway reads its drains from the consumer snapshot wherever the store has
+// one, so the snapshot must leave the app out too (logs audit 2026-10-31 D7);
+// deliveredAppLogDrains checks both reads.
 func testRehearsalAppLogsStayInsideTheRun(t *testing.T, fx *Fixture) {
 	t.Helper()
 	enrolled := enrollRehearsalApp(t, fx)
@@ -42,14 +45,10 @@ func testRehearsalAppLogsStayInsideTheRun(t *testing.T, fx *Fixture) {
 		}
 		ids[app] = drain.ID
 	}
-	drains, err := fx.Store.ListEnabledAppLogDrains(fx.Ctx)
-	if err != nil {
-		t.Fatal(err)
+	if _, ok := fx.Store.(state.ApplicationStandardLogInventoryStore); !ok {
+		t.Fatal("the store has no consumer snapshot; both stores implement it")
 	}
-	seen := map[string]bool{}
-	for _, d := range drains {
-		seen[d.ID] = true
-	}
+	seen := deliveredAppLogDrains(t, fx)
 	if !seen[ids[fx.App.ID]] || seen[ids[enrolled.ID]] {
 		t.Fatalf("enabled drains: ordinary=%v rehearsal=%v; want true,false", seen[ids[fx.App.ID]], seen[ids[enrolled.ID]])
 	}

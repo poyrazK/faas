@@ -13,8 +13,9 @@ func TestParseKernelOverlay(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{raw: "", want: ""},
+		{raw: "", want: api.BuildKitSnapshotterAuto},
 		{raw: "false", want: ""},
+		{raw: "0", want: ""},
 		{raw: "true", want: api.BuildKitSnapshotterAuto},
 		{raw: " 1 ", want: api.BuildKitSnapshotterAuto},
 		{raw: "overlayfs", wantErr: true},

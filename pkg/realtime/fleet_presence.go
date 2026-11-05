@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -72,6 +73,63 @@ func (m *Manager) upsertFleetPresence(ctx context.Context, c *connection, channe
 	return updated, members, nil
 }
 
+// fleetPresenceWriteInterval spaces one member's fleet presence writes. Each
+// write is a control-plane Postgres transaction, and a client may change its
+// state 10 times a second; updates in between still reach local subscribers
+// and other nodes at once (relayed with their timestamp, which reconciliation
+// prefers over an older stored row), and one trailing write stores the latest.
+const fleetPresenceWriteInterval = time.Second
+
+// claimFleetPresenceWrite reports whether this update writes the fleet
+// presence row now, or else how long until the trailing write may run.
+func (m *Manager) claimFleetPresenceWrite(key channelKey, connectionID string, now time.Time) (bool, time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	member := m.presenceMembers[key][connectionID]
+	if member == nil {
+		return true, 0
+	}
+	if since := now.Sub(member.fleetWrittenAt); since < fleetPresenceWriteInterval {
+		return false, fleetPresenceWriteInterval - since
+	}
+	member.fleetWrittenAt = now
+	return true, 0
+}
+
+// knownPresenceConnections is the member's fleet connection count as last
+// stored, for an update that skips the write that would return it.
+func (m *Manager) knownPresenceConnections(key channelKey, memberID string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if member, ok := m.fleetPresence[key][memberID]; ok && member.ConnectionCount > 0 {
+		return member.ConnectionCount
+	}
+	return 1
+}
+
+// flushFleetPresence stores a member's latest state after coalesced updates.
+// A failed write is repaired by the member's next renewal.
+func (m *Manager) flushFleetPresence(c *connection, channel, memberID string) {
+	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+	m.mu.Lock()
+	member := m.presenceMembers[key][c.info.ID]
+	if member != nil {
+		member.fleetFlushPending = false
+	}
+	if m.conns[c.info.ID] != c || member == nil || !member.announced || member.memberID != memberID {
+		m.mu.Unlock()
+		return
+	}
+	member.fleetWrittenAt = time.Now()
+	state := append(json.RawMessage(nil), member.state...)
+	principal := ""
+	if member.presenceScope == "principal" {
+		principal = c.info.Principal
+	}
+	m.mu.Unlock()
+	_, _, _ = m.upsertFleetPresence(m.ctx, c, channel, memberID, principal, state)
+}
+
 func (m *Manager) renewFleetPresence(ctx context.Context, c *connection, channel string) {
 	if m.cfg.FleetClient == nil {
 		return
@@ -87,6 +145,20 @@ func (m *Manager) renewFleetPresence(ctx context.Context, c *connection, channel
 	memberID := member.memberID
 	presenceScope := member.presenceScope
 	m.mu.RUnlock()
+	if renewer, ok := m.cfg.FleetClient.(ManagedRealtimePresenceRenewClient); ok && !m.presenceRenewUnsupported.Load() {
+		renewCtx, cancel := context.WithTimeout(ctx, realtimeChannelRouteReportTimeout)
+		renewed, err := renewer.RenewPresence(renewCtx, c.info.EndpointID, channel, c.info.ID)
+		cancel()
+		switch {
+		case err == nil && renewed:
+			return
+		case errors.Is(err, ErrPresenceRenewUnsupported):
+			m.presenceRenewUnsupported.Store(true)
+		case err != nil:
+			m.reportFleetFailure(err)
+			return // the next renewal tries again, within the lease
+		}
+	}
 	principal := ""
 	if presenceScope == "principal" {
 		principal = c.info.Principal
@@ -95,6 +167,17 @@ func (m *Manager) renewFleetPresence(ctx context.Context, c *connection, channel
 		return
 	}
 }
+
+// ManagedRealtimePresenceRenewClient is an optional fleet client extension
+// that renews a live presence lease without a snapshot (ADR-1323, amendment
+// of 2026-11-03). Renewed false means the lease is gone; the node upserts it.
+type ManagedRealtimePresenceRenewClient interface {
+	RenewPresence(ctx context.Context, endpointID, channel, connectionID string) (bool, error)
+}
+
+// ErrPresenceRenewUnsupported is returned by a fleet client whose apid
+// predates renewals; the node then upserts as before.
+var ErrPresenceRenewUnsupported = errors.New("realtime: presence renewal unsupported")
 
 func (m *Manager) deleteFleetPresence(ctx context.Context, c *connection, channel string, memberID string) {
 	if m.cfg.FleetClient == nil {

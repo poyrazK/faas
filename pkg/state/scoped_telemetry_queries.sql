@@ -61,7 +61,7 @@ SELECT c.id::text AS deployment_id,c.scope,c.status,
 FROM candidate c;
 
 -- name: ScopedRouteMonitorServingDeployments :many
-SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps
+SELECT d.id::text AS id,d.commit_sha,d.source_url,d.source_root,d.created_at,d.canary_step_started_at,d.rollout_completed_at,d.traffic_percent,d.canary_step,d.canary_total_steps,d.promoted_at
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted'
 AND d.status='live' AND d.deleted_at IS NULL AND d.traffic_percent>0
@@ -101,3 +101,8 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND request_id=sqlc.arg(request_id):
 -- name: WriteEnvironmentBudgetReceipt :exec
 INSERT INTO environment_route_budget_receipts(account_id,request_id,app_id,request_hash,response)
 VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(request_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(request_hash)::text,sqlc.arg(response)::jsonb);
+
+-- name: ReadEnvironmentBudgetReceiptForApp :one
+SELECT request_hash,response FROM environment_route_budget_receipts
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND request_id=sqlc.arg(request_id)::uuid;

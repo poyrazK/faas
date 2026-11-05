@@ -219,6 +219,24 @@ healthy windows produce healthy evidence. Missing, sparse or mixed evidence is
 unknown and holds an enforced rollout. The stable comparison must be the sole
 other live serving deployment in the same scope.
 
+A 5xx the gateway returns because a Gregale dependency could not admit the
+request is not counted for either deployment: node admission, traffic policy,
+rate-limit or revocation state was unavailable, and neither deployment caused
+it. Deadlines, open circuits, capacity refusals and failed wakes or boots still
+count, because a candidate can cause each of them.
+
+Route evidence does not depend on per-route metrics: request telemetry labels
+routes whether or not the app turned on per-route Prometheus series. Each app
+has 50 route labels per gateway; the routes a guard or a production monitor
+selects always keep theirs, so a rarely called selected route is never folded
+into `__route_other__`.
+
+Requests sent to a deployment's own URL (its preview URL, an alias URL or a
+revision pin) are not evidence, so smoke tests against a canary's preview URL
+do not change its verdict. A response that stays open past its request budget,
+such as a WebSocket or an event stream, counts as a request and can count as an
+error, but its duration is left out of latency.
+
 Coverage is explicitly `observed_only`: the system cannot establish how many
 requests were dropped before telemetry storage. The ingestion allowance helps
 with normal publishing delay but does not guarantee completeness. This compares
@@ -282,8 +300,14 @@ flag increments the revision and requires fresh observations.
 Percentiles are estimates weighted by collapsed telemetry request counts. Each
 publisher bucket contributes its inclusive upper-bound latency with its request
 weight; the original individual latency distribution cannot be recovered. Measurements
-include all observed statuses and the gateway's end-to-end request latency,
-including cold boot time. They retain the `observed_only` coverage limitation and
+include all observed statuses and the gateway's end-to-end request latency of
+requests that did not cold boot. A scale-to-zero canary with a small traffic
+share cold boots more often than the stable deployment, so counting cold boots
+would make a healthy candidate look slower. Each window reports the warm
+requests it ranked as `latency_requests`, and the 100-request minimum applies to
+that count; latency investigations and examples use the same warm requests.
+Safe Deploy's circuit breaker still compares cold-boot p95 between the two
+deployments. Measurements retain the `observed_only` coverage limitation and
 do not certify a latency SLO.
 
 ## Explain a saved rollout decision

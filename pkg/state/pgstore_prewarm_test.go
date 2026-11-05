@@ -173,3 +173,14 @@ func TestPgStorePrewarmExpiryTerminalizesPendingRows(t *testing.T) {
 		t.Fatalf("missing ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
 	}
 }
+
+func TestPgStoreActivePrewarmFloors(t *testing.T) {
+	s, ctx := pgStore(t)
+	apps := make([]state.App, 3)
+	for i := range apps {
+		suffix := string(rune('a' + i))
+		accountID, appID, _ := seedLiveDeploy(t, s, ctx, "prewarm-floors-"+suffix, suffix)
+		apps[i] = state.App{ID: appID, AccountID: accountID}
+	}
+	testActivePrewarmFloors(t, s, apps, uuid.NewString())
+}

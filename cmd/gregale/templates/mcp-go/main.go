@@ -181,7 +181,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			status = "degraded"
 		}
 		writeJSON(w, statusCode, map[string]any{
-			"ok": ready, "status": status, "instance_id": strings.TrimSpace(os.Getenv("FAAS_INSTANCE_ID")),
+			"ok": ready, "status": status, "instance_id": strings.TrimSpace(r.Header.Get("X-Faas-Instance-Id")),
 			"catalog_revision": revision, "catalog_sha256": digest,
 		})
 		return
@@ -222,6 +222,18 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 	var request rpcRequest
 	if err := json.Unmarshal(body, &request); err != nil || request.JSONRPC != "2.0" || request.Method == "" {
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request", http.StatusBadRequest)
+		return
+	}
+	version := r.Header.Get("MCP-Protocol-Version")
+	if version == "" {
+		version = currentProtocol
+	}
+	if len(r.Header.Values("MCP-Protocol-Version")) > 1 || (version != currentProtocol && (version != legacyProtocol || !config.Legacy)) {
+		writeRPCError(w, request.ID, -32600, "unsupported MCP protocol version", http.StatusBadRequest)
+		return
+	}
+	if err := validateMCPHeaders(r.Header, request, version); err != nil {
+		writeRPCError(w, request.ID, -32020, "MCP headers do not match the request", http.StatusBadRequest)
 		return
 	}
 	if len(request.ID) > 0 {
@@ -293,14 +305,6 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request ID", http.StatusBadRequest)
 		return
 	}
-	version := r.Header.Get("MCP-Protocol-Version")
-	if version == "" {
-		version = currentProtocol
-	}
-	if version != currentProtocol && version != legacyProtocol {
-		writeRPCError(w, request.ID, -32600, "unsupported MCP protocol version", http.StatusBadRequest)
-		return
-	}
 	w.Header().Set("MCP-Protocol-Version", version)
 	if request.Method == "subscriptions/listen" {
 		serveTaskSubscription(w, r, request.ID, request.Params, version, auth, identity, tasks)
@@ -314,7 +318,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			return
 		}
 		writeRPCResult(w, request.ID, map[string]any{
-			"supportedVersions": []string{currentProtocol, legacyProtocol},
+			"supportedVersions": supportedMCPVersions(config.Legacy),
 			"capabilities":      serverCapabilities(tasks, true),
 		})
 	case "initialize":
@@ -322,7 +326,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		_ = json.Unmarshal(request.Params, &params)
-		if params.ProtocolVersion != currentProtocol && params.ProtocolVersion != legacyProtocol {
+		if params.ProtocolVersion != currentProtocol && (params.ProtocolVersion != legacyProtocol || !config.Legacy) {
 			writeRPCError(w, request.ID, -32602, "unsupported protocol version", http.StatusBadRequest)
 			return
 		}

@@ -50,7 +50,7 @@ func setupTick(t *testing.T, service *Service, store *PostgresStore, id string) 
 	if _, err := store.pool.Exec(t.Context(), `UPDATE data_pipeline_setups SET retry_at=clock_timestamp() WHERE id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.SetupTick(t.Context()); err != nil {
+	if claimed, err := service.SetupTick(t.Context()); err != nil || !claimed {
 		t.Fatal(err)
 	}
 	var account string

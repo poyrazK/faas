@@ -1087,13 +1087,32 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// ADR-194 only the queue path applied it, because it was the only
 		// path that had loaded it; a concurrent_requests app's
 		// max_instances was silently ignored by this trigger.
-		dec = decideTargets(limits{
-			MaxConcurrency:    maxInstances,
-			Concurrency:       conc,
-			LastScaleOutAt:    lastScaleOut,
-			ScaleOutCooldownS: policy.ScaleOutCooldownS,
-			Now:               now,
-		}, obs)
+		decideNow := func() Decision {
+			return decideTargets(limits{
+				MaxConcurrency:    maxInstances,
+				Concurrency:       conc,
+				LastScaleOutAt:    lastScaleOut,
+				ScaleOutCooldownS: policy.ScaleOutCooldownS,
+				Now:               now,
+			}, obs)
+		}
+		dec = decideNow()
+		// ADR 20261103094355: the app list can carry an older scale-out
+		// stamp than the row, which would end a cooldown early. Before an
+		// admission the cooldown could have held, read the stamp itself.
+		if conc > 0 && policy.ScaleOutCooldownS > 0 && dec.Outcome != OutcomeCooldownHeld && (dec.ShouldAdmit || workerQueuePath) {
+			if stamps, ok := t.appStore.(state.AppScaleOutStampReader); ok {
+				stamp, err := stamps.AppScaleOutStamp(ctx, app.ID)
+				if err != nil {
+					t.log.Warn("targets: read scale-out stamp", "app_id", app.ID, "err", err)
+					continue
+				}
+				if stamp != nil && stamp.After(lastScaleOut) {
+					lastScaleOut = *stamp
+					dec = decideNow()
+				}
+			}
+		}
 		// Always emit the decision metric so the rate of
 		// no_signal vs admit vs cooldown_held is observable.
 		if t.metrics != nil {

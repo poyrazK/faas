@@ -938,6 +938,9 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
 	RetryMax            *int            `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int            `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove them from the cron.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // SchedulePolicy controls overlap and missed-run handling for recurring work.
@@ -1259,6 +1262,9 @@ type UsageSummaryResponse struct {
 	OverageGBHours  float64                        `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64                          `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
 	Executions      *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
+	// QuietPausedGBHours is quiet-paused time that was not billed; not part
+	// of UsedGBHours. Zero until unbilled quiet pause reaches the account.
+	QuietPausedGBHours float64 `json:"quiet_paused_gb_hours,omitempty"`
 }
 
 // AccountUsageResponse is the account-level usage projection. Optional

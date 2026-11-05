@@ -648,7 +648,9 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 		} else if CheckQuota(acct.Plan, used).Action != "" {
 			used = l.freePeriodUsageGB(ctx, acct, now, used)
 		}
-		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
+		params := QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands,
+			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(l.pusher, acct.Plan)}
+		if _, err := params.Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
 			if errors.Is(err, state.ErrNotFound) {
@@ -676,12 +678,11 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 	// apid bills object storage in daily steps under the same cap
 	// (ADR-20261027093220); a part cent counts as reached. A pending step's
 	// reservation is an upper bound, not a charge, so it never parks.
-	objectStorage, _, err := liveObjectStorageCharge(ctx, l.store, acct.ID, now)
+	objectStorageCents, err := SpendCapObjectStorageCents(ctx, l.store, acct.ID, now)
 	if err != nil {
 		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
 		return
 	}
-	objectStorageCents := objectStorage/api.MillicentsPerCent + min(objectStorage%api.MillicentsPerCent, 1)
 	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
 	holds, hasHolds := l.store.(state.SpendCapHoldStore)
 	if observed < capCents {

@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -676,6 +677,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (in-memory resident accounting). The lv-fc percentage shells out to
 	// `lvs`; on dev boxes where lvs is missing, the closure returns 0 and
 	// the gauge degrades to "no data" (no error, no spike).
+	// residencyReader is the instance stats reader once it exists; a scrape
+	// before then keeps the gauge's previous value.
+	var residencyReader atomic.Pointer[instancestats.Reader]
 	dashGauges := fcvm.NewDashboardGauges(fcvm.DashboardMetrics{
 		ListSnapshotStats: func(ctx context.Context) ([]fcvm.SnapshotStat, error) {
 			rows, err := store.ListLiveSnapshotStats(ctx)
@@ -688,8 +692,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return out, nil
 		},
+		// ADR 20261102072403: on a multi-node fleet this scheduler reports
+		// its own node, every owner's instances over that node's ceiling;
+		// its ledger alone summed its own bookings across every node.
 		ResidentBytes: func(_ context.Context) (int64, error) {
-			return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+			if ownerNodeID == "" {
+				return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+			}
+			if r := residencyReader.Load(); r != nil {
+				if mb, ok := r.ReservedMB(ownerNodeID, time.Now()); ok {
+					return int64(mb) << 20, nil
+				}
+			}
+			return 0, errNodeResidencyUnmeasured
+		},
+		CeilingMB: func(_ context.Context) (int, error) {
+			for _, n := range nodeRegistry.Snapshot() {
+				if n.ID == ownerNodeID {
+					return n.AdmissionCeilingMB, nil
+				}
+			}
+			return 0, nil
 		},
 		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
@@ -789,8 +812,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
+	// ADR-20261101215228: the values that shape a listed app's CPU, and the
+	// list itself, are runtime config.
+	cpuShape := &cpuShapeConfig{engine: engine}
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			if handled, err := cpuShape.apply(key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
 				return err
@@ -1302,7 +1334,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var privateNetworkPolicySubscriber *sched.PrivateNetworkPolicySubscriber
 	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
 	var privateNetworkFabricDeletionSubscriber *sched.PrivateNetworkFabricDeletionSubscriber
-	if api.PrivateNetworkEnabled() {
+	if api.PrivateNetworkEnabled() && !privateNetworkReconcilersRun(cfg.Role) {
+		log.Info("schedd: private network reconciler left to the central scheduler", "role", cfg.Role)
+	} else if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
 			log.Warn("schedd: private network reconciler unavailable; state store lacks reconcile extension")
@@ -1746,6 +1780,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// counter is the provider-independent RPS fallback when the
 	// optional gateway metrics endpoint is unavailable.
 	reader := instancestats.NewReader()
+	residencyReader.Store(reader)
 	statsPoller := instancestats.NewPoller(
 		store,
 		instancestats.DialerFunc(deps.dialVMM),
@@ -1833,6 +1868,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 		log.Info("owner cache enabled (ADR-1741)")
+	}
+	if cfg.AsyncWakeFinalize {
+		engine.WithAsyncWakeFinalize()
+		log.Info("async wake finalize enabled (ADR-20261105090246)")
 	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
@@ -2014,6 +2053,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
 		WithTriggerSecretIdentities(deliveryReaders).
+		// Broker triggers take at most their plan's
+		// TriggerRecordsPerSecondPerApp; records over it stay on the
+		// broker for a later poll (ADR-20261101093015).
+		WithTriggerRecordRateLimiter(sched.NewTriggerRecordRateLimiter()).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
@@ -2095,6 +2138,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// accountor and the broker egress was effectively unbounded
 	// in prod. A parse error fails boot loudly so a typo can't
 	// silently disable the shaper.
+	// ADR 20261104143005: the stats tick runs on the loop; its recycles and
+	// capture requests run on the loop's work pool instead.
+	statsPoller.WithEnforcementDispatch(loop.EnforcementDispatch)
 	if beCfg, ok, err := brokerEgressConfigFromEnv(); err != nil {
 		log.Error("broker egress config: invalid env", "err", err)
 		os.Exit(1)
@@ -2795,6 +2841,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
+	// ADR-20261105090246: keep the records of wakes that already answered.
+	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
+	if err := engine.WaitWakeFinalize(stopCtx); err != nil {
+		log.Warn("schedd: wake bookkeeping still running at shutdown", "err", err)
+	}
 	if httpSrv != nil {
 		//nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		_ = httpSrv.Shutdown(stopCtx)
@@ -2871,6 +2922,17 @@ func triggersRetention(store state.Store, log *slog.Logger, value string) *sched
 		return nil
 	}
 	return sched.NewTriggersRetention(store, log)
+}
+
+// privateNetworkReconcilersRun reports whether a schedd with this role runs
+// the private-network reconcilers and their notify subscribers. They sweep
+// every attachment and push it to every live node through the vmmd router,
+// so one scheduler per fleet runs them: the control-plane or single-box one.
+// A node-local schedd (ADR-062) reads the same host-wide
+// FAAS_PRIVATE_NETWORK_ENABLED, and its unclaimed sweeps would race the
+// central one's attachment status writes.
+func privateNetworkReconcilersRun(r role.Role) bool {
+	return r != role.RoleComputeOnly
 }
 
 // subscribeWithReconnect drains a pg_notify-style feed via the
@@ -3174,10 +3236,25 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 	if err != nil {
 		return api.PlanFree, false
 	}
-	if !acct.Active() {
-		return api.PlanFree, true
+	return floorPlan(acct), true
+}
+
+// ResolveAppPlan implements floor.AppPlanResolver: a company app's floor
+// follows its organization's plan and status, the subject meterd bills the
+// floor to, not its creator's account (ADR-20261101113742).
+func (s schedFloorPlanResolver) ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool) {
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return api.PlanFree, false
 	}
-	return acct.Plan, true
+	return floorPlan(acct), true
+}
+
+func floorPlan(acct state.Account) api.Plan {
+	if !acct.Active() {
+		return api.PlanFree
+	}
+	return acct.Plan
 }
 
 // schedFloorLedger (issue #557 / ADR-071) adapts *sched.NodeLedger
@@ -3186,6 +3263,10 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 // pre-check). Concurrency + ResidentRAM are already exposed by
 // schedTargetsLedger; HeadroomMB is the new method the floor
 // trigger adds.
+// errNodeResidencyUnmeasured keeps fcvm_resident_ram_pct at its previous
+// value until this node has a fresh measurement (ADR 20261102072403).
+var errNodeResidencyUnmeasured = errors.New("schedd: this node's residency is not measured yet")
+
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
 	// headroom is Engine.FloorHeadroomMB; nil falls back to the ledger.

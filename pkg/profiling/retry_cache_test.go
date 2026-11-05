@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -35,6 +36,33 @@ func TestRetryCacheEvictsOldestInsteadOfRefusing(t *testing.T) {
 	// The admitted upload is still recognised as a replay.
 	if err := service.Push(t.Context(), e); err != nil || backend.pushes != 1 {
 		t.Fatalf("replay after eviction: err %v, pushes %d", err, backend.pushes)
+	}
+}
+
+// Uploads count in their app's resource owner's quota: two members' apps of
+// one organization share it, and an upload without a pool (an older vmmd)
+// counts in its account's (ADR-1155).
+func TestUploadQuotaCountsInThePool(t *testing.T) {
+	now := time.Now().Add(-time.Second)
+	service := NewService(&captureBackend{}, nil)
+	service.clock = func() time.Time { return now }
+	org := uuid.NewString()
+	first, second := principalFixture(now), principalFixture(now)
+	first.Pool, second.Pool = org, org
+	if !service.admit(first.quotaKey(), 1, now) {
+		t.Fatal("first upload refused")
+	}
+	if service.admit(second.quotaKey(), 1, now) {
+		t.Fatal("another member's app of the organization got a quota of its own")
+	}
+	legacy := principalFixture(now)
+	if legacy.quotaKey() != legacy.AccountID || !service.admit(legacy.quotaKey(), 1, now) {
+		t.Fatal("an upload without a pool does not count in its account's quota")
+	}
+	bad := principalFixture(now)
+	bad.Pool = "not-a-uuid"
+	if validPrincipal(bad) {
+		t.Fatal("a malformed pool was accepted")
 	}
 }
 

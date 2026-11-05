@@ -76,7 +76,7 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 				} else {
 					var queued bool
 					var wait time.Duration
-					queued, wait, err = h.admissionQueue.Do(wakeCtx, app.ID, string(app.Plan), policy, admit)
+					queued, wait, err = h.admissionQueue.Do(wakeCtx, app.ID, app.AccountID, string(app.Plan), policy, admit)
 					if h.metrics != nil {
 						h.metrics.ObserveWakeAdmission(string(app.Plan), err, queued, wait)
 					}
@@ -121,6 +121,9 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 
 func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, wakeWaitExpired bool, err error) {
 	h.logFleetCapacityRefusal(app.ID, err)
+	// The visitor gets a generic detail (publicWakeFailure); operators keep
+	// the scheduler's cause, as on the ordinary wake path.
+	h.logWakeFailure(app.ID, err)
 	showPage := acceptsWakePage(r)
 	if showPage && r.Context().Err() == nil && wakeWaitExpired && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 		h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())

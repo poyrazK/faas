@@ -1,6 +1,9 @@
 package mail
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -8,6 +11,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/redact"
 )
+
+// CertificateIssuanceFailedKey binds provider deduplication to the claim and
+// exact delivery payload. Retries stay stable across midnight; transfers and
+// recipient changes get independent keys. Tokens are hashed, never exposed.
+func CertificateIssuanceFailedKey(appID, token string, recipients []string, subject, body string) string {
+	data, _ := json.Marshal(struct {
+		AppID, Token, Subject, Body string
+		Recipients                  []string
+	}{appID, token, subject, body, recipients})
+	digest := sha256.Sum256(data)
+	return "cert_issuance_failed:" + hex.EncodeToString(digest[:])
+}
 
 // CertificateIssuanceFailure contains the customer-safe details for F2.
 type CertificateIssuanceFailure struct {

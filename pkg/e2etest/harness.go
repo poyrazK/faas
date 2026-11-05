@@ -388,6 +388,11 @@ failure_report_dir = %q
 				h.nativeRuntimeSnapshotRoot = snapshots
 				cfg += fmt.Sprintf("native_runtime_capture = true\nnative_runtime_snapshot_root = %q\n", snapshots)
 			}
+			if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+				// The native GitOps journey is the qualification capture
+				// acceptance (ADR 20261023093000).
+				cfg += "native_qualification_capture = true\n"
+			}
 		}
 		if which&VMMDMetrics != 0 {
 			addr := freeTCPAddr(t)
@@ -1220,6 +1225,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, gatewaydDurableEnv(h.TmpDir)...)
+	env = append(env, gatewaydFleetKeyEnv(t, h.TmpDir))
 	env = append(env, extraEnv...)
 	// Multi-gateway tests need a named gateway without making the legacy
 	// single-box schedd claim the synthetic default-local node. Keep this
@@ -1322,6 +1328,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_NODE_NAME="+nodeName,
 	)
 	env = append(env, gatewaydDurableEnv(dir)...)
+	env = append(env, gatewaydFleetKeyEnv(t, h.TmpDir))
 	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
 	waitReadyz(t, controlAddr, 30*time.Second)
@@ -1580,6 +1587,11 @@ func testEnvCommon(dbURL string) []string {
 	}
 	if currentHarness != nil && currentHarness.RecoveryHMACKeyHex != "" {
 		env = append(env, "FAAS_MFA_RECOVERY_HMAC_KEY="+currentHarness.RecoveryHMACKeyHex)
+	}
+	// apid refuses to boot without an audit HMAC key it can keep; it
+	// mints one into this per-test file on first boot.
+	if currentHarness != nil && currentHarness.TmpDir != "" {
+		env = append(env, "FAAS_AUDIT_HMAC_KEY_FILE="+filepath.Join(currentHarness.TmpDir, "audit-hmac.key"))
 	}
 	if currentHarness != nil && currentHarness.HostHMACKeyPath != "" {
 		env = append(env, "FAAS_HOST_HMAC_KEY_PATH="+currentHarness.HostHMACKeyPath)

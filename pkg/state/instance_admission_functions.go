@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +90,26 @@ func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramM
 	return admissionFunctionError(err, nodeID)
 }
 
+// reserveThawDB runs the durable node reservation for a frozen VM going back
+// into service, inside the caller's transaction, before its row leaves the
+// frozen state: a frozen row is outside the node's bookings, so a thaw adds
+// its plan RAM, vCPU and CPU back like an admission (ADR 20261102072403). It
+// uses ctx's thaw binding (WithThawAdmission) and no placement generation;
+// the node must still admit. A database without the admission functions
+// keeps the previous unchecked thaw.
+func (s *PgStore) reserveThawDB(ctx context.Context, tx pgx.Tx, instanceID, nodeID string) error {
+	if !validUUID(instanceID) || !validUUID(nodeID) || !s.admissionFunctionsUsable(ctx) {
+		return nil
+	}
+	percent, c := thawAdmission(ctx, nodeID)
+	_, err := tx.Exec(ctx, `select admission_reserve_node(i.node_id, NULL::bigint, i.ram_mb, true, $3::integer, $4::integer,
+		$5::integer, $6::integer, $7::integer, $8::integer, $9::integer, $10::integer)
+		  from instances i where i.id = $1::uuid and i.node_id = $2::uuid`,
+		instanceID, nodeID, api.PerVMOverheadMB, percent,
+		c.VCPU, c.QuietVCPU, c.CPUMillicores, c.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit)
+	return admissionFunctionError(err, nodeID)
+}
+
 // fenceParams is ctx's app owner fence as nullable function arguments.
 func fenceParams(ctx context.Context) (appID, ownerNodeID *string) {
 	app, owner, ok := fencedApp(ctx)
@@ -139,26 +160,33 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 	}
 	compute := nodeComputeAdmission(ctx, nodeID)
 	_, fenceOwner := fenceParams(fenceApp(ctx, appID))
+	booked := nodeBookedCPUMillicores(ctx, nodeID)
 	inst, err := retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
-		row := s.pool.QueryRow(ctx, `
+		admit := func(queryRow func(context.Context, string, ...any) pgx.Row) (Instance, error) {
+			row := queryRow(ctx, `
 		select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		       coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		  from admit_wake_instance($1::uuid, $2::text, $3::text, $4::integer, $5::uuid, $6::text, $7::text,
 		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint, $14::integer,
 		                           $15::integer, $16::integer, $17::integer, $18::integer, $19::integer, $20::integer, $21::uuid)`,
-			appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
-			expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration,
-			nodeReservationPercent(ctx, nodeID),
-			compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
-			fenceOwner)
-		inst, err := scanInstanceCols(row.Scan)
-		if err == nil {
-			return inst, nil
+				appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
+				expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration,
+				nodeReservationPercent(ctx, nodeID),
+				compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
+				fenceOwner)
+			inst, err := scanInstanceCols(row.Scan)
+			if err == nil {
+				return inst, nil
+			}
+			if mapped, ok := mapAdmissionFunctionError(err, nodeID); ok {
+				return Instance{}, mapped
+			}
+			return scanCreatedInstance(errorRow{err}, wakeID, appID)
 		}
-		if mapped, ok := mapAdmissionFunctionError(err, nodeID); ok {
-			return Instance{}, mapped
+		if booked <= 0 {
+			return admit(s.pool.QueryRow)
 		}
-		return scanCreatedInstance(errorRow{err}, wakeID, appID)
+		return admitWithBookedCPU(ctx, s.pool, booked, admit)
 	})
 	if undefinedFunction(err) {
 		s.markAdmissionFunctionsMissing()
@@ -265,4 +293,29 @@ func (s *PgStore) publishOnGenerationFunction(ctx context.Context, p RuntimeInst
 		p.Bookkeeping.SnapshotBackoffRecorded = backoffRecorded
 	}
 	return instance, nil
+}
+
+// admitWithBookedCPU runs a one-statement admission in a transaction that
+// first sets the CPU booking capture_instance_capacity stores on the new row
+// (ADR-20261101160231 step 5b).
+func admitWithBookedCPU(ctx context.Context, pool interface {
+	Begin(context.Context) (pgx.Tx, error)
+}, booked int,
+	admit func(func(context.Context, string, ...any) pgx.Row) (Instance, error)) (Instance, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: admission: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(booked)); err != nil {
+		return Instance{}, fmt.Errorf("state: admission: booked CPU: %w", err)
+	}
+	inst, err := admit(tx.QueryRow)
+	if err != nil {
+		return Instance{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instance{}, fmt.Errorf("state: admission: commit: %w", mapErr(err))
+	}
+	return inst, nil
 }

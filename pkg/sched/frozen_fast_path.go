@@ -382,7 +382,8 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, false
 	}
 	bookkeeping := e.publicationBookkeeping(plan.frozen.ID, plan.app.ID, plan.frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
-	fresh, err := guards.ThawFrozenInstance(ctx, state.FrozenThaw{
+	publishCtx := e.thawAdmissionContext(ctx, plan.frozen.NodeID, plan.limits.VCPU, e.appCPUBookingMillicores(plan.app, plan.limits))
+	fresh, err := guards.ThawFrozenInstance(publishCtx, state.FrozenThaw{
 		AccountID: plan.acct.ID, AppID: plan.app.ID, InstanceID: plan.frozen.ID, NodeID: plan.frozen.NodeID, WakeID: plan.frozen.WakeID,
 		Fence: ticket.fence, Generation: ticket.generation, Bookkeeping: bookkeeping,
 	})
@@ -393,7 +394,7 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, false
 	case err != nil:
 		e.log.Warn("sched: frozen fast path: publish RUNNING", "instance", plan.frozen.ID, "err", err)
-		e.abandonThawPublication(ctx, plan.frozen)
+		e.abandonThawPublication(ctx, plan.frozen, err)
 		return WakeResult{}, false
 	}
 	return e.answerThaw(ctx, plan, fresh, bookkeeping, timing, "fast"), true

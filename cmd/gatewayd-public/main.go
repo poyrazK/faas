@@ -69,6 +69,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
@@ -249,6 +250,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		log.Info("gatewayd-public: compute-node app edge (ADR-1343)")
 	}
+	edgeTLS, err := edgeTLSConfigFromEnv(edgeMode, os.Getenv)
+	if err != nil {
+		return err
+	}
+	edgeLimits, err := edgeClientLimitsFromEnv(edgeMode, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if edgeTLS.direct() && !edgeLimits.on {
+		log.Warn("gatewayd-public: the edge serves clients directly without per-address limits; set " + edgeClientLimitsEnv + "=1 (ADR-20261103163954 §4)")
+	}
 	// ADR-20261026100000: the platform, apps, deployment-preview and alias
 	// domains. Only FAAS_APPS_DOMAIN set keeps the shared layout.
 	domains, err := hostidentity.DomainsFromEnv(os.Getenv, hostidentity.DefaultAppsDomain, hostidentity.FileConfig{})
@@ -320,13 +332,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(hstsEnabledFromEnv))
 	s3Flag := runtimeconfig.NewBoolFlag(false)
+	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	// gatewayd-public owns the outer response headers, so it must consume the
 	// same durable HSTS flag as apid and gatewayd-internal. This keeps a hot
 	// operator change from producing different security headers at the edge.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS, runtimeconfig.KeyS3},
+	watcher := runtimeconfig.New(pgStore, pool, []string{runtimeconfig.KeyHSTS, runtimeconfig.KeyS3, runtimeconfig.KeyTenantSurfaces},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -338,6 +351,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			if key == runtimeconfig.KeyS3 {
 				s3Flag.Store(enabled)
+			}
+			if key == runtimeconfig.KeyTenantSurfaces {
+				tenantSurfacesFlag.Store(enabled)
 			}
 			return nil
 		}, log)
@@ -401,6 +417,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	internalURL := &url.URL{Scheme: "http", Host: "gatewayd-internal"}
 	var internalDialer gateway.InternalDialer
 	edgeMetricsSet := newEdgeMetrics()
+	edgeLimits.refused = edgeMetricsSet.refused
 	// A dynamic dialer can pick a different upstream per request, so the
 	// transport must not pool connections under the one logical URL.
 	dynamicUpstream := upstreamMode == internalUpstreamDatabase
@@ -423,6 +440,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
 		if envBoolOr(edgePlacementRoutingEnv, false) {
 			placement = newEdgePlacement()
+			if envBoolOr(edgePlacementNodeSetEnv, false) {
+				placement.withNodeSet()
+			}
 			lfd.withPlacement(placement, cgp)
 		}
 		go lfd.run(ctx)
@@ -531,6 +551,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(opsMetrics, pool)
+	edgeCerts, err := startEdgeCertificates(ctx, edgeTLS, pool, probe, edgeMetricsSet.registry, log)
+	if err != nil {
+		return err
+	}
 	probe.SetReadyObserver(func(ready bool, reason string) {
 		opsMetrics.MarkReady("gatewayd-public", ready, reason)
 	})
@@ -614,6 +638,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: %w", err)
 		}
+		// ADR-20261103163954 §4: bounded however many clients send them.
+		edgeForward = edgeLimits.forwards(edgeForward)
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
@@ -693,21 +719,47 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}()
 	}
 	rootHandler := http.Handler(controlPlaneHandler)
+	// Public-read host lookups run in front of every GET and HEAD; names this
+	// edge never saw name an app spend a budget (ADR-20261103163954 §4).
+	hostLookups := objectstorage.NewHostLookupBudget("gatewayd_public_object")
+	opsMetrics.Registry().MustRegister(hostLookups.Collectors()...)
+	// Every app slug and verified custom domain skips that budget, so after
+	// a restart random names cannot starve real apps this edge has not yet
+	// served.
+	knownHosts := knownhosts.New(domains.Apps)
+	hostLookups.Preload(knownHosts)
+	go knownhosts.Run(runtimeCtx, knownHosts, pgStore, log)
 	if edgeMode == edgeModeCompute {
-		// No storage credentials here: upload routes and public bucket
-		// reads go to the control plane's edge.
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, domains, log)
+		// Upload routes go to the control plane's edge: only apid resolves
+		// their keys. Public bucket reads are served here once the node holds
+		// the gateway credential (ADR-20261031122757 step 7), and forwarded
+		// to the control plane's edge otherwise.
+		var localReads http.Handler
+		if publicStorageRegistry != nil {
+			budget, err := computePublicReadBudget(os.Getenv, publicStorageRegistry)
+			if err != nil {
+				return fmt.Errorf("gatewayd-public: %w", err)
+			}
+			transfers := objectstorage.NewTransferLimiter(budget, "gatewayd_public_object")
+			opsMetrics.Registry().MustRegister(transfers.Collectors()...)
+			fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
+			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
+			defer stopReads()
+			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
+				tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
+			if err != nil {
+				return err
+			}
+			log.Info("gatewayd-public: public object reads served on this node", "max_bytes_per_second", budget)
+		}
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, hostLookups, tenantSurfacesFlag.Load, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
 		// Public reads wait out the same restore fence as the S3 gateway
 		// (ADR-20261025111015 amendment).
-		fence := runtimeconfig.NewObjectStorageFence(pgStore, log)
-		if err := fence.Check(runtimeCtx); err != nil {
-			log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
-		}
-		go fence.Run(runtimeCtx)
+		fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
 		// Upload keys are resolved by apid on its local auth socket (ADR
 		// 20261029202403); this edge runs on the control plane.
 		uploadAuth, dialErr := apidgrpc.DialAuth(ctx, envOr("FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock"), nil)
@@ -720,8 +772,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// flush runs before the pool closes.
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fence.Open() },
-			domains, controlPlaneHandler, log)
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
+			tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
 		}
@@ -767,6 +819,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// mode it is answered here and never reaches tenant code.
 	publicHandler = aliasHosts(publicHandler, domains)
 	if edgeMode == edgeModeCompute {
+		// ADR-20261103163954 §4: inside cloudflareClientIP, so behind
+		// Cloudflare the request rate counts against CF-Connecting-IP.
+		publicHandler = edgeLimits.body(publicHandler)
+		publicHandler = edgeLimits.hosts(publicHandler)
+		publicHandler = edgeLimits.requests(publicHandler, trustedIngressCIDRs)
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
 	}
@@ -823,6 +880,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// only serves /healthz, /readyz, /metrics — so it's not
 	// counted.
 	publicSrv.ConnState = inflight.ConnState
+	edgeTLSErrors := edgeTLS.attach(publicSrv, log, edgeMetricsSet.tlsHandshakeFailures)
 
 	// Tier A8 / ADR-083 (code-review fix #2 + #6): start the
 	// DNSHandoff subscriber and the StandbyWarmup loop. Both are
@@ -844,6 +902,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	listeners, err := openEdgeListeners(publicSrv.Addr, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), controlSrv.Addr)
 	if err != nil {
 		return err
+	}
+	if edgeTLS.enabled() {
+		appHost := func(name string) bool { return isAppHost(name, domains) }
+		if listeners.tls, err = openEdgeTLSListener(ctx, edgeTLS, appHost, edgeCerts, edgeLimits, edgeTLSErrors.handshakeFailed); err != nil {
+			listeners.close()
+			return err
+		}
 	}
 	notifyStop := wire.NotifyReadyWhen(ctx, probe.ReadyFunc())
 	defer notifyStop()
@@ -1027,7 +1092,8 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 // listeners.private, when set, is a second listener for publicSrv on the
 // control plane's private address (ADR-1343 §2): compute-node edges forward
 // credential-bound requests there. It shares publicSrv, so Shutdown closes and
-// drains it with the public listener.
+// drains it with the public listener. listeners.tls, a compute edge's public
+// TLS listener (ADR-20261102081618), shares publicSrv the same way.
 func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, listeners edgeListeners, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func(), checks []wire.HandoffCheck) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
@@ -1065,11 +1131,19 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	// Start the listeners. The drain lets connections accepted just before
 	// shutdown deliver their requests instead of being closed unanswered.
 	publicDrain := wire.NewHTTPDrain(publicSrv)
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
 	if listeners.private != nil {
 		go func() {
 			log.Info("gatewayd-public: private listening for compute edges", "addr", listeners.private.Addr().String())
 			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(listeners.private))); err != nil {
+				errc <- err
+			}
+		}()
+	}
+	if listeners.tls != nil {
+		go func() {
+			log.Info("gatewayd-public: edge TLS listening", "addr", listeners.tls.Addr().String())
+			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(listeners.tls))); err != nil {
 				errc <- err
 			}
 		}()
@@ -1266,6 +1340,17 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv *ht
 // daemon reports ready. private is nil when no private address is set.
 type edgeListeners struct {
 	public, private, control net.Listener
+	// tls is a compute edge's public TLS listener (ADR-20261102081618), nil
+	// while it is off. It serves the public handler.
+	tls net.Listener
+}
+
+func (l edgeListeners) close() {
+	for _, ln := range []net.Listener{l.public, l.private, l.control, l.tls} {
+		if ln != nil {
+			_ = ln.Close()
+		}
+	}
 }
 
 // openEdgeListeners opens the public, optional private and control listeners,

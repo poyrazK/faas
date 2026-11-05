@@ -1,7 +1,7 @@
 # ADR: Managed PostgreSQL overage invoicing
 
 Date: 2026-10-31
-Status: Accepted
+Status: Accepted; price amended by [ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md) ($0.2331 per CU-hour, Neon Scale's price plus 5%)
 Amends: [ADR 20261025094915](20261025094915-managed-postgres-compute-caps-on-running-databases.md) (decision 2: overage was unbilled until invoicing)
 Related: [ADR-1430](1430-plan-entitlements-from-october-2026-cogs-report.md) (plan entitlements, COGS report), [ADR 20261027093220](20261027093220-object-storage-billed-daily.md) (object-storage charge steps), [ADR-1320](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) (spend cap)
 
@@ -24,7 +24,8 @@ overage setting all live in apid.
 
 1. **Price.** Managed PostgreSQL compute above the plan's monthly allowance
    costs $0.20 per CU-hour (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`
-   = 20,000 millicents). It is charged per compute-unit second, rounded down to
+   = 20,000 millicents; superseded: ADR-20261102072425 sets $0.2331, Neon
+   Scale's price plus 5%). It is charged per compute-unit second, rounded down to
    a whole millicent. The charge stops at the ceiling (twice the allowance), so
    a month costs at most one allowance: Hobby $5, Pro $15, Scale $40. Free has
    no overage.
@@ -79,3 +80,37 @@ overage setting all live in apid.
   meters.
 - The dashboard and `gregale postgres usage` do not show the charge yet. The
   usage response can add it later as an `omitempty` field.
+
+## Amendment 1: idempotent on the starting point; shadow and live apart (2026-11-02)
+
+Bug hunt 33 found two ways decision 4 could charge the wrong amount.
+
+- **Double charge after an ambiguous response.** The external ID named the
+  cumulative target. Usage keeps growing between sweeps, so after a publish
+  Polar accepted but whose response was lost (a timeout, apid restarting),
+  the next sweep's step had a new target, a new external ID, and charged
+  from the same delivered amount again. The external ID now names the step's
+  starting point: `faas-managed-postgres-step-<subject>-<month>-from-<delivered>`.
+  A retry starts from the same point, so Polar keeps one event. The cost is
+  a possible undercharge of the usage between the two attempts, which only
+  happens after an ambiguous response; an overcharge cannot happen.
+- **Shadow rows counted as charged.** Shadow and live share the month's row.
+  A live step now starts from zero over a shadow row and replaces it; a
+  shadow step never rewrites a live row. The record compares both the
+  amount and the mode it read.
+
+## Amendment 2: storage past the pool is billed (2026-11-02)
+
+ADR-20261031165104 left storage overage open. [ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md) priced it at $0.50 per GB-month. It is now billed on the same delivery row and step as compute:
+
+- **Who.** A subject with overage on. With overage on its storage pool doubles (ADR-20261025094915 decision 9), so storage past the plan's pool is billed instead of failing writes. Without overage, storage is never charged.
+- **What.** Storage held past the plan's pool, averaged over the UTC month:
+  - `billed = min(max(storage_byte_s − pool × month_s, 0), pool × month_s)`;
+  - `millicents = floor(billed × 50 000 / (2³⁰ × month_s))`, using `api.ManagedPostgresStorageOverageMillicentsPerGiBMonth`.
+
+  Storage is metered in GiB, the unit of the plans' pools. The month's whole pool is the allowance, as object storage does it, so a step never shrinks as the month goes on. At most one more pool is charged a month: Hobby $0.50, Pro $2.50, Scale $10.
+- **Usage.** `UsageSnapshot.StorageByteSeconds`, the provider's measured storage for the subject. A restored copy's storage is reported inside its source's project, so pages it shares with the source are counted once.
+- **One charge.** The step's target is compute plus storage, cumulative. The row records `billed_storage_byte_seconds` (migration `20261102085140417`, its CHECK added `NOT VALID`), and the Polar event's metadata adds the storage usage, pool, billed byte-seconds and price.
+- **Subjects.** `ManagedPostgresOverageSubjects` also lists subjects with overage on and subjects already charged in the month, besides those that reached the compute allowance.
+- **Turning overage off.** A month that charged storage keeps counting it, so the cumulative charge never drops and later compute is not hidden behind it.
+- **Skew.** The previous release's upsert does not name the new column, so its rows keep 0. Its compute-only target never exceeds a combined one, so it delivers nothing until compute grows past it. The total stays cumulative.

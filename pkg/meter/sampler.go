@@ -102,6 +102,24 @@ type EgressSource interface {
 	ReadUsageDeltas(instanceID string) (UsageDeltas, bool)
 }
 
+// CumulativeNetworkSource is an EgressSource whose host-interface bytes are
+// vmmd's cumulative per-instance counters (UsageDeltas.NetworkCumulative),
+// which the Store checkpoints exactly once. A missed, failed or caught-up
+// tick then loses no bytes: the next reading carries them into the minute it
+// is taken, and a counter reset counts its new value in full. So a minute the
+// compute sampler rolled in full is complete egress evidence too
+// (ADR-20261101113742). cmd/meterd's egress aggregator implements it.
+type CumulativeNetworkSource interface {
+	CumulativeNetworkCounters() bool
+}
+
+// cumulativeNetwork reports whether the sampler's egress source keeps
+// cumulative, checkpointed network counters.
+func (s *Sampler) cumulativeNetwork() bool {
+	source, ok := s.egress.(CumulativeNetworkSource)
+	return ok && source.CumulativeNetworkCounters()
+}
+
 // TailSecondsSource (issue #667 / ADR-078) is the per-instance
 // tail-seconds reader the sampler uses to populate
 // usage_minutes.tail_seconds. The reader is backed by vmmd
@@ -599,7 +617,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		return nil, err
 	}
 	var out []RolledRow
+	// The previous app's unbilled paused usage is recorded when the next app
+	// starts, after every path through its floor below (rollout step 3). An
+	// error return drops the app's record: the floor it nets out is unknown.
+	var quietPausedUsage quietPausedApp
 	for _, app := range apps {
+		s.recordQuietPaused(ctx, &quietPausedUsage, minute)
 		compute, hasCompute := s.store.(state.FinancialComputeStore)
 		// The strict-budget check costs one or two queries. It ran for every
 		// app every minute, parked and deleted ones included; it is now read
@@ -688,8 +711,19 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				// A quiet-paused second is not a running second (§4.7,
 				// ADR-20261023171905). Subtracted before compute funding and
 				// the floor fill, so a floor still bills its paused capacity.
-				seconds = s.unbilledQuietSeconds(quietPaused, quietMode, ins.ID,
+				billed := s.unbilledQuietSeconds(quietPaused, quietMode, ins.ID,
 					string(planByAccount[meterAppSubject(app, planByAccount)]), seconds)
+				if billed < seconds {
+					sidecarMBs, err := sidecarsFor(ins.DeploymentID)
+					if err != nil {
+						return out, err
+					}
+					quietPausedUsage.records = append(quietPausedUsage.records, quietPausedRecord{
+						accountID: meterAppSubject(app, planByAccount), appID: app.ID, instanceID: ins.ID,
+						seconds: seconds - billed, mb: api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs),
+					})
+				}
+				seconds = billed
 			}
 			if seconds > 0 && (exactResidency || state.State(ins.State).Billable()) {
 				covered, err := managed()
@@ -911,8 +945,11 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// outlives a downgrade, and schedd then holds none (Free) or no more
 		// than the plan allows, while the gap was still billed. An unknown
 		// plan (a failed prefetch) keeps the stored floor, as before.
+		// The billing subject's plan, as schedd's floor trigger reads it: a
+		// company app's floor follows its organization's plan, not its
+		// creator's (ADR-20261101113742).
 		floorCap := floor
-		if plan, known := planByAccount[app.AccountID]; known {
+		if plan, known := planByAccount[subject]; known {
 			floorCap = planFloorCap(app, plan)
 		}
 		floor = min(floor, floorCap)
@@ -990,8 +1027,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 					SyntheticFloor: true,
 				})
 			}
+			if exactResidency {
+				quietPausedUsage.refilled = floorSeconds - liveSeconds
+			}
 		}
 	}
+	s.recordQuietPaused(ctx, &quietPausedUsage, minute)
 	return out, nil
 }
 

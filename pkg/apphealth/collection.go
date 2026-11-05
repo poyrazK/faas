@@ -23,9 +23,36 @@ func Collect(ctx context.Context, store EvidenceStore, client *promql.Client, ap
 }
 
 func CollectScope(ctx context.Context, store EvidenceStore, client *promql.Client, app state.App, metricsAllowed bool, scope string) api.AppHealthResponse {
-	e := Evidence{App: app, MetricsAllowed: metricsAllowed, Scope: evidenceScope(scope)}
+	return CollectScopeWith(ctx, store, client, app, scope, Options{MetricsAllowed: metricsAllowed})
+}
+
+// Options are the per-account decisions a collection follows.
+type Options struct {
+	MetricsAllowed bool
+	// AssessWorkers is the app_health_workers platform flag
+	// (ADR-20261102091500).
+	AssessWorkers bool
+	// AssessMemory is the app_health_memory platform flag
+	// (ADR-20261102124306).
+	AssessMemory bool
+	// Plan is the account's plan, for the memory check's RAM suggestion.
+	Plan api.Plan
+}
+
+func CollectScopeWith(ctx context.Context, store EvidenceStore, client *promql.Client, app state.App, scope string, opts Options) api.AppHealthResponse {
+	e := Evidence{App: app, MetricsAllowed: opts.MetricsAllowed, AssessWorkers: opts.AssessWorkers,
+		AssessMemory: opts.AssessMemory, Plan: opts.Plan, Scope: evidenceScope(scope)}
 	collectDeployments(ctx, store, &e)
 	collectInstances(ctx, store, &e)
+	if e.AssessMemory {
+		collectMemory(ctx, store, &e)
+	}
+	if e.AssessWorkers && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+		// A worker serves no requests; its queue is the workload evidence.
+		collectWorkerQueue(ctx, store, &e, time.Now().UTC())
+		e.Now = time.Now().UTC()
+		return Evaluate(e)
+	}
 	if e.MetricsAllowed && e.DeploymentsKnown {
 		var ids []string
 		for _, d := range servingDeploymentsInScope(e.Live, e.Scope) {

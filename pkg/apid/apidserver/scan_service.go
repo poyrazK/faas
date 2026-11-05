@@ -36,6 +36,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,7 +51,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
+	"github.com/onebox-faas/faas/pkg/apid/projectselection"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/resourcelabels"
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
@@ -73,21 +76,22 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
-	SafeReleaseID          string            `json:"safe_release_id,omitempty"`
-	PublicAppsDomain       string            `json:"public_apps_domain,omitempty"`
-	AppSlugs               map[string]string `json:"app_slugs,omitempty"`
-	Migration              bool              `json:"migration,omitempty"`
-	Hash                   string            `json:"hash"`
-	AccountID              string            `json:"account_id"`
-	Slug                   string            `json:"slug"`
-	RepoFullName           string            `json:"repo_full_name,omitempty"`
-	ProductionBranch       string            `json:"production_branch,omitempty"`
-	InstallID              int64             `json:"install_id,omitempty"`
-	NoTriggers             bool              `json:"no_triggers,omitempty"`
-	PlatformTenantRequired *bool             `json:"platform_tenant_required,omitempty"`
-	Environment            string            `json:"environment,omitempty"`
-	ConfigHash             string            `json:"config_hash,omitempty"`
-	TSUnix                 int64             `json:"ts_unix"`
+	Selection              *projectselection.Filters `json:"selection,omitempty"`
+	SafeReleaseID          string                    `json:"safe_release_id,omitempty"`
+	PublicAppsDomain       string                    `json:"public_apps_domain,omitempty"`
+	AppSlugs               map[string]string         `json:"app_slugs,omitempty"`
+	Migration              bool                      `json:"migration,omitempty"`
+	Hash                   string                    `json:"hash"`
+	AccountID              string                    `json:"account_id"`
+	Slug                   string                    `json:"slug"`
+	RepoFullName           string                    `json:"repo_full_name,omitempty"`
+	ProductionBranch       string                    `json:"production_branch,omitempty"`
+	InstallID              int64                     `json:"install_id,omitempty"`
+	NoTriggers             bool                      `json:"no_triggers,omitempty"`
+	PlatformTenantRequired *bool                     `json:"platform_tenant_required,omitempty"`
+	Environment            string                    `json:"environment,omitempty"`
+	ConfigHash             string                    `json:"config_hash,omitempty"`
+	TSUnix                 int64                     `json:"ts_unix"`
 }
 
 // scanPlanRequest is the parsed multipart body for both /scan and
@@ -510,27 +514,18 @@ func computeAffectedPartition(
 }
 
 func workloadMatchesSelectors(selectors map[string]bool, workload reposcan.Workload) bool {
-	if len(selectors) == 0 {
-		return false
-	}
-	return selectors[strings.ToLower(workload.Name)] ||
-		(workload.RootDir != "" && selectors[strings.ToLower(workload.RootDir)])
+	return reconcile.WorkloadMatchesSelectors(selectors, workload)
 }
 
 func appMatchesSelectors(selectors map[string]bool, app state.App) bool {
-	if len(selectors) == 0 {
-		return false
-	}
-	return selectors[strings.ToLower(app.Slug)] ||
-		selectors[strings.ToLower(app.WorkloadName)] ||
-		(app.RootDir != "" && selectors[strings.ToLower(app.RootDir)])
+	return reconcile.AppMatchesSelectors(selectors, app)
 }
 
 func validateWorkloadSelectors(kind string, selectors map[string]bool, workloads []reposcan.Workload, requireKnown bool) *api.Problem {
 	for selector := range selectors {
 		var roots []string
 		for _, workload := range workloads {
-			if strings.EqualFold(selector, workload.Name) || strings.EqualFold(selector, workload.RootDir) {
+			if workloadMatchesSelectors(map[string]bool{selector: true}, workload) {
 				roots = append(roots, workload.RootDir)
 			}
 		}
@@ -662,6 +657,24 @@ func emitPersistedExcludedAuditRows(
 		}
 		auditor.EmitAs(ctx, actor, reconcile.KindProjectScopeExcluded, &acctID, data)
 	}
+}
+
+// unboundDatastoreKeys lists each selected service's key that points at the
+// Compose datastore m and stays unset in the plan ("api.REDIS_URL").
+func unboundDatastoreKeys(env reposcan.ComposeEnv, workloads []reposcan.Workload, planned []api.PlanWorkload, m reposcan.Managed) []string {
+	unset := make(map[string]bool)
+	for _, w := range planned {
+		for _, key := range w.UnsetEnvKeys {
+			unset[strings.ToLower(w.Name)+"."+key] = true
+		}
+	}
+	var out []string
+	for _, consumer := range projectsetup.ManagedConsumers(env, workloads, m.Name, m.EnvHint) {
+		if unset[strings.ToLower(consumer.Workload)+"."+consumer.EnvKey] {
+			out = append(out, consumer.Workload+"."+consumer.EnvKey)
+		}
+	}
+	return out
 }
 
 // toPlanManaged translates a reposcan.Managed into the wire-shape
@@ -950,6 +963,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		if !reconcileProductionEnvironment(environment) {
+			var err error
+			app, err = state.ResolveAppForEnvironment(ctx, s.store, app, environment)
+			if err != nil {
+				res.Error = "environment workload settings could not be loaded"
+				out = append(out, res)
+				continue
+			}
+		}
 		cronPlan, managedCrons := cronPlans[app.ID]
 		if managedCrons && cronPlan.err != nil {
 			res.Error = "cron planning failed (server logs carry the detail)"
@@ -1049,13 +1071,46 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// reposcan (web first, otherwise deterministic process order).
 		if len(workloads) == 1 {
 			var releaseProblem *api.Problem
-			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, sourceApp, manifest)
+			var sourceRelease deploymentReleaseCommand
+			sourceRelease, releaseProblem = resolveSourceReleaseDeclaration(staged, sourceApp, manifest)
 			if releaseProblem != nil {
 				_ = os.Remove(staged)
 				res.Error = "release declaration invalid (server logs carry the detail)"
 				s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
 				out = append(out, res)
 				continue
+			}
+			if len(sourceRelease.command) > 0 {
+				releaseCommand = sourceRelease
+			}
+		}
+		if s.releasePhaseOff && len(releaseCommand.command) > 0 {
+			_ = os.Remove(staged)
+			res.Error = releasePhaseOffProblem().Detail
+			out = append(out, res)
+			continue
+		}
+		// A service's own gregale.yaml settings (lifecycle hooks, restart
+		// policy, timeouts, scaling, retries) apply as on a single-app deploy
+		// of its directory (ADR-20261104221217). They apply before the
+		// deployment row exists, so imaged bakes the hooks into it.
+		settings := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+		if manifest != nil {
+			if problem := s.applySourceManifestSettings(ctx, acct, app, manifest, &settings); problem != nil {
+				_ = os.Remove(staged)
+				if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
+					s.log.Warn("apid: roll back project service settings", "app_id", app.ID, "err", rbErr)
+				}
+				res.Error = "gregale.yaml settings rejected: " + problem.Detail
+				out = append(out, res)
+				continue
+			}
+			if settings.lifecycleChanged || settings.scalingChanged || settings.retryPolicyChanged {
+				// Later manifest writes (the source checkpoint) start from
+				// the app as it is now, not as it was before the settings.
+				if reloaded, err := s.store.AppByID(ctx, app.ID); err == nil {
+					app = reloaded
+				}
 			}
 		}
 		// Enqueue via the shared helper. The helper does CreateDeployment
@@ -1100,7 +1155,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			buildDependencies = run.BuildDependencies(app.ID)
 		}
 		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
-		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
+		enqParams := apidsource.EnqueueParams{
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
 			BuildDependencies:         buildDependencies,
@@ -1143,7 +1198,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ReleaseCommandShell: releaseCommand.shell,
 			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
 			Workflows:           marshalWorkflowDefinitions(workflowDefinitions),
-		})
+		}
+		// A project apply into production gets the same default canary and
+		// first-wake rollback as a single-app deploy (ADR-1446 amendment 1).
+		// An atomic project release stages dark and cuts every app over
+		// together, so it keeps its own coordinated rollout.
+		if !safe {
+			release.ApplyDefaultToEnqueue(ctx, s.store, s.log, app, acct.Plan, environment, &enqParams)
+		}
+		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, enqParams)
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
 		}
@@ -1161,6 +1224,9 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			// customer, log the full error (which can carry
 			// pgx field names, row IDs, spool paths) to
 			// slog only.
+			if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
+				s.log.Warn("apid: roll back project service settings", "app_id", app.ID, "err", rbErr)
+			}
 			s.log.Warn("apid: apply enqueue build failed", "app_id", app.ID, "slug", app.Slug, "project_id", project.ID, "err", enqErr)
 			res.Error = "enqueue failed (server logs carry the detail)"
 			out = append(out, res)
@@ -1175,7 +1241,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// Enqueue is the acceptance boundary for the source. Checkpoint the
 		// per-workload digest only after the deployment and build rows exist;
 		// failed staging/admission/enqueue attempts therefore remain retryable.
-		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok && !safe {
+		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok && !safe && reconcileProductionEnvironment(environment) {
 			manifest := app.Manifest
 			manifest.ProjectSourceSHA256 = workload.SourceSHA256
 			if _, checkpointErr := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); checkpointErr != nil {
@@ -1320,6 +1386,7 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
 	defer func() { _ = os.Remove(req.SourcePath); _ = os.RemoveAll(req.ScanDir) }()
+	noTriggers := req.NoTriggers || !reconcileProductionEnvironment(req.Environment)
 	if prob := projectaccess.ValidateScan(r, s.store, acct, req.ProjectSlug); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
@@ -1364,92 +1431,38 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
 				"Protected environment approval required", "approve the exact plan before applying to this protected environment")
 		}
-		approval, err := s.store.ConsumeProjectEnvironmentApproval(r.Context(), acct.ID, req.ProjectSlug, req.Environment,
-			hashProjectEnvironmentApprovalMaterial(planToken), hashProjectEnvironmentApprovalMaterial(req.ApprovalToken), time.Now().UTC())
-		if err != nil {
-			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
-				"Invalid environment approval", "the approval is expired or does not match this exact plan and environment")
-		}
-		s.audit.Emit(r.Context(), "project.environment.approval.consumed", &acct.ID, map[string]any{
-			"project_slug": req.ProjectSlug,
-			"environment":  req.Environment,
-			"approval_id":  approval.ID,
-			"token_kind":   approval.TokenKind,
-			"consumed_at":  approval.ConsumedAt.UTC().Format(time.RFC3339),
-		})
 	}
-	// ADR-124 follow-up #3 — apply-time persisted-exclude fallback.
-	// When the apply path runs without an explicit --exclude AND a
-	// project row already exists (i.e. this is a re-deploy, not a
-	// brand-new project), fold the persisted set into req.Exclude
-	// so the operator's "I excluded this for the long haul" intent
-	// carries forward without re-typing. The response surfaces the
-	// merged set via resp.PersistedExclusions; the handler emits
-	// one KindProjectScopeExcluded audit row per slug below.
-	//
-	// Brand-new projects (no project row yet) skip the fallback —
-	// there is nothing persisted to fold in. The check is cheap
-	// (single ProjectBySlug; ErrNotFound is not an error here).
-	// persistedSlugs captures every slug folded in from the persisted
-	// deployment_scope_exclusions table on the apply path. When the
-	// operator did NOT pass --exclude on this deploy but a previous
-	// deploy ran with --persist-exclude, those slugs carry forward
-	// into this apply. Surfaced via resp.PersistedExclusions so the
-	// operator + dashboard can see exactly what carried forward; the
-	// apply handler emits one KindProjectScopeExcluded audit row per
-	// slug for SOC 2 CC7.2 paper trail.
+	// Preview and apply share the same persisted exclusion set. Keep explicit
+	// filters separate: persisted exclusions take precedence over --only without
+	// erasing its intent or turning it into an unrestricted selection.
 	var persistedSlugs []string
-	// Code-review fix #3: drop the `len(req.Exclude) == 0` guard.
-	// The original guard meant typing `--exclude=foo` while a
-	// persisted set existed silently dropped the persisted
-	// carry-forward — the operator's persisted intent was
-	// shadowed by any per-deploy --exclude, even though the
-	// intent of `--exclude=foo,bar` + persisted `baz,quux` is
-	// "exclude foo + bar + baz + quux" (union semantics). Fold
-	// in regardless; the post-scan check below filters slugs no
-	// longer in the repo into stale_persisted_exclusions instead
-	// of tripping exclude_unknown_slug (fix #2).
-	if apply {
-		if proj, projErr := s.store.ProjectBySlug(r.Context(), acct.ID, req.ProjectSlug); projErr == nil {
-			if persisted, lookupErr := s.store.LookupDeploymentScopeExclusions(r.Context(), acct.ID, proj.ID); lookupErr == nil && len(persisted) > 0 {
-				if req.Exclude == nil {
-					req.Exclude = make(map[string]bool, len(persisted))
-				}
-				for _, e := range persisted {
-					lname := strings.ToLower(e.Slug)
-					req.Exclude[lname] = true
-					persistedSlugs = append(persistedSlugs, lname)
-				}
+	explicitExcludes := maps.Clone(req.Exclude)
+	if proj, projErr := s.store.ProjectBySlug(r.Context(), acct.ID, req.ProjectSlug); projErr == nil {
+		persisted, lookupErr := s.store.LookupDeploymentScopeExclusions(r.Context(), acct.ID, proj.ID)
+		if lookupErr != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load persisted project exclusions")
+		}
+		if len(persisted) > 0 {
+			if req.Exclude == nil {
+				req.Exclude = make(map[string]bool, len(persisted))
+			}
+			for _, e := range persisted {
+				lname := strings.ToLower(e.Slug)
+				req.Exclude[lname] = true
+				persistedSlugs = append(persistedSlugs, lname)
 			}
 		}
-	}
-	// Code-review fix #6: a persisted slug that also appears in
-	// req.Only would trip the --only/--exclude mutex below with
-	// 409 exclude_only_overlap. The persisted set is the
-	// "long-haul" intent (per ADR-127) and the operator's
-	// ephemeral --only contradicts it; honor persisted by
-	// stripping the slug from req.Only before the mutex check.
-	// Audit emission downstream tags the slug as reason="persisted"
-	// so operators can trace what happened.
-	if len(persistedSlugs) > 0 && len(req.Only) > 0 {
-		persistedSet := make(map[string]bool, len(persistedSlugs))
-		for _, slug := range persistedSlugs {
-			persistedSet[slug] = true
-		}
-		for slug := range req.Only {
-			if persistedSet[slug] {
-				delete(req.Only, slug)
-			}
-		}
+	} else if !errors.Is(projErr, state.ErrNotFound) {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not inspect persisted project selection")
 	}
 	// ADR-124: --only and --exclude are inverse filters and cannot
 	// share a slug. Reject the request pre-scan with a 409 and a
 	// stable code so the CLI / dashboard can branch on it without
 	// guessing. Sorted output keeps the message deterministic.
-	if len(req.Exclude) > 0 && len(req.Only) > 0 {
+	if len(explicitExcludes) > 0 && len(req.Only) > 0 {
 		var clash []string
 		for slug := range req.Only {
-			if req.Exclude[slug] {
+			if explicitExcludes[slug] {
 				clash = append(clash, slug)
 			}
 		}
@@ -1467,8 +1480,8 @@ func (s *server) scanService(
 	// short-circuits the scan only when the hash matches; on a
 	// miss we re-scan (the caller asked for this bytes-blob, not
 	// the cached plan) and continue.
+	var pt planTokenWire
 	if planToken != "" {
-		var pt planTokenWire
 		b, decErr := base64.StdEncoding.DecodeString(planToken)
 		if decErr == nil {
 			_ = json.Unmarshal(b, &pt)
@@ -1596,9 +1609,9 @@ func (s *server) scanService(
 	if selectorProblem := validateWorkloadSelectors("exclude", req.Exclude, result.Workloads, false); selectorProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, selectorProblem
 	}
-	if len(req.Only) > 0 && len(req.Exclude) > 0 {
+	if len(req.Only) > 0 && len(explicitExcludes) > 0 {
 		for _, workload := range result.Workloads {
-			if workloadMatchesSelectors(req.Only, workload) && workloadMatchesSelectors(req.Exclude, workload) {
+			if workloadMatchesSelectors(req.Only, workload) && workloadMatchesSelectors(explicitExcludes, workload) {
 				return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 					http.StatusConflict, "exclude_only_overlap", "workload is in both --only and --exclude",
 					fmt.Sprintf("workload %q at root %q is selected by both filters", workload.Name, workload.RootDir))
@@ -1659,6 +1672,10 @@ func (s *server) scanService(
 		}
 		filteredW = append(filteredW, wl)
 	}
+	if len(req.Only) > 0 && len(filteredW) == 0 {
+		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
+			"project_selection_empty", "No workloads selected", "all requested workloads are excluded; review the persisted exclusions before deploying")
+	}
 	var dependencyReferences []reposcan.Workload
 	if req.Migration {
 		dependencyReferences = projectsetup.DependencyReferences(result.Workloads, filteredW)
@@ -1715,6 +1732,9 @@ func (s *server) scanService(
 		scanNames := make(map[string]bool, len(result.Workloads)*2)
 		for _, w := range result.Workloads {
 			scanNames[strings.ToLower(w.Name)] = true
+			if w.AppSlug != "" {
+				scanNames[strings.ToLower(w.AppSlug)] = true
+			}
 			if w.RootDir != "" {
 				scanNames[strings.ToLower(w.RootDir)] = true
 			}
@@ -1775,6 +1795,16 @@ func (s *server) scanService(
 			persistedSlugs = filtered
 		}
 	}
+	selection := projectselection.New(req.Only, explicitExcludes, persistedSlugs)
+	if apply && environmentProtected {
+		if !projectselection.Matches(pt.Selection, selection) {
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
+				"plan_token_stale", "Project selection changed after review", "scan and approve the exact selection before applying to this protected environment")
+		}
+		if prob := s.consumeProjectPlanApproval(r.Context(), acct, req, planToken); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
 	// Managed services (compose image: db, etc.) are not subject to
 	// --only — the customer sees them in the plan either way so they
 	// know what we're NOT provisioning. That mirrors the §4 fixture
@@ -1801,14 +1831,18 @@ func (s *server) scanService(
 	// path from the just-inserted apps.
 	crons := projectWorkloadCrons(filteredW)
 	warnings := append([]string(nil), result.Warnings...)
-	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
-		warnings = append(warnings, routeWarning)
+	if reconcileProductionEnvironment(req.Environment) {
+		if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
+			warnings = append(warnings, routeWarning)
+		}
+		if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
+			warnings = append(warnings, routeWarning)
+		}
+	} else if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
+		warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
 	}
-	if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
-		warnings = append(warnings, routeWarning)
-	}
-	if req.NoTriggers {
-		if len(crons) > 0 {
+	if noTriggers {
+		if len(crons) > 0 && req.NoTriggers {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
 		}
 		crons = nil
@@ -1853,7 +1887,7 @@ func (s *server) scanService(
 			existingProjectCrons += len(cronInventory[app.ID])
 		}
 	}
-	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+	if resolvedManifest.AsyncRoutesPresent && !noTriggers {
 		if problem := validateProjectManifestAsyncRoutes(resolvedManifest.AsyncRoutes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
@@ -1861,7 +1895,7 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
-	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+	if resolvedManifest.RoutesPresent && !noTriggers {
 		if problem := validateProjectManifestPathRoutes(resolvedManifest.Routes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
@@ -1870,7 +1904,7 @@ func (s *server) scanService(
 	if resolvedManifest.AsyncRoutesPresent {
 		asyncRoutePlan, manifestProblem = s.planProjectManifestAsyncRoutes(
 			r.Context(), acct, result.Workloads, filteredW, projectApps,
-			resolvedManifest.AsyncRoutes, req.NoTriggers,
+			resolvedManifest.AsyncRoutes, noTriggers,
 		)
 		if manifestProblem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
@@ -1878,8 +1912,28 @@ func (s *server) scanService(
 	}
 	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
 	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
+	if !reconcileProductionEnvironment(req.Environment) {
+		prePartition.Removed, partition.Removed = nil, nil
+	} else {
+		preserved, err := state.EnvironmentOnlyProjectApps(r.Context(), s.store, acct.ID, projectID)
+		if err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not inspect environment-only services")
+		}
+		preservedSlugs := make(map[string]bool)
+		for _, app := range projectApps {
+			if preserved[app.ID] {
+				preservedSlugs[app.Slug] = true
+			}
+		}
+		kept := func(slug string) bool { return preservedSlugs[slug] }
+		if slices.ContainsFunc(partition.Removed, kept) {
+			warnings = append(warnings, "production deploy preserves omitted services configured only in another environment; they still count toward app capacity")
+		}
+		prePartition.Removed = slices.DeleteFunc(prePartition.Removed, kept)
+		partition.Removed = slices.DeleteFunc(partition.Removed, kept)
+	}
 	var preDesiredCrons, desiredCrons []planCron
-	if !req.NoTriggers {
+	if !noTriggers {
 		preDesiredCrons = projectCronsWithPreserved(
 			projectWorkloadCrons(onlyFilteredW), projectApps, cronInventory,
 			func(name string) bool { return len(req.Only) > 0 && !onlyNames[strings.ToLower(name)] },
@@ -1897,7 +1951,7 @@ func (s *server) scanService(
 	projectedCrons := observedCrons - existingProjectCrons + len(desiredCrons)
 	preCronGate := observedCrons - existingProjectCrons + len(preDesiredCrons)
 	cronGate := projectedCrons
-	if req.NoTriggers {
+	if noTriggers {
 		// Suppression leaves trigger state untouched. Existing rows must not
 		// block a workload-only deploy after a plan downgrade.
 		projectedCrons = observedCrons
@@ -1938,6 +1992,11 @@ func (s *server) scanService(
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
 		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, filteredW, slugHolders)...)
+	}
+	if !reconcileProductionEnvironment(req.Environment) {
+		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)
+		admissionReasons = append(admissionReasons, stageReasons...)
+		preAdmissionReasons = append(preAdmissionReasons, stageReasons...)
 	}
 	if len(preAdmissionReasons) > 0 {
 		preCanApply = false
@@ -1993,7 +2052,7 @@ func (s *server) scanService(
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
 	// The Compose environment's values are read apart from the scan so they
 	// never enter a plan; an unreadable one only means nothing is imported.
-	composeEnv, composeEnvErr := reposcan.ReadProjectEnv(os.DirFS(req.ScanDir), s.projectScanOptions(acct))
+	composeEnv, composeEnvErr := reposcan.ReadProjectEnv(os.DirFS(req.ScanDir), s.projectScanOptions(acct), result.Workloads)
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
@@ -2068,8 +2127,14 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 		if provision, ok := composePostgres[m.Name]; ok {
 			respManaged[i].Provision = planManagedProvision(provision)
-		} else {
-			respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+			continue
+		}
+		respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		respManaged[i].Unbound = unboundDatastoreKeys(composeEnv, filteredW, respWorkloads, m)
+		if m.Kind != "postgres" && len(respManaged[i].Unbound) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s (%s) is not run on Gregale and has no managed equivalent; %s will have no value. Set each to an external %s before the first request",
+				m.Name, m.Kind, strings.Join(respManaged[i].Unbound, ", "), m.Kind))
 		}
 	}
 	resp := &scanPlanResponse{
@@ -2160,7 +2225,7 @@ func (s *server) scanService(
 				reviewedSlugs[workload.Name] = workload.AppSlug
 			}
 		}
-		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease)}
+		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease), Selection: selection}
 		if req.Migration {
 			names.PublicAppsDomain = s.domain
 		}
@@ -2461,10 +2526,14 @@ func (s *server) scanService(
 			excludeSeen[name] = true
 		}
 	}
-	rec, recErr := s.reconcileSvc.ReconcileWithCrons(
-		r.Context(), project, filteredScan,
-		reconcileInputs.CommitSHA, reconcileInputs.Branch,
-		excludeList, nil)
+	var rec reconcile.Result
+	var recErr error
+	if reconcileProductionEnvironment(req.Environment) {
+		rec, recErr = s.reconcileSvc.ReconcileWithCrons(r.Context(), project, filteredScan,
+			reconcileInputs.CommitSHA, reconcileInputs.Branch, excludeList, nil)
+	} else {
+		rec, recErr = s.reconcileSvc.ReconcileEnvironment(r.Context(), project, filteredScan, req.Environment, reconcileInputs.CommitSHA, environmentProtected)
+	}
 	if recErr != nil {
 		// Map reconcile-package errors into the existing RFC 7807
 		// problem shapes so the handler can use a single dispatch
@@ -2504,7 +2573,7 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers) || (resolvedManifest.RoutesPresent && !req.NoTriggers)
+	needsProjectApps := len(req.RetryTargets) > 0 || !noTriggers || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0
 	var currentProjectApps []state.App
 	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
@@ -2520,19 +2589,27 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		currentProjectApps = apps
+		if !reconcileProductionEnvironment(req.Environment) {
+			for i := range currentProjectApps {
+				currentProjectApps[i], appsErr = state.ResolveAppForEnvironment(r.Context(), s.store, currentProjectApps[i], req.Environment)
+				if appsErr != nil {
+					return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load environment workload settings")
+				}
+			}
+		}
 	}
 	if len(resolvedManifest.PostgresBindings) > 0 {
 		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifest.PostgresBindings, currentProjectApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
-	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+	if resolvedManifest.AsyncRoutesPresent && !noTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
-	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+	if resolvedManifest.RoutesPresent && !noTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestPathRoutes(r.Context(), acct, resolvedManifest.Routes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
@@ -2669,7 +2746,7 @@ func (s *server) scanService(
 		buildAdded = nil
 	}
 	var cronPlans map[string]projectDeploymentCronPlan
-	if !req.NoTriggers && reconcileProductionEnvironment(req.Environment) {
+	if !noTriggers {
 		buildChanged, cronPlans = s.planProjectDeploymentCrons(r.Context(), acct, selectedProjectManifestApps(filteredW, currentProjectApps), buildAdded, buildChanged, desiredCrons)
 	}
 	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, req.OverrideFreeze, cronPlans, dependencyReferences)
@@ -2998,6 +3075,7 @@ func hashFileSHA256(path string) (string, error) {
 }
 
 type planNameOptions struct {
+	Selection        *projectselection.Filters
 	PublicAppsDomain string
 	AppSlugs         map[string]string
 	Migration        bool
@@ -3010,6 +3088,7 @@ type planNameOptions struct {
 // compares). AccountID prevents token-reuse across accounts.
 func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool, names ...planNameOptions) (string, error) {
 	pt := planTokenWire{
+		Selection:              projectselection.New(nil, nil, nil),
 		Hash:                   hashHex,
 		AccountID:              accountID,
 		Slug:                   slug,
@@ -3027,6 +3106,9 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		pt.Migration = names[0].Migration
 		pt.PublicAppsDomain = names[0].PublicAppsDomain
 		pt.SafeReleaseID = names[0].SafeReleaseID
+		if names[0].Selection != nil {
+			pt.Selection = names[0].Selection
+		}
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {

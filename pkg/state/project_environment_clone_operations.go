@@ -4,9 +4,15 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
+
+// ErrProjectEnvironmentCloneUnfinished refuses protecting an environment that
+// an unfinished clone targets: publication refuses a protected target, and the
+// clone's compensation would then delete the protected environment.
+var ErrProjectEnvironmentCloneUnfinished = fmt.Errorf("the environment's clone is unfinished: %w", ErrConflict)
 
 // ProjectEnvironmentCloneOperation pins the source identity for a complete
 // clone. The resource list contains identities and capture points, never
@@ -120,4 +126,5 @@ type ProjectEnvironmentCloneOperationStore interface {
 // has to finish: every status but ready, failed and compensated.
 type ProjectEnvironmentCloneActivityStore interface {
 	UnfinishedProjectEnvironmentClones(ctx context.Context) (int64, error)
+	UnfinishedProjectEnvironmentClonesForProject(ctx context.Context, projectID string) (int64, error)
 }

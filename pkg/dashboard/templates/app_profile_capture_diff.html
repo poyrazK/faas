@@ -4,7 +4,7 @@
 body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} .muted {color:#64748b} .grew {color:#b91c1c} .shrank {color:#1d4ed8} svg {width:100%;font-size:12px} svg rect {stroke:white;stroke-width:1;cursor:pointer} svg text {pointer-events:none} svg g:focus rect {stroke:#0f172a;stroke-width:2} .legend span {display:inline-block;width:1em;height:1em;vertical-align:middle;margin:0 .25em 0 .75em} .legend .up {background:#ef4444} .legend .down {background:#3b82f6} .legend .same {background:#d1d5db}
 </style></head><body>
 {{$d := .Data}}{{$x := $d.Diff}}
-<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles#profile-captures">Profiles</a>{{if $x.Candidate.ID}} · <a href="{{$d.CandidateURL}}">Capture</a>{{end}}</nav>
+<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles/captures">Captures</a>{{if $x.Candidate.ID}} · <a href="{{$d.CandidateURL}}">Capture</a>{{end}}</nav>
 <h1>Compare captures</h1>
 {{if $d.Error}}<p class="notice">{{$d.Error}}</p>{{else}}
 <table aria-label="Compared captures"><thead><tr><th></th><th>Started</th><th>Trigger</th><th>Duration</th><th>{{$x.Kind}} total</th></tr></thead><tbody>

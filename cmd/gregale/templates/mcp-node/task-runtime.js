@@ -14,6 +14,12 @@ function envName(value) {
   return value;
 }
 
+// The shared CLI config represents omitted numeric settings as zero. Preserve
+// that defaulting contract without treating booleans or numeric strings as zero.
+function taskDefault(value, fallback) {
+  return value === undefined || value === null || value === 0 ? fallback : value;
+}
+
 export function resolveMcpTaskSettings(config, { env = process.env, role = 'combined' } = {}) {
   if (!['combined', 'web', 'worker', 'observer'].includes(role)) throw new Error('MCP task role must be combined, web, worker, or observer');
   const settings = config?.tasks;
@@ -34,19 +40,35 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
   if (!ownerKey && role !== 'observer') throw new Error('MCP Tasks are enabled but the configured owner key is unavailable');
   if (typeof namespace !== 'string' || !namespace.trim()) throw new Error('MCP Tasks require a stable namespace');
 
+  const nativeOwnerKeys = role === 'observer' ? [] : [{ id: settings.owner_key_id ?? 'default', key: ownerKey }];
+  if (role !== 'observer') {
+    const previous = settings.previous_owner_keys ?? [];
+    if (!Array.isArray(previous) || previous.length > 16) throw new Error('Invalid MCP task previous owner keys');
+    for (const item of previous) {
+      if (!item || typeof item !== 'object') throw new Error('Invalid MCP task previous owner keys');
+      nativeOwnerKeys.push({ id: item.id, key: env[envName(item.env)] });
+    }
+    const ids = new Set();
+    for (const item of nativeOwnerKeys) {
+      if (typeof item.id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(item.id) || ids.has(item.id) ||
+          typeof item.key !== 'string' || Buffer.byteLength(item.key) < 32) throw new Error('Invalid MCP task native owner key configuration');
+      ids.add(item.id);
+    }
+  }
   return {
     enabled: true,
+    nativeOwnerKeys,
     role,
     databaseURL,
     ownerKey,
     encryptionKeys: role !== 'observer' && settings.encryption_keys_env ? parseMcpTaskEncryptionKeys(env[envName(settings.encryption_keys_env)]) : undefined,
     namespace: namespace.trim(),
-    ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
-    pollIntervalMs: settings.poll_interval_ms ?? 2000,
-    workerConcurrency: settings.worker_concurrency ?? 1,
+    ttlMs: taskDefault(settings.ttl_seconds, 86400) * 1000,
+    pollIntervalMs: taskDefault(settings.poll_interval_ms, 2000),
+    workerConcurrency: taskDefault(settings.worker_concurrency, 1),
     deploymentID: (env.FAAS_DEPLOYMENT_ID || '').trim(),
-    shutdownTimeoutMs: env.MCP_DRAIN_TIMEOUT_SECONDS === undefined ? (settings.shutdown_timeout_ms ?? 10_000) : Number(env.MCP_DRAIN_TIMEOUT_SECONDS) * 1000,
-    ...validateMcpTaskRetryPolicy({ maxAttempts: settings.max_attempts ?? 3, retryBaseDelayMs: settings.retry_base_delay_ms ?? 1000, retryMaxDelayMs: settings.retry_max_delay_ms ?? 60_000 }),
+    shutdownTimeoutMs: env.MCP_DRAIN_TIMEOUT_SECONDS === undefined ? taskDefault(settings.shutdown_timeout_ms, 10_000) : Number(env.MCP_DRAIN_TIMEOUT_SECONDS) * 1000,
+    ...validateMcpTaskRetryPolicy({ maxAttempts: taskDefault(settings.max_attempts, 3), retryBaseDelayMs: taskDefault(settings.retry_base_delay_ms, 1000), retryMaxDelayMs: taskDefault(settings.retry_max_delay_ms, 60_000) }),
     maxRunning: settings.max_running || defaults.maxRunning,
     maxRunningPerOwner: settings.max_running_per_owner || defaults.maxRunningPerOwner,
     maxOutstanding: settings.max_outstanding || defaults.maxOutstanding,
@@ -77,7 +99,7 @@ export async function startMcpTaskRuntime(config, {
   let taskRuntime;
   let metricsPublisher;
   try {
-    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, compatibility: true }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, encryptionKeys: settings.encryptionKeys, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
+    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxAttempts: settings.maxAttempts, compatibility: true }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, encryptionKeys: settings.encryptionKeys, nativeOwnerKeys: settings.nativeOwnerKeys, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner, maxAttempts: settings.maxAttempts });
     if (role === 'observer') {
       await checkSchema({ pool, namespace: settings.namespace, role: 'observer' });
       await store.queueMetrics();
@@ -112,6 +134,7 @@ export async function startMcpTaskRuntime(config, {
   let closing;
   return {
     taskRuntime,
+    shutdownTimeoutMs: settings.shutdownTimeoutMs,
     async close() {
       if (closing) return closing;
       closing = (async () => {

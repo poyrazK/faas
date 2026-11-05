@@ -251,7 +251,7 @@ export class DomainsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `The domain is not verified and cannot be selected.`,
+        409: `The domain is unverified, routes to another app, or belongs to a suspended tenant and cannot be selected.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

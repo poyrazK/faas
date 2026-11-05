@@ -19,7 +19,7 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|delete|deploy|configure|server-key|usage|live|storage|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|delete|deploy|configure|server-key|usage|live|storage|hooks|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -71,12 +71,14 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPILive(args[1:])
 	case "storage":
 		return cmdDataAPIStorage(args[1:])
+	case "hooks":
+		return cmdDataAPIHooks(args[1:])
 	case "deploy":
 		return cmdDataAPIDeploy(args[1:])
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, delete, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, delete, deploy, configure, server-key, usage, live, storage, hooks, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -141,6 +143,10 @@ func cmdDataAPIRefresh(args []string) int {
 }
 
 func cmdDataAPICreate(args []string) int {
+	return cmdDataAPICreateContext(context.Background(), args)
+}
+
+func cmdDataAPICreateContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("data-api create", flag.ContinueOnError)
 	database := fs.String("database", "", "managed PostgreSQL name or ID")
 	schema := fs.String("schema", "api", "exposed schema (api, or public with --read-only)")
@@ -197,7 +203,6 @@ func cmdDataAPICreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
 	if *authApp != "" {
 		resolved, err := resolveAuthIssuer(ctx, client, *authApp)
 		if err != nil {

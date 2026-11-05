@@ -114,6 +114,9 @@ func run(args []string) (status int) {
 	previousAutomation := nonInteractive
 	defer func() { nonInteractive = previousAutomation }()
 	nonInteractive = false
+	previousInsecureWarned := insecureAPIWarned
+	defer func() { insecureAPIWarned = previousInsecureWarned }()
+	insecureAPIWarned = false
 	var automationErr error
 	args, automationErr = extractAutomationFlag(args)
 	previousProfile := profileOverride
@@ -154,13 +157,31 @@ func run(args []string) (status int) {
 			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
 		}
 	}
-	if topic, ok := cliTreeHelpTopic(args); ok {
+	// Help under a tree noun or a shortcut comes from the tree manifest the
+	// reference renders, so it names the same verbs at every depth.
+	if words, ok := treeHelpWords(typed); ok {
+		if cliTreeTopicHidden(cliTreeTopic{Path: words[:1]}) {
+			return unknownCommand(strings.Join(leadingTreeWords(words), " "))
+		}
+		if printTreeManifestHelp(osStdout, words) {
+			return 0
+		}
+	}
+	// A topic is what the user typed: `mcp server --help` rewrites to `mcp
+	// --help`, whose topic is another page.
+	if topic, ok := cliTreeHelpTopic(args); ok && slices.Equal(typed, args) {
 		if cliTreeTopicHidden(topic) {
 			return unknownCommand(strings.Join(leadingTreeWords(typed), " "))
 		}
 		printCliTreeHelp(osStdout, topic)
 		return 0
 	}
+	previousUsageFrom, previousUsageTo := treeUsageFrom, treeUsageTo
+	treeUsageFrom, treeUsageTo = "", ""
+	if from, to, ok := cliTreeHelpRename(typed, args); ok {
+		treeUsageFrom, treeUsageTo = from, to
+	}
+	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
 			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
@@ -210,6 +231,11 @@ func run(args []string) (status int) {
 	// A command that names its app only with --app also takes the app as the
 	// first argument after its verb.
 	rewritten, err := appArgumentAsFlag(args)
+	if err == nil {
+		// …and a command that takes the app only as its first argument also
+		// takes --app.
+		rewritten, err = appFlagAsArgument(rewritten)
+	}
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
@@ -250,17 +276,25 @@ func run(args []string) (status int) {
 		}
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
+	case "completion":
+		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
+		// via cmdCompletion; the dispatcher is in completion.go. Like help,
+		// it must work with a broken profile: shells source it at startup.
+		return cmdCompletion(args[1:])
+	case "man":
+		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
+		// gregale-<command>(1). Dispatcher is in man.go.
+		return cmdMan(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)
 	}
+	if code, stop := connectionPreflight(args[0]); stop {
+		return code
+	}
 	switch args[0] {
 	case "profile":
 		return cmdProfile(args[1:])
-	case "completion":
-		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
-		// via cmdCompletion; the dispatcher is in completion.go.
-		return cmdCompletion(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
 	case "link":
@@ -271,10 +305,6 @@ func run(args []string) (status int) {
 		return cmdContext(args[1:])
 	case "capabilities":
 		return cmdCapabilities(args[1:])
-	case "man":
-		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
-		// gregale-<command>(1). Dispatcher is in man.go.
-		return cmdMan(args[1:])
 	case "login":
 		return cmdLogin(args[1:])
 	case dispatchSignup:
@@ -930,6 +960,7 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
 		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackSwitchUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)
@@ -1055,7 +1086,7 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		printCLIExamples(w, sub.Examples)
 	}
 	printHelpNotes(w, sub.Notes)
-	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
+	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands, "app") {
 		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))

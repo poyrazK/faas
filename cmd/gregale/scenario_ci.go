@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/wire"
 	"gopkg.in/yaml.v3"
 )
 
@@ -109,7 +113,7 @@ func cmdTestCIInit(args []string) int {
 	environment := fs.String("environment", "gregale-test", "GitHub environment containing real-VM credentials")
 	branch := fs.String("branch", "main", "branch that publishes and supplies the baseline")
 	baselineMaxAgeDays := fs.Int("baseline-max-age-days", 30, "maximum age of a CI baseline artifact (0 disables the age check)")
-	workflowPath := fs.String("workflow", defaultTestCIWorkflow, "new GitHub Actions workflow path")
+	workflowPath := fs.String("workflow", defaultTestCIWorkflow, "new GitHub Actions workflow path, relative to the repository root")
 	budgetPath := fs.String("budget", defaultTestCIBudget, "comparison budget path; creates a starter budget when absent")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -159,8 +163,15 @@ func cmdTestCIInit(args []string) int {
 		return printErr("Invalid CI load options", errors.New("--load requires --engine local"))
 	}
 
-	repoRoot, err := os.Getwd()
+	workingDir, err := os.Getwd()
 	if err != nil {
+		return printErr("Could not locate repository", err)
+	}
+	repoRoot, err := gitRootFromCwd(workingDir)
+	if errors.Is(err, ErrNotInGitRepo) {
+		// Allow workflow generation before a directory has been initialized as Git.
+		repoRoot = workingDir
+	} else if err != nil {
 		return printErr("Could not locate repository", err)
 	}
 	manifestRel, manifestAbs, err := testCIRepositoryPath(repoRoot, *manifestPath, "manifest")
@@ -247,11 +258,36 @@ func cmdTestCIInit(args []string) int {
 	if err != nil {
 		return printErr("Cannot prepare CI suite", err)
 	}
+	// Every selectable matrix profile must be supported before writing a workflow.
+	if effectiveEngine == "real-vm" {
+		for _, profile := range vmProfiles[1:] {
+			suiteOptions.Profile = profile
+			if _, err := prepareTestSuite(manifestAbs, selectedSuite, suiteOptions); err != nil {
+				return printErr("Cannot prepare CI suite", err)
+			}
+		}
+	}
 	if effectiveEngine == "local" {
 		for _, scenario := range prepared {
 			if scenario.Scenario.Local == nil {
 				return printErr("CI suite needs a managed local app", fmt.Errorf("scenario %q has no local.command; this workflow generator only starts app processes declared in the manifest", scenario.Name))
 			}
+		}
+	}
+	jobTimeout, err := testCIJobTimeoutMinutes(prepared, repeatCount)
+	if err != nil {
+		return printErr("CI suite exceeds job runtime limit", err)
+	}
+	var vmRepeatOptions []string
+	if effectiveEngine == "real-vm" {
+		// Cover every offered dispatch choice, not just the generation default.
+		for count := 1; count <= 3; count++ {
+			timeout, err := testCIJobTimeoutMinutes(prepared, count)
+			if err != nil {
+				break
+			}
+			vmRepeatOptions = append(vmRepeatOptions, strconv.Itoa(count))
+			jobTimeout = max(jobTimeout, timeout)
 		}
 	}
 
@@ -323,6 +359,8 @@ func cmdTestCIInit(args []string) int {
 		Budget:             budgetRel, WorkflowFile: filepath.Base(workflowRel), Consumers: consumers,
 		NeedsNode: testCINeedsNode(prepared), Profiles: vmProfiles,
 		MaxWorkloadMinutes: *maxWorkloadMinutes, Environment: *environment,
+		JobTimeoutMinutes: jobTimeout,
+		RepeatOptions:     vmRepeatOptions,
 	})
 	if err != nil {
 		return printErr("Could not render GitHub Actions workflow", err)
@@ -380,6 +418,42 @@ type generatedTestCIOptions struct {
 	Profiles           []string
 	MaxWorkloadMinutes int
 	Environment        string
+	JobTimeoutMinutes  int
+	RepeatOptions      []string
+}
+
+func testCIJobTimeoutMinutes(scenarios []testPreparedScenario, repeat int) (int, error) {
+	// Leave time for checkout, CLI/runtime installation, comparison and upload.
+	total := 10 * time.Minute
+	for _, scenario := range scenarios {
+		limit := 15 * time.Minute
+		if scenario.Scenario.Timeout != "" {
+			limit, _ = time.ParseDuration(scenario.Scenario.Timeout)
+		}
+		cases := 1
+		if scenario.Engine == "local" {
+			cases = max(1, len(scenario.Cases))
+			// Fixture cleanup and app shutdown run outside the scenario deadline.
+			limit += 2 * time.Minute
+		}
+		runs := repeat * cases
+		if scenario.Engine == "real-vm" {
+			runs *= testResilienceRuns(scenario.Scenario)
+			// Resource cleanup, fault draining and diagnostics have independent
+			// deadlines. Contained commands can also require longer action sealing.
+			cleanup := 6 * time.Minute
+			if scenario.Scenario.CommandExecution != nil {
+				cleanup = 8 * time.Minute
+			}
+			limit += cleanup
+		}
+		total += time.Duration(runs) * limit
+	}
+	minutes := max(30, int((total+time.Minute-1)/time.Minute))
+	if minutes > 360 {
+		return 0, fmt.Errorf("selected scenarios, cases and repeats need up to %d minutes; GitHub jobs allow at most 360 minutes; split the suite or reduce repeats, cases, resilience runs or scenario timeouts", minutes)
+	}
+	return minutes, nil
 }
 
 func renderTestCIWorkflow(options generatedTestCIOptions) ([]byte, error) {
@@ -395,7 +469,7 @@ func renderTestCIWorkflow(options generatedTestCIOptions) ([]byte, error) {
 	steps = append(steps,
 		generatedTestCIWorkflowStep{
 			Name:  "Install Gregale CLI",
-			Run:   `curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"`,
+			Run:   generatedTestCIInstallCommand(wire.Version),
 			Shell: "bash",
 		},
 		generatedTestCIWorkflowStep{
@@ -405,7 +479,7 @@ func renderTestCIWorkflow(options generatedTestCIOptions) ([]byte, error) {
 		},
 		generatedTestCIWorkflowStep{
 			Name:  "Compare with branch baseline",
-			If:    "github.event_name == 'pull_request'",
+			If:    "!cancelled() && github.event_name == 'pull_request'",
 			Env:   map[string]string{"GH_TOKEN": "${{ github.token }}"},
 			Run:   generatedTestCICompareCommand(),
 			Shell: "bash",
@@ -457,7 +531,7 @@ func renderTestCIWorkflow(options generatedTestCIOptions) ([]byte, error) {
 		Permissions: map[string]string{"contents": "read", "actions": "read"},
 		Jobs: map[string]generatedTestCIJob{
 			"scenarios": {
-				RunsOn: "ubuntu-latest", TimeoutMinutes: 30, Env: jobEnv, Steps: steps,
+				RunsOn: "ubuntu-latest", TimeoutMinutes: options.JobTimeoutMinutes, Env: jobEnv, Steps: steps,
 			},
 		},
 	}
@@ -484,7 +558,7 @@ func renderTestCIVMWorkflow(options generatedTestCIOptions) ([]byte, error) {
 			Required:    true,
 			Type:        "choice",
 			Default:     fmt.Sprint(options.Repeat),
-			Options:     []string{"1", "2", "3"},
+			Options:     options.RepeatOptions,
 		},
 	}
 	steps := []generatedTestCIWorkflowStep{{Name: "Check out repository", Uses: "actions/checkout@v7"}}
@@ -496,12 +570,12 @@ func renderTestCIVMWorkflow(options generatedTestCIOptions) ([]byte, error) {
 	steps = append(steps,
 		generatedTestCIWorkflowStep{
 			Name:  "Install Gregale CLI",
-			Run:   `curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"`,
+			Run:   generatedTestCIInstallCommand(wire.Version),
 			Shell: "bash",
 		},
 		generatedTestCIWorkflowStep{
 			Name:  "Check Gregale credentials",
-			Run:   generatedTestCIVMConfigCommand(),
+			Run:   generatedTestCIVMConfigCommand(options.RepeatOptions...),
 			Shell: "bash",
 			Env: map[string]string{
 				"FAAS_API":          "${{ vars.GREGALE_TEST_API_URL }}",
@@ -551,7 +625,7 @@ func renderTestCIVMWorkflow(options generatedTestCIOptions) ([]byte, error) {
 		},
 		Jobs: map[string]generatedTestCIJob{
 			"scenarios": {
-				RunsOn: "ubuntu-latest", TimeoutMinutes: 240, Environment: options.Environment,
+				RunsOn: "ubuntu-latest", TimeoutMinutes: options.JobTimeoutMinutes, Environment: options.Environment,
 				Strategy: &generatedTestCIStrategy{
 					FailFast: false, MaxParallel: 1, Matrix: map[string]any{"profile": profileMatrix},
 				},
@@ -578,7 +652,10 @@ func generatedTestCIVMCommandEnv(options generatedTestCIOptions) map[string]stri
 	}
 }
 
-func generatedTestCIVMConfigCommand() string {
+func generatedTestCIVMConfigCommand(repeats ...string) string {
+	if len(repeats) == 0 {
+		repeats = []string{"1", "2", "3"}
+	}
 	return `set -euo pipefail
 if [ -z "${FAAS_API:-}" ]; then
   echo '::error::Set GREGALE_TEST_API_URL in the configured GitHub environment.'
@@ -589,8 +666,8 @@ if [ -z "${FAAS_TOKEN:-}" ]; then
   exit 1
 fi
 case "$GREGALE_CI_REPEAT" in
-  1|2|3) ;;
-  *) echo '::error::repeat must be 1, 2, or 3.'; exit 1 ;;
+  ` + strings.Join(repeats, "|") + `) ;;
+  *) echo '::error::repeat must be one of: ` + strings.Join(repeats, ", ") + `. Larger repeat counts exceed this workflow job limit.'; exit 1 ;;
 esac
 api="${FAAS_API%/}"
 curl --fail --silent --show-error --max-time 15 "$api/healthz" >/dev/null`
@@ -614,6 +691,24 @@ func generatedTestCIVMRunCommand(preflight bool) string {
   --html "$RUNNER_TEMP/gregale-test-results-$GREGALE_CI_PROFILE.html"`
 }
 
+// releaseTagVersion matches the wire.Version of a release build: a release
+// tag such as v0.1.18 or v0.1.18-rc.313. Prerelease identifiers carry no
+// hyphen, which keeps out a development build's `git describe` version
+// (v0.1.18-rc.313-4-gabc1234) whose tag does not exist.
+var releaseTagVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)
+
+// generatedTestCIInstallCommand installs the CLI in a generated workflow. A
+// release build pins the installer to its own tag, so CI runs the CLI that
+// wrote the workflow rather than whichever release is newest on the day; a
+// development build has no published tag and installs the newest release.
+func generatedTestCIInstallCommand(version string) string {
+	const install = `curl -fsSL https://get.gregale.dev | sh -s -- `
+	if releaseTagVersion.MatchString(version) && !strings.HasSuffix(version, "-dirty") {
+		return install + "--version " + version + ` --dir "$RUNNER_TEMP/gregale"`
+	}
+	return install + `--dir "$RUNNER_TEMP/gregale"`
+}
+
 func generatedTestCIRunCommand(load bool) string {
 	command := `"$RUNNER_TEMP/gregale/gregale" test \
   --manifest "$GREGALE_CI_MANIFEST" \
@@ -631,6 +726,18 @@ func generatedTestCIRunCommand(load bool) string {
 
 func generatedTestCICompareCommand() string {
 	return `set -euo pipefail
+write_baseline_error() {
+  {
+    echo '## Gregale test comparison'
+    echo
+    echo "$1"
+  } >> "$GITHUB_STEP_SUMMARY"
+  echo "::error::$1"
+}
+if [ ! -f "$RUNNER_TEMP/gregale-test-results.json" ]; then
+  write_baseline_error 'The test suite did not produce a JSON report; the comparison cannot run.'
+  exit 1
+fi
 latest_baseline_for_event() {
   gh run list --repo "$GITHUB_REPOSITORY" \
   --workflow "$GREGALE_CI_WORKFLOW_FILE" \
@@ -651,14 +758,6 @@ elif [ -n "$manual_baseline" ]; then
     baseline="$manual_baseline"
   fi
 fi
-write_baseline_error() {
-  {
-    echo '## Gregale test comparison'
-    echo
-    echo "$1"
-  } >> "$GITHUB_STEP_SUMMARY"
-  echo "::error::$1"
-}
 if [ -z "$baseline" ]; then
   {
     echo '## Gregale test comparison'
@@ -779,9 +878,12 @@ func testCIConsumerKeys(scenarios []testPreparedScenario) map[string]string {
 
 func testCINeedsNode(scenarios []testPreparedScenario) bool {
 	for _, scenario := range scenarios {
-		commands := [][]string{scenario.Scenario.Command, scenario.Scenario.Trigger}
+		commands := [][]string{scenario.Scenario.Command, scenario.Scenario.Trigger, scenario.Scenario.Simulation}
 		commands = append(commands, scenario.Scenario.Setup...)
 		commands = append(commands, scenario.Scenario.Cleanup...)
+		for _, step := range scenario.Scenario.Steps {
+			commands = append(commands, step.Command)
+		}
 		if scenario.Scenario.Local != nil {
 			commands = append(commands, scenario.Scenario.Local.Command)
 		}
@@ -822,13 +924,10 @@ func testCIRepositoryPath(repoRoot, path, label string) (string, string, error) 
 	if strings.Contains(path, "\\") || strings.ContainsAny(path, "\r\n") {
 		return "", "", fmt.Errorf("%s path must not contain backslashes or line breaks", label)
 	}
-	abs := filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		var err error
-		abs, err = filepath.Abs(filepath.Join(repoRoot, filepath.Clean(path)))
-		if err != nil {
-			return "", "", err
-		}
+	// Manifest and budget arguments retain normal CLI paths relative to cwd.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %s path: %w", label, err)
 	}
 	rel, err := filepath.Rel(repoRoot, abs)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -838,13 +937,17 @@ func testCIRepositoryPath(repoRoot, path, label string) (string, string, error) 
 }
 
 func testCIWorkflowPath(repoRoot, path string) (string, string, error) {
+	// GitHub discovers workflows only in the repository root's .github/workflows.
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoRoot, path)
+	}
 	rel, abs, err := testCIRepositoryPath(repoRoot, path, "workflow")
 	if err != nil {
 		return "", "", err
 	}
-	workflowDir := filepath.ToSlash(filepath.Join(".github", "workflows")) + "/"
-	if !strings.HasPrefix(rel, workflowDir) || (filepath.Ext(rel) != ".yml" && filepath.Ext(rel) != ".yaml") {
-		return "", "", errors.New("--workflow must be a .yml or .yaml file inside .github/workflows")
+	workflowDir := filepath.ToSlash(filepath.Join(".github", "workflows"))
+	if filepath.ToSlash(filepath.Dir(rel)) != workflowDir || (filepath.Ext(rel) != ".yml" && filepath.Ext(rel) != ".yaml") {
+		return "", "", errors.New("--workflow must be a .yml or .yaml file directly inside .github/workflows")
 	}
 	return rel, abs, nil
 }

@@ -11,6 +11,57 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPgIssueBatchRollsBackOnQuota(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	account, app := seedPgAccountAndApp(t, s, ctx)
+	deployment := seedPgDeployment(t, s, ctx, app)
+	now := time.Now().UTC()
+	limits := api.PlanHobby.IssueLimits()
+	limits.EventsPerApp = 1
+	first := state.RecordIssueParams{
+		Credential:  state.IssueCredential{AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID, Environment: "application"},
+		Event:       api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "Error", SourceKind: "exception"},
+		Fingerprint: strings.Repeat("a", 64), Title: "Error", PayloadHash: strings.Repeat("b", 64), GroupingVersion: 1, Limits: limits, Now: now,
+	}
+	second := first
+	second.Event.EventID = uuid.NewString()
+	_, err := s.RecordIssueBatch(ctx, []state.RecordIssueParams{first, second})
+	var limit *state.IssueLimitError
+	if !errors.As(err, &limit) || limit.NoCapacityAtBatchStart {
+		t.Fatalf("expected quota after a rolled-back prefix, got %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM issue_events WHERE app_id=$1", app.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("batch left committed events: %d, %v", count, err)
+	}
+	first.Limits.EventsPerApp = 2
+	second.Limits.EventsPerApp = 2
+	results, err := s.RecordIssueBatch(ctx, []state.RecordIssueParams{first, second})
+	if err != nil || len(results) != 2 || results[0].Duplicate || results[1].Duplicate {
+		t.Fatalf("retry after increasing quota: %+v, %v", results, err)
+	}
+	again, err := s.RecordIssueBatch(ctx, []state.RecordIssueParams{first, second})
+	if err != nil || len(again) != 2 || !again[0].Duplicate || !again[1].Duplicate {
+		t.Fatalf("exact export retry: %+v, %v", again, err)
+	}
+	third := first
+	third.Event.EventID = uuid.NewString()
+	_, err = s.RecordIssueBatch(ctx, []state.RecordIssueParams{third, first})
+	if !errors.As(err, &limit) || !limit.NoCapacityAtBatchStart {
+		t.Fatalf("exhausted batch did not mark initial quota: %v", err)
+	}
+	_, err = s.RecordIssueBatch(ctx, []state.RecordIssueParams{first, third})
+	if !errors.As(err, &limit) || !limit.NoCapacityAtBatchStart {
+		t.Fatalf("duplicate-only prefix consumed capacity: %v", err)
+	}
+	third.Limits.EventsPerApp = 10
+	third.Limits.EventsPerMinute = 2
+	_, err = s.RecordIssueBatch(ctx, []state.RecordIssueParams{third})
+	if !errors.As(err, &limit) || !limit.Rate || !limit.NoCapacityAtBatchStart {
+		t.Fatalf("exhausted rate quota was not marked: %v", err)
+	}
+}
+
 // Exercise the PgStore boundary directly so the exact-package coverage gate
 // includes the release-aware Issues persistence paths, not only their callers.
 func TestPg_IssueStoreLifecycle(t *testing.T) {

@@ -106,6 +106,12 @@ func TestCommandCapabilityPath(t *testing.T) {
 		// Hunt 14 H14-100: the profile gate route belongs to the internal
 		// traffic-profiles capability.
 		{[]string{"canary", "gate", "dep"}, "canary gate", "traffic-profiles"},
+		// rc.318 field report: these answered a bare "no such API route"
+		// on production-us, where their preview capabilities are off.
+		{[]string{"alerts", "actions", "--app", "my-app"}, "alerts actions", "alert-rollbacks"},
+		{[]string{"app", "my-app", "exec", "--", "ls"}, "app exec", "app-tasks"},
+		{[]string{"app", "my-app", "cp", "/tmp/x", "-"}, "app cp", "app-tasks"},
+		{[]string{"app", "my-app", "port-forward", "5432:db:5432"}, "app port-forward", "app-tasks"},
 		{[]string{"deploy"}, "deploy", ""},
 	} {
 		path := main.CommandCapabilityPath(tc.args)

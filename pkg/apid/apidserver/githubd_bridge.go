@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -92,7 +94,18 @@ type githubdBridge struct {
 	// agentSteps reports whether an account may deploy workflow agent steps
 	// (ADR-20261027090010 §1); nil refuses them.
 	agentSteps func(state.Account) bool
+	// releasePhaseOff refuses a push that declares a release command while
+	// FAAS_RELEASE_PHASE_ENABLED is off on apid.
+	releasePhaseOff bool
+	// applySettings applies the source gregale.yaml's app settings (lifecycle
+	// hooks, restart policy, timeouts, scaling, retries) before the deployment
+	// row exists, and returns their undo for a failed enqueue
+	// (ADR-20261104221217). Nil skips them.
+	applySettings bridgeSettingsApplier
 }
+
+// bridgeSettingsApplier is server.applyBridgeSourceSettings.
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -352,7 +365,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if buildErr != nil {
 		return nil, buildErr
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest, g.releasePhaseOff)
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
@@ -518,6 +531,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
+		// ADR-20261019071733 amendment 9: a push does not release into a
+		// protected environment other than production.
+		if p := protectedEnvironmentReleaseProblem(ctx, g.store, app, req.DeploymentScope); p != nil {
+			return nil, status.Error(codes.FailedPrecondition, p.Detail)
+		}
 		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, resource.Plan, req.DeploymentScope, &params)
 		// ADR-20261020085706: a push to an app that requires approvals must
 		// wait in a canary; githubd reports the refusal on the commit.
@@ -531,8 +549,34 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			}
 		}
 	}
+	ctx, _, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
+	if cronProblem != nil {
+		return nil, grpcerr.ToStatus(cronProblem)
+	}
+	spooled, err := g.spoolSource(req.SourcePath)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
+	}
+	params.SourcePath = spooled
+	undoSettings := func(context.Context) {}
+	if g.applySettings != nil && manifest != nil {
+		updated, undo, problem := g.applySettings(ctx, resource, app, manifest)
+		if problem != nil {
+			if spooled != req.SourcePath {
+				_ = os.Remove(spooled)
+			}
+			return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: gregale.yaml settings: %s", problem.Detail)
+		}
+		undoSettings = undo
+		app = updated
+		params.ServiceRollout = app.Manifest.ExecutionMode == api.ExecutionModeService
+	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
+		undoSettings(context.WithoutCancel(ctx))
+		if spooled != req.SourcePath {
+			_ = os.Remove(spooled)
+		}
 		return nil, g.asGRPC("enqueue", err)
 	}
 
@@ -553,6 +597,46 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		DeploymentId: res.DeploymentID,
 		AppId:        app.ID,
 	}, nil
+}
+
+// spoolSource copies githubd's staged archive into apid's build spool and
+// returns the copy's path. builderd reads only sources under the spool root
+// (FAAS_SPOOL_ROOT), and a split-box builder materializes them there from
+// source storage; githubd's staging tree is outside it, so a build pointed
+// at the staged file failed with "outside spool root". A source already in
+// the spool is used as it is.
+func (g *githubdBridge) spoolSource(sourcePath string) (string, error) {
+	root := filepath.Clean(g.spool)
+	if strings.HasPrefix(filepath.Clean(sourcePath), root+string(filepath.Separator)) {
+		return sourcePath, nil
+	}
+	if err := os.MkdirAll(root, 0o770); err != nil {
+		return "", fmt.Errorf("create source spool: %w", err)
+	}
+	//nolint:forbidigo // sourcePath passed the staging-root allowlist above.
+	src, err := os.Open(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("open staged source: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	dst := filepath.Join(root, randomToken(12)+".tar.gz")
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", fmt.Errorf("spool source: %w", err)
+	}
+	_, copyErr := io.Copy(out, src)
+	if closeErr := out.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil {
+		copyErr = os.Rename(tmp, dst)
+	}
+	if copyErr != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("spool source: %w", copyErr)
+	}
+	return dst, nil
 }
 
 func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Account, app state.App, req *githubdpb.EnqueueBuildRequest) *state.OrgActivity {
@@ -773,7 +857,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -783,5 +867,33 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
 		agentSteps:  agentSteps,
+
+		releasePhaseOff: releasePhaseOff,
+		applySettings:   applySettings,
 	})
+}
+
+// prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the
+// app, as a source deploy of the same commit does (crons audit 2026-11-01):
+// pushes ignored them. They activate when the deployment goes live. A PR
+// preview, a non-production scope and a release staged without traffic do not
+// stage crons, as on the source API. An intent whose deployment was never
+// created is left in place: it activates nothing, the app's next push
+// supersedes it, and githubd retrying the delivery prepares it again (a
+// cancelled intent would refuse that retry).
+func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, manifest *gregalemanifest.Manifest, kind state.DeploymentKind, params apidsource.EnqueueParams) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
+	production := req.DeploymentScope == "" || req.DeploymentScope == state.DefaultEnvScope
+	if kind != state.DeploymentKindGitHub || manifest == nil || staged || !production {
+		return ctx, nil, nil
+	}
+	store, ok := g.store.(state.DeploymentCronStagingStore)
+	if !ok {
+		return ctx, nil, nil
+	}
+	ctx, intent, err := deploystaging.PrepareDeliveryCrons(ctx, store, resource, app, manifest, req.DeliveryId)
+	if err != nil {
+		return ctx, nil, sourceRefManifestStoreProblem(err, resource.Plan, true)
+	}
+	return ctx, intent, nil
 }

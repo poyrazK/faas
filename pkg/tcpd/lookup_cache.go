@@ -114,6 +114,15 @@ func (c *CachedInstanceSource) AppByID(ctx context.Context, appID string) (state
 	return c.next.AppByID(ctx, appID)
 }
 
+// Owner policy stays fresh so a warm lookup cache cannot bypass a new hold.
+func (c *CachedInstanceSource) AccountByID(ctx context.Context, accountID string) (state.Account, error) {
+	return c.next.AccountByID(ctx, accountID)
+}
+
+func (c *CachedInstanceSource) OrgByID(ctx context.Context, orgID string) (state.Org, error) {
+	return c.next.OrgByID(ctx, orgID)
+}
+
 func (c *CachedInstanceSource) TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (state.TCPListener, error) {
 	return c.next.TCPListenerByAppAndName(ctx, appID, listenerName)
 }
@@ -129,4 +138,25 @@ func (c *CachedInstanceSource) LiveDeployments(ctx context.Context, appID string
 
 func (c *CachedInstanceSource) ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error) {
 	return c.next.ListInstancesForApp(ctx, appID)
+}
+
+// ListLiveInstancesForApps forwards the live-only read when next has one, so
+// the resolver behind this cache does not fall back to an app's full history.
+func (c *CachedInstanceSource) ListLiveInstancesForApps(ctx context.Context, appIDs []string) ([]state.Instance, error) {
+	if reader, ok := c.next.(state.LiveInstancesForAppsReader); ok {
+		return reader.ListLiveInstancesForApps(ctx, appIDs)
+	}
+	var out []state.Instance
+	for _, id := range appIDs {
+		rows, err := c.next.ListInstancesForApp(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if state.IsLive(row.State) {
+				out = append(out, row)
+			}
+		}
+	}
+	return out, nil
 }

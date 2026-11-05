@@ -60,7 +60,7 @@ func TestGetCapabilitiesExplainsPlanAndRuntimeGates(t *testing.T) {
 			for _, key := range []string{"openapi-contract-preview", "disposable-runs", "object-storage", "github-deploys"} {
 				capability := capabilityByKey(t, response, key)
 				wantReason := ""
-				if tc.plan == api.PlanFree && (key == "disposable-runs" || key == "object-storage") {
+				if tc.plan == api.PlanFree && key == "disposable-runs" {
 					wantReason = api.CapabilityUnavailablePlan
 				} else if !tc.runtime {
 					wantReason = api.CapabilityUnavailableRuntime

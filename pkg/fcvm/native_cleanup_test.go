@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -199,6 +201,53 @@ func TestNativeCleanupUnknownMountOrOldVersionChrootCannotBeAcknowledged(t *test
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("confirmed old-version jail survived")
+	}
+}
+
+// Logs/traces audit 2026-10-31 A11: native process recovery's teardown
+// closed the ring before the guest stopped and without archiving, so a
+// parked native instance's retained lines never reached the log archive.
+// The ring now stays open until exit is confirmed, then is archived once.
+func TestNativeCleanupArchivesRetainedLinesAfterConfirmedExit(t *testing.T) {
+	_, v, _ := nativeManagerFixture(t)
+	v.destroyWait = 50 * time.Millisecond
+	l := prepareRecoveredNative(t, v, 0, "parked-native")
+	local, err := v.nativeRecovery.journal.read(l.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.nativeRecovery.remember(local)
+	retired := 0
+	var archived []logbuf.Line
+	v.WithLogRetireCallback(func(_ string, lines []logbuf.Line) {
+		retired++
+		archived = lines
+	})
+	ring := v.registerRing(l.Instance)
+	if _, err := ring.Write("stdout", []byte("handled request\n")); err != nil {
+		t.Fatal(err)
+	}
+	rec := &instanceRecord{done: make(chan struct{})}
+	v.recs[l.Instance] = rec
+
+	if err := v.Kill(t.Context(), l); err == nil {
+		t.Fatal("teardown finished without a confirmed exit")
+	}
+	if retired != 0 || v.LogRing(l.Instance) != ring {
+		t.Fatalf("ring retired before exit was confirmed: retired=%d", retired)
+	}
+	if _, err := ring.Write("stdout", []byte("shutting down\n")); err != nil {
+		t.Fatalf("ring closed while the guest could still write: %v", err)
+	}
+	close(rec.done)
+	if err := v.Kill(t.Context(), l); err != nil {
+		t.Fatal(err)
+	}
+	if retired != 1 || len(archived) != 2 || archived[0].Line != "handled request" || archived[1].Line != "shutting down" {
+		t.Fatalf("archived %d times: %+v, want both lines once", retired, archived)
+	}
+	if v.LogRing(l.Instance) != nil {
+		t.Fatal("ring survived native teardown")
 	}
 }
 

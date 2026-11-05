@@ -6,12 +6,19 @@ import (
 	"slices"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
 const (
-	// asyncAuditQueueCapacity bounds the request-path audit backlog. Beyond
-	// it events are dropped (ADR-035: gateway audit is best-effort).
+	// asyncAuditQueueCapacity bounds the request-path evidence backlog
+	// (authn failures, edge-rule denials, forged-XFF hits). Beyond it events
+	// are dropped (ADR-035: gateway audit is best-effort).
 	asyncAuditQueueCapacity = 4096
+	// asyncAuditInfoQueueCapacity bounds the informational backlog
+	// (edge_rule.*_matched, vm.inflight_threshold_reached) separately, so
+	// those rows can fill only their own queue.
+	asyncAuditInfoQueueCapacity = 1024
 	// asyncAuditWriteTimeout bounds one row write so a slow database cannot
 	// wedge the writer behind a single insert.
 	asyncAuditWriteTimeout = 2 * time.Second
@@ -33,20 +40,36 @@ type asyncAuditRecord struct {
 // drains the queue, so database load from audit is bounded to a single
 // connection's throughput regardless of request rate, and a full queue drops
 // the event (counted and periodically logged) instead of blocking traffic.
+//
+// Evidence rows and informational rows (gateway.IsInformationalAudit) have
+// separate queues and the writer always drains evidence first. With one
+// shared queue, CORS-match traffic that outran the writer filled it and
+// authn failures and denials were dropped with the noise (O22).
 type asyncAuditStore struct {
-	next     auditStore
-	queue    chan asyncAuditRecord
-	log      *slog.Logger
-	dropped  atomic.Int64
-	reported atomic.Int64
+	next         auditStore
+	queue        chan asyncAuditRecord
+	info         chan asyncAuditRecord
+	log          *slog.Logger
+	dropped      atomic.Int64
+	droppedInfo  atomic.Int64
+	reported     atomic.Int64
+	reportedInfo atomic.Int64
 }
 
 // newAsyncAuditStore starts the writer; it drains until ctx is done.
 func newAsyncAuditStore(ctx context.Context, next auditStore, capacity int, log *slog.Logger) *asyncAuditStore {
-	if capacity < 1 {
-		capacity = 1
+	return newAsyncAuditStoreWithInfo(ctx, next, capacity, asyncAuditInfoQueueCapacity, log)
+}
+
+func newAsyncAuditStoreWithInfo(ctx context.Context, next auditStore, capacity, infoCapacity int, log *slog.Logger) *asyncAuditStore {
+	capacity = max(capacity, 1)
+	infoCapacity = max(infoCapacity, 1)
+	s := &asyncAuditStore{
+		next:  next,
+		queue: make(chan asyncAuditRecord, capacity),
+		info:  make(chan asyncAuditRecord, infoCapacity),
+		log:   log,
 	}
-	s := &asyncAuditStore{next: next, queue: make(chan asyncAuditRecord, capacity), log: log}
 	go s.run(ctx)
 	return s
 }
@@ -59,10 +82,15 @@ func (s *asyncAuditStore) AppendEvent(_ context.Context, actor, kind string, sub
 		value := *subject
 		subjectCopy = &value
 	}
+	rec := asyncAuditRecord{actor: actor, kind: kind, subject: subjectCopy, data: slices.Clone(data)}
+	queue, dropped := s.queue, &s.dropped
+	if gateway.IsInformationalAudit(kind) {
+		queue, dropped = s.info, &s.droppedInfo
+	}
 	select {
-	case s.queue <- asyncAuditRecord{actor: actor, kind: kind, subject: subjectCopy, data: slices.Clone(data)}:
+	case queue <- rec:
 	default:
-		s.dropped.Add(1)
+		dropped.Add(1)
 	}
 	return nil
 }
@@ -71,12 +99,22 @@ func (s *asyncAuditStore) run(ctx context.Context) {
 	ticker := time.NewTicker(asyncAuditDropLogInterval)
 	defer ticker.Stop()
 	for {
+		// Evidence first: an informational row is written only while no
+		// evidence row is waiting.
+		select {
+		case rec := <-s.queue:
+			s.write(ctx, rec)
+			continue
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			s.reportDrops()
 		case rec := <-s.queue:
+			s.write(ctx, rec)
+		case rec := <-s.info:
 			s.write(ctx, rec)
 		}
 	}
@@ -95,5 +133,10 @@ func (s *asyncAuditStore) reportDrops() {
 	previous := s.reported.Swap(total)
 	if total > previous && s.log != nil {
 		s.log.Warn("gatewayd audit queue full; events dropped", "dropped", total-previous, "dropped_total", total)
+	}
+	info := s.droppedInfo.Load()
+	previousInfo := s.reportedInfo.Swap(info)
+	if info > previousInfo && s.log != nil {
+		s.log.Info("gatewayd informational audit queue full; match events dropped", "dropped", info-previousInfo, "dropped_total", info)
 	}
 }

@@ -1,0 +1,204 @@
+---
+# edgednsd_service — install and run edgednsd (ADR-20261102081618 §3). It
+# reads compute_nodes, probes each compute edge on the private network and
+# writes the managed names' address records, so it runs on the control plane
+# (or a single box), where its DNS token stays.
+- name: edgednsd_service — require a configured edgednsd when enabled
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - (faas_edgednsd_cf_token | length > 0) or (faas_edgednsd_cf_token_src | length > 0)
+      - faas_edgednsd_names | length > 0
+      - faas_edgednsd_node_addresses | length > 0
+      - faas_edgednsd_metrics_listen is match('^(127\.0\.0\.1|\[::1\]):[0-9]+$')
+    fail_msg: >-
+      edgednsd runs on a control-plane (or single-box) host and needs the
+      zone's DNS: Edit token (faas_edgednsd_cf_token, which CD stages from
+      the EDGEDNSD_CF_TOKEN secret, or faas_edgednsd_cf_token_src), at least
+      one managed name and node address, and a loopback metrics listener.
+      See roles/edgednsd_service/README.md.
+  when: faas_edgednsd_enabled | bool
+
+- name: edgednsd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-edgednsd.service
+    dest: /etc/systemd/system/faas-edgednsd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-edgednsd
+
+- name: edgednsd_service — create unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-edgednsd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: edgednsd_service — create secret directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/edgednsd
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: faas_edgednsd_enabled | bool
+
+# PRIVATE: 0400 root:root. systemd reads the token through LoadCredential
+# (ADR-127) and the env file as the unit's EnvironmentFile.
+- name: edgednsd_service — install the token
+  ansible.builtin.copy:
+    content: "{{ faas_edgednsd_cf_token if faas_edgednsd_cf_token | length > 0 else omit }}"
+    src: "{{ omit if faas_edgednsd_cf_token | length > 0 else faas_edgednsd_cf_token_src }}"
+    dest: /etc/faas/secrets/edgednsd/cf-token
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: faas_edgednsd_enabled | bool
+  notify: restart faas-edgednsd
+
+- name: edgednsd_service — require a complete certificate configuration
+  ansible.builtin.assert:
+    that:
+      - faas_edgednsd_certificate_zone_id | length > 0
+      - faas_edgednsd_acme_ca in ['letsencrypt-staging', 'letsencrypt']
+    fail_msg: >-
+      faas_edgednsd_certificate_names needs the zone id its DNS-01 challenges
+      go to (faas_edgednsd_certificate_zone_id) and faas_edgednsd_acme_ca
+      letsencrypt-staging or letsencrypt (ADR-20261103163954 §3).
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
+
+- name: edgednsd_service — read the edge-tls recipient
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/domains/edge-tls.age.pub
+  register: faas_edgednsd_edge_tls_recipient
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
+
+- name: edgednsd_service — require the edge-tls recipient
+  ansible.builtin.assert:
+    that:
+      - faas_edgednsd_edge_tls_recipient.stat.exists
+    fail_msg: >-
+      edgednsd seals the certificate key to the edge-tls seal domain, so its
+      recipient must be staged at /etc/faas/secrets/domains/edge-tls.age.pub
+      first: `gregalectl seal-domain init --domain edge-tls`, then the
+      seal_domains role.
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
+
+# PRIVATE: the ACME account's key, created once and never replaced or
+# removed here: it is the account that ordered, and can revoke, every stored
+# certificate. The directory is root-only.
+- name: edgednsd_service — create the ACME account key
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, "ec_paramgen_curve:P-256", -out, /etc/faas/secrets/edgednsd/acme-account.key]
+    creates: /etc/faas/secrets/edgednsd/acme-account.key
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
+  notify: restart faas-edgednsd
+
+- name: edgednsd_service — keep the ACME account key private
+  ansible.builtin.file:
+    path: /etc/faas/secrets/edgednsd/acme-account.key
+    owner: root
+    group: root
+    mode: "0400"
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
+
+# The Certificate Transparency watch reads Cert Spotter with an API key when
+# the operator staged one at /etc/faas/secrets/edgednsd/certspotter-api-key
+# (root, 0400); without one it stays inside Cert Spotter's anonymous quota.
+- name: edgednsd_service — look for a Cert Spotter API key
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/edgednsd/certspotter-api-key
+  register: faas_edgednsd_ct_api_key
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_ct_domain | length > 0
+
+- name: edgednsd_service — note whether the watch has an API key
+  ansible.builtin.set_fact:
+    faas_edgednsd_ct_api_key_staged: "{{ faas_edgednsd_ct_api_key.stat.exists }}"
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_ct_domain | length > 0
+
+- name: edgednsd_service — install the database environment
+  ansible.builtin.copy:
+    src: "{{ faas_edgednsd_env_src }}"
+    dest: /etc/faas/secrets/edgednsd/edgednsd.env
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_env_src | length > 0
+  notify: restart faas-edgednsd
+
+# Without one, edgednsd logs in like the other control-plane daemons: peer
+# authentication over the local socket as its unit's user, faas (pkg/db's
+# default address).
+- name: edgednsd_service — remove the database environment when none is set
+  ansible.builtin.file:
+    path: /etc/faas/secrets/edgednsd/edgednsd.env
+    state: absent
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_env_src | length == 0
+  notify: restart faas-edgednsd
+
+- name: edgednsd_service — install configuration drop-in
+  ansible.builtin.template:
+    src: 50-faas-edgednsd.conf.j2
+    dest: /etc/systemd/system/faas-edgednsd.service.d/50-faas-edgednsd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_edgednsd_enabled | bool
+  notify: restart faas-edgednsd
+
+- name: edgednsd_service — remove configuration when disabled
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-edgednsd.service.d/50-faas-edgednsd.conf
+    - /etc/faas/secrets/edgednsd/edgednsd.env
+    - /etc/faas/secrets/edgednsd/cf-token
+  when: not (faas_edgednsd_enabled | bool)
+
+# Apply configuration restarts before probing, so an already-running edgednsd
+# cannot pass the check with its old configuration.
+- name: edgednsd_service — apply configuration handlers before readiness
+  ansible.builtin.meta: flush_handlers
+
+# A release converges these roles before it activates, so on the first
+# release that ships edgednsd the binary is not under /opt/faas/current yet
+# (rc.323: the unit exited 203/EXEC and the metrics check failed the control
+# plane stage). Enable the unit now; cd-controlplane's post-activation step
+# starts it and checks its metrics once the release is current.
+- name: edgednsd_service — check for the edgednsd binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/edgednsd
+  register: faas_edgednsd_binary
+  when: faas_edgednsd_enabled | bool
+
+- name: edgednsd_service — enable and start edgednsd
+  ansible.builtin.systemd_service:
+    name: faas-edgednsd.service
+    enabled: true
+    state: "{{ 'started' if faas_edgednsd_binary.stat.exists else omit }}"
+    daemon_reload: true
+  when: faas_edgednsd_enabled | bool
+
+- name: edgednsd_service — stop and disable edgednsd when requested
+  ansible.builtin.systemd_service:
+    name: faas-edgednsd.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_edgednsd_enabled | bool)
+
+- name: edgednsd_service — verify metrics
+  ansible.builtin.uri:
+    url: "http://{{ faas_edgednsd_metrics_listen }}/metrics"
+    method: GET
+    status_code: 200
+  register: faas_edgednsd_metrics
+  retries: 10
+  delay: 3
+  until: faas_edgednsd_metrics.status == 200
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_binary.stat.exists

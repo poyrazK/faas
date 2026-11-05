@@ -214,6 +214,14 @@ when the API returns a revision conflict.
 
 Environment cloning materializes workload settings into an independent revision.
 Protected environments require an approved project plan or promotion for edits.
+A protected environment other than production also takes its releases that way:
+a direct `gregale deploy --env` into it is refused unless it stages the
+release with no traffic, and a staged release there takes traffic only through
+an approved plan or promotion. Production keeps direct deploys,
+which its freezes, approval policies and default rollout hold. The same goes
+for configuration: setting an env var, a secret value or the project
+environment configuration in a protected environment other than production is
+refused; deleting or rotating a secret stays open for incident response.
 With active source and target release graphs, environment promotion with
 `--sync-config` now carries the source deployment's tested workload settings
 alongside project configuration. Configuration-only changes are included even

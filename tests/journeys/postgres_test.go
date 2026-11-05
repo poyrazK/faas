@@ -46,6 +46,8 @@ func TestManagedPostgres(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
 	j := &postgresJourney{tg: tg, bindings: map[string]string{}}
+	hidden := hiddenCapabilities(t, tg)
+	skipHidden(t, hidden, "release-commands")
 	j.app = tg.app(t, "pg")
 	j.db, j.restored = tg.slug("pg"), tg.slug("pg-restored")
 	// Bindings go before databases and databases before the app (cleanups
@@ -59,14 +61,17 @@ func TestManagedPostgres(t *testing.T) {
 		j.waitReady(t, j.db)
 	})
 	s.step("deploy_app", func(t *testing.T) {
-		receipt := tg.deploy(t, j.app, "--path", postgresProbeSource(t))
+		receipt := tg.deploy(t, j.app, "--path", postgresProbeSource(t, ""))
 		j.base = strings.TrimRight(str(receipt, "app_url"), "/")
 		if j.base == "" {
 			j.base = tg.appURL(j.app)
 		}
 	})
 	s.step("attach_database", func(t *testing.T) { j.attach(t, j.db, "DATABASE_URL") })
+	s.step("migrate", j.migrate)
 	s.check("binding_verify", func(t *testing.T) {
+		// The probe runs as an app task.
+		skipHidden(t, hidden, "app-tasks")
 		tg.ok(t, 2*time.Minute, "app", "binding", "verify", j.app, "--postgres", "DATABASE_URL")
 	})
 	s.step("write_and_read", func(t *testing.T) {
@@ -128,29 +133,53 @@ func (j *postgresJourney) waitReady(t *testing.T, name string) map[string]any {
 // the app so its instances start with the new secret.
 func (j *postgresJourney) attach(t *testing.T, name, key string) {
 	t.Helper()
-	binding := object(t, j.tg.ok(t, 2*time.Minute, "postgres", "attach", name, j.app, "--env", key).stdout)
-	j.bindings[name] = str(binding, "id")
+	j.bindings[name] = j.bind(t, name, key)
+	j.tg.ok(t, 12*time.Minute, "app", j.app, "restart", "--fresh", "--wait", "--timeout", "10m")
+}
+
+// bind binds name to the app as key and waits until the binding is ready.
+// It returns the binding's ID; extra flags (--access) go to attach.
+func (j *postgresJourney) bind(t *testing.T, name, key string, extra ...string) string {
+	t.Helper()
+	args := append([]string{"postgres", "attach", name, j.app, "--env", key}, extra...)
+	id := str(object(t, j.tg.ok(t, 2*time.Minute, args...).stdout), "id")
 	eventually(t, key+" binding ready", 5*time.Minute, 5*time.Second, func() (bool, string) {
 		list := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "list", name).stdout)
 		items, _ := field(list, "items").([]any)
 		for _, item := range items {
-			if str(item, "id") == j.bindings[name] {
+			if str(item, "id") == id {
 				return str(item, "state") == "ready", compact(item)
 			}
 		}
 		return false, compact(list)
 	})
-	j.tg.ok(t, 12*time.Minute, "app", j.app, "restart", "--fresh", "--wait", "--timeout", "10m")
+	return id
 }
 
 // detach deletes the app's binding to name and waits until it is gone: a
 // database with a binding cannot be deleted.
 func (j *postgresJourney) detach(t *testing.T, name string) {
 	t.Helper()
-	id := j.bindings[name]
-	if id == "" {
-		return
+	if id := j.bindings[name]; id != "" {
+		j.unbind(t, name, id)
+		delete(j.bindings, name)
 	}
+}
+
+// migrate creates the probe's table the way docs/postgres.md tells
+// customers to run migrations: a release command connecting through a
+// migration binding, since serving credentials cannot change the schema.
+// The migration binding is deleted again, so the delete steps find only
+// DATABASE_URL.
+func (j *postgresJourney) migrate(t *testing.T) {
+	id := j.bind(t, j.db, "MIGRATION_DATABASE_URL", "--access", "migration")
+	j.tg.deploy(t, j.app, "--path", postgresProbeSource(t, "create"), "--rollout", "immediate")
+	j.unbind(t, j.db, id)
+}
+
+// unbind deletes one of name's bindings and waits until it is gone.
+func (j *postgresJourney) unbind(t *testing.T, name, id string) {
+	t.Helper()
 	j.tg.ok(t, time.Minute, "postgres", "bindings", "delete", id)
 	eventually(t, name+" binding deleted", 5*time.Minute, 5*time.Second, func() (bool, string) {
 		list := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "list", name).stdout)
@@ -162,7 +191,6 @@ func (j *postgresJourney) detach(t *testing.T, name string) {
 		}
 		return true, ""
 	})
-	delete(j.bindings, name)
 }
 
 // notes calls the app's /notes for the database bound as key. The first
@@ -341,8 +369,12 @@ func (j *postgresJourney) purge(t *testing.T, name string) {
 	} else if state := str(object(t, res.stdout), "state"); state == "deleted" {
 		return
 	}
-	if id := j.bindings[name]; id != "" {
-		j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+	// A database switch moves the app's bindings to the restored copy, so
+	// the journey does not know every binding's ID: delete what is listed.
+	if ids := j.liveBindings(t, name); len(ids) > 0 {
+		for _, id := range ids {
+			j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+		}
 		time.Sleep(30 * time.Second)
 	}
 	if res := j.tg.run(t, time.Minute, "postgres", "delete", name, "--purge", "--yes"); res.exit != 0 {
@@ -350,10 +382,28 @@ func (j *postgresJourney) purge(t *testing.T, name string) {
 	}
 }
 
+// liveBindings lists name's bindings that are not deleted. It is for
+// cleanups, so a failed list returns none.
+func (j *postgresJourney) liveBindings(t *testing.T, name string) []string {
+	res := j.tg.run(t, time.Minute, "postgres", "bindings", "list", name)
+	if res.exit != 0 {
+		return nil
+	}
+	items, _ := field(object(t, res.stdout), "items").([]any)
+	var ids []string
+	for _, item := range items {
+		if str(item, "state") != "deleted" {
+			ids = append(ids, str(item, "id"))
+		}
+	}
+	return ids
+}
+
 // postgresProbeSource copies testdata/postgres-probe into a fresh
 // directory, so its source digest is fixed and later runs hit the build
-// cache.
-func postgresProbeSource(t *testing.T) string {
+// cache. A non-empty release adds a Procfile whose release command is
+// `node server.js migrate <release>`.
+func postgresProbeSource(t *testing.T, release string) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join("testdata", "postgres-probe")
@@ -368,6 +418,12 @@ func postgresProbeSource(t *testing.T) string {
 		}
 		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644); err != nil {
 			t.Fatalf("write postgres probe source: %v", err)
+		}
+	}
+	if release != "" {
+		procfile := "web: node server.js\nrelease: node server.js migrate " + release + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "Procfile"), []byte(procfile), 0o644); err != nil {
+			t.Fatalf("write postgres probe Procfile: %v", err)
 		}
 	}
 	return dir

@@ -686,9 +686,11 @@ func TestAppBySlugAndListIgnoreDeleted(t *testing.T) {
 		t.Errorf("ListApps = %+v, want only the alive app", list)
 	}
 
-	// Recreating the same slug after deletion must succeed (soft delete frees the slug).
-	if _, err := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "doomed"}); err != nil {
-		t.Errorf("re-create after delete: %v", err)
+	// A soft-deleted app keeps its slug until it is purged, as Postgres's
+	// apps_slug_key UNIQUE (slug) does: re-creating it is a conflict and the
+	// app is restored instead.
+	if _, err := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "doomed"}); err == nil {
+		t.Error("re-create after delete: want a slug conflict, got none")
 	}
 
 	// Different account — verify isolation.
@@ -5056,6 +5058,14 @@ func memstoreSeedLiveSibling(t *testing.T, m *MemStore, ctx context.Context, pri
 	}
 	m.mu.Lock()
 	prior := m.deployments[priorDepID]
+	if deploymentServing(prior) {
+		// The demoted row served: record it as the
+		// deployment_serving_ended_at trigger does.
+		if m.deploymentServingEndedAt == nil {
+			m.deploymentServingEndedAt = map[string]time.Time{}
+		}
+		m.deploymentServingEndedAt[priorDepID] = time.Now().UTC()
+	}
 	prior.Status = DeployLive
 	prior.TrafficPercent = 0
 	m.deployments[priorDepID] = prior

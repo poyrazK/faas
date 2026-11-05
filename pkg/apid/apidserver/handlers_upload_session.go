@@ -781,7 +781,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
@@ -792,6 +792,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
+	// Guarded like the cron intent above: contextcheck follows the request
+	// through the branch, not through an unconditional WithContext.
+	if stagedManifest.eventSubscriptionIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentEventSubscriptions(r.Context(), stagedManifest.eventSubscriptionIntent))
 	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)

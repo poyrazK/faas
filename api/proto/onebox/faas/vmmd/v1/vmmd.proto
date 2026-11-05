@@ -285,8 +285,11 @@ service Vmmd {
   // request (ADR-1138). The caller is resolved from the same host-owned live
   // identity as ResolveServiceCaller. It answers only when exactly one
   // forward of any kind is in flight and it is an HTTP request that carried a
-  // valid traceparent; otherwise traceparent is empty. Older vmmds answer
-  // Unimplemented, which callers treat as empty.
+  // valid traceparent; otherwise traceparent is empty. Under the same
+  // one-forward rule it also answers that request's deadline
+  // (ADR-20261102082606), whether or not it carried trace context. Older
+  // vmmds answer Unimplemented or leave the deadline 0, which callers treat
+  // as unknown.
   rpc InflightRequestTrace(InflightRequestTraceRequest) returns (InflightRequestTraceResponse);
 
 // Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
@@ -418,6 +421,11 @@ service Vmmd {
   // provider. When transport_peers_managed is true, the peer list is also
   // reconciled as the authoritative regional VXLAN topology.
   rpc ReconcilePrivateNetworkFabric(ReconcilePrivateNetworkFabricRequest) returns (ReconcilePrivateNetworkFabricAck);
+
+  // Atomically replaces the complete account/region L3 peering policy.
+  // Callers must prepare every listed fabric before publishing app routes.
+  rpc ReconcilePrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
+  rpc RestrictPrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
 
   // RemovePrivateNetworkFabric tears down the node-local bridge and optional
   // regional VXLAN link for a deleted Gregale-owned network. The operation is
@@ -924,6 +932,9 @@ message AppSpec {
   // platform veth) and ignores the allowlist, private network, static
   // egress IP and operator bundle. Only schedd's fork coordinator sets it.
   bool quarantine = 35;
+  // Non-production deployments keep shared egress even when their app has a pin.
+  // False preserves production eligibility for older callers.
+  bool static_egress_excluded = 36;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -3006,6 +3017,27 @@ message ReconcilePrivateNetworkFabricAck {
   repeated string observed_peer_addresses = 5;
 }
 
+message PrivateNetworkRouterNetwork {
+  string network_id = 1;
+  string cidr = 2;
+}
+
+message PrivateNetworkRouterRoute {
+  string from_network_id = 1;
+  string destination_network_id = 2;
+  string destination_cidr = 3;
+}
+
+message ReconcilePrivateNetworkPeeringsRequest {
+  string account_id = 1;
+  string region = 2;
+  repeated PrivateNetworkRouterNetwork networks = 3;
+  // Authoritative full set. Empty revokes all peerings in this router.
+  repeated PrivateNetworkRouterRoute routes = 4;
+}
+
+message ReconcilePrivateNetworkPeeringsAck {}
+
 // RemovePrivateNetworkFabricRequest carries the identity needed to remove a
 // node-local Gregale-owned network fabric after its durable control-plane row
 // has been deleted.
@@ -3239,6 +3271,10 @@ message AllowResolvedEgressRequest {
   // app's bound managed databases (ADR 20261026150000): vmmd also opens that
   // TCP port to the addresses. An older resolver leaves it zero.
   uint32 database_port = 4;
+  // Captured from ResolveServiceCaller before starting the DNS lookup.
+  // Both fields fence a grant against slot reuse and daemon/VM replacement.
+  string instance_id = 5;
+  string network_generation = 6;
 }
 
 message AllowResolvedEgressAck {
@@ -3826,6 +3862,9 @@ message ResolveServiceCallerResponse {
   string deployment_id = 5;
   bool app_task = 6;
   bool job_task = 7;
+  // Opaque lifetime of this manager's current network owner, including
+  // occupied builder/job slots that have no service-caller app identity.
+  string network_generation = 8;
 }
 
 message DataRepairRehearsalIdentityRequest {}
@@ -3862,9 +3901,13 @@ message InflightRequestTraceRequest {
 }
 
 // InflightRequestTraceResponse carries the lone in-flight request's
-// traceparent, or nothing.
+// traceparent and deadline, or nothing.
 message InflightRequestTraceResponse {
   string traceparent = 1;
+  // deadline_unix_ms is when the request's X-Faas-Deadline-Ms budget runs
+  // out, in Unix milliseconds; 0 when the forward carried none
+  // (ADR-20261102082606).
+  int64 deadline_unix_ms = 2;
 }
 
 // BaseGenerationReadiness is one configured runtime base and whether this

@@ -17,7 +17,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWakeJoin(t *testing.T) {
+// The guard explains warm latency (ADR-20261028110044 amendment 3): cold-boot
+// rows are left out of examples and diagnostics. Monitor incident evidence
+// keeps them and covers the wake join (route_evidence_attribution_test.go).
+func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWarmRows(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
@@ -88,17 +91,20 @@ func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWakeJoin(
 		// turn the selected deployment's boot into a long unrelated wake.
 		emitWake(wake, instance, uuid.NewString(), w.Start.Add(-time.Minute), 7000)
 		emitWake(wake, uuid.NewString(), app.ID, w.Start.Add(-time.Minute), 8000)
-		insert(candidate.ID, tenant.ID, "POST", "/checkout", wake, instance, w.Start, 4, 9999, 9000, 9000)
+		insert(candidate.ID, tenant.ID, "POST", "/checkout", "", "", w.Start, 4, 9999, 9000, 9000)
 		for i := 1; i <= 32; i++ {
 			spanMS := int32(500)
 			if i == 32 {
 				spanMS = 0
 			}
-			insert(candidate.ID, tenant.ID, "POST", "/checkout", wake, instance, w.Start.Add(time.Duration(i)*time.Second), 4, 600, 200, spanMS)
+			insert(candidate.ID, tenant.ID, "POST", "/checkout", "", "", w.Start.Add(time.Duration(i)*time.Second), 4, 600, 200, spanMS)
 		}
+		// The newest and slowest rows cold booted; the guard leaves them out.
+		insert(candidate.ID, tenant.ID, "POST", "/checkout", wake, instance, w.Start.Add(40*time.Second), 4, 20000, 9000, 9000)
 		stableWake, stableInstance := uuid.NewString(), uuid.NewString()
 		emitWake(stableWake, stableInstance, app.ID, w.Start, 50)
-		insert(stable.ID, tenant.ID, "POST", "/checkout", stableWake, stableInstance, w.Start, 132, 100, 30, 40)
+		insert(stable.ID, tenant.ID, "POST", "/checkout", "", "", w.Start, 132, 100, 30, 40)
+		insert(stable.ID, tenant.ID, "POST", "/checkout", stableWake, stableInstance, w.Start.Add(40*time.Second), 7, 30000, 30, 40)
 		for _, dep := range []string{candidate.ID, stable.ID} {
 			insert(dep, "", "POST", "/checkout", "", "", w.Start, 999, 9999, 9999, 9999)
 			insert(dep, tenant.ID, "GET", "/checkout", "", "", w.Start, 999, 9999, 9999, 9999)
@@ -116,7 +122,7 @@ func TestPgRouteLatencyInvestigationSuccessfulResponsesBoundedScopesAndWakeJoin(
 	}
 	for _, w := range r.Windows {
 		d := w.Diagnostics
-		if w.Candidate.MatchingRequests != 132 || w.Candidate.ObservedRows != 33 || w.Candidate.Examples[0].LatencyMS != 9999 || w.Candidate.Examples[0].Status != 200 || d.Candidate.SampledRows != 32 || d.Candidate.SampledRequests != 128 || !d.Candidate.SamplesTruncated || d.Candidate.SpanRows != 31 || d.Candidate.MissingSpanRows != 1 || *d.Candidate.GuestP95MS != 200 || d.Candidate.WakeSamples != 1 || *d.Candidate.WakeBootP95MS != 250 || *d.Stable.WakeBootP95MS != 50 {
+		if w.Candidate.MatchingRequests != 132 || w.Candidate.ObservedRows != 33 || w.Candidate.Examples[0].LatencyMS != 9999 || w.Candidate.Examples[0].Status != 200 || d.Candidate.SampledRows != 32 || d.Candidate.SampledRequests != 128 || !d.Candidate.SamplesTruncated || d.Candidate.SpanRows != 31 || d.Candidate.MissingSpanRows != 1 || *d.Candidate.GuestP95MS != 200 || d.Candidate.ColdBootRequests != 0 || d.Candidate.WakeSamples != 0 || d.Candidate.WakeBootP95MS != nil || d.Stable.WakeBootP95MS != nil {
 			t.Fatalf("independent full/sample inventories: %+v", w)
 		}
 		dep := d.Dependencies[0]

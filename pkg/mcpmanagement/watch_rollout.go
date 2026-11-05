@@ -83,6 +83,13 @@ func (m *management) watchRollout(ctx context.Context, args waitArgs) (any, erro
 }
 
 func (m *management) rolloutSnapshot(ctx context.Context, args waitArgs) (watchRolloutResult, error) {
+	return m.readRolloutSnapshot(ctx, args, true)
+}
+
+// App-bound verification uses deployment lifecycle evidence without requesting
+// account-level build details. A live artifact has already passed native build
+// admission; a non-live artifact remains unverified.
+func (m *management) readRolloutSnapshot(ctx context.Context, args waitArgs, includeBuild bool) (watchRolloutResult, error) {
 	var out watchRolloutResult
 	app, env, err := m.appEnvironment(ctx, args.App, args.Project, args.Environment, false)
 	if err != nil {
@@ -99,7 +106,7 @@ func (m *management) rolloutSnapshot(ctx context.Context, args waitArgs) (watchR
 		return out, invalid("invalid_target", "deployment does not belong to the selected app and environment")
 	}
 	out = watchRolloutResult{AppID: app.ID, Scope: normalizedScope(args.Environment), ProjectID: env.ProjectID, EnvironmentID: env.ID, Mode: app.Manifest.EffectiveExecutionMode(), CheckedAt: time.Now().UTC(), Basis: "sequential_passive_reads", Deployment: projectDeployment(d), Accepted: true, Live: d.Status == "live", Blockers: []string{}, CompletionBasis: "unconfirmed", NextRead: "gregale_watch_rollout"}
-	if d.BuildID != "" {
+	if d.BuildID != "" && includeBuild {
 		build, err := m.client.GetBuildsId(ctx, d.BuildID)
 		if err != nil {
 			return out, err

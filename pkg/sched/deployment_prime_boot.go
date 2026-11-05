@@ -72,7 +72,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
+		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
@@ -109,7 +109,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// the customer-supplied static IPv4 (BYOIP, Scale-only)
 		// onto the vmmd AppSpec so the per-netns renderer
 		// emits the SNAT-to-customer sibling rule.
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		// ADR-053: snapshot priming is the first cold boot for a source
 		// deployment, so it must use the same resolved guest port as later
 		// wakes. Without this field vmmd falls back to guest :8080 while the

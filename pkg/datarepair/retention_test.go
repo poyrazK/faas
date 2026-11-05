@@ -364,7 +364,7 @@ func TestRepairRetentionOwnerUpgradePreservesEnrollment(t *testing.T) {
 	p := approved(t, e, s, source)
 	// Recreate the legacy table shape in this private database. The owner
 	// upgrade must retain old rows, identity, enrollment and qualification.
-	if _, err := e.Pool.Exec(ctx, `ALTER TABLE gregale_repair.operations DROP COLUMN payload_purged_at;
+	if _, err := e.Pool.Exec(ctx, `ALTER TABLE gregale_repair.operations DROP COLUMN payload_purged_at, DROP COLUMN capture_relation_filenode;
 ALTER TABLE gregale_repair.plans DROP COLUMN payload_purged_at, DROP COLUMN retained_digest;
 DROP TABLE gregale_repair.retention_runs;`); err != nil {
 		t.Fatal(err)

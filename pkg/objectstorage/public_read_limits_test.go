@@ -52,7 +52,7 @@ func TestPublicReadRefusalStatus(t *testing.T) {
 }
 
 func TestPublicCacheControlRevalidates(t *testing.T) {
-	if publicCacheControl != "public, max-age=300, must-revalidate" {
+	if publicCacheControl != "public, max-age=300, must-revalidate, no-transform" {
 		t.Fatalf("Cache-Control = %q", publicCacheControl)
 	}
 }

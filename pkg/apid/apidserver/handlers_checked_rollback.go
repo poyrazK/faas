@@ -21,7 +21,7 @@ import (
 
 // plainRollbacks is the verified plain-rollback ledger (ADR-1446).
 func (s *server) plainRollbacks() release.Rollbacks {
-	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops}
+	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops, AutomaticFailed: s.automaticRollbackFailed}
 }
 
 func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) {
@@ -39,6 +39,7 @@ func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, ac
 		}
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
+	s.warnRollbackCrons(r.Context(), w, app, target)
 	response.RollbackOperation = &operation
 	writeJSON(w, http.StatusAccepted, response)
 }
@@ -83,6 +84,9 @@ func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account,
 	}
 	operation, err := store.CreateCheckedRollback(ctx, acct.ID, app.ID, target.ID, currentID, req.Reason)
 	if err != nil {
+		if problem := rollbackAttemptProblem(err); problem != nil {
+			return operation, target, problem
+		}
 		if errors.Is(err, state.ErrLayerArtifactRetired) {
 			return operation, target, rollbackTargetArtifactsReclaimed()
 		}

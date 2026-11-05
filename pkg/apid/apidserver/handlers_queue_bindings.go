@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -139,6 +140,13 @@ func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct 
 	var rows []state.QueueBinding
 	var err error
 	if selector == "true" {
+		// A deploy credential lists the active bindings it reconciles
+		// (ADR-20261031162858 amendment 1); retired history stays a read.
+		if !middleware.HasScope(r, api.ScopesReadSurface...) {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+				"Insufficient scope", "queue binding history requires the apps:read scope"))
+			return
+		}
 		history, supported := s.store.(state.QueueBindingHistoryStore)
 		if !supported {
 			api.WriteProblem(w, api.ErrCapacity("queue binding history is unavailable"))

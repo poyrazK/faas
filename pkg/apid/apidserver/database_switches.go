@@ -52,12 +52,85 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 			_, err := state.InvalidateAppSnapshots(ctx, s.store, appID)
 			return err
 		},
-		AppChanged: func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
-		Ownership:  s.databaseSwitchOwnership,
-		Observe:    s.observeDatabaseSwitch,
-		Report:     s.reportDatabaseSwitchTick,
-		Log:        s.log,
+		AppChanged:     func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
+		Ownership:      s.databaseSwitchOwnership,
+		Observe:        s.observeDatabaseSwitch,
+		Report:         s.reportDatabaseSwitchTick,
+		ReleaseGuard:   s.databaseSwitchReleaseGuard,
+		PromoteRelease: s.databaseSwitchPromoteRelease,
+		Log:            s.log,
 	}
+}
+
+// databaseSwitchPromoteRelease retains enforced binding checks on the
+// database switch's code change and on its compensating code change. These
+// checks cover the currently published bindings; the cutover separately
+// verifies every replacement credential before it publishes the copy.
+func (s *server) databaseSwitchPromoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	app, err := s.store.AppByID(ctx, sw.AppID)
+	if err != nil {
+		return err
+	}
+	account, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return err
+	}
+	deployment, err := s.store.DeploymentByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if deployment.Status == state.DeploySnapshotting && deployment.TrafficPercent == 0 {
+		markers, ok := s.store.(state.RollbackPreparedStore)
+		if !ok {
+			return fmt.Errorf("prepared database rollback marker is unavailable")
+		}
+		prepared, err := markers.DeploymentRollbackPrepared(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !prepared {
+			return state.ErrNoRollbackTarget
+		}
+		ctx = context.WithValue(ctx, preparedBindingRollbackKey{}, id)
+	}
+	ctx = context.WithValue(ctx, bindingReleaseWorkerReadsKey{}, true)
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	if err != nil {
+		return err
+	}
+	observations, problem := s.serviceRecipientBindingObservation(r, account, app, deployment)
+	if problem != nil {
+		return fmt.Errorf("database rollback binding check: %s", problem.Code)
+	}
+	problem, err = s.withBindingReleaseObservations(r, account, app, observations, func(writeCtx context.Context) error {
+		return s.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(writeCtx), id)
+	})
+	if problem != nil {
+		return fmt.Errorf("database rollback binding check: %s", problem.Code)
+	}
+	return err
+}
+
+// databaseSwitchReleaseGuard holds a switch's rollback target, just before
+// it goes live, to the guards its rollback met when requested
+// (rollbackTargetApprovalProblem). It returns why the target may not go live
+// now, or "". An unreadable guard returns an error so the worker retries.
+func (s *server) databaseSwitchReleaseGuard(ctx context.Context, sw state.DatabaseSwitch) (string, error) {
+	app, err := s.store.AppByID(ctx, sw.AppID)
+	if err != nil {
+		return "", fmt.Errorf("read database switch app: %w", err)
+	}
+	target, err := s.store.DeploymentByID(ctx, sw.TargetDeploymentID)
+	if err != nil {
+		return "", fmt.Errorf("read database switch target: %w", err)
+	}
+	if p := s.rollbackTargetApprovalProblem(ctx, app, target); p != nil {
+		if p.Status >= http.StatusInternalServerError {
+			return "", fmt.Errorf("check database switch release: %s", p.Code)
+		}
+		return "The rollback target may no longer go live: " + p.Detail, nil
+	}
+	return "", nil
 }
 
 // databaseSwitchOwnership scopes a switch's managed PostgreSQL calls to the
@@ -120,8 +193,8 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, problem)
 		return
 	}
-	if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, plan.target.Scope); split {
-		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, earlier))
+	if split, ok := s.trafficSplitEarlierRelease(ctx, app.ID, plan.target.Scope); ok {
+		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, split))
 		return
 	}
 	sw, problem := s.databaseSwitchFor(ctx, r, acct, app, plan)
@@ -184,6 +257,9 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 	if !ok || limits.DatabasesMax == 0 || !managedPostgresPlanAllows(limits, source.Spec) {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable("The account's plan does not allow restoring this database.", "Upgrade the plan, or restore it another way.")
 	}
+	if problem := s.databaseSwitchRoom(ctx, acct); problem != nil {
+		return state.DatabaseSwitch{}, problem
+	}
 	point, name := release.SwitchRestore(plan.crossed, databases[0])
 	if window := time.Duration(source.Spec.RestoreWindowSeconds) * time.Second; window > 0 && time.Since(point) > window {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable(
@@ -199,6 +275,31 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 	return state.DatabaseSwitch{AccountID: acct.ID, AppID: app.ID, Scope: plan.target.Scope, FromDeploymentID: plan.current.ID,
 		TargetDeploymentID: plan.target.ID, UndoneDeploymentIDs: undone, SourceDatabaseID: source.ID, TargetName: name,
 		RestorePoint: point, RequestedBy: releaseApprovalActorLabel(r, acct), CreatedAt: time.Now().UTC()}, nil
+}
+
+// databaseSwitchRoom refuses a switch whose restored copy would not fit
+// inside the plan's database limit, before anything changes. The copy
+// becomes the app's database, so it cannot take the restore slot: the
+// slot's end would revoke its bindings (ADR-20261031123259). The worker's
+// restore refuses the slot as well, for a limit reached after this check.
+func (s *server) databaseSwitchRoom(ctx context.Context, acct state.Account) *api.Problem {
+	used, limit, err := s.managedPostgres.DatabaseRoom(ctx, acct.ID)
+	switch {
+	case errors.Is(err, managedpostgres.ErrUnsupported):
+		return nil
+	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+		return api.ErrDatabaseSwitchUnavailable("The account's plan does not allow restoring this database.", "Upgrade the plan, or restore it another way.")
+	case err != nil:
+		return customerCapacityProblem(s.log, "count managed databases", "Rollback temporarily unavailable",
+			"Gregale could not count the account's managed databases.", "Retry the request in a moment.", err)
+	case used < int64(limit):
+		return nil
+	}
+	return api.NewProblem(http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded",
+		fmt.Sprintf("A rollback that restores the database needs room for the restored copy, which becomes the app's database and so cannot use the restore slot; the account has %d of %d databases.", used, limit)).
+		WithLimit(int64(limit), used).
+		WithHint("Delete a database you no longer need or upgrade the plan, then roll back again; or restore the database with gregale postgres restore and roll back with acknowledge_releases.").
+		WithDocs("https://gregale.dev/docs/plans")
 }
 
 // releaseMigrationDatabases lists the managed databases whose migration

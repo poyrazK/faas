@@ -114,6 +114,9 @@ type Handler struct {
 	// profileCapturesReleased decides the profile-captures capability for a
 	// deployment's account (ADR-20261023115741); nil releases it.
 	profileCapturesReleased func(platformflags.Subject) bool
+	// postgresPoolSizingReleased decides the postgres_pool_sizing flag for a
+	// deployment's account (ADR-20261104141122); nil releases it to none.
+	postgresPoolSizingReleased func(platformflags.Subject) bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -133,6 +136,11 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// releasePaused reports the break-glass release pause (ADR
+	// 20261022140000). An approved release held before its release command
+	// does not resume while it is on (ADR-20261020085706 amendment 13). Nil
+	// is never paused.
+	releasePaused func() bool
 	// rehearsalCommandsEnabled mirrors apid's FAAS_REHEARSAL_COMMAND_EXECUTION
 	// gate for the release commands imaged pins in contained rehearsals.
 	rehearsalCommandsEnabled bool
@@ -562,6 +570,13 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 	return h
 }
 
+// WithPostgresPoolSizingRelease installs the per-account decision of the
+// postgres_pool_sizing platform flag (ADR-20261104141122).
+func (h *Handler) WithPostgresPoolSizingRelease(released func(platformflags.Subject) bool) *Handler {
+	h.postgresPoolSizingReleased = released
+	return h
+}
+
 // WithProfileCapturesRelease installs the per-account decision of the
 // profile-captures capability: a preview released to selected accounts, so
 // collectors reach only their deployments (ADR-20261023115741).
@@ -579,10 +594,13 @@ func (h *Handler) WithProfileCapturesRelease(released func(platformflags.Subject
 func (h *Handler) stampProfiling(manifest api.AppManifest, app state.App, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	released := h.profileCapturesReleased == nil || h.profileCapturesReleased(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID})
-	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released
-	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
+	// guest-init's profile bridge binds its port before the app starts: an
+	// app listening there keeps its port and runs without collectors.
+	bridgeFree := manifest.EffectivePort() != api.ProfileBridgePort()
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released && bridgeFree
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && (!h.continuousProfiling || !bridgeFree) || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
-		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling && bridgeFree
 		// Automatic captures are the control plane's decision; the guest
 		// manifest stays what guests of every release understand.
 		cfg.AutomaticCaptures = nil
@@ -627,6 +645,17 @@ func (h *Handler) WithRehearsalCommandsEnabled(enabled bool) *Handler {
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 	h.releasePhaseEnabled = enabled
 	return h
+}
+
+// WithReleasePause follows the break-glass release pause (ADR
+// 20261022140000) for releases resuming after approval.
+func (h *Handler) WithReleasePause(paused func() bool) *Handler {
+	h.releasePaused = paused
+	return h
+}
+
+func (h *Handler) releasePauseOn() bool {
+	return h.releasePaused != nil && h.releasePaused()
 }
 
 // WithLegacyParentDeferral is for the rolling pre-stage only. A child base
@@ -2122,6 +2151,16 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
 		}
+		// ADR-20261020085706 amendment 13: a release a newer revision
+		// overtook never runs its release command.
+		if superseded, err := h.supersedeOutpacedRelease(ctx, dep); err != nil || superseded {
+			return err
+		}
+		// ADR-20261020085706 amendment 12: a release its app's approvals
+		// gate runs its release command only once approved.
+		if held, err := h.holdReleaseCommandForApproval(ctx, app, dep); err != nil || held {
+			return err
+		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) {
 			return nil
@@ -2523,7 +2562,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
+	manifest = h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3208,7 +3247,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app)
+	manifest = applyFunctionConcurrency(h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)

@@ -4,10 +4,15 @@
 //
 //   POST /notes?env=KEY&body=TEXT  inserts a row, returns {body, at}
 //   GET  /notes?env=KEY            returns {bodies, now}
+//   node server.js migrate STEP    runs a release command (see migrations)
 //
 // KEY names the environment variable holding the URL (DATABASE_URL by
 // default). TEXT is [a-z0-9-]{1,40}, so it can be quoted safely; writing the
 // same TEXT again returns the existing row.
+//
+// /notes runs no DDL: a read_write or read_only login cannot change the
+// schema. The release command `migrate create` makes the table through the
+// migration binding first.
 
 import crypto from "node:crypto";
 import http from "node:http";
@@ -203,28 +208,56 @@ async function notes(req, url) {
     if (!/^[a-z0-9-]{1,40}$/.test(body)) return [400, { error: "body must match [a-z0-9-]{1,40}" }];
     // A retried write returns the first attempt's row, so a lost response
     // never adds a second one.
-    const rows = await query(database, `${schema} INSERT INTO journey_notes (body) VALUES ('${body}') ON CONFLICT (body) DO UPDATE SET body = EXCLUDED.body RETURNING body, ${utc("at")};`);
+    const rows = await query(database, `INSERT INTO journey_notes (body) VALUES ('${body}') ON CONFLICT (body) DO UPDATE SET body = EXCLUDED.body RETURNING body, ${utc("at")};`);
     return [200, { body: rows[0][0], at: rows[0][1] }];
   }
-  const rows = await query(database, `${schema} SELECT body, ${utc("clock_timestamp()")} FROM journey_notes ORDER BY id;`);
+  const rows = await query(database, `SELECT body, ${utc("clock_timestamp()")} FROM journey_notes ORDER BY id;`);
   const now = await query(database, `SELECT ${utc("clock_timestamp()")};`);
   return [200, { bodies: rows.map((row) => row[0]), now: now[0][0] }];
 }
 
-http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://probe");
-  let status = 200, payload = { ok: true };
-  if (url.pathname === "/notes") {
-    try {
-      [status, payload] = await notes(req, url);
-    } catch (err) {
-      status = 502;
-      payload = { error: err.message, code: err.code || "" };
+// migrations are the database rollback journey's release commands
+// (TestManagedPostgresRollbackRestore). They connect through the migration
+// binding, MIGRATION_DATABASE_URL, which only the release task receives.
+const migrations = {
+  create: schema,
+  // The bad migration the journey rolls back: it deletes every row.
+  wipe: `${schema} DELETE FROM journey_notes;`,
+};
+
+async function migrate(step) {
+  const database = process.env.MIGRATION_DATABASE_URL;
+  if (!database) throw new Error("MIGRATION_DATABASE_URL is not set");
+  if (!migrations[step]) throw new Error(`unknown migration ${step}`);
+  await query(database, migrations[step]);
+  console.log(`migration ${step} done`);
+}
+
+if (process.argv[2] === "migrate") {
+  migrate(process.argv[3]).catch((err) => {
+    console.error(`migration ${process.argv[3]} failed: ${err.message}`);
+    process.exit(1);
+  });
+} else {
+  serve();
+}
+
+function serve() {
+  http.createServer(async (req, res) => {
+    const url = new URL(req.url, "http://probe");
+    let status = 200, payload = { ok: true };
+    if (url.pathname === "/notes") {
+      try {
+        [status, payload] = await notes(req, url);
+      } catch (err) {
+        status = 502;
+        payload = { error: err.message, code: err.code || "" };
+      }
+    } else if (url.pathname !== "/" && url.pathname !== "/healthz") {
+      status = 404;
+      payload = { error: "not found" };
     }
-  } else if (url.pathname !== "/" && url.pathname !== "/healthz") {
-    status = 404;
-    payload = { error: "not found" };
-  }
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(payload) + "\n");
-}).listen(port, () => console.log(`postgres probe listening on ${port}`));
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(payload) + "\n");
+  }).listen(port, () => console.log(`postgres probe listening on ${port}`));
+}

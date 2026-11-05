@@ -23,15 +23,31 @@ rehearsal through schedd/vmmd still needs qualification. See
 - Candidate conflicts abort the entire approved correction. Plans never silently
   refresh versions or drop newly conflicting candidates.
 
-RLS tables, partitioning/inheritance, custom triggers/rules/expressions, and
+RLS tables, generated columns, partitioning/inheritance, custom triggers/rules/expressions, and
 cascading updates of selected fields are rejected. Enrollment does not infer
 cross-table dependencies or external actions in application code. The owner must
 qualify the selected command's effects. Record before the incident: existing
-operation receipts alone cannot reconstruct uncaptured old values.
+operation receipts alone cannot reconstruct uncaptured old values. Identity
+primary keys are supported; identity columns cannot be selected as repair fields.
+Columns included in a covering primary-key index remain ordinary mutable fields.
+
+Selected fields and primary keys cannot contain arrays or PostgreSQL `json`,
+including through domains or composite members: JSON journals lose array bounds
+and duplicate JSON keys. JSONB and supported scalar fields remain available.
+Unselected array/json columns are preserved as native values during repair.
+Existing enrollments with lossy selected types are blocked, and validation or
+verification reports `schema_changed`; old journals cannot recover the lost
+details. No upgrade turns that evidence into an exact restoration guarantee.
 
 Limits are defined in `pkg/api/limits.go`. Capture failure aborts the business
 transaction. Readiness and rehearsal establish mechanical/database checks;
 application semantics depend on the checks and dependencies the owner declares.
+
+Apply locks and validates every candidate before restoring the selection in one
+UPDATE statement. Deferrable, initially immediate unique and exclusion constraints
+can therefore validate a complete value swap at statement end. Fields absent
+from a row's inverse retain their native values. Nondeferrable constraints,
+fresh row versions and business checks remain enforced.
 
 ## Inspect repair readiness
 
@@ -320,6 +336,10 @@ gregale data-repair enroll --table public.products --fields category
 ```
 
 Installation and enrollment are explicit transactions and must each run once.
+Commit enrollment before starting application captures. Capture also refuses a
+table created or physically rewritten earlier in its enclosing transaction.
+`TRUNCATE` of the enrolled table aborts capture, including after the capture
+helper returns but before commit; rolled-back savepoint work remains harmless.
 The schema command prints SQL and never connects by itself. Enrollment adds
 `gregale_row_identity`, `gregale_row_version`, a unique identity index, and
 capture/version triggers. Do not bypass triggers, reset versions, or reuse row
@@ -333,11 +353,182 @@ gregale data-repair schema --upgrade > repair-upgrade.sql
 psql "$GREGALE_REPAIR_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f repair-upgrade.sql
 ```
 
-The upgrade is transactional and repeatable. It preserves enrollment, row
+The upgrade is transactional and repeatable. It preserves enrollment identities, row
 identities/versions and existing plan digests, approvals and receipts. New plans
 gain the current diagnostic fields. Older plans retain their original document;
 the UI marks missing diagnostic observations as not recorded. No upgrade runs
 from an application startup or request handler.
+
+The capture contract upgrade adds an operation's initial relation storage ID and
+checks it at finalization and deferred commit. It leaves the fingerprinted row
+triggers unchanged. It also corrects legacy covering-index metadata that included
+non-key columns, after verifying the live fingerprint; frozen captured keys stay
+as recorded. Existing generated-column enrollments report blocked and refuse
+capture before the business callback. Review this owner upgrade before deploying
+the corresponding executor and SDK readiness probes. See
+[capture and transport fixes](adr/20261103171817-repair-capture-and-transport-fixes.md).
+
+The value-comparison upgrade normalizes recorded fields through their PostgreSQL
+types when comparing them. Different writer/executor timezones no longer make an
+unchanged `timestamptz` conflict. Captured values and frozen
+plans retain their original bytes and digests; prepare a new plan to reconsider
+rows that an earlier plan excluded because of timezone formatting. Separate
+executor and verification/freshness reader roles need `EXECUTE` on
+`gregale_repair.normalize_values(regclass,jsonb)` in addition to their existing
+privileges. Capture-only writers do not need that grant.
+
+Custom functions in index expressions and partial-index predicates are also
+unsupported. New enrollment rejects them; legacy enrollments report blocked in
+both readiness profiles and cannot capture or execute repairs. Validation and
+verification report `schema_changed`. The upgrade does not refresh their stored
+fingerprints. See [value comparison, index qualification and failover](adr/20261103181657-repair-value-and-qualification-fixes.md).
+
+The runtime-guard upgrade enforces origin replication mode before capture/apply
+and again at capture finalization. Rejected writes roll back; an already
+committed receipt can still be recovered. Inverse construction preserves
+unselected NOT NULL domains and native array/json values. The same upgrade adds
+`gregale_repair.check_query(text)` for named checks and the Docker check wrapper;
+separate executor roles need `EXECUTE` on that function. Capture-only and
+verification-only roles do not need this grant. Valid terminated SELECTs may have
+trailing comments; strings, quoted identifiers and dollar quotes retain their
+original meaning. Configured check bytes and plan/check digests stay unchanged.
+See [lossy types and runtime guards](adr/20261103185741-repair-lossless-types-and-runtime-guards.md).
+
+The native-image upgrade replaces the exact known guard/capture implementations
+and preserves their canonical fingerprint contribution. It compares undeclared
+fields without JSONB normalization, captures floats with full precision, and
+avoids converting unrelated JSON during ordinary updates, planning or apply.
+Application columns named `t` or `r` remain ordinary supported fields. Function
+settings are local; an application/executor connection can keep its own float
+output preference.
+
+The native-image upgrade added nullable `operations.capture_contract_version`;
+earlier operations keep NULL and that producer recorded version 1. Old captures on tables
+containing floats, arrays or plain JSON, including unselected domain/composite
+members, cannot be certified as precise and complete. Planning, replacement and
+apply reject that history; validation/verification report `schema_changed`.
+Safe legacy scalar captures retain their approvals and can still be applied.
+Historical receipts remain recoverable. No upgrade rewrites old images, digests,
+approvals or fingerprints, or invents missing values.
+
+Only exact known trigger/fingerprint implementations are upgraded. A customized
+body or settings stop the owner script with
+`repair_row_contract_upgrade_requires_review` without partial replacement.
+Apply the matching owner upgrade before deploying updated executor and SDK
+readiness probes. Existing role grants remain sufficient. See
+[native capture images and provenance](adr/20261103193020-repair-native-capture-images.md).
+
+The timezone/domain upgrade pins new enrollment fingerprints to UTC and records
+the rendering timezone in `enrollments.fingerprint_timezone`. It fills a legacy
+entry only when the upgrade connection's timezone reproduces its existing
+fingerprint. Unmatched entries remain NULL and blocked: review the catalog and
+rerun the owner upgrade in the original enrollment timezone. Do not rewrite the
+fingerprint or reenroll to bypass a mismatch. Matching legacy captures and
+approved plans keep their original bytes and work across connection timezones.
+The caller's timezone is restored after fingerprint rendering.
+
+Domain constraints are inspected recursively through domain bases, composites
+and arrays of every column. Custom or nonimmutable constraint functions block
+enrollment and runtime use before validation/verification reconstructs a saved
+value. Builtin immutable domain checks remain supported; existing committed
+receipts remain recoverable. Apply the owner upgrade before matching executor
+and SDK probes. Existing grants remain sufficient. See
+[timezones and domain qualification](adr/20261103201136-repair-timezones-and-domain-qualification.md).
+
+The scalar-fidelity upgrade records capture contract version 2 after checking
+that selected fields and keys survive a native JSONB round trip. Negative zero
+in a selected float, domain/composite or key cannot be journaled losslessly and
+aborts capture with `repair_capture_value_not_lossless`; the callback's writes
+and capture metadata roll back. Unselected negative zero remains supported.
+Readiness checks inspect the contract, while capture enforces value-specific
+fidelity and size limits during the transaction.
+Selected JSONB literal `null` is also rejected because its journal encoding
+cannot distinguish it from SQL NULL. SQL NULL and nulls nested inside JSONB
+objects remain supported.
+
+Version-1 captures remain usable when their typed images are unambiguous.
+Catalog inspection follows domain and composite member types together with
+their recorded values. Older float zeros and JSONB literal nulls cannot establish
+their original native value; planning, replacement and apply reject
+them, and validation/verification report `schema_changed`. The upgrade never
+invents a sign or relabels old evidence. Existing committed receipts remain
+recoverable.
+
+New plans retain `value_contract_version=2` in their digest-bound document.
+Purging older source payloads cannot establish missing scalar proof: older
+scale-sensitive plans and pre-version-2 float/JSONB captures can become unavailable for
+verification after that evidence is removed. Their committed receipts remain
+readable and replayable.
+
+Captures without a producer version also lack completeness proof on tables
+containing numeric or JSONB columns, including unselected members: the old JSONB
+comparison could miss undeclared scale changes. Those captures cannot authorize
+a new repair.
+
+Numeric scale changes now participate in inverse selection and native value
+guards. An old plan that omitted a scale-changing field cannot authorize an
+incomplete repair. Prepare a fresh plan identity from the retained source,
+review its complete selection, rehearse and approve it. Existing plans and
+approvals are not rewritten. Separate executor, freshness and verification
+roles need `EXECUTE` on `gregale_repair.values_match(anyelement,jsonb)` alongside
+their existing grants; capture-only writer grants are unchanged.
+
+Named checks and legacy Docker checks inspect the complete result row, including
+when a composite column is named `q`; extra columns cannot mask a false result.
+Expression qualification also follows custom operators to their implementation
+functions before any domain reconstruction or business callback. Apply the
+owner upgrade before matching executor/SDK probes. See
+[scalar fidelity and strict checks](adr/20261103205518-repair-scalar-fidelity-and-checks.md).
+
+The catalog-contract upgrade checks incoming cascading foreign keys on every
+entry point, including keys added after approval. Selected fields referenced by
+UPDATE CASCADE, SET NULL or SET DEFAULT are unsupported. Index qualification
+also checks operator classes, families and their support functions; custom
+classes remain unsupported even when they delegate to builtin comparators.
+
+New captures retain a separate named-type definition signature for all table
+columns, including nested domain, composite, array and range members. Recreating
+a domain under the same name, changing an enum label or changing a composite
+member blocks repair before saved values are reconstructed. Capture checks
+local type state again at finalization and commit. Logical signatures survive
+Docker dump/restore and use settings local to the fingerprint function.
+
+Apply the explicit owner upgrade and grant `EXECUTE` on
+`gregale_repair.type_fingerprint(regclass,boolean)` to writer, executor,
+freshness and verification roles before updating their clients. The upgrade
+establishes a baseline for future captures; it cannot certify older named-type
+history. Such history and committed receipts remain readable, but cannot
+authorize a new repair or establish successful restoration. Old builtin-only
+captures retain their existing value-fidelity requirements. Existing plan
+digests and approvals are never rewritten. Coordinate owner schema changes
+with capture and repair operations. See
+[catalog contracts](adr/20261103224500-repair-catalog-contracts.md).
+
+Capture contract version 3 fixes interval interpretation across connection
+settings. Journal construction and reconstruction use `IntervalStyle=postgres`
+locally, including intervals nested in domains, composites, ranges and
+multiranges. Callback and pooled-session settings are preserved. Older captures
+with selected interval values or keys cannot prove their original interpretation;
+planning, replacement and apply reject them, and validation/verification report
+`schema_changed`. Historical evidence, approvals and committed receipts remain
+readable and are never rewritten. New version-3 captures can authorize repairs.
+
+Range qualification checks canonicalization, subtype-difference functions,
+subtype operator classes and subtype constraints even without an index. Custom
+callbacks and classes are unsupported, including aliases of builtin functions.
+Checks follow unselected columns and nested range/multirange members. Named-type
+signatures also record range callback implementations. Older custom-range
+captures whose signature changes cannot acquire missing proof from an upgrade.
+Incoming cascade checks include `gregale_row_version`, which every repair updates.
+
+Catalog fingerprints also retain `fingerprint_datestyle` and
+`fingerprint_intervalstyle`. New enrollments use `ISO, YMD` and `postgres`.
+An owner upgrade fills missing settings only when rendering under the upgrade
+connection's settings reproduces the saved hash. Unmatched entries remain blocked:
+review the schema and rerun the upgrade with the original DateStyle and
+IntervalStyle. Readiness and execution use the same saved settings. Apply the
+matching owner upgrade before the updated executor and SDKs; existing grants
+remain sufficient. See [intervals, ranges and rendering](adr/20261103231827-repair-intervals-range-callbacks-and-rendering.md).
 
 The schema grants nothing to PUBLIC. The initial executor uses a trusted owner
 or owner-qualified repair role. To use a separate trusted backend writer:
@@ -349,7 +540,7 @@ GRANT SELECT ON gregale_repair.enrollments TO application_writer;
 GRANT SELECT, INSERT, UPDATE ON gregale_repair.operations, gregale_repair.changes TO application_writer;
 GRANT EXECUTE ON FUNCTION gregale_repair.begin_operation(uuid,jsonb,text,regclass,uuid),
   gregale_repair.finish_operation(uuid), gregale_repair.check_enrollment(uuid),
-  gregale_repair.fingerprint(regclass) TO application_writer;
+  gregale_repair.fingerprint(regclass), gregale_repair.type_fingerprint(regclass,boolean) TO application_writer;
 
 -- The selected managed Operation receipt protocol also needs its base inbox:
 GRANT SELECT, INSERT ON public.gregale_operation_inbox TO application_writer;
@@ -359,14 +550,20 @@ GRANT SELECT, INSERT ON public.gregale_operation_inbox TO application_writer;
 
 The owner must first install the selected SDK receipt schema. Optional outboxes
 need separate grants. PostgreSQL trigger invocation does not require caller
-EXECUTE grants on trigger functions. Capture's enrollment check takes a
-`SHARE UPDATE EXCLUSIVE` lock: column-only UPDATE is insufficient. PostgreSQL
-accepts table-level UPDATE, DELETE or TRUNCATE for that lock; the example uses
+EXECUTE grants on trigger functions. READ COMMITTED captures take a
+`ROW EXCLUSIVE` enrollment lock, allowing independent captured writes to share a
+table. An already running concurrent index build or other SHARE UPDATE EXCLUSIVE
+maintenance causes a retryable conflict before capture begins. A later build
+waits for the capture transaction before building its index. REPEATABLE READ and
+SERIALIZABLE retain the stronger `SHARE UPDATE EXCLUSIVE` lock. Column-only UPDATE
+is insufficient for enrollment locking; the example uses table-level
 UPDATE and grants no unnecessary DELETE/TRUNCATE privileges. These are trusted
 backend grants, not end-user database permissions. Do not grant evidence,
 approval, plan-table writes or apply authority to untrusted clients. Database
 owners remain part of the trust boundary. Captured values require an explicit
-retention policy. The reviewed maintenance flow below removes eligible old
+retention policy. Writer and executor roles also need SELECT on
+`pg_catalog.pg_locks`, normally available through PUBLIC; readiness reports it
+if an administrator revoked that grant. The reviewed maintenance flow below removes eligible old
 payloads while preserving identities and receipts; no automatic purge runs.
 
 ## Repair payload retention
@@ -389,6 +586,12 @@ Each inventory has at most 32 entries and 64 MiB of estimated logical payload,
 expires after 15 minutes and is applied atomically with fresh state checks.
 Changed entries reject the entire batch. No hosted API or executor token grants
 purge authority.
+
+New inventories bind their rendering timezone into the saved digest. Purge can
+use another connection timezone without changing the selected records, and
+restores its caller's setting. Pre-upgrade inventories retain their original
+digest and require the original connection timezone; alternatively prepare and
+review a new inventory. An upgrade never rewrites an existing selection.
 
 Old applied plans and expired never-approved plans can lose their row items.
 A superseded parent can also be compacted once its saved replacement is at
@@ -554,6 +757,8 @@ arbitrary incoming HTTP requests.
 The operator machine needs a matching PostgreSQL 16 `pg_dump`, a PostgreSQL URI
 in `GREGALE_REPAIR_DATABASE_URL`, and local Docker. The isolated restore preserves
 database encoding and locale; an unavailable locale blocks rehearsal.
+Multi-host PostgreSQL URIs retain their ordered hosts, ports and
+`target_session_attrs` during snapshot export, including IPv6 hosts.
 Pre-pull the immutable sandbox image; the runner never pulls during a request:
 
 ```sh
@@ -585,6 +790,8 @@ SELECT NOT EXISTS (SELECT 1 FROM public.products WHERE category IS NULL)
 
 Its exact bytes are hashed into the plan. The same check runs in rehearsal and
 before the live commit. Changing it requires a new plan/rehearsal/approval.
+Both paths reject extra columns, text or numeric substitutes for a boolean,
+NULL, empty results and multiple rows.
 Without a file, `SELECT true` adds no application-specific guarantee. Checks must
 not perform external actions or acquire locks in an inconsistent order.
 Assertions over other mutable records need explicit locking or database
@@ -693,7 +900,9 @@ same primary key does not replace the old row identity. A same-version value
 mismatch reports `recorded_values_changed` within `edited`. Original exclusions
 are counted from the receipt and are not reread or promoted.
 
-Plan compaction does not prevent verification while the repair journal remains.
+For the current value contract, plan compaction does not prevent verification
+while the repair journal remains. Older scalar contracts may also need retained
+source evidence as described in the owner-upgrade notes above.
 After journal purge, `available` is false, `issues` contains `journal_purged`,
 and observation counters and rows are empty. Schema/enrollment changes similarly
 return `schema_changed` without inspecting business rows. Neither condition
@@ -820,6 +1029,12 @@ recover an existing matching source result for a resolving reservation; it
 never closes a source plan itself. Settlement starts the normal bounded
 result/event retention window again, without refreshing source plan expiry.
 
+Hosted `applying` and `outcome_unknown` repairs also retain their identities,
+events and idempotency records until a source receipt or explicit closure settles
+them. An elapsed result window cannot remove access to reconciliation or
+resolution. Late receipt recovery starts the ordinary result/event retention
+window again; settled repairs expire normally afterward.
+
 Existing installations need the explicit owner `schema --upgrade`. No table
 reenrollment is required. Closure alone keeps source payload held; a verified
 saved replacement can later make its parent eligible for reviewed compaction
@@ -879,7 +1094,20 @@ and accepts only the same UUID/digest; replays may use the original sequence.
 It appears in operator health with recovery guidance and survives normal ledger
 cleanup. Child admission and the parent's `replaced` phase commit together. An
 expired child recovered after response loss is recorded as failed; its expiry
-and approval authority are not refreshed.
+and approval authority are not refreshed. This historical recovery remains
+available after a plan downgrade or while pending-operation quota is full,
+using the parent's stored limits for result/event retention. Fresh executable
+children still require the current plan and available capacity. Completing a
+replacement restarts the parent's result/event retention windows so a lost
+response can be retried; replays return the same child without extending those
+windows.
+
+Expired, unapproved hosted plans in `prepared` with no active rehearsal stop
+counting toward pending-operation quota immediately. The existing minute-based
+apid operation cleanup loop marks them failed in bounded batches and emits one
+failure event. Ordinary retention then applies. It preserves the saved source
+expiry and does not settle approved plans, active native rehearsals or
+unresolved reservations.
 
 Existing installations require the explicit owner `schema --upgrade`, which adds
 a nullable unique plan reference and replaces the guarded SQL functions. No table

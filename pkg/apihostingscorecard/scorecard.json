@@ -452,7 +452,7 @@
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolvePassesRouteGates"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengePassCoversTheHostForTheAccount"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolveRefusesForeignTokens"},
-        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestEdgeChallengeSecret"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestLoadGatewayFleetKey"},
         {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengePassSurvivesAShadowingCookie"},
         {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengedPreflightIsAnsweredAtTheEdge"},
         {"kind": "runbook", "locator": "docs/runbooks/FaasEdgeChallenge.md"},
@@ -567,6 +567,7 @@
       "targets": [{"metric": "p95", "operator": "lte", "value": 180, "unit": "seconds"}],
       "evidence": [
         {"kind": "test", "locator": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"},
+        {"kind": "test", "locator": "pkg/githubd/app_binding_push_test.go::TestPushDeploysAppBoundWithoutProject"},
         {"kind": "test", "locator": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"},
         {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"},
         {"kind": "test", "locator": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments"},

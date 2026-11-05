@@ -923,36 +923,39 @@ func (q *Queries) PipelineConnections(ctx context.Context, db DBTX, arg Pipeline
 
 const pipelineControl = `-- name: PipelineControl :one
 UPDATE data_pipelines SET
- verification_progress=CASE WHEN $1::bigint>0 OR $2::boolean THEN '{}'::jsonb ELSE verification_progress END,
+ verification_progress=CASE WHEN $1::bigint>0 THEN '{}'::jsonb
+ WHEN $2::boolean THEN jsonb_build_object('ManualAttempt',revision+1) ELSE verification_progress END,
  schema_change=CASE WHEN $1::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
  schema_approval=CASE WHEN $1::bigint>0 THEN '' ELSE schema_approval END,
  desired_state=$3,state=$4,generation=generation+$1::bigint,
  applied_through_at=CASE WHEN $1::bigint>0 THEN NULL ELSE applied_through_at END,
  initialized=CASE WHEN $1::bigint>0 THEN false ELSE initialized END,
- revision=revision+1,verify_requested=$2,verification=CASE WHEN $1::bigint>0 THEN 'unknown' WHEN $2 THEN 'pending' ELSE verification END,
+ revision=revision+1,verify_requested=$5,verification=CASE WHEN $1::bigint>0 THEN 'unknown' WHEN $2 THEN 'pending' ELSE verification END,
  verified_at=CASE WHEN $2 OR $1::bigint>0 THEN NULL ELSE verified_at END,
  retry_at=clock_timestamp()
-WHERE account_id=$5::text::uuid AND id=$6::text::uuid AND revision=$7 AND state<>'deleted'
+WHERE account_id=$6::text::uuid AND id=$7::text::uuid AND revision=$8 AND state<>'deleted'
  AND (coalesce(reader_change->>'State','')<>'approved' OR $1::bigint=0)
 RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
 `
 
 type PipelineControlParams struct {
-	GenerationDelta int64
-	VerifyRequested bool
-	DesiredState    string
-	State           string
-	AccountID       string
-	ID              string
-	Revision        int64
+	GenerationDelta   int64
+	StartVerification bool
+	DesiredState      string
+	State             string
+	VerifyRequested   bool
+	AccountID         string
+	ID                string
+	Revision          int64
 }
 
 func (q *Queries) PipelineControl(ctx context.Context, db DBTX, arg PipelineControlParams) (DataPipeline, error) {
 	row := db.QueryRow(ctx, pipelineControl,
 		arg.GenerationDelta,
-		arg.VerifyRequested,
+		arg.StartVerification,
 		arg.DesiredState,
 		arg.State,
+		arg.VerifyRequested,
 		arg.AccountID,
 		arg.ID,
 		arg.Revision,
@@ -1425,7 +1428,7 @@ func (q *Queries) PipelineRequestTableCancellation(ctx context.Context, db DBTX,
 const pipelineRequestTableRecovery = `-- name: PipelineRequestTableRecovery :execrows
 UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
  schema_change=jsonb_set(schema_change,'{Recovery}',CASE WHEN $1::text='live'
- THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined')
+ THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined','CopyRetry',reason IN ('table_copy_stalled','table_addition_tracking_lost'))
  ELSE jsonb_build_object('Table',$2::text,'Kind',$1::text,'State','requested') END)
 WHERE account_id=$3::text::uuid AND id=$4::text::uuid AND revision=$5
  AND desired_state='running' AND state='blocked'
@@ -1437,7 +1440,9 @@ WHERE account_id=$3::text::uuid AND id=$4::text::uuid AND revision=$5
  AND (($1::text='live' AND schema_change->'Recovery'->>'Kind'='live' AND reason IN ('live_table_mismatch','replica_mismatch')
  AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=$2::text)
  OR ($1::text='' AND coalesce(schema_change->'Recovery'->>'Kind','')<>'live' AND reason='replica_mismatch' AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=$2::text)
- OR ($1::text='copy' AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
+ OR (($1::text='copy' OR ($1::text='live' AND schema_change->'Recovery'->>'Kind'='live'
+ AND schema_change->'Recovery'->>'State'='blocked' AND schema_change->'Recovery'->>'Stage'='copying'))
+ AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) c WHERE c->>'Table'=$2::text
  AND coalesce(c->>'NativeState','')<>'r' AND (coalesce((c->>'Stalled')::boolean,false) OR c->>'Phase'='missing'))
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) other_copy WHERE other_copy->>'Table'<>$2::text AND coalesce(other_copy->>'NativeState','')='')))
@@ -1539,6 +1544,44 @@ func (q *Queries) PipelineRequestTables(ctx context.Context, db DBTX, arg Pipeli
 	return result.RowsAffected(), nil
 }
 
+const pipelineRetryTableRetirement = `-- name: PipelineRetryTableRetirement :execrows
+UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
+ schema_change=jsonb_set(schema_change,'{Cancellation,RefreshRetry}',to_jsonb(coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)+1))
+WHERE account_id=$1::text::uuid AND id=$2::text::uuid AND revision=$3
+ AND desired_state='running' AND state='blocked' AND reason='schema_api_refresh_failed'
+ AND schema_approval=schema_change->>'ID'
+ AND schema_change->'Cancellation'->>'ID'=$4::text
+ AND schema_change->'Cancellation'->>'State'='approved' AND schema_change->'Cancellation'->>'Stage'='archived'
+ AND schema_change->'Cancellation'->>'Retention'='retain_private'
+ AND coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)<$5::integer
+ AND coalesce(reader_change->>'State','')<>'approved'
+ AND observed_revision=revision AND observed_at>clock_timestamp()-($6::bigint*interval '1 second')
+`
+
+type PipelineRetryTableRetirementParams struct {
+	AccountID      string
+	ID             string
+	Revision       int64
+	CancellationID string
+	MaxRetries     int32
+	MaxAgeSeconds  int64
+}
+
+func (q *Queries) PipelineRetryTableRetirement(ctx context.Context, db DBTX, arg PipelineRetryTableRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, pipelineRetryTableRetirement,
+		arg.AccountID,
+		arg.ID,
+		arg.Revision,
+		arg.CancellationID,
+		arg.MaxRetries,
+		arg.MaxAgeSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pipelineRotateConnection = `-- name: PipelineRotateConnection :one
 UPDATE data_pipeline_connections SET ciphertext=$1,revision=revision+1
 WHERE account_id=$2::text::uuid AND id=$3::text::uuid AND revision=$4 RETURNING id, account_id, name, revision, ciphertext, identity, created_at
@@ -1572,7 +1615,9 @@ func (q *Queries) PipelineRotateConnection(ctx context.Context, db DBTX, arg Pip
 }
 
 const pipelineSchemaApps = `-- name: PipelineSchemaApps :many
-SELECT DISTINCT a.id,a.slug,a.status FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+SELECT DISTINCT a.id,a.slug,a.status,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.status='live') AS has_live_deployment
+FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
 WHERE b.account_id=$1::text::uuid AND b.database_id=$2::text::uuid AND b.state<>'deleted' AND a.status<>'deleted'
 ORDER BY a.id LIMIT $3
 `
@@ -1584,9 +1629,10 @@ type PipelineSchemaAppsParams struct {
 }
 
 type PipelineSchemaAppsRow struct {
-	ID     pgtype.UUID
-	Slug   string
-	Status string
+	ID                pgtype.UUID
+	Slug              string
+	Status            string
+	HasLiveDeployment bool
 }
 
 func (q *Queries) PipelineSchemaApps(ctx context.Context, db DBTX, arg PipelineSchemaAppsParams) ([]PipelineSchemaAppsRow, error) {
@@ -1598,7 +1644,12 @@ func (q *Queries) PipelineSchemaApps(ctx context.Context, db DBTX, arg PipelineS
 	items := []PipelineSchemaAppsRow{}
 	for rows.Next() {
 		var i PipelineSchemaAppsRow
-		if err := rows.Scan(&i.ID, &i.Slug, &i.Status); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Status,
+			&i.HasLiveDeployment,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1680,6 +1731,23 @@ type PipelineSchemaRefreshPruneParams struct {
 func (q *Queries) PipelineSchemaRefreshPrune(ctx context.Context, db DBTX, arg PipelineSchemaRefreshPruneParams) error {
 	_, err := db.Exec(ctx, pipelineSchemaRefreshPrune, arg.PipelineID, arg.ChangeID)
 	return err
+}
+
+const pipelineSchemaRefreshQueued = `-- name: PipelineSchemaRefreshQueued :one
+SELECT EXISTS(SELECT 1 FROM notification_outbox WHERE channel='runtime_config_restart'
+ AND payload::jsonb->>'app_id'=$1::text AND payload::jsonb->>'wake_id'=$2::text)
+`
+
+type PipelineSchemaRefreshQueuedParams struct {
+	AppID  string
+	WakeID string
+}
+
+func (q *Queries) PipelineSchemaRefreshQueued(ctx context.Context, db DBTX, arg PipelineSchemaRefreshQueuedParams) (bool, error) {
+	row := db.QueryRow(ctx, pipelineSchemaRefreshQueued, arg.AppID, arg.WakeID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const pipelineSchemaRefreshSnapshots = `-- name: PipelineSchemaRefreshSnapshots :exec
@@ -1955,6 +2023,32 @@ func (q *Queries) PipelineSetupInsert(ctx context.Context, db DBTX, arg Pipeline
 	return i, err
 }
 
+const pipelineSetupInvalidateFailedCheck = `-- name: PipelineSetupInvalidateFailedCheck :exec
+UPDATE data_connection_checks SET observed_at=NULL
+WHERE account_id=$1::text::uuid AND connection_id=$2::text::uuid
+ AND database_id=$3::text
+ AND (state='blocked' OR (state='passed' AND $4::boolean AND
+  (coalesce(result#>>'{capacity,source,state}','')<>'ready' OR
+   (database_id<>'' AND coalesce(result#>>'{capacity,destination,state}','')<>'ready'))))
+`
+
+type PipelineSetupInvalidateFailedCheckParams struct {
+	AccountID     string
+	ConnectionID  string
+	DatabaseID    string
+	CapacityRetry bool
+}
+
+func (q *Queries) PipelineSetupInvalidateFailedCheck(ctx context.Context, db DBTX, arg PipelineSetupInvalidateFailedCheckParams) error {
+	_, err := db.Exec(ctx, pipelineSetupInvalidateFailedCheck,
+		arg.AccountID,
+		arg.ConnectionID,
+		arg.DatabaseID,
+		arg.CapacityRetry,
+	)
+	return err
+}
+
 const pipelineSetupList = `-- name: PipelineSetupList :many
 SELECT id, account_id, source_connection_id, name, request, mirror_plan, data_api_plan, database_id, mirror_name, pipeline_id, state, phase, reason, revision, lease_token, lease_until, retry_at, updated_at, created_at FROM data_pipeline_setups WHERE account_id=$1::text::uuid ORDER BY created_at DESC,id LIMIT $2
 `
@@ -2002,6 +2096,42 @@ func (q *Queries) PipelineSetupList(ctx context.Context, db DBTX, arg PipelineSe
 		return nil, err
 	}
 	return items, nil
+}
+
+const pipelineSetupLock = `-- name: PipelineSetupLock :one
+SELECT id, account_id, source_connection_id, name, request, mirror_plan, data_api_plan, database_id, mirror_name, pipeline_id, state, phase, reason, revision, lease_token, lease_until, retry_at, updated_at, created_at FROM data_pipeline_setups WHERE account_id=$1::text::uuid AND id=$2::text::uuid FOR UPDATE
+`
+
+type PipelineSetupLockParams struct {
+	AccountID string
+	ID        string
+}
+
+func (q *Queries) PipelineSetupLock(ctx context.Context, db DBTX, arg PipelineSetupLockParams) (DataPipelineSetup, error) {
+	row := db.QueryRow(ctx, pipelineSetupLock, arg.AccountID, arg.ID)
+	var i DataPipelineSetup
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.SourceConnectionID,
+		&i.Name,
+		&i.Request,
+		&i.MirrorPlan,
+		&i.DataApiPlan,
+		&i.DatabaseID,
+		&i.MirrorName,
+		&i.PipelineID,
+		&i.State,
+		&i.Phase,
+		&i.Reason,
+		&i.Revision,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const pipelineSetupOtherReservations = `-- name: PipelineSetupOtherReservations :one

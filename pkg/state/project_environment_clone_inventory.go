@@ -3,8 +3,9 @@ package state
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CloneInventoryPolicy says how a configuration or customer-data table's rows
@@ -34,6 +35,49 @@ type CloneInventoryPolicy struct {
 	Via         [][3]string `json:"via,omitempty"`
 	Strategy    string      `json:"strategy,omitempty"`
 	Unavailable string      `json:"unavailable,omitempty"`
+	// Live names what a row must meet to count as the source's: a deleted
+	// bucket, a retired queue binding or a revoked credential holds nothing a
+	// clone would copy, and a row scoped to another environment is not the
+	// source's. Conditions apply to the table itself, never to a via hop.
+	Live []CloneInventoryLiveCondition `json:"live,omitempty"`
+}
+
+// CloneInventoryLiveCondition is exactly one test of Column: Null needs it to
+// be NULL, Not needs it to differ from a fixed state, and SourceScope needs it
+// (empty read as default) to be one of the source environment's slugs.
+type CloneInventoryLiveCondition struct {
+	Column      string `json:"column"`
+	Null        bool   `json:"null,omitempty"`
+	Not         string `json:"not,omitempty"`
+	SourceScope bool   `json:"source_scope,omitempty"`
+}
+
+var cloneInventoryLiveValue = lazyregexp.New(`^[a-z_]{1,32}$`)
+
+func validCloneInventoryLive(columns []string, live []CloneInventoryLiveCondition) bool {
+	known := map[string]bool{}
+	for _, column := range columns {
+		known[column] = true
+	}
+	for _, condition := range live {
+		tests := 0
+		if condition.Null {
+			tests++
+		}
+		if condition.Not != "" {
+			tests++
+			if !cloneInventoryLiveValue.MatchString(condition.Not) {
+				return false
+			}
+		}
+		if condition.SourceScope {
+			tests++
+		}
+		if tests != 1 || !known[condition.Column] || !cloneInventoryIdentifier.MatchString(condition.Column) {
+			return false
+		}
+	}
+	return true
 }
 
 const (
@@ -59,9 +103,19 @@ const (
 	// A bound managed database without a restore window cannot be copied at
 	// the clone's point in time (ADR-20261024224230).
 	CloneBlockerPointInTimeRestoreUnavailable = "point_in_time_restore_unavailable"
+	// A bucket setting the clone does not copy yet: CORS, lifecycle,
+	// notifications, encryption, Object Lock, upload routes or per-version
+	// protection (ADR-20261103160000).
+	CloneBlockerObjectBucketSettingUnavailable = "object_bucket_setting_unavailable"
+	// A bucket without versioning has no history to read at the clone's data
+	// point (ADR-20261103160000).
+	CloneBlockerObjectVersioningRequired = "object_versioning_required"
+	// A bucket on a storage backend not yet qualified for clones
+	// (ADR-20261103160000).
+	CloneBlockerObjectStorageProviderUnqualified = "object_storage_provider_unqualified"
 )
 
-var cloneInventoryIdentifier = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+var cloneInventoryIdentifier = lazyregexp.New(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // Clone admission needs a frozen source and an isolated target copy; diff,
 // qualification, promotion and rollback belong to full promotion.
@@ -72,7 +126,7 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 		return policy.Clone == nil
 	}
 	c := policy.Clone
-	if c == nil || len(c.Via) > 3 {
+	if c == nil || len(c.Via) > 3 || !validCloneInventoryLive(policy.Columns, c.Live) {
 		return false
 	}
 	for _, hop := range c.Via {
@@ -97,7 +151,7 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 		return false
 	}
 	switch c.Unavailable {
-	case "", CloneBlockerDataCheckpointUnavailable, CloneBlockerWorkActivationUnavailable:
+	case "", CloneBlockerDataCheckpointUnavailable, CloneBlockerWorkActivationUnavailable, CloneBlockerObjectBucketSettingUnavailable:
 	default:
 		return false
 	}
@@ -116,11 +170,12 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 
 // cloneInventoryProbe is one table the source inventory must test for rows.
 type cloneInventoryProbe struct {
-	Table      string      `json:"table"`
-	Owner      string      `json:"owner"`
-	Column     string      `json:"column,omitempty"`
-	SlugColumn string      `json:"slug_column,omitempty"`
-	Via        [][3]string `json:"via,omitempty"`
+	Table      string                        `json:"table"`
+	Owner      string                        `json:"owner"`
+	Column     string                        `json:"column,omitempty"`
+	SlugColumn string                        `json:"slug_column,omitempty"`
+	Via        [][3]string                   `json:"via,omitempty"`
+	Live       []CloneInventoryLiveCondition `json:"live,omitempty"`
 }
 
 // cloneInventoryProbes lists, in table order, every table whose rows would
@@ -133,7 +188,7 @@ func cloneInventoryProbes(policies []ProjectEnvironmentCloneSchemaPolicy) ([]byt
 			continue
 		}
 		probes = append(probes, cloneInventoryProbe{Table: policy.TableName, Owner: policy.Clone.Owner,
-			Column: policy.Clone.Column, SlugColumn: policy.Clone.SlugColumn, Via: policy.Clone.Via})
+			Column: policy.Clone.Column, SlugColumn: policy.Clone.SlugColumn, Via: policy.Clone.Via, Live: policy.Clone.Live})
 	}
 	sort.Slice(probes, func(i, j int) bool { return probes[i].Table < probes[j].Table })
 	return json.Marshal(probes)
@@ -194,3 +249,55 @@ func (e *ProjectEnvironmentCloneInventoryError) Error() string {
 }
 
 func (e *ProjectEnvironmentCloneInventoryError) Unwrap() error { return ErrConflict }
+
+// cloneSourceBucketIDs lists, sorted and once each, the buckets the captured
+// workloads bind.
+func cloneSourceBucketIDs(records []projectCloneWorkloadRecord) []string {
+	seen := map[string]bool{}
+	ids := []string{}
+	for _, record := range records {
+		if record.snapshot.Bindings == nil {
+			continue
+		}
+		for _, bucket := range record.snapshot.Bindings.Buckets {
+			if !seen[bucket.ID] {
+				seen[bucket.ID] = true
+				ids = append(ids, bucket.ID)
+			}
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// cloneBucketBlockers names each source bucket a clone cannot copy at its
+// data point: one on a backend not qualified for clones, or without
+// versioning (ADR-20261103160000). A bucket several workloads bind is named
+// once; blockers are ordered by bucket name.
+func cloneBucketBlockers(records []projectCloneWorkloadRecord, qualifiedBackends []string) []ProjectEnvironmentCloneCoverageBlocker {
+	qualified := make(map[string]bool, len(qualifiedBackends))
+	for _, backend := range qualifiedBackends {
+		qualified[backend] = true
+	}
+	seen := map[string]bool{}
+	blockers := []ProjectEnvironmentCloneCoverageBlocker{}
+	for _, record := range records {
+		if record.snapshot.Bindings == nil {
+			continue
+		}
+		for _, bucket := range record.snapshot.Bindings.Buckets {
+			if seen[bucket.ID] {
+				continue
+			}
+			seen[bucket.ID] = true
+			if !qualified[bucket.BackendID] {
+				blockers = append(blockers, ProjectEnvironmentCloneCoverageBlocker{Table: "object_buckets", Resource: bucket.Name, Code: CloneBlockerObjectStorageProviderUnqualified})
+			}
+			if !bucket.VersioningEnabled {
+				blockers = append(blockers, ProjectEnvironmentCloneCoverageBlocker{Table: "object_buckets", Resource: bucket.Name, Code: CloneBlockerObjectVersioningRequired})
+			}
+		}
+	}
+	sort.SliceStable(blockers, func(i, j int) bool { return blockers[i].Resource < blockers[j].Resource })
+	return blockers
+}

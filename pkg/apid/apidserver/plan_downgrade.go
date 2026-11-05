@@ -2,7 +2,6 @@ package apidserver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -57,6 +56,14 @@ func (s *server) planDowngradeProblem(ctx context.Context, subject state.Account
 		return api.ErrCapacity("could not check the plan's limits; try again")
 	}
 	tasks = append(tasks, databaseTasks...)
+	storage, err := s.object.PlanChangeStorage(ctx, subject, target)
+	if err != nil {
+		s.log.Error("plan downgrade: read object storage", "account", subject.ID, "err", err)
+		return api.ErrCapacity("could not check the plan's limits; try again")
+	}
+	if storage.Task != "" {
+		tasks = append(tasks, storage.Task)
+	}
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -66,11 +73,16 @@ func (s *server) planDowngradeProblem(ctx context.Context, subject state.Account
 		problem = api.ErrPlanLimitApps(limits, deployed)
 	case len(ramTasks) > 0:
 		problem = api.ErrPlanLimitRAM(limits, largest)
-	default:
+	case len(databaseTasks) > 0:
 		problem = api.NewProblem(403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded", "").
 			WithLimit(int64(databasesMax), int64(databases)).WithDocs("https://gregale.dev/docs/plans")
+	default:
+		// ADR-20261101214152: the target plan's storage ceiling, with the
+		// spend cap the account would hold after the change.
+		problem = api.NewProblem(403, api.CodePlanLimitObjectStorage, "Object storage over plan ceiling", "").
+			WithLimit(storage.CeilingBytes, storage.StoredBytes).WithDocs(api.ObjectStorageLimitsDocsURL)
 	}
-	problem.Detail = fmt.Sprintf("the %s plan does not fit your apps and databases yet; before downgrading: %s", target, strings.Join(tasks, "; "))
+	problem.Detail = fmt.Sprintf("the %s plan does not fit your apps, databases and stored objects yet; before downgrading: %s", target, strings.Join(tasks, "; "))
 	return problem
 }
 
@@ -109,29 +121,7 @@ func (s *server) planDowngradeDatabaseTasks(ctx context.Context, subject state.A
 
 // planSubjectApps is the apps a plan governs: an organization's apps, or an
 // account's personal apps (company apps follow their organization's plan).
+// schedd ranks the same apps when a plan no longer fits them.
 func (s *server) planSubjectApps(ctx context.Context, subject state.Account) ([]state.App, error) {
-	if subject.ResourceOrgID != "" {
-		lister, ok := s.store.(state.OrgAppLister)
-		if !ok {
-			return nil, errors.New("store cannot list organization apps")
-		}
-		return lister.ListAppsByOrg(ctx, subject.ResourceOrgID)
-	}
-	apps, err := s.store.ListApps(ctx, subject.ID)
-	if err != nil {
-		return nil, err
-	}
-	personalOrg := ""
-	if org, err := s.store.OrgByPersonalAccount(ctx, subject.ID); err == nil {
-		personalOrg = org.ID
-	} else if !errors.Is(err, state.ErrNotFound) {
-		return nil, err
-	}
-	personal := apps[:0]
-	for _, app := range apps {
-		if app.OrgID == "" || app.OrgID == personalOrg {
-			personal = append(personal, app)
-		}
-	}
-	return personal, nil
+	return state.PlanSubjectApps(ctx, s.store, subject)
 }

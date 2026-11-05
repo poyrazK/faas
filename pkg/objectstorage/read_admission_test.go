@@ -20,12 +20,15 @@ type fakeReadStore struct {
 	recorded []state.ObjectReadUsage
 }
 
-func (f *fakeReadStore) ObjectReadAdmission(_ context.Context, _, _ string, at time.Time, _ api.ObjectStoragePolicy) (state.ObjectReadAdmission, error) {
+func (f *fakeReadStore) ObjectReadAdmission(_ context.Context, account, _ string, at time.Time, _ api.ObjectStoragePolicy) (state.ObjectReadAdmission, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
 	d := f.decision
 	d.Period = state.ObjectStoragePeriod(at)
+	if d.SubjectID == "" {
+		d.SubjectID = account
+	}
 	return d, f.readErr
 }
 
@@ -119,6 +122,32 @@ func TestReadAdmitterCeilingsIncludePendingCounts(t *testing.T) {
 	}
 	if err = a.ReserveEgress(first, -1); !errors.Is(err, state.ErrObjectUsageStale) {
 		t.Fatalf("unknown length = %v", err)
+	}
+}
+
+// adr: 20261101214152 — above the plan's storage ceiling a cached read is
+// still admitted for HEAD, but its body is refused and counts no egress.
+func TestReadAdmitterRefusesBodiesAboveTheStorageCeiling(t *testing.T) {
+	over := &state.ObjectStorageLimitError{Kind: "account_bytes", Observed: 60, Limit: 50, Cause: state.ErrObjectBudget}
+	d := roomyDecision()
+	d.DownloadErr = over
+	store := &fakeReadStore{decision: d}
+	a := NewReadAdmitter(store, api.ObjectStoragePolicy{}, (&fakeClock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}).Now)
+	read, err := a.AdmitRead(t.Context(), readBucket())
+	if err != nil {
+		t.Fatal("a HEAD above the ceiling was refused:", err)
+	}
+	if err = a.ReserveEgress(read, 0); err != nil {
+		t.Fatal("an empty body above the ceiling was refused:", err)
+	}
+	if err = a.ReserveEgress(read, 1); !errors.Is(err, over) {
+		t.Fatalf("a body above the ceiling = %v", err)
+	}
+	a.mu.Lock()
+	pending := a.pendingLocked(readBucket().ID, read.period, read.owner).EgressBytes
+	a.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("a refused body counted %d egress bytes", pending)
 	}
 }
 

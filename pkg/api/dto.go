@@ -3,20 +3,21 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/textproto"
 	"net/url"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 
 	"github.com/google/uuid"
 	"golang.org/x/net/http/httpguts"
@@ -2482,9 +2483,11 @@ func (b *PublicAuthBlock) Validate() *Problem {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_user",
 			fmt.Sprintf("public_auth.basic_user must be 1..%d bytes when mode='basic'", AppPublicAuthBasicUserMaxBytes))
 	}
-	if p := strings.TrimSpace(b.BasicPass); p == "" || len(p) > AppPublicAuthBasicPassMaxBytes {
+	// A short password fell quickly to guessing at the gateway (H76); a
+	// newly set one must be at least PublicAuthBasicPassMinBytes long.
+	if p := strings.TrimSpace(b.BasicPass); len(p) < PublicAuthBasicPassMinBytes || len(p) > AppPublicAuthBasicPassMaxBytes {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_pass",
-			fmt.Sprintf("public_auth.basic_pass must be 1..%d bytes when mode='basic'", AppPublicAuthBasicPassMaxBytes))
+			fmt.Sprintf("public_auth.basic_pass must be %d..%d bytes when mode='basic'", PublicAuthBasicPassMinBytes, AppPublicAuthBasicPassMaxBytes))
 	}
 	return nil
 }
@@ -2949,7 +2952,7 @@ const SecretRefPrefix = "secret:"
 // identifier grammar as env keys / secret keys (ADR-045 §Decision 1 mirror).
 // Exported so pkg/sched/engine.go::loadSealedEnvFor (PR-B) reuses it at
 // wake time — one regex, no drift between apid and schedd rejection logic.
-var SecretRefNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+var SecretRefNameRe = lazyregexp.New(`^[A-Z][A-Z0-9_]*$`)
 
 // Validate enforces every override field's constraint from
 // ADR-053 §Decision 1. Returns nil on success or a *Problem with
@@ -4223,6 +4226,8 @@ type AccountAbuseHoldActionResponse struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
+	// KeyApp is present only for an app-bound agent principal.
+	KeyApp *AppAgentBinding `json:"key_app,omitempty"`
 	// AbuseHold is present while the account is on an ADR-361 abuse hold:
 	// nothing runs or deploys until an operator releases it.
 	AbuseHold     *AccountAbuseHold `json:"abuse_hold,omitempty"`
@@ -4255,6 +4260,19 @@ type AccountResponse struct {
 	// KeyScopes are the scopes of the API key that authenticated GET
 	// /v1/account; absent for a dashboard session (ADR-20261029085359).
 	KeyScopes []string `json:"key_scopes,omitempty"`
+	// KeyOrg is the shared organization that key acts in; absent for a
+	// personal key or a session (ADR-20261101225122).
+	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+	// KeyProjects are the slugs of the projects that key is limited to;
+	// absent for an unlimited key or a session (ADR-20261104085712).
+	KeyProjects []string `json:"key_projects,omitempty"`
+}
+
+// KeyOrg names the shared organization an API key acts in.
+type KeyOrg struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -4287,6 +4305,18 @@ type AccountLimits struct {
 // Nil means no ceiling; zero means no overage is allowed.
 type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
+}
+
+// OrgBillingEmailRequest sets the email an organization bills to. The billing
+// provider sends this address the organization's invoices and lets it sign in
+// to the organization's billing portal (ADR-20261103131742).
+type OrgBillingEmailRequest struct {
+	BillingEmail string `json:"billing_email"`
+}
+
+// OrgBillingEmailResponse reports the email an organization bills to.
+type OrgBillingEmailResponse struct {
+	BillingEmail string `json:"billing_email"`
 }
 
 // AccountRateLimitsResponse reports account-wide rate windows that affect
@@ -4338,6 +4368,9 @@ type APIKeyResponse struct {
 	RotatedFromID string   `json:"rotated_from_id,omitempty"` // predecessor key id
 	// Plaintext appears ONLY on the create + rotate responses, never persisted.
 	Plaintext string `json:"plaintext,omitempty"`
+	// Projects are the slugs of the projects an agent key is limited to;
+	// absent for an unlimited key (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4365,11 +4398,19 @@ type ListDeployTokensResponse struct {
 }
 
 // CreateDeployTokenRequest controls a per-app deploy token mint. Scopes are
-// intentionally not caller-controlled in v1: the token is always limited to
-// deploy:write. ExpiresAt is optional and defaults to 90 days.
+// deploy:write unless Agent selects the narrow app-agent scope vocabulary.
+// ExpiresAt is optional and defaults to 90 days.
 type CreateDeployTokenRequest struct {
-	Label     string `json:"label,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Agent     bool     `json:"agent,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	ExpiresAt string   `json:"expires_at,omitempty"`
+}
+
+// AppAgentBinding pins the credential's immutable app identity.
+type AppAgentBinding struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
 }
 
 // RotateDeployTokenRequest mirrors CreateDeployTokenRequest. An empty label
@@ -4434,6 +4475,9 @@ type GraceWindowResponse struct {
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4448,6 +4492,9 @@ type CreateKeyRequest struct {
 type CreateOrgAPIKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys
@@ -4493,16 +4540,20 @@ type RotateOrgAPIKeyResponse struct {
 // alt names, useful for the `gregale domains show` listing). All three
 // fields are omitempty so pre-PR-3 clients see bit-identical payloads.
 type CustomDomainResponse struct {
-	Domain         string   `json:"domain"`
-	AppID          string   `json:"app_id"`
-	Environment    string   `json:"environment,omitempty"`
-	ChallengeToken string   `json:"challenge_token,omitempty"`
-	Verified       bool     `json:"verified"`
-	VerifiedAt     string   `json:"verified_at,omitempty"`
-	TXTRecord      string   `json:"txt_record,omitempty"` // convenience for the customer
-	Default        bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
-	CertNotAfter   string   `json:"cert_not_after,omitempty"`
-	CertSANs       []string `json:"cert_sans,omitempty"`
+	// VerificationExpiresAt is the hard deadline for an unverified claim.
+	// Expired claims require a fresh create request and a new TXT proof.
+	VerificationExpiresAt string   `json:"verification_expires_at,omitempty"`
+	VerificationExpired   bool     `json:"verification_expired,omitempty"`
+	Domain                string   `json:"domain"`
+	AppID                 string   `json:"app_id"`
+	Environment           string   `json:"environment,omitempty"`
+	ChallengeToken        string   `json:"challenge_token,omitempty"`
+	Verified              bool     `json:"verified"`
+	VerifiedAt            string   `json:"verified_at,omitempty"`
+	TXTRecord             string   `json:"txt_record,omitempty"` // convenience for the customer
+	Default               bool     `json:"default,omitempty"`    // true when this domain is the app's default (issue #961 / Mega-A PR-3)
+	CertNotAfter          string   `json:"cert_not_after,omitempty"`
+	CertSANs              []string `json:"cert_sans,omitempty"`
 	// Durable legacy custom-domain TLS state (issue #1397 / F1). These
 	// fields are populated by the DNS/cert poller and remain available when
 	// the live cert endpoint is temporarily unreachable.
@@ -4729,6 +4780,12 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
 	RetryMax            *int                       `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int                       `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's schedule
+	// policy or failure rules; an omitted schedule_policy or failure_rules
+	// leaves them as they are. Each refuses the matching field in the same
+	// request.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -5243,9 +5300,15 @@ type ExecutionUsageSummaryResponse struct {
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
 	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
-	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
-	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
+	IncludedGBHours int64   `json:"included_gb_hours"` // the month's allowance, following its plan history (ADR-20261101113742)
+	OverageGBHours  float64 `json:"overage_gb_hours"`  // compute billed beyond the allowance, hour by hour as the provider bills it
 	OverageCents    int64   `json:"overage_cents"`     // compute plus live egress overage, in integer cents
+	// QuietPausedGBHours is the month's quiet-paused time that was not
+	// billed: Σ usage_minutes.paused_mb_seconds / 1024 / 3600, in the same
+	// plan RAM + 8 MB unit as UsedGBHours and not part of it
+	// (ADR-20261023171905). Omitted while it is zero, which it stays until
+	// unbilled quiet pause is released to the account.
+	QuietPausedGBHours float64 `json:"quiet_paused_gb_hours,omitempty"`
 	// UsedCPUHours is the per-month CPU-hours Σ CPUUsageUsec /
 	// 3.6e9. Informational only — billing is on UsedGBHours.
 	// Issue #279 / PR-B. The customer dashboard renders this
@@ -7240,9 +7303,10 @@ type WakeTimelineApp struct {
 //   - PlanIncludedGBHours: echoed from acct.Plan.PlanIncludedGBHours()
 //     so the dashboard can render the included-band badge without
 //     a second round-trip.
-//   - OverageGBHours: max(0, gb_hours - plan_included). 0 when
-//     gb_hours ≤ plan_included. The dashboard renders this as the
-//     red overage chip; the Stripe pusher bills it at $0.01/GB-h.
+//   - OverageGBHours: always 0. Overage is billed per account: every
+//     app shares the plan allowance, so one app's usage has no overage
+//     of its own. Kept for older clients; GET /v1/usage/summary reports
+//     the account's billed overage (ADR-20261101113742).
 //   - Source: "usage_minutes" today (after the 30d retention cap).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
@@ -7640,8 +7704,13 @@ type PlanManaged struct {
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
 	// provided: unavailable, plan, quota, unsupported, configured,
-	// not_referenced or permission. Empty for other datastores.
+	// not_referenced or permission. Empty for other datastores, which have
+	// no managed equivalent.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+	// Unbound names the selected services' keys that point at a datastore
+	// apply does not provide and will have no value ("api.REDIS_URL"), so a
+	// reviewer sees which services start without it (ADR-20261104221217).
+	Unbound []string `json:"unbound,omitempty"`
 }
 
 // PlanManagedProvision is a managed database a project apply provides.
@@ -8194,7 +8263,7 @@ const (
 // 1..63 chars, starts with [a-z0-9]. Mirrors the `apps.slug` regex
 // shape so the dashboard and CLI can use the same identifier
 // grammar for app-sidecar and app-slug paths. Anchored.
-var sidecarNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var sidecarNameRe = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // sidecarImageRe is the digest-pinning predicate for a sidecar
 // image reference. Mirrors the canonical pattern at
@@ -8204,7 +8273,7 @@ var sidecarNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // effect may promote this to a single shared helper in pkg/oci
 // if imaged's pull path also wants the API gate inline; for
 // PR-A the two-call-site duplication is acceptable.
-var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
+var sidecarImageRe = lazyregexp.New(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
 
 // ValidCompanionImageReference reports whether ref is an immutable OCI digest
 // accepted for a custom or platform-managed companion.
@@ -9154,12 +9223,12 @@ type EdgeRuleCORSAction struct {
 // "https://*.example.com" expands to a concrete origin at
 // request time, so browsers permit credentials for it; the
 // guard is intentionally narrow.
-var CorsOriginPattern = regexp.MustCompile(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
+var CorsOriginPattern = lazyregexp.New(`^(?:\*|https?://(?:\*\.[a-zA-Z0-9.\-]+|localhost)(?::\*|\:[0-9]+)?|https?://[a-zA-Z0-9.\-]+(?::\*|\:[0-9]+)?)$`)
 
 // CorsHeaderNamePattern accepts an HTTP field-name token or the CORS wildcard.
 // The wildcard is valid only when credentials are disabled; callers enforce
 // that cross-field rule separately.
-var CorsHeaderNamePattern = regexp.MustCompile("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
+var CorsHeaderNamePattern = lazyregexp.New("^(?:\\*|[!#$%&'*+\\-.^_`|~0-9A-Za-z]+)$")
 
 func validateCORSAllowHeaders(subject string, headers []string, allowCredentials bool) *Problem {
 	for _, header := range headers {
@@ -9407,7 +9476,7 @@ func (a *EdgeRuleIPAction) Validate() *Problem {
 // or "$id"), followed by an optional-whitespace colon, followed by
 // a URL-shaped value. Verified against 10 cases in this PR-C
 // harness (see plan-file regression-proof walkthrough).
-var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
+var edgeRuleValidateRefURLPattern = lazyregexp.New(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
 
 // EdgeRuleValidateAction is the wire shape for a kind=validate edge
 // rule. Schema is a JSON Schema 2020-12 document (Draft 2020-12;
@@ -10173,7 +10242,7 @@ const (
 	ThrottleCountStatusesMax = 16
 )
 
-var throttleHeaderNameRegex = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
+var throttleHeaderNameRegex = lazyregexp.New("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
 
 // ThrottleKeyFieldName parses a composite key field: one of the single
 // key_by dimensions, "method", "path", or "header:<name>". It returns the
@@ -10256,7 +10325,7 @@ type ThrottleValidationContext struct {
 // identifiers landing in metric labels and log fields — anything looser
 // risks a label-cardinality explosion or a CodeQL finding on a future
 // refactor.
-var jwtClaimNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
+var jwtClaimNameRegex = lazyregexp.New(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
 
 func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Problem {
 	if a == nil {
@@ -12455,6 +12524,12 @@ type RequestAnalyticsResponse struct {
 	ComputeCost           *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
 	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
 	AsOf                  string                                   `json:"as_of"`
+	// TelemetryComplete says whether every gateway delivered the window's
+	// request telemetry, judged up to RequestAnalyticsSettleLag before as_of
+	// (the newest minutes are still arriving); nil when it was not judged.
+	// TelemetryGaps names each reason requests may be missing.
+	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
+	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
@@ -12495,6 +12570,9 @@ type RequestAnalyticsTimeseriesResponse struct {
 	Points        []RequestAnalyticsTimeseriesPoint  `json:"points"`
 	Series        []RequestAnalyticsTimeseriesSeries `json:"series,omitempty"`
 	AsOf          string                             `json:"as_of"`
+	// TelemetryComplete and TelemetryGaps match RequestAnalyticsResponse.
+	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
+	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

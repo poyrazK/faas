@@ -122,7 +122,8 @@ func TestPerAppTokenLimitAndDailyCostLimit(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		// A small output ceiling keeps the ADR-991 reservation below the
 		// limits under test.
-		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/chat/completions", "token", app, http.MethodPost, strings.NewReader(`{"max_tokens":5}`)))
+		// The model is named, as it must be under a cost cap (ADR 20261027132936).
+		handler.ServeHTTP(recorder, gatewayRequest("/i/integration-1/v1/chat/completions", "token", app, http.MethodPost, strings.NewReader(`{"model":"gpt-4o","max_tokens":5}`)))
 		return recorder
 	}
 

@@ -21,6 +21,7 @@ import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
+import { changeEventsTable, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -37,6 +38,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     problem(res, 503, 'data_api_overloaded')
   })
   const usage = createUsage(config.usage, { access: accessReport(config) })
+  // Change hooks (ADR-20261022121642) borrow free engine slots, never queue.
+  const changes = createChangeRelay(config, { upstreamPort, tryAcquire: admitted.tryAcquire })
   const transfers = { active: 0 }
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
@@ -76,6 +79,17 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       res.writeHead(204)
       return res.end()
     }
+    // A drain schedule's platform cron (ADR-20261022121642 amendment 1) wakes
+    // a parked API so changes other writers recorded meanwhile publish. Only
+    // invocations the platform dispatches carry x-faas-cron; the answer is
+    // delivery counts, and a drain publishes nothing that would not publish.
+    if (req.method === 'POST' && req.url === changeHooksDrainPath && req.headers['x-faas-cron'] === 'true') {
+      if (!changes) return problem(res, 409, 'data_api_change_hooks_off')
+      const state = await changes.drain(limits.changeHooksDrainWaitMs)
+      if (!state) return problem(res, 503, 'data_api_change_hooks_unavailable')
+      return healthResponse(res, state.publishing === 'retrying' ? 503 : 200, { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
+        ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}) })
+    }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
@@ -87,11 +101,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (storage.code) return problem(res, storage.status, storage.code)
     } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     const writes = storage ? storage.write : !['GET', 'HEAD'].includes(req.method)
+    // A committed write may have recorded changes: publish them promptly.
+    if (changes && writes) res.once('finish', () => { if (res.statusCode < 300) changes.kick() })
     let rpc
     if (req.url.startsWith('/rest/v1/')) {
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
+      // Only the change event relay reads its table, over loopback.
+      if (path === changeEventsTable) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -246,7 +264,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }).finally(() => serverKeyLease?.settled())
   })
   server.usage = usage
-  server.on('close', () => usage?.stop())
+  server.changes = changes
+  server.on('close', () => { usage?.stop(); changes?.stop() })
   return server
 }
 
@@ -353,6 +372,10 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       delete document.schemes
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
+      // The change event table is the relay's, never part of the API.
+      delete document.paths?.[`/${changeEventsTable}`]
+      delete document.definitions?.[changeEventsTable]
+      for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${changeEventsTable}` || name.startsWith(`rowFilter.${changeEventsTable}.`)) delete document.parameters[name]
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
@@ -392,6 +415,20 @@ export async function main(env = process.env) {
       }
       runtimeFailure('data_api_storage_unsafe')
       config.storageUnavailable = true
+    }
+  }
+  if (config.changeEvents) {
+    // Like storage, change hooks fail closed alone: an unsafe outbox turns
+    // them off, the API keeps serving and recorded changes wait in the table.
+    // An unreachable database fails the boot instead, because hooks turned
+    // off here would be captured in the snapshot every wake restores.
+    try { await checkChangeEvents(config.connection, config.changeEvents.schema) } catch (error) {
+      if (!(error instanceof UnsafeConfiguration)) {
+        runtimeFailure('data_api_database_unavailable')
+        throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
+      }
+      runtimeFailure('data_api_change_events_unavailable')
+      config.changeEventsUnavailable = true
     }
   }
   config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)

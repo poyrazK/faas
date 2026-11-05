@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -37,28 +36,39 @@ type PublicReadConfig struct {
 	// decisions and batches their counts (ADR-20261030075301 step 2). Build
 	// it with the registry's AnonymousReadPolicy.
 	ReadAdmitter *ReadAdmitter
-	Enabled      func() bool
-	AppsDomain   string
-	Next         http.Handler
-	HTTPClient   *http.Client
-	Now          func() time.Time
-	Log          *slog.Logger
+	// Transfers paces object bodies to the edge's part of its node's port
+	// share on a compute node; nil leaves them unpaced (ADR-20261031122757
+	// step 7).
+	Transfers *TransferLimiter
+	// HostLookups bounds store reads for hostnames never seen naming an
+	// app; nil leaves them unbounded (ADR-20261103163954 §4).
+	HostLookups           *HostLookupBudget
+	Enabled               func() bool
+	TenantSurfacesEnabled func() bool
+	AppsDomain            string
+	Next                  http.Handler
+	HTTPClient            *http.Client
+	Now                   func() time.Time
+	Log                   *slog.Logger
 }
 
 type publicReadHandler struct {
-	store          PublicReadStore
-	registry       *Registry
-	requestMetrics state.ObjectStorageProviderUsageStore
-	accounting     state.ObjectStorageAccountingStore
-	readAdmitter   *ReadAdmitter
-	enabled        func() bool
-	appsDomain     string
-	next           http.Handler
-	client         *http.Client
-	now            func() time.Time
-	log            *slog.Logger
-	mounts         *publicMountCache
-	limiters       *publicReadLimiters
+	store                 PublicReadStore
+	registry              *Registry
+	requestMetrics        state.ObjectStorageProviderUsageStore
+	accounting            state.ObjectStorageAccountingStore
+	readAdmitter          *ReadAdmitter
+	transfers             *TransferLimiter
+	enabled               func() bool
+	tenantSurfacesEnabled func() bool
+	appsDomain            string
+	next                  http.Handler
+	client                *http.Client
+	now                   func() time.Time
+	log                   *slog.Logger
+	mounts                *publicMountCache
+	hostLookups           *HostLookupBudget
+	limiters              *publicReadLimiters
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -101,10 +111,10 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 	}
 	return &publicReadHandler{
 		store: c.Store, registry: c.Registry, requestMetrics: c.RequestMetrics,
-		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, enabled: c.Enabled,
+		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, transfers: c.Transfers, enabled: c.Enabled, tenantSurfacesEnabled: c.TenantSurfacesEnabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
-		mounts: newPublicMountCache(), limiters: newPublicReadLimiters(),
+		mounts: newPublicMountCache(), hostLookups: c.HostLookups, limiters: newPublicReadLimiters(),
 	}, nil
 }
 
@@ -136,6 +146,10 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket, key, matched, err := h.lookup(r)
+	if errors.Is(err, errHostLookupShed) {
+		writeHostLookupShed(w)
+		return
+	}
 	if err != nil {
 		if matched {
 			http.Error(w, "invalid object path", http.StatusBadRequest)
@@ -246,6 +260,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.registry.Accounting.GatewaySafety() {
 		body = io.LimitReader(body, response.ContentLength)
 	}
+	body = h.transfers.Reader(r.Context(), body, TransferDownload)
 	n, _ := io.Copy(w, body)
 	if !h.registry.Accounting.GatewaySafety() {
 		if err := RecordDeliveredEgress(r.Context(), h.requestMetrics, bucket.ID, n, h.now()); err != nil {
@@ -288,12 +303,7 @@ func (h *publicReadHandler) reserveEgress(ctx context.Context, bucket state.Obje
 }
 
 func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string, bool, error) {
-	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.Host), "."))
-	if hostName, port, err := net.SplitHostPort(host); err == nil && port != "" {
-		host = hostName
-	} else {
-		host = strings.Trim(host, "[]")
-	}
+	host := storageRequestHost(r.Host)
 	buckets, err := h.hostMounts(r.Context(), host)
 	if err != nil {
 		return state.ObjectBucket{}, "", false, err
@@ -320,23 +330,81 @@ func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string,
 // answer (see publicMountTTL). A host that names no app has no mounts.
 func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]state.ObjectBucket, error) {
 	now := time.Now()
-	if buckets, ok := h.mounts.get(host, now); ok {
+	cacheKey := host
+	checkTenant := !strings.HasSuffix(host, "."+h.appsDomain) && h.tenantSurfacesOn()
+	var binding *state.PlatformTenantHostBinding
+	if checkTenant {
+		if buckets, ok := h.mounts.get(host, now); ok && len(buckets) == 0 {
+			return buckets, nil
+		}
+		if !h.hostLookups.admit(host) {
+			return nil, errHostLookupShed
+		}
+		b, err := storageTenantBinding(ctx, h.store, host)
+		if errors.Is(err, state.ErrPlatformTenantSuspended) {
+			return nil, nil
+		}
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return nil, err
+		}
+		if err == nil {
+			binding = &b
+			cacheKey += "\x00" + b.SurfaceID + "\x00" + b.AppID + "\x00" + b.AccountID
+		}
+	}
+	if buckets, ok := h.mounts.get(cacheKey, now); ok {
 		return buckets, nil
 	}
-	app, found, err := h.hostApp(ctx, host)
+	app, found, err := h.mountApp(ctx, host, binding, checkTenant)
 	if err != nil {
 		return nil, err
 	}
 	var buckets []state.ObjectBucket
 	if found {
+		h.hostLookups.found(host)
 		all, err := h.store.ListObjectBuckets(ctx, app.AccountID, app.ID)
 		if err != nil {
 			return nil, err
 		}
 		buckets = servableMounts(all)
 	}
-	h.mounts.put(host, buckets, now)
+	h.mounts.put(cacheKey, buckets, now)
 	return buckets, nil
+}
+
+func (h *publicReadHandler) tenantSurfacesOn() bool {
+	if h.tenantSurfacesEnabled != nil {
+		return h.tenantSurfacesEnabled()
+	}
+	return api.TenantSurfacesEnabled()
+}
+
+func (h *publicReadHandler) mountApp(ctx context.Context, host string, binding *state.PlatformTenantHostBinding, tenantChecked bool) (state.App, bool, error) {
+	if !tenantChecked {
+		return h.hostApp(ctx, host)
+	}
+	var app state.App
+	var err error
+	if binding != nil {
+		app, err = storageTenantApp(ctx, h.store, *binding)
+	} else {
+		app, err = customDomainApp(ctx, h.store, host)
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return state.App{}, false, nil
+	}
+	return app, err == nil, err
+}
+
+// errHostLookupShed is a host lookup refused by the new-host budget. It is
+// answered 503, never passed on as a miss: the host may be a real app's.
+var errHostLookupShed = errors.New("object storage public read: host lookup shed: new-host lookup budget spent")
+
+// writeHostLookupShed answers a request whose host lookup was shed.
+func writeHostLookupShed(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
+		"Traffic policy unavailable", "Gregale could not look up this host right now. Retry shortly."))
 }
 
 func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App, bool, error) {
@@ -347,19 +415,15 @@ func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App
 		if slug == "" || strings.Contains(slug, ".") {
 			return state.App{}, false, nil
 		}
+		if !h.hostLookups.admit(host) {
+			return state.App{}, false, errHostLookupShed
+		}
 		app, err = h.store.AppBySlug(ctx, slug)
 	} else {
-		domain, domainErr := h.store.DomainByName(ctx, host)
-		if domainErr != nil {
-			if errors.Is(domainErr, state.ErrNotFound) {
-				return state.App{}, false, nil
-			}
-			return state.App{}, false, domainErr
+		if !h.hostLookups.admit(host) {
+			return state.App{}, false, errHostLookupShed
 		}
-		if !domain.Verified() {
-			return state.App{}, false, nil
-		}
-		app, err = h.store.AppByID(ctx, domain.AppID)
+		app, err = storageDomainApp(ctx, h.store, host, h.tenantSurfacesOn())
 	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -380,7 +444,7 @@ func validPublicKey(key string) bool {
 }
 
 func copyPublicObjectHeaders(dst, src http.Header) {
-	for _, name := range []string{"Accept-Ranges", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
+	for _, name := range []string{"Accept-Ranges", "Content-Encoding", "Content-Language", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
 		if value := src.Get(name); value != "" {
 			dst.Set(name, value)
 		}

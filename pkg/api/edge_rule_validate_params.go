@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // EdgeRuleValidateParameters extends a kind=validate rule beyond the request
@@ -46,7 +47,7 @@ type EdgeRuleParamKind struct {
 	Item string
 }
 
-var edgeRuleHeaderParamName = regexp.MustCompile(`^[a-z0-9!#$%&'*+.^_` + "`" + `|~-]+$`)
+var edgeRuleHeaderParamName = lazyregexp.New(`^[a-z0-9!#$%&'*+.^_` + "`" + `|~-]+$`)
 
 // Validate checks the parameter schemas against the rule's match path.
 func (p *EdgeRuleValidateParameters) Validate(matchPath string) *Problem {

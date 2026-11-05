@@ -329,6 +329,23 @@ func Verify(token string, allowedSvc map[string]ed25519.PublicKey) (string, erro
 	return finalClaims.Subject, nil
 }
 
+// StringClaim returns a string claim from token's payload without checking
+// the signature, or "" when the token or claim is malformed. Call it only on
+// a token Verify accepted: it reads which app a verified schedd token was
+// minted for.
+func StringClaim(token, name string) string {
+	jws, err := jose.ParseSigned(token, []jose.SignatureAlgorithm{jose.EdDSA})
+	if err != nil {
+		return ""
+	}
+	var claims map[string]any
+	if json.Unmarshal(jws.UnsafePayloadWithoutVerification(), &claims) != nil {
+		return ""
+	}
+	v, _ := claims[name].(string)
+	return v
+}
+
 // GenerateKeypair returns a fresh Ed25519 keypair. Convenience
 // for local dev and tests; production code paths load the
 // keypair from disk at boot (cmd/schedd/main.go etc.).

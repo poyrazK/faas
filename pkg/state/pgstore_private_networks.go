@@ -337,7 +337,7 @@ func (s *PgStore) DeletePrivateNetworkDurably(ctx context.Context, accountID, id
 	return mapErr(tx.Commit(ctx))
 }
 
-func (s *PgStore) CreatePrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
+func (s *PgStore) createPrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
 	var err error
 	peering, err = validatePrivateNetworkPeering(peering)
 	if err != nil {
@@ -468,7 +468,7 @@ func (s *PgStore) UpdatePrivateNetworkPeeringStatus(ctx context.Context, account
 		returning id, account_id, left_network_id, right_network_id, region, status, status_detail, created_at, updated_at`, mustPgUUID(accountID), strings.TrimSpace(id), status, detail))
 }
 
-func (s *PgStore) DeletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {
+func (s *PgStore) deletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {
 	result, err := s.pool.Exec(ctx, `delete from private_network_peerings where account_id = $1 and id = $2`, mustPgUUID(accountID), strings.TrimSpace(id))
 	if err != nil {
 		return mapErr(err)
@@ -489,6 +489,14 @@ func (s *PgStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, 
 		return PrivateNetworkAddress{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	row, err := allocatePrivateNetworkAddressTx(ctx, tx, accountID, networkID, ownerType, ownerID)
+	if err != nil {
+		return PrivateNetworkAddress{}, err
+	}
+	return row, tx.Commit(ctx)
+}
+
+func allocatePrivateNetworkAddressTx(ctx context.Context, tx pgx.Tx, accountID, networkID, ownerType, ownerID string) (PrivateNetworkAddress, error) {
 	var prefixText string
 	if err := tx.QueryRow(ctx, `select cidr::text from private_networks where account_id = $1 and id = $2 for update`, mustPgUUID(accountID), networkID).Scan(&prefixText); err != nil {
 		return PrivateNetworkAddress{}, mapErr(err)
@@ -544,9 +552,6 @@ func (s *PgStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID, 
 		returning id, account_id, network_id, owner_type, owner_id, address::text, created_at`, id, mustPgUUID(accountID), networkID, ownerType, ownerID, address.String()))
 	if err != nil {
 		return PrivateNetworkAddress{}, mapErr(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return PrivateNetworkAddress{}, err
 	}
 	return row, nil
 }

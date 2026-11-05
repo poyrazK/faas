@@ -253,7 +253,8 @@ type Config struct {
 	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
 	// between_requests instance this many seconds after its last request
 	// instead of at its idle timeout, so it stops accruing usage soon after
-	// it last served. 0 (the default) is off; otherwise 2-300. Ignored unless
+	// it last served. 0 is off; otherwise 2-300, by default
+	// api.FrozenEarlyFreezeDefaultSeconds (ADR 20261102072403). Ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides it.
 	FrozenTierEarlyFreezeAfterS int `toml:"frozen_tier_early_freeze_after_s"`
 
@@ -269,6 +270,12 @@ type Config struct {
 	// (app_runtime_changed); the admission insert commits only while that
 	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
 	OwnerCache bool `toml:"owner_cache"`
+
+	// AsyncWakeFinalize (ADR-20261105090246) answers a booted wake as soon as
+	// its RUNNING publication commits and records what the boot proved (the
+	// observed workload class and the secret delivery) afterwards. Off by
+	// default. FAAS_ASYNC_WAKE_FINALIZE overrides it.
+	AsyncWakeFinalize bool `toml:"async_wake_finalize"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -538,6 +545,9 @@ func LoadConfig(path string) (*Config, error) {
 		FrozenProactiveCompress: true,
 		MeasuredCPUAdmission:    true,
 		CPUPressureBackstop:     true,
+		// ADR 20261102072403: early freeze on by default for density; 0 in
+		// schedd.toml or FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S turns it off.
+		FrozenTierEarlyFreezeAfterS: api.FrozenEarlyFreezeDefaultSeconds,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go
@@ -643,6 +653,14 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
 		}
 		c.OwnerCache = enabled
+	}
+	// ADR-20261105090246: FAAS_ASYNC_WAKE_FINALIZE overrides async_wake_finalize.
+	if v := os.Getenv("FAAS_ASYNC_WAKE_FINALIZE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_ASYNC_WAKE_FINALIZE must be a boolean (got %q)", v)
+		}
+		c.AsyncWakeFinalize = enabled
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

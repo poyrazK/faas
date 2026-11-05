@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
-	"regexp"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const (
@@ -121,8 +122,8 @@ func CatalogMonitorRole(role string) string {
 	return role
 }
 
-var catalogRolePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
-var catalogTokenEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+var catalogRolePattern = lazyregexp.New(`^[a-z][a-z0-9_-]{0,31}$`)
+var catalogTokenEnvPattern = lazyregexp.New(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 
 func ValidCatalogMonitorRole(role string) bool {
 	return catalogRolePattern.MatchString(CatalogMonitorRole(role))

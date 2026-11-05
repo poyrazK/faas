@@ -39,6 +39,7 @@ type gatewayTestStore struct {
 	credential                          state.ObjectS3Credential
 	bucket                              state.ObjectBucket
 	touched                             int
+	touchBudget                         time.Duration
 	admitted                            []string
 	activityMu                          sync.Mutex
 	activity                            map[string]state.ObjectBucketMutation
@@ -122,8 +123,11 @@ func (s *gatewayTestStore) ResolveObjectS3Credential(_ context.Context, access s
 	}
 	return s.credential, s.bucket, nil
 }
-func (s *gatewayTestStore) TouchObjectS3Credential(context.Context, string, time.Time) error {
+func (s *gatewayTestStore) TouchObjectS3Credential(ctx context.Context, _ string, _ time.Time) error {
 	s.touched++
+	if deadline, ok := ctx.Deadline(); ok {
+		s.touchBudget = time.Until(deadline)
+	}
 	return nil
 }
 func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _ int64, _ bool, _ api.ObjectStoragePolicy) error {
@@ -491,10 +495,15 @@ func signedGatewayRequest(t *testing.T, method, target string, body []byte, payl
 	if method == http.MethodPut {
 		request.Header.Set("Content-Type", "application/octet-stream")
 	}
+	signGatewayRequest(t, request, payloadHash)
+	return request
+}
+
+func signGatewayRequest(t *testing.T, request *http.Request, payloadHash string) {
+	t.Helper()
 	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	return request
 }
 
 func presignedGatewayRequest(t *testing.T, method, target string, body []byte) *http.Request {
@@ -765,12 +774,10 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			request := signedGatewayRequest(t, test.method, test.target, nil, "UNSIGNED-PAYLOAD")
 			request.Header.Set(test.header, test.value)
+			signGatewayRequest(t, request, "UNSIGNED-PAYLOAD")
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			status, code := http.StatusNotImplemented, "NotImplemented"
-			if test.header == "X-Amz-Server-Side-Encryption" {
-				status, code = http.StatusBadRequest, "InvalidRequest"
-			}
 			if recorder.Code != status || !strings.Contains(recorder.Body.String(), code) {
 				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 			}
@@ -781,6 +788,86 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotImplemented || len(provider.presignRequests) != 0 {
 		t.Fatalf("checksum-mode response = %d %s presigns=%v", recorder.Code, recorder.Body.String(), provider.presignRequests)
+	}
+}
+
+func TestGatewayIgnoresPrivateCannedACL(t *testing.T) {
+	var uploads int
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Amz-Acl") != "" {
+			t.Errorf("canned ACL reached the provider: %q", r.Header.Get("X-Amz-Acl"))
+		}
+		uploads++
+		header := make(http.Header)
+		header.Set("ETag", `"etag"`)
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	body := []byte("hello")
+	sum := sha256.Sum256(body)
+	for _, test := range []struct {
+		acl  string
+		want int
+	}{
+		{"private", http.StatusOK},
+		{"bucket-owner-full-control", http.StatusOK},
+		{"public-read", http.StatusNotImplemented},
+		{"authenticated-read", http.StatusNotImplemented},
+	} {
+		t.Run(test.acl, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/folder/hello.txt?x-id=PutObject", bytes.NewReader(body))
+			request.Host = "s3.gregale.dev"
+			request.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
+			request.Header.Set("X-Amz-Date", "20260907T120000Z")
+			request.Header.Set("Content-Type", "application/octet-stream")
+			request.Header.Set("X-Amz-Acl", test.acl)
+			if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("PUT with x-amz-acl %s = %d %s", test.acl, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	if uploads != 2 {
+		t.Fatalf("provider uploads = %d, want the two private ones", uploads)
+	}
+}
+
+func TestGatewayResponsesBypassTheCDNCache(t *testing.T) {
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Content-Type", "image/png")
+		header.Set("Content-Length", "5")
+		header.Set("Cache-Control", "public, max-age=86400")
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
+	})
+	for _, request := range []*http.Request{
+		signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/logo.png?x-id=GetObject", nil, "UNSIGNED-PAYLOAD"),
+		signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/other/logo.png", nil, "UNSIGNED-PAYLOAD"),
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if got := recorder.Header().Get("Cloudflare-CDN-Cache-Control"); got != "no-store" {
+			t.Fatalf("%s %d: Cloudflare-CDN-Cache-Control = %q, want no-store", request.URL.Path, recorder.Code, got)
+		}
+	}
+}
+
+func TestGatewayBoundsTheCredentialLastUsedWrite(t *testing.T) {
+	handler, store, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Content-Length", "5")
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-id=GetObject", nil, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusOK || store.touched != 1 {
+		t.Fatalf("GET = %d touched=%d", recorder.Code, store.touched)
+	}
+	if store.touchBudget <= 0 || store.touchBudget > api.ObjectCredentialTouchTimeout {
+		t.Fatalf("last-used write had %s, want at most %s rather than the transfer budget", store.touchBudget, api.ObjectCredentialTouchTimeout)
 	}
 }
 
@@ -1122,7 +1209,7 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 }
 
 func TestGatewayPublicMultipartLifecycle(t *testing.T) {
-	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+	handler, store, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
 			if _, err := io.Copy(io.Discard, r.Body); err != nil {
 				return nil, err
@@ -1146,6 +1233,7 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	initiateRequest.Header.Set("Content-Language", "en")
 	initiateRequest.Header.Set("X-Amz-Meta-Owner", "platform")
 	initiateRequest.Header.Set("X-Amz-Tagging", "env=prod&team=core")
+	signGatewayRequest(t, initiateRequest, "UNSIGNED-PAYLOAD")
 	handler.ServeHTTP(recorder, initiateRequest)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("initiate = %d %s", recorder.Code, recorder.Body.String())
@@ -1197,10 +1285,19 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 		}
 	}
 
+	// ListParts is admitted and its page counted as egress like the other
+	// listings (bug hunt 33: it skipped both).
 	recorder = httptest.NewRecorder()
+	store.admitted = nil
+	served, listMetrics := handler.requestMetrics, &readEgressMetrics{}
+	handler.requestMetrics = listMetrics
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, nil, "UNSIGNED-PAYLOAD"))
+	handler.requestMetrics = served
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<PartNumber>1</PartNumber>") || !strings.Contains(recorder.Body.String(), "<PartNumber>2</PartNumber>") {
 		t.Fatalf("list parts = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Contains(store.admitted, "__list__") || listMetrics.delivered != int64(recorder.Body.Len()) {
+		t.Fatalf("list parts admitted %v, recorded %d of %d bytes", store.admitted, listMetrics.delivered, recorder.Body.Len())
 	}
 
 	completeBody := []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"etag-2"</ETag></Part></CompleteMultipartUpload>`)

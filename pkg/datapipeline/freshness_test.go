@@ -26,6 +26,9 @@ func TestPipelineHealthRequiresAppliedEvidence(t *testing.T) {
 		{"live mismatch", "blocked", "running", "live_table_mismatch", "", true, "live_table_mismatch", "", true},
 		{"credential", "blocked", "running", "credential_unavailable", "", true, "credential_unavailable", "rotate_credentials", false},
 		{"pause", "paused", "paused", "", "", true, "paused", "resume", false},
+		{"pause requested", "live", "paused", "", "", false, "pause_pending", "", false},
+		{"pause failed", "blocked", "paused", "database_unavailable", "", true, "pause_failed", "", false},
+		{"pause observation expired", "paused", "paused", "", "", false, "pause_pending", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := pipelineHealth(api.DataPipeline{State: tc.state, DesiredState: tc.desired, Reason: tc.reason, AppliedThroughAt: tc.applied, ObservationFresh: tc.fresh}, now)

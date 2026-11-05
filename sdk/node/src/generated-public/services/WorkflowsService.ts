@@ -811,18 +811,24 @@ export class WorkflowsService {
   }
   /**
    * Deliver an external event to a waiting workflow run.
+   * A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
    * @returns InjectWorkflowEventResponse The event was recorded.
    * @throws ApiError
    */
   public static injectWorkflowEvent({
     id,
     requestBody,
+    idempotencyKey,
   }: {
     /**
      * Workflow-run identifier that receives the event.
      */
     id: string,
     requestBody: InjectWorkflowEventRequest,
+    /**
+     * Reuse the same key and event content to retry while the event is retained.
+     */
+    idempotencyKey?: string,
   }): CancelablePromise<InjectWorkflowEventResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -830,13 +836,16 @@ export class WorkflowsService {
       path: {
         'id': id,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
-        409: `code: workflow_not_running — only running or awaiting_event runs accept events.`,
+        409: `code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

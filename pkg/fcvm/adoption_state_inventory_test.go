@@ -28,6 +28,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"appDatabaseResolved":               "reset",    // bound database pairs for seeding (ADR-20261026150000)
 		"backingDigests":                    "reset",    // file digest cache
 		"backingHashing":                    "reset",    // in-flight file digests
+		"backingKeys":                       "reset",    // bases the digest primer follows; wakes note them again, recorded digests cover the rest
 		"backingPending":                    "reset",    // in-flight instance identities; adoption restores instanceBacking
 		"baseGenerations":                   "reset",    // base image generation cache
 		"cidToID":                           "rebuilt",
@@ -42,9 +43,16 @@ var adoptionStateInventory = map[string]map[string]string{
 		"pendingCleanup":                    "reset",    // interrupted teardown resumes from its stop intent (slice 3)
 		"pendingProcessExits":               "reset",
 		"perAppAllowlist":                   "rebuilt",
+		"perAppStaticBlocked":               "reset", // revalidated with durable provisioning before guest execution
 		"perAppStaticIP":                    "refused",
-		"perVMHostIP":                       "refused",
-		"privateNetworkFabric":              "reset", // idempotency cache; schedd's reconcile probes the kernel
+		"perAppStaticAccounts":              "reset", // reconstructed by wake or live policy delivery
+		"staticEgressStarting":              "reset",
+		"privateNetworkAddressOwners":       "rebuilt", // durable claims retain service ownership; local guard is restored from adopted configs
+		"privateNetworkTransportIdentity":   "reset",   // probed before reuse
+		"staticEgressAliasIPs":              "reset",   // labeled kernel aliases rediscovered on bundle replay
+		"privateNetworkFabric":              "reset",   // idempotency cache; schedd's reconcile probes the kernel
+		"privateNetworkRouters":             "reset",   // probed and repaired on every fabric replay
+		"privateNetworkPeeringPolicies":     "reset",   // unknown policy is restricted to default drop before repair
 		"privateNetworkTransport":           "reset",
 		"privateNetworkTransportPeers":      "reset", // forces one peer sync after a restart, by design
 		"processGenerations":                "rebuilt",
@@ -60,6 +68,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"runtimeAdmissionInstances":         "reset", // per-incarnation replay window; receipts are re-bound (slice 3)
 		"runtimeAdmissionTokens":            "reset",
 		"staticEgressAliases":               "refused",
+		"staticEgressAliasAccounts":         "bootonly", // operator bundle is reloaded at startup
 		"waking":                            "reset",
 		"computeLeases":                     "bootonly", // financial compute authority: wired only with native process recovery
 		"functionMigrationDestinations":     "bootonly", // function VM resources: native qualification builds only; adoption refuses function guests there
@@ -165,7 +174,10 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressNewDstPerMin":              "reset",
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
+	"StaticEgressExcluded":            "rebuilt",
+	"networkPolicyMu":                 "reset",
 	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
+	"resolvedEgressGeneration":        "reset", // restart invalidates outstanding DNS grants
 	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
 	"TailCount":                       "reset", // the host only ever sees decrements
 	"tailSecondsAccum":                "reset", // informational, not billed

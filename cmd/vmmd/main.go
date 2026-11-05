@@ -636,6 +636,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			OverlayInterface: transportInterface,
 			LocalAddress:     localAddress,
 			PeerAddresses:    peers,
+			MTU:              cfg.ComputeNode.PrivateNetworkTransportMTU,
 		}
 		log.Info("vmmd: private network transport enabled",
 			"overlay_interface", transportInterface,
@@ -930,6 +931,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			fanout.WithInterval(interval)
 		}
+		// FAAS_SNAPSHOT_FANOUT_LISTEN=off keeps the fixed interval, the
+		// behaviour before snapshot_fanout existed.
+		if pool != nil && os.Getenv("FAAS_SNAPSHOT_FANOUT_LISTEN") != "off" {
+			wake, listenErr := snapshotFanoutWake(ctx, pool, log)
+			if listenErr != nil {
+				log.Warn("vmmd: snapshot fan-out LISTEN failed; keeping the fixed interval", "err", listenErr)
+			} else {
+				fanout.WithWake(wake)
+			}
+		}
 		go func() {
 			if runErr := fanout.Run(ctx); runErr != nil && ctx.Err() == nil {
 				log.Error("vmmd: snapshot fan-out stopped", "err", runErr)
@@ -1041,6 +1052,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeRuntimeCapture {
 		jailer.WithNativeRuntimeCapture()
 	}
+	if cfg.NativeQualificationCapture {
+		// ADR 20261023093000: LoadConfig already required native recovery
+		// and both private roots.
+		jailer.WithEnvironmentQualificationCapture()
+	}
 	// Adoption ADR §2: only guests whose console is a file survive a vmmd
 	// restart in an adoptable state (V-A3). Records imply file consoles.
 	if cfg.AdoptionRecord && !cfg.NativeProcessRecovery {
@@ -1070,6 +1086,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	mgr.WithPrivateNetworkMembers(privateNetworkMemberSource(store, identityNodeID), privateNetworkMemberRelease(store, identityNodeID))
+	mgr.WithPrivateNetworkTransportIdentitySource(func(ctx context.Context, account, network, region string) (uint32, error) {
+		source, ok := store.(state.PrivateNetworkTransportStore)
+		if !ok {
+			return 0, fmt.Errorf("private transport identity store unavailable")
+		}
+		return source.EnsurePrivateNetworkTransportVNI(ctx, account, network, region)
+	})
+	// Require a local operator grant even before the asynchronous bundle loader runs.
+	mgr.SetStaticEgressIPAliases(nil) //nolint:contextcheck // The context-free bundle API bounds discovery and retirement of stale kernel aliases.
 	httpAdmissionEnabled, err := api.HTTPAdmissionEnabled(os.Getenv("FAAS_HTTP_ADMISSION"))
 	if err != nil {
 		return err
@@ -1091,6 +1117,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mgr.WithEgressCircuitSource(store.GetAppEgressCircuits)
 	}
 	if store != nil {
+		mgr.WithStaticEgressPolicySource(func(policyCtx context.Context, accountID, appID string) (*netip.Addr, error) {
+			app, err := store.AppByID(policyCtx, appID)
+			if errors.Is(err, state.ErrNotFound) {
+				return nil, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			if app.AccountID != accountID {
+				return nil, errors.New("static egress app account mismatch")
+			}
+			if app.StaticEgressIP != nil {
+				provisioned, err := store.ProvisionedStaticEgressIPExists(policyCtx, accountID, *app.StaticEgressIP)
+				if err != nil {
+					return nil, err
+				}
+				if !provisioned {
+					return app.StaticEgressIP, fcvm.ErrStaticEgressUnprovisioned
+				}
+			}
+			return app.StaticEgressIP, nil
+		})
+
 		if rehearsalContainmentEnabled(os.Getenv) {
 			policies, ok := store.(state.ScenarioNetworkPolicyStore)
 			if !ok {
@@ -1382,8 +1431,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
-	// first restore after this start does not hash a base in its wake path.
-	go mgr.PrimeBackingDigests(ctx)
+	// first restore after this start does not hash a base in its wake path,
+	// and keep following them: a release pre-stage replaces bases while this
+	// process still serves wakes (amendment 2).
+	go mgr.RunBackingDigestPrimer(ctx, fcvm.BackingDigestPrimeInterval)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a
@@ -1575,11 +1626,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if recv != nil {
 		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
-			recv.WithQualificationFrameworkReadyRecorder(func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
+			record := func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
 				runtimeName string, warmupMS int64) error {
 				_, err := readinessStore.RecordEnvironmentQualificationFrameworkReadyReceipt(recordCtx, frame, runtimeName, warmupMS)
 				return err
-			})
+			}
+			recv.WithQualificationFrameworkReadyRecorder(record)
+			// A native qualification restore reads the restored runner's
+			// stored framework-ready state itself (ADR 20261023093000).
+			mgr.WithQualificationFrameworkReadyRecorder(record)
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
@@ -1626,6 +1681,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			payload, err := json.Marshal(envelope)
 			if err != nil {
 				return fmt.Errorf("encode in-guest event publish: %w", err)
+			}
+			if err := checkGuestEventEnvelope(publishCtx, store, accountID, payload); err != nil {
+				return err
 			}
 			if err := store.AppendEvent(publishCtx, "vmmd", "event.published", &accountID, payload); err != nil {
 				return fmt.Errorf("persist in-guest event publish: %w", err)
@@ -1713,6 +1771,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if relayRecvErr != nil {
 		log.Warn("vmmd: outbound relay receiver unavailable", "err", relayRecvErr, "goos", runtime.GOOS)
 	} else {
+		if store != nil {
+			relayRecv.UseDeployments(store)
+		}
 		defer relayRecv.Close()
 	}
 	// ADR-990: Runs stream through the relay only when this vmmd serves it.
@@ -2174,6 +2235,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		w = newEgressWatcher(log, egressStagingDir, egressLivePath)
 	}
 	mgr.SetHostRenderer(w)
+	// ADR-20261103163954 §2: the operator's block list on the public entry
+	// addresses, re-added after every reload and on a loop.
+	var blocks *publicBlockApplier
+	if nodeID != "" && len(hostPolicy.PublicEntryAddrs) > 0 {
+		blocks = &publicBlockApplier{path: publicBlockListPath, stagingDir: egressStagingDir, nft: w.nft, log: log, now: time.Now}
+		w.afterReload = blocks.apply
+	}
 	if nodeID != "" {
 		// A previous vmmd process may have left a runtime ruleset rendered
 		// from different host-network values. Apply the deployment-owned
@@ -2196,6 +2264,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}()
 		}
 		log.Info("vmmd: egress watcher wired", "node_id", nodeID, "staging", egressStagingDir, "live", egressLivePath)
+		if blocks != nil {
+			go blocks.run(ctx, w)
+		}
 	}
 
 	// Issue #679 / PR-A: install the SIGHUP-driven egress
@@ -2205,13 +2276,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cannot corrupt the operator-bundle slice. A failed reload
 	// keeps the prior bundle live (best-effort, never blocks
 	// signal delivery).
-	hupCh := make(chan os.Signal, 1)
-	signal.Notify(hupCh, syscall.SIGHUP)
-	defer signal.Stop(hupCh)
+	hupCh, staticHupCh, stopPolicySignals := policyBundleSignals()
+	defer stopPolicySignals()
 	go watchEgressBundleReload(ctx, mgr, cfg.EgressOperatorAllowlist, log, hupCh)
 	// ADR-119 redesign: SIGHUP-driven static egress IP bundle
 	// reload. Wired on the same hupCh as the operator-allowlist
-	// bundle — every SIGHUP fans out to both. The watcher
+	// bundle through a separate signal registration. The watcher
 	// (cmd/vmmd/egress_static_ip_bundle.go) reads the operator
 	// TOML, installs the bridge aliases, pushes the rules into
 	// the host renderer (via netns.SwapActiveHostPolicy), and
@@ -2220,7 +2290,48 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//
 	// `st` is the same state.Store the rest of the daemon
 	// consumes (the apid uses it for the gate read).
-	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, log, hupCh)
+	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, log, staticHupCh, nodeID)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if cfg.StaticEgressIPBundlePath == "" {
+					mgr.SetStaticEgressIPAliases(nil) //nolint:contextcheck // The context-free bundle API bounds its kernel repair.
+				}
+				repairCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+				if err := mgr.ReconcilePrivateNetworkServices(repairCtx); err != nil {
+					slog.Warn("vmmd: reconcile private services", "err", err)
+				}
+				cancel()
+			}
+		}
+	}()
+	if store != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					repairCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+					if err := mgr.ReconcileStaticEgressPolicies(repairCtx); err != nil {
+						slog.Warn("vmmd: reconcile static egress intent", "err", err)
+					}
+					if cfg.StaticEgressIPBundlePath == "" {
+						mgr.SetStaticEgressIPAliases(nil) //nolint:contextcheck // Context-free bundle API bounds each kernel repair.
+						_ = writeProvisionedStaticEgressIPs(repairCtx, store, nil, log, nodeID)
+					}
+					cancel()
+				}
+			}
+		}()
+	}
 	// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation on the
 	// same hupCh the egress-bundle reload watches. Reuses the
 	// channel — each signal is consumed by both watchers — and

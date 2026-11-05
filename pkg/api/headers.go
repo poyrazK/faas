@@ -279,6 +279,9 @@ var outboundWebhookHeaders = map[string]struct{}{
 	"x-faas-delivery-id":       {},
 	"x-faas-webhook-timestamp": {},
 	"x-faas-webhook-attempt":   {},
+	// The previous secret's signature during a rotation overlap
+	// (ADR-20261101093517).
+	"x-faas-webhook-signature-previous": {},
 }
 
 // IsOutboundWebhookHeader reports a header of a Gregale-signed outbound

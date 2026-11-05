@@ -531,7 +531,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if hasSourceBuild {
 		kind, dockerfile = state.DeploymentKindDockerfile, true
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
@@ -542,6 +542,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !noTriggers)
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
+	// Guarded like the cron intent above: contextcheck follows the request
+	// through the branch, not through an unconditional WithContext.
+	if stagedManifest.eventSubscriptionIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentEventSubscriptions(r.Context(), stagedManifest.eventSubscriptionIntent))
 	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)

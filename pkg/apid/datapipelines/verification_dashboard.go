@@ -25,6 +25,8 @@ func verificationView(p datapipeline.Pipeline) dashboard.DataPipelineVerificatio
 		view.Reason = "A batch waited for a lock or timed out. Saved progress is retained."
 	case "verification_row_limit":
 		view.Reason = "One row exceeded the 16 MiB verification limit. Review recovery guidance."
+	case "verification_key_limit":
+		view.Reason = "One primary key exceeded the 1 MiB verification limit. Reduce its values before retrying; changing the key definition requires resync."
 	case "verification_range_limit":
 		view.Reason = "The check reached its saved-range limit. Retry or use explicit resync."
 	case "replica_mismatch":
@@ -51,7 +53,8 @@ func verificationView(p datapipeline.Pipeline) dashboard.DataPipelineVerificatio
 		}
 	}
 	view.CanCancel = p.DesiredState == "running" && p.ObservationFresh && (v.State == "running" || v.State == "waiting")
-	view.CanRetry = p.DesiredState == "running" && p.State == "live" && !p.VerifyRequested && (v.State == "cancelled" || v.State == "limited")
+	qualification := p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification"
+	view.CanRetry = p.DesiredState == "running" && (p.State == "live" || p.State == "blocked" && qualification && p.ObservationFresh) && !p.VerifyRequested && (v.State == "cancelled" || v.State == "limited")
 	if p.DesiredState == "paused" && v.State == "running" {
 		view.State = "paused"
 	}

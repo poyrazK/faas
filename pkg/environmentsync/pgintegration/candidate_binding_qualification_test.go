@@ -139,11 +139,16 @@ func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBind
 			inputs.Variables = map[string]string{}
 		}
 		runtime := state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID, Netns: fmt.Sprintf("candidate-source-%d", i), HostIP: fmt.Sprintf("10.100.0.%d", i+2), GuestUID: 20001 + i, Inputs: inputs}
-		if _, err := store.PublishEnvironmentWorkloadQualificationRuntime(t.Context(), request, runtime); err != nil {
+		instance, err := store.PublishEnvironmentWorkloadQualificationRuntime(t.Context(), request, runtime)
+		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.RecordEnvironmentQualificationConfigReceipt(t.Context(), request, admitted.Execution, strings.Repeat("a", 64)); err != nil {
 			t.Fatal(err)
+		}
+		if request.ExecutionMode == api.ExecutionModeJob {
+			members = append(members, member{request, admitted.Execution, runtime, instance, ""})
+			continue
 		}
 		proof := captureProof(admitted.Execution)
 		if _, err := store.RecordEnvironmentQualificationSnapshot(t.Context(), request, admitted.Execution, proof); err != nil {
@@ -166,7 +171,7 @@ func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBind
 		runtime.Netns = fmt.Sprintf("candidate-restored-%d", i)
 		runtime.HostIP = fmt.Sprintf("10.100.1.%d", i+2)
 		runtime.Inputs.Boundary = time.Now().UTC()
-		instance, err := store.PublishEnvironmentQualificationRestoreRuntime(t.Context(), request, restored.Execution, runtime)
+		instance, err = store.PublishEnvironmentQualificationRestoreRuntime(t.Context(), request, restored.Execution, runtime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,9 +235,21 @@ func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBind
 	}
 	for _, m := range members {
 		retirement := qualificationNativeProof()
-		retirement.KernelBootID = m.kernelBootID
+		if m.kernelBootID != "" {
+			retirement.KernelBootID = m.kernelBootID
+		}
 		if err := store.RetireEnvironmentQualificationExecution(t.Context(), m.frame, retirement); err != nil {
 			t.Fatal(err)
+		}
+		if m.request.ExecutionMode == api.ExecutionModeJob {
+			evidence, err := state.NewEnvironmentQualificationJobSmokeEvidence(m.request, m.frame.InstanceID, 0, "succeeded", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.(state.EnvironmentQualificationJobSmokeReceiptStore).RecordEnvironmentQualificationJobSmokeReceipt(t.Context(), m.request, evidence); err != nil {
+				t.Fatal(err)
+			}
+			continue
 		}
 		if _, err := store.RecordEnvironmentQualificationRestoreReceipt(t.Context(), m.request, m.frame, m.runtime.Inputs); err != nil {
 			t.Fatal(err)
@@ -272,6 +289,7 @@ func TestCandidateBindingGraphActivation(t *testing.T) {
 				if err != nil || !active || len(release.Members) != 2 {
 					t.Fatalf("checked activation: %+v %v %v", release, active, err)
 				}
+				assertActivatedGitOpsPreparationReplay(t, basic, lease, plan, requests)
 				for _, r := range requests {
 					d, err := basic.(state.Store).DeploymentByID(t.Context(), r.DeploymentID)
 					if err != nil || d.EnvironmentWorkloadHeld() || d.Status != state.DeployLive {
@@ -293,6 +311,9 @@ func TestCandidateBindingGraphActivation(t *testing.T) {
 				if err != nil || done || serving.ReleaseSetID != release.ID || len(serving.Routes) != 1 {
 					t.Fatalf("checked traffic cutover: %+v %v %v", serving, done, err)
 				}
+				// The controller starts again with preparation while route/queue
+				// acknowledgements are still pending after this cutover.
+				assertActivatedGitOpsPreparationReplay(t, basic, lease, plan, requests)
 				routed, err := full.DeploymentByID(t.Context(), serving.Routes[0].DeploymentID)
 				if err != nil || routed.TrafficPercent != 100 {
 					t.Fatal("HTTP candidate did not receive checked traffic", err)
@@ -307,6 +328,33 @@ func TestCandidateBindingGraphActivation(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func assertActivatedGitOpsPreparationReplay(t *testing.T, basic gitOpsTestStore, lease state.EnvironmentGitOpsLease,
+	plan environmentsync.Plan, requests []state.EnvironmentWorkloadQualificationRequest) {
+	t.Helper()
+	preparer := basic.(state.EnvironmentGitOpsPreparationStore)
+	pending, err := preparer.EnvironmentGitOpsSourceRequests(t.Context(), lease, plan)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("activated graph requested new source builds: %+v %v", pending, err)
+	}
+	candidates, err := preparer.PrepareEnvironmentGitOpsCandidates(t.Context(), lease, plan, nil)
+	if err != nil || len(candidates) != len(requests) {
+		t.Fatalf("activated candidate replay: %+v %v", candidates, err)
+	}
+	expected := make(map[string]string, len(requests))
+	for _, request := range requests {
+		expected[request.Resource] = request.DeploymentID
+	}
+	for _, candidate := range candidates {
+		if candidate.DeploymentID != expected[candidate.Resource] || candidate.Status != state.DeployLive || !candidate.HasRootfs {
+			t.Fatalf("replay replaced an activated candidate: %+v", candidate)
+		}
+	}
+	graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan)
+	if err != nil || graph.Phase != "prepared" || graph.ID != requests[0].GraphID {
+		t.Fatalf("activated graph lost its prepared cohort: %+v %v", graph, err)
 	}
 }
 

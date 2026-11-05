@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitapproval"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Manual sources discover candidates. Protected sources require fresh reviewed
@@ -34,7 +34,7 @@ type EnvironmentGitSourcePollStore interface {
 	FinishEnvironmentGitSourcePoll(context.Context, EnvironmentGitSourcePollLease, EnvironmentGitSourcePollResult, time.Time, time.Time) error
 }
 
-var environmentDefinitionDigestRE = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var environmentDefinitionDigestRE = lazyregexp.New(`^[a-f0-9]{64}$`)
 
 func validateEnvironmentSourcePollResult(result EnvironmentGitSourcePollResult) error {
 	if result.ErrorCode == "" {

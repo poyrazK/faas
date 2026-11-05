@@ -16,7 +16,7 @@ func (s *server) bindingInventoryDeployment(ctx context.Context, app state.App, 
 		return s.store.LiveDeployment(ctx, app.ID)
 	}
 	dep, err := s.store.DeploymentByID(ctx, id)
-	if err == nil && (dep.AppID != app.ID || dep.Status != state.DeployLive || dep.RootfsKey == "" || dep.ImageDigest == "") {
+	if err == nil && (dep.AppID != app.ID || dep.Status != state.DeployLive && !preparedBindingRollback(ctx, dep) || dep.RootfsKey == "" || dep.ImageDigest == "") {
 		return state.Deployment{}, state.ErrConflict
 	}
 	return dep, err

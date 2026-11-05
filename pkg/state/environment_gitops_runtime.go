@@ -61,6 +61,8 @@ type EnvironmentGitOpsRuntimeStore interface {
 	ObserveEnvironmentGitOpsRuntime(context.Context, EnvironmentGitOpsLease) ([]EnvironmentGitOpsRuntimeTarget, error)
 	EnsureEnvironmentGitOpsRuntime(context.Context, EnvironmentGitOpsLease, environmentsync.Plan) error
 	PendingEnvironmentGitOpsRuntime(context.Context, EnvironmentGitOpsLease) ([]EnvironmentGitOpsRuntimeEffect, error)
+	// Report mode only observes the original scope and finalizes fresh effects;
+	// it must not invalidate snapshots, advance boundaries or request refreshes.
 	ReconcileEnvironmentGitOpsRuntime(context.Context, EnvironmentGitOpsLease, string) (EnvironmentGitOpsRuntimeProgress, error)
 }
 
@@ -71,6 +73,14 @@ func gitOpsRuntimeReady(targets []EnvironmentGitOpsRuntimeTarget) bool {
 		}
 	}
 	return true
+}
+
+// Ownership requires current whole-graph evidence, not a permanent runtime
+// blocker. The current-evidence readers bind these receipts to the approved
+// revision, generation, intent version, plan and exact active release.
+func environmentGitOpsWorkloadsConverged(evidence *EnvironmentWorkloadActivationEvidence) bool {
+	return evidence != nil && evidence.ArtifactsPrepared && evidence.Qualified && evidence.Activated &&
+		evidence.Serving && len(evidence.BlockingReasons) == 0
 }
 
 func gitOpsChangedVariableApps(plan environmentsync.Plan, ids map[string]string) []string {

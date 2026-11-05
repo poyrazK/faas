@@ -206,6 +206,24 @@ func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
 	}
 }
 
+// The apps domains' certificate key opens only in the compute edges'
+// gatewayd-public (ADR-20261103163954 §3): edgednsd seals it and the
+// gateway that talks to guests never holds it.
+func TestRegistry_EdgeTLSIsWiredToGatewaydPublicAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.EdgeTLS)
+	if !ok || !s.Wired || s.Dedicated {
+		t.Fatalf("edge-tls domain = %+v, %v; want wired and managed", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "gatewayd-public" || len(s.Roles) != 1 || s.Roles[0] != sealdomain.RoleCompute {
+		t.Fatalf("edge-tls readers = %v on %v, want [gatewayd-public] on compute", s.Readers, s.Roles)
+	}
+	for _, d := range []string{"edgednsd", "gatewayd-internal", "apid"} {
+		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.EdgeTLS) {
+			t.Fatalf("%s reads the edge-tls domain; only gatewayd-public opens the certificate key", d)
+		}
+	}
+}
+
 // imaged opens registry passwords to pull images; vmmd opens them into a
 // builder VM's Docker config for its base-image pulls (ADR-20261026091500).
 // Both run on compute nodes, where root already holds the build identity.

@@ -56,7 +56,7 @@ func (s *server) savedProfilePage(w http.ResponseWriter, r *http.Request, acct s
 	}
 	data := s.savedProfileData(r, acct, app, view)
 	s.includeSavedProfileDeployments(r, app, &data)
-	view.CanSave = data.Baseline.DeploymentID != "" && data.Query.DeploymentID != "" && (api.MustLimitsFor(acct.Plan).Profiling.Enabled || view.Saved != nil)
+	view.CanSave = data.Baseline.DeploymentID != "" && data.Query.DeploymentID != "" && (api.MustLimitsFor(s.profilePlan(r.Context(), acct.Plan, app)).Profiling.Enabled || view.Saved != nil)
 	if view.CanSave && s.sessions != nil {
 		token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileInvestigationCSRFAction, actorAccount(r, acct).ID, profileInvestigationCSRFCookie)
 		if err != nil {

@@ -55,6 +55,7 @@ type requestAnalyticsView struct {
 	RoutesTruncated        bool                 `json:"routes_truncated"`
 	TextTruncated          bool                 `json:"text_truncated"`
 	SourceCompleteness     string               `json:"source_completeness"`
+	TelemetryGaps          []string             `json:"telemetry_gaps,omitempty"`
 	Freshness              string               `json:"freshness"`
 	Basis                  string               `json:"basis"`
 	ErrorBasis             string               `json:"error_basis"`
@@ -90,7 +91,7 @@ func projectAnalyticsMeasurements(n api.RequestAnalyticsRoute) (analyticsMeasure
 func (m *management) projectRequestAnalytics(slug, appID string, n api.RequestAnalyticsResponse, limit int) (requestAnalyticsView, error) {
 	v := requestAnalyticsView{App: slug, AppID: appID, Scope: "app_wide", Status: "observed", Since: n.Since, From: n.From, Until: n.Until, AsOf: n.AsOf, WindowClamped: n.WindowClamped,
 		Routes: []analyticsRouteView{}, NativeRoutesLimit: n.RoutesLimit, NativeRouteCount: len(n.Routes), NativeRoutesTruncated: n.RoutesTruncated, NativeGroupsTruncated: n.GroupsTruncated, RoutesTruncated: len(n.Routes) > limit,
-		SourceCompleteness: "unknown", Freshness: "unknown", Basis: "retained_requests_weighted_by_collapse_count", ErrorBasis: "http_status_gte_400",
+		SourceCompleteness: analyticsSourceCompleteness(n.TelemetryComplete), TelemetryGaps: n.TelemetryGaps, Freshness: "unknown", Basis: "retained_requests_weighted_by_collapse_count", ErrorBasis: "http_status_gte_400",
 		MeasurementLimitations: "Optional fields are native measurements: absent differs from observed zero. Route-level measurement counts/coverage are not reported. Retained values may be rounded/bucketed. Guest execution is runner wall time. CPU measures supported one-shot child processes including runtime startup, not all runtime modes; peak RSS is their rounded/bucketed high-water mark, not allocated VM/app memory. Cold request p95 includes handling; wake boot p95 measures the scheduler boot-start to RUNNING interval. These populations can differ; do not sum/subtract percentiles or infer resource/cost changes.",
 		Limitations:            "App-wide retained route/method aggregates in native order, not all traffic or proof of health. Native plan/retention limits apply. Error requests include HTTP 4xx and 5xx, unlike 5xx-only debugger regression signals. Summary and route queries are sequential, not an atomic snapshot; counts need not reconcile. Native and projection limits are separate; omitted routes are not zero traffic. Route/method labels may be modified and collide. No cost/billing data, deployment provenance/comparisons, dimensions/consumer identities, dependency payloads, raw requests, spans, SQL, headers or bodies are exposed. App identity is checked before/after the native slug-scoped read. No request examples are fetched. Request discovery has independent windows, no method filter or historical until; do not manufacture selectors or claim cohort equivalence. Diagnostic consent grants no other environment/log or write access."}
 	var err error
@@ -122,4 +123,17 @@ func (m *management) projectRequestAnalytics(slug, appID string, n api.RequestAn
 		v.Status = "no_retained_requests"
 	}
 	return v, nil
+}
+
+// analyticsSourceCompleteness reports the native verdict on whether every
+// gateway delivered the window's telemetry; an older apid sends none.
+func analyticsSourceCompleteness(complete *bool) string {
+	switch {
+	case complete == nil:
+		return "unknown"
+	case *complete:
+		return "complete"
+	default:
+		return "incomplete"
+	}
 }
