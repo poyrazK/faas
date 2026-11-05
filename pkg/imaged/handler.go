@@ -3614,6 +3614,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
 		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
 	}
+	if ready == nil && dep.DeletedAt != nil {
+		// A deleted stage cannot resolve runtime policy from its replacement.
+		// Discard this unreferenced capture before attempting that lookup.
+		if err := h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier}); err != nil {
+			return err
+		}
+		return fmt.Errorf("imaged: snapshot deployment was deleted: %w", state.ErrNotFound)
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
 	}

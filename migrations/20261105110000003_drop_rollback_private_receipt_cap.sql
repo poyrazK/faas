@@ -3,7 +3,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE deployment_rollback_operations
- DROP CONSTRAINT deployment_rollback_operations_receipt_check;
+ DROP CONSTRAINT IF EXISTS deployment_rollback_operations_receipt_check;
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
