@@ -454,11 +454,16 @@ func TestPostgresBootStatements(t *testing.T) {
 		// ownerCache wakes once with schedd's owner cache on (ADR-1741),
 		// parks, and traces the next wake, which finds the entry cached.
 		ownerCache bool
+		// explicit names the app's deployment, as the gateway's AdmitInstance
+		// and the drain's invocations do; ADR-1741 amendment 2026-11-05.
+		explicit bool
 	}{
 		{name: "cold boot"},
 		{name: "snapshot restore", snapshot: true},
 		{name: "cold boot, owner cache warm", ownerCache: true},
 		{name: "snapshot restore, owner cache warm", snapshot: true, ownerCache: true},
+		{name: "snapshot restore, deployment named", snapshot: true, explicit: true},
+		{name: "snapshot restore, deployment named, owner cache warm", snapshot: true, explicit: true, ownerCache: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, tracer := tracedPgStore(t)
@@ -517,9 +522,13 @@ func TestPostgresBootStatements(t *testing.T) {
 			for _, n := range nodes {
 				e.CapacityTable().Replace(CapacityReport{NodeID: n.ID, SampledAt: time.Now(), RAMHeadroomMB: int32(n.MemMB)})
 			}
+			wakeDeployment, wakeTrigger := "", ""
+			if tc.explicit {
+				wakeDeployment, wakeTrigger = dep.ID, TriggerInvocation
+			}
 			if tc.ownerCache {
 				e.WithOwnerCache()
-				first, err := e.Wake(ctx, app.ID, "", "", "")
+				first, err := e.Wake(ctx, app.ID, wakeDeployment, "", wakeTrigger)
 				if err != nil {
 					t.Fatalf("first Wake: %v", err)
 				}
@@ -535,7 +544,7 @@ func TestPostgresBootStatements(t *testing.T) {
 			vmm.coldBootHook = vmm.restoreHook
 			tracer.armed.Store(true)
 			wakeStarted := time.Now()
-			result, err := e.Wake(ctx, app.ID, "", "", "")
+			result, err := e.Wake(ctx, app.ID, wakeDeployment, "", wakeTrigger)
 			answered := time.Now()
 			tracer.armed.Store(false)
 			if err != nil || result.InstanceID == "" {
