@@ -30,4 +30,6 @@ var (
 	_ state.ObjectTrackedUploadMutationStore = (*state.EdgeStore)(nil)
 	_ state.ObjectTrackedUploadStore         = (*state.EdgeStore)(nil)
 	_ state.ObjectBucketObjectLockStore      = (*state.EdgeStore)(nil)
+	_ state.PlatformTenantHostBindingReader  = (*state.EdgeStore)(nil)
+	_ state.CustomDomainTLSKnownHostReader   = (*state.EdgeStore)(nil)
 )

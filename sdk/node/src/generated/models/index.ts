@@ -668,6 +668,7 @@ export type { DebugRunningRequestAttribution } from './DebugRunningRequestAttrib
 export type { DebugRunningResponse } from './DebugRunningResponse.js';
 export type { DebugStatusDeployment } from './DebugStatusDeployment.js';
 export type { DebugStatusHealth } from './DebugStatusHealth.js';
+export type { DebugStatusMemory } from './DebugStatusMemory.js';
 export type { DebugStatusOOMKill } from './DebugStatusOOMKill.js';
 export type { DebugStatusResponse } from './DebugStatusResponse.js';
 export type { DebugSuspectedDependency } from './DebugSuspectedDependency.js';
@@ -1552,6 +1553,7 @@ export type { ObjectBucketNotificationsRequest } from './ObjectBucketNotificatio
 export type { ObjectBucketObjectLock } from './ObjectBucketObjectLock.js';
 export type { ObjectBucketObjectLockConfiguration } from './ObjectBucketObjectLockConfiguration.js';
 export type { ObjectBucketObjectLockRequest } from './ObjectBucketObjectLockRequest.js';
+export type { ObjectBucketRetry } from './ObjectBucketRetry.js';
 export type { ObjectBucketVersioning } from './ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './ObjectCapacityReconciliation.js';

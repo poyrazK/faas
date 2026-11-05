@@ -2868,6 +2868,35 @@ func (q *Queries) BeginCrashCaptureStage(ctx context.Context, db DBTX, arg Begin
 	return i, err
 }
 
+const beginCustomDomainCertificateAttempt = `-- name: BeginCustomDomainCertificateAttempt :execrows
+UPDATE custom_domains SET cert_retry_at=$1::timestamptz
+WHERE domain=$2::text::citext AND app_id=$3::text::uuid
+ AND challenge_token=$4::text AND verified_at IS NOT NULL AND domain LIKE '*.%'
+ AND coalesce(cert_retry_at,'epoch'::timestamptz)<=$5::timestamptz
+`
+
+type BeginCustomDomainCertificateAttemptParams struct {
+	RetryAt pgtype.Timestamptz
+	Domain  string
+	AppID   string
+	Token   string
+	Now     pgtype.Timestamptz
+}
+
+func (q *Queries) BeginCustomDomainCertificateAttempt(ctx context.Context, db DBTX, arg BeginCustomDomainCertificateAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, beginCustomDomainCertificateAttempt,
+		arg.RetryAt,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const beginDatabaseVMMove = `-- name: BeginDatabaseVMMove :execrows
 UPDATE database_vms
 SET state = 'moving', move_node = $1::text, state_changed_at = now(), last_error = NULL,
@@ -8043,6 +8072,15 @@ func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX
 	return result.RowsAffected(), nil
 }
 
+const clearCustomDomainCertificateAttempt = `-- name: ClearCustomDomainCertificateAttempt :exec
+UPDATE custom_domains SET cert_retry_at=NULL WHERE domain=$1::text::citext
+`
+
+func (q *Queries) ClearCustomDomainCertificateAttempt(ctx context.Context, db DBTX, domain string) error {
+	_, err := db.Exec(ctx, clearCustomDomainCertificateAttempt, domain)
+	return err
+}
+
 const clearCustomDomainProbeObservation = `-- name: ClearCustomDomainProbeObservation :exec
 DELETE FROM domain_doctor_observations WHERE domain=$1::text::citext AND surface_id IS NULL
 `
@@ -11122,11 +11160,22 @@ func (q *Queries) CountOwnedActiveOperationJobTasksForPurge(ctx context.Context,
 
 const countPendingCustomerOperations = `-- name: CountPendingCustomerOperations :one
 SELECT count(*)::bigint FROM customer_operations WHERE account_id=$1::uuid
-AND state IN ('accepted','running','waiting','requires_reconciliation')
+AND state IN ('accepted','running','waiting','requires_reconciliation') AND NOT (
+ data_repair_id IS NOT NULL AND COALESCE(record->'data_repair'->>'phase','')='prepared'
+ AND COALESCE(record->'data_repair'->'approval','null'::jsonb)='null'::jsonb
+ AND COALESCE(record->'data_repair'->>'rehearsal_status','') NOT IN ('queued','running','cleanup','publishing')
+ AND COALESCE((record->'data_repair'->>'plan_expires_at')::timestamptz<=$2::timestamptz,false)
+ AND NOT EXISTS(SELECT 1 FROM data_repair_rehearsals r WHERE r.operation_id=customer_operations.id AND r.phase IN ('queued','running','cleanup','publishing'))
+)
 `
 
-func (q *Queries) CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
-	row := db.QueryRow(ctx, countPendingCustomerOperations, accountID)
+type CountPendingCustomerOperationsParams struct {
+	AccountID  pgtype.UUID
+	ObservedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CountPendingCustomerOperations(ctx context.Context, db DBTX, arg CountPendingCustomerOperationsParams) (int64, error) {
+	row := db.QueryRow(ctx, countPendingCustomerOperations, arg.AccountID, arg.ObservedAt)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -46206,6 +46255,79 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 	return items, nil
 }
 
+const listCustomDomainCertificateRetries = `-- name: ListCustomDomainCertificateRetries :many
+SELECT domain::text,app_id::text AS app_id,challenge_token::text AS token
+FROM custom_domains
+WHERE verified_at IS NOT NULL AND domain LIKE '*.%'
+ AND coalesce(cert_retry_at,'epoch'::timestamptz)<=$1::timestamptz
+ AND (cert_status IN ('pending','failed') OR
+  (cert_status IN ('issued','renewing') AND (cert_expires_at IS NULL OR cert_expires_at<=$2::timestamptz)))
+ORDER BY coalesce(cert_retry_at,'epoch'::timestamptz),domain LIMIT $3::integer
+`
+
+type ListCustomDomainCertificateRetriesParams struct {
+	Now         pgtype.Timestamptz
+	RenewBefore pgtype.Timestamptz
+	BatchLimit  int32
+}
+
+type ListCustomDomainCertificateRetriesRow struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ListCustomDomainCertificateRetries(ctx context.Context, db DBTX, arg ListCustomDomainCertificateRetriesParams) ([]ListCustomDomainCertificateRetriesRow, error) {
+	rows, err := db.Query(ctx, listCustomDomainCertificateRetries, arg.Now, arg.RenewBefore, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomDomainCertificateRetriesRow{}
+	for rows.Next() {
+		var i ListCustomDomainCertificateRetriesRow
+		if err := rows.Scan(&i.Domain, &i.AppID, &i.Token); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomDomainTLSKnownHosts = `-- name: ListCustomDomainTLSKnownHosts :many
+SELECT h.host::text AS host FROM custom_domain_tls_hosts h
+WHERE h.host > $1::text::citext ORDER BY h.host LIMIT $2::integer
+`
+
+type ListCustomDomainTLSKnownHostsParams struct {
+	AfterHost string
+	PageSize  int32
+}
+
+// Membership hints only: certificate admission still checks the live claim.
+func (q *Queries) ListCustomDomainTLSKnownHosts(ctx context.Context, db DBTX, arg ListCustomDomainTLSKnownHostsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listCustomDomainTLSKnownHosts, arg.AfterHost, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomDomainsForActor = `-- name: ListCustomDomainsForActor :many
 select d.domain::text as domain, d.app_id::text as app_id, d.challenge_token,
        d.verified_at, d.cert_status::text as cert_status, d.cert_expires_at,
@@ -47808,6 +47930,71 @@ func (q *Queries) ListDevBridges(ctx context.Context, db DBTX, arg ListDevBridge
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDoctorDomainBatch = `-- name: ListDoctorDomainBatch :many
+WITH raw AS (
+ SELECT d.domain::text AS domain,a.account_id,coalesce(o.observed_at,'epoch'::timestamptz) AS observed_at
+ FROM custom_domains d JOIN apps a ON a.id=d.app_id
+ LEFT JOIN domain_doctor_observations o ON o.domain=d.domain WHERE d.verified_at IS NOT NULL
+ UNION ALL
+ SELECT h.hostname::text AS domain,s.account_id,coalesce(o.observed_at,'epoch'::timestamptz) AS observed_at
+ FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+ LEFT JOIN domain_doctor_observations o ON o.domain=h.hostname WHERE s.status<>'deleted'
+), candidates AS (
+ SELECT DISTINCT ON(domain) domain,account_id,observed_at FROM raw ORDER BY domain,observed_at
+), ranked AS (
+ SELECT domain,observed_at,row_number() OVER(PARTITION BY account_id ORDER BY observed_at,domain) AS account_rank
+ FROM candidates
+)
+SELECT domain FROM ranked ORDER BY account_rank,observed_at,domain LIMIT $1::integer
+`
+
+func (q *Queries) ListDoctorDomainBatch(ctx context.Context, db DBTX, batchLimit int32) ([]string, error) {
+	rows, err := db.Query(ctx, listDoctorDomainBatch, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, err
+		}
+		items = append(items, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDoctorDomains = `-- name: ListDoctorDomains :many
+SELECT domain::text FROM custom_domains WHERE verified_at IS NOT NULL
+UNION
+SELECT h.hostname::text FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+WHERE s.status<>'deleted'
+`
+
+func (q *Queries) ListDoctorDomains(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listDoctorDomains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, err
+		}
+		items = append(items, domain)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -63154,13 +63341,20 @@ UPDATE custom_domains SET verified_at=now(),
 WHERE domain=$2::text::citext AND app_id=$3::uuid
   AND (NOT $1::boolean OR
     (challenge_token=$4::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()))
+  AND (NOT $5::boolean
+    OR (NOT $6::boolean AND cert_status<>'dns_drifted')
+    OR ($6::boolean AND
+        dns_last_checked_at IS NOT DISTINCT FROM $7::timestamptz))
 `
 
 type MarkTrafficDomainVerifiedParams struct {
-	ChallengeBound bool
-	Domain         string
-	AppID          pgtype.UUID
-	Token          string
+	ChallengeBound       bool
+	Domain               string
+	AppID                pgtype.UUID
+	Token                string
+	ProbeBound           bool
+	ExpectedDnsDrifted   bool
+	ExpectedDnsCheckedAt pgtype.Timestamptz
 }
 
 func (q *Queries) MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg MarkTrafficDomainVerifiedParams) (int64, error) {
@@ -63169,6 +63363,9 @@ func (q *Queries) MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg Ma
 		arg.Domain,
 		arg.AppID,
 		arg.Token,
+		arg.ProbeBound,
+		arg.ExpectedDnsDrifted,
+		arg.ExpectedDnsCheckedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -75363,7 +75560,7 @@ func (q *Queries) PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DB
 const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
 WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
  WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
- AND COALESCE(o.record->'data_repair'->>'phase','') NOT IN ('replacing','resolving')
+ AND COALESCE(o.record->'data_repair'->>'phase','') NOT IN ('applying','outcome_unknown','replacing','resolving')
  ORDER BY e.created_at,e.operation_id,e.sequence LIMIT $2::integer)
 DELETE FROM customer_operation_events e USING doomed d WHERE e.operation_id=d.operation_id AND e.sequence=d.sequence
 `
@@ -75383,7 +75580,8 @@ func (q *Queries) PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg
 
 const pruneCustomerOperationIdempotency = `-- name: PruneCustomerOperationIdempotency :execrows
 WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency i WHERE expires_at<=$1::timestamptz
- AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running','waiting'))
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND
+  (o.state IN ('accepted','running','waiting') OR COALESCE(o.record->'data_repair'->>'phase','') IN ('applying','outcome_unknown','replacing','resolving')))
  ORDER BY expires_at,scope_digest LIMIT $2::integer)
 DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest
 `
@@ -75423,7 +75621,7 @@ func (q *Queries) PruneCustomerOperationStreams(ctx context.Context, db DBTX, ar
 const pruneCustomerOperations = `-- name: PruneCustomerOperations :execrows
 WITH doomed AS (SELECT id FROM customer_operations
  WHERE expires_at<=$1::timestamptz AND state IN ('succeeded','failed','cancelled','requires_reconciliation')
- AND COALESCE(record->'data_repair'->>'phase','') NOT IN ('replacing','resolving')
+ AND COALESCE(record->'data_repair'->>'phase','') NOT IN ('applying','outcome_unknown','replacing','resolving')
  AND NOT EXISTS (SELECT 1 FROM data_repair_rehearsals r WHERE r.operation_id=customer_operations.id AND r.phase IN ('queued','running','cleanup','publishing'))
  ORDER BY expires_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED)
 DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id
@@ -90693,6 +90891,49 @@ func (q *Queries) ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg Re
 	return items, nil
 }
 
+const readUsableCustomDomainDefaults = `-- name: ReadUsableCustomDomainDefaults :many
+SELECT ad.app_id::text AS app_id,d.domain::text AS domain
+FROM app_default_domains ad JOIN custom_domains d ON d.domain=ad.domain
+WHERE ad.app_id=ANY($1::text[]::uuid[]) AND d.app_id=ad.app_id
+ AND d.verified_at IS NOT NULL AND d.environment_id IS NULL AND d.domain NOT LIKE '*.%'
+ AND (NOT $2::boolean OR NOT EXISTS (
+  SELECT 1 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+  LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+  WHERE h.hostname=d.domain AND h.verified_at IS NOT NULL AND s.status<>'deleted'
+   AND (t.status='suspended' OR (s.status='active' AND s.app_id<>d.app_id))
+ ))
+`
+
+type ReadUsableCustomDomainDefaultsParams struct {
+	AppIds         []string
+	TenantSurfaces bool
+}
+
+type ReadUsableCustomDomainDefaultsRow struct {
+	AppID  string
+	Domain string
+}
+
+func (q *Queries) ReadUsableCustomDomainDefaults(ctx context.Context, db DBTX, arg ReadUsableCustomDomainDefaultsParams) ([]ReadUsableCustomDomainDefaultsRow, error) {
+	rows, err := db.Query(ctx, readUsableCustomDomainDefaults, arg.AppIds, arg.TenantSurfaces)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadUsableCustomDomainDefaultsRow{}
+	for rows.Next() {
+		var i ReadUsableCustomDomainDefaultsRow
+		if err := rows.Scan(&i.AppID, &i.Domain); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readValidRouteLifecycleApprovals = `-- name: ReadValidRouteLifecycleApprovals :many
 SELECT receipt FROM route_lifecycle_approvals
 WHERE account_id=$1::text::uuid AND app_id=$2::text::uuid
@@ -94557,6 +94798,21 @@ func (q *Queries) ReleaseCustomDomainProbeFailureEmail(ctx context.Context, db D
 		arg.Token,
 		arg.At,
 	)
+	return err
+}
+
+const releaseCustomDomainVerificationLeases = `-- name: ReleaseCustomDomainVerificationLeases :exec
+UPDATE custom_domains d SET verification_attempts=greatest(d.verification_attempts-1,0),
+ verification_next_check_at=clock_timestamp()
+FROM jsonb_to_recordset($1::jsonb) AS lease(
+ domain text, app_id uuid, token text, attempts integer, next_check_at timestamptz)
+WHERE d.domain=lease.domain::citext AND d.app_id=lease.app_id AND d.challenge_token=lease.token
+ AND d.verified_at IS NULL AND d.verification_attempts=lease.attempts
+ AND d.verification_next_check_at=lease.next_check_at
+`
+
+func (q *Queries) ReleaseCustomDomainVerificationLeases(ctx context.Context, db DBTX, leases []byte) error {
+	_, err := db.Exec(ctx, releaseCustomDomainVerificationLeases, leases)
 	return err
 }
 
@@ -102416,31 +102672,45 @@ func (q *Queries) SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg Set
 }
 
 const setCustomDomainDefault = `-- name: SetCustomDomainDefault :one
-INSERT INTO app_default_domains(app_id,domain)
-SELECT $1::text::uuid,domain FROM custom_domains
-WHERE domain=$2::text::citext AND app_id=$1::text::uuid
- AND environment_id IS NULL AND verified_at IS NOT NULL AND domain NOT LIKE '*.%'
- AND (NOT $3::boolean OR challenge_token=$4::text)
-ON CONFLICT(app_id) DO UPDATE SET domain=excluded.domain,updated_at=now() RETURNING 1
+WITH eligible AS MATERIALIZED (
+ SELECT d.app_id,d.domain,
+  (NOT $1::boolean OR NOT EXISTS (
+   SELECT 1 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+   LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+   WHERE h.hostname=d.domain AND h.verified_at IS NOT NULL AND s.status<>'deleted'
+    AND (t.status='suspended' OR (s.status='active' AND s.app_id<>d.app_id))
+  ))::boolean AS routable
+ FROM custom_domains d
+ WHERE d.domain=$2::text::citext AND d.app_id=$3::text::uuid
+  AND d.environment_id IS NULL AND d.verified_at IS NOT NULL AND d.domain NOT LIKE '*.%'
+  AND (NOT $4::boolean OR d.challenge_token=$5::text)
+), selected AS (
+ INSERT INTO app_default_domains(app_id,domain)
+ SELECT app_id,domain FROM eligible WHERE routable
+ ON CONFLICT(app_id) DO UPDATE SET domain=excluded.domain,updated_at=now() RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM selected)::boolean AS routable FROM eligible
 `
 
 type SetCustomDomainDefaultParams struct {
-	AppID      string
-	Domain     string
-	ClaimBound bool
-	Token      string
+	TenantSurfaces bool
+	Domain         string
+	AppID          string
+	ClaimBound     bool
+	Token          string
 }
 
-func (q *Queries) SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (int32, error) {
+func (q *Queries) SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (bool, error) {
 	row := db.QueryRow(ctx, setCustomDomainDefault,
-		arg.AppID,
+		arg.TenantSurfaces,
 		arg.Domain,
+		arg.AppID,
 		arg.ClaimBound,
 		arg.Token,
 	)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
+	var routable bool
+	err := row.Scan(&routable)
+	return routable, err
 }
 
 const setCustomerOperationExecutionIdentity = `-- name: SetCustomerOperationExecutionIdentity :exec
@@ -106251,7 +106521,7 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 
 const updateCustomDomainProbeCert = `-- name: UpdateCustomDomainProbeCert :execrows
 UPDATE custom_domains SET cert_status=$1::text,
- cert_expires_at=$2::timestamptz,
+ cert_expires_at=coalesce($2::timestamptz,cert_expires_at),
  cert_last_error=nullif($3::text,''),
  dns_last_checked_at=$4::timestamptz,
  cert_failed_at=CASE WHEN $1::text='failed' AND cert_status IS DISTINCT FROM 'failed'
@@ -106259,7 +106529,7 @@ UPDATE custom_domains SET cert_status=$1::text,
    WHEN $1::text='failed' THEN cert_failed_at ELSE NULL END
 WHERE domain=$5::text::citext
  AND (NOT $6::boolean OR (app_id=nullif($7::text,'')::uuid AND challenge_token=$8::text))
- AND (NOT $6::boolean OR $4::timestamptz IS NULL OR dns_last_checked_at IS NULL OR dns_last_checked_at <= $4::timestamptz)
+ AND (NOT $6::boolean OR dns_last_checked_at IS NULL OR dns_last_checked_at <= $4::timestamptz)
 `
 
 type UpdateCustomDomainProbeCertParams struct {
@@ -107167,12 +107437,17 @@ SELECT claim.domain,($1::jsonb->>'surface_id')::uuid,
  $1::jsonb->>'last_error',($1::jsonb->>'dns_checked_at')::timestamptz,
  ($1::jsonb->>'cert_checked_at')::timestamptz FROM claim
 ON CONFLICT (domain) DO UPDATE SET
- surface_id=coalesce(excluded.surface_id,domain_doctor_observations.surface_id),
+ surface_id=excluded.surface_id,
  observed_at=excluded.observed_at,dns_record_found=excluded.dns_record_found,points_to_gregale=excluded.points_to_gregale,
  caa_permits=excluded.caa_permits,ipv6_conflict=excluded.ipv6_conflict,
  observed_target=excluded.observed_target,observed_aaaa=excluded.observed_aaaa,caa_observed=excluded.caa_observed,
  cert_state=excluded.cert_state,cert_not_after=excluded.cert_not_after,last_error=excluded.last_error,
  dns_checked_at=excluded.dns_checked_at,cert_checked_at=excluded.cert_checked_at
+WHERE domain_doctor_observations.observed_at <= excluded.observed_at
+ AND (domain_doctor_observations.dns_checked_at IS NULL OR excluded.dns_checked_at IS NULL
+      OR domain_doctor_observations.dns_checked_at <= excluded.dns_checked_at)
+ AND (domain_doctor_observations.cert_checked_at IS NULL OR excluded.cert_checked_at IS NULL
+      OR domain_doctor_observations.cert_checked_at <= excluded.cert_checked_at)
 `
 
 type UpsertCustomDomainProbeObservationParams struct {

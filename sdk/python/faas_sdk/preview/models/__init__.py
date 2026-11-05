@@ -1254,6 +1254,7 @@ from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_status_deployment import DebugStatusDeployment
 from .debug_status_health import DebugStatusHealth
+from .debug_status_memory import DebugStatusMemory
 from .debug_status_oom_kill import DebugStatusOOMKill
 from .debug_status_response import DebugStatusResponse
 from .debug_status_response_verdict import DebugStatusResponseVerdict
@@ -3082,6 +3083,8 @@ from .object_bucket_object_lock_configuration import ObjectBucketObjectLockConfi
 from .object_bucket_object_lock_last_error_code import ObjectBucketObjectLockLastErrorCode
 from .object_bucket_object_lock_request import ObjectBucketObjectLockRequest
 from .object_bucket_object_lock_state import ObjectBucketObjectLockState
+from .object_bucket_retry import ObjectBucketRetry
+from .object_bucket_retry_reason import ObjectBucketRetryReason
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
 from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
@@ -7507,6 +7510,7 @@ __all__ = (
     "DebugRunningResponse",
     "DebugStatusDeployment",
     "DebugStatusHealth",
+    "DebugStatusMemory",
     "DebugStatusOOMKill",
     "DebugStatusResponse",
     "DebugStatusResponseVerdict",
@@ -9229,6 +9233,8 @@ __all__ = (
     "ObjectBucketObjectLockLastErrorCode",
     "ObjectBucketObjectLockRequest",
     "ObjectBucketObjectLockState",
+    "ObjectBucketRetry",
+    "ObjectBucketRetryReason",
     "ObjectBucketState",
     "ObjectBucketVersioning",
     "ObjectBucketVersioningDesiredStatus",
