@@ -245,6 +245,13 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	if result := stopWrites(); result.err != nil || result.value < 1001 {
 		t.Fatal("updates failed during removal", result)
 	}
+	// Cancellation can lose the final COMMIT acknowledgement. Lock the source
+	// row so any in-flight writer transaction settles before capturing the exact
+	// committed value that the healthy mirror must eventually expose.
+	var committedTotal string
+	if err = source.QueryRow(ctx, `SELECT total::text FROM public.orders WHERE id=1 FOR UPDATE`).Scan(&committedTotal); err != nil {
+		t.Fatal("read committed live-removal source value", err)
+	}
 	refreshReady = true
 	old := get()
 	ob := Observation{State: "blocked", Verification: old.Verification}
@@ -256,7 +263,7 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	wait(func(v Pipeline) bool {
 		return v.State == "live" && slices.Equal(v.Tables, []string{"orders"}) && v.SchemaChange.Cancellation.State == "complete"
 	})
-	expected := fmt.Sprintf("%d.00", written.value)
+	expected := committedTotal
 	wait(func(Pipeline) bool {
 		status, body := oldAPI.request("GET", "alice", "id=eq.1&select=id,total", "")
 		return status == 200 && strings.Contains(body, expected)
