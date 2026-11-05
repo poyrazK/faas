@@ -218,6 +218,9 @@ func TestProjectDependencyGateScopeIsolation(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			f := newDependencyGateFixture(t, backend)
+			if _, err := f.store.CreateProjectEnvironment(f.ctx, state.ProjectEnvironment{AccountID: f.web.AccountID, ProjectID: f.web.ProjectID, Slug: "staging"}); err != nil {
+				t.Fatal(err)
+			}
 			_, err := f.store.CreateDeployment(f.ctx, state.Deployment{AppID: f.web.ID, Kind: state.DeploymentKindImage, Scope: "staging", ImageDigest: "docker.io/library/nginx:1.27"})
 			if err == nil {
 				t.Fatal("production dependency satisfied a staging admission")

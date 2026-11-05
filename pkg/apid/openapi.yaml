@@ -107082,6 +107082,10 @@ components:
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
+        project_secrets_revision_hash:
+          description: Opaque shared-secret set identity observed before qualification probes. Submit it as the project:secrets entry in secret_revision_hashes; it changes on secret additions, rotations, and deletions, but not master-key reseals. Omitted by older servers.
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         feature_flags_hash:
           description: Fingerprint of the environment identity, current flag version, and configuration observed before qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released workload settings hash when submitting workload_config_hashes.
           type: string
@@ -107643,7 +107647,7 @@ components:
         promotion_token: { type: string, minLength: 1 }
 
     CreateProjectEnvironmentQualificationRequest:
-      description: Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and per-workload secret revision fingerprints.
+      description: Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and workload and shared-secret revision fingerprints observed before probes.
       type: object
       additionalProperties: false
       required: [release_set_id, configuration_version, configuration_hash, secret_revision_hashes, checks]
@@ -107657,9 +107661,10 @@ components:
         configuration_version: { type: integer, minimum: 0 }
         configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         secret_revision_hashes:
+          description: Per-workload secret fingerprints plus the reserved project:secrets identity from the pre-probe environment state. The shared identity is required once the environment has held shared secrets, including after the final key is deleted.
           type: object
           minProperties: 1
-          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          propertyNames: { type: string, pattern: '^([a-z0-9][a-z0-9-]{0,62}|project:secrets)$' }
           additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         checks:
           type: array
@@ -107714,7 +107719,7 @@ components:
           description: SHA-256 of canonical non-secret environment configuration; empty only for a legacy receipt that cannot qualify for promotion.
         secret_revision_hashes:
           type: object
-          description: Opaque per-workload fingerprints of secret keys, version metadata, and managed credential generations; no secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for promotion.
+          description: Opaque per-workload secret fingerprints and, for tracked shared-secret sets, the reserved project:secrets identity. No secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for promotion.
           additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         status: { type: string, enum: [passed, failed] }
         checks:

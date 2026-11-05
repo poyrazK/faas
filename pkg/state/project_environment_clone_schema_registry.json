@@ -16834,6 +16834,15 @@
     }
   },
   {
+    "table": "project_app_stage_admissions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "project_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "project_environments",
     "columns": [
       "account_id",
@@ -16841,6 +16850,7 @@
       "id",
       "project_id",
       "protected",
+      "shared_secret_generation",
       "slug",
       "updated_at"
     ],

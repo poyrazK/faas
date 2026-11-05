@@ -67,6 +67,9 @@ func decodeCheckedRollback(raw []byte, err error) (api.RollbackOperation, error)
 	return r, err
 }
 func rollbackPairValid(r api.RollbackOperation, target, current Deployment, rows []Deployment) bool {
+	if target.DeletedAt != nil || current.DeletedAt != nil {
+		return false
+	}
 	if target.ID != r.TargetDeploymentID || target.AppID != r.AppID || normalizedDeploymentScope(target.Scope) != r.Scope || current.ID != r.CurrentDeploymentID || current.AppID != r.AppID || normalizedDeploymentScope(current.Scope) != r.Scope || current.Status != DeployLive || current.TrafficPercent != 100 || current.CanaryTotalSteps > 0 && current.CanaryStep < current.CanaryTotalSteps || IsServiceRollout(current) {
 		return false
 	}

@@ -123,7 +123,11 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 	if candidate.ID == "" || hasCurrent && current.ID != candidate.ID || candidate.Status != state.DeployLive {
 		return "", "", fmt.Errorf("%w: target changed after promotion; refusing to clear it", state.ErrConflict)
 	}
-	if err := store.UpdateDeploymentStatus(ctx, candidate.ID, state.DeployFailed, "environment promotion rollback"); err != nil {
+	clear, ok := store.(state.ProjectPromotionClearStore)
+	if !ok {
+		return "", "", fmt.Errorf("guarded project rollback clearing is unavailable")
+	}
+	if err := clear.ClearProjectPromotionDeployment(ctx, appID, candidate.ID, promotion.ID); err != nil {
 		return "", "", fmt.Errorf("could not clear promotion deployment: %w", err)
 	}
 	return "cleared", "", nil
