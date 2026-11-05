@@ -1465,6 +1465,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"    - set FAAS_MAIL_TRANSPORT=log to keep mail in the journal\n"+
 				"    - set FAAS_DEV=1 on a dev/CI box where unset transport should resolve to log", err)
 		}
+		// noop on a production box drops every email; count each drop as
+		// apid_mail_send_failures_total{reason="no_transport"}.
+		if dropping, ok := m.(*mail.DroppingSender); ok {
+			if mailMetrics, merr := mail.NewPrometheusMetrics(ops.Registry(), ops.MetricPrefix()); merr != nil {
+				log.Warn("apid: mail metrics unavailable", "err", merr)
+			} else {
+				dropping.SetMetrics(mailMetrics)
+			}
+		}
 	}
 	// PR #1191 fixup: wrap the transport with the decorator stack so
 	// every send path is suppressed-aware + 429/5xx-retried. Without
