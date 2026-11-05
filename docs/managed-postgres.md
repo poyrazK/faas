@@ -999,7 +999,7 @@ whole quota. A replica that cannot take the lock skips that tick.
   `compute_time_seconds` counter plus what the account has left. A restore is
   a branch inside its source's project, so the two share one quota.
 - Neon checks a quota only when that counter moves. In production it moved
-  once in more than 80 minutes of continuous use, so the quota is only a
+  15, 86 and 52 minutes apart under continuous use, so the quota is only a
   backstop. The sweep stops the databases itself
   (ADR-20261025094915 amendment 2026-11-05): when nothing is left, when the
   subject is inactive, or when a database is past its plan, it holds each
