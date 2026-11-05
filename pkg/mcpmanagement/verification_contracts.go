@@ -55,7 +55,7 @@ func strengthenResultSchema(name string, schema map[string]any) {
 		} else {
 			schema["anyOf"] = []any{
 				map[string]any{"properties": map[string]any{"kind": map[string]any{"const": "restart"}, "result": map[string]any{"type": "object", "required": []string{"wake_id"}, "properties": map[string]any{"wake_id": map[string]any{"type": "string"}}}}},
-				map[string]any{"properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"env", "scale", "config_rollback", "cron_update", "cron_delete", "domain_delete"}}}},
+				map[string]any{"properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"env", "scale", "config_rollback", "config_rollback_guarded", "cron_update", "cron_delete", "domain_delete"}}}},
 			}
 		}
 	case "gregale_apply_route_budgets":

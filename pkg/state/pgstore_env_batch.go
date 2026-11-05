@@ -37,6 +37,61 @@ func (s *PgStore) ApplyEnvBatch(ctx context.Context, in EnvBatchChange) (api.Env
 	}
 }
 
+func (s *PgStore) EnvBatchReceipt(ctx context.Context, accountID, appID, scope, requestID, proof string) (api.EnvBatchResponse, error) {
+	app, err := s.AppByID(ctx, appID)
+	if err != nil {
+		return api.EnvBatchResponse{}, err
+	}
+	if app.AccountID != accountID || app.Status == AppDeleted {
+		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	environmentID := ""
+	if scope != DefaultEnvScope {
+		env, err := s.ProjectEnvironmentBySlug(ctx, accountID, app.ProjectID, scope)
+		if err != nil {
+			return api.EnvBatchResponse{}, err
+		}
+		environmentID = env.ID
+	}
+	row, err := sqlc.New().ReadEnvBatchReceipt(ctx, s.pool, sqlc.ReadEnvBatchReceiptParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, RequestID: mustPgUUID(requestID)})
+	if err != nil {
+		return api.EnvBatchResponse{}, mapErr(err)
+	}
+	var saved storedEnvBatchReceipt
+	var tag struct {
+		Kind string `json:"_kind"`
+	}
+	if err := json.Unmarshal(row.Receipt, &tag); err != nil || tag.Kind != "" {
+		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	if err := json.Unmarshal(row.Receipt, &saved); err != nil {
+		return api.EnvBatchResponse{}, err
+	}
+	out := saved.EnvBatchResponse
+	if !envBatchProofMatches(saved.ProofHash, proof) || out.AppID != appID || out.Scope != scope || out.RequestID != requestID || !envBatchEnvironmentMatches(out.EnvironmentID, environmentID) {
+		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	// A target can be deleted, moved or recreated while the receipt is read.
+	// Recheck its immutable identities before releasing the historical data.
+	current, err := s.AppByID(ctx, appID)
+	if err != nil {
+		return api.EnvBatchResponse{}, err
+	}
+	if current.AccountID != accountID || current.Status == AppDeleted || current.ProjectID != app.ProjectID {
+		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	if scope != DefaultEnvScope {
+		env, err := s.ProjectEnvironmentBySlug(ctx, accountID, current.ProjectID, scope)
+		if err != nil {
+			return api.EnvBatchResponse{}, err
+		}
+		if env.ID != environmentID {
+			return api.EnvBatchResponse{}, ErrNotFound
+		}
+	}
+	return out, nil
+}
+
 func (s *PgStore) applyEnvBatchTx(ctx context.Context, in EnvBatchChange, hash [32]byte) (api.EnvBatchResponse, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -52,6 +107,15 @@ func (s *PgStore) applyEnvBatchTx(ctx context.Context, in EnvBatchChange, hash [
 	}
 	if _, err = q.LockEnvBatchOwner(ctx, tx, sqlc.LockEnvBatchOwnerParams{AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID)}); err != nil {
 		return api.EnvBatchResponse{}, mapErr(err)
+	}
+	if in.Request.ExpectedEnvironmentID != "" {
+		env, err := q.LockAppScalingEnvironment(ctx, tx, sqlc.LockAppScalingEnvironmentParams{ID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID), Slug: in.Scope})
+		if err != nil {
+			return api.EnvBatchResponse{}, mapErr(err)
+		}
+		if !sameStandardUUID(uuid.UUID(env.ID.Bytes).String(), in.Request.ExpectedEnvironmentID) || env.Protected {
+			return api.EnvBatchResponse{}, ErrConflict
+		}
 	}
 	saved, err := q.ReadEnvBatchReceipt(ctx, tx, sqlc.ReadEnvBatchReceiptParams{AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID), Scope: in.Scope, RequestID: mustPgUUID(in.Request.RequestID)})
 	if err == nil {
@@ -137,7 +201,7 @@ func (s *PgStore) applyEnvBatchTx(ctx context.Context, in EnvBatchChange, hash [
 		return api.EnvBatchResponse{}, err
 	}
 	out := envBatchReceipt(in, revision.Revision, guard)
-	raw, err := json.Marshal(out)
+	raw, err := json.Marshal(storedEnvBatchReceipt{EnvBatchResponse: out, ProofHash: envBatchProofHash(in.Request.ReceiptProof)})
 	if err != nil {
 		return api.EnvBatchResponse{}, err
 	}

@@ -694,6 +694,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/scaling":                                                   "ApplyAppScaling",
 	"GET /v1/apps/{slug}/scaling/requests/{request_id}":                              "GetAppScalingReceipt",
 	"POST /v1/apps/{slug}/env/batch":                                                 "ApplyEnvBatch",
+	"GET /v1/apps/{slug}/env/batch/requests/{request_id}":                            "GetEnvBatchReceipt",
+	"GET /v1/apps/{slug}/config/rollback/requests/{request_id}":                      "GetConfigRollbackReceipt",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
 	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}":                        "GetEnvironmentRouteBudgetReceipt",

@@ -59,6 +59,9 @@ type HTTPOptions struct {
 	// AgentKeys lets a headless agent authenticate with an API key carrying
 	// the agent scope instead of OAuth (ADR-20261029085359).
 	AgentKeys bool
+	// AgentKeyToolsetSelection lets agent-key requests select a subset of the
+	// operator maximum with Gregale-MCP-Toolsets; omitted selects the default.
+	AgentKeyToolsetSelection bool
 }
 
 type remoteServer struct {

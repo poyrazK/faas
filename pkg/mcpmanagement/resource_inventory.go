@@ -46,7 +46,7 @@ func registerResourceInventory(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_buckets", "Read one native page of bucket metadata in the selected app and scope. Requires apps:read; grants no object or credential access.", m.listBuckets)
 	register(s, m, "gregale_get_storage_bindings", "Read one native page of selected-scope bucket binding references and rotation state. Requires apps:read; no credential material.", m.getStorageBindings)
 	register(s, m, "gregale_list_databases", "Read one native page of database and binding metadata in the selected app and scope. Requires apps:read; grants no connections or lifecycle access.", m.listDatabases)
-	register(s, m, "gregale_plan_cron_change", "Review changing or deleting an exact cron owned by the selected app. Pins its current configuration; apply with gregale_apply_operation.", m.planCronChange)
+	register(s, m, "gregale_plan_cron_change", "Review changing or deleting an exact cron owned by the selected app. Apply rechecks its configuration before the write, but the native write does not atomically guard that review. Inspect an ambiguous attempt rather than repeating it.", m.planCronChange)
 	register(s, m, "gregale_plan_domain_removal", "Review detaching an exact custom domain from the selected app. Serving on that domain stops; DNS records at the provider remain. Apply with gregale_apply_operation.", m.planDomainRemoval)
 	if m.hasCapability(api.ScopeUsageRead) {
 		register(s, m, "gregale_get_costs", "Read costs attributed to the selected app for a UTC billing month. Native coverage and shared-cost limitations remain explicit.", m.getCosts)
@@ -207,6 +207,7 @@ func (m *management) planCronChange(ctx context.Context, a cronChangeArgs) (any,
 		return nil, invalid("app_access_denied", "cron does not belong to the selected app")
 	}
 	p.Operation.ResourceID, p.Operation.ResourceHash = a.CronID, cronFingerprint(cron)
+	p.Operation.CronHistorySafe = true
 	p.Operation.Changes = p.Operation.Request
 	p.TrafficEffect = "Change the exact reviewed schedule. Deletion stops future scheduled requests; already running requests continue."
 	return m.savePlan(p)
@@ -253,7 +254,7 @@ func (m *management) applyResourceOperation(ctx context.Context, p *releasePlan)
 	}
 	c, err := m.client.GetCron(ctx, p.Operation.ResourceID)
 	if notFound(err) && p.Operation.Kind == "cron_delete" {
-		return map[string]any{"deleted": true}, nil
+		return nil, invalid("outcome_unknown", "the cron is absent; its absence does not prove this plan deleted it")
 	}
 	if err != nil {
 		return nil, err

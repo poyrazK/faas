@@ -7479,6 +7479,32 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/env/batch/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}, description: Original configuration batch request UUID.}
+      - {name: X-Gregale-Env-Receipt-Proof, in: header, required: false, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Original private receipt proof when the batch supplied one. Never place this value in a URL.}
+    get:
+      tags: [env]
+      operationId: getEnvBatchReceipt
+      summary: Read an original value-free configuration batch receipt.
+      description: Requires current app and scope read access. Named-environment receipts must contain the current immutable environment identity; legacy receipts without it are unavailable. This read does not replay a batch or prove current configuration or restart completion.
+      responses:
+        '200':
+          description: Original retained value-free receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnvBatchResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/config/revisions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -7553,7 +7579,7 @@ paths:
       tags: [env]
       operationId: rollbackConfig
       summary: Restore a scope's variables to a config revision.
-      description: "Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`."
+      description: "Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`. Reviewed requests may pin the current revision and immutable targets, and provide a private proof and request ID for passive receipt recovery."
       requestBody:
         required: true
         content:
@@ -7569,7 +7595,30 @@ paths:
         '400': {$ref: '#/components/responses/ValidationError'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/config/rollback/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: X-Gregale-Env-Receipt-Proof, in: header, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Original private receipt proof. Never put it in a URL.}
+    get:
+      tags: [env]
+      operationId: getConfigRollbackReceipt
+      summary: Read a reviewed configuration rollback receipt.
+      description: Returns value-free evidence for the original app and environment, subject to current read access. Never replays a rollback.
+      responses:
+        '200':
+          description: The original rollback receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConfigRollbackReceipt'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/env/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -37991,6 +38040,9 @@ components:
       required: [request_id, expected_revision]
       description: At least one set or delete is required. Keys must be distinct across both collections; plan limits bound collection counts and value sizes.
       properties:
+        expected_app_id: {type: string, format: uuid, description: Optional immutable app identity; required when expected_environment_id is supplied.}
+        expected_environment_id: {type: string, format: uuid, description: Immutable named-environment identity for an identity-pinned batch; omit for the default scope.}
+        receipt_proof: {type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Optional private random proof required to read this batch receipt; never returned in a receipt. Requires expected_app_id.}
         request_id: {type: string, format: uuid}
         expected_revision: {type: integer, format: int64, minimum: 0}
         values:
@@ -38009,6 +38061,7 @@ components:
         request_id: {type: string, format: uuid}
         app_id: {type: string, format: uuid}
         scope: {type: string}
+        environment_id: {type: string, format: uuid, description: Immutable environment identity when the original named batch was pinned.}
         updated_keys: {type: array, items: {type: string}}
         deleted_keys: {type: array, items: {type: string}}
         config_change: {$ref: '#/components/schemas/ConfigChangeReceipt'}
@@ -38330,6 +38383,22 @@ components:
       required: [revision]
       properties:
         revision: {type: integer, format: int64, minimum: 1}
+        expected_revision: {type: integer, format: int64, minimum: 0, description: Current configuration revision reviewed before rollback.}
+        expected_app_id: {type: string, format: uuid, description: Immutable reviewed app identity.}
+        expected_environment_id: {type: string, format: uuid, description: Immutable reviewed named environment identity.}
+        request_id: {type: string, format: uuid, description: Original reviewed rollback request identity.}
+        receipt_proof: {type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Private proof required for receipt recovery.}
+    ConfigRollbackReceipt:
+      type: object
+      required: [request_id, app_id, scope, restored_revision, config_revision, changed]
+      properties:
+        request_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        scope: {type: string}
+        environment_id: {type: string, format: uuid}
+        restored_revision: {type: integer, format: int64, minimum: 1}
+        config_revision: {type: integer, format: int64, minimum: 1}
+        changed: {type: boolean}
     ConfigSecretDifference:
       description: "A secret a config rollback could not restore."
       type: object
