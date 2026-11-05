@@ -17,6 +17,7 @@ import (
 func TestCreateCronInEnvironment(t *testing.T) {
 	ctx := context.Background()
 	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
 	store := *e.Store()
 	acct := *e.Acct()
 	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "cron-env"})
