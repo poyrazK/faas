@@ -3,10 +3,12 @@ package datapipeline
 import (
 	"context"
 	"errors"
-	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestPipelineHealthRequiresAppliedEvidence(t *testing.T) {
@@ -19,6 +21,7 @@ func TestPipelineHealthRequiresAppliedEvidence(t *testing.T) {
 	}{
 		{"receiver alone", "live", "running", "", "", true, "apply_unconfirmed", "", false},
 		{"applied checkpoint", "live", "running", "", now.Add(-time.Second).Format(time.RFC3339Nano), true, "applied_progress_confirmed", "", false},
+		{"catching up with recent checkpoint", "catching_up", "running", "waiting_for_replication", now.Add(-time.Second).Format(time.RFC3339Nano), true, "catching_up", "", false},
 		{"expired proof", "live", "running", "", now.Add(-api.DataPipelineObservationMaxAge).Format(time.RFC3339Nano), true, "apply_unconfirmed", "", false},
 		{"worker down", "live", "running", "", now.Format(time.RFC3339Nano), false, "monitoring_stale", "", false},
 		{"future clock", "live", "running", "", now.Add(time.Second).Format(time.RFC3339Nano), true, "apply_unconfirmed", "", false},
@@ -36,6 +39,21 @@ func TestPipelineHealthRequiresAppliedEvidence(t *testing.T) {
 				t.Fatalf("health: %+v", h)
 			}
 		})
+	}
+}
+
+func TestPipelineHealthKeyLimitGuidance(t *testing.T) {
+	h := pipelineHealth(api.DataPipeline{State: "blocked", DesiredState: "running", Reason: "verification_key_limit", ObservationFresh: true}, time.Now())
+	if h.Code != "verification_key_limit" || !strings.Contains(h.Recovery, "primary-key values") || strings.Contains(h.Recovery, "retries automatically") {
+		t.Fatalf("key limit guidance: %+v", h)
+	}
+}
+
+func TestPipelineHealthCatchingUpIsPending(t *testing.T) {
+	now := time.Now().UTC()
+	h := pipelineHealth(api.DataPipeline{State: "catching_up", DesiredState: "running", Reason: "waiting_for_replication", ObservationFresh: true, AppliedThroughAt: now.Add(-time.Second).Format(time.RFC3339Nano)}, now)
+	if h.State != "pending" || h.Code != "catching_up" {
+		t.Fatalf("catching-up pipeline reported misleading health: %+v", h)
 	}
 }
 

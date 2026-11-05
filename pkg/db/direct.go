@@ -198,9 +198,11 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err != nil {
 		return nil, fmt.Errorf("db: open direct pool: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
+	if err := defaultBootWaiter(ctx).ping(ctx, func(ctx context.Context) error {
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		defer cancel()
+		return pool.Ping(pingCtx)
+	}); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("db: ping direct pool: %w", err)
 	}

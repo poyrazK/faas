@@ -1998,6 +1998,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
+- [ADR-20261105103642: Pipeline health and verification pause handling](20261105103642-pipeline-health-and-verification-pause.md) — local/staging; catch-up health stays pending, verification admission honors pause intent, and key-limit recovery is actionable
+- [ADR-20261105110155: Pipeline worker deployment and recovery](20261105110155-pipeline-worker-deployment-recovery.md) — optional workers converge on deployment and recover from catalog outages
+- [ADR-20261105115244: Pipeline check contention and pilot refresh](20261105115244-pipeline-check-contention-and-pilot-refresh.md) — serialize shared checks, normalize UUIDs, retain poll state, and refresh alert scope
 - [ADR-20261104221106: Pipeline slot advancement and schema waits](20261104221106-pipeline-slot-advancement-and-schema-waits.md) — local/staging; unobserved slot advances require fresh verification, and CLI waits continue through pending schema refresh
 - [ADR-20261104211004: Pipeline native stream continuity and readiness](20261104211004-pipeline-native-stream-continuity-and-readiness.md) — local/staging; uncertain slot continuity gates a fresh proof, and lost native table readiness requires explicit recovery
 - [ADR-20261104202549: Pipeline source storage checks and missing-slot cleanup](20261104202549-pipeline-source-storage-and-slotless-cleanup.md) — local/staging; live rewrites gate reads through verification, and missing-main-slot cleanup needs no replacement replication capacity
