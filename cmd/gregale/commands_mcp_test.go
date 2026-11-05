@@ -149,12 +149,27 @@ func TestMCPDeploySecretsFileRejectsGlobalCatalogPin(t *testing.T) {
 }
 
 func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		name := "fields"
+		if empty {
+			name = "empty consent"
+		}
+		t.Run(name, func(t *testing.T) { testMCPCallInputResponsesFile(t, empty) })
+	}
+}
+
+func testMCPCallInputResponsesFile(t *testing.T, empty bool) {
+	t.Helper()
 	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var output, stderr bytes.Buffer
 	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &stderr, true
 	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	content, properties := `{"from":"2026-06-01","to":"2026-06-30"}`, `{"from":{"type":"string"},"to":{"type":"string"}}`
+	if empty {
+		content, properties = `{}`, `{}`
+	}
 	responses := filepath.Join(t.TempDir(), "responses.json")
-	if err := os.WriteFile(responses, []byte(`{"dates":{"action":"accept","content":{"from":"2026-06-01","to":"2026-06-30"}}}`), 0600); err != nil {
+	if err := os.WriteFile(responses, fmt.Appendf(nil, `{"dates":{"action":"accept","content":%s}}`, content), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -180,12 +195,17 @@ func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
 				t.Errorf("interactive capability missing: %v", caps)
 			}
 			if count == 1 {
-				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"input_required","requestState":"opaque","inputRequests":{"dates":{"method":"elicitation/create","params":{"mode":"form","message":"Choose dates","requestedSchema":{"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}}}}}}`, request.ID)
+				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"input_required","requestState":"opaque","inputRequests":{"dates":{"method":"elicitation/create","params":{"mode":"form","message":"Approve report?","requestedSchema":{"type":"object","properties":%s}}}}}}`, request.ID, properties)
 				return
 			}
 			inputResponses, _ := request.Params["inputResponses"].(map[string]any)
 			if inputResponses == nil || request.Params["requestState"] != "opaque" {
 				t.Errorf("missing response or opaque state: %v", request.Params)
+			}
+			response, _ := inputResponses["dates"].(map[string]any)
+			gotContent, ok := response["content"].(map[string]any)
+			if response["action"] != "accept" || !ok || empty && len(gotContent) != 0 {
+				t.Error("accepted form response lost its content object")
 			}
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","content":[{"type":"text","text":"preview ready"}]}}`, request.ID)
 		default:

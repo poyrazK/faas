@@ -1,5 +1,6 @@
 import { isMcpTaskToolName, mcpTaskHandlerInventory } from './task-compatibility.js';
 import { createMcpTaskLeaseDeadline } from './task-lease.js';
+import { snapshotTaskOutputSchema, validateTaskOutput } from './task-output.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
@@ -50,6 +51,10 @@ function wireTask(task, pollIntervalMs) {
   return result;
 }
 
+function elicitationMode(params) {
+  return Object.hasOwn(params, 'mode') ? params.mode : 'form';
+}
+
 function validateInputRequests(requests) {
   if (!requests || typeof requests !== 'object' || Array.isArray(requests)) throw new Error('MCP task input requests must be an object');
   const entries = Object.entries(requests);
@@ -62,7 +67,7 @@ function validateInputRequests(requests) {
     if (!request.params || typeof request.params !== 'object' || Array.isArray(request.params)) {
       throw new Error('MCP task input request params must be an object');
     }
-    if (request.method === 'elicitation/create' && !['form', 'url'].includes(request.params.mode)) {
+    if (request.method === 'elicitation/create' && !['form', 'url'].includes(elicitationMode(request.params))) {
       throw new Error('MCP elicitation task requests must declare form or url mode');
     }
   }
@@ -299,7 +304,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         if (abortReason === 'shutdown') throw new Error('Task worker is stopping');
         validateInputRequests(requests);
         for (const request of Object.values(requests)) {
-          const capability = request.method === 'elicitation/create' ? `${request.method}:${request.params.mode}` : request.method;
+          const capability = request.method === 'elicitation/create' ? `${request.method}:${elicitationMode(request.params)}` : request.method;
           if (!task.input_methods?.includes(capability)) throw new Error(`MCP task client did not declare support for ${request.method}`);
         }
         const state = await store.requestInputs({ taskID: task.task_id, leaseToken: task.lease_token, requests });
@@ -323,7 +328,10 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
         },
       });
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
-      else if (abortReason !== 'lease_lost' && abortReason !== 'shutdown') await store.complete(task.task_id, task.lease_token, result);
+      else if (abortReason !== 'lease_lost' && abortReason !== 'shutdown') {
+        validateTaskOutput(result, task.output_schema);
+        await store.complete(task.task_id, task.lease_token, result);
+      }
     } catch (error) {
       if (error === TASK_INPUT_REQUIRED) return;
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
@@ -476,12 +484,14 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       })();
       return stopping;
     },
-    async create(toolName, args, authInfo, authMode, clientCapabilities = {}) {
+    async create(toolName, args, authInfo, authMode, clientCapabilities = {}, outputSchema) {
       if (stopping) throw new Error('MCP task runtime is draining');
       const handler = handlers[toolName];
       if (!handler || typeof handler.execute !== 'function') throw new Error('MCP task tool is not registered');
-      handler.validate?.(args);
-      const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities) });
+      const outputContract = snapshotTaskOutputSchema(outputSchema);
+      await handler.validate?.(args);
+      if (stopping) throw new Error('MCP task runtime is draining');
+      const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities), outputSchema: outputContract });
       if (workerEnabled) void drain();
       return {
         resultType: 'task', taskId: task.task_id, status: 'working',

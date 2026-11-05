@@ -3297,6 +3297,20 @@ Replacing the sample `customer_record` resource uses the supplied URI/template,
 handler and completion callbacks. Custom handlers enforce ownership of their
 application data; the original sample retains its own ownership checks.
 
+Custom tool arguments are validated against the declared `inputSchema` before
+the handler runs or a task is queued. Validation leaves argument values and
+defaults unchanged. Go supports Draft 7 and 2020-12 schemas; Python uses
+`jsonschema` (2020-12 by default). Local schema references work without network
+access. Go rejects unresolved external references at registration; Python
+rejects calls requiring external retrieval. Handlers enforce business rules
+and ownership. A custom tool handler's successful result must include
+`structuredContent` matching its declared `outputSchema`. Error results with
+`isError: true` and intermediate `input_required` responses may omit structured
+output. Both schemas are checked before
+catalog registration or replacement, and invalid output is returned as a
+redacted tool error. Node uses the SDK's resource-template matcher for both reads
+and subscriptions, including parameter names such as `{item.id}`.
+
 For a serving guard against catalog drift, set the same
 `MCP_CATALOG_EXPECTED_SHA256` environment value on every serving replica. Start
 one instance without the pin and read `catalog_sha256` from `/healthz`, then
@@ -3494,6 +3508,10 @@ The CLI sends form responses only after an explicit opt-in and bounds the
 number and size of requests it handles. Calls without either input option keep
 the existing single-request behavior.
 
+Consent forms with `properties: {}` are supported in interactive calls and Task
+input requests. They still require an explicit response; accepting an empty form
+uses `"action": "accept", "content": {}`.
+
 ## MCP Tasks
 
 Gregale's Go client supports the `io.modelcontextprotocol/tasks` extension, and
@@ -3502,6 +3520,29 @@ tools. Tasks use the modern `2026-07-28` protocol. Each starter includes
 `build_report`, a safe example that returns a task handle for opted-in clients
 when durable tasks are enabled. Other calls stay synchronous. The server
 returns the handle only after PostgreSQL can read the new row.
+
+For tools declaring `outputSchema`, each starter saves a JSON snapshot with the
+task at admission. Workers check final successful `structuredContent` against
+that original contract, including after retry, input pause, worker restart or
+catalog replacement. Invalid output fails with a redacted error and is not saved
+as a successful result. Tool results marked `isError: true` may omit structured
+output. Node also awaits asynchronous task validators before persistence and
+keeps handle delivery separate from final output validation.
+
+The Go worker also catches panics raised by application Task executors and records
+a generic terminal failure without logging the panic value. Cancellation,
+shutdown and lease ownership checks still apply, and the worker can process
+subsequent Tasks.
+
+Existing Task databases require an explicit starter migration to add the nullable
+`output_schema` JSONB column, even if schema version 1 is installed: use
+`npm run tasks:migrate -- apply`, `go run . tasks-migrate apply`, or
+`python task_schema.py apply` with the migration binding. Migrate first, then
+upgrade and drain all older workers before deploying producers that rely on the
+contract check; old workers ignore this metadata. Tasks without a saved schema
+retain their prior behavior. Schemas contain reviewed catalog metadata in
+plaintext; task payload encryption is unchanged. See
+[the Task output-contract decision](adr/20261105161206-mcp-task-output-contracts.md).
 
 The Go and Python starters support durable enqueue, worker execution, task
 status reads, cancellation, encrypted client input through `tasks/update`, the
@@ -3683,6 +3724,10 @@ the worker then replays the handler from its beginning with the saved responses
 available under the same keys. Request and response payloads are encrypted
 with the task key, and request keys cannot be reused for a different prompt.
 The original client must have declared support for each embedded request type.
+An `elicitation/create` request without `params.mode` uses form mode in all three
+starters and requires the client's form elicitation capability. Explicit modes
+must be `form` or `url`. Requests retain their original shape when persisted so
+the same handler request can replay after the client responds.
 Keep handlers idempotent because worker recovery can also replay them after a
 crash.
 
@@ -3701,6 +3746,19 @@ and Python starters also compare catalogs on a bounded poll, so a missed hint
 is recovered within five seconds (or the configured task poll interval when
 longer). A snapshot poll also recovers missed task notifications and listener
 reconnects. Active streams and watched task IDs are capped per process.
+
+Node also caps pending setup messages and socket output at 1 MiB each. It closes
+a stream on overflow or when backpressure persists for 15 seconds; later events
+cannot extend that deadline. Go bounds each subscription write and flush,
+including keepalive comments, by 15 seconds or the remaining verified token
+lifetime. Idle streams retain their normal lifetime. Clients can reconnect for
+fresh task snapshots and refetch resource contents after a stream closes.
+
+Python closes the HTTP connection when rejecting a POST before reading its body,
+so a subsequent retry starts on a clean connection. Successful requests preserve
+normal HTTP keepalive. Node reports malformed JSON as HTTP 400 with JSON-RPC
+parse error `-32700`, and bodies over 1 MiB as HTTP 413 with `request_too_large`;
+neither response includes submitted content.
 
 Each starter exposes a resource update publisher for application-owned changes:
 Node returns `notifyResourceUpdated(uri)` from `createApp`, Go provides
@@ -3959,6 +4017,25 @@ entries missing from it; `{}` hides and denies every entry of that catalog
 type. Null maps and scope arrays fail configuration validation. Open mode
 accepts only empty scope arrays. The generated public starter lists its
 harmless entries explicitly.
+
+Provider JWKs must permit signature verification: when `key_ops` is present,
+it must contain `verify`. Encryption-only or signing-only keys cannot validate
+access tokens. Failed JWKS refreshes have a 30-second cooldown in every starter,
+including HTTP, network and malformed-response failures. A still-fresh cached
+verification key remains usable during the cooldown; expired keys are not used.
+JWKS responses are limited to 1 MiB in every starter. Refreshes have a total
+five-second deadline, including body reads. Python coalesces concurrent
+refreshes, discards results arriving after the deadline, and verifies tokens
+with fresh cached keys while a refresh is pending.
+Go likewise coalesces refreshes without holding the cache lock during network
+I/O, so fresh cached keys remain usable while a rotation refresh is pending.
+The token algorithm must also match a JWK's declared `alg`. Without a JWT
+`kid`, selection requires exactly one key eligible for that algorithm, key
+type, purpose and operation; ambiguous key sets are rejected. A mixed RSA/EC
+key set can provide one eligible key for each supported algorithm.
+The OAuth provider doctor's signing-key check applies the same `key_ops`
+requirement and does not count encryption-only or malformed-operation keys
+as usable verification keys.
 
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
@@ -4606,8 +4683,8 @@ explanation instead of being interpreted as zero work. Queue explanations includ
 `unsupported_handler`, `no_active_workers`, and `idle_queue`.
 
 Workers register their supported tool/handler-version pairs in
-`gregale_mcp_task_workers`. Heartbeats refresh at a bounded cadence (20–30 seconds,
-depending on polling), expire after 90 seconds using database time, and are
+`gregale_mcp_task_workers` in all three starters. Heartbeats refresh at a bounded cadence (10–30 seconds,
+depending on the runtime and polling), expire after 90 seconds using database time, and are
 withdrawn when a worker stops accepting work. Worker registrations describe
 availability to claim work; they are not a guarantee that a handler succeeds.
 Expired registrations do not participate in inventory and are pruned by workers.
@@ -4615,6 +4692,15 @@ The observer reads this table without writing registrations or migrating schema.
 Run `npm run tasks:migrate -- apply` with migration credentials before
 starting an upgraded observer. Include read access to the worker registry in any
 observer database grants, and upgrade every worker so the inventory is complete.
+
+For Go and Python upgrades, run their explicit `tasks-migrate apply` command
+before deploying the new runtime, even when the native schema marker is already
+version 1. This creates the shared worker registry used by the complete health
+gauges. Runtime worker roles need `SELECT`, `INSERT`, `UPDATE` and `DELETE` on
+`gregale_mcp_task_workers`; observer roles need only `SELECT` on that table.
+Native workers mark themselves draining before withdrawing handler availability,
+retain their drain registration through the configured drain deadline, and remove
+it when stopping. Late local heartbeats cannot reactivate the worker.
 
 `mcp_tasks_active_workers` counts unexpired registrations.
 `mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and
