@@ -3338,14 +3338,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Invalid deploy manifest", manifestErr)
 			}
 		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		plan, planWarnings, planErr := resolveSimpleAppPlanWithWarnings(sourceDir, slug, *profile, sourceKind, *app, *function)
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		preview := newCLIPreview("local inference", slug, *environment, source, changes, "No login or remote state checked; resource defaults and runtime inference are not a deployment guarantee.")
 		deploymentPreviewTargetSources(preview, contextDir, *name != "", explicit["environment"])
-		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON, preview)
+		return renderSimpleAppPlanWithWarnings(osStdout, plan, planWarnings, jsonOutput || *diffJSON, preview)
 	}
 	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
 		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction
@@ -3407,7 +3407,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			return 1
 		}
-		if *doctorStrict && rep.HasWarnings() && !jsonOutput {
+		if *doctorStrict && rep.HasStrictWarnings() && !jsonOutput {
 			renderDoctorHuman(osStderr, rep)
 		}
 		if !*doctorStrict && (rep.HasErrors() || rep.HasWarnings() || rep.HasProfileWarnings()) {

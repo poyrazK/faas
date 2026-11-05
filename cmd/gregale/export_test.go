@@ -2711,3 +2711,8 @@ var ResolveTestRegressionConfig = resolveTestRegressionConfig
 var CompareTestStagedLoadRelative = compareTestStagedLoadRelative
 var CompareTestGateErrorRate = compareTestGateErrorRate
 var CompareRepeatedTestGateErrorRate = compareRepeatedTestGateErrorRate
+
+// Profile warnings in doctor --strict and deploy --plan (#6640).
+var CmdDoctor = cmdDoctor
+var ResolveSimpleAppPlanWithWarnings = resolveSimpleAppPlanWithWarnings
+var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
