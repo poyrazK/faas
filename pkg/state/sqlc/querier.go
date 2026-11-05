@@ -2642,6 +2642,7 @@ type Querier interface {
 	// ADR-20261101030512: the event subscriptions a production manifest deploy
 	// declares, applied once the deployment serves all production traffic.
 	InsertDeploymentEventSubscriptionIntent(ctx context.Context, db DBTX, arg InsertDeploymentEventSubscriptionIntentParams) error
+	InsertDeploymentPromotionReceipt(ctx context.Context, db DBTX, arg InsertDeploymentPromotionReceiptParams) error
 	InsertDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg InsertDeploymentRegistryRootfsParams) (DeploymentRegistryRootf, error)
 	InsertDeploymentRegistryVerification(ctx context.Context, db DBTX, arg InsertDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
 	InsertDeploymentRuntimeScan(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeScanParams) (DeploymentRuntimeScan, error)
@@ -4456,6 +4457,7 @@ type Querier interface {
 	LockScheduledRelease(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduledRelease, error)
 	LockSecretEncryptionKeyRetirement(ctx context.Context, db DBTX) error
 	LockSecretRekeyApp(ctx context.Context, db DBTX, arg LockSecretRekeyAppParams) error
+	LockServiceAbortApp(ctx context.Context, db DBTX, appID string) (string, error)
 	// Account lock serializes Free organization creation across apid processes.
 	LockSharedOrgCreator(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockSnapshotPublicationApp(ctx context.Context, db DBTX, arg LockSnapshotPublicationAppParams) (pgtype.UUID, error)
@@ -5781,6 +5783,7 @@ type Querier interface {
 	// ADR-20261028110044 amendment 4: when a traffic change last took the
 	// deployment to 100%, which anchors the monitor's rollback window.
 	ReadDeploymentPromotedAt(ctx context.Context, db DBTX, deploymentID string) (pgtype.Timestamptz, error)
+	ReadDeploymentPromotionReceipt(ctx context.Context, db DBTX, arg ReadDeploymentPromotionReceiptParams) (ReadDeploymentPromotionReceiptRow, error)
 	ReadDeploymentReleaseAddition(ctx context.Context, db DBTX, appID string) (ReadDeploymentReleaseAdditionRow, error)
 	ReadDeploymentReleaseSecrets(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadDeploymentSubmission(ctx context.Context, db DBTX, arg ReadDeploymentSubmissionParams) (ReadDeploymentSubmissionRow, error)
@@ -5792,6 +5795,7 @@ type Querier interface {
 	ReadEnvBatchReceipt(ctx context.Context, db DBTX, arg ReadEnvBatchReceiptParams) (ReadEnvBatchReceiptRow, error)
 	ReadEnvironmentBudgetIdentity(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetIdentityParams) (ReadEnvironmentBudgetIdentityRow, error)
 	ReadEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptParams) (ReadEnvironmentBudgetReceiptRow, error)
+	ReadEnvironmentBudgetReceiptForApp(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptForAppParams) (ReadEnvironmentBudgetReceiptForAppRow, error)
 	ReadEnvironmentQueueAdmissionProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	// ADR-531: private stage transport, independent of the legacy completion inbox.
 	ReadEnvironmentQueueDeliveryAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ReadEnvironmentQueueDeliveryAccountRow, error)
@@ -6172,6 +6176,8 @@ type Querier interface {
 	ReadScheduledStartDeployment(ctx context.Context, db DBTX, id pgtype.UUID) (ReadScheduledStartDeploymentRow, error)
 	ReadSecretEncryptionKeyUsage(ctx context.Context, db DBTX, kid string) (ReadSecretEncryptionKeyUsageRow, error)
 	ReadSecretKeyRetirementFence(ctx context.Context, db DBTX) (int64, error)
+	ReadServiceAbortAcceptance(ctx context.Context, db DBTX, arg ReadServiceAbortAcceptanceParams) ([]byte, error)
+	ReadServiceAbortReceipt(ctx context.Context, db DBTX, arg ReadServiceAbortReceiptParams) ([]byte, error)
 	ReadServiceBindingRevision(ctx context.Context, db DBTX, arg ReadServiceBindingRevisionParams) (string, error)
 	ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, arg ReadServicePolicyActiveReleaseParams) (bool, error)
 	// ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
