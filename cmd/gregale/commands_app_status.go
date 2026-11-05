@@ -21,11 +21,6 @@ const (
 	subStatus = "status"
 	subWait   = "wait"
 
-	// exitWaitTimeout is the exit code of a wait that ran out of time: the
-	// CLI's retry-later code, as job and preview waits use it
-	// (ADR-20261030151810).
-	exitWaitTimeout = 3
-
 	// codeWaitTimedOut is the problem code of a wait that ran out of time.
 	codeWaitTimedOut = "wait_timed_out"
 )
