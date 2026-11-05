@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -46,6 +47,54 @@ func (s *server) requestAnalyticsTotals(ctx context.Context, app state.App, acct
 	}
 	rows, err := s.store.RequestTelemetryAnalyticsByDimension(ctx, byDimension)
 	return summary, rows, err
+}
+
+// requestAnalyticsRollupSplit holds the rollups' requests per route, method
+// and deployment when they answer the window; nil leaves the raw counts.
+type requestAnalyticsRollupSplit map[analyticsrollup.RouteDeploymentKey]int64
+
+func (s *server) requestAnalyticsRollupSplit(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow) (requestAnalyticsRollupSplit, error) {
+	reader, ok := analyticsrollup.Covers(ctx, s.store, app.ID, window.From)
+	if !ok {
+		return nil, nil
+	}
+	split, err := analyticsrollup.RouteDeployments(ctx, reader, app.ID, acct.ID, window.From, window.Until)
+	return requestAnalyticsRollupSplit(split), err
+}
+
+// deployments replaces the raw (ingest-capped) per-deployment counts with
+// the rollups', re-ranks them, and sets the window total to the rollup
+// total, so the "other" bucket holds only the unlisted deployments.
+func (split requestAnalyticsRollupSplit) deployments(rows []sqlc.RequestTelemetryAnalyticsByDeploymentRow, total int64) []sqlc.RequestTelemetryAnalyticsByDeploymentRow {
+	if split == nil {
+		return rows
+	}
+	byDeployment := map[string]int64{}
+	for k, n := range split {
+		byDeployment[k.DeploymentID] += n
+	}
+	for i := range rows {
+		rows[i].Requests = byDeployment[rows[i].DeploymentID]
+		rows[i].TotalRequests = total
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Requests > rows[j].Requests })
+	return rows
+}
+
+// routeDeployments replaces the raw per-route deployment counts with the
+// rollups'. The __other__ rows are left for the caller, which recomputes
+// them as each route's remainder.
+func (split requestAnalyticsRollupSplit) routeDeployments(rows []sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow) []sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow {
+	if split == nil {
+		return rows
+	}
+	for i := range rows {
+		if rows[i].DeploymentID == "__other__" {
+			continue
+		}
+		rows[i].Requests = split[analyticsrollup.RouteDeploymentKey{Route: rows[i].Route, Method: rows[i].Method, DeploymentID: rows[i].DeploymentID}]
+	}
+	return rows
 }
 
 // requestAnalyticsSampledMeasures reads the raw groups for the measures

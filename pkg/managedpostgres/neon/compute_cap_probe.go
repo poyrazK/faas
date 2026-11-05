@@ -13,11 +13,13 @@ var _ managedpostgres.ComputeCapProber = (*Provider)(nil)
 
 // Compute cap probe timings. Neon's counters lag, so the probe holds the
 // compute busy for a measured interval and waits for the counters to show it.
+// Neon suspends a compute at its quota only when the counters next move, so
+// each wait allows 35 minutes: the probe can take over an hour.
 const (
 	computeCapProbeHold          = 90 * time.Second
 	computeCapProbeMinimumActive = 30
-	computeCapProbeCounterWait   = 5 * time.Minute
-	computeCapProbeSuspendWait   = 3 * time.Minute
+	computeCapProbeCounterWait   = 35 * time.Minute
+	computeCapProbeSuspendWait   = 35 * time.Minute
 	computeCapProbeRefuseWait    = 30 * time.Second
 	computeCapProbeResumeWait    = 2 * time.Minute
 	computeCapProbePoll          = 5 * time.Second

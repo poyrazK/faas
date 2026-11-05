@@ -24,7 +24,8 @@ overage setting all live in apid.
 
 1. **Price.** Managed PostgreSQL compute above the plan's monthly allowance
    costs $0.20 per CU-hour (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`
-   = 20,000 millicents). It is charged per compute-unit second, rounded down to
+   = 20,000 millicents; superseded: ADR-20261102072425 sets $0.2331, Neon
+   Scale's price plus 5%). It is charged per compute-unit second, rounded down to
    a whole millicent. The charge stops at the ceiling (twice the allowance), so
    a month costs at most one allowance: Hobby $5, Pro $15, Scale $40. Free has
    no overage.

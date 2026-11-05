@@ -190,7 +190,13 @@ func (l *Loop) reconcileDeploymentSecurityLease(ctx context.Context, app state.A
 	if !private {
 		reason = securityScanLeaseFailure(dep, now, scanEvery)
 	}
+	if reason == "" {
+		l.forgetLeaseRescan(dep.ID)
+	}
 	if reason == "" || dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+		return
+	}
+	if !private && reason == "security_scan_evidence_expired" && l.leaseRescanStarted(ctx, app, dep, now) {
 		return
 	}
 	if auditErr := l.appendSecurityScanLeaseAudit(ctx, app, dep, reason, now); auditErr != nil {
@@ -284,6 +290,49 @@ func (l *Loop) quarantineSignatureFailure(ctx context.Context, app state.App, de
 // promptly on the following lease tick. One lease tick of grace prevents the
 // cheap checker from racing a scanner result that is being persisted at the
 // same boundary.
+// leaseRescanGrace is how long a live release whose scan evidence merely
+// expired keeps serving while imaged rescans it (ADR-20261020085706 amendment
+// 14). Rescans cover live releases only, so a release that serves again after
+// a rollback carries evidence from when it last served, hours old: the lease
+// parked the app about a minute into the rollback meant to end an incident.
+// A rescan that fails or finds the image unsafe still parks it: the first by
+// the lease once the grace ends, the second at once.
+const leaseRescanGrace = 15 * time.Minute
+
+// leaseRescanStarted starts one rescan of dep and reports whether its lease
+// should wait for it. It waits through leaseRescanGrace once per expiry.
+func (l *Loop) leaseRescanStarted(ctx context.Context, app state.App, dep state.Deployment, now time.Time) bool {
+	if l.handler == nil {
+		return false
+	}
+	l.leaseRescanMu.Lock()
+	if l.leaseRescans == nil {
+		l.leaseRescans = map[string]time.Time{}
+	}
+	started, ok := l.leaseRescans[dep.ID]
+	if ok && now.Sub(started) >= leaseRescanGrace {
+		delete(l.leaseRescans, dep.ID)
+		l.leaseRescanMu.Unlock()
+		return false
+	}
+	if !ok {
+		l.leaseRescans[dep.ID] = now
+	}
+	l.leaseRescanMu.Unlock()
+	if !ok {
+		l.log.Info("imaged: scan evidence expired; rescanning before the lease parks the release",
+			"deployment", dep.ID, "app", app.ID, "grace", leaseRescanGrace)
+		go l.rescanLiveDeployment(ctx, app, dep)
+	}
+	return true
+}
+
+func (l *Loop) forgetLeaseRescan(deploymentID string) {
+	l.leaseRescanMu.Lock()
+	delete(l.leaseRescans, deploymentID)
+	l.leaseRescanMu.Unlock()
+}
+
 func securityScanLeaseFailure(dep state.Deployment, now time.Time, scanEvery time.Duration) string {
 	if dep.ScanStatus != "complete" {
 		return "security_scan_evidence_incomplete"

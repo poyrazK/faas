@@ -102,10 +102,10 @@ const (
 )
 
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
-// deleted database holds the gate until its final usage correction lands, so
-// without it a timed wait reads like an outage (production-us hunt #9,
-// H9-P101).
-const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until its final usage correction is collected, up to a few hours. Existing databases keep running; retry later."
+// deleted database holds the gate until the hour it was deleted in has been
+// collected, so without it a timed wait reads like an outage (production-us
+// hunt #9, H9-P101; ADR-20261104143000).
+const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until the hour it was deleted in has closed and its usage is collected, usually under an hour. Existing databases keep running; retry later."
 
 type State string
 
@@ -721,6 +721,12 @@ type UsageProgress struct {
 	// A resource created inside the current window has no completed window
 	// to collect yet, so its missing first observation is not a gap.
 	CreatedAt time.Time
+	// CreationLeaseUntil is snapshot metadata: while the resource is
+	// provisioning, when its worker's lifecycle lease ends. Zero otherwise.
+	CreationLeaseUntil time.Time
+	// DatabaseID is snapshot metadata: the database this coverage is for.
+	// The compute cap sweep reads a scope's use since it.
+	DatabaseID string
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an

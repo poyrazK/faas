@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -109,11 +110,16 @@ type OnDemandTLSPolicy struct {
 	log       *slog.Logger
 	decisions *prometheus.CounterVec
 
-	mu       sync.Mutex
-	tokens   float64
-	refilled time.Time
-	unknown  map[string]time.Time // host → negative-cache expiry
-	known    map[string]time.Time // recently allowed host → bucket-bypass expiry
+	mu            sync.Mutex
+	tokens        float64
+	refilled      time.Time
+	unknown       map[string]time.Time // host → negative-cache expiry
+	known         map[string]time.Time // recently allowed host → bucket-bypass expiry
+	hints         *tlsKnownHostHints
+	hintsScan     *tlsKnownHostScan
+	hintsNextLoad time.Time
+	hintsErr      error
+	hintsLoad     singleflight.Group
 }
 
 // NewOnDemandTLSPolicy builds the policy. appsDomain is the platform zone
@@ -173,6 +179,9 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 		return false, OnDemandTLSDenyPlatform
 	}
 	if p.store == nil {
+		return false, OnDemandTLSDenyError
+	}
+	if err := p.refreshKnownHostHints(ctx); err != nil {
 		return false, OnDemandTLSDenyError
 	}
 	if decision, ok := p.admitLookup(host); !ok {
@@ -354,6 +363,9 @@ func (p *OnDemandTLSPolicy) admitLookup(host string) (string, bool) {
 		}
 		delete(p.known, host)
 	}
+	if p.hints.contains(host) {
+		return "", true
+	}
 	burst := float64(api.OnDemandTLSAskLookupBurst)
 	if p.refilled.IsZero() {
 		p.tokens, p.refilled = burst, now
@@ -393,6 +405,9 @@ func (p *OnDemandTLSPolicy) rememberKnown(host string) {
 		p.known = make(map[string]time.Time)
 	}
 	p.known[host] = now.Add(time.Duration(api.OnDemandTLSAskKnownHostSeconds) * time.Second)
+	if p.hints != nil {
+		p.hints.add(host)
+	}
 }
 
 func normalizeTLSHost(host string) string {

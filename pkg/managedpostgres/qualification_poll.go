@@ -2,6 +2,7 @@ package managedpostgres
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -58,6 +59,35 @@ func qualifyProviderReadyWithRestore(ctx context.Context, provider Provider, res
 		}
 		if err := qualificationPoll(ctx, interval); err != nil {
 			return observed, err
+		}
+	}
+}
+
+// qualifyProviderUsage reads the usage of the hour the resource was created
+// in: a fresh resource has none before it. With wait, it reads once that
+// hour has closed and retries while the provider has not caught up; on
+// timeout it returns the provider's last error, not the context's.
+func qualifyProviderUsage(ctx context.Context, provider Provider, resourceID string, created time.Time, interval time.Duration, wait bool) (Usage, error) {
+	window := UsageWindow{From: created.UTC().Truncate(time.Hour)}
+	window.To = window.From.Add(time.Hour)
+	if !wait {
+		return provider.Usage(ctx, resourceID, window)
+	}
+	if remaining := time.Until(window.To); remaining > 0 {
+		if err := qualificationPoll(ctx, remaining); err != nil {
+			return Usage{}, err
+		}
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	for {
+		usage, err := provider.Usage(ctx, resourceID, window)
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrUsageStale) {
+			return usage, err
+		}
+		if qualificationPoll(ctx, interval) != nil {
+			return usage, err
 		}
 	}
 }

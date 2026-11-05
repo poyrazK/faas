@@ -7666,6 +7666,21 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "Object storage inventory scans are failing"
           description: "More than 20% of apid's bucket inventory attempts failed over 15m. A bucket whose inventory is older than 900 s, and whose listing is not advancing, refuses its own uploads and reads until a listing completes."
+      # 11-03 review: the failure-ratio alert above needs scans to happen, so a
+      # sweep that stopped (or never completes) stayed silent while every
+      # bucket's inventory aged past 900 s.
+      - alert: FaasObjectStorageInventorySweepStopped
+        expr: |
+          time() - max(faas_object_storage_inventory_sweep_last_success_timestamp_seconds) > 600
+        for: 5m
+        labels:
+          severity: page
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
+          description: "No inventory sweep has completed without error for {{ $value | humanizeDuration }}. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."
       # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
       # billing account) withdraws object storage; every bucket create failed
       # for three weeks with nothing paging.

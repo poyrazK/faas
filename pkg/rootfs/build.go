@@ -1185,6 +1185,16 @@ async function respondFetchBody(out, status, headers, body) {
 
 // handleOne answers one request: input is the raw line, or the decoded
 // request on a shared worker.
+// The SDK's request context (release, signed deadline, time left): when the
+// handler loaded @gregale/sdk-node, the SDK registers its entry point here and
+// its service-call fetch reads the context (ADR-20261102082606 amendment 2).
+// Without the SDK the handler runs exactly as before.
+const GREGALE_REQUEST_CONTEXT = Symbol.for("gregale.sdk.requestContext.v1");
+function inGregaleRequestContext(headers, run) {
+  const enter = globalThis[GREGALE_REQUEST_CONTEXT];
+  return typeof enter === "function" ? enter(headers, run) : run();
+}
+
 async function handleOne(input, out) {
   let invocationID = "";
   try {
@@ -1255,6 +1265,8 @@ async function handleOne(input, out) {
     return;
   }
   postgresResources?.assertReady();
+  // The handler, and any body it streams, run in the SDK's request context.
+  await inGregaleRequestContext(headers, async () => {
   const value = await invoke();
   if (value && typeof value === "object" && typeof value.arrayBuffer === "function" &&
       typeof value.status === "number" && value.headers) {
@@ -1292,6 +1304,7 @@ async function handleOne(input, out) {
     responseBody = JSON.stringify(responseBody);
   }
   emitWhole(out, status, normalizedHeaders, Buffer.from(responseBody));
+  });
   } catch (err) {
     if (out.cancelled) return;
     const rawMessage = err instanceof Error ? err.message : String(err);
@@ -1363,6 +1376,7 @@ const pythonFunctionAdapter = `# FAAS_PERSISTENT_PROTOCOL_V1
 import asyncio
 import base64
 import concurrent.futures
+import contextlib
 import importlib.util
 import inspect
 import json
@@ -1525,6 +1539,17 @@ def _error_envelope(message, invocation_id):
         "body_b64": base64.b64encode(error_body.encode("utf-8")).decode("ascii"),
     }
 
+def _gregale_context(request):
+    # The SDK's request context (release, signed deadline, time left) when
+    # the handler imported faas_sdk; its transports read it on service calls
+    # (ADR-20261102082606 amendment 2). Without the SDK, nothing changes.
+    module = sys.modules.get("faas_sdk.release_context")
+    enter = getattr(module, "with_gregale_request_context", None)
+    headers = request.get("headers") if isinstance(request, dict) else None
+    if enter is None or not isinstance(headers, dict):
+        return contextlib.nullcontext()
+    return enter(headers)
+
 def _serve_lines():
     for line in sys.stdin:
         if not line.strip():
@@ -1538,21 +1563,22 @@ def _serve_lines():
         # handler. Mirror the Node adapter: a terminal handler_error envelope.
         try:
             request = json.loads(line)
-            event, invocation_id = _event(request)
-            result = handler(event, _Context(invocation_id, lifecycle_hook=request.get("lifecycle_hook", "")))
-            if inspect.isawaitable(result): result = loop.run_until_complete(result)
-            status, headers_out, response_body = _shape(result)
-            if _is_stream_body(response_body):
-                streaming = True
-                _emit({"frame": "head", "status": status, "headers": headers_out})
-                if hasattr(response_body, "__aiter__"):
-                    loop.run_until_complete(_drain_async(response_body))
-                else:
-                    for piece in response_body:
-                        _emit_chunk(piece)
-                _emit({"frame": "end"})
-                continue
-            envelope = _whole(status, headers_out, response_body)
+            with _gregale_context(request):
+                event, invocation_id = _event(request)
+                result = handler(event, _Context(invocation_id, lifecycle_hook=request.get("lifecycle_hook", "")))
+                if inspect.isawaitable(result): result = loop.run_until_complete(result)
+                status, headers_out, response_body = _shape(result)
+                if _is_stream_body(response_body):
+                    streaming = True
+                    _emit({"frame": "head", "status": status, "headers": headers_out})
+                    if hasattr(response_body, "__aiter__"):
+                        loop.run_until_complete(_drain_async(response_body))
+                    else:
+                        for piece in response_body:
+                            _emit_chunk(piece)
+                    _emit({"frame": "end"})
+                    continue
+                envelope = _whole(status, headers_out, response_body)
         except Exception as exc:
             traceback.print_exc()
             message = _error_message(exc)
@@ -1582,26 +1608,30 @@ async def _serve_one(request, rid, cancelled):
     invocation_id = ""
     streaming = False
     try:
-        event, invocation_id = _event(request)
-        status, headers_out, response_body = _shape(await handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", ""))))
-        if _is_stream_body(response_body):
-            streaming = True
-            emit({"frame": "head", "status": status, "headers": headers_out})
-            if hasattr(response_body, "__aiter__"):
-                await _drain_async(response_body, emit)
-            else:
-                for piece in response_body:
-                    _emit_chunk(piece, emit)
-            emit({"frame": "end"})
-            return
-        emit(_whole(status, headers_out, response_body))
+        with _gregale_context(request):
+            event, invocation_id = _event(request)
+            status, headers_out, response_body = _shape(await handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", ""))))
+            if _is_stream_body(response_body):
+                streaming = True
+                emit({"frame": "head", "status": status, "headers": headers_out})
+                if hasattr(response_body, "__aiter__"):
+                    await _drain_async(response_body, emit)
+                else:
+                    for piece in response_body:
+                        _emit_chunk(piece, emit)
+                emit({"frame": "end"})
+                return
+            emit(_whole(status, headers_out, response_body))
     except Exception as exc:
         traceback.print_exc()
         message = _error_message(exc)
         emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
 
-async def _await(awaitable):
-    return await awaitable
+async def _await(awaitable, request=None):
+    # run_coroutine_threadsafe runs this in the loop thread's context, not the
+    # handler thread's, so it re-enters the request's context itself.
+    with _gregale_context(request):
+        return await awaitable
 
 def _serve_sync(request, rid, cancelled):
     # Runs on a handler thread. Python cannot interrupt a thread, so a
@@ -1613,24 +1643,25 @@ def _serve_sync(request, rid, cancelled):
     invocation_id = ""
     streaming = False
     try:
-        event, invocation_id = _event(request)
-        result = handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", "")))
-        if inspect.isawaitable(result):
-            result = asyncio.run_coroutine_threadsafe(_await(result), loop).result()
-        status, headers_out, response_body = _shape(result)
-        if _is_stream_body(response_body):
-            streaming = True
-            emit({"frame": "head", "status": status, "headers": headers_out})
-            if hasattr(response_body, "__aiter__"):
-                asyncio.run_coroutine_threadsafe(_drain_async(response_body, emit), loop).result()
-            else:
-                for piece in response_body:
-                    if cancelled.is_set():
-                        break
-                    _emit_chunk(piece, emit)
-            emit({"frame": "end"})
-            return
-        emit(_whole(status, headers_out, response_body))
+        with _gregale_context(request):
+            event, invocation_id = _event(request)
+            result = handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", "")))
+            if inspect.isawaitable(result):
+                result = asyncio.run_coroutine_threadsafe(_await(result, request), loop).result()
+            status, headers_out, response_body = _shape(result)
+            if _is_stream_body(response_body):
+                streaming = True
+                emit({"frame": "head", "status": status, "headers": headers_out})
+                if hasattr(response_body, "__aiter__"):
+                    asyncio.run_coroutine_threadsafe(_await(_drain_async(response_body, emit), request), loop).result()
+                else:
+                    for piece in response_body:
+                        if cancelled.is_set():
+                            break
+                        _emit_chunk(piece, emit)
+                emit({"frame": "end"})
+                return
+            emit(_whole(status, headers_out, response_body))
     except Exception as exc:
         traceback.print_exc()
         message = _error_message(exc)

@@ -73,13 +73,7 @@ func (m *MemStore) CreateSharedOrg(ctx context.Context, ownerID, slug, name stri
 	if _, exists := m.accounts[ownerID]; !exists {
 		return Org{}, ErrNotFound
 	}
-	owned := 0
-	for _, org := range m.orgs {
-		member := m.memberships[orgAccountKey{OrgID: org.ID, AccountID: ownerID}]
-		if !org.Personal && !org.DeletedPending && org.Plan == api.PlanFree && member.Role == OrgRoleOwner && member.RemovedAt == nil {
-			owned++
-		}
-	}
+	owned := m.ownedFreeSharedOrgsLocked(ownerID)
 	if owned >= api.FreeOrganizationsOwnedMax {
 		return Org{}, &OrgFreeLimitError{Owned: owned}
 	}
@@ -92,6 +86,17 @@ func (m *MemStore) CreateSharedOrg(ctx context.Context, ownerID, slug, name stri
 		OrgID: org.ID, AccountID: ownerID, Role: OrgRoleOwner, InvitedByAccountID: &ownerID, JoinedAt: org.CreatedAt,
 	})
 	return org, nil
+}
+
+func (m *MemStore) ownedFreeSharedOrgsLocked(ownerID string) int {
+	owned := 0
+	for _, org := range m.orgs {
+		member := m.memberships[orgAccountKey{OrgID: org.ID, AccountID: ownerID}]
+		if !org.Personal && !org.DeletedPending && org.Plan == api.PlanFree && member.Role == OrgRoleOwner && member.RemovedAt == nil {
+			owned++
+		}
+	}
+	return owned
 }
 
 func orgInvitationLimit(plan api.Plan, status OrgStatus, deleted, held bool) (int, error) {

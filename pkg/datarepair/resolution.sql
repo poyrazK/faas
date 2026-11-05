@@ -39,7 +39,8 @@ BEGIN
  END IF;
  IF p.replacement_plan_id IS NOT NULL OR repair_operation=p.source_operation_id THEN
   RAISE EXCEPTION 'repair_resolution_conflict' USING ERRCODE='40001'; END IF;
- IF p.payload_purged_at IS NOT NULL THEN RAISE EXCEPTION 'repair_payload_purged' USING ERRCODE='55000'; END IF;
+ -- Closure needs only retained identity and integrity, never captured values.
+ -- Compaction already prevents future apply, but must not strand its outcome.
  UPDATE gregale_repair.plans SET apply_resolution=jsonb_build_object('outcome','not_committed',
   'plan_digest',expected_digest,'repair_operation_id',repair_operation,'resolved_at',clock_timestamp(),'resolved_by',actor) WHERE id=plan;
  RETURN gregale_repair.get_plan(plan,expected_scope);

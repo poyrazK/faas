@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -79,6 +81,9 @@ type runtimeConfigDefinition struct {
 	ControllerEnabled bool
 	Mutable           bool
 	Sensitive         bool
+	// Validate, when set, checks the value after its kind's check: the
+	// key's own bounds (ADR-20261101215228).
+	Validate func(json.RawMessage) error
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
@@ -102,6 +107,10 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigProductControlSignup, Label: "Product Control self-serve signup", Description: "Let visitors sign up and create their own workspace in Product Control products whose catalog offers signup, and keep a card on file through the product's Stripe (ADR-20261022100735). Disabling hides every signup offer and refuses new signups; existing workspaces keep working.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFullEnvironmentClones, Label: "Full environment clone machinery", Description: "Run what only full environment clones use (ADR-590): schedd's wake and migration ownership recorders, gateway clone readiness reads for stage URLs, and apid's clone coordinator. Full clones are not admitted yet. Turn this on and wait for every daemon's apply receipt before admitting them; it cannot be turned off while admission is open or a clone is unfinished. Partial environment clones never need it.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFullEnvironmentCloneAdmission, Label: "Full environment clone admission", Description: "Admit env create --full for sources without managed data (ADR-20261024123122). Turn on only after full_environment_clones_enabled has an apply receipt from every daemon; admission also needs that switch on.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeconfig.KeyGuestVCPUFromCPUApps, Label: "Apps whose CPU follows plan RAM", Description: "Comma-separated app IDs, or * for every app, that book their plan's CPU baseline and boot one guest vCPU per guest_vcpu_millicores of CPU ceiling (ADR-20261101160231). Empty keeps every app on its plan. A listed app cold-boots once: its snapshots were taken at the other vCPU count. List Scale apps only once every node runs a release that accepts a two-core ceiling.", Category: "Plan CPU", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateGuestVCPUApps},
+	{Key: runtimeconfig.KeyAppCPUBaselineMillicoresPerGB, Label: "CPU baseline per GB of plan RAM", Description: "Millicores a listed app's instance books per GB of plan RAM, and its share on a busy node (ADR-20261101215228). 1000 gives 250 m Free, 500 m Hobby, 1,000 m Pro, 2,000 m Scale.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.AppCPUBaselineMillicoresPerGBMin, api.AppCPUBaselineMillicoresPerGBMax, api.ValidAppCPUBaselineMillicoresPerGB)},
+	{Key: runtimeconfig.KeyAppCPUCeilingFloorMillicores, Label: "Lowest CPU ceiling", Description: "The lowest burst ceiling (cpu.max) a listed app's plan gets: 250, 500, or whole cores up to 2000 (ADR-20261101215228). A ceiling is never above what this release's vmmd accepts for the plan.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.AppCPUCeilingFloorMillicoresMin, api.AppCPUCeilingFloorMillicoresMax, api.ValidAppCPUCeilingFloorMillicores)},
+	{Key: runtimeconfig.KeyGuestVCPUMillicores, Label: "Millicores per guest vCPU", Description: "A listed app boots one guest vCPU per this many millicores of CPU ceiling, never more than its plan's count (ADR-20261101215228). Changing it makes listed apps cold-boot once.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.GuestVCPUMillicoresMin, api.GuestVCPUMillicoresMax, api.ValidGuestVCPUMillicores)},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -530,6 +539,40 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		}
 	default:
 		return fmt.Errorf("%s has unsupported kind %q", def.Key, def.Kind)
+	}
+	if def.Validate != nil {
+		if err := def.Validate(value); err != nil {
+			return fmt.Errorf("%s: %w", def.Key, err)
+		}
+	}
+	return nil
+}
+
+// validateIntSetting checks an integer setting against its bounds and shape.
+func validateIntSetting(lo, hi int, valid func(int) bool) func(json.RawMessage) error {
+	return func(value json.RawMessage) error {
+		v, err := runtimeconfig.Int(value)
+		if err != nil || !valid(v) {
+			return fmt.Errorf("must be between %d and %d (see pkg/api/limits.go)", lo, hi)
+		}
+		return nil
+	}
+}
+
+// validateGuestVCPUApps checks a comma-separated list of app IDs or "*".
+func validateGuestVCPUApps(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(list, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || entry == "*" {
+			continue
+		}
+		if _, err := uuid.Parse(entry); err != nil {
+			return fmt.Errorf("%q is not an app ID or *", entry)
+		}
 	}
 	return nil
 }

@@ -47,6 +47,9 @@ gregale bucket list my-api
 app with `read_write` access (`--permission read` or `write` to narrow it). It
 is idempotent: running it again reuses the bucket and the binding.
 `gregale bucket list` shows the bucket IDs that other commands take.
+If a create or delete fails, Gregale keeps retrying it. While it does, the
+bucket stays `provisioning` or `deleting`, and `bucket list` (and the API's
+`retry` field) says why, how many attempts ran and when the next one starts.
 
 With the API, `POST /v1/apps/{app}/buckets` creates a bucket:
 
@@ -311,15 +314,16 @@ gregale bucket protection retention my-api BUCKET_ID notes.txt VERSION_ID GOVERN
 ```
 
 A bucket or account holding protected versions cannot be deleted until the
-protection ends. See the [CLI reference](cli-reference.md#bucket-object-lock)
-for the bucket defaults.
+protection ends. Run `gregale bucket object-lock set --help` for the bucket
+defaults. (Object storage is in preview, so the public CLI reference does not
+list its commands.)
 
 ## Encryption
 
 Objects are encrypted at rest by the storage provider. You can also choose a
 bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`) or, where
-enabled for your account, your own enrolled keys. See the
-[CLI reference](cli-reference.md#bucket-encryption).
+enabled for your account, your own enrolled keys. Run
+`gregale bucket encryption set --help` for the options.
 
 ## Tags, copies and checksums
 

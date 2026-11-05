@@ -510,10 +510,19 @@ type RestoreBreakdown struct {
 	// that ran before the JailerVMM restore window. They are NOT part of
 	// TotalMs; they explain the gap between wake.boot_started and the first
 	// vmmd restore phase.
-	LeaseAcquireMs       int64
-	EnvPrepareMs         int64
-	PreNetworkMs         int64
-	SetupNetworkMs       int64
+	LeaseAcquireMs int64
+	EnvPrepareMs   int64
+	PreNetworkMs   int64
+	SetupNetworkMs int64
+	// BackingCheckMs .. BackingHashMs (ADR-510, ADR-192) attribute vmmd's
+	// snapshot backing check, which runs after SetupNetworkMs and before the
+	// restore window: the whole check, the capture's identity read, resolving
+	// (or fetching) the kernel and base, and identifying them. Outside
+	// TotalMs; the payload omits them when zero.
+	BackingCheckMs       int64
+	BackingSidecarMs     int64
+	BackingFetchMs       int64
+	BackingHashMs        int64
 	RestoreGateWaitMs    int64
 	ChrootMs             int64
 	MaterializeMemMs     int64
@@ -552,10 +561,17 @@ type RestoreArtifactResolution struct {
 // It deliberately starts before artifact resolution, which is outside boot()
 // and was previously invisible in wake.cold_boot_cpu.
 type ColdBootBreakdown struct {
-	EmitAt           time.Time
-	WakeID           string
-	AppID            string
-	InstanceID       string
+	EmitAt     time.Time
+	WakeID     string
+	AppID      string
+	InstanceID string
+	// BackingCheckMs .. BackingHashMs are the ADR-510 backing check that ran
+	// before a restore fell back to this cold boot (see RestoreBreakdown).
+	// Outside TotalMs; the payload omits them when zero.
+	BackingCheckMs   int64
+	BackingSidecarMs int64
+	BackingFetchMs   int64
+	BackingHashMs    int64
 	ResolveImagesMs  int64
 	ChrootMs         int64
 	ProvisionMs      int64
@@ -586,7 +602,7 @@ func (e ColdBootBreakdown) Kind() string     { return WakeColdBootBreakdown }
 func (e ColdBootBreakdown) At() time.Time    { return e.EmitAt }
 func (e ColdBootBreakdown) Subject() *string { return nil }
 func (e ColdBootBreakdown) Payload() map[string]any {
-	return map[string]any{
+	p := map[string]any{
 		"wake_id":           e.WakeID,
 		"app_id":            e.AppID,
 		"instance_id":       e.InstanceID,
@@ -605,6 +621,21 @@ func (e ColdBootBreakdown) Payload() map[string]any {
 		"quota_restore_ms":  e.QuotaRestoreMs,
 		"total_ms":          e.TotalMs,
 	}
+	addBackingCheck(p, e.BackingCheckMs, e.BackingSidecarMs, e.BackingFetchMs, e.BackingHashMs)
+	return p
+}
+
+// addBackingCheck adds the ADR-510 backing check keys when a check took any
+// measurable time. They are new optional keys (omitempty): readers written
+// before them see an unchanged payload.
+func addBackingCheck(p map[string]any, total, sidecar, fetch, hash int64) {
+	if total == 0 && sidecar == 0 && fetch == 0 && hash == 0 {
+		return
+	}
+	p["backing_check_ms"] = total
+	p["backing_sidecar_ms"] = sidecar
+	p["backing_fetch_ms"] = fetch
+	p["backing_hash_ms"] = hash
 }
 
 // ThawBreakdown attributes schedd's share of one frozen-VM thaw. Each field
@@ -711,7 +742,7 @@ func (e RestoreBreakdown) Kind() string     { return WakeRestoreBreakdown }
 func (e RestoreBreakdown) At() time.Time    { return e.EmitAt }
 func (e RestoreBreakdown) Subject() *string { return nil }
 func (e RestoreBreakdown) Payload() map[string]any {
-	return map[string]any{
+	p := map[string]any{
 		"wake_id":                 e.WakeID,
 		"app_id":                  e.AppID,
 		"instance_id":             e.InstanceID,
@@ -736,6 +767,8 @@ func (e RestoreBreakdown) Payload() map[string]any {
 		"wait_ready_ms":           e.WaitReadyMs,
 		"total_ms":                e.TotalMs,
 	}
+	addBackingCheck(p, e.BackingCheckMs, e.BackingSidecarMs, e.BackingFetchMs, e.BackingHashMs)
+	return p
 }
 
 func (e BootStarted) Kind() string     { return WakeBootStarted }

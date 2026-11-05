@@ -155,6 +155,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-data-pipeline-worker
 
 # ADR-1591: independent catalog health monitor; install without enabling.
 - name: control_plane_service — install private pipeline alert worker unit
@@ -164,6 +165,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-data-pipeline-alert-worker
 
 # ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.

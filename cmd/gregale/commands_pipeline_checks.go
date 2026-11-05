@@ -17,6 +17,7 @@ type connectionCheckClient interface {
 }
 
 func requestConnectionCheck(ctx context.Context, client connectionCheckClient, id, database string) (api.DataConnectionCheck, error) {
+	id, database = pipelineID(id), pipelineID(database)
 	connections, err := client.ListDataConnections(ctx)
 	if err != nil {
 		return api.DataConnectionCheck{}, err
@@ -53,11 +54,11 @@ func waitConnectionCheck(ctx context.Context, client connectionCheckClient, chec
 		case <-ctx.Done():
 			return check, ctx.Err()
 		case <-ticker.C:
-			var err error
-			check, err = client.GetDataConnectionCheck(ctx, check.ConnectionID)
+			current, err := client.GetDataConnectionCheck(ctx, check.ConnectionID)
 			if err != nil {
 				return check, err
 			}
+			check = current
 		}
 	}
 }

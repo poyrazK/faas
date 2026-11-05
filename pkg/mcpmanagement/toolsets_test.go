@@ -21,6 +21,25 @@ import (
 // Includes structured output envelopes; remain deliberately bounded.
 const coreCatalogBudget = 56 << 10
 
+func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
+	backend := httptest.NewServer(http.NotFoundHandler())
+	defer backend.Close()
+	noCLI := func(context.Context, []string, []byte) (LocalCLIResult, error) { return LocalCLIResult{}, nil }
+	cs, ctx := connectSelectedTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, LocalCLI: noCLI, Toolsets: []string{ToolsetCore}}, "2026-07-28")
+	catalog, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Tools) != 18 {
+		t.Fatalf("read-only core count=%d names=%v", len(catalog.Tools), toolNamesOf(catalog.Tools))
+	}
+	for _, tool := range catalog.Tools {
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Fatalf("read-only core exposes mutation %s", tool.Name)
+		}
+	}
+}
+
 // toolsetCatalog lists the tools of a local connection and of a fully
 // consented hosted grant (ADR-20261026195952) together: some tools exist on
 // only one of them.

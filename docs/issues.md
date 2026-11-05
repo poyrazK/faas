@@ -3,6 +3,9 @@
 Gregale Issues groups related failures across deployments and connects ownership,
 resolution, release history, and retained request or worker evidence. It is a
 preview feature on Hobby, Pro, and Scale.
+For company-owned apps, Issue integrations use the company's current plan and
+status. Before a company adopts resource ownership, its apps use the creator's
+plan together with the company's status.
 
 ## Connect exception reporting
 
@@ -122,6 +125,14 @@ records with `exception.type` or `exception.message`. Standard exception type,
 message, and stacktrace attributes are supported. Optional `gregale.request_id`,
 `gregale.invocation_id`, and `gregale.issue.event_id` attributes supply correlation
 or an explicit UUID. Unrelated logs/spans/resource tags are ignored.
+For HTTP fallback grouping, trace exports use `http.route` and integer
+`http.response.status_code` (or the older `http.status_code`) on the span;
+exception event attributes override span attributes. Log exports can provide
+the same attributes on each log record. Only status codes 400–599 are used.
+These fields become part of generated event identity, so an unchanged export
+retried across the rollout of this support can be recorded a second time.
+An explicit `gregale.issue.event_id` preserves identity, but a retry of an
+already stored event can then conflict because its HTTP context has changed.
 
 Trace and span IDs follow the [OTLP JSON encoding specification](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding). Unknown protocol fields are ignored.
 Invalid or all-zero optional log trace and span IDs are treated as absent; span
@@ -266,11 +277,28 @@ records do not contain that timing evidence, and windows crossing their batch
 boundaries remain approximate. Apply the schema and upgrade all apid writers
 before upgrading gateways if precise timing is required: an older apid ignores
 the new bucket field, and those timestamps cannot be recovered later.
+If the gateway's legacy error stream fails or apid reports that its Issue
+handoff queue is full, the gateway keeps eligible HTTP
+Issues in a separate bounded in-memory queue and retries them using their
+stable event IDs. It does not retry the legacy counter, whose commit may have
+been ambiguous. The queue holds at most 1,024 records, at most 128 per app,
+for up to an hour; overflow, expiry or a gateway restart can lose records.
+Up to eight retries run concurrently, with at most one retry per app. An apid
+busy with the same app asks the gateway to retry instead of holding a worker.
+Deploy apid before gateways: older apid versions do not report handoff overflow
+and do not implement the retry RPC, so queued records wait until a compatible
+apid is available or expire. Successful handoff is still in memory; a receiver
+restart or a later exhausted retry can lose a record after acknowledgement.
 If recording an HTTP Issue fails transiently, apid retries the Issue independently
 of the legacy error count. Initial attempts allow 128 concurrent records, at most 8 per app. Up to 1,024
 additional records can wait for an initial attempt, at most 128 per app. Retries
-remain in memory for up to an hour; a full queue, expiry, or process restart can
+run at most 128 at a time, at most 8 per app; database attempts for one app
+serialize before they enter the four-slot telemetry ingest gate. Another 1,024 failed records can
+wait for a retry slot, at most 128 per app. They remain in memory for up to an
+hour from the initial attempt; a full queue, expiry, or process restart can
 still lose records.
+The per-attempt database timeout starts after admission, so time spent waiting
+for the app or telemetry gate does not use the database execution budget.
 The `retry_recovered`, `retry_dropped`, and `retry_skipped` ingestion outcomes
 expose recovery, exhaustion, and events no longer eligible for ingestion.
 
@@ -404,7 +432,7 @@ npx gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace
 ```
 
 The command is installed with `@gregale/sdk-node`; the programmatic equivalent
-is `buildIssueSourceMapManifest(directory)` from `@gregale/sdk-node/issues/source-maps`.
+is `buildIssueSourceMapManifest(directory)` from `@gregale/sdk-node/preview/issues/source-maps`.
 Discovery reads local `.js`, `.mjs`, and `.cjs` bundles. It uses the last
 `sourceMappingURL` comment, or an adjacent `bundle.js.map` for hidden-map builds.
 Map paths must stay inside the selected directory. Dependency directories,
@@ -993,7 +1021,10 @@ upgrade before relying on weighted counts. The original per-record weights
 cannot be reconstructed from retained issue events. Rolling back the schema
 is blocked while weighted events remain, to avoid discarding known weights.
 
-Maintenance runs every minute with bounded batches. Detailed occurrences expire
+Maintenance runs every minute with bounded batches; while a retention batch is
+full, an independent worker drains further bounded batches once per second.
+Cleanup skips apps with locked app or usage rows so other apps can make progress.
+Expired ingest tokens are also deleted in bounded batches. Detailed occurrences expire
 even when traffic stops. Aggregate issue/release totals and activity survive.
 Expired tokens are removed; app deletion cascades all issue records. A Free
 downgrade gates reporting and removes detailed occurrences on maintenance.
@@ -1524,6 +1555,10 @@ policy and destination revisions remain enabled. Automatic/manual retries reuse
 the same message ID; Slack delivery remains at least once, so ambiguous timeouts
 can still produce duplicates. Failed roots hold later replies until terminal or
 successful, and a channel change starts a new thread.
+Failures before dispatch, including an unavailable token key or a temporary
+readiness-check failure, are retried until delivery expiry without consuming
+the send-attempt budget after all apid workers have been upgraded. Older
+workers still count each claim as an attempt during a rolling upgrade.
 
 Queue plus retained application delivery history is capped at 1,000 records per
 app. The oldest terminal record makes room first. If every slot is live, the new

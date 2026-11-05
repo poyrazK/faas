@@ -1853,6 +1853,17 @@
     "kind": "operational"
   },
   {
+    "table": "app_scaling_receipts",
+    "columns": [
+      "app_id",
+      "request_hash",
+      "request_id",
+      "response",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_secret_revocation_targets",
     "columns": [
       "ack_at",
@@ -2680,6 +2691,7 @@
       "runtime",
       "scaling_policy",
       "scaling_policy_revision",
+      "scaling_revision",
       "security_policy",
       "service_address_index",
       "slug",
@@ -4005,6 +4017,7 @@
       "cert_expires_at",
       "cert_failed_at",
       "cert_last_error",
+      "cert_retry_at",
       "cert_status",
       "challenge_token",
       "dns_last_checked_at",
@@ -4522,6 +4535,20 @@
       "app_id",
       "config",
       "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_change_hook_reports",
+    "columns": [
+      "app_id",
+      "reported_at",
+      "pending",
+      "failed",
+      "oldest_pending_at",
+      "last_published_at",
+      "last_failure_code",
+      "publishing"
     ],
     "kind": "operational"
   },
@@ -5387,6 +5414,21 @@
       "signal"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "deployment_promotion_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id",
+      "environment_id",
+      "expected_serving_deployment_id",
+      "project_id",
+      "request_hash",
+      "scope"
+    ]
   },
   {
     "table": "deployment_submission_receipts",
@@ -8099,6 +8141,7 @@
       "app_id",
       "application_standard_boot_token",
       "application_standard_promotion_token",
+      "booked_cpu_millicores",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",
@@ -16791,6 +16834,15 @@
     }
   },
   {
+    "table": "project_app_stage_admissions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "project_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "project_environments",
     "columns": [
       "account_id",
@@ -16798,6 +16850,7 @@
       "id",
       "project_id",
       "protected",
+      "shared_secret_generation",
       "slug",
       "updated_at"
     ],
@@ -17284,6 +17337,14 @@
       "request_time_ms",
       "requests",
       "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_gaps",
+    "columns": [
+      "app_id",
+      "bucket_start"
     ],
     "kind": "operational"
   },

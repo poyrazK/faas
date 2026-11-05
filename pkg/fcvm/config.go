@@ -348,6 +348,9 @@ type ColdBootSpec struct {
 	// StorageBackend key of the image it holds; empty: zeros.
 	AgentInput bool
 	InputKey   string
+	// Backing is the ADR-510 backing check that ran before this boot, when a
+	// restore was attempted first; it rides wake.cold_boot_breakdown.
+	Backing BackingCheckTimings
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the

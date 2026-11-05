@@ -235,6 +235,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
 	"POST /v1/runtime/data-api/events":                  true,
+	"POST /v1/runtime/data-api/change-status":           true,
 
 	// ADR-1027 in-place major upgrades: a preview gated by
 	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
@@ -689,9 +690,13 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/resource-inventory":                                         "GetAppResourceInventory",
 	"GET /v1/apps/{slug}/operation-preview":                                          "GetAppOperationPreview",
 	"GET /v1/apps/{slug}/costs":                                                      "GetAppCosts",
+	"GET /v1/apps/{slug}/scaling":                                                    "GetAppScaling",
+	"POST /v1/apps/{slug}/scaling":                                                   "ApplyAppScaling",
+	"GET /v1/apps/{slug}/scaling/requests/{request_id}":                              "GetAppScalingReceipt",
 	"POST /v1/apps/{slug}/env/batch":                                                 "ApplyEnvBatch",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
+	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}":                        "GetEnvironmentRouteBudgetReceipt",
 	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
@@ -1499,6 +1504,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/runtime":                                            "GetDataAPIRuntime",
+	"GET /v1/apps/{slug}/data-api/status":                                             "GetDataAPIStatus",
+	"GET /v1/apps/{slug}/postgres-bindings":                                           "ListAppPostgresBindings",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
@@ -2406,6 +2413,8 @@ var methodRouteMap = map[string]string{
 	// names derived from hyphenated route segments.
 	"GET /v1/apps/{slug}/deployment-cron-staging":                                                  "GetDeploymentCronStagingSnapshot",
 	"GET /v1/apps/{slug}/deployment-staging":                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":                                              "GetServiceAbortReceipt",
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}":                                       "GetDeploymentPromotionReceipt",
 	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                      "GetDeploymentSubmission",
 	"GET /v1/project-submissions/{attempt_id}":                                                     "GetProjectSubmission",
 	"POST /v1/apps/{slug}/deployment-cron-staging":                                                 "ApplyDeploymentCronStaging",

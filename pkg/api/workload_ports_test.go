@@ -108,3 +108,24 @@ func TestSidecarSummariesCarryNoEnvironment(t *testing.T) {
 		t.Fatal("no companions should summarize to nil so the response omits the field")
 	}
 }
+
+func TestDeclaresPublicWorkloadPort(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		ports    []WorkloadPort
+		listener string
+		want     bool
+	}{
+		{"named", []WorkloadPort{{Name: " Echo ", Port: 9000, Protocol: "TCP"}}, "ECHO", true},
+		{"unnamed", []WorkloadPort{{Port: 9000}}, "tcp-9000", true},
+		{"removed", nil, "echo", false},
+		{"renamed", []WorkloadPort{{Name: "new", Port: 9000}}, "echo", false},
+		{"internal-wins", []WorkloadPort{{Name: "echo", Port: 9000}, {Name: "private", Port: 9000, Internal: true}}, "echo", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DeclaresPublicWorkloadPort(tc.ports, tc.listener, WorkloadPortTCP, 9000); got != tc.want {
+				t.Fatalf("declaration=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}

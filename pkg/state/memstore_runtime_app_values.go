@@ -70,6 +70,18 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 			return RuntimeAppValuesSnapshot{}, ErrConflict
 		}
 		settings = spec.Settings
+		if d.EnvironmentWorkloadRuntime != "" {
+			// Guest fields follow the frozen candidate overlay, as PgStore does.
+			overlaid, err := settings.ApplyTo(App{ID: appID, AccountID: accountID})
+			if err == nil {
+				overlaid, err = AppForDeploymentRuntime(overlaid, d)
+			}
+			if err != nil {
+				return RuntimeAppValuesSnapshot{}, err
+			}
+			settings.Manifest, settings.StartCommand = overlaid.Manifest, overlaid.StartCommand
+			settings.Type, settings.Runtime, settings.WorkloadClass = overlaid.Type, overlaid.Runtime, overlaid.WorkloadClass
+		}
 	}
 	result.SidecarLayers = []DeploymentSidecarLayer{}
 	for _, layer := range m.deploymentSidecarLayers {
