@@ -176,11 +176,13 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFloodDropsPerMin":          "reset",
 	"StaticEgressExcluded":            "rebuilt",
 	"networkPolicyMu":                 "reset",
-	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
-	"resolvedEgressGeneration":        "reset", // restart invalidates outstanding DNS grants
-	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
-	"TailCount":                       "reset", // the host only ever sees decrements
-	"tailSecondsAccum":                "reset", // informational, not billed
+	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
+	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
+	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
+	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
+	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
+	"TailCount":                       "reset",   // the host only ever sees decrements
+	"tailSecondsAccum":                "reset",   // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
