@@ -25,7 +25,21 @@ const (
 	// CLI's retry-later code, as job and preview waits use it
 	// (ADR-20261030151810).
 	exitWaitTimeout = 3
+
+	// codeWaitTimedOut is the problem code of a wait that ran out of time.
+	codeWaitTimedOut = "wait_timed_out"
 )
+
+// printWaitTimeout reports a condition wait that ran out of its --timeout.
+// It printed invalid_request with exit_code 1 under --json while the process
+// exited 3 (CLI journey 2026-11-05, #6653). The wait is a valid request that
+// expired: a 408-class problem, wait_timed_out, exit 3 in both the JSON and
+// the process status. Nothing on the server is cancelled.
+func printWaitTimeout(detail string) int {
+	problem := api.NewProblem(http.StatusRequestTimeout, codeWaitTimedOut, "Wait timed out", detail)
+	problem.Hint = "The wait expired; the server keeps working and nothing was cancelled. Check the current status, or wait again with a longer --timeout."
+	return printErr("Wait timed out", &APIError{Problem: *problem})
+}
 
 // cmdAppConditions runs `app <slug> status` and `app <slug> wait`, and
 // reports false for any other subcommand.
@@ -186,8 +200,7 @@ func waitForCondition(read func(context.Context) (api.ResourceStatus, error), wa
 	if jsonOutput && last != nil {
 		_ = writeJSON(*last)
 	}
-	_ = printErr("Wait timed out", fmt.Errorf("%s did not hold within %s", want, timeout))
-	return exitWaitTimeout
+	return printWaitTimeout(fmt.Sprintf("%s did not hold within %s", want, timeout))
 }
 
 func findCondition(status api.ResourceStatus, typ string) (api.Condition, bool) {
