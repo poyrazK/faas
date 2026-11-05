@@ -1750,6 +1750,10 @@ test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (AD
 test-agents-sandbox: ## @gregale/agents-sandbox (OpenAI Agents SDK backend, ADR-20261027090013 §8) unit tests; needs Node 22+ and npm
 	@cd sdk/agents-sandbox && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
 
+.PHONY: test-sandbox-e2b
+test-sandbox-e2b: ## @gregale/sandbox-e2b (E2B-compatible client, ADR-20261027090013 §12) unit tests; needs Node 22+ and npm
+	@cd sdk/sandbox-e2b && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
 .PHONY: auth-staging-check auth-staging-canary
 auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)
 	@node --test tests/auth/staging/*.test.mjs

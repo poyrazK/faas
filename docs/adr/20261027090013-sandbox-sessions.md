@@ -530,6 +530,18 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
    - **Tested.** There are unit tests against a fake API, a real `SandboxAgent` run through the SDK's runner with `ScriptedModel`, and the PR-triage example (`examples/pr-triage.ts`) run the same way.
    - **Not tested against a deployed Gregale**, where sandbox sessions are switched off. There is no journey for it yet. A journey needs the switches on in a test environment.
 10. The E2B-compatible shim, template import, and a migration guide with the coverage table (§12, §13).
+   - **As built, part one (local branch, no PR yet).** `@gregale/sandbox-e2b` (TypeScript, private) lives in `sdk/sandbox-e2b` and has no runtime dependencies. Its tests run under `make test-sandbox-e2b`, which no CI job runs yet.
+     - It is written from the E2B SDK's public interface (`e2b` 2.63.0: method names and option shapes) and copies no E2B code. The error classes keep E2B's names, so existing `catch` code still matches.
+     - **Sandbox:** `create` (template = preset, `base` = the default), `connect`, `list`, `kill`, `getInfo`, `setTimeout`, `isRunning` and `createSnapshot` (`workspace:persist`).
+     - **Commands:** `run` in the foreground (JSON, or SSE when `onStdout` or `onStderr` is set, with `CommandExitError` on a non-zero exit) and in the background (a handle polled for output). `list`, `kill` and `connect` work with numeric pids, which the client maps to Gregale handles.
+     - **Files:** the files API inside `/workspace`. Reads, writes, `exists`, `makeDir` and `remove` on paths outside it go through commands and are capped at 256 KB.
+     - **Ports:** `getHost(port)` is synchronous in E2B, so it answers only for ports exposed at `create` (`ports`) or with `await exposePort(port)`, and `previewToken(port)` returns a private port's token.
+     - **Refused with `UnsupportedError`,** naming the call and the alternative: `pause` and `betaPause`, `pty`, stdin, `watchDir`, MCP and custom templates. `envs` go with every command, because create takes no session env yet. `allowInternetAccess: true` asks for `web`, which apid still refuses.
+   - **Migration guide:** `docs/sandbox-migration.md`, holding the coverage table, the E2B call mapping, the Agents SDK move, workspaces and network modes. It is not in `customer-pages.json` until launch.
+   - **Not built yet:**
+     - The Python shim `gregale-sandbox-e2b`.
+     - Template import (`gregale sandbox template build` from `e2b.Dockerfile` and `e2b.toml`). It first needs sessions that start from a seller image: create still refuses `image`, and schedd and vmmd boot only presets. That is its own step: seller-image sessions, then the build command in a builder VM with the start command run before the warm snapshot.
+     - The pricing calculator and shadow mode from §13.
 11. Billing, with ADR-20261027090011.
 
 Long-lived paused sessions (E2B-style memory pause) need their own ADR.
