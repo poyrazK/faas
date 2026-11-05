@@ -9238,19 +9238,23 @@ Change hooks: publish committed row changes as events
 
 Print the change hooks migration
 
-`gregale data-api hooks export [--schema <SCHEMA>]`
+`gregale data-api hooks export [--schema <SCHEMA>] [--upgrade]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+| `--upgrade` | print only the backlog bound upgrade for an existing installation |  |
 
 Examples:
 
 ```sh
 gregale data-api hooks export > migrations/0006_change_hooks.sql
+gregale data-api hooks export --upgrade > migrations/0009_change_hooks_bound.sql
 ```
 
 Creates the change event table, its trigger and the enable and disable helpers.
+
+Changes stop recording while 100,000 wait to publish. --upgrade prints only that bound for hooks installed before it.
 
 #### data-api hooks enable
 
@@ -9272,6 +9276,8 @@ gregale data-api hooks enable shop-data --drain-every 5m
 ```
 
 --drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan&#39;s cron limits and each run is app time.
+
+Only production publishes, and only on a platform that accepts runtime reports; otherwise enable changes nothing.
 
 #### data-api hooks status
 

@@ -49,6 +49,8 @@ type hooksAPI struct {
 	bodies  map[string]string
 	status  *api.DataAPIStatus
 	crons   []api.CronResponse
+	// refuseCrons answers cron creation like a plan that allows none (Free).
+	refuseCrons bool
 }
 
 func newHooksClient(t *testing.T, fake *hooksAPI, base string) *api.Client {
@@ -81,6 +83,8 @@ func newHooksClient(t *testing.T, fake *hooksAPI, base string) *api.Client {
 			_ = json.NewEncoder(w).Encode(fake.status)
 		case r.URL.Path == "/v1/crons" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(fake.crons)
+		case r.URL.Path == "/v1/crons" && r.Method == http.MethodPost && fake.refuseCrons:
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "cron_limit_reached", "Cron limit reached", "your plan allows 0 crons per app"))
 		case r.URL.Path == "/v1/crons" && r.Method == http.MethodPost:
 			var req api.CreateCronRequest
 			_ = json.Unmarshal(body, &req)
@@ -120,7 +124,7 @@ func TestDataAPIHooksEnableStoresTheOriginAndReportsTheSource(t *testing.T) {
 	fake := &hooksAPI{}
 	client := newHooksClient(t, fake, "https://api.gregale.example")
 	ctx := context.Background()
-	receipt, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, true)
+	receipt, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +151,7 @@ func TestDataAPIHooksEnableStoresTheOriginAndReportsTheSource(t *testing.T) {
 func TestDataAPIHooksNeedAnHTTPSPlatform(t *testing.T) {
 	fake := &hooksAPI{}
 	client := newHooksClient(t, fake, "http://localhost:8080")
-	if _, err := main.EnableDataAPIHooks(context.Background(), client, "shop-data", api.DefaultEnvScope, true); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+	if _, err := main.EnableDataAPIHooks(context.Background(), client, "shop-data", api.DefaultEnvScope, true, nil); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("err %v", err)
 	}
 	if len(fake.writes) != 0 {
@@ -221,7 +225,7 @@ func TestDataAPIHooksDrainSchedule(t *testing.T) {
 	client := newHooksClient(t, fake, "https://api.gregale.example")
 	t.Setenv("FAAS_API", "https://api.gregale.example")
 	ctx := context.Background()
-	receipt, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, false)
+	receipt, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, false, nil)
 	if err == nil {
 		err = main.ApplyDataAPIDrainSchedule(ctx, client, &receipt, "*/5 * * * *", "5m")
 	}
@@ -247,6 +251,79 @@ func TestDataAPIHooksDrainSchedule(t *testing.T) {
 		if _, err := main.DataAPIDrainSchedule(bad); err == nil {
 			t.Fatalf("%s accepted", bad)
 		}
+	}
+}
+
+// Enable refuses, before anything is stored, what could only pile changes up
+// in the database (ADR-20261022121642 amendment 2): an installation that takes
+// no runtime publications, a non-production scope, and a drain schedule the
+// plan refuses.
+func TestDataAPIHooksEnableRefusesWhatCannotPublish(t *testing.T) {
+	ctx := context.Background()
+	unavailable := &hooksAPI{status: &api.DataAPIStatus{RuntimeVersion: "0123456789abcdef", RuntimeReports: api.DataAPIRuntimeReportsUnavailable}}
+	client := newHooksClient(t, unavailable, "https://api.gregale.example")
+	if _, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, true, nil); err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("without runtime reports: %v", err)
+	}
+	if _, err := main.EnableDataAPIHooks(ctx, client, "shop-data", "preview", true, nil); err == nil || !strings.Contains(err.Error(), "only from production") {
+		t.Fatalf("a stage scope: %v", err)
+	}
+	if len(unavailable.writes) != 0 {
+		t.Fatalf("wrote %v", unavailable.writes)
+	}
+	free := &hooksAPI{refuseCrons: true}
+	client = newHooksClient(t, free, "https://api.gregale.example")
+	drain := func(receipt *main.DataAPIHooksReceipt) error {
+		return main.ApplyDataAPIDrainSchedule(ctx, client, receipt, "*/5 * * * *", "5m")
+	}
+	if _, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, true, drain); err == nil || !strings.Contains(err.Error(), "change hooks were not changed") {
+		t.Fatalf("a refused drain schedule: %v", err)
+	}
+	if got := strings.Join(free.writes, "|"); got != "POST /v1/crons" {
+		t.Fatalf("hooks turned on although the schedule was refused: %s", got)
+	}
+	free.refuseCrons, free.writes = false, nil
+	receipt, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, false, drain)
+	if err != nil || !receipt.Enabled || receipt.DrainEvery != "5m" || strings.Join(receipt.Changed, ",") != "change_hooks,drain_schedule" {
+		t.Fatalf("enable with a schedule %+v %v", receipt, err)
+	}
+	if got := strings.Join(free.writes, "|"); got != "POST /v1/crons|PUT /v1/apps/shop-data/secrets/DATA_API_CHANGE_EVENTS_URL" {
+		t.Fatalf("writes %s", got)
+	}
+}
+
+// Installations before the backlog bound upgrade with the same capture the
+// full installation prints, and status warns as the backlog nears the bound.
+func TestDataAPIHooksBacklogBound(t *testing.T) {
+	full, err := main.DataAPIHooksSQL("catalog")
+	if err != nil || !strings.Contains(full, "gregale:backlog-bound") || !strings.Contains(full, ">= 100000") || strings.Contains(full, "{{") {
+		t.Fatalf("full installation renders the bound: %v", err)
+	}
+	upgrade, err := main.DataAPIHooksUpgradeSQL("catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"SET LOCAL lock_timeout", "CREATE INDEX IF NOT EXISTS gregale_change_events_pending ON catalog.gregale_change_events", "CREATE OR REPLACE FUNCTION gregale_hooks.capture()",
+		"gregale:backlog-bound", "FROM catalog.gregale_change_events WHERE failed_at IS NULL", "REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;"} {
+		if !strings.Contains(upgrade, want) {
+			t.Fatalf("upgrade lacks %q:\n%s", want, upgrade)
+		}
+	}
+	for _, unwanted := range []string{"CREATE TABLE", "gregale_change_claim", "{{"} {
+		if strings.Contains(upgrade, unwanted) {
+			t.Fatalf("upgrade contains %q", unwanted)
+		}
+	}
+	if _, err := main.DataAPIHooksUpgradeSQL("API"); err == nil {
+		t.Fatal("upgrade accepted an invalid schema")
+	}
+	for pending, full := range map[int64]bool{0: false, 89_999: false, 90_000: true, 100_000: true} {
+		if got := main.DataAPIHooksBacklogFull(&api.DataAPIChangeHookStatus{Pending: pending}); got != full {
+			t.Fatalf("%d pending: full = %v", pending, got)
+		}
+	}
+	if main.DataAPIHooksBacklogFull(nil) {
+		t.Fatal("no report is not a full backlog")
 	}
 }
 
