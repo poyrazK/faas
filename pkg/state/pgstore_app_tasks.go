@@ -785,6 +785,16 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		return AppTask{}, mapErr(err)
 	}
 	current, err := scanAppTask(tx.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1 for update`, taskID))
+	if err == nil && current.Kind == AppTaskKindRelease {
+		admitted, clockErr := sqlc.New().ReleaseAdmissionTime(ctx, tx)
+		if clockErr != nil {
+			return AppTask{}, clockErr
+		}
+		if admitted.Time.After(startedAt) {
+			startedAt = admitted.Time
+		}
+	}
+
 	if err != nil || current.Status != AppTaskRestoring || current.LeaseToken == nil || *current.LeaseToken != leaseToken ||
 		current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(startedAt) {
 		return AppTask{}, ErrAppTaskLeaseLost

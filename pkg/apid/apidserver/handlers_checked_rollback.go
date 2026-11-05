@@ -30,11 +30,17 @@ func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, problem)
 		return
 	}
-	// PostgreSQL commits the readiness outbox entry with intent. Notify also
-	// supports in-memory/local stores; duplicate deliveries are safe.
-	if s.notif != nil {
-		payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "deployment_id": target.ID})
-		if err := s.notif.Notify(r.Context(), db.NotifySnapshotPrime, string(payload)); err != nil {
+	// Preparing targets have a transactional readiness outbox. Notify also
+	// wakes local stores and service reconciliation; duplicate deliveries are safe.
+	if s.notif != nil && (operation.Status == "preparing" || operation.Service) {
+		channel := db.NotifySnapshotPrime
+		fields := map[string]string{"app_id": app.ID, "deployment_id": target.ID}
+		if operation.Status == "ready" {
+			channel = db.NotifyDeploymentChanged
+			fields["kind"], fields["status"] = "service_rollout", "live"
+		}
+		payload, _ := json.Marshal(fields)
+		if err := s.notif.Notify(r.Context(), channel, string(payload)); err != nil {
 			s.log.Warn("checked rollback readiness wakeup", "request_id", operation.ID, "err", err)
 		}
 	}

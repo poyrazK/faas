@@ -1,5 +1,9 @@
 # Architecture Decision Records
 
+- [ADR-20261105110000: Fence app rollback routing and preserve migration evidence](20261105110000-rollback-routing-ownership-and-evidence-budgets.md)
+
+- [ADR-20261104200000: Preserve rollback serving history and retained readiness](20261104200000-rollback-serving-windows-and-retained-readiness.md)
+
 - [ADR-20261104160000: Guard graph and service rollback publication](20261104160000-graph-and-service-rollback-safety.md) — accepted; graph contracts and migration serving windows, atomic service-abort release guards, and durable checked completion after replacement.
 
 - [ADR-20261104140000: Fence rollback execution and reconcile outcomes](20261104140000-rollback-execution-fences-and-outcomes.md) — accepted; database-switch code writes validate leases, plain rollback reviews are preparation-bound, project rollback retains contract checks, and outcome sweeps reconcile fairly.

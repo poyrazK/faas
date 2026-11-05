@@ -18,6 +18,7 @@ import (
 // ProjectReleaseSet is an immutable app->deployment graph. Active is only the
 // default ingress choice; clients carrying its ID can continue until expiry.
 type ProjectReleaseSet struct {
+	fallbackSince             time.Time                              // MemStore routing history; PostgreSQL keeps its durable column.
 	Deactivation              *api.ProjectReleaseDeactivationReceipt `json:"deactivation,omitempty"`
 	RollbackSourceReleaseID   string                                 `json:"rollback_source_release_id,omitempty"`
 	RollbackPreviousReleaseID string                                 `json:"rollback_previous_release_id,omitempty"`
@@ -286,20 +287,6 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 	if err := applyReleaseAdditionsDB(ctx, tx); err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	// Its direct revision deadline began at the deployment cutover, which
-	// can precede this graph switch. Keep it alive through the old graph's
-	// compatibility window measured from this transaction.
-	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
-		  from project_release_sets rs
-		  join project_release_members rm on rm.release_id = rs.id
-		  join deployments d on d.id = rm.deployment_id
-		 where rs.project_id = $1 and rs.environment_slug = $2 and rs.active
-		   and d.status = 'live' and d.traffic_percent = 0
-		on conflict (deployment_id) do update
-		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
-		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
-	}
 	var existing ProjectReleaseSet
 	if activateID != "" {
 		var err error
@@ -324,6 +311,9 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 			return ProjectReleaseSet{}, ErrConflict
 		}
 		release.ID, release.CreatedAt = existing.ID, existing.CreatedAt
+		if err := recordProjectFallbackWindowTx(ctx, tx, release.ID, activeID); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		return release, nil
 	}
 	if qualifiedID, qualified := ctx.Value(qualifiedEnvironmentReleaseKey{}).(string); qualified {
@@ -352,6 +342,9 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 		if _, err := tx.Exec(ctx, `insert into project_release_members (release_id, app_id, deployment_id) values ($1, $2, $3)`, release.ID, member.AppID, member.DeploymentID); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	if err := recordProjectFallbackWindowTx(ctx, tx, release.ID, activeID); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	return release, nil
 }
@@ -451,16 +444,6 @@ func (s *PgStore) deactivateProjectReleaseSet(ctx context.Context, accountID, pr
 		return ProjectReleaseSet{}, err
 	}
 
-	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
-		  from project_release_sets rs
-		  join project_release_members rm on rm.release_id = rs.id
-		  join deployments d on d.id = rm.deployment_id
-		 where rs.id = $1 and rs.active and d.status = 'live' and d.traffic_percent = 0
-		on conflict (deployment_id) do update
-		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, expectedActiveID); err != nil {
-		return ProjectReleaseSet{}, fmt.Errorf("state: retain deactivated release members: %w", err)
-	}
 	if before != nil {
 		receipt, err := json.Marshal(projectDeactivationReceipt(ctx, expectedActiveID, expectedFallback, time.Now().UTC()))
 		if err != nil {
@@ -769,21 +752,7 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 	if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, members, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	// A member may already have reached 0% when this graph is replaced.
-	// Its direct revision deadline began at the deployment cutover, which
-	// can precede this graph switch. Keep it alive through the old graph's
-	// compatibility window measured from this transaction.
-	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
-		  from project_release_sets rs
-		  join project_release_members rm on rm.release_id = rs.id
-		  join deployments d on d.id = rm.deployment_id
-		 where rs.project_id = $1 and rs.environment_slug = $2 and rs.active
-		   and d.status = 'live' and d.traffic_percent = 0
-		on conflict (deployment_id) do update
-		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
-		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
-	}
+	// Retirement pins zero-traffic members through the graph's exact deadline.
 	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
 		return ProjectReleaseSet{}, err
 	}
@@ -797,6 +766,9 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 		if _, err := tx.Exec(ctx, `insert into project_release_members (release_id, app_id, deployment_id) values ($1, $2, $3)`, release.ID, member.AppID, member.DeploymentID); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	if err := recordProjectFallbackWindowTx(ctx, tx, release.ID, activeID); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	return release, nil
 }

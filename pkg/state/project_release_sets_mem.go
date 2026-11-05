@@ -204,6 +204,10 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 	if recovering {
 		release.RollbackSourceReleaseID, release.RollbackPreviousReleaseID = rollback.source, rollback.previous
 	}
+	release.fallbackSince = now
+	if previousID != "" {
+		release.fallbackSince = m.projectReleaseSets[previousID].fallbackSince
+	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
 	if change != nil {
@@ -439,6 +443,10 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	now := time.Now().UTC()
 	release := ProjectReleaseSet{ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true,
 		TTLSeconds: ttlSeconds, CreatedAt: now, Members: append([]ProjectReleaseMember(nil), members...)}
+	release.fallbackSince = now
+	if previousID != "" {
+		release.fallbackSince = m.projectReleaseSets[previousID].fallbackSince
+	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
 	return release, nil

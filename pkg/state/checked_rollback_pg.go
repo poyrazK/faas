@@ -50,21 +50,22 @@ func rollbackFacts(ctx context.Context, tx pgx.Tx, app, id string) (Deployment, 
 	}
 
 	var facts struct {
-		ID               string                `json:"id"`
-		AppID            string                `json:"app_id"`
-		Scope            string                `json:"scope"`
-		Status           DeploymentStatus      `json:"status"`
-		TrafficPercent   int                   `json:"traffic_percent"`
-		CanaryTotalSteps int                   `json:"canary_total_steps"`
-		CanaryStep       int                   `json:"canary_step"`
-		RolloutState     string                `json:"rollout_state"`
-		RootfsKey        string                `json:"rootfs_key"`
-		ImageDigest      string                `json:"image_digest"`
-		Runtime          json.RawMessage       `json:"environment_workload_runtime"`
-		Handoff          ServiceRolloutHandoff `json:"service_rollout_handoff"`
+		ID                 string                `json:"id"`
+		AppID              string                `json:"app_id"`
+		Scope              string                `json:"scope"`
+		Status             DeploymentStatus      `json:"status"`
+		TrafficPercent     int                   `json:"traffic_percent"`
+		CanaryTotalSteps   int                   `json:"canary_total_steps"`
+		CanaryStep         int                   `json:"canary_step"`
+		RolloutCompletedAt *time.Time            `json:"rollout_completed_at"`
+		RolloutState       string                `json:"rollout_state"`
+		RootfsKey          string                `json:"rootfs_key"`
+		ImageDigest        string                `json:"image_digest"`
+		Runtime            json.RawMessage       `json:"environment_workload_runtime"`
+		Handoff            ServiceRolloutHandoff `json:"service_rollout_handoff"`
 	}
 	err = json.Unmarshal(raw, &facts)
-	d := Deployment{ID: facts.ID, AppID: facts.AppID, Scope: facts.Scope, Status: facts.Status, TrafficPercent: facts.TrafficPercent, CanaryTotalSteps: facts.CanaryTotalSteps, CanaryStep: facts.CanaryStep, RolloutState: facts.RolloutState, RootfsKey: facts.RootfsKey, ImageDigest: facts.ImageDigest, ServiceRolloutHandoff: facts.Handoff}
+	d := Deployment{ID: facts.ID, AppID: facts.AppID, Scope: facts.Scope, Status: facts.Status, TrafficPercent: facts.TrafficPercent, CanaryTotalSteps: facts.CanaryTotalSteps, CanaryStep: facts.CanaryStep, RolloutState: facts.RolloutState, RolloutCompletedAt: facts.RolloutCompletedAt, RootfsKey: facts.RootfsKey, ImageDigest: facts.ImageDigest, ServiceRolloutHandoff: facts.Handoff}
 	if len(facts.Runtime) > 0 && string(facts.Runtime) != "null" && string(facts.Runtime) != "{}" {
 		d.EnvironmentWorkloadRuntime = string(facts.Runtime)
 	}
@@ -147,6 +148,30 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
 		return r, err
 	}
+	if err := checkAppRollbackGraphTx(ctx, tx, app, r.Scope, target); err != nil {
+		return r, err
+	}
+	reusable, err := q.CheckedRollbackReuseLive(ctx, tx, mustPgUUID(target))
+	if err != nil {
+		return r, err
+	}
+	reuseLive := reusable.Valid && reusable.Bool
+	if reuseLive {
+		managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, d.AppID, d.Scope)
+		if err != nil {
+			return r, err
+		}
+		if d.EnvironmentWorkloadManaged() || managed {
+			return r, ErrInvalidArgument
+		}
+	}
+	if err = preserveRollbackSuccessTx(ctx, tx, d); err != nil {
+		return r, err
+	}
+	if reuseLive {
+		r.Status = "ready"
+	}
+
 	raw, _ := marshalCheckedRollback(ctx, r)
 	err = q.InsertCheckedRollback(ctx, tx, sqlc.InsertCheckedRollbackParams{ID: mustPgUUID(r.ID), AppID: mustPgUUID(app), Scope: r.Scope, TargetID: mustPgUUID(target), CurrentID: mustPgUUID(current), Status: r.Status, Receipt: raw})
 	if err != nil {
@@ -157,13 +182,25 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if r.Service {
 		rolloutState = "rolling_out"
 	}
-	if err = q.PrepareCheckedRollbackTarget(ctx, tx, sqlc.PrepareCheckedRollbackTargetParams{TargetID: mustPgUUID(target), RolloutState: rolloutState, Handoff: handoff}); err != nil {
+	if err = q.PrepareCheckedRollbackTarget(ctx, tx, sqlc.PrepareCheckedRollbackTargetParams{TargetID: mustPgUUID(target), RolloutState: rolloutState, Handoff: handoff, ReuseLive: reuseLive}); err != nil {
 		return r, err
 	}
-	payload, _ := json.Marshal(map[string]string{"app_id": app, "deployment_id": target})
-	if err = db.EnqueueDurableNotificationTx(ctx, tx, db.NotifySnapshotPrime, string(payload)); err != nil {
-		return r, err
+	fields := map[string]string{"app_id": app, "deployment_id": target}
+	if reuseLive {
+		if r.Service {
+			fields["kind"], fields["status"] = "service_rollout", "live"
+			payload, _ := json.Marshal(fields)
+			if err = q.NotifyRetainedCheckedRollback(ctx, tx, string(payload)); err != nil {
+				return r, err
+			}
+		}
+	} else {
+		payload, _ := json.Marshal(fields)
+		if err = db.EnqueueDurableNotificationTx(ctx, tx, db.NotifySnapshotPrime, string(payload)); err != nil {
+			return r, err
+		}
 	}
+
 	return r, nil
 }
 func (s *PgStore) markCheckedRollbackReadyTx(ctx context.Context, tx pgx.Tx, d Deployment, r api.RollbackOperation) error {
@@ -222,6 +259,16 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	}
 	if d.Status != DeployLive || d.TrafficPercent != 0 {
 		return r, ErrCheckedRollbackChanged
+	}
+	modeMatches, err := q.CheckedRollbackServiceModeMatches(ctx, tx, sqlc.CheckedRollbackServiceModeMatchesParams{AppID: mustPgUUID(r.AppID), Service: r.Service})
+	if err != nil {
+		return r, err
+	}
+	if !modeMatches {
+		return r, ErrCheckedRollbackChanged
+	}
+	if err = checkAppRollbackGraphTx(ctx, tx, r.AppID, r.Scope, d.ID); err != nil {
+		return r, err
 	}
 	if _, err = q.LockCheckedRollbackScope(ctx, tx, sqlc.LockCheckedRollbackScopeParams{AppID: mustPgUUID(r.AppID), Scope: r.Scope}); err != nil {
 		return r, err
@@ -331,17 +378,17 @@ func (s *PgStore) UpdateCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if status == "failed" && done {
 		status, code, blockers = "complete", "", nil
 	}
-	if status == "failed" && d.TrafficPercent == 0 {
-		if err = q.FailCheckedRollbackTarget(ctx, tx, mustPgUUID(d.ID)); err != nil {
-			return err
-		}
-	}
 	r = blockedRollback(r, status, code, blockers)
 	if status == "complete" && d.ServiceRolloutHandoff.CompletedAt != nil {
 		r.CompletedAt = d.ServiceRolloutHandoff.CompletedAt
 	}
 	if err = saveCheckedRollback(ctx, tx, r); err != nil {
 		return err
+	}
+	if status == "failed" && d.TrafficPercent == 0 {
+		if err = q.FailCheckedRollbackTarget(ctx, tx, mustPgUUID(d.ID)); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

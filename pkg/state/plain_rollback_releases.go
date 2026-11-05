@@ -16,7 +16,14 @@ func WithRollbackReleaseReview(ctx context.Context, runs []ReleaseRun) context.C
 func (m *MemStore) checkPlainRollbackReleasesLocked(ctx context.Context, d Deployment) error {
 	_, prepared := m.rollbackPrepared[d.ID]
 	_, synchronous := ctx.Value(rollbackTrafficKey{}).(rollbackTrafficSelection)
-	if _, switching := databaseSwitchLease(ctx); switching || !prepared && !synchronous {
+	_, switching := databaseSwitchLease(ctx)
+	if !prepared && !synchronous && !switching {
+		return nil
+	}
+	if err := m.checkAppRollbackGraphLocked(d.AppID, d.Scope, d.ID); err != nil {
+		return err
+	}
+	if switching {
 		return nil
 	}
 	review := m.plainRollbackReleaseReviews[d.ID]
@@ -26,18 +33,22 @@ func (m *MemStore) checkPlainRollbackReleasesLocked(ctx context.Context, d Deplo
 	return checkRollbackReleaseReview(d.ID, m.releaseRunsCrossedByLocked(d.AppID, d.ID), m.releasesUndoneByDatabaseSwitchesLocked(d.AppID, d.Scope), review)
 }
 func checkPlainRollbackReleasesTx(ctx context.Context, tx pgx.Tx, d Deployment) error {
-	if _, switching := databaseSwitchLease(ctx); switching {
-		return nil
-	} // Lease validation precedes this guard.
+	_, switching := databaseSwitchLease(ctx)
 	q := sqlc.New()
 	raw, err := q.ReadPreparedRollbackReleaseReview(ctx, tx, mustPgUUID(d.ID))
 	if err != nil {
 		return err
 	}
 	_, synchronous := ctx.Value(rollbackTrafficKey{}).(rollbackTrafficSelection)
-	if len(raw) == 0 && !synchronous {
+	if len(raw) == 0 && !synchronous && !switching {
 		return nil
 	} // No prepared plain rollback.
+	if err := checkAppRollbackGraphTx(ctx, tx, d.AppID, d.Scope, d.ID); err != nil {
+		return err
+	}
+	if switching {
+		return nil // The database restore's lease was validated before this guard.
+	}
 	var review []ReleaseRun
 	if !synchronous && len(raw) > 0 {
 		if err = json.Unmarshal(raw, &review); err != nil {

@@ -34878,6 +34878,7 @@ CREATE TABLE public.project_release_sets (
     rollback_source_release_id uuid,
     rollback_previous_release_id uuid,
     deactivation jsonb,
+    fallback_hidden_at timestamp with time zone,
     CONSTRAINT project_release_deactivation_receipt CHECK (((deactivation IS NULL) OR ((NOT active) AND (jsonb_typeof(deactivation) = 'object'::text) AND (jsonb_typeof((deactivation -> 'id'::text)) = 'string'::text) AND (((deactivation ->> 'id'::text))::uuid IS NOT NULL) AND ((deactivation ->> 'release_id'::text) = (id)::text) AND (jsonb_typeof((deactivation -> 'completed_at'::text)) = 'string'::text) AND (((deactivation ->> 'completed_at'::text))::timestamp with time zone IS NOT NULL) AND (jsonb_typeof((deactivation -> 'fallback_members'::text)) = 'array'::text) AND ((jsonb_array_length((deactivation -> 'fallback_members'::text)) >= 1) AND (jsonb_array_length((deactivation -> 'fallback_members'::text)) <= 100)) AND (deactivation ?& ARRAY['id'::text, 'release_id'::text, 'completed_at'::text, 'fallback_members'::text])))),
     CONSTRAINT project_release_rollback_pair CHECK ((((rollback_source_release_id IS NULL) AND (rollback_previous_release_id IS NULL)) OR ((rollback_source_release_id IS NOT NULL) AND (rollback_previous_release_id IS NOT NULL) AND (rollback_source_release_id <> rollback_previous_release_id) AND (rollback_source_release_id <> id) AND (rollback_previous_release_id <> id)))),
     CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
@@ -36448,7 +36449,7 @@ CREATE TABLE public.deployment_rollback_operations (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT deployment_rollback_operations_check CHECK ((target_deployment_id <> current_deployment_id)),
     CONSTRAINT deployment_rollback_operations_check1 CHECK (((receipt ?& ARRAY['id'::text, 'app_id'::text, 'scope'::text, 'target_deployment_id'::text, 'current_deployment_id'::text, 'status'::text]) AND ((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'scope'::text) = scope) AND ((receipt ->> 'target_deployment_id'::text) = (target_deployment_id)::text) AND ((receipt ->> 'current_deployment_id'::text) = (current_deployment_id)::text) AND ((receipt ->> 'status'::text) = status))),
-    CONSTRAINT deployment_rollback_operations_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
+    CONSTRAINT deployment_rollback_operations_public_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length(((receipt - '_release_review'::text))::text) <= 16384) AND ((NOT (receipt ? '_release_review'::text)) OR (jsonb_typeof((receipt -> '_release_review'::text)) = ANY (ARRAY['array'::text, 'null'::text]))))),
     CONSTRAINT deployment_rollback_operations_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_rollback_operations_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'ready'::text, 'blocked'::text, 'routing'::text, 'complete'::text, 'failed'::text])))
 );

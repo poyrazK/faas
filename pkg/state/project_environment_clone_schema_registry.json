@@ -16918,6 +16918,7 @@
       "deactivation",
       "environment_slug",
       "expires_at",
+      "fallback_hidden_at",
       "id",
       "project_id",
       "rollback_previous_release_id",

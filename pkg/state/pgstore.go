@@ -10929,11 +10929,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
 			// Only traffic-bearing siblings receive a new deadline. Already
 			// retained revisions keep the original cutover deadline.
-			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-				select id, app_id, now() + ($4::integer * interval '1 second')
-				  from deployments
-				 where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
-				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
+			if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
 				return fmt.Errorf("state: retain replaced revisions: %w", err)
 			}
 		}
@@ -12246,6 +12242,9 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if err := checkDatabaseSwitchLeaseTx(ctx, tx, target); err != nil {
 		return Deployment{}, err
 	}
+	if err := checkAppRollbackGraphTx(ctx, tx, appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -12265,6 +12264,10 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	// A target whose layers were reclaimed cannot cold boot; refuse it here
 	// rather than fail its readiness prime later (Hunt 21 H21-1).
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
+
+	if err := preserveRollbackSuccessTx(ctx, tx, target); err != nil {
 		return Deployment{}, err
 	}
 

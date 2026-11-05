@@ -25,14 +25,16 @@ func (m *MemStore) checkProjectRollbackReleasesLocked(project, scope, activeID s
 		}
 		var since time.Time
 		if fallback {
-			since = active.CreatedAt
-		} else {
-			for _, release := range m.projectReleaseSets {
-				if release.ProjectID == project && release.EnvironmentSlug == scope && !release.Active && !staged[release.ID] && release.ExpiresAt != nil && releaseMemberForApp(release, member.AppID) == member.DeploymentID {
-					ended := release.ExpiresAt.Add(-time.Duration(release.TTLSeconds) * time.Second)
-					if ended.After(since) {
-						since = ended
-					}
+			since = active.fallbackSince
+			if since.IsZero() {
+				since = m.deployments[member.DeploymentID].CreatedAt
+			}
+		}
+		for _, release := range m.projectReleaseSets {
+			if release.ProjectID == project && release.EnvironmentSlug == scope && !release.Active && !staged[release.ID] && release.ExpiresAt != nil && releaseMemberForApp(release, member.AppID) == member.DeploymentID {
+				ended := release.ExpiresAt.Add(-time.Duration(release.TTLSeconds) * time.Second)
+				if ended.After(since) {
+					since = ended
 				}
 			}
 		}
@@ -80,7 +82,13 @@ func checkProjectRollbackReleasesTx(ctx context.Context, tx pgx.Tx, account, pro
 			return err
 		}
 		if fallback {
-			ended = pgTimestamptzUTC(active.CreatedAt)
+			cutoff, err := q.ProjectFallbackServingEnd(ctx, tx, sqlc.ProjectFallbackServingEndParams{ReleaseID: mustPgUUID(activeID), TargetID: mustPgUUID(member.DeploymentID)})
+			if err != nil {
+				return err
+			}
+			if !ended.Valid || cutoff.Time.After(ended.Time) {
+				ended = cutoff
+			}
 		}
 		if !ended.Valid {
 			continue
@@ -98,4 +106,8 @@ func checkProjectRollbackReleasesTx(ctx context.Context, tx pgx.Tx, account, pro
 		}
 	}
 	return nil
+}
+
+func recordProjectFallbackWindowTx(ctx context.Context, tx pgx.Tx, release, previous string) error {
+	return sqlc.New().RecordProjectFallbackWindow(ctx, tx, sqlc.RecordProjectFallbackWindowParams{ReleaseID: mustPgUUID(release), PreviousID: mustPgUUID(previous)})
 }

@@ -106,6 +106,25 @@ func (s *PgStore) RecordRollbackRequest(ctx context.Context, r RollbackRecord) (
 		return RollbackRecord{}, fmt.Errorf("state: record rollback begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockRollbackOutcomeApp(ctx, tx, r.AppID); err != nil {
+		return RollbackRecord{}, err
+	}
+	if _, err := sqlc.New().LockCheckedRollbackApp(ctx, tx, sqlc.LockCheckedRollbackAppParams{AppID: mustPgUUID(r.AppID), AccountID: mustPgUUID(r.AccountID)}); err != nil {
+		return RollbackRecord{}, mapErr(err)
+	}
+	if target, err := sqlc.New().LockRollbackOutcomeTarget(ctx, tx, mustPgUUID(r.TargetDeploymentID)); err == nil {
+		d := Deployment{ID: r.TargetDeploymentID, Status: DeploymentStatus(target.Status)}
+		if target.RolloutCompletedAt.Valid {
+			done := target.RolloutCompletedAt.Time
+			d.RolloutCompletedAt = &done
+		}
+		if err := preserveRollbackSuccessTx(ctx, tx, d); err != nil {
+			return RollbackRecord{}, err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return RollbackRecord{}, err
+	}
+
 	if _, err := tx.Exec(ctx, `update deployment_rollbacks
 		   set status = 'failed', finished_at = clock_timestamp(),
 		       error_code = 'rollback_superseded', error = 'a newer rollback request replaced this one'
@@ -161,6 +180,21 @@ func (s *PgStore) FinishRollback(ctx context.Context, id string, o RollbackOutco
 		return RollbackRecord{}, false, fmt.Errorf("state: finish rollback begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	appID, err := sqlc.New().ReadRollbackOutcomeApp(ctx, tx, mustPgUUID(id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RollbackRecord{}, false, nil
+		}
+		return RollbackRecord{}, false, err
+	}
+	// Match preparation's parent-before-app order before locking the receipt.
+	if err := lockRollbackOutcomeApp(ctx, tx, pgUUIDString(appID)); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return RollbackRecord{}, false, nil
+		}
+		return RollbackRecord{}, false, err
+	}
+
 	var targetID string
 	var requestedAt time.Time
 	if err := tx.QueryRow(ctx, `select target_deployment_id::text, requested_at from deployment_rollbacks where id = $1 and status = 'preparing' for update`, id).Scan(&targetID, &requestedAt); err != nil {
@@ -250,6 +284,10 @@ func (m *MemStore) RecordRollbackRequest(_ context.Context, r RollbackRecord) (R
 	if m.rollbackRecords == nil {
 		m.rollbackRecords = map[string]RollbackRecord{}
 	}
+	if err := m.preserveRollbackSuccessLocked(m.deployments[r.TargetDeploymentID]); err != nil {
+		return RollbackRecord{}, err
+	}
+
 	now := time.Now().UTC()
 	for id, other := range m.rollbackRecords {
 		if other.TargetDeploymentID == r.TargetDeploymentID && other.Status == RollbackStatusPreparing {

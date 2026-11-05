@@ -3,8 +3,6 @@ package state
 import (
 	"context"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func deploymentPreferredForWake(candidate, current Deployment) bool {
@@ -101,12 +99,7 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 			continue
 		}
 		other := m.deployments[row.id]
-		ttl := m.apps[target.AppID].Manifest.RevisionPinTTLSeconds
-		if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-			if _, exists := m.revisionPins[row.id]; !exists {
-				m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-			}
-		}
+		m.retainServingRevisionLocked(other, time.Now().UTC())
 		if m.deploymentRevisionRetainedLocked(row.id) || m.deploymentInUsableReleaseLocked(row.id) {
 			other.Status = DeployLive
 		} else {
@@ -167,12 +160,7 @@ func (m *MemStore) beginServiceRolloutCutoverLocked(ctx context.Context, id stri
 		if row.id == id {
 			other.TrafficPercent = 100
 		} else {
-			ttl := m.apps[target.AppID].Manifest.RevisionPinTTLSeconds
-			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds && other.TrafficPercent > 0 {
-				if _, exists := m.revisionPins[row.id]; !exists {
-					m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-				}
-			}
+			m.retainServingRevisionLocked(other, time.Now().UTC())
 			other.TrafficPercent = 0
 		}
 		m.putDeploymentLocked(row.id, other)

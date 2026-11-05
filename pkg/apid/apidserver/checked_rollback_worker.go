@@ -60,6 +60,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if err != nil {
 		return "", "", nil, err
 	}
+	if operation.Service != (app.Manifest.ExecutionMode == api.ExecutionModeService) {
+		return "failed", "rollback_execution_mode_changed", nil, nil
+	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		if problem.Status >= 500 {
 			return rollbackProblemStatus(problem)
@@ -109,6 +112,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	}
 	if errors.Is(err, state.ErrRollbackCrossesRelease) {
 		return "failed", api.CodeRollbackCrossesRelease, nil, nil
+	}
+	if errors.Is(err, state.ErrProjectReleaseRollbackRequired) {
+		return "failed", api.CodeProjectReleaseRollbackRequired, nil, nil
 	}
 	if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
 		return "failed", api.CodeRollbackTargetDatabaseRestored, nil, nil

@@ -10358,11 +10358,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
 			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-				if other.TrafficPercent > 0 {
-					if _, exists := m.revisionPins[otherID]; !exists {
-						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-					}
-				}
+				m.retainServingRevisionLocked(other, time.Now().UTC())
 				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
@@ -11191,6 +11187,9 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
 	}
+	if err := m.checkAppRollbackGraphLocked(appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
 	if err := m.checkDatabaseSwitchLeaseLocked(ctx, target); err != nil {
 		return Deployment{}, err
 	}
@@ -11210,6 +11209,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(target)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.preserveRollbackSuccessLocked(target); err != nil {
+		return Deployment{}, err
+	}
+
 	now := time.Now().UTC()
 	var prior StageState
 	if len(target.StageState) > 0 {
