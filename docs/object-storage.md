@@ -47,6 +47,9 @@ gregale bucket list my-api
 app with `read_write` access (`--permission read` or `write` to narrow it). It
 is idempotent: running it again reuses the bucket and the binding.
 `gregale bucket list` shows the bucket IDs that other commands take.
+If a create or delete fails, Gregale keeps retrying it. While it does, the
+bucket stays `provisioning` or `deleting`, and `bucket list` (and the API's
+`retry` field) says why, how many attempts ran and when the next one starts.
 
 With the API, `POST /v1/apps/{app}/buckets` creates a bucket:
 

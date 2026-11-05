@@ -25,7 +25,7 @@ func (e *Engine) cleanupRetiredGenerations(ctx context.Context, p Pipeline, raw 
 		if err = current(ctx); err != nil {
 			return err
 		}
-		if err = e.cleanupGeneration(ctx, previous, raw, source, target); err != nil {
+		if err = e.cleanupGeneration(ctx, previous, raw, source, target, current); err != nil {
 			return err
 		}
 	}

@@ -99,8 +99,8 @@ func TestPooledExecModeOnlyWhenPoolingIsConfigured(t *testing.T) {
 	// transaction can land on a server connection that never prepared them.
 	t.Setenv(DirectDSNEnv, "postgres://u@localhost:5432/d")
 	applyPooledExecMode(cfg, ordinaryDSN)
-	if cfg.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeExec {
-		t.Errorf("exec mode = %v, want QueryExecModeExec when %s is set",
+	if cfg.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeCacheDescribe {
+		t.Errorf("exec mode = %v, want QueryExecModeCacheDescribe when %s is set",
 			cfg.ConnConfig.DefaultQueryExecMode, DirectDSNEnv)
 	}
 }
@@ -164,6 +164,39 @@ func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 	}
 }
 
+// TestPooledExecModeEncodesJSONBBytes pins the pooled path's exec mode: sqlc
+// passes every JSONB parameter as []byte, which QueryExecModeExec sent as
+// bytea and PostgreSQL rejected as invalid JSON, so enabling the pooler broke
+// every compute-side JSONB write. Each statement is written twice so the
+// second runs from the cached description.
+func TestPooledExecModeEncodesJSONBBytes(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `create table pooled_jsonb_probe (doc jsonb not null)`); err != nil {
+		t.Fatalf("create JSONB probe table: %v", err)
+	}
+	config := pool.Config().Copy()
+	t.Setenv(DirectDSNEnv, "postgres://u@direct:5432/d")
+	applyPooledExecMode(config, "postgres://u@pooler:6432/d")
+	if config.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeCacheDescribe {
+		t.Fatalf("pooled exec mode = %v, want QueryExecModeCacheDescribe", config.ConnConfig.DefaultQueryExecMode)
+	}
+	probe, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open pooled-mode pool: %v", err)
+	}
+	t.Cleanup(probe.Close)
+	for _, doc := range []string{`{"status":"live"}`, `{"status":"failed"}`} {
+		if _, err := probe.Exec(ctx, `insert into pooled_jsonb_probe (doc) values ($1)`, []byte(doc)); err != nil {
+			t.Fatalf("pooled-mode JSONB write %s: %v", doc, err)
+		}
+	}
+	var count int
+	if err := probe.QueryRow(ctx, `select count(*) from pooled_jsonb_probe where doc->>'status' = any($1)`, []string{"live", "failed"}).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("pooled-mode JSONB read: count=%d err=%v", count, err)
+	}
+}
+
 // sessionScopedAcquire records every Acquire that pins a connection for
 // session-scoped work, with the reason it cannot be pooled. Each MUST resolve
 // through DirectPool.
@@ -183,6 +216,7 @@ var sessionScopedAcquire = map[string]string{
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
 	"pkg/state/traffic_policy_session.go":       "session locks precede the guarded repeatable-read transaction",
 	"pkg/state/snapshot_restore_pressure_pg.go": "session pg_advisory_lock for the fleet-wide restore-pressure lock, taken with its counts in one call (ADR-1741)",
+	"pkg/edgecert/serve.go":                     "LISTEN: gatewayd-public's certificate reload notices",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
@@ -194,6 +228,7 @@ var pooledAcquireOK = map[string]string{
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
 	"pkg/db/pgtest/migration_statements.go":              "test harness: one connection for a NO TRANSACTION migration file; never runs against a pooler",
 	"pkg/state/pgstore_ratelimit.go":                     "atomic shared-rate statements, released on every path; no LISTEN, session lock, or other session state",
+	"pkg/state/private_network_coordination.go":          "MemStore's per-scope semaphore.Weighted.Acquire; the PgStore path takes its session lock through acquireSessionAdvisoryLockConn (DirectPool)",
 	"pkg/e2etest/postgresprobe/pool.go":                  "private customer pools: reads and explicit transactions are pooler-safe; Acquire only borrows semaphore permits",
 	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
 	"pkg/livequery/checkpoint.go":                        "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",

@@ -1171,6 +1171,10 @@ paths:
         Stages deletion. The account becomes `deleted_pending` for 30 days
         during which the customer can call `POST /v1/account/restore`. After
         the grace period, all rows are GC'd.
+        An account serving as an organization's billing contact while it has
+        a billing customer must move that contact first (409
+        `billing_contact_member`). If the billing-contact check cannot
+        complete, returns retryable 503 without staging deletion.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -1183,6 +1187,7 @@ paths:
                 example: {"status": "deleted_pending", "scheduled_at": "2026-07-23T11:25:00Z", "restore_until": "2026-08-22T11:25:00Z"}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ConflictDelete'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/account/rate-limits:
     get:
       tags: [account]
@@ -4738,6 +4743,78 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/service-aborts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before reviewed service abort.
+        schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+    get:
+      tags: [deployments]
+      operationId: getServiceAbortReceipt
+      summary: Read the immutable acceptance receipt for a service-abort attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns immutable acceptance
+        of an exact reviewed default or named-environment service abort, including the original native
+        reverse-handoff request ID, even after the current handoff changes. Acceptance
+        does not establish gateway acknowledgement, request draining, completion or
+        current health. Compare the request ID separately with the observed handoff.
+        A 404 means no retained evidence; it never proves rejection or permits replay.
+        The receipt is retained with the candidate deployment audit and app. Named receipts
+        also require the original project/environment UUIDs to match the current app
+        and environment. Deleted, replaced or moved targets return no evidence.
+      responses:
+        '200':
+          description: The immutable receipt for the original reviewed service abort.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceAbortReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Service-abort receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/deployment-promotions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before guarded traffic promotion.
+        schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+    get:
+      tags: [deployments]
+      operationId: getDeploymentPromotionReceipt
+      summary: Read the immutable acceptance receipt for a promotion attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns the original
+        candidate and original serving guard even after traffic changes. A 404 means no retained
+        receipt is available; it does not establish rejection and must never
+        trigger automatic resubmission. Receipts expire when their deployment
+        or app is purged. Named environment identities must still exist. This lookup never changes traffic.
+      responses:
+        '200':
+          description: The immutable receipt for the original guarded traffic promotion.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentPromotionReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Promotion receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/deployment-submissions/{attempt_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -5600,6 +5677,11 @@ paths:
         Stored binding enforcement requires this exact workflow.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Rollback-Attempt-ID
+          in: header
+          required: false
+          description: Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+          schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       requestBody:
         required: false
         content:
@@ -5620,7 +5702,7 @@ paths:
         '404': {$ref: '#/components/responses/RollbackTargetNotFound'}
         '409':
           $ref: '#/components/responses/RollbackConflict'
-          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required'
+          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required | rollback_attempt_accepted | rollback_attempt_conflict'
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/rollbacks/{operation}:
     parameters:
@@ -5703,6 +5785,18 @@ paths:
         request and never substitute a different predecessor.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Service-Abort-Attempt-ID
+          in: header
+          required: false
+          description: |
+            Opaque identity saved before an exact reviewed default or named-environment service abort.
+            Acceptance is recorded atomically with reverse-handoff intent. Accepted
+            repeats return 409 service_abort_attempt_accepted; a changed reviewed
+            request returns 409 service_abort_attempt_conflict. Read the retained
+            service-aborts receipt after a lost response; never replay accepted intent.
+            Named scopes require the complete project/environment release review and current
+            unprotected write admission. Unsupported recovery modes reject this header.
+          schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       requestBody:
         required: true
         content:
@@ -7758,6 +7852,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id32'
     patch:
+      parameters:
+        - name: Deployment-Promotion-Attempt-ID
+          in: header
+          required: false
+          description: Opaque durable identity for guarded 100 percent promotion. An accepted retry returns 409 deployment_promotion_attempt_accepted without changing traffic; read its receipt separately. Never reuse it with another body.
+          schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       tags: [deployments]
       operationId: updateDeploymentTraffic
       summary: Set the per-deployment traffic-split weight.
@@ -8820,7 +8920,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: The domain is not verified and cannot be selected.
+          description: The domain is unverified, routes to another app, or belongs to a suspended tenant and cannot be selected.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -15291,6 +15391,8 @@ paths:
         the next rotation observes the new value. `days=0` is atomic
         rotation (no grace); `days=null` (or omission) clears the
         override and falls back to the plan default.
+        A failed save returns retryable 503 without invalidating the cache
+        or emitting a successful change audit event.
       requestBody:
         required: true
         content:
@@ -15311,6 +15413,7 @@ paths:
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/account/egress_allowlist_extra:
     get:
       tags: [account]
@@ -17199,6 +17302,8 @@ paths:
         the organization bills to cannot be removed while the organization
         has a billing customer (409 `billing_contact_member`); set another
         billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+        If the billing-contact check cannot complete, returns retryable 503
+        without removing the member.
       responses:
         '204': {description: Member removed.}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -17225,6 +17330,7 @@ paths:
             `org_memberships_one_owner_idx` partial unique index. Stable code `org_last_owner`.
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -17238,7 +17344,9 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org.
+        member of the org. For a Free organization, the recipient must have
+        available Free-organization ownership capacity; admission is serialized
+        with organization creation and other incoming transfers.
       requestBody:
         required: true
         content:
@@ -17253,8 +17361,9 @@ paths:
         '403':
           description: |
             `403 Forbidden` — caller is authenticated but is not the
-            active owner of the target org. Stable code
-            `org_role_forbidden`.
+            active owner of the target org (`org_role_forbidden`), or the
+            recipient already owns the maximum number of Free organizations
+            (`org_free_limit_exceeded`, with limit and observed count).
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '404':
           description: 'code: NotFound (new owner is not a member)'
@@ -27928,6 +28037,35 @@ components:
         status: {type: string, enum: [disabled, unavailable, ready]}
         source: {type: string, enum: [registry, object_storage]}
         sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    ServiceAbortReceipt:
+      description: Immutable acceptance of an original reviewed service-abort intent; ACK/drain completion and the current handoff remain separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, predecessor_deployment_id, request_id, scope, accepted_at]
+      properties:
+        attempt_id: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+        request_hash: {type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$'}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        predecessor_deployment_id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        scope: {type: string, description: Default scope or the original named environment slug.}
+        project_id: {type: string, format: uuid, description: Original project identity; present for named scopes.}
+        environment_id: {type: string, format: uuid, description: Original environment identity; present for named scopes.}
+        accepted_at: {type: string, format: date-time}
+    DeploymentPromotionReceipt:
+      description: Immutable acceptance of an original guarded 100 percent traffic promotion; current traffic and health are separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, expected_serving_deployment_id, scope, accepted_at]
+      properties:
+        attempt_id: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
+        request_hash: {type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$'}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        expected_serving_deployment_id: {type: string, description: Original serving guard; empty requires no serving sibling.}
+        scope: {type: string}
+        project_id: {type: string, format: uuid}
+        environment_id: {type: string, format: uuid}
+        accepted_at: {type: string, format: date-time}
     DeploymentSubmissionReceipt:
       description: Immutable acceptance evidence for one opaque deployment submission attempt.
       type: object

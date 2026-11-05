@@ -33,7 +33,7 @@ func TestPrivateNetworkPolicyPreservesResolvedEgress(t *testing.T) {
 	}
 	target := netip.MustParseAddr("198.51.100.10")
 	targets := []netip.Addr{target, netip.MustParseAddr("2001:db8::10")}
-	if err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, targets, time.Hour, 5432); err != nil {
+	if err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, resolvedOwner(t, m, inst.Net.HostIP), targets, time.Hour, 5432); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(r.input), "add element ip faas egress_resolved { 198.51.100.10") {
@@ -57,7 +57,7 @@ func TestPrivateNetworkPolicyPreservesResolvedEgress(t *testing.T) {
 		}
 	}
 	before := r.inputRuns
-	if err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, targets, time.Hour, 5432); err != nil {
+	if err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, resolvedOwner(t, m, inst.Net.HostIP), targets, time.Hour, 5432); err != nil {
 		t.Fatal(err)
 	}
 	if r.inputRuns != before {

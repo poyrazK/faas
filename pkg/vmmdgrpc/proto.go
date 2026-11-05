@@ -7,6 +7,7 @@ package vmmdgrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"time"
 	"unicode/utf8"
@@ -990,12 +991,13 @@ func toPrivateNetworkCIDRs(ss []string) ([]netip.Prefix, error) {
 	return parsed, nil
 }
 
-func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, network []netip.Prefix) ([]api.PrivateNetworkFirewallRule, error) {
+func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, networks []netip.Prefix, memberAddress string) ([]api.PrivateNetworkFirewallRule, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	if len(network) != 1 {
-		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", "firewall rules require exactly one private network CIDR")
+	network, err := privateNetworkFirewallCIDR(networks, memberAddress)
+	if err != nil {
+		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", err.Error())
 	}
 	rules := make([]api.PrivateNetworkFirewallRule, 0, len(raw))
 	for _, rule := range raw {
@@ -1007,11 +1009,32 @@ func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, net
 			CIDRs: append([]string(nil), rule.GetCidrs()...), Ports: append([]string(nil), rule.GetPorts()...),
 		})
 	}
-	validated, err := api.ValidatePrivateNetworkFirewallRules(rules, network[0])
+	validated, err := api.ValidatePrivateNetworkFirewallRules(rules, network)
 	if err != nil {
 		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", err.Error())
 	}
 	return validated, nil
+}
+
+// Peer destinations can sort before the member's own subnet. Firewall rules
+// retain the owning subnet as their baseline regardless of route ordering.
+func privateNetworkFirewallCIDR(networks []netip.Prefix, memberAddress string) (netip.Prefix, error) {
+	if memberAddress == "" {
+		if len(networks) == 1 {
+			return networks[0], nil
+		}
+		return netip.Prefix{}, errors.New("firewall rules require a member address when multiple private network CIDRs are present")
+	}
+	address, err := netip.ParseAddr(memberAddress)
+	if err != nil || !address.Is4() {
+		return netip.Prefix{}, errors.New("private_network_address must be an IPv4 address")
+	}
+	for _, network := range networks {
+		if network.Contains(address) {
+			return network, nil
+		}
+	}
+	return netip.Prefix{}, errors.New("private_network_address is outside the private network CIDRs")
 }
 
 func privateNetworkFirewallRulesFromProto(raw []*vmmdpb.PrivateNetworkFirewallRule) []api.PrivateNetworkFirewallRule {

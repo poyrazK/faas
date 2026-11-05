@@ -72,29 +72,37 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 	if (args.UploadID == "") == (len(args.Files) == 0) {
 		return nil, invalid("invalid_argument", "pass either upload_id or files")
 	}
-	dir, err := m.opts.uploads.newDir()
-	if err != nil {
-		return nil, err
-	}
+	var dir string
 	if args.UploadID != "" {
 		up, archive, err := m.opts.uploads.take(m.opts.grantID, args.UploadID)
 		if err != nil {
-			m.opts.uploads.removeDir(dir)
 			return nil, err
 		}
 		if up.app != args.App {
-			m.opts.uploads.removeDir(dir)
+			_ = os.Remove(archive)
 			return nil, invalid("invalid_argument", "this upload was created for app "+up.app)
 		}
-		err = extractUpload(archive, dir, up.maxBytes*4)
+		// The plan directory takes over the upload's reservation, unpacked.
+		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
+		if err != nil {
+			_ = os.Remove(archive)
+			return nil, err
+		}
+		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
 		_ = os.Remove(archive)
 		if err != nil {
 			m.opts.uploads.removeDir(dir)
 			return nil, invalid("invalid_upload", err.Error())
 		}
-	} else if err := writeInlineFiles(dir, args.Files); err != nil {
-		m.opts.uploads.removeDir(dir)
-		return nil, invalid("invalid_argument", err.Error())
+	} else {
+		var err error
+		if dir, err = m.opts.uploads.newDir("grant:"+m.opts.grantID, maxInlineBytes); err != nil {
+			return nil, err
+		}
+		if err := writeInlineFiles(dir, args.Files); err != nil {
+			m.opts.uploads.removeDir(dir)
+			return nil, invalid("invalid_argument", err.Error())
+		}
 	}
 	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {

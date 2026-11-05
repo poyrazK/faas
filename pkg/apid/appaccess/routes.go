@@ -78,6 +78,10 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/builds/{id}/sbom":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/logs":                        authz.OrgActionReadAppLogs,
 
+	// Historical receipts require the same app-read permission as deployments.
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":        authz.OrgActionReadApp,
+
 	// Release approvals (ADR-20261020085706): only owners and admins may
 	// change the policy, so a developer cannot switch approvals off.
 	"GET /v1/apps/{slug}/release-approval-policy":    authz.OrgActionReadApp,

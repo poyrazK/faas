@@ -31,6 +31,7 @@ func udpListenerFixture(t *testing.T) (*state.MemStore, context.Context, state.A
 
 func TestMemStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 	m, ctx, account, app := udpListenerFixture(t)
+	declareUDPListener(t, m, app.ID, "postgres", 5432)
 	created, err := m.CreateUDPListener(ctx, state.UDPListener{
 		AccountID: account.ID, AppID: app.ID, ListenerName: "Postgres",
 		GuestPort: 5432, PublicPort: 40123, Enabled: true,
@@ -86,6 +87,7 @@ func TestMemStoreUDPListenerRejectsCollisionsAndInvalidPorts(t *testing.T) {
 
 func TestMemStoreUDPListenerSeparateNamespaceAndAppDeletion(t *testing.T) {
 	m, ctx, account, app := udpListenerFixture(t)
+	declareUDPListener(t, m, app.ID, "echo", 5353)
 	if _, err := m.CreateTCPListener(ctx, state.TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 5353, PublicPort: 40126, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

@@ -80,6 +80,18 @@ export function withGregaleRequestContext<T>(headers: HeadersInit, handler: () =
 }
 
 /**
+ * Gregale's function adapters run each handler call inside this request
+ * context when the handler has loaded the SDK, so a function needs no wrapper
+ * of its own (ADR-20261102082606 amendment 2). The first SDK copy loaded
+ * registers; a second copy in the same process does not replace it.
+ */
+const REQUEST_CONTEXT_HOOK = Symbol.for('gregale.sdk.requestContext.v1');
+const hooks = globalThis as unknown as Record<symbol, unknown>;
+if (typeof hooks[REQUEST_CONTEXT_HOOK] !== 'function') {
+  hooks[REQUEST_CONTEXT_HOOK] = withGregaleRequestContext;
+}
+
+/**
  * Render the selected Gregale release as an HTML meta tag for an SSR page.
  * The value is emitted only when it has the UUID form accepted by the public
  * release-pin API, so untrusted header values cannot inject markup.

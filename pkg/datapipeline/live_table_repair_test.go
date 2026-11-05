@@ -13,6 +13,32 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
+func TestLiveRepairCopyRetryEligibilityKeepsScopeAndAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, phase, native, reason string
+		fresh, stalled                     bool
+		retries                            int
+		want                               bool
+	}{
+		{"stalled copy", "blocked", "copying", "d", "table_copy_stalled", true, true, 1, true},
+		{"lost tracking", "blocked", "missing", "", "table_addition_tracking_lost", true, false, 2, true},
+		{"ready copy", "blocked", "ready", "r", "table_copy_stalled", true, true, 1, false},
+		{"obsolete observation", "blocked", "missing", "", "table_addition_tracking_lost", false, false, 2, false},
+		{"active attempt", "approved", "copying", "d", "table_copy_stalled", true, true, 1, false},
+		{"attempt budget", "blocked", "missing", "", "table_addition_tracking_lost", true, false, api.DataPipelineSchemaRetriesMax, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Pipeline{SchemaApproval: "approved", DataPipeline: api.DataPipeline{State: "blocked", DesiredState: "running", ObservationFresh: tc.fresh, Reason: tc.reason}, SchemaChange: &SchemaChange{ID: "approved", Supported: true, State: "verifying", Retry: tc.retries,
+				Recovery: &TableRecovery{Kind: "live", Table: "orders", State: tc.state, Stage: "copying"},
+				Copies:   []TableCopyProgress{{Table: "orders", Phase: tc.phase, NativeState: tc.native, Stalled: tc.stalled}, {Table: "customers", Phase: "ready", NativeState: "r"}}}}
+			choices := RecoverableTables(p)
+			if tc.want && !slices.Equal(choices, []string{"orders"}) || !tc.want && len(choices) != 0 {
+				t.Fatal("wrong live copy recovery eligibility", choices)
+			}
+		})
+	}
+}
+
 func TestLiveTableRepairRequiresSeparateExactApproval(t *testing.T) {
 	service, store, p, _ := schemaPipelineFixture(t)
 	ctx := t.Context()

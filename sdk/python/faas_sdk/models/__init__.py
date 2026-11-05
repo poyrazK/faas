@@ -560,6 +560,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -2170,6 +2171,7 @@ from .secret_runtime_reload_observation_reload_support import SecretRuntimeReloa
 from .secret_runtime_reload_observation_runtime_state import SecretRuntimeReloadObservationRuntimeState
 from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
 from .secret_scan_result import SecretScanResult
+from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -3154,6 +3156,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",
@@ -4617,6 +4620,7 @@ __all__ = (
     "SecretRuntimeReloadObservationRuntimeState",
     "SecretRuntimeReloadObservationSignal",
     "SecretScanResult",
+    "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",

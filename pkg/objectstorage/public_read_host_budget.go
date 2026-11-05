@@ -7,6 +7,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 )
 
 // HostLookupBudget bounds the public-read matcher's store reads for hostnames
@@ -23,6 +24,18 @@ type HostLookupBudget struct {
 	maxKnown int
 	budget   *rate.Limiter
 	shed     prometheus.Counter
+	// preloaded holds every app slug and verified custom domain, refreshed
+	// from the store, so a real app's host skips the budget even before this
+	// edge has served it (after a restart). Set before serving.
+	preloaded *knownhosts.Set
+}
+
+// Preload lets every host in known skip the budget. Call it before the
+// budget is used.
+func (b *HostLookupBudget) Preload(known *knownhosts.Set) {
+	if b != nil {
+		b.preloaded = known
+	}
 }
 
 // NewHostLookupBudget returns a budget whose shed counter is named
@@ -47,7 +60,7 @@ func (b *HostLookupBudget) Collectors() []prometheus.Collector {
 // admit reports whether a store read of host may go ahead. A nil budget
 // admits every read.
 func (b *HostLookupBudget) admit(host string) bool {
-	if b == nil {
+	if b == nil || b.preloaded.Has(host) {
 		return true
 	}
 	b.mu.Lock()
