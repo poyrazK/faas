@@ -6982,7 +6982,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		return cmdLogsInteractive(slug)
 	}
 	if *explain && jsonOutput {
-		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable)", "logs")
+		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable); drop --explain: with --json, `logs --deployment ID` returns a failed deployment's log records and failure reason", "logs")
 		return 2
 	}
 	if fs.NArg() > 1 {
@@ -7949,11 +7949,11 @@ streamLoop:
 					Line string `json:"line"`
 				}
 				if !opts.quiet && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
+					prefix := ""
 					if opts.prefixBuildLogs {
-						fmt.Printf("build | %s\n", terminalSafe(entry.Line))
-					} else {
-						fmt.Println(terminalSafe(entry.Line))
+						prefix = "build | "
 					}
+					_ = printTerminalSafeLines(os.Stdout, prefix, entry.Line)
 				}
 			case "stage":
 				// ADR-117 §3: server-side stage diff — drive the
