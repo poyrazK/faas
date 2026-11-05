@@ -389,6 +389,24 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - What the files API and extraction create is owned by `app`.
      - Archives are tar.gz, with links kept as links, never followed. Creation is capped in bytes, and extraction in entries and unpacked bytes.
    - **Not yet:** the anti-spoofing rule, the module-less guest kernel and the §10 root metal tests (part two), and the workspace scratch drive, which vmmd attaches in step 4.
+
+   **Built, part two (2026-11-05), on a local branch.**
+   - **No kernel code.** Every guest kernel build turns off `CONFIG_MODULES` and `CONFIG_KEXEC_FILE` (`CONFIG_KEXEC` is already off): the release build (`scripts/build-firecracker-kernel.sh`), which checks again after `olddefconfig` and refuses a config that builds anything as a module, as well as the Ansible fallback build and the packer build.
+     - Firecracker's pinned 6.18 config builds nothing as a module, so no driver is lost.
+     - The kernel digest changes, so runtime snapshots taken on the old kernel go stale. Apps re-snapshot lazily through cold boot (ADR-005).
+   - **Anti-spoofing.** With `netns.Config.GuestMAC` set, a `netdev` table (`faas_guard`) hooks `tap0`'s ingress at priority -500, ahead of NAT and every other rule. It accepts only IPv4 from `10.0.0.2` and ARP for `10.0.0.2`, both from that MAC, and counts and drops everything else, IPv6 included (`faas_guest_spoof`).
+     - Sandbox sessions in `registries` mode set the fixed MAC `netns.SandboxGuestMAC` (`06:00:0a:00:00:02`, identical across VMs like the guest IP, ADR-009), which Firecracker gives the guest as `guest_mac`.
+     - `none` sessions have no network interface.
+     - App, job and agent-run VMs get no guard yet. Their MAC is Firecracker's random choice, and restored snapshots carry whichever one they booted with, so a MAC rule would cut off every existing snapshot. Fixing their MAC first is a follow-up.
+   - **Metal test** (`TestMetalSandboxRootStaysInsideTheVM`, run by `scripts/experiments/agent-runs/metal/run_sandbox_root_metal.sh` against a kernel built by the release script for the host's Firecracker). As root, a registries session:
+     - finds `init_module`, `finit_module` and `kexec_file_load` answering `ENOSYS`;
+     - has a spoofed source address and a spoofed MAC dropped and counted by the guard, while its ordinary traffic passes;
+     - cannot connect to metadata, the bridge's SSH, RFC1918 or mail ports, even on an address the registries resolver answered, which stays open on 443;
+     - stays under `memory.max` when it allocates past its RAM: the guest's own OOM killer stops the process at a peak just under the limit, and the session keeps running.
+     - Passed on gregale-internal-test-1 (Firecracker 1.7.0, Linux 6.1.134 built by the release script with these edits; leakcheck clean before and after). Running ordinary traffic through it shows no false drops.
+   - **Not yet:**
+     - `sudo apk add` in registries mode needs gatewayd-internal's registries resolver, so it belongs to the full-stack native lane;
+     - the agent base has no `sudo` for `app` yet (§10), so `run_as: root` is the way to get root.
 4. vmmd `SandboxSession` and gateway routing, on the ADR-1037 transport.
 
    **Built (2026-11-02), on a local branch.** Nothing is reachable until step 5 boots sessions.

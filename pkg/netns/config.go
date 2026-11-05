@@ -20,6 +20,13 @@ const (
 	GuestGateway = "10.0.0.1"
 	GuestPrefix  = "10.0.0.2/30"
 	TapPrefix    = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
+	// SandboxGuestMAC is every sandbox session guest's MAC, as identical
+	// across VMs as GuestIP (ADR-009): locally administered, unicast.
+	SandboxGuestMAC = "06:00:0a:00:00:02"
+	// GuestGuardTable is the netdev table holding the tap ingress guard.
+	GuestGuardTable = "faas_guard"
+	// GuestSpoofCounter counts the frames the guard dropped.
+	GuestSpoofCounter = "faas_guest_spoof"
 	// TapARPRetransMs is the tap's ARP retry interval inside the netns. The
 	// readiness probe dials the guest before its network exists; with the
 	// kernel default (1000 ms) the first unanswered ARP left the host blind
@@ -151,8 +158,14 @@ type Config struct {
 	// it reaches none of the bridge's service ports, and the DNS gate with
 	// port 443 alone leaves it only the addresses that resolver answered.
 	SandboxRegistries bool
-	HostBits          int // prefix length for HostIP (16)
-	EgressMbit        int // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
+	// GuestMAC, when set, is the only MAC the guest may send from: with it,
+	// an ingress guard on the tap accepts only IPv4 from GuestIP and ARP for
+	// GuestIP, both from GuestMAC, and drops every other frame
+	// (ADR-20261027090013 §10). Sandbox sessions set it to SandboxGuestMAC,
+	// because their tenant is root in the guest.
+	GuestMAC   string
+	HostBits   int // prefix length for HostIP (16)
+	EgressMbit int // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
 	// DenySet is the typed egress denylist applied at the per-netns
 	// forward chain. Defaults to NewDefaultDenySet() when zero
 	// (pkg/fcvm/manager.go::Wake does not set it; the renderer falls
@@ -983,7 +996,33 @@ func (c Config) NftCommands() [][]string {
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
 	cmds = append(cmds, c.RehearsalNftCommands()...)
+	cmds = append(cmds, c.GuestGuardCommands()...)
 	return cmds
+}
+
+// GuestGuardCommands installs the anti-spoofing guard when GuestMAC is set
+// (ADR-20261027090013 §10). It hooks the tap's ingress, ahead of every
+// other rule and of NAT, so a guest that is root cannot send a frame from
+// another MAC, an IPv4 packet from another address, an ARP claim for
+// another address, or any other protocol, IPv6 included.
+func (c Config) GuestGuardCommands() [][]string {
+	if c.GuestMAC == "" {
+		return nil
+	}
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	return [][]string{
+		nft("add", "table", "netdev", GuestGuardTable),
+		nft("add", "counter", "netdev", GuestGuardTable, GuestSpoofCounter, "{}"),
+		nft("add", "chain", "netdev", GuestGuardTable, "ingress", "{", "type", "filter", "hook", "ingress", "device", c.Tap,
+			"priority", "-500", ";", "policy", "drop", ";", "}"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "ether", "saddr", "!=", c.GuestMAC,
+			"counter", "name", GuestSpoofCounter, "drop"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "ether", "type", "ip", "ip", "saddr", GuestIP, "accept"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "ether", "type", "arp", "arp", "saddr", "ether", c.GuestMAC,
+			"arp", "saddr", "ip", GuestIP, "accept"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "counter", "name", GuestSpoofCounter, "drop"),
+	}
 }
 
 // Counter and set names for the ADR-361 tenant egress policy.
@@ -1605,7 +1644,7 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 func (c Config) NftResetCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
-	return [][]string{
+	cmds := [][]string{
 		nft("delete", "table", "ip", "faas"),
 		// Mirror the IPv6 table reset (ADR-023 split). Same best-effort
 		// shape as the v4 entry: if the table is absent (first boot, freshly
@@ -1616,6 +1655,11 @@ func (c Config) NftResetCommands() [][]string {
 		// itself does not exercise this branch.
 		nft("delete", "table", "ip6", "faas"),
 	}
+	// Only a guarded VM has the guard table; others spawn no extra process.
+	if c.GuestMAC != "" {
+		cmds = append(cmds, nft("delete", "table", "netdev", GuestGuardTable))
+	}
+	return cmds
 }
 
 // TcCommands returns the argv list that applies the per-plan bandwidth

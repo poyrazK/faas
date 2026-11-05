@@ -6,6 +6,7 @@ package fcvm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -37,6 +38,10 @@ func TestRegistriesSandboxBootsDNSGatedOn443(t *testing.T) {
 	nc := inst.Net
 	if !nc.SandboxRegistries || !nc.DNSGated || !slices.Equal(nc.EgressPorts, []uint16{443}) || nc.DatabaseEgress || len(nc.EgressAllowlist) != 0 {
 		t.Fatalf("network = %+v; want registries, DNS-gated, 443 only", nc)
+	}
+	// §10: root in the guest sends only from the fixed MAC and GuestIP.
+	if nc.GuestMAC != netns.SandboxGuestMAC || len(nc.GuestGuardCommands()) == 0 {
+		t.Fatalf("guest MAC %q; want the guarded %q", nc.GuestMAC, netns.SandboxGuestMAC)
 	}
 	period := api.PlanPro.CPUPeriodUS()
 	if got, err := leaseCPUMax(inst.Lease); err != nil || got != fmt.Sprintf("%d %d", 2*period, period) {
@@ -76,5 +81,17 @@ func TestRegistriesSandboxRefusesToBootWithoutTheDNSGate(t *testing.T) {
 	defer m.mu.Unlock()
 	if _, live := m.live["sbx-off"]; live {
 		t.Fatal("a refused sandbox stayed live")
+	}
+}
+
+// The guard's MAC is the one Firecracker gives the guest.
+func TestColdBootFixesTheGuardedGuestMAC(t *testing.T) {
+	cfg := BuildColdBootConfig(ColdBootSpec{Tap: "tap0", GuestMAC: netns.SandboxGuestMAC, VcpuCount: 1, MemSizeMiB: 512}, 3)
+	if len(cfg.NetworkInterfaces) != 1 || cfg.NetworkInterfaces[0].GuestMAC != netns.SandboxGuestMAC {
+		t.Fatalf("interfaces %+v", cfg.NetworkInterfaces)
+	}
+	raw, err := json.Marshal(BuildColdBootConfig(ColdBootSpec{Tap: "tap0", VcpuCount: 1, MemSizeMiB: 512}, 3).NetworkInterfaces)
+	if err != nil || strings.Contains(string(raw), "guest_mac") {
+		t.Fatalf("an unguarded VM fixes a MAC: %s %v", raw, err)
 	}
 }

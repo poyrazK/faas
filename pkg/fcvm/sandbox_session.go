@@ -163,6 +163,9 @@ func (r WakeRequest) networkless() bool { return r.ExecutionOnly && !r.sandboxRe
 // extra port is reachable.
 func applySandboxRegistriesEgress(nc *netns.Config, plan api.Plan) {
 	nc.SandboxRegistries = true
+	// The tenant is root in the guest (§10): the netns accepts only the
+	// fixed MAC and GuestIP from the tap.
+	nc.GuestMAC = netns.SandboxGuestMAC
 	nc.DNSGated = true
 	nc.EgressPorts = []uint16{443}
 	if lim, ok := api.LimitsFor(plan); ok {
