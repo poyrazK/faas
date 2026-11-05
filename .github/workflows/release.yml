@@ -455,7 +455,9 @@ jobs:
     name: Publish the npm channel
     needs: [build]
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # Two public-availability waits of up to 20 minutes each
+    # (scripts/publish-npm-packages.mjs) plus staging and uploads.
+    timeout-minutes: 55
     concurrency:
       group: gregale-npm-publish
       cancel-in-progress: false
