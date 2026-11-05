@@ -179,7 +179,7 @@ RAM per session follows `AgentRunRAMMBMax`.
 
 ### 8. `GregaleSandboxClient` (OpenAI Agents SDK, TypeScript)
 
-- **Package.** `@gregale/agents-sandbox`, in the `sdk/node` workspace, with `@openai/agents` as a peer dependency pinned to tested versions. It is not exported or packed until launch (the gating rule).
+- **Package.** `@gregale/agents-sandbox`, in its own package `sdk/agents-sandbox` (amended 2026-11-05; first proposed inside the `sdk/node` workspace), with `@openai/agents-core` as a peer dependency pinned to tested versions. It is not exported or packed until launch (the gating rule).
 - **Interfaces.** It implements `SandboxClient` with `backendId: 'gregale'`, plus `create`, `delete`, `serializeSessionState`, `deserializeSessionState` and `resume`. It also implements `SandboxSession`.
 
 | SDK | Gregale |
@@ -521,6 +521,14 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - `sandbox_ports_open` and `sandbox_preview_requests_total` are not emitted yet.
      - The `GregaleSandboxClient` and the shim (steps 9 and 10) do not call the port routes yet.
 9. `GregaleSandboxClient` (with `resolveExposedPort`) and the PR-triage example.
+   - **As built (local branch, no PR yet).** `@gregale/agents-sandbox` lives in its own private package, `sdk/agents-sandbox`, not inside `sdk/node`, so the Node SDK takes no `@openai/agents` peer dependency. It implements `SandboxClient` and `SandboxSession` from `@openai/agents-core/sandbox` 0.21.0, which is pinned as the peer dependency. Its tests run under `make test-agents-sandbox`, which no CI job runs yet.
+   - **Interface.** The Agents SDK's remote-session base class (`@openai/agents-extensions`, used by E2B, Modal and the others) is not exported, so the session implements the public interface directly. The client leaves `supportsDefaultOptions` unset, like the other remote providers: the SDK then passes no default `local` snapshot, and any other core snapshot is refused in favour of `persistSnapshot()` and `snapshotId`.
+   - **Commands.** The shell tool's `execCommand` starts a background command and polls its output for up to `yieldTimeMs` (10 s by default). A command still running keeps an SDK session ID, and `writeStdin` with empty `chars` polls it. `supportsPty()` answers true so the SDK offers `write_stdin` for polling, but input is refused, because Gregale has no stdin route yet. `tty` is refused, and so is `runAs` other than `app` or `root`.
+   - **Manifest.** `file`, `dir`, `local_file` and `local_dir` entries go up in one `workspace:hydrate` tar. A `git_repo` is fetched in the guest (`git fetch --depth 1 origin <ref>`, so `refs/pull/N/head` works) and needs a network mode that reaches its host. The manifest's environment is sent with every command and is never serialized. Mounts, users, groups, path grants, entry groups and a root other than `/workspace` fail before any session is created.
+   - **State and tokens.** `serializeSessionState` is `{sandboxId, apiBase}`. `deserializeSessionState` and `resume` refuse a state for another API origin, so a forged state cannot send the API key elsewhere. The session token is re-minted from the API key near expiry, and once when the data plane rejects it. A private port's preview token is returned in the endpoint's `query` and is never stored in `state.exposedPorts`.
+   - **Workspace.** `persistWorkspace` builds a tar in the guest and downloads it through `…/files`; `hydrateWorkspace` gzips the tar and uploads it. `persistSnapshot()` is Gregale's server-side `workspace:persist`.
+   - **Tested.** There are unit tests against a fake API, a real `SandboxAgent` run through the SDK's runner with `ScriptedModel`, and the PR-triage example (`examples/pr-triage.ts`) run the same way.
+   - **Not tested against a deployed Gregale**, where sandbox sessions are switched off. There is no journey for it yet. A journey needs the switches on in a test environment.
 10. The E2B-compatible shim, template import, and a migration guide with the coverage table (§12, §13).
 11. Billing, with ADR-20261027090011.
 
