@@ -1,4 +1,4 @@
-# ADR-20261105183935: Repair catalog references and retained outcome resolution
+# ADR-20261105185744: Repair catalog references and retained outcome resolution
 
 - Status: accepted for internal operator qualification
 - Date: 2026-11-05

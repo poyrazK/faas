@@ -1173,7 +1173,7 @@ restoring write authority. A matching committed receipt still takes precedence.
 The hosted operation can then settle and release its pending-operation slot.
 Apply the explicit owner `schema --upgrade` before updating executors and SDKs.
 See [catalog references and retained outcome
-resolution](adr/20261105183935-repair-catalog-references-and-retained-resolution.md).
+resolution](adr/20261105185744-repair-catalog-references-and-retained-resolution.md).
 
 After a network failure, inspect `get PLAN_UUID`. `applied_at` and
 `repair_operation_id` establish a committed correction. Repeat apply only with

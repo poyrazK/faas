@@ -14,7 +14,7 @@
 
 - [ADR-20261105120854: Mirror holds protect PostgreSQL recovery data](20261105120854-managed-postgres-mirror-retention-safety.md) — verify both hold inventories before pruning, protect queued mirror deletions, and discover recovery backups despite incomplete primary listings
 
-- [ADR-20261105183935: Repair catalog references and retained outcome resolution](20261105183935-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
+- [ADR-20261105185744: Repair catalog references and retained outcome resolution](20261105185744-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
 
 - [ADR-20261105110000: Repair preparation recovery and monetary locales](20261105110000-repair-prepare-recovery-and-money-locales.md) — preserves pending prepare identities and refresh paths, canonicalizes money capture, and qualifies monetary fingerprint rendering without rewriting history
 
