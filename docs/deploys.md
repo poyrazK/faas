@@ -634,6 +634,9 @@ It reports:
 
 A section shows as unknown when its history is gone: config history keeps
 the last 100 revisions per scope, and image releases have no build SBOM.
+A release whose build made no artifact (failed, cancelled or still running)
+has no runtime base yet: the runtime base is not listed as a changed setting,
+and the summary ends with `runtime base unknown: v2 made no build artifact`.
 The approval page and the "approval needed" message show the same
 comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
