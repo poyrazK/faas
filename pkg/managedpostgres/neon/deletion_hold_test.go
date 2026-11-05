@@ -80,3 +80,23 @@ func TestDeletionHoldDisablesAndEnablesThePrimaryEndpoint(t *testing.T) {
 		t.Fatalf("an unconfirmed hold: %v", err)
 	}
 }
+
+// adr: 20261025094915 — amendment 2026-11-05: the cap sweep reads the same
+// hold before it places or releases one.
+func TestComputeHeldReadsThePrimaryEndpoint(t *testing.T) {
+	f := &deletionHoldFixture{}
+	provider := deletionHoldProvider(t, f)
+	for _, disabled := range []bool{false, true} {
+		f.disabled = disabled
+		held, err := provider.ComputeHeld(context.Background(), "quiet-river-12345678")
+		if err != nil || held != disabled {
+			t.Fatalf("disabled %v: held %v, %v", disabled, held, err)
+		}
+	}
+	if held, err := provider.ComputeHeld(context.Background(), "quiet-river-12345678/br-restore-123"); err != nil || held {
+		t.Fatalf("restore branch: held %v, %v; want its own endpoint, which is not disabled", held, err)
+	}
+	if len(f.patches) != 0 {
+		t.Fatalf("reading the hold wrote %v", f.patches)
+	}
+}

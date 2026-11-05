@@ -4024,6 +4024,7 @@ type Deployment struct {
 	MailFailureAppRevision     pgtype.Int8
 	MailFailureSuccessRevision pgtype.Int8
 	PromotedAt                 pgtype.Timestamptz
+	RollbackReleaseReview      []byte
 }
 
 type DeploymentAlias struct {
@@ -13549,6 +13550,7 @@ type ProjectReleaseSet struct {
 	RollbackSourceReleaseID   pgtype.UUID
 	RollbackPreviousReleaseID pgtype.UUID
 	Deactivation              []byte
+	FallbackHiddenAt          pgtype.Timestamptz
 }
 
 type ProjectReleaseStage struct {

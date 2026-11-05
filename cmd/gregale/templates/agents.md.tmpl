@@ -30,9 +30,24 @@ example:
 gregale --non-interactive --json deploy --name <app>
 ```
 
-The receipt has the deployment `id`, its `status` and the `app_url`. Request
-the `app_url` before reporting success. If the receipt says
-`"timed_out": true`, run its `resume_command` instead of deploying again.
+The command waits until the release is live and prints nothing until then; a
+first build can take several minutes. To get the deployment at once, add
+`--no-wait`: the receipt then has the deployment `id` and a `resume_command`
+that waits for that same deployment. If the receipt says `"timed_out": true`,
+or your process stopped while waiting, run its `resume_command` instead of
+deploying again.
+
+The receipt has the deployment `id`, its `status` and the `app_url`. Check the
+deployed code before reporting success:
+
+```sh
+gregale --non-interactive --json invoke <app> --method GET --path /
+```
+
+On Hobby, Pro and Scale a new app is private: `app_url` answers 401 without an
+API key, and `invoke` sends the request with your credential. Never put a key
+in a URL. `/healthz` on `app_url` answers from Gregale's edge, not from the
+app, so it does not show your code ran.
 
 ## Check and debug
 

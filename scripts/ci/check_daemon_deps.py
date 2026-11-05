@@ -23,12 +23,18 @@ itself only, not its subpackages (pkg/sched/flowcount is a separate leaf). Closu
 Makefile's DAEMON_TAGS for daemons). A violation prints the import chain
 that pulls the package in.
 
+The release's guest-init (PID 1 of every microVM, built from guest/init under
+the Makefile's GUEST_TAGS) is checked as the binary "init": every runtime base
+embeds it, so its code is what decides whether releases keep the bases and
+snapshots (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md).
+
 Usage:
   scripts/ci/check_daemon_deps.py [--config scripts/ci/daemon_deps.json]
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import deque
@@ -38,6 +44,21 @@ sys.path.insert(0, HERE)
 import affected_units as au  # noqa: E402
 
 DEFAULT_CONFIG = os.path.join(HERE, "daemon_deps.json")
+
+# Release binaries that are not a ./cmd/<name> command: name -> main package.
+GUEST_MAINS = {"init": "guest/init"}
+
+
+def main_package(module, name):
+    """The import path of binary name's main package."""
+    return f"{module}/{GUEST_MAINS.get(name, 'cmd/' + name)}"
+
+
+def guest_tags(text):
+    """The build tags release builds give guest-init: the Makefile's
+    GUEST_TAGS (comma-separated), else none."""
+    m = re.search(r"^GUEST_TAGS\s*:=\s*(\S+)\s*$", text, re.M)
+    return m.group(1).split(",") if m else []
 
 
 def load_rules(path):
@@ -99,7 +120,7 @@ def violations(rules, graphs, module, daemons=()):
             graph = graphs[name]
             target = import_path(rule["package"], module, graph)
             allowed = frozenset(import_path(p, module, graph) for p in rule.get("allow_importers", ()))
-            chain = import_chain(graph, f"{module}/cmd/{name}", target, allowed)
+            chain = import_chain(graph, main_package(module, name), target, allowed)
             if chain:
                 out.append((rule, name, [p.removeprefix(module + "/") for p in chain]))
     return out
@@ -118,7 +139,8 @@ def go_graph(mains, tags, root="."):
 
 
 def load_graphs(root="."):
-    """({binary: package graph}, module, daemons) for the release binaries."""
+    """({binary: package graph}, module, daemons) for the release binaries,
+    guest-init included."""
     with open(os.path.join(root, "Makefile"), encoding="utf-8") as fh:
         makefile = fh.read()
     module = au.module_path(root)
@@ -127,6 +149,8 @@ def load_graphs(root="."):
     for names, tags in ((daemons, au.daemon_tags(makefile)), (au.makefile_list(makefile, "CLIS"), [])):
         graph = go_graph([f"./cmd/{n}" for n in names], tags, root)
         graphs.update({n: graph for n in names})
+    for name, package in GUEST_MAINS.items():
+        graphs[name] = go_graph([f"./{package}"], guest_tags(makefile), root)
     return graphs, module, daemons
 
 

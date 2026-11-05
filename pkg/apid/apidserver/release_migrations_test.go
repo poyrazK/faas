@@ -162,6 +162,15 @@ func TestRollbackOverReleaseNeedsAcknowledgement(t *testing.T) {
 	if !found {
 		t.Fatalf("rollback audit lacks crossed_releases [v3]: %+v", audits)
 	}
+	// The imaging worker resumes without the admission request's context. Its
+	// traffic write must recover this exact acknowledgement from preparation.
+	store := *h.e.Store()
+	if err := store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(t.Context()), h.v1.ID); err != nil {
+		t.Fatalf("plain rollback lost its admission acknowledgement: %v", err)
+	}
+	if got, err := store.DeploymentByID(t.Context(), h.v1.ID); err != nil || got.TrafficPercent != 100 {
+		t.Fatalf("acknowledged rollback did not serve: %+v %v", got, err)
+	}
 }
 
 // TestDeploymentReportsItsRelease: single reads carry the release run.

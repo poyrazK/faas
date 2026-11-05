@@ -143,6 +143,8 @@ var OptionalRegistry = []Entry{
 	{Name: "s3-gatewayd", Unit: UnitS3Gateway, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8084", ReadyzURL: "http://127.0.0.1:9096/readyz"}},
 	{Name: "bridged", Unit: UnitBridged, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9098"}},
 	{Name: "apid-clone-worker", Unit: UnitApidCloneWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "apid-data-pipeline-worker", Unit: UnitApidDataPipelineWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "apid-data-pipeline-alert-worker", Unit: UnitApidDataPipelineAlertWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
 	{Name: "maild", Unit: UnitMaild, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/maild.sock"}},
 	// ADR-1343: the compute-node app edge, turned on per cell by the
 	// manifest's public_edge.compute_nodes.

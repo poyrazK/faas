@@ -4203,6 +4203,7 @@ CREATE TABLE public.deployments (
     mail_failure_app_revision bigint,
     mail_failure_success_revision bigint,
     promoted_at timestamp with time zone,
+    rollback_release_review jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -4232,6 +4233,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
     CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
+    CONSTRAINT deployments_rollback_release_review_check CHECK (COALESCE(((jsonb_typeof(rollback_release_review) = 'object'::text) AND ((rollback_release_review = '{}'::jsonb) OR ((jsonb_typeof((rollback_release_review -> 'prepared_epoch'::text)) = 'number'::text) AND (jsonb_typeof((rollback_release_review -> 'runs'::text)) = 'array'::text)))), false)),
     CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
@@ -35077,6 +35079,7 @@ CREATE TABLE public.project_release_sets (
     rollback_source_release_id uuid,
     rollback_previous_release_id uuid,
     deactivation jsonb,
+    fallback_hidden_at timestamp with time zone,
     CONSTRAINT project_release_deactivation_receipt CHECK (((deactivation IS NULL) OR ((NOT active) AND (jsonb_typeof(deactivation) = 'object'::text) AND (jsonb_typeof((deactivation -> 'id'::text)) = 'string'::text) AND (((deactivation ->> 'id'::text))::uuid IS NOT NULL) AND ((deactivation ->> 'release_id'::text) = (id)::text) AND (jsonb_typeof((deactivation -> 'completed_at'::text)) = 'string'::text) AND (((deactivation ->> 'completed_at'::text))::timestamp with time zone IS NOT NULL) AND (jsonb_typeof((deactivation -> 'fallback_members'::text)) = 'array'::text) AND ((jsonb_array_length((deactivation -> 'fallback_members'::text)) >= 1) AND (jsonb_array_length((deactivation -> 'fallback_members'::text)) <= 100)) AND (deactivation ?& ARRAY['id'::text, 'release_id'::text, 'completed_at'::text, 'fallback_members'::text])))),
     CONSTRAINT project_release_rollback_pair CHECK ((((rollback_source_release_id IS NULL) AND (rollback_previous_release_id IS NULL)) OR ((rollback_source_release_id IS NOT NULL) AND (rollback_previous_release_id IS NOT NULL) AND (rollback_source_release_id <> rollback_previous_release_id) AND (rollback_source_release_id <> id) AND (rollback_previous_release_id <> id)))),
     CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
@@ -36700,7 +36703,7 @@ CREATE TABLE public.deployment_rollback_operations (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT deployment_rollback_operations_check CHECK ((target_deployment_id <> current_deployment_id)),
     CONSTRAINT deployment_rollback_operations_check1 CHECK (((receipt ?& ARRAY['id'::text, 'app_id'::text, 'scope'::text, 'target_deployment_id'::text, 'current_deployment_id'::text, 'status'::text]) AND ((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'scope'::text) = scope) AND ((receipt ->> 'target_deployment_id'::text) = (target_deployment_id)::text) AND ((receipt ->> 'current_deployment_id'::text) = (current_deployment_id)::text) AND ((receipt ->> 'status'::text) = status))),
-    CONSTRAINT deployment_rollback_operations_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
+    CONSTRAINT deployment_rollback_operations_public_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length(((receipt - '_release_review'::text))::text) <= 16384) AND ((NOT (receipt ? '_release_review'::text)) OR (jsonb_typeof((receipt -> '_release_review'::text)) = ANY (ARRAY['array'::text, 'null'::text]))))),
     CONSTRAINT deployment_rollback_operations_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_rollback_operations_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'ready'::text, 'blocked'::text, 'routing'::text, 'complete'::text, 'failed'::text])))
 );

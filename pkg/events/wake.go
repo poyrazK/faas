@@ -85,6 +85,12 @@ const (
 	// incarnation's wake_id, so successive thaws share it; their rows differ
 	// by time. Emitted after a successful thaw.
 	WakeThawBreakdown = "wake.thaw_breakdown"
+	// WakeServedByInstance — an explicit wake was answered by an instance
+	// that keeps its own wake_id: a frozen VM schedd thawed, or a VM that was
+	// already running. The requested wake stamps no instance, so this row is
+	// its terminal outcome on its own timeline (#6639). Payload: {wake_id,
+	// app_id, instance_id, instance_wake_id, node_id}.
+	WakeServedByInstance = "wake.served_by_instance"
 	// WakeColdBootCPU — vmmd temporarily raised the host-side CPU allowance
 	// for an app cold boot and observed readiness. Payload: {wake_id, app_id,
 	// instance_id, startup_cpu_millicores, configured_cpu_millicores,
@@ -670,6 +676,31 @@ func (e ThawBreakdown) Payload() map[string]any {
 		"publish_ms":       e.PublishMs,
 		"after_publish_ms": e.AfterPublishMs,
 		"total_ms":         e.TotalMs,
+	}
+}
+
+// ServedByInstance links an explicit wake to the existing instance that
+// answered it. InstanceWakeID is that instance's own wake_id, where its boot,
+// thaw and proxy rows are.
+type ServedByInstance struct {
+	EmitAt         time.Time
+	WakeID         string
+	AppID          string
+	InstanceID     string
+	InstanceWakeID string
+	NodeID         string
+}
+
+func (e ServedByInstance) Kind() string     { return WakeServedByInstance }
+func (e ServedByInstance) At() time.Time    { return e.EmitAt }
+func (e ServedByInstance) Subject() *string { return nil }
+func (e ServedByInstance) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":          e.WakeID,
+		"app_id":           e.AppID,
+		"instance_id":      e.InstanceID,
+		"instance_wake_id": e.InstanceWakeID,
+		"node_id":          e.NodeID,
 	}
 }
 

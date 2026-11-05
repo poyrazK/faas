@@ -4,7 +4,9 @@
   default. Amended 2026-10-21 ("Amendment: coordinated wakes"): the cache
   serves a coordinated wake whose selection is the entry's. Amended
   2026-10-22 ("Amendment: team organizations"): the cache serves no app of
-  a team organization.
+  a team organization. Amended 2026-11-05 ("Amendment: wakes that name their
+  deployment"): a wake that names the entry's production deployment is
+  served from it.
 - Date: 2026-10-16
 - Builds on: ADR-1740 (frozen fast path), ADR-1151 (pause tiers), the
   scaling roadmap's wake rule (zero control-plane round trips per request,
@@ -358,3 +360,60 @@ Adding generation triggers on `orgs` (status, plan, abuse hold, deletion,
 resource ownership, fanning out to the organization's apps) would let the
 cache serve them too.
 
+## Amendment: wakes that name their deployment (2026-11-05)
+
+The cache served a wake only when it named no deployment and no scope. On
+production-us (rc.322, 2026-11-04/05, compute-1 schedd, 223 admissions in
+11 hours) `schedd_owner_cache_total` counted 4 consults: hit 2, miss 2. Every
+wake the gateway makes today is an `AdmitInstance` RPC that names the
+deployment it routes to (101 `AdmitInstance` and 2 `EnsureWake` RPCs on that
+schedd), the drain's invocations and the service, floor and smoke wakes name
+theirs, and `ownerEntryForAdmission` refused any wake that did. So the
+~25-round-trip read phase and the unguarded, multi-statement publication
+were the ordinary path for about 99% of wakes, and the cache served the
+ones nothing sends.
+
+An admission, and wake phase 1, now takes the entry when the wake names the
+entry's own production deployment:
+
+- the deployment id equals the entry's, and the entry's deployment is
+  `live`;
+- the scope is empty or the deployment's own (`default` and the empty scope
+  are the same environment, as everywhere in the engine);
+- the trigger is not `deployment.smoke`, which wakes a candidate production
+  does not point at yet;
+- a coordinated wake's selection still has to be the entry's.
+
+Any other named deployment (a canary's other leg, a retained release,
+another environment's, a mirror target) counts as
+`schedd_owner_cache_total{outcome="selection"}` and reads its own rows, as
+before. The admission skips its `DeploymentByID` read of the named
+deployment: its status, app and scope are part of the generation, and the
+insert and the publication check that generation. A deployment that
+stopped being live behind a missed notification therefore fails the
+guard, the wake retries from fresh reads (`refused`), and those reads
+refuse it as they always did.
+
+Round trips on the critical path, on real Postgres
+(`TestPostgresBootStatements`, snapshot restore, placing from schedd's node
+registry as a compute node's schedd does):
+
+| wake that names its deployment | before | after (entry warm) |
+|---|---|---|
+| before vmmd (reads, placement, admission) | 24 round trips, 44 statements | 10, 19 |
+| after vmmd (publication) | 11 round trips, 12 statements | 2, 2 |
+| total | 35 | 12 |
+
+The publication becomes the single-statement `publish_instance_on_generation`
+instead of a transaction with the config fence, which is the second place
+this path was paying (the unguarded `PublishOwnedInstanceRuntime` ran 6,053
+times against 2,418 guarded ones since 2026-10-20). A compute node's schedd
+pays about 3 ms of network per statement to the control plane's Postgres
+(measured 3.4-4.1 ms TCP connect, 2026-11-05), so 23 fewer round trips is
+about 70 ms of network alone, against the 126 ms (reads 65 plus publish 61, p50) the gateway's
+restores spent there on rc.322, and 23 fewer waits on a 2-vCPU database host
+whose statement means run 5-20 times their floors.
+
+The workload-retirement gate still runs first for a named deployment: it is
+deferred only for a wake that names none (`gateGuardedByGeneration`), and
+moving it needs its own look at the scope the gate reads.

@@ -169,6 +169,7 @@ type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
+type InspectRecommendation = inspectRecommendation
 type InspectWatchEvent = inspectWatchEvent
 type IssueTicketSyncResult = issueTicketSyncResult
 type LocalAppLog = localAppLog
@@ -517,6 +518,7 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -2104,6 +2106,7 @@ var WaitCommitEvent = waitCommitEvent
 var WaitDataAPIRefresh = waitDataAPIRefresh
 var WaitDataAPIRestart = waitDataAPIRestart
 var WaitDataPipeline = waitDataPipeline
+var WaitPipelineConnectionCheck = waitConnectionCheck
 var WaitForAppWake = waitForAppWake
 var WaitForDeploymentReceiptUntil = waitForDeploymentReceiptUntil
 var WaitForDeploymentRollout = waitForDeploymentRollout
@@ -2711,3 +2714,19 @@ var ResolveTestRegressionConfig = resolveTestRegressionConfig
 var CompareTestStagedLoadRelative = compareTestStagedLoadRelative
 var CompareTestGateErrorRate = compareTestGateErrorRate
 var CompareRepeatedTestGateErrorRate = compareRepeatedTestGateErrorRate
+
+// Profile warnings in doctor --strict and deploy --plan (#6640).
+var CmdDoctor = cmdDoctor
+var ResolveSimpleAppPlanWithWarnings = resolveSimpleAppPlanWithWarnings
+var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
+
+// Deploy preflights (#6625, #6631).
+var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var SourceCapLookupBudgets = &sourceCapLookupBudgets
+var SourceUploadLimitError = sourceUploadLimitError
+
+// ResolveSourceUploadCapForTest exposes resolveSourceUploadCap's result.
+func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, verified bool, warning string, explain func(error) error) {
+	got := resolveSourceUploadCap(ctx, c)
+	return got.mb, got.verified, got.warning(), got.explain
+}

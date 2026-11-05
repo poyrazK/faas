@@ -980,7 +980,7 @@ enabling provisioning.
 ## Compute caps on running databases
 
 Admission only stops new work. A running database is held to its account's
-monthly compute ceiling by the provider itself
+monthly compute ceiling by apid's cap sweep
 ([ADR-20261025094915](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
 
 After each usage sweep, apid runs one enforcement sweep. Only one apid at a
@@ -991,30 +991,39 @@ whole quota. A replica that cannot take the lock skips that tick.
 
 - The ceiling is the plan's monthly compute allowance (`pkg/api/managed_postgres.go`),
   capped by `usage.max_monthly_compute_unit_seconds`.
-- The account's use is the larger of the ledger, which still counts databases
-  deleted this month, and the live provider counters.
-- Each Neon project gets `settings.quota.compute_time_seconds` set to its own
-  use plus what the account has left. A restore is a branch inside its source's
-  project, so the two share one quota.
-- Neon checks a quota only when its counters move, about every 25 minutes, so
-  what the account has left first keeps back each database's largest size for
-  30 minutes (1,800 CU-s for development, 3,600 for burstable, 7,200 for
-  production). A busy database is therefore suspended up to that much before
-  the ceiling, not that much after it (ADR-20261025094915 amendment
-  2026-11-04).
-- When nothing is left, every quota equals its project's use, and Neon suspends
-  the computes until the quota is raised or the counters reset on the 1st. A
-  cap never deletes a database.
+- The account's use is the ledger, which still counts databases deleted this
+  month, plus each Neon project's compute in Neon's consumption report since
+  the ledger last collected it, the open hour included. The report is current
+  to about a minute.
+- Each Neon project gets `settings.quota.compute_time_seconds` set to its
+  `compute_time_seconds` counter plus what the account has left. A restore is
+  a branch inside its source's project, so the two share one quota.
+- Neon checks a quota only when that counter moves. In production it moved
+  15, 86 and 52 minutes apart under continuous use, so the quota is only a
+  backstop. The sweep stops the databases itself
+  (ADR-20261025094915 amendment 2026-11-05): when nothing is left, when the
+  subject is inactive, or when a database is past its plan, it holds each
+  ready or failed database's compute, as the delete grace period does. Neon
+  suspends the compute and refuses new connections. When room returns, the
+  next sweep releases the hold, and the next connection wakes the compute.
+  A busy account can overshoot its ceiling by its databases' largest sizes
+  for one sweep, about five minutes.
+- When nothing is left, every quota equals its project's counter. A cap never
+  deletes a database.
+- A database being created or changed is held or released by the first sweep
+  after it settles. One in its delete grace period is not in the sweep, so a
+  cap never releases a deletion hold.
 
 `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` selects the mode:
 
 - `shadow` (the default) logs `managed postgres compute cap (shadow)` with the
-  quota it would set, and writes nothing.
+  quota it would set and `managed postgres compute hold (shadow)` with each
+  hold it would place or release, and writes nothing.
 - `on` writes the quotas, and requires the usage ledger.
 - `off` does nothing.
 
-Quotas written earlier stay on the projects in every mode, so switching to
-`off` or rolling back never lifts a suspension.
+Quotas and holds written earlier stay on the projects in every mode, so
+switching to `off` or rolling back never lifts a suspension.
 
 Customers see the cap in `GET /v1/account/managed-postgres-usage` and
 `gregale postgres usage`:
@@ -1107,6 +1116,9 @@ hour of the UTC month start. Metrics:
 
 - `apid_managed_postgres_cap_accounts{state}`
 - `apid_managed_postgres_cap_quota_decisions_total{outcome}`
+- `apid_managed_postgres_cap_held_databases`
+- `apid_managed_postgres_cap_hold_decisions_total{outcome}`, where `outcome`
+  is `held`, `released` or `shadowed`
 - `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
 - `apid_managed_postgres_cap_enforcement_mode{mode}`
 
@@ -1124,27 +1136,31 @@ live provisioning qualification (`FAAS_ENVIRONMENT=staging`,
 managed-postgres-qualify --compute-cap > compute-cap-qualification.json
 ```
 
-The run creates a disposable database, probes it, and deletes it. The probe:
+The run creates a disposable database, probes it, and deletes it. The probe
+checks what enforcement relies on (ADR-20261025094915 amendment 2026-11-05):
 
-1. Checks that Neon's consumption period starts within an hour of the UTC
-   month start.
-2. Holds the compute active for 90 seconds, then checks that
-   `compute_time_seconds` grew by the compute's size times its active seconds.
-   The ratio, `compute_unit_ratio_permille`, must be at least 800 and at most
-   the largest-to-smallest size ratio plus a quarter, so the quota and the
-   ledger count the same compute-unit seconds.
-3. Sets the quota to the counter and waits for the compute to suspend; a
-   connection must then fail. Neon suspends only when its counters next move,
-   so steps 2 and 3 each wait up to 35 minutes, and the run defaults to a
-   150-minute timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it).
-4. Raises the quota and waits for a connection to wake the compute.
-5. Checks that `logical_size_bytes` did not change.
+1. Neon's consumption period starts within an hour of the UTC month start.
+2. The consumption report is current. The probe keeps the compute active for
+   12 minutes and reads the report, open hour included, 3 and 11 minutes in.
+   It must grow between the two readings by the compute's size times the
+   time between them. The ratio, `compute_unit_ratio_permille`, must be at
+   least 800 and at most the largest-to-smallest size ratio plus a quarter,
+   so the sweep and the ledger count the same compute-unit seconds.
+3. The hold stops the compute: once held, it suspends and a new connection
+   is refused; once released, the next connection wakes it.
+4. A quota write leaves `logical_size_bytes` as it was.
+
+The probe takes about 20 minutes, and the run defaults to a 120-minute
+timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it). It does not
+wait for Neon to enforce a quota: Neon checks one only when its project
+counter moves, which can take over an hour. The artifact is version 2, and
+`on` refuses version 1.
 
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. The file is separate from the provisioning approval on purpose: an
 older apid decodes that approval strictly. Re-run it after a Neon plan or API
-change. A shadow week whose logged quotas match the ledger then completes
-ADR-20261025094915 decision 10.
+change. A shadow week whose logged quotas and holds match the ledger then
+completes ADR-20261025094915 decision 10.
 
 ### Storage pool
 
