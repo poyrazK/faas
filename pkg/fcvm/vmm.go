@@ -184,6 +184,8 @@ type JailerVMM struct {
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
 	// budget is released when the instance is gone (invariant §6.2-4).
 	rings map[string]*logbuf.Ring
+	// logBudget bounds the bytes every ring holds together (bug hunt H47).
+	logBudget *logbuf.Budget
 	// slowSubscriber (issue #309 / tier-2 DX) is the per-VMM
 	// callback installed at every ring that registerRing
 	// creates. Nil = no callback wired; registerRing skips the
@@ -824,6 +826,7 @@ func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string,
 		_ = old.Close()
 	}
 	r := logbuf.New(0) // 0 -> logbuf.DefaultMaxBytes (10 MiB)
+	r.SetBudget(v.logBudget)
 	if appID != "" {
 		r.SetHourlyByteAllowance(plan.LogBytesPerInstanceHour())
 	}
@@ -1066,6 +1069,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		characterizationReceipts: make(map[string]*characterizationReceipt),
 		recs:                     make(map[string]*instanceRecord),
 		rings:                    make(map[string]*logbuf.Ring),
+		logBudget:                logbuf.NewBudget(api.VmmdLogRingBudgetBytes, api.VmmdLogRingFloorBytes),
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
 		bindSourceModes:          make(map[bindSourceKey]bindSourceMode),
