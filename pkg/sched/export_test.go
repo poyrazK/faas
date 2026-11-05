@@ -722,6 +722,9 @@ var LiftErr = liftErr
 // NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
 func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
 
+func (r *fakeVMM) Characterization() *api.CharacterizationReport {
+	return &r.characterization
+}
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }

@@ -278,6 +278,12 @@ type Config struct {
 	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
 	OwnerCache bool `toml:"owner_cache"`
 
+	// AsyncWakeFinalize (ADR-20261105090246) answers a booted wake as soon as
+	// its RUNNING publication commits and records what the boot proved (the
+	// observed workload class and the secret delivery) afterwards. Off by
+	// default. FAAS_ASYNC_WAKE_FINALIZE overrides it.
+	AsyncWakeFinalize bool `toml:"async_wake_finalize"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).
@@ -654,6 +660,14 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
 		}
 		c.OwnerCache = enabled
+	}
+	// ADR-20261105090246: FAAS_ASYNC_WAKE_FINALIZE overrides async_wake_finalize.
+	if v := os.Getenv("FAAS_ASYNC_WAKE_FINALIZE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_ASYNC_WAKE_FINALIZE must be a boolean (got %q)", v)
+		}
+		c.AsyncWakeFinalize = enabled
 	}
 	if v, ok := os.LookupEnv("FAAS_GUEST_VCPU_FROM_CPU_APPS"); ok {
 		c.GuestVCPUFromCPUApps = strings.Split(v, ",")
