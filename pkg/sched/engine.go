@@ -1983,7 +1983,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		insErr               error
 	)
 	appFromCache := false
-	if entry, ok := e.ownerEntryForPhaseOne(ctx, appID, deploymentID); ok {
+	if entry, ok := e.ownerEntryForPhaseOne(ctx, appID, deploymentID, trigger); ok {
 		// ADR-1741: the owner cache holds the app (its standards check
 		// passed) and the production deployment; only the instances are read.
 		app, appFromCache = entry.app, true
@@ -3122,7 +3122,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	barrier := make(chan error, 1)
 	// ADR-1741: an owner cache entry exists only while the barrier is clear
 	// at its generation, and the admission insert rechecks that generation.
-	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID)
+	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID, trigger)
 	if !useCache {
 		// A wake that held its retirement gate for the cache, and decides
 		// from fresh reads after all (a stale entry's retry), runs it now.
@@ -3189,7 +3189,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, err
 	}
-	if deploymentID != "" {
+	// An explicit deployment the owner cache serves is the entry's own: its
+	// status, app and scope are in the generation the insert will check.
+	if deploymentID != "" && !useCache {
 		explicitDep, depErr := e.store.DeploymentByID(ctx, deploymentID)
 		if depErr != nil {
 			release()

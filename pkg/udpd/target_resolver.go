@@ -62,7 +62,17 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 		}
 	}
 	if len(running) > 0 {
+		running, err = ingressroute.ReadyInstances(ctx, r.Store, route.AppID, deploymentID, running)
+		if err != nil {
+			return gateway.Target{}, err
+		}
+		if len(running) == 0 {
+			return gateway.Target{}, ingressroute.ErrNoReadyInstance
+		}
 		if err := r.validateIntent(ctx, route); err != nil {
+			return gateway.Target{}, err
+		}
+		if err := ingressroute.RequireDeployment(ctx, r.Store, route.AppID, deploymentID); err != nil {
 			return gateway.Target{}, err
 		}
 		instance := running[(r.cursor.Add(1)-1)%uint64(len(running))]
@@ -78,8 +88,18 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if capacity || instance == "" || node == "" || deployment != deploymentID {
 		return gateway.Target{}, errors.New("UDP admission produced no routable instance")
 	}
+	ready, err := ingressroute.ReadyInstances(ctx, r.Store, route.AppID, deploymentID, []state.Instance{{ID: instance, AppID: route.AppID, DeploymentID: deploymentID, NodeID: node, WakeID: wake}})
+	if err != nil {
+		return gateway.Target{}, err
+	}
+	if len(ready) == 0 {
+		return gateway.Target{}, ingressroute.ErrNoReadyInstance
+	}
 	// Waking may outlast an intent change; never admit a peer from stale intent.
 	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
+	}
+	if err := ingressroute.RequireDeployment(ctx, r.Store, route.AppID, deploymentID); err != nil {
 		return gateway.Target{}, err
 	}
 	return gateway.Target{AppID: route.AppID, InstanceID: instance, NodeID: node, DeploymentID: deployment, WakeID: wake, Port: route.GuestPort}, nil

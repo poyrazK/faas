@@ -143,6 +143,7 @@ func TestUDPStreamPreservesInitialReceiveFailure(t *testing.T) {
 // control, with pipes in place of the privileged namespace helper. It exercises
 // transport shutdown without claiming native namespace/process qualification.
 type udpFlowControlServer struct {
+	sessions forwardSessions
 	vmmdpb.UnimplementedVmmdServer
 	writer      *io.PipeWriter
 	reader      *io.PipeReader
@@ -162,7 +163,9 @@ func (s *udpFlowControlServer) ForwardUDPStream(stream grpc.BidiStreamingServer[
 	}
 	defer func() { _ = s.writer.Close() }()
 	defer func() { _ = s.reader.Close() }()
-	err = udpBridgeFrames(&udpFlowControlStream{BidiStreamingServer: stream, owner: s}, io.Discard, s.reader, first.GetInit())
+	ctx, release := s.sessions.track(stream.Context(), first.GetInit().Instance)
+	defer release()
+	err = udpBridgeFramesContext(ctx, &udpFlowControlStream{BidiStreamingServer: stream, owner: s}, io.Discard, s.reader, first.GetInit())
 	s.handlerDone <- err
 	return err
 }
@@ -185,6 +188,13 @@ func (s *udpFlowControlStream) Send(frame *vmmdpb.ForwardUDPResponse) error {
 }
 
 func TestUDPStreamRequestFailureReleasesBlockedGRPCReply(t *testing.T) {
+	testUDPStreamBlockedGRPCReply(t, false)
+}
+func TestUDPStreamInstanceStopReleasesBlockedGRPCReply(t *testing.T) {
+	testUDPStreamBlockedGRPCReply(t, true)
+}
+func testUDPStreamBlockedGRPCReply(t *testing.T, stopInstance bool) {
+	t.Helper()
 	reader, writer := io.Pipe()
 	fixture := &udpFlowControlServer{reader: reader, writer: writer, handlerDone: make(chan error, 1), sendFailed: make(chan error, 1)}
 	listener := bufconn.Listen(1 << 20)
@@ -241,16 +251,22 @@ func TestUDPStreamRequestFailureReleasesBlockedGRPCReply(t *testing.T) {
 	if !blocked {
 		t.Fatal("could not establish real gRPC reply backpressure")
 	}
-	if err := stream.Send(udpInitRequest("instance", 5353, 0)); err != nil {
+	want := codes.InvalidArgument
+	if stopInstance {
+		want = codes.Unavailable
+		if n := fixture.sessions.closeInstance("instance"); n != 1 {
+			t.Fatalf("canceled %d sessions", n)
+		}
+	} else if err := stream.Send(udpInitRequest("instance", 5353, 0)); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case err := <-fixture.handlerDone:
-		if status.Code(err) != codes.InvalidArgument {
+		if status.Code(err) != want {
 			t.Fatalf("request error lost: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("request failure could not terminate blocked reply handler")
+		t.Fatal("request failure or instance stop could not terminate blocked reply handler")
 	}
 	select {
 	case <-fixture.sendFailed:

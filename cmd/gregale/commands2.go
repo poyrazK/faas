@@ -2545,7 +2545,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "rollout", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
+		// The simple plan is a request-mode app: an explicit request mode is
+		// its own default, and the preview used to refuse even that while
+		// deploy accepted it (#6632). Other modes are not simple apps.
+		if explicit["execution-mode"] && strings.TrimSpace(*executionMode) != api.ExecutionModeRequest {
+			mode := strings.TrimSpace(*executionMode)
+			return printErr("Invalid flags", fmt.Errorf("%s previews request-mode apps; preview --execution-mode %s with `gregale deploy --dry-run --execution-mode %s`", planFlag, mode, mode))
+		}
+		for _, name := range []string{"runtime", "handler", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "rollout", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --%s", planFlag, name))
 			}
@@ -3338,7 +3345,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Invalid deploy manifest", manifestErr)
 			}
 		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function, strings.TrimSpace(*executionMode))
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
@@ -3473,26 +3480,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// authedClientWithDeployTimeout (5 min, line 1382) is not
 		// affected — Whoami is a small JSON GET and never needs the
 		// deploy budget.
-		planCapMB := defaultZeroConfigSourceCapMB
+		sourceCap := sourceUploadCap{mb: defaultZeroConfigSourceCapMB, verified: true}
 		if client != nil {
-			// 5-second budget: Whoami is a tiny JSON GET, but a flaky
-			// apid used to hang the CLI for the full HTTP timeout (30s)
-			// before falling back to the floor. Bound it explicitly so
-			// the zero-config deploy stays snappy on the unhappy path.
-			whoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			if acct, werr := client.Whoami(whoCtx); werr == nil {
-				planCapMB = api.MustLimitsFor(api.Plan(acct.Plan)).SourceTarballMaxMB
-			} else if readRefused(werr) {
-				// A deploy credential may not read the account's plan. apid
-				// refuses an upload above the account's cap, so the pack is
-				// bounded only by the largest plan's (ADR-20261031162858
-				// amendment 1); the Free floor refused Pro and Scale sources.
-				planCapMB = largestSourceTarballMB()
-			} else {
-				PrintWarn(osStderr, "Whoami round-trip for per-plan cap failed (%v); using %d MB Free/Hobby floor", werr, planCapMB)
+			sourceCap = resolveSourceUploadCap(ctx, client)
+			if warning := sourceCap.warning(); warning != "" {
+				PrintWarn(osStderr, "%s", warning)
 			}
-			cancel()
 		}
+		planCapMB := sourceCap.mb
 		if gitArchivePath != "" {
 			// Project deploys deliberately have no single root workload. The
 			// server-side planner scans the complete repository and selects each
@@ -3531,7 +3526,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			gitArchiveBuildOnlyFiles = buildOnlyFiles
 			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, dockerfileSource(sourceDir), gitArchiveExcludes...)
 			if packErr != nil {
-				return printErr("Could not pack committed HEAD", packErr)
+				return printErr("Could not pack committed HEAD", sourceCap.explain(packErr))
 			}
 			if n == 0 {
 				return printErr("No deployable source found in "+filepath.Base(sourceDir),
@@ -3555,7 +3550,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			path, _, n, packErr := autoPackSource(sourceDir, sourceDir, false, planCapMB, overrides, execution.extraSourceExcludes...)
 			if packErr != nil {
-				return printErr("Could not pack project source", packErr)
+				return printErr("Could not pack project source", sourceCap.explain(packErr))
 			}
 			localSourceWarning = warnLocalCredentialFiles(sourceDir, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 			if n == 0 {
@@ -3610,7 +3605,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 				path, _, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
 				if err != nil {
-					return printErr("Could not pack deploy source", err)
+					return printErr("Could not pack deploy source", sourceCap.explain(err))
 				}
 				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
@@ -3631,7 +3626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 				path, fw, n, err := autoPackSource(sourceDir, packRoot, flatContext, planCapMB, overrides, execution.extraSourceExcludes...)
 				if err != nil {
-					return printErr("Could not pack deploy source", err)
+					return printErr("Could not pack deploy source", sourceCap.explain(err))
 				}
 				localSourceWarning = warnLocalCredentialFiles(packRoot, dockerfileSource(sourceDir), execution.extraSourceExcludes...)
 				defer func() { _ = os.Remove(path) }()
@@ -3655,13 +3650,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			*executionMode = mode
 		}
 	}
-	if !projectRequested && resolvedShape == shapeApp && *executionMode == "" && *restartPolicy == "" &&
-		*startupDeadlineS == 0 && *maxRetries == 0 {
+	// An explicit --execution-mode request is the simple plan's own mode, so
+	// it gets the same plan --plan previews (#6632).
+	if !projectRequested && resolvedShape == shapeApp && (*executionMode == "" || strings.TrimSpace(*executionMode) == api.ExecutionModeRequest) &&
+		*restartPolicy == "" && *startupDeadlineS == 0 && *maxRetries == 0 {
 		sourceKind := simpleapp.SourceDirectory
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
 		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, true, false)
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, true, false, strings.TrimSpace(*executionMode))
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
@@ -4017,6 +4014,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
+	// The deploy session is written after the app is created or updated;
+	// prove it can be before changing anything remotely (#6625).
+	if !*createOnly {
+		if err := preflightDeploySessionStorage(client); err != nil {
+			return printErr("Could not save deploy session", err)
+		}
+	}
 	resolvedApp := api.AppResponse{}
 	if existingApp {
 		// Developer sessions already own the app and intentionally skip the
@@ -4114,7 +4118,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var sessionLock *flock.Flock
 	savedSession, sessionLock, err := newSavedDeploySession(ctx, client, slug, resolvedApp.ID, sourceDir, deployKey, prov, *safeDeploy, parkedDeploy)
 	if err != nil {
-		return printErr("Could not save deploy session", err)
+		return printErr("Could not save deploy session", appExistsNothingDeployed(slug, err))
 	}
 	defer func() { _ = sessionLock.Close() }()
 	savedSession.addWarning(localSourceWarning)
@@ -6982,7 +6986,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		return cmdLogsInteractive(slug)
 	}
 	if *explain && jsonOutput {
-		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable)", "logs")
+		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable); drop --explain: with --json, `logs --deployment ID` returns a failed deployment's log records and failure reason", "logs")
 		return 2
 	}
 	if fs.NArg() > 1 {
@@ -7949,11 +7953,11 @@ streamLoop:
 					Line string `json:"line"`
 				}
 				if !opts.quiet && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
+					prefix := ""
 					if opts.prefixBuildLogs {
-						fmt.Printf("build | %s\n", terminalSafe(entry.Line))
-					} else {
-						fmt.Println(terminalSafe(entry.Line))
+						prefix = "build | "
 					}
+					_ = printTerminalSafeLines(os.Stdout, prefix, entry.Line)
 				}
 			case "stage":
 				// ADR-117 §3: server-side stage diff — drive the
