@@ -1,17 +1,6 @@
 # Architecture Decision Records
 
-- [ADR-20261104222700: MCP catalog SDK keys and HTTP framing](20261104222700-mcp-catalog-sdk-keys-and-http-framing.md) — support prototype-property catalog names, honor sample resource replacements and decode bounded Python chunked requests
-
-- [ADR-20261104220400: MCP subscription setup ownership](20261104220400-mcp-subscription-setup-ownership.md) — reserve pending stream capacity, handle early disconnects and dispose registrations that finish after cancellation
-
-- [ADR-20261104212930: MCP live worker receipts and schema snapshots](20261104212930-mcp-live-worker-receipts-and-schema-snapshots.md) — recover native handoffs after log eviction, accept empty previous pools and isolate Zod metadata through Standard Schema snapshots
-
-- [ADR-20261104205633: MCP worker drain budgets, cipher identity and catalog snapshots](20261104205633-mcp-worker-drain-cipher-identity-and-catalog-snapshots.md) — validate actual running-worker budgets, authenticate same-ID formats during rewrap and isolate nested catalog metadata
-
-- [ADR-20261104201707: MCP Task renewal, subscriptions and release checkpoints](20261104201707-mcp-task-renewal-subscriptions-and-release-checkpoints.md) — recheck lease expiry after row locks, release expired Task subscriptions and distinguish release retries from new worker generations
-
-- [ADR-20261104195018: MCP Task cancellation and startup validation](20261104195018-mcp-task-cancellation-and-startup-validation.md) — settle cancelled expired leases without execution, authenticate all retained Node payloads, align tool-name validation and canonicalize release source roots
-
+- [ADR-20261104143000: Deleting a managed PostgreSQL database does not pause the account for its correction tail](20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md) — accepted; amends ADR-569 and ADR-582: a deleted database blocks new databases, restores and resizes only until its windows are covered through the end of the hour it was deleted in (usually under an hour, was 3–4 h); its three-window correction tail is still replayed and blocks as `final_correction_pending` only once overdue by `usage.stale_after_seconds`
 - [ADR-20261104104521: Recoverable app scaling](20261104104521-recoverable-app-scaling.md) — accepted; native app/environment identity and revision guards, atomic scaling receipts, safe MCP retries, and configuration verification.
 
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
@@ -2036,6 +2025,12 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261104033000: MCP release protocol gates and verification budgets](20261104033000-mcp-release-protocol-gates-and-verification-budgets.md)
 - [ADR-20261104050000: MCP observer bindings and Task identity defaults](20261104050000-mcp-observer-bindings-and-task-identity-defaults.md)
 - [ADR-20261104143950: MCP Task release bindings and execution deadlines](20261104143950-mcp-task-release-namespace-and-execution-fences.md)
+- [ADR-20261104195018: MCP Task cancellation and startup validation](20261104195018-mcp-task-cancellation-and-startup-validation.md) — settle cancelled expired leases without execution, authenticate all retained Node payloads, align tool-name validation and canonicalize release source roots
+- [ADR-20261104201707: MCP Task renewal, subscriptions and release checkpoints](20261104201707-mcp-task-renewal-subscriptions-and-release-checkpoints.md) — recheck lease expiry after row locks, release expired Task subscriptions and distinguish release retries from new worker generations
+- [ADR-20261104205633: MCP worker drain budgets, cipher identity and catalog snapshots](20261104205633-mcp-worker-drain-cipher-identity-and-catalog-snapshots.md) — validate actual running-worker budgets, authenticate same-ID formats during rewrap and isolate nested catalog metadata
+- [ADR-20261104212930: MCP live worker receipts and schema snapshots](20261104212930-mcp-live-worker-receipts-and-schema-snapshots.md) — recover native handoffs after log eviction, accept empty previous pools and isolate Zod metadata through Standard Schema snapshots
+- [ADR-20261104220400: MCP subscription setup ownership](20261104220400-mcp-subscription-setup-ownership.md) — reserve pending stream capacity, handle early disconnects and dispose registrations that finish after cancellation
+- [ADR-20261104222700: MCP catalog SDK keys and HTTP framing](20261104222700-mcp-catalog-sdk-keys-and-http-framing.md) — support prototype-property catalog names, honor sample resource replacements and decode bounded Python chunked requests
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
 - [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)
