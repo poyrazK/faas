@@ -291,7 +291,8 @@ records. The owner decides each step marked **owner**.
    wider, and on any other rule that opens 80 or 443 to everyone.
 2. **owner:** run `deploy/scripts/gcp-compute-edge-address.sh entry NODE...`,
    read what it would do, then rerun with `APPLY=1`. It creates
-   `gregale-direct-entry-v4` once and tags each node. The forwarding rule from
+   `gregale-direct-entry-v4` once, in the VPC of the node's first interface
+   (`NETWORK` overrides it), and tags each node. The forwarding rule from
    step 5 must already exist: it carries 443 alone, so the node's own
    addresses stay unreachable.
 3. **owner:** put a publicly trusted certificate for the apps domain (a

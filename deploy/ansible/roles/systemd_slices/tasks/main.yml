@@ -174,6 +174,42 @@
       IOWeight={{ faas_obs_slice_io_weight }}
   register: obs_slice
 
+- name: systemd_slices — validate user.slice weights
+  ansible.builtin.assert:
+    that:
+      - faas_user_slice_cpu_weight | string is match('^[0-9]+$')
+      - faas_user_slice_cpu_weight | int >= 1 and faas_user_slice_cpu_weight | int <= 10000
+      - faas_user_slice_io_weight | string is match('^[0-9]+$')
+      - faas_user_slice_io_weight | int >= 1 and faas_user_slice_io_weight | int <= 10000
+    fail_msg: >-
+      faas_user_slice_cpu_weight and faas_user_slice_io_weight must be
+      integers in 1..10000 (got {{ faas_user_slice_cpu_weight }} /
+      {{ faas_user_slice_io_weight }}).
+
+- name: systemd_slices — create the user.slice drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/user.slice.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ADR-20261023124955 amendment 2026-11-06: SSH sessions yield CPU and IO to
+# PostgreSQL and the daemons under contention, as the observability slice
+# does. daemon-reload applies the drop-in to the running slice.
+- name: systemd_slices — weight user.slice below the services
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/user.slice.d/50-faas-priority.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Operator and Ansible sessions yield to PostgreSQL and the daemons.
+      [Slice]
+      CPUWeight={{ faas_user_slice_cpu_weight }}
+      IOWeight={{ faas_user_slice_io_weight }}
+  register: user_slice
+
 - name: systemd_slices — write faas-cp-build.slice
   ansible.builtin.copy:
     dest: /etc/systemd/system/faas-cp-build.slice
@@ -234,7 +270,7 @@
 - name: systemd_slices — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true
-  when: cp_slice is changed or obs_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
+  when: cp_slice is changed or obs_slice is changed or user_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
 
 - name: systemd_slices — start cgroup parents before jailer can attach VMs
   ansible.builtin.systemd:

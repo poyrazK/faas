@@ -13073,7 +13073,7 @@ BEGIN
  IF adopted THEN
   SELECT CASE WHEN deleted_pending THEN 'deleted_pending' ELSE status END INTO current_status FROM orgs WHERE id=owner_org FOR UPDATE;
  ELSE
-  SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+  SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR NO KEY UPDATE;
  END IF;
  IF current_status IS DISTINCT FROM 'active' THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_account_cleanup_fenced',MESSAGE='Inactive storage owner cannot reserve new object buckets';
@@ -13217,7 +13217,7 @@ BEGIN
  -- lock order. Re-read the lease and revision after acquiring those locks.
  SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id AND state='ready' FOR NO KEY UPDATE;
  IF aid IS NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle deletion requires a ready owned bucket'; END IF;
- PERFORM 1 FROM resource_namespaces WHERE id=aid FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=aid FOR NO KEY UPDATE;
  SELECT EXISTS(
   SELECT 1 FROM object_lifecycle_scans s JOIN object_bucket_lifecycle p ON p.bucket_id=s.bucket_id,
    LATERAL jsonb_array_elements(s.rules) r
@@ -13272,7 +13272,7 @@ BEGIN
  -- follow the same bucket/account/upload ordering to avoid deadlocks.
  SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id AND state='ready' FOR NO KEY UPDATE;
  IF aid IS NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart lifecycle admission requires an owned ready bucket'; END IF;
- PERFORM 1 FROM resource_namespaces WHERE id=aid FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=aid FOR NO KEY UPDATE;
  SELECT EXISTS(
   SELECT 1 FROM object_lifecycle_scans s JOIN object_bucket_lifecycle p ON p.bucket_id=s.bucket_id,
    LATERAL jsonb_array_elements(s.rules) r
@@ -13307,7 +13307,7 @@ BEGIN
    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected lifecycle intents must begin prepared and unverified';
   END IF;
   SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id;
-  PERFORM 1 FROM resource_namespaces WHERE id=aid FOR UPDATE;
+  PERFORM 1 FROM resource_namespaces WHERE id=aid FOR NO KEY UPDATE;
   PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
   SELECT NEW.lifecycle_scan_id IS NOT NULL AND NEW.selector<>'' AND EXISTS(
    SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=NEW.bucket_id
@@ -13484,7 +13484,7 @@ BEGIN
  END IF;
  -- Match the application admission order: account before source bucket.
  -- An older replica's INSERT must not invert the account FK/row locks.
- PERFORM id FROM resource_namespaces WHERE id=NEW.account_id FOR UPDATE;
+ PERFORM id FROM resource_namespaces WHERE id=NEW.account_id FOR NO KEY UPDATE;
  SELECT state INTO bucket_state FROM object_buckets
  WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id FOR UPDATE;
  IF bucket_state IS DISTINCT FROM 'ready' THEN
@@ -13583,7 +13583,7 @@ CREATE FUNCTION public.fence_object_write_key() RETURNS trigger
 DECLARE owner uuid; own_write uuid;
 BEGIN
  SELECT account_id INTO owner FROM object_buckets WHERE id=NEW.bucket_id;
- PERFORM 1 FROM resource_namespaces WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=owner FOR NO KEY UPDATE;
  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
  IF TG_TABLE_NAME='object_storage_write_admissions' THEN
   own_write:=NEW.id;
@@ -13615,7 +13615,7 @@ BEGIN
  ELSE
   IF NEW.kind<>'proxy' OR NEW.route_receipt THEN RETURN NEW; END IF;
  END IF;
- PERFORM 1 FROM resource_namespaces a JOIN object_buckets b ON b.account_id=a.id WHERE b.id=NEW.bucket_id FOR UPDATE OF a;
+ PERFORM 1 FROM resource_namespaces a JOIN object_buckets b ON b.account_id=a.id WHERE b.id=NEW.bucket_id FOR NO KEY UPDATE OF a;
  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
  IF EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND (enabled_required OR native_enabled_observed OR state<>'ready')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lock_admission_fenced',MESSAGE='Object Lock requires a tracked protection-aware write';
@@ -14166,7 +14166,7 @@ BEGIN
    RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_mutation_isolation',MESSAGE='Multipart receipt binding requires READ COMMITTED';
   END IF;
   SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
-  PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+  PERFORM id FROM accounts WHERE id=u.account_id FOR NO KEY UPDATE;
   PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
   SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
   IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
@@ -14206,7 +14206,7 @@ BEGIN
    RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_mutation_isolation',MESSAGE='Upload receipt binding requires READ COMMITTED';
   END IF;
   SELECT * INTO u FROM object_upload_completions WHERE id=NEW.upload_id;
-  PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+  PERFORM id FROM accounts WHERE id=u.account_id FOR NO KEY UPDATE;
   PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
   SELECT * INTO u FROM object_upload_completions WHERE id=NEW.upload_id FOR UPDATE;
   IF EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE bucket_id=u.bucket_id) THEN
@@ -18019,7 +18019,7 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_isolation',MESSAGE='Initiation dispatch requires READ COMMITTED';
  END IF;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
- PERFORM id FROM resource_namespaces WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM resource_namespaces WHERE id=u.account_id FOR NO KEY UPDATE;
  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
  IF u.id IS NULL OR u.state<>'initiating' OR u.provider_upload_id<>'' OR NOT EXISTS(
@@ -18086,7 +18086,7 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writers require READ COMMITTED';
  END IF;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
- PERFORM id FROM resource_namespaces WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM resource_namespaces WHERE id=u.account_id FOR NO KEY UPDATE;
  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
  SELECT * INTO g FROM object_storage_multipart_part_grants WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number;
@@ -24345,7 +24345,7 @@ DECLARE b object_buckets; owner uuid;
 BEGIN
  -- The admission/cascade boundary uses account-before-bucket locking.
  SELECT account_id INTO owner FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id);
- PERFORM 1 FROM resource_namespaces WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=owner FOR NO KEY UPDATE;
  SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id) FOR NO KEY UPDATE;
  IF TG_OP='DELETE' THEN
   IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve protection receipts until physical bucket deletion'; END IF;
@@ -24411,7 +24411,7 @@ CREATE FUNCTION public.protect_object_write_protection() RETURNS trigger
 DECLARE j object_bucket_object_lock; protected boolean; url_request jsonb;
 BEGIN
  IF TG_OP='INSERT' THEN
-  PERFORM 1 FROM resource_namespaces WHERE id=NEW.account_id FOR UPDATE;
+  PERFORM 1 FROM resource_namespaces WHERE id=NEW.account_id FOR NO KEY UPDATE;
   PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
   SELECT * INTO j FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id;
   protected := FOUND AND (j.enabled_required OR j.native_enabled_observed OR j.observed_snapshot->>'enabled'='true');

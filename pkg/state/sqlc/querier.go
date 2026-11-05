@@ -5008,6 +5008,8 @@ type Querier interface {
 	// bucket metered last month continues from the start of this month; any other
 	// bucket starts now, so storage is never billed for time Gregale did not meter.
 	ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error)
+	// NO KEY UPDATE for the same reason as ObjectUsageLockAccount: foreign-key
+	// inserts naming the account must not wait for an object job.
 	ObjectStorageLockLegacyIdentity(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ObjectStorageLockOwner(ctx context.Context, db DBTX, arg ObjectStorageLockOwnerParams) (ObjectStorageLockOwnerRow, error)
 	ObjectStorageLockReportingOwners(ctx context.Context, db DBTX, subject pgtype.UUID) ([]pgtype.UUID, error)
@@ -5070,6 +5072,10 @@ type Querier interface {
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
 	ObjectUsageGrantUpsert(ctx context.Context, db DBTX, arg ObjectUsageGrantUpsertParams) error
+	// Object writers of one account serialize here. NO KEY UPDATE excludes the
+	// other writers and the fences but not the KEY SHARE that foreign-key inserts
+	// naming the namespace take (request journal, invocations): FOR UPDATE stalled
+	// them for the whole account while an object job ran (2026-11-05).
 	ObjectUsageLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	ObjectUsageReportGet(ctx context.Context, db DBTX, arg ObjectUsageReportGetParams) (ObjectStorageUsageReport, error)
 	ObjectUsageReportHead(ctx context.Context, db DBTX, arg ObjectUsageReportHeadParams) error
