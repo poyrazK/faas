@@ -12499,7 +12499,20 @@ type RequestAnalyticsResponse struct {
 	// TelemetryGaps names each reason requests may be missing.
 	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
 	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
+	// SampledMeasures says whether the detail only raw sampled rows carry
+	// (group CPU and latency of sampled rows, per-deployment costs and
+	// per-route deployment splits) is in this response: "included", or
+	// "omitted" when reading it failed or ran past its time budget. Counts
+	// and percentiles never depend on it.
+	SampledMeasures string `json:"sampled_measures,omitempty"`
 }
+
+// RequestAnalyticsSampledMeasures* are the RequestAnalyticsResponse
+// sampled_measures values.
+const (
+	RequestAnalyticsSampledMeasuresIncluded = "included"
+	RequestAnalyticsSampledMeasuresOmitted  = "omitted"
+)
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
 // by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed

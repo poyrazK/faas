@@ -668,6 +668,14 @@ func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
 	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
 }
 
+// RequestAnalyticsSampledRead runs read as the analytics handler runs a
+// sampled-detail read; bounded is whether the rollups answer the window.
+func RequestAnalyticsSampledRead(ctx context.Context, bounded bool, read func(context.Context) (int, error)) (int, bool, error) {
+	return requestAnalyticsSampledRead(ctx, &server{}, bounded, "test", read)
+}
+
+var RequestAnalyticsSampledMeasuresState = requestAnalyticsSampledMeasuresState
+
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
 var ParseSweepOlderThan = parseSweepOlderThan

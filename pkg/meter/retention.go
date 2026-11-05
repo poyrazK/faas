@@ -293,12 +293,32 @@ const retentionRequestAnalyticsMinutesBatchSQL = `DELETE FROM public.request_ana
                                                       LIMIT $1
                                                   )`
 
+// retentionRequestAnalyticsHoursBatchSQL sweeps the hourly tier on the same
+// ladder (ADR-20261103113952 amendment 2). An hour that starts before the
+// cutoff is never wholly inside a retained window, so no reader asks for
+// it. Not partitioned, so ctid is unique.
+const retentionRequestAnalyticsHoursBatchSQL = `DELETE FROM public.request_analytics_hours
+                                                WHERE ctid IN (
+                                                    SELECT h.ctid FROM public.request_analytics_hours h
+                                                    LEFT JOIN public.app_resource_accounts ac ON ac.app_id = h.app_id
+                                                    WHERE h.bucket_start < now() - (CASE ac.plan
+                                                        WHEN 'free'  THEN interval '0 days'
+                                                        WHEN 'hobby' THEN interval '3 days'
+                                                        WHEN 'pro'   THEN interval '7 days'
+                                                        WHEN 'scale' THEN interval '14 days'
+                                                        ELSE              interval '1 day'
+                                                    END)
+                                                    ORDER BY h.bucket_start
+                                                    LIMIT $1
+                                                )`
+
 // RetentionOnceRequestAnalyticsMinutes runs one bounded sweep of the
 // analytics rollups, in batches like RetentionOnceRequestTelemetry.
 func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExecer) (int64, error) {
 	var total int64
 	for _, sweep := range []struct{ what, sql string }{
 		{"rollup", retentionRequestAnalyticsMinutesBatchSQL},
+		{"hourly rollup", retentionRequestAnalyticsHoursBatchSQL},
 		{"rollup gap", retentionRequestAnalyticsRollupGapsBatchSQL},
 	} {
 		n, err := retentionBatches(ctx, db, sweep.sql)

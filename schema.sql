@@ -54204,6 +54204,46 @@ UNION ALL
 
 
 --
+-- Name: request_analytics_hours; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_hours (
+    app_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    dimension_kind text NOT NULL,
+    dimension text NOT NULL,
+    method text NOT NULL,
+    status smallint NOT NULL,
+    deployment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    requests bigint NOT NULL,
+    error_requests bigint NOT NULL,
+    cold_boots bigint NOT NULL,
+    request_time_ms bigint NOT NULL,
+    latency_max_ms integer NOT NULL,
+    latency_hist bigint[] NOT NULL,
+    CONSTRAINT request_analytics_hours_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_bin('01:00:00'::interval, bucket_start, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT request_analytics_hours_check CHECK (((octet_length(method) <= 16) AND ((dimension_kind = 'route'::text) OR (method = ''::text)))),
+    CONSTRAINT request_analytics_hours_check1 CHECK (((error_requests >= 0) AND (error_requests <= requests))),
+    CONSTRAINT request_analytics_hours_check2 CHECK (((cold_boots >= 0) AND (cold_boots <= requests))),
+    CONSTRAINT request_analytics_hours_dimension_check CHECK (((octet_length(dimension) >= 1) AND (octet_length(dimension) <= 512))),
+    CONSTRAINT request_analytics_hours_dimension_kind_check CHECK ((dimension_kind = ANY (ARRAY['route'::text, 'country'::text, 'referrer_host'::text, 'ua_family'::text, 'consumer_id'::text]))),
+    CONSTRAINT request_analytics_hours_latency_hist_check CHECK (((cardinality(latency_hist) = 45) AND (array_ndims(latency_hist) = 1) AND (array_position(latency_hist, NULL::bigint) IS NULL))),
+    CONSTRAINT request_analytics_hours_latency_max_ms_check CHECK ((latency_max_ms >= 0)),
+    CONSTRAINT request_analytics_hours_request_time_ms_check CHECK ((request_time_ms >= 0)),
+    CONSTRAINT request_analytics_hours_requests_check CHECK ((requests >= 1)),
+    CONSTRAINT request_analytics_hours_status_check CHECK (((status >= 100) AND (status <= 599)))
+);
+
+
+--
+-- Name: TABLE request_analytics_hours; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.request_analytics_hours IS 'Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).';
+
+
+--
 -- Name: request_analytics_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -54250,7 +54290,9 @@ COMMENT ON TABLE public.request_analytics_minutes IS 'Per-minute request analyti
 CREATE TABLE public.request_analytics_rollup_coverage (
     app_id uuid NOT NULL,
     covered_since timestamp with time zone NOT NULL,
-    CONSTRAINT request_analytics_rollup_coverage_covered_since_check CHECK ((isfinite(covered_since) AND (covered_since = date_bin('00:01:00'::interval, covered_since, '1970-01-01 00:00:00+00'::timestamp with time zone))))
+    hours_covered_since timestamp with time zone,
+    CONSTRAINT request_analytics_rollup_coverage_covered_since_check CHECK ((isfinite(covered_since) AND (covered_since = date_bin('00:01:00'::interval, covered_since, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT request_analytics_rollup_coverage_hours_covered_since_chk CHECK (((hours_covered_since IS NULL) OR (isfinite(hours_covered_since) AND (hours_covered_since = date_bin('00:01:00'::interval, hours_covered_since, '1970-01-01 00:00:00+00'::timestamp with time zone)))))
 );
 
 
@@ -69199,6 +69241,14 @@ ALTER TABLE ONLY public.release_secret_key_retirements
 
 
 --
+-- Name: request_analytics_hours request_analytics_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_hours
+    ADD CONSTRAINT request_analytics_hours_pkey PRIMARY KEY (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id);
+
+
+--
 -- Name: request_analytics_minutes request_analytics_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79860,6 +79910,13 @@ CREATE INDEX release_freezes_unlifted ON public.release_freezes USING btree (acc
 --
 
 CREATE INDEX release_gate_probe_results_window ON public.release_gate_probe_results USING btree (window_start);
+
+
+--
+-- Name: request_analytics_hours_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_hours_bucket_idx ON public.request_analytics_hours USING btree (bucket_start);
 
 
 --
