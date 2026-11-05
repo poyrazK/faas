@@ -3146,6 +3146,7 @@ type CustomDomain struct {
 	VerificationAttempts          int32
 	VerificationExpiresAt         pgtype.Timestamptz
 	EnvironmentID                 pgtype.UUID
+	CertRetryAt                   pgtype.Timestamptz
 }
 
 type CustomDomainTlsAdmission struct {
@@ -4218,6 +4219,18 @@ type DeploymentProjectReleaseWorker struct {
 	AccountID    pgtype.UUID
 	ProjectID    pgtype.UUID
 	AttemptID    string
+}
+
+type DeploymentPromotionReceipt struct {
+	AppID                       pgtype.UUID
+	AttemptID                   string
+	RequestHash                 string
+	DeploymentID                pgtype.UUID
+	ExpectedServingDeploymentID string
+	Scope                       string
+	ProjectID                   string
+	EnvironmentID               string
+	AcceptedAt                  pgtype.Timestamptz
 }
 
 type DeploymentPublicBuildUrl struct {
@@ -6629,6 +6642,7 @@ type Instance struct {
 	CapacityRamMb                     int64
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
+	BookedCpuMillicores               pgtype.Int4
 }
 
 type InstanceApplicationStandardAdmission struct {

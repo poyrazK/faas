@@ -20,6 +20,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 )
 
 // errRouteLookupShed is a route read refused by the new-host budget. The
@@ -32,6 +33,10 @@ type routeMissGuard struct {
 	missing map[string]time.Time // host -> when its remembered miss expires
 	known   map[string]struct{}  // hosts this gateway has seen route
 	budget  *rate.Limiter
+	// preloaded holds every app slug and verified custom domain, refreshed
+	// from the store, so a real app's host skips the budget even before
+	// this gateway has served it (after a restart). Set before serving.
+	preloaded *knownhosts.Set
 
 	missTTL    time.Duration
 	maxWait    time.Duration
@@ -76,6 +81,9 @@ func (g *routeMissGuard) missed(host string) bool {
 // maxWait for it.
 func (g *routeMissGuard) admit(ctx context.Context, host string) error {
 	if g == nil {
+		return nil
+	}
+	if g.preloaded.Has(host) {
 		return nil
 	}
 	g.mu.Lock()

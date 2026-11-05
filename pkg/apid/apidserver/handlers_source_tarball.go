@@ -282,7 +282,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return

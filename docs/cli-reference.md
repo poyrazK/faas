@@ -3436,6 +3436,21 @@ Preview or delete a project
 | `--dry-run` | preview affected state |  |
 | `--yes` | confirm project deletion |  |
 
+### project rollback
+
+Roll every service back to its previous deployment, dependencies first
+
+`gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the rollback order |  |
+| `--yes` | roll every service back |  |
+| `--acknowledge-releases` | accept rolling back across release commands |  |
+| `--timeout <DURATION>` | wait per service (default 10m) |  |
+
+Stops at the first service that fails and names the rest.
+
 
 ## build
 
@@ -4798,7 +4813,7 @@ Read, guard or recover scaling configuration; prints JSON
 | `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <MILLICORES>` | CPU allowance |  |
-| `--max-concurrency <COUNT>` | maximum running instances (instance cap) |  |
+| `--max-concurrency <COUNT>` | most instances the app runs at once |  |
 | `--min <COUNT>` | minimum warm instance count, including zero |  |
 
 Examples:
@@ -8346,7 +8361,7 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version; reuse the request UUID
+Delete current data or an owned version; retry with the same UUID
 
 `gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 

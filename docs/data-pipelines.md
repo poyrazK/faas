@@ -79,6 +79,14 @@ To use an existing source, run `gregale pipeline connection add NAME --url-file
 `--region REGION` to choose placement for a new one. Omit `--api` to operate the
 mirror without deploying an HTTP app. Provisioned resources remain available
 for inspection if a later step fails; retry with their source and database IDs.
+Before new checks or provisioning, the CLI recovers an accepted pipeline with
+the same name, source, tables and readers. An explicitly supplied database or
+region must also match. This works after a lost creation response even when
+replication has populated the mirror or the source is temporarily unreachable.
+Changed selections require inspecting the existing pipeline or choosing a new
+name. Automatically created mirrors use `NAME-mirror` for letter-led names and
+`p-NAME-mirror-db` for digit-led names, such as `p-7-orders-mirror-db`.
+
 Source registration uses a credential-derived idempotency key; rotate an existing
 source when its credential changes instead of registering its name again.
 
@@ -150,8 +158,30 @@ required; a newly provisioned mirror can pause at **needs attention** until its
 exact allocation is operator-qualified. Creating a mirror does not grant it
 capacity qualification automatically.
 
-**Retry saved setup** resumes its saved stage using the same resource IDs. Worker
-leases and intent revisions fence stale completion, including after cancellation
+**Retry saved setup** resumes its saved stage using the same resource IDs.
+Retries refresh failed source or mirror checks. A running check or the short
+check cooldown can delay the next observation; setup waits and continues
+automatically. A newer passing check is retained.
+
+If the saved API source changes before deployment is accepted, retry uses the
+current template for a fresh build attempt. The same mirror, pipeline, app and
+read-only binding are retained. Already accepted deployments keep their IDs.
+
+An existing mirror must belong to your account and remain available when the
+setup is saved. Setup reservations serialize with database deletion and resize.
+If read-only API access is withdrawn, saved setup retains its resources and
+starts no new API preparation or builds until access is restored. An already
+accepted deployment can still finish and report its status.
+
+A pause request remains unconfirmed until a current worker observation confirms
+that replication is paused. If the worker cannot reach the mirror, health reports
+the failed pause and replication may still be running. The saved request retries
+automatically; check worker and mirror access before relying on a stopped sync.
+An approved reader change cannot hold up subscription disable. If its policy
+update is blocked, pause can still be confirmed while that reader change remains
+approved for retry. Pause confirmation does not mean the new readers are applied.
+
+Worker leases and intent revisions fence stale completion, including after cancellation
 or lease takeover. A lost provider or pipeline acknowledgement is recovered from
 the existing reservation instead of creating another resource. Failed/blocked
 setups remain visible with their selected tables and mirror reference.
@@ -205,6 +235,10 @@ The source must be reachable from both the worker and the managed destination;
 allow the destination provider's egress addresses at the source firewall. The
 operator's exact host and CIDR allowlist also applies to native subscription
 connections. DNS changes outside that policy block reconnection.
+When a hostname has several qualified addresses, native connections can fall back
+between them. Each address keeps the original hostname for TLS verification;
+unqualified addresses are excluded. Native connection attempts use at most five
+seconds per address, preserving an explicitly shorter source timeout.
 
 ## Observe and recover
 
@@ -227,6 +261,33 @@ is true only for a check of the current intent within 90 seconds. Live means
 all copies finished, the initial WAL barrier was acknowledged, the source slot
 was active and within 16 MiB, and the target receiver was recently active. This
 is an asynchronous mirror, with no promise of a zero-lag read.
+
+Native readiness requires the exact selected table registrations. Losing a
+registration, or a ready table reverting to copying, reports
+`resync_required` / `replication_state_lost`, closes imported reads and retains
+rows for explicitly confirmed resync. It is not treated as another initial copy,
+including after a lost catalog acknowledgement or while reads are already gated.
+
+The worker also records the source sender and a confirmed WAL checkpoint.
+After the sender changes, reconnects can continue directly only when the
+confirmed checkpoint is unchanged and its WAL is retained. An unobserved advance
+requires verification, including ordinary reconnects whose final progress was
+not witnessed. Retained WAL alone does not prove that changes were consumed.
+If continuity cannot be established, including after a slot is manually advanced
+or recreated under the same name,
+reads are gated behind `replication_continuity_verification`. A fresh full proof
+can reopen them without replacing the subscription or tables. A mismatch reports
+`resync_required` / `replication_continuity_lost` and requires explicit resync.
+Newer replicated changes or a current heartbeat cannot qualify a historical gap.
+Mirrors without a saved continuity witness use the same gated qualification.
+Stopping or reaching a verification limit preserves the read gate; use **Retry
+verification** or `gregale pipeline verify PIPELINE_ID --wait` after remediation.
+Continuity uncertainty during a scoped table workflow requires full recovery.
+
+After resume, CLI `--wait` polls for a current observation before treating a
+blocked state as a failure. An expired or preceding revision's failure does not
+end the wait. Pending automatic schema refresh also keeps polling; an actual
+refresh failure ends the wait. All waits are bounded by `--timeout`.
 
 A pause retains readable rows and its upstream slot. Source WAL may accumulate;
 the configured finite retention backstop can invalidate the slot during a long
@@ -268,6 +329,14 @@ must remain reachable to confirm pause. Deletion also stops these streams when
 source access fails, while keeping cleanup pending until the publisher can be
 reached. Subscription ownership markers, slot names and publication membership
 are checked before changes; a conflicting marker blocks the operation.
+
+Cleanup does not allocate a replacement when a subscription's main source slot
+is already missing. It atomically detaches that slot and lets PostgreSQL remove
+the subscription and its native table-sync slots. The worker verifies that those
+sync slots are gone before confirming cleanup. A failed source check or lost
+worker intent leaves the subscription's original ownership identity available
+for retry. Unrelated source slots are retained, even when all slot capacity is
+occupied.
 
 Deleting a pipeline removes its publications, subscriptions, and replication
 slots from every unfinished generation, while keeping destination rows. An
@@ -740,6 +809,14 @@ Removal requires no new copy capacity or retry attempt and does not reset the
 pipeline generation. Shared replication loss and the retained-WAL limit still
 require full pipeline recovery.
 
+Every removal stage rechecks the saved source definition, including recovery
+after a lost completion acknowledgement. All original tables must match before
+retirement begins; afterwards the remaining tables must match. Source changes
+that require resync close imported reads and report `source_schema_changed`
+without replacing imported rows. Bounded source locks protect the initial
+retirement commit and final completion after the API refresh. Once retired, the
+removed table's source may disappear without blocking completion.
+
 Cleanup resumes after restarts and lost acknowledgements. A distinct refresh of
 the existing Data API runtime must complete before the saved selection changes.
 The remaining tables become the new schema baseline; old verification proof is
@@ -792,6 +869,15 @@ ten-attempt schema budget. Changed source definitions, shared replication loss,
 lost tracking in another table or excessive/lost WAL still require full recovery.
 No repair starts automatically. Stop/retry of repair verification preserves the
 closed table gate. Explicit full resync and pipeline disconnect remain available.
+
+If the repair's fresh copy stalls or loses tracking, preview and approve another
+recovery of that same table. This needs current copy evidence and a new exact
+approval, and uses the remaining ten-attempt budget. The saved mismatch proof is
+not required for this copy retry. Preview retains imported rows and the closed
+read gate; approval authorizes replacing only the quarantined table, including
+if its previous copy finishes while confirmation is pending. Lost copy-stage
+acknowledgements recover from the private receipt. Other tables keep syncing,
+and shared failures still require full recovery.
 
 Local acceptance uses two 100,000-row live tables with ongoing source updates. It
 corrupts a previously checked range, rolls back the first quarantine transaction,
@@ -848,12 +934,23 @@ explicit retry starts a fresh proof and safely revisits them. A new source
 definition during an unfinished backfill requires explicit recovery rather than
 treating partially populated columns as a complete baseline.
 
-For each bound app, a durable refresh operation invalidates snapshots and asks
-the ordinary scheduler to replace runtimes in every live scope. A saved operation
-ID prevents lost acknowledgements from restamping freshness or queuing duplicate
-replacements. Reads remain gated until every operation reports completion and a
-final source definition/data check passes under a source write/DDL lock. The new
-runtime rebuilds its Data API schema contract and PostgREST cache on startup.
+Maintenance that materializes a fast default, such as `VACUUM FULL`, preserves
+the saved schema approval when the logical column definition is unchanged.
+Verification restarts against the new heap and retains its approved scope.
+It does not reuse ranges checked before the rewrite or require a full resync
+solely because PostgreSQL cleared its internal missing-value metadata.
+
+For each bound app, a durable refresh operation stamps runtime freshness and
+invalidates snapshots. Apps with live deployments ask the ordinary scheduler to
+replace runtimes in every live scope. An app without a live deployment reports
+`not_required`, so initial API setup can proceed after schema completion; pending
+or failed deployment history does not require a restart. A saved operation ID
+prevents lost acknowledgements from restamping freshness or queuing duplicate
+replacements. If an app becomes live during an unfinished workflow, its restart
+uses the original freshness boundary. Reads remain gated until every required
+operation reports completion and a final source definition/data check passes
+under a source write/DDL lock. The new runtime rebuilds its Data API schema
+contract and PostgREST cache on startup.
 No VM lifecycle changes or separate hosting tier are introduced. Refresh failure
 retains the migrated mirror; fix the app configuration or runtime failure and
 choose **Retry schema workflow**. At most 100 bound apps and 10 explicit retries
@@ -915,7 +1012,21 @@ This prevents large valid rows from exhausting query time while unread results
 are drained. Tuple locations remain transient and never enter checkpoints.
 
 Source physical rewrites can change values without normal CDC row events. Each
-run also records opaque heap/TOAST/storage fingerprints, checks them under each
+live generation also retains its qualified source storage fingerprints between
+checks. If ordinary reconciliation detects a rewrite, it gates imported reads
+and starts a full resumable check with reason `source_storage_verification`.
+Harmless maintenance, including `VACUUM FULL`, can pass and reopen reads without
+recopying or replacing the subscription. A value-changing rewrite that makes the
+source and mirror differ reports `resync_required` / `source_storage_changed`,
+retains imported rows and requires explicitly confirmed resync. Existing mirrors
+without a storage baseline qualify their rows through the same gated check.
+Stopping or reaching a work limit leaves reads gated; resolve the cause and use
+**Retry verification** or `gregale pipeline verify PIPELINE_ID --wait`. Pending
+qualification survives worker restart and lost acknowledgements. A rewrite of a
+healthy table during scoped table addition, repair or removal requires resync.
+
+Every verification run also records opaque heap/TOAST/storage fingerprints,
+checks them under each
 source lock and checks them again at finalization. A rewrite discards the old
 ranges and starts a new run for the same approved intent; the dashboard reports
 these restarts. This requires no new schema approval when the column definitions
@@ -939,7 +1050,12 @@ primary key may use at most 1 MiB, keeping cursors within the private 4 MiB
 checkpoint bound. A key over this budget reports `verification_key_limit` and
 an inconclusive result, then retires temporary tracking. It does not repeatedly
 retry a failed checkpoint. Reduce key values before retrying; changing a key's
-definition requires resync. At most 4,096 ranges are retained per
+definition requires resync. Oversized row values report `verification_row_limit`
+and an inconclusive result, including values whose encoded form would exceed
+PostgreSQL's representation limits. A size precheck avoids building oversized
+JSONB rows, and a scan savepoint preserves the transaction needed to save the
+result and retire tracking if an output function still exceeds those limits.
+Ordinary rows retain the same verification encoding. At most 4,096 ranges are retained per
 pipeline, including ranges created by splits; this replaces the old per-table
 size cap with a bounded amount of persistent verification metadata. Source and
 destination lock acquisition is limited to 250 ms, individual statements to two
@@ -1006,6 +1122,9 @@ after a worker restart or a lost acknowledgement. Revocation governs subsequent
 database reads after commit; already-running transactions may finish under their
 existing snapshot. Changes can also be applied while replication is paused or
 the source credential is unavailable, provided the worker can reach the mirror.
+Pausing disables replication before attempting policy changes, so a long read
+transaction cannot prevent suspension. Once the lock clears, the approved reader
+change retries while the pipeline remains paused.
 
 During an active account's past-due grace period, previews and approvals may
 remove existing subjects while retaining at least one. Adding or replacing a
@@ -1051,8 +1170,8 @@ every 15 seconds, with a 90-second observation freshness allowance:
 
 | Code | Evidence |
 | --- | --- |
-| `monitoring_stale` | A running pipeline has no current worker observation, including a stopped replication worker. |
-| `sync_blocked` | A fresh, current-revision observation says blocked or resync required. |
+| `monitoring_stale` | A running pipeline or an unacknowledged pause has no current worker observation, including a stopped replication worker. |
+| `sync_blocked` | A fresh, current-revision observation says blocked or resync required, including a failed pause. |
 | `retention_pressure` | A fresh observation reports retained WAL at or above 80% of the 1 GiB retention ceiling, including intentionally paused pipelines. |
 | `apply_unconfirmed` | A live/catching-up pipeline retains at least 16 MiB of WAL and lacks an applied checkpoint from the last 90 seconds. This signals uncertain apply progress, not proven row lag. |
 

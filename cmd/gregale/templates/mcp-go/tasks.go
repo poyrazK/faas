@@ -187,6 +187,7 @@ type durableMCPTask struct {
 	ExpiresAt      time.Time
 	AttemptCount   int
 	LeaseToken     string
+	leaseDeadline  time.Time
 	CancelAt       *time.Time
 	Arguments      map[string]any
 	InputMethods   []string
@@ -217,6 +218,9 @@ type mcpTaskRuntime struct {
 	maxPerOwner              int
 	execution                mcpTaskExecutionPolicy
 	payloadEncryptionVersion int
+	rewrapMu                 sync.Mutex
+	rewrapAfter              string
+	rewrapThrough            string
 	taskKeys                 []mcpTaskKey
 	taskHandlers             map[string]mcpRegisteredTaskHandler
 	taskExecutors            map[mcpTaskHandlerKey]MCPTaskExecutor
@@ -1284,11 +1288,20 @@ func taskPayloadNeedsRewrapSQL(column string) string {
 }
 
 func (runtime *mcpTaskRuntime) rewrapBatch(ctx context.Context, limit int) (int, error) {
+	runtime.rewrapMu.Lock()
+	defer runtime.rewrapMu.Unlock()
+	if limit < 1 {
+		return 0, nil
+	}
 	if runtime.payloadEncryptionVersion != 2 {
 		return 0, nil
 	}
 	if len(runtime.taskKeys) == 0 {
 		return 0, errors.New("MCP task encryption keys are unavailable")
+	}
+	if runtime.ambiguousRewrapKeyID() {
+		// A retained row can carry several megabytes of encrypted fields.
+		limit = min(limit, 8)
 	}
 	tx, err := runtime.pool.Begin(ctx)
 	if err != nil {
@@ -1298,16 +1311,7 @@ func (runtime *mcpTaskRuntime) rewrapBatch(ctx context.Context, limit int) (int,
 	if _, err := tx.Exec(ctx, `SELECT set_config('gregale.mcp_task_rewrap','on',true)`); err != nil {
 		return 0, err
 	}
-	columns := []string{"arguments_encrypted", "result_encrypted", "error_encrypted", "input_state_encrypted"}
-	checks := make([]string, 0, len(columns))
-	for _, column := range columns {
-		checks = append(checks, taskPayloadNeedsRewrapSQL(column))
-	}
-	query := `SELECT task_id::text,arguments_encrypted,result_encrypted,error_encrypted,input_state_encrypted
-		FROM gregale_mcp_tasks WHERE namespace=$1 AND expires_at>clock_timestamp()
-		AND (` + strings.Join(checks, " OR ") + `)
-		ORDER BY created_at LIMIT $3 FOR UPDATE SKIP LOCKED`
-	rows, err := tx.Query(ctx, query, runtime.namespace, []byte(runtime.taskKeys[0].id), limit)
+	rows, through, scanning, err := runtime.rewrapCandidates(ctx, tx, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -1329,19 +1333,13 @@ func (runtime *mcpTaskRuntime) rewrapBatch(ctx context.Context, limit int) (int,
 		return 0, err
 	}
 	rows.Close()
+	changed := 0
 	for _, item := range batch {
+		needsUpdate := false
 		rotate := func(value []byte, field string, maxBytes int) ([]byte, error) {
-			if value == nil {
-				return nil, nil
-			}
-			plain, err := runtime.decryptPayload(value, item.id, field)
-			if err != nil {
-				return nil, err
-			}
-			if len(plain) > maxBytes {
-				return nil, errors.New("MCP task payload exceeds its configured size limit")
-			}
-			return runtime.encryptPayload(plain, item.id, field)
+			encrypted, updated, err := runtime.rewrapPayload(value, item.id, field, maxBytes)
+			needsUpdate = needsUpdate || updated
+			return encrypted, err
 		}
 		args, err := rotate(item.args, "arguments", 256*1024)
 		if err != nil {
@@ -1359,14 +1357,24 @@ func (runtime *mcpTaskRuntime) rewrapBatch(ctx context.Context, limit int) (int,
 		if err != nil {
 			return 0, err
 		}
+		if !needsUpdate {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `UPDATE gregale_mcp_tasks SET arguments_encrypted=$3,result_encrypted=$4,error_encrypted=$5,input_state_encrypted=$6 WHERE namespace=$1 AND task_id=$2::uuid`, runtime.namespace, item.id, args, result, taskError, inputState); err != nil {
 			return 0, err
 		}
+		changed++
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return len(batch), nil
+	if scanning {
+		runtime.rewrapAfter, runtime.rewrapThrough = "", ""
+		if len(batch) == limit {
+			runtime.rewrapAfter, runtime.rewrapThrough = batch[len(batch)-1].id, through
+		}
+	}
+	return changed, nil
 }
 
 func (runtime *mcpTaskRuntime) rewrapLoop(ctx context.Context) {
@@ -1428,7 +1436,7 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 				break
 			}
 			runtime.drainMu.Lock()
-			if !runtime.drainStarted.IsZero() {
+			if !runtime.drainStarted.IsZero() || !task.leaseDeadline.IsZero() && !time.Now().Before(task.leaseDeadline) {
 				runtime.drainMu.Unlock()
 				runtime.releaseDrainedTask(ctx, task)
 				break
@@ -1492,6 +1500,15 @@ func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPT
 	defer cancel()
 	finished := make(chan struct{})
 	abortReason := make(chan string, 1)
+	loseLease := func() {
+		select {
+		case abortReason <- "lease_lost":
+		default:
+		}
+		cancel()
+	}
+	lease := newMCPTaskLeaseDeadline(ctx, task.leaseDeadline, loseLease)
+	defer lease.close()
 	go func() {
 		defer close(finished)
 		ticker := time.NewTicker(5 * time.Second)
@@ -1501,20 +1518,24 @@ func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPT
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				startedAt := time.Now()
 				cancelRequested, err := runtime.heartbeatTask(ctx, task)
 				if errors.Is(err, pgx.ErrNoRows) {
-					abortReason <- "lease_lost"
-					cancel()
+					loseLease()
 					return
 				}
 				if err != nil {
 					continue
 				}
 				if cancelRequested {
-					abortReason <- "cancelled"
+					select {
+					case abortReason <- "cancelled":
+					default:
+					}
 					cancel()
 					return
 				}
+				lease.renew(startedAt)
 			}
 		}
 	}()
@@ -1530,6 +1551,7 @@ func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPT
 		return responses, nil
 	}
 	result, executeErr := execute(ctx, task.Arguments, execution)
+	lease.close()
 	cancel()
 	<-finished
 	if parent.Err() != nil {

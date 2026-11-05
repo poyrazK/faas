@@ -673,6 +673,7 @@ export type { DebugRunningRequestAttribution } from './DebugRunningRequestAttrib
 export type { DebugRunningResponse } from './DebugRunningResponse.js';
 export type { DebugStatusDeployment } from './DebugStatusDeployment.js';
 export type { DebugStatusHealth } from './DebugStatusHealth.js';
+export type { DebugStatusMemory } from './DebugStatusMemory.js';
 export type { DebugStatusOOMKill } from './DebugStatusOOMKill.js';
 export type { DebugStatusResponse } from './DebugStatusResponse.js';
 export type { DebugSuspectedDependency } from './DebugSuspectedDependency.js';
@@ -717,6 +718,7 @@ export type { DeploymentLiveWebhookPayload } from './DeploymentLiveWebhookPayloa
 export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './DeploymentRelease.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
@@ -869,6 +871,7 @@ export type { EnvironmentPolicy } from './EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './EnvironmentRecoveryRetention.js';
+export type { EnvironmentRouteBudgetReceipt } from './EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './EnvironmentServiceBinding.js';
@@ -1557,6 +1560,7 @@ export type { ObjectBucketNotificationsRequest } from './ObjectBucketNotificatio
 export type { ObjectBucketObjectLock } from './ObjectBucketObjectLock.js';
 export type { ObjectBucketObjectLockConfiguration } from './ObjectBucketObjectLockConfiguration.js';
 export type { ObjectBucketObjectLockRequest } from './ObjectBucketObjectLockRequest.js';
+export type { ObjectBucketRetry } from './ObjectBucketRetry.js';
 export type { ObjectBucketVersioning } from './ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './ObjectCapacityReconciliation.js';
@@ -2946,6 +2950,7 @@ export type { SelectedTraceLookupResponse } from './SelectedTraceLookupResponse.
 export type { SelectedTraceRequest } from './SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './SendAppMessageResponse.js';
+export type { ServiceAbortReceipt } from './ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './ServiceBindingExplanation.js';
 export type { ServiceBindingInventoryContext } from './ServiceBindingInventoryContext.js';

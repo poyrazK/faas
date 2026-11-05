@@ -269,6 +269,7 @@ export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.j
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './models/DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './models/DeploymentRelease.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
@@ -922,6 +923,12 @@ export type { ProjectDeploymentCheck } from './models/ProjectDeploymentCheck.js'
 export type { ProjectDeploymentCheckRequest } from './models/ProjectDeploymentCheckRequest.js';
 export type { ProjectDeploymentCheckWorkload } from './models/ProjectDeploymentCheckWorkload.js';
 export type { ProjectDeploymentReadiness } from './models/ProjectDeploymentReadiness.js';
+export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
+export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
+export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
+export type { ProjectEnvironmentSharedSecret } from './models/ProjectEnvironmentSharedSecret.js';
+export type { ProjectEnvironmentSharedSecretResponse } from './models/ProjectEnvironmentSharedSecretResponse.js';
+export type { ProjectEnvironmentSharedSecretsResponse } from './models/ProjectEnvironmentSharedSecretsResponse.js';
 export type { ProjectInitialSecrets } from './models/ProjectInitialSecrets.js';
 export type { ProjectMigrationBaselineVerification } from './models/ProjectMigrationBaselineVerification.js';
 export type { ProjectMigrationContract } from './models/ProjectMigrationContract.js';
@@ -1073,6 +1080,7 @@ export type { SecretReferenceEnvironment } from './models/SecretReferenceEnviron
 export type { SecretRevocationTarget } from './models/SecretRevocationTarget.js';
 export type { SecretRuntimeReloadObservation } from './models/SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './models/SecretScanResult.js';
+export type { ServiceAbortReceipt } from './models/ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './models/ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './models/ServiceBindingExplanation.js';
 export type { ServiceBindingInventoryContext } from './models/ServiceBindingInventoryContext.js';
@@ -1101,6 +1109,7 @@ export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasReque
 export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
+export type { SetProjectEnvironmentSharedSecretRequest } from './models/SetProjectEnvironmentSharedSecretRequest.js';
 export type { SetServiceWakeAheadRequest } from './models/SetServiceWakeAheadRequest.js';
 export type { SetWorkflowRecoveryPolicyRequest } from './models/SetWorkflowRecoveryPolicyRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';
@@ -1144,6 +1153,7 @@ export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateFinancialBudgetRequest } from './models/UpdateFinancialBudgetRequest.js';
 export type { UpdateInboundWebhookEndpointRequest } from './models/UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
+export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UploadDeployOptions } from './models/UploadDeployOptions.js';
 export type { UploadSessionResponse } from './models/UploadSessionResponse.js';

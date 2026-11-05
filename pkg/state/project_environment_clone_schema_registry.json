@@ -4017,6 +4017,7 @@
       "cert_expires_at",
       "cert_failed_at",
       "cert_last_error",
+      "cert_retry_at",
       "cert_status",
       "challenge_token",
       "dns_last_checked_at",
@@ -5413,6 +5414,21 @@
       "signal"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "deployment_promotion_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id",
+      "environment_id",
+      "expected_serving_deployment_id",
+      "project_id",
+      "request_hash",
+      "scope"
+    ]
   },
   {
     "table": "deployment_submission_receipts",
@@ -8125,6 +8141,7 @@
       "app_id",
       "application_standard_boot_token",
       "application_standard_promotion_token",
+      "booked_cpu_millicores",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",

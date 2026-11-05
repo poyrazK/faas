@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -280,7 +281,9 @@ func (s *Served) listen(ctx context.Context, pool *pgxpool.Pool, notices chan<- 
 }
 
 func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) error {
-	conn, err := pool.Acquire(ctx)
+	// LISTEN is session-scoped, so it runs on the direct pool: a transaction
+	// pooler would hand the listening backend to another client.
+	conn, err := db.DirectPool(pool).Acquire(ctx)
 	if err != nil {
 		return err
 	}

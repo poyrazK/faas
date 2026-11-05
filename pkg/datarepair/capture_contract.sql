@@ -59,9 +59,22 @@ BEGIN
  SELECT * INTO STRICT e FROM gregale_repair.enrollments WHERE enrollment_id=enrollment;
  IF e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL THEN RAISE EXCEPTION 'repair_fingerprint_rendering_requires_review' USING ERRCODE='22023'; END IF;
  IF e.fingerprint_timezone IS NULL THEN RAISE EXCEPTION 'repair_fingerprint_timezone_requires_review' USING ERRCODE='22023'; END IF;
- -- Ordinary row writers remain concurrent. This also fences inheritance,
- -- trigger/rule changes and concurrent index DDL for the bounded transaction.
- EXECUTE format('LOCK TABLE %s IN SHARE UPDATE EXCLUSIVE MODE',e.relation);
+ IF current_setting('transaction_isolation')='read committed' THEN
+  -- Concurrent captured writers share this lock; ordinary schema DDL cannot
+  -- pass it. A concurrent index build started later must wait for this writer
+  -- before building/activating its index. Refuse maintenance already running.
+  EXECUTE format('LOCK TABLE %s IN ROW EXCLUSIVE MODE',e.relation);
+  IF NOT EXISTS(SELECT 1 FROM gregale_repair.operations
+   WHERE id=nullif(current_setting('gregale.repair_guarded_'||e.relation::oid::text,true),'')::uuid
+    AND enrollment_id=e.enrollment_id AND transaction_id=pg_current_xact_id()::text) AND
+   EXISTS(SELECT 1 FROM pg_locks WHERE locktype='relation' AND relation=e.relation AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
+    AND mode='ShareUpdateExclusiveLock' AND pid IS DISTINCT FROM pg_backend_pid()) THEN
+   RAISE EXCEPTION 'repair_schema_maintenance_busy' USING ERRCODE='40001';
+  END IF;
+ ELSE
+  -- Preserve the stronger fence for callers retaining an older catalog snapshot.
+  EXECUTE format('LOCK TABLE %s IN SHARE UPDATE EXCLUSIVE MODE',e.relation);
+ END IF;
  IF EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=e.relation AND attnum>0 AND NOT attisdropped AND attgenerated<>'') THEN
   RAISE EXCEPTION 'repair_generated_columns_unsupported' USING ERRCODE='22023';
  END IF;

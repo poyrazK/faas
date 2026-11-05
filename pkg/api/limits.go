@@ -53,6 +53,14 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Management MCP history is connection-local metadata, not an account audit log.
+const (
+	ManagementMCPActionHistoryMax       = 256
+	ManagementMCPActionHistoryPageMax   = 50
+	ManagementMCPActionHistoryRetention = 24 * time.Hour
+	ManagementMCPActionCursorMaxBytes   = 1024
+)
+
 // Keys minted by a JSON password sign-in (POST /v1/auth/login and
 // /v1/auth/signup) lapse like CLI device-code keys, and an account keeps at
 // most SignInAPIKeysMax of them: the next sign-in revokes the oldest.
@@ -175,6 +183,12 @@ const AgentKeyLifetime = 90 * 24 * time.Hour
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.
 const InboundWebhookFailuresPerIPPerMinute = 30
+
+// SelfVerifiedRouteFailuresPerIPPerMinute is how many refused requests (401,
+// 403, 404) one client IP may send a minute to the other unauthenticated
+// routes that check their own credential with a database lookup (consumer
+// billing keys) before it gets 429 without one (bug hunt H15).
+const SelfVerifiedRouteFailuresPerIPPerMinute = 30
 
 // AppWebhookMaxInFlightPerAccount bounds one account's concurrent outbound
 // webhook requests across every scheduler (ADR-20261101093517). Each
@@ -2444,6 +2458,14 @@ const (
 	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
 	// uncached access tokens that run at once (ADR 20261027132936).
 	OutboundAIAccessTokenLookupsMax = 8
+	// OutboundAIAccessTokenGuessesPerWindow unknown access tokens a client
+	// network (IPv4 /24, IPv6 /64) may present on the public AI host per
+	// OutboundAIAccessTokenGuessWindow before it gets 429 without a lookup;
+	// OutboundAIAccessTokenGuessClientsMax bounds the networks tracked (bug
+	// hunt H82).
+	OutboundAIAccessTokenGuessesPerWindow = 30
+	OutboundAIAccessTokenGuessWindow      = time.Minute
+	OutboundAIAccessTokenGuessClientsMax  = 10_000
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
@@ -3265,6 +3287,88 @@ var VCPUPerPlan = map[Plan]int{
 	PlanHobby: 2,
 	PlanPro:   2,
 	PlanScale: 4,
+}
+
+// GuestVCPUMillicores is the sustained CPU quota one guest vCPU stands for
+// when an app's topology follows its quota instead of its plan
+// (ADR-20261101160231).
+const GuestVCPUMillicores = 1000
+
+// GuestVCPUsForCPUMillicores is the guest vCPU count for a sustained CPU
+// quota: one per GuestVCPUMillicores, at least one (ADR-20261101160231).
+func GuestVCPUsForCPUMillicores(millicores int) int {
+	return max(1, (millicores+GuestVCPUMillicores-1)/GuestVCPUMillicores)
+}
+
+// AppCPUBaselineMillicoresPerGB is the CPU an app instance books, and its
+// share when the node is busy, per GB of plan RAM: 250 m on Free … 2,000 m
+// on Scale (ADR-20261101160231).
+const AppCPUBaselineMillicoresPerGB = 1000
+
+// AppCPUBookingMaxMillicores bounds an instance's stored CPU booking
+// (instances.booked_cpu_millicores): the largest plan baseline.
+const AppCPUBookingMaxMillicores = 2000
+
+// AppCPUCeilingFloorMillicores is the lowest burst ceiling (cpu.max) a plan
+// gets, so no plan bursts below today's one core (ADR-20261101160231).
+const AppCPUCeilingFloorMillicores = DefaultAppCPUMillicores
+
+// AppCPUBaselineMillicores is the plan's booked CPU baseline. Zero for an
+// unknown plan.
+func AppCPUBaselineMillicores(plan Plan) int {
+	l, ok := LimitsFor(plan)
+	if !ok {
+		return 0
+	}
+	return AppCPUBaselineMillicoresForPlanRAM(l.RAMMB)
+}
+
+// AppCPUBaselineMillicoresForPlanRAM is the baseline of a plan with
+// planRAMMB of RAM.
+func AppCPUBaselineMillicoresForPlanRAM(planRAMMB int) int {
+	return planRAMMB * AppCPUBaselineMillicoresPerGB / 1024
+}
+
+// AppCPUCeilingMillicores is the plan's burst ceiling: max(floor, baseline).
+// Zero for an unknown plan.
+func AppCPUCeilingMillicores(plan Plan) int {
+	l, ok := LimitsFor(plan)
+	if !ok {
+		return 0
+	}
+	return AppCPUCeilingMillicoresForPlanRAM(l.RAMMB)
+}
+
+// AppCPUCeilingMillicoresForPlanRAM is the burst ceiling of a plan with
+// planRAMMB of RAM.
+func AppCPUCeilingMillicoresForPlanRAM(planRAMMB int) int {
+	return max(AppCPUCeilingFloorMillicores, AppCPUBaselineMillicoresForPlanRAM(planRAMMB))
+}
+
+// ValidAppCPUCeilingMillicores reports whether a host or guest cgroup may
+// enforce v as an app's sustained CPU on plan: one of the customer shapes
+// (ValidAppCPUMillicores), or whole cores up to the plan's burst ceiling.
+// vmmd and guest-init accept it a release before schedd sends a value above
+// one core (ADR-20261101160231 rollout step 4). Customers still choose only
+// the shapes ValidAppCPUMillicores lists.
+func ValidAppCPUCeilingMillicores(plan Plan, v int) bool {
+	if ValidAppCPUMillicores(v) {
+		return true
+	}
+	return v > DefaultAppCPUMillicores && v%GuestVCPUMillicores == 0 && v <= AppCPUCeilingMillicores(plan)
+}
+
+// ValidAnyAppCPUCeilingMillicores reports whether v is a valid app CPU
+// ceiling on some plan. Code that does not know the app's plan (guest-init,
+// vmmd's per-app policy entry point) checks this; the per-instance cgroup
+// write checks the instance's plan.
+func ValidAnyAppCPUCeilingMillicores(v int) bool {
+	for _, p := range Plans {
+		if ValidAppCPUCeilingMillicores(p, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // BlockRateLimit is a VM's sustained limit on its writable app-layer drive
@@ -9321,6 +9425,15 @@ const (
 	// quadratic region.
 	CertRenewTickBatchLimit = 1000
 
+	// Legacy DNS-01 wildcard recovery shares a durable per-claim cooldown
+	// between eager notifications and periodic retries. Each pass is bounded
+	// and completes before another replica may acquire the same claim.
+	CustomDomainCertRetryBatchLimit  = 16
+	CustomDomainCertRetryWorkers     = 4
+	CustomDomainCertRetryTimeout     = 2 * time.Minute
+	CustomDomainCertRetryPassTimeout = 4 * time.Minute
+	CustomDomainCertRetryDelay       = 5 * time.Minute
+
 	// On-demand custom-domain TLS (ADR-520). The public edge (Caddy)
 	// asks gatewayd-public before it loads, obtains or renews a
 	// certificate for a customer hostname.
@@ -9379,6 +9492,13 @@ const (
 	OnDemandTLSAskNegativeCacheEntries = 10000
 	OnDemandTLSAskKnownHostSeconds     = 7 * 24 * 60 * 60
 	OnDemandTLSAskKnownHostEntries     = 100000
+	// Durable membership hints protect existing certificates after an edge
+	// restart. A fixed-size Bloom filter covers every paged admission; a
+	// possible match only bypasses the unknown-host lookup bucket.
+	OnDemandTLSAskKnownHostHintBytes = 2 << 20
+	OnDemandTLSAskKnownHostPageSize  = 1024
+	OnDemandTLSAskKnownHostRefresh   = 5 * time.Minute
+	OnDemandTLSAskKnownHostRetry     = time.Second
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -12907,6 +13027,16 @@ const (
 	GatewayNewHostLookupsPerSecond = 25
 	GatewayNewHostLookupBurst      = 500
 	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// The gateway and the edge preload every app slug and verified custom
+	// domain (at most KnownRouteHostsMax of each), refreshed every
+	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
+	// new-host budgets above or PublicReadNewHostLookups*. Only names that
+	// are not an app's do: after a restart a flood of random names no longer
+	// answers 503 for apps the process has not yet served. Wildcard custom
+	// domains are not preloaded (ADR-20261103163954 §4).
+	KnownRouteHostsMax             = 1_000_000
+	KnownRouteHostsRefreshInterval = time.Minute
+	KnownRouteHostsRefreshTimeout  = 20 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -17220,6 +17350,7 @@ const (
 	DataPipelineRequestMaxBytes            = 32768
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
+	DataPipelineNativeConnectTimeout       = 5 * time.Second
 	DataPipelinePollInterval               = 15 * time.Second
 	DataPipelineReconcileConcurrency       = 8
 	DataPipelineCheckConcurrency           = 2
@@ -17525,4 +17656,9 @@ const (
 const (
 	DomainDoctorDNSTimeout    = 5 * time.Second
 	DomainDoctorCAAMaxQueries = 128
+	// One verification pass shares workers between custom domains and tenant
+	// hostnames, leaving time for the doctor on the same 30-second ticker.
+	DomainVerificationWorkers        = 16
+	DomainVerificationPassTimeout    = 25 * time.Second
+	DomainVerificationCleanupTimeout = 3 * time.Second
 )
