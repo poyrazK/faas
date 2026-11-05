@@ -499,9 +499,9 @@ credentials. It gets:
   To set one for every service of the project at once:
 
   ```sh
-  gregale project preview-secrets set shop STRIPE_KEY=sk_test_…
-  printf 'STRIPE_KEY=%s\n' "$KEY" | gregale project preview-secrets set shop --from-stdin
-  gregale project preview-secrets unset shop STRIPE_KEY
+  gregale project preview secret set shop STRIPE_KEY=sk_test_…
+  printf 'STRIPE_KEY=%s\n' "$KEY" | gregale project preview secret set shop --from-stdin
+  gregale project preview secret unset shop STRIPE_KEY
   ```
 
   It writes the value to each service's `pr-preview` scope; a service added

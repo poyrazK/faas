@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const projectsPreviewSecretsUsage = "usage: gregale projects preview-secrets <set|unset> <project> (KEY=VALUE... | --from-stdin | KEY...)"
+const projectsPreviewSecretsUsage = "usage: gregale project preview secret <set|unset> <project> (KEY=VALUE... | --from-stdin | KEY...)"
 
 // cmdProjectsPreviewSecrets sets or removes a value in the pr-preview scope of
 // every service of a project (ADR-20261104221217). A pull request preview
@@ -32,6 +32,11 @@ func cmdProjectsPreviewSecrets(args []string) int {
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	if err := fs.Parse(flags); err != nil || len(positional) == 0 || !api.ValidProjectSlug(positional[0]) || unset && *fromStdin {
 		PrintUsage(os.Stderr, projectsPreviewSecretsUsage, "projects")
+		return 1
+	}
+	// The positionals were split out above; anything the flag parser still
+	// holds is unexpected, and nothing is written.
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	project, rest := positional[0], positional[1:]
