@@ -211,6 +211,8 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	checkedRollbackReleaseReviews        map[string][]ReleaseRun
+	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
 	alertHistoricalClaims                map[string]string
 	recoveryPredecessors                 map[string]string
@@ -10175,6 +10177,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if !ok {
 		return ErrNotFound
 	}
+	if err = m.checkDatabaseSwitchLeaseLocked(ctx, d); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
 		return ErrConflict
 	}
@@ -10270,6 +10275,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		delete(m.rollbackPrepared, id)
 		return ErrDeploymentSuperseded
+	}
+	if err = m.checkPlainRollbackReleasesLocked(ctx, d); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -10429,11 +10437,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
 			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-				if other.TrafficPercent > 0 {
-					if _, exists := m.revisionPins[otherID]; !exists {
-						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-					}
-				}
+				m.retainServingRevisionLocked(other, time.Now().UTC())
 				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
@@ -11265,6 +11269,12 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[target.AppID], normalizedDeploymentScope(target.Scope)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.checkAppRollbackGraphLocked(appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkDatabaseSwitchLeaseLocked(ctx, target); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if !rollbackPairValid(r, target, m.deployments[current], m.rollbackRowsLocked(r)) {
@@ -11281,6 +11291,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(target)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.preserveRollbackSuccessLocked(target); err != nil {
+		return Deployment{}, err
+	}
+
 	now := time.Now().UTC()
 	var prior StageState
 	if len(target.StageState) > 0 {
@@ -11318,6 +11332,11 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 		m.rollbackPrepared = map[string]time.Time{}
 	}
 	m.rollbackPrepared[targetDeploymentID] = now
+	if m.plainRollbackReleaseReviews == nil {
+		m.plainRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.plainRollbackReleaseReviews[targetDeploymentID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
+
 	return target, nil
 }
 

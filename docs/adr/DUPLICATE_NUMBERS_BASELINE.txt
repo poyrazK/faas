@@ -232,3 +232,8 @@
 # sources and publish rate. (ADR-20261026090000's collision was removed by
 # renumbering #5516's builder private base images to ADR-20261026091500.)
 20261026140000
+
+# Independently duplicated in merged main e9442a524 (2026-11-05):
+# managed PostgreSQL/network controls and account/raw-ingress recovery.
+20261104143000
+20261104170000

@@ -1,13 +1,27 @@
 # Architecture Decision Records
 
+- [ADR-20261105133000: Fence app rollback routing and preserve migration evidence](20261105133000-rollback-routing-ownership-and-evidence-budgets.md)
+
 - [ADR-20261105120000: Repair catalog references and retained outcome resolution](20261105120000-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
 
 - [ADR-20261105110000: Repair preparation recovery and monetary locales](20261105110000-repair-prepare-recovery-and-money-locales.md) — preserves pending prepare identities and refresh paths, canonicalizes money capture, and qualifies monetary fingerprint rendering without rewriting history
 
 - [ADR-20261105100000: vmmd launches the jailer and firecracker from verified copies on the jail tmpfs](20261105100000-resident-jailer-and-firecracker-executables.md) — proposed; the first restore after a node sits idle stalled ~200 ms in `bind_tun` (47 of 1,087 restores on rc.322), probably reading evicted jailer and firecracker binaries from a busy disk: vmmd stages byte-verified copies in `<jail base>/.faas-resident/` at startup and launches the jailer and `--exec-file` from them (same basenames, falls back to the installed binaries), and `vmmd_restore_phase_duration_seconds` gains `tun_journal_checks`, `tun_wait_mntns`, `tun_wait_chroot`, `tun_setup_jail`, `cgroup_fence` to confirm the cause
+
 - [ADR-20261105090246: A booted wake answers before its bookkeeping](20261105090246-booted-wake-answers-before-its-bookkeeping.md) — proposed; behind schedd `async_wake_finalize` (off by default): a booted wake answers once its RUNNING publication commits, and the observed workload class and secret delivery records (with their audit rows) follow in the background, bounded by 10 s and awaited on shutdown
+
 - [ADR-20261104203253: A managed PostgreSQL create in flight does not pause its account](20261104203253-managed-postgres-in-flight-create-does-not-pause-account.md) — accepted; amends ADR-581: an unresolved obligation still provisioning under a held lease, reserved in the current usage window, does not block admission, so parallel creates work; a lost reply blocks again when the lease lapses or the window closes
+
+- [ADR-20261104200000: Preserve rollback serving history and retained readiness](20261104200000-rollback-serving-windows-and-retained-readiness.md)
+
+- [ADR-20261104160001: Guard graph and service rollback publication](20261104160001-graph-and-service-rollback-safety.md) — accepted; graph contracts and migration serving windows, atomic service-abort release guards, and durable checked completion after replacement.
+
 - [ADR-20261104143000: Deleting a managed PostgreSQL database does not pause the account for its correction tail](20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md) — accepted; amends ADR-569 and ADR-582: a deleted database blocks new databases, restores and resizes only until its windows are covered through the end of the hour it was deleted in (usually under an hour, was 3–4 h); its three-window correction tail is still replayed and blocks as `final_correction_pending` only once overdue by `usage.stale_after_seconds`
+
+- [ADR-20261104140000: Fence rollback execution and reconcile outcomes](20261104140000-rollback-execution-fences-and-outcomes.md) — accepted; database-switch code writes validate leases, plain rollback reviews are preparation-bound, project rollback retains contract checks, and outcome sweeps reconcile fairly.
+
+- [ADR-20261104110001: Retain rollback release and contract evidence](20261104110001-rollback-release-and-contract-evidence.md) — accepted; checked cutover validates acknowledged release runs, contract gates cover production scopes and serving baselines, and historical contracts survive readiness.
+
 - [ADR-20261104104521: Recoverable app scaling](20261104104521-recoverable-app-scaling.md) — accepted; native app/environment identity and revision guards, atomic scaling receipts, safe MCP retries, and configuration verification.
 
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)

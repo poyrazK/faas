@@ -3614,6 +3614,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
 		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
 	}
+	if ready == nil && dep.DeletedAt != nil {
+		// A deleted stage cannot resolve runtime policy from its replacement.
+		// Discard this unreferenced capture before attempting that lookup.
+		if err := h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier}); err != nil {
+			return err
+		}
+		return fmt.Errorf("imaged: snapshot deployment was deleted: %w", state.ErrNotFound)
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
 	}
@@ -4025,6 +4033,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
+	}
+	if errors.Is(promoteErr, state.ErrRollbackCrossesRelease) || errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+		code, detail := api.CodeRollbackCrossesRelease, "Release commands started after this rollback was reviewed. Review migration history and submit a new rollback with acknowledgement."
+		if errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+			code, detail = api.CodeRollbackTargetDatabaseRestored, "This deployment's release command was undone by a database restore."
+		}
+		failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if err != nil {
+			return fmt.Errorf("imaged: record rollback release refusal: %w", err)
+		}
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, failed.Status)
+		return nil
 	}
 	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
