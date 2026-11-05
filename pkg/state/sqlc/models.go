@@ -7303,8 +7303,8 @@ type IssueApplicationResponseAccess struct {
 	AppID             pgtype.UUID
 	OwnerAccountID    pgtype.UUID
 	ActorAccountID    pgtype.UUID
-	OwnerPlan         string
-	ResponsibleTeamID interface{}
+	OwnerPlan         interface{}
+	ResponsibleTeamID pgtype.UUID
 	RoutedTeamID      pgtype.UUID
 }
 
@@ -7477,9 +7477,9 @@ type IssueSlackDeliverySource struct {
 	LinkID                  pgtype.UUID
 	Kind                    string
 	Reason                  string
-	Details                 interface{}
-	Eligible                interface{}
-	ApplicationRetryAllowed interface{}
+	Details                 []byte
+	Eligible                bool
+	ApplicationRetryAllowed bool
 }
 
 type IssueSlackIdentity struct {
@@ -7600,6 +7600,7 @@ type IssueTeamSlackDelivery struct {
 	ReminderID                pgtype.UUID
 	RoutingRevision           int64
 	RoutingRuleKey            string
+	AttemptClaimID            pgtype.UUID
 }
 
 type IssueTeamSlackDestination struct {

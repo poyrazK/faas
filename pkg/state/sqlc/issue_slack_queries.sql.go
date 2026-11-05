@@ -197,7 +197,7 @@ FROM candidates c JOIN issue_team_slack_destinations dst ON dst.team_id=c.team_i
 JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN app_issue_teams t ON t.id=dst.team_id AND t.app_id=a.id
 JOIN app_issue_team_members tm ON tm.team_id=t.id
-WHERE tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)
+WHERE issue_actor_current_member(a.id,tm.account_id)
 GROUP BY dst.id,dst.revision,dst.channel_id,t.name,c.priority ORDER BY c.priority LIMIT 1
 `
 
@@ -359,21 +359,36 @@ func (q *Queries) IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSl
 }
 
 const issueSlackAttemptStart = `-- name: IssueSlackAttemptStart :execrows
-UPDATE issue_team_slack_deliveries d SET attempt=attempt+1,total_attempts=total_attempts+1,updated_at=clock_timestamp()
+UPDATE issue_team_slack_deliveries d SET attempt_claim_id=d.claim_id,updated_at=clock_timestamp()
 WHERE d.id=$1 AND d.claim_id=$2 AND d.status='in_flight'
 AND d.claim_until>clock_timestamp() AND d.expires_at>clock_timestamp() AND d.attempt=$3
-AND EXISTS (SELECT 1 FROM issue_team_slack_destinations dst WHERE dst.id=d.destination_id
- AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.enabled AND dst.revision=d.destination_revision)
+AND d.attempt_claim_id IS DISTINCT FROM d.claim_id
+AND EXISTS (SELECT 1 FROM issue_team_slack_destinations dst
+ JOIN apps a ON a.id=dst.app_id JOIN app_resource_accounts owner ON owner.app_id=a.id
+ LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
+ JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id AND src.eligible
+ WHERE dst.id=d.destination_id AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp()
+ AND dst.enabled AND dst.revision=d.destination_revision AND a.account_id=dst.account_id
+ AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+ AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id)
+   OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL))
+ AND owner.plan=ANY($4::text[]))
 `
 
 type IssueSlackAttemptStartParams struct {
 	ID              pgtype.UUID
 	ClaimID         pgtype.UUID
 	PreviousAttempt int32
+	EntitledPlans   []string
 }
 
 func (q *Queries) IssueSlackAttemptStart(ctx context.Context, db DBTX, arg IssueSlackAttemptStartParams) (int64, error) {
-	result, err := db.Exec(ctx, issueSlackAttemptStart, arg.ID, arg.ClaimID, arg.PreviousAttempt)
+	result, err := db.Exec(ctx, issueSlackAttemptStart,
+		arg.ID,
+		arg.ClaimID,
+		arg.PreviousAttempt,
+		arg.EntitledPlans,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -412,7 +427,7 @@ func (q *Queries) IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.U
 }
 
 const issueSlackCandidateDelivery = `-- name: IssueSlackCandidateDelivery :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details::jsonb AS details,
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key, d.attempt_claim_id,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details::jsonb AS details,
  COALESCE(a.account_id=dst.account_id AND a.deleted_at IS NULL AND a.status<>'deleted'
  AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($1::text[])
  AND dst.enabled AND dst.revision=d.destination_revision AND src.eligible,false)::boolean AS eligible
@@ -457,6 +472,7 @@ type IssueSlackCandidateDeliveryRow struct {
 	ReminderID                pgtype.UUID
 	RoutingRevision           int64
 	RoutingRuleKey            string
+	AttemptClaimID            pgtype.UUID
 	AppID                     pgtype.UUID
 	AccountID                 pgtype.UUID
 	TeamID                    pgtype.UUID
@@ -500,6 +516,7 @@ func (q *Queries) IssueSlackCandidateDelivery(ctx context.Context, db DBTX, arg 
 		&i.ReminderID,
 		&i.RoutingRevision,
 		&i.RoutingRuleKey,
+		&i.AttemptClaimID,
 		&i.AppID,
 		&i.AccountID,
 		&i.TeamID,
@@ -661,7 +678,7 @@ func (q *Queries) IssueSlackChallengesExpire(ctx context.Context, db DBTX, appID
 }
 
 const issueSlackClaim = `-- name: IssueSlackClaim :exec
-UPDATE issue_team_slack_deliveries SET status='in_flight',claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1
+UPDATE issue_team_slack_deliveries SET status='in_flight',claim_id=$2,claim_until=$3,attempt_claim_id=NULL,updated_at=clock_timestamp() WHERE id=$1
 `
 
 type IssueSlackClaimParams struct {
@@ -912,7 +929,10 @@ func (q *Queries) IssueSlackEnqueue(ctx context.Context, db DBTX, arg IssueSlack
 }
 
 const issueSlackFinish = `-- name: IssueSlackFinish :exec
-UPDATE issue_team_slack_deliveries SET status=$2,last_error=$3,response_code=$4,next_attempt_at=$5,claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp() WHERE id=$1
+UPDATE issue_team_slack_deliveries SET status=$2,last_error=$3,response_code=$4,next_attempt_at=$5,
+ attempt=attempt+CASE WHEN $6::boolean THEN 1 ELSE 0 END,
+ total_attempts=total_attempts+CASE WHEN $6::boolean THEN 1 ELSE 0 END,
+ claim_id=NULL,claim_until=NULL,attempt_claim_id=NULL,updated_at=clock_timestamp() WHERE id=$1
 `
 
 type IssueSlackFinishParams struct {
@@ -921,6 +941,7 @@ type IssueSlackFinishParams struct {
 	LastError     string
 	ResponseCode  int32
 	NextAttemptAt pgtype.Timestamptz
+	Attempted     bool
 }
 
 func (q *Queries) IssueSlackFinish(ctx context.Context, db DBTX, arg IssueSlackFinishParams) error {
@@ -930,12 +951,13 @@ func (q *Queries) IssueSlackFinish(ctx context.Context, db DBTX, arg IssueSlackF
 		arg.LastError,
 		arg.ResponseCode,
 		arg.NextAttemptAt,
+		arg.Attempted,
 	)
 	return err
 }
 
 const issueSlackHeld = `-- name: IssueSlackHeld :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key, d.attempt_claim_id FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
 WHERE d.id=$1 AND d.claim_id=$2 AND d.claim_until>clock_timestamp() AND d.status='in_flight'
 AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.revision=d.destination_revision AND dst.enabled
 `
@@ -975,6 +997,7 @@ func (q *Queries) IssueSlackHeld(ctx context.Context, db DBTX, arg IssueSlackHel
 		&i.ReminderID,
 		&i.RoutingRevision,
 		&i.RoutingRuleKey,
+		&i.AttemptClaimID,
 	)
 	return i, err
 }
@@ -1220,7 +1243,7 @@ func (q *Queries) IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRe
 }
 
 const issueSlackRetryGet = `-- name: IssueSlackRetryGet :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed::boolean AS application_retry_allowed FROM issue_team_slack_deliveries d
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key, d.attempt_claim_id,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed::boolean AS application_retry_allowed FROM issue_team_slack_deliveries d
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
 WHERE d.id=$1 AND a.id=$2 AND a.account_id=$3
@@ -1259,6 +1282,7 @@ type IssueSlackRetryGetRow struct {
 	ReminderID                pgtype.UUID
 	RoutingRevision           int64
 	RoutingRuleKey            string
+	AttemptClaimID            pgtype.UUID
 	TeamID                    pgtype.UUID
 	CurrentRevision           int64
 	Enabled                   bool
@@ -1295,6 +1319,7 @@ func (q *Queries) IssueSlackRetryGet(ctx context.Context, db DBTX, arg IssueSlac
 		&i.ReminderID,
 		&i.RoutingRevision,
 		&i.RoutingRuleKey,
+		&i.AttemptClaimID,
 		&i.TeamID,
 		&i.CurrentRevision,
 		&i.Enabled,

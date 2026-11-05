@@ -39178,17 +39178,16 @@ func (q *Queries) IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApp
 }
 
 const issueAssigneeAllowed = `-- name: IssueAssigneeAllowed :one
-SELECT EXISTS(SELECT 1 FROM apps a LEFT JOIN org_memberships m ON m.org_id=a.org_id AND m.account_id=$1 AND m.removed_at IS NULL
-WHERE a.id=$2 AND (a.account_id=$1 OR m.account_id IS NOT NULL))
+SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=$1 AND issue_actor_current_member(a.id,$2))
 `
 
 type IssueAssigneeAllowedParams struct {
-	Assignee pgtype.UUID
 	AppID    pgtype.UUID
+	Assignee pgtype.UUID
 }
 
 func (q *Queries) IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error) {
-	row := db.QueryRow(ctx, issueAssigneeAllowed, arg.Assignee, arg.AppID)
+	row := db.QueryRow(ctx, issueAssigneeAllowed, arg.AppID, arg.Assignee)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -41165,6 +41164,22 @@ func (q *Queries) IssuePolicyLockOrg(ctx context.Context, db DBTX, orgID pgtype.
 	return i, err
 }
 
+const issuePolicyOrg = `-- name: IssuePolicyOrg :one
+SELECT personal_org, personal_owner_account_id FROM orgs WHERE id=$1
+`
+
+type IssuePolicyOrgRow struct {
+	PersonalOrg            bool
+	PersonalOwnerAccountID pgtype.UUID
+}
+
+func (q *Queries) IssuePolicyOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) (IssuePolicyOrgRow, error) {
+	row := db.QueryRow(ctx, issuePolicyOrg, orgID)
+	var i IssuePolicyOrgRow
+	err := row.Scan(&i.PersonalOrg, &i.PersonalOwnerAccountID)
+	return i, err
+}
+
 const issuePurgeEvents = `-- name: IssuePurgeEvents :exec
 DELETE FROM issue_events WHERE app_id = $1 AND received_at < $2
 `
@@ -41224,19 +41239,19 @@ func (q *Queries) IssuePurgeExpiredTokens(ctx context.Context, db DBTX, arg Issu
 }
 
 const issuePurgePlanEvents = `-- name: IssuePurgePlanEvents :execrows
-WITH candidate_apps AS MATERIALIZED (
+WITH candidate_apps AS (
  SELECT a.id FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id
  JOIN LATERAL (SELECT e.received_at FROM issue_events e
   WHERE e.app_id=a.id AND e.received_at<$1 ORDER BY e.received_at LIMIT 1) oldest ON true
  WHERE c.plan=$2 ORDER BY oldest.received_at,a.id
- LIMIT $3 FOR UPDATE OF a SKIP LOCKED
-), locked_usage AS MATERIALIZED (
- SELECT u.app_id FROM issue_event_usage u JOIN candidate_apps a ON a.id=u.app_id
- ORDER BY u.app_id FOR UPDATE OF u SKIP LOCKED
+ FOR UPDATE OF a SKIP LOCKED
 ), eligible_apps AS MATERIALIZED (
  SELECT a.id FROM candidate_apps a
- WHERE EXISTS (SELECT 1 FROM locked_usage u WHERE u.app_id=a.id)
- OR NOT EXISTS (SELECT 1 FROM issue_event_usage u WHERE u.app_id=a.id)
+ LEFT JOIN LATERAL (SELECT u.app_id FROM issue_event_usage u WHERE u.app_id=a.id FOR UPDATE OF u SKIP LOCKED) locked_usage ON true
+ JOIN LATERAL (SELECT e.event_id FROM issue_events e WHERE e.app_id=a.id AND e.received_at<$1
+   ORDER BY e.received_at LIMIT 1 FOR UPDATE OF e SKIP LOCKED) unlocked_event ON true
+ WHERE locked_usage.app_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM issue_event_usage u WHERE u.app_id=a.id)
+ LIMIT $3
 ), expired AS (
  SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN eligible_apps a ON a.id=e.app_id
  WHERE e.received_at<$1 ORDER BY e.received_at LIMIT $3 FOR UPDATE OF e SKIP LOCKED
