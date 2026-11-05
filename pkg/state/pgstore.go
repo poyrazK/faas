@@ -14604,9 +14604,6 @@ func validateCronCreateRetryOptions(opts CronOptions) error {
 	if !ValidCronDeploymentScope(opts.DeploymentScope) {
 		return fmt.Errorf("%w: cron environment must be a project environment slug", ErrInvalidArgument)
 	}
-	if opts.DeploymentScope != "" && len(opts.Command) == 0 {
-		return fmt.Errorf("%w: an environment cron requires a deployment command", ErrInvalidArgument)
-	}
 	return nil
 }
 
@@ -17013,7 +17010,7 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err != nil {
 		return Invocation{}, err
 	}
-	if info.environment.ID != "" {
+	if info.environment.ID != "" && !stageCronInvocationShape(inv) {
 		if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
 			return Invocation{}, err
 		}

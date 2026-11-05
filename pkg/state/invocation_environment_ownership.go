@@ -23,6 +23,20 @@ func resolveInvocationEnvironmentAdmission(ctx context.Context, store interface 
 	if bound, err := validateBoundQueueEnvironment(ctx, store, inv, inv.DeploymentScope); bound || err != nil {
 		return inv, info, err
 	}
+	if prepared, env, ok, err := prepareStageCronInvocation(ctx, store, inv); err != nil || ok {
+		if err != nil {
+			return inv, info, err
+		}
+		app, err := store.AppByID(ctx, inv.AppID)
+		if err != nil {
+			return inv, info, err
+		}
+		info.app, info.environment = app, env
+		if prepared.AccountID == "" {
+			prepared.AccountID = app.AccountID
+		}
+		return prepared, info, nil
+	}
 	var headers map[string]string
 	if len(inv.Headers) > 0 && json.Unmarshal(inv.Headers, &headers) != nil {
 		return inv, info, ErrInvalidArgument
@@ -199,6 +213,9 @@ func (m *MemStore) validateInvocationEnvironmentClaimLocked(inv Invocation) erro
 		}
 		return nil
 	}
+	if stageCronInvocationShape(inv) {
+		return m.validateStageCronOwnerLocked(inv)
+	}
 	if !stageKeyedInvocationSupported(inv) {
 		return ErrInvocationEnvironmentWorkIsolation
 	}
@@ -242,6 +259,9 @@ func bindInvocationEnvironmentDB(ctx context.Context, db sqlc.DBTX, info invocat
 func (m *MemStore) validateInvocationEnvironmentLocked(inv Invocation, info invocationWorkEnvironment) error {
 	if inv.EnvironmentID == "" {
 		return nil
+	}
+	if stageCronInvocationShape(inv) {
+		return m.validateStageCronOwnerLocked(inv)
 	}
 	app, ok := m.apps[inv.AppID]
 	env, found := m.projectEnvironments[inv.EnvironmentID]

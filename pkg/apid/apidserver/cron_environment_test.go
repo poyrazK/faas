@@ -12,8 +12,8 @@ import (
 )
 
 // ADR-20261104120000: a cron is created in one environment of a project app.
-// A stage takes command crons; a stage HTTP cron, an unknown environment and
-// an app outside a project are refused with a stable problem.
+// A stage takes HTTP and command crons; an unknown environment and an app
+// outside a project are refused with a stable problem.
 func TestCreateCronInEnvironment(t *testing.T) {
 	ctx := context.Background()
 	e := apidserver.Setup(t, api.PlanPro)
@@ -43,7 +43,7 @@ func TestCreateCronInEnvironment(t *testing.T) {
 	}{
 		{"production command", api.CreateCronRequest{AppID: app.ID, Schedule: "0 9 * * *", Command: command}, http.StatusCreated, ""},
 		{"staging command", api.CreateCronRequest{AppID: app.ID, Schedule: "0 9 * * *", Command: command, Environment: "staging"}, http.StatusCreated, "staging"},
-		{"staging HTTP", api.CreateCronRequest{AppID: app.ID, Schedule: "0 9 * * *", Path: "/tick", Environment: "staging"}, http.StatusBadRequest, ""},
+		{"staging HTTP", api.CreateCronRequest{AppID: app.ID, Schedule: "0 9 * * *", Path: "/tick", Environment: "staging"}, http.StatusCreated, "staging"},
 		{"unknown environment", api.CreateCronRequest{AppID: app.ID, Schedule: "0 9 * * *", Command: command, Environment: "qa"}, http.StatusNotFound, ""},
 		{"app outside a project", api.CreateCronRequest{AppID: loose, Schedule: "0 9 * * *", Command: command, Environment: "staging"}, http.StatusBadRequest, ""},
 		{"production by name", api.CreateCronRequest{AppID: loose, Schedule: "0 10 * * *", Command: command, Environment: "production"}, http.StatusCreated, ""},

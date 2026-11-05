@@ -11,9 +11,8 @@ import (
 
 // cronEnvironmentScope resolves the environment a new cron runs in
 // (ADR-20261104120000). Production names resolve to the empty scope every
-// existing cron has. A stage needs a project app with that environment and,
-// until stage HTTP crons ship, a deployment command.
-func (s *server) cronEnvironmentScope(ctx context.Context, app state.App, environment string, command bool) (string, *api.Problem) {
+// existing cron has. A stage needs a project app with that environment.
+func (s *server) cronEnvironmentScope(ctx context.Context, app state.App, environment string) (string, *api.Problem) {
 	scope := state.NormalizeCronDeploymentScope(environment)
 	if scope == "" {
 		return "", nil
@@ -30,9 +29,6 @@ func (s *server) cronEnvironmentScope(ctx context.Context, app state.App, enviro
 	}
 	if err != nil || env.ProjectID != app.ProjectID {
 		return "", api.ErrCapacity("could not resolve the cron environment")
-	}
-	if !command {
-		return "", api.ErrCronEnvironmentHTTPUnavailable(scope)
 	}
 	return scope, nil
 }

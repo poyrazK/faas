@@ -4383,7 +4383,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
-	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment, len(cronCommand) > 0)
+	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment)
 	if scopeProblem != nil {
 		api.WriteProblem(w, scopeProblem)
 		return

@@ -200,7 +200,9 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}
 	}
-	if inv.EnvironmentID != "" && revision == "" && release == "" {
+	// An environment cron's request carries no pin: its cron row, checked
+	// against the environment below, is the owner proof (ADR-20261104120000).
+	if inv.EnvironmentID != "" && revision == "" && release == "" && !stageCronInvocationShape(inv) {
 		return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 	}
 	if InvocationHasOperation(inv) {
@@ -270,7 +272,15 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Slug != scope {
 			return inv, InvocationVersion{}, ErrConflict
 		}
-		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv))) ||
+		stageCron := false
+		if stageCronInvocationShape(inv) && inv.EnvironmentID != "" {
+			cronEnv, ok, cronErr := stageCronEnvironment(ctx, store, inv)
+			if cronErr != nil || !ok || cronEnv.ID != env.ID {
+				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+			}
+			stageCron = true
+		}
+		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !(stageQueueInvocationShape(inv) || stageCron))) ||
 			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}

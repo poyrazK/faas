@@ -30,23 +30,46 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// An environment cron takes its environment's shared admission lock
+	// before the cron row, in the order environment deletion takes them
+	// (ADR-20261104120000).
+	var lockEnvironmentID, lockAppID, lockAccountID string
+	err = tx.QueryRow(ctx, `select coalesce(c.environment_id::text,''), c.app_id::text, a.account_id::text
+		  from crons c join apps a on a.id = c.app_id
+		 where c.id = $1::uuid and a.status <> 'deleted'`, cronID).Scan(&lockEnvironmentID, &lockAppID, &lockAccountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Invocation{}, ScheduleOccurrence{}, false, nil
+	}
+	if err != nil {
+		return Invocation{}, ScheduleOccurrence{}, false, fmt.Errorf("state: read scheduled HTTP cron environment %s: %w", cronID, err)
+	}
+	if lockEnvironmentID != "" {
+		if err := lockInvocationEnvironmentDB(ctx, tx, lockAppID, lockAccountID, lockEnvironmentID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return Invocation{}, ScheduleOccurrence{}, false, nil
+			}
+			return Invocation{}, ScheduleOccurrence{}, false, err
+		}
+	}
+
 	var cron Cron
 	var accountID string
 	var enabled, skipIfRunning bool
 	var suspendedReason string
 	var lastFiredAt pgtype.Timestamptz
 	var schedulePolicyRaw, failureRulesRaw []byte
+	var cronEnvironmentID string
 	err = tx.QueryRow(ctx, `
 		select c.app_id::text, a.account_id::text, c.path, c.command,
 		       c.enabled, c.skip_if_running, c.suspended_reason,
 	       c.last_fired_at, c.schedule_revision, c.schedule_policy,
-	       c.failure_rules
+	       c.failure_rules, c.deployment_scope, coalesce(c.environment_id::text,'')
 		  from crons c join apps a on a.id = c.app_id
 		 where c.id = $1::uuid and a.status <> 'deleted'
 		 for update of c`, cronID).Scan(
 		&cron.AppID, &accountID, &cron.Path, &cron.Command,
 		&enabled, &skipIfRunning, &suspendedReason, &lastFiredAt,
-		&cron.ScheduleRevision, &schedulePolicyRaw, &failureRulesRaw)
+		&cron.ScheduleRevision, &schedulePolicyRaw, &failureRulesRaw, &cron.DeploymentScope, &cronEnvironmentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invocation{}, ScheduleOccurrence{}, false, nil
 	}
@@ -195,6 +218,12 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 	invocation.DueAt = scheduledFor
 	if invocation.ScheduledAt == nil {
 		invocation.ScheduledAt = cloneTimePtr(&scheduledFor)
+	}
+	if cron.DeploymentScope != "" {
+		if cronEnvironmentID == "" || cronEnvironmentID != lockEnvironmentID || !stageCronInvocationShape(invocation) {
+			return Invocation{}, ScheduleOccurrence{}, false, ErrInvocationEnvironmentWorkIsolation
+		}
+		invocation.EnvironmentID, invocation.DeploymentScope = cronEnvironmentID, cron.DeploymentScope
 	}
 	enqueued, err := enqueueInvocationRow(ctx, tx, invocation)
 	if err != nil {

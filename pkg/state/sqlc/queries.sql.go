@@ -107954,7 +107954,11 @@ SELECT
     EXISTS(SELECT 1 FROM invocations i WHERE i.environment_id=e.id AND (i.state='dispatching' OR i.quota_reserved)) AS busy,
     EXISTS(SELECT 1 FROM invocations i LEFT JOIN apps a ON a.id=i.app_id
         WHERE i.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id OR i.account_id<>e.account_id
-            OR NOT ((i.source IN ('async_invoke','delayed_task') AND i.queue_name='') OR (i.source='queue' AND EXISTS(SELECT 1 FROM invocation_environment_queue_admissions q WHERE q.invocation_id=i.id AND q.environment_id=e.id AND q.app_id=i.app_id AND q.account_id=i.account_id AND q.queue_name=i.queue_name))) OR i.cron_id IS NOT NULL
+            OR NOT ((i.source IN ('async_invoke','delayed_task') AND i.queue_name='' AND i.cron_id IS NULL)
+                OR (i.source='queue' AND i.cron_id IS NULL AND EXISTS(SELECT 1 FROM invocation_environment_queue_admissions q WHERE q.invocation_id=i.id AND q.environment_id=e.id AND q.app_id=i.app_id AND q.account_id=i.account_id AND q.queue_name=i.queue_name))
+                -- An environment cron's request; a cron deleted since leaves cron_id null.
+                OR (i.source='cron' AND i.queue_name='' AND i.work_policy_name IS NULL
+                    AND (i.cron_id IS NULL OR EXISTS(SELECT 1 FROM crons c WHERE c.id=i.cron_id AND c.app_id=i.app_id AND c.environment_id=e.id))))
             OR i.on_success_destination_id IS NOT NULL OR i.on_failure_destination_id IS NOT NULL
             OR (i.work_policy_name IS NULL AND EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id))
             OR (i.work_policy_name IS NOT NULL AND NOT EXISTS(
@@ -108009,6 +108013,14 @@ ELSE EXISTS(SELECT 1 FROM project_environments e JOIN apps a ON a.project_id=e.p
                 JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
                 WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.project_id=e.project_id AND r.account_id=e.account_id
                     AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now())))))
+    -- ADR-20261104120000: an environment cron's HTTP request; the cron row,
+    -- whose environment is immutable, is the owner proof.
+    OR EXISTS(SELECT 1 FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+        JOIN crons c ON c.app_id=a.id AND c.environment_id=e.id AND c.deployment_scope=e.slug
+        WHERE e.id=i.environment_id AND e.slug NOT IN ('production','default') AND a.id=i.app_id AND a.account_id=i.account_id AND a.status<>'deleted'
+            AND c.id=i.cron_id AND i.source='cron' AND i.deployment_scope=e.slug AND i.queue_name='' AND i.queue_binding_id IS NULL AND coalesce(i.ack_url,'')=''
+            AND i.on_success_destination_id IS NULL AND i.on_failure_destination_id IS NULL AND i.work_policy_name IS NULL
+            AND NOT i.headers ? 'X-Gregale-Revision' AND NOT i.headers ? 'X-Gregale-Release')
 END::boolean AS owner_valid
 FROM invocations i WHERE i.id=$1::uuid
 `

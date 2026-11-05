@@ -2,7 +2,6 @@ package state_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -47,8 +46,7 @@ func cronEnvironmentBackends(t *testing.T, fn func(t *testing.T, ctx context.Con
 }
 
 // ADR-20261104120000: a cron belongs to one environment of its app. A stage
-// may hold the same command cron as production; a stage HTTP cron is not
-// admitted yet, and suspension for want of a live deployment stays inside
+// may hold the same command cron as production, and suspension for want of a live deployment stays inside
 // the environment that lost it.
 func TestCronEnvironmentScope(t *testing.T) {
 	cronEnvironmentBackends(t, func(t *testing.T, ctx context.Context, s state.Store, appID string) {
@@ -72,8 +70,8 @@ func TestCronEnvironmentScope(t *testing.T) {
 		if named, err := create("production", report); err != nil || named.ID != production.ID {
 			t.Fatalf("production by name = %+v, %v; want the production cron", named, err)
 		}
-		if _, err := create("staging", nil); !errors.Is(err, state.ErrInvalidArgument) {
-			t.Fatalf("staging HTTP cron: err = %v, want ErrInvalidArgument", err)
+		if httpCron, err := create("staging", nil); err != nil || httpCron.DeploymentScope != "staging" {
+			t.Fatalf("staging HTTP cron = %+v, %v", httpCron, err)
 		}
 
 		scoped, ok := s.(state.CronScopeSuspensionStore)
@@ -81,8 +79,8 @@ func TestCronEnvironmentScope(t *testing.T) {
 			t.Fatalf("%T does not suspend crons per environment", s)
 		}
 		count, err := scoped.SuspendCronsForAppScope(ctx, appID, "staging", state.CronSuspendedNoLiveDeployment)
-		if err != nil || count != 1 {
-			t.Fatalf("suspend staging = %d, %v; want 1", count, err)
+		if err != nil || count != 2 {
+			t.Fatalf("suspend staging = %d, %v; want 2", count, err)
 		}
 		for _, want := range []struct {
 			cron      state.Cron

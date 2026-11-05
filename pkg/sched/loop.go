@@ -5044,12 +5044,6 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 	if len(due) == 0 {
 		return
 	}
-	if c.DeploymentScope != "" {
-		// Stage HTTP crons are not admitted yet (ADR-20261104120000); an
-		// invocation without the cron's environment would run in production.
-		l.log.Warn("cron: environment HTTP cron is not dispatched", "cron_id", c.ID)
-		return
-	}
 	store := l.engine.Store()
 	occurrences, ok := store.(state.ScheduledCronInvocationStore)
 	if !ok {
@@ -5099,10 +5093,13 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 		return
 	}
 	cronID := c.ID
+	// An environment cron's request runs in its environment; the store
+	// stamps and checks the environment from the cron row (ADR-20261104120000).
 	inv := state.Invocation{
 		AppID: c.AppID, AccountID: account.ID, Source: state.InvocationCron,
 		Method: "POST", Path: c.Path, CronID: &cronID, Headers: headers,
 		DueAt: scheduledFor, ScheduledAt: &scheduledFor, CreatedAt: now,
+		DeploymentScope: c.DeploymentScope,
 	}
 	// Without failure rules a scheduled time is delivered once, as for a
 	// plain cron (ADR-20261026201726 amendment 2026-11-02); the queue's plan
@@ -5551,10 +5548,6 @@ func (l *Loop) dispatchCron(ctx context.Context, c state.Cron, now time.Time, tr
 	// Move 1: the cron row in invocations shows up in /v1/invocations and
 	// the meter sees it. cron_id is stamped so the run history joins back
 	// to crons.
-	if c.DeploymentScope != "" {
-		l.log.Warn("cron: environment HTTP cron is not dispatched", "cron_id", c.ID)
-		return CronRun{}, fmt.Errorf("%w: environment HTTP crons are not dispatched", ErrCronRunNotQueued)
-	}
 	cronID := c.ID
 	cronHeaders, err := json.Marshal(pkgtrace.MergeHeaderMap(ctx, map[string]string{"x-faas-cron": "true"}))
 	if err != nil {
@@ -5571,6 +5564,8 @@ func (l *Loop) dispatchCron(ctx context.Context, c state.Cron, now time.Time, tr
 		Headers:      cronHeaders,
 		DueAt:        dueAt,
 		FailureRules: workpolicy.Clone(c.FailureRules),
+		// The store resolves an environment cron's environment from its row.
+		DeploymentScope: c.DeploymentScope,
 	}
 	if c.FailureRules == nil {
 		inv.RetryPolicyJSON = cronSingleAttemptRetryPolicy

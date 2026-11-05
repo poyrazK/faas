@@ -256,16 +256,16 @@ gregale cron create --app APP_ID --environment staging \
   --schedule "0 2 * * *" --command bin/rebuild-index
 ```
 
-A staging cron runs against the staging deployment and never against
-production. It can repeat a production cron's schedule and command. When the
+A staging cron, HTTP or command, runs against the staging deployment and
+never against production; its requests are staging work, deleted with the
+environment. It can repeat a production cron's schedule and command. When the
 environment has no live deployment, only that environment's crons are
 suspended; the app's other environments keep firing. Deleting the
 environment deletes its crons. A cron's environment cannot be changed: create
 it again in the other environment.
 
-For now, environments other than production take command crons only. An HTTP
-cron with `--environment staging` returns `400 cron_invalid`. A
-`gregale deploy --environment` leaves production's manifest crons alone.
+Manifest crons stay production's: a `gregale deploy --environment` leaves
+them alone. Create a stage's crons with `--environment`.
 
 ## Command crons (preview)
 
