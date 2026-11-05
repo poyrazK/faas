@@ -783,8 +783,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	// rename
 	"POST /v1/apps/{slug}/rename": authz.OrgActionConfigureApp,
 	// route-budgets
-	"GET /v1/apps/{slug}/route-budgets": authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/route-budgets": authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/route-budgets":                       authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/route-budgets":                       authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}": authz.OrgActionReadApp,
 	// route-lifecycle
 	"POST /v1/apps/{slug}/route-lifecycle/approvals":              authz.OrgActionConfigureApp,
 	"GET /v1/apps/{slug}/route-lifecycle/approvals/{approval_id}": authz.OrgActionReadApp,
