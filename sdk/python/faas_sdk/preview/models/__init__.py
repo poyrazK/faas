@@ -1254,6 +1254,7 @@ from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_status_deployment import DebugStatusDeployment
 from .debug_status_health import DebugStatusHealth
+from .debug_status_memory import DebugStatusMemory
 from .debug_status_oom_kill import DebugStatusOOMKill
 from .debug_status_response import DebugStatusResponse
 from .debug_status_response_verdict import DebugStatusResponseVerdict
@@ -7514,6 +7515,7 @@ __all__ = (
     "DebugRunningResponse",
     "DebugStatusDeployment",
     "DebugStatusHealth",
+    "DebugStatusMemory",
     "DebugStatusOOMKill",
     "DebugStatusResponse",
     "DebugStatusResponseVerdict",

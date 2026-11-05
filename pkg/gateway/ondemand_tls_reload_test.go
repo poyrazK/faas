@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"testing"
@@ -62,6 +63,9 @@ func TestOnDemandTLSStoredCertificateSurvivesRepeatedEdgeRestarts(t *testing.T) 
 	}
 	policy := gateway.NewOnDemandTLSPolicy(store, "gregale.dev", nil, nil)
 	policy.SetNow(func() time.Time { return now })
+	if allowed, decision := policy.Decide(ctx, host); !allowed {
+		t.Fatalf("seed durable certificate admission: %s", decision)
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +106,13 @@ func TestOnDemandTLSStoredCertificateSurvivesRepeatedEdgeRestarts(t *testing.T) 
 		SignatureSchemes:  []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256}, Conn: helloConn{},
 	}
 	load := func() error {
+		// Restart the policy as well as the certificate cache. Random server
+		// names must not deny a stored certificate its first permission check.
+		policy := gateway.NewOnDemandTLSPolicy(store, "gregale.dev", nil, nil)
+		policy.SetNow(func() time.Time { return now })
+		for n := range 2 * api.OnDemandTLSAskLookupBurst {
+			policy.Decide(ctx, fmt.Sprintf("scan-%d.unregistered.example.org", n))
+		}
 		var cfg *certmagic.Config
 		cache := certmagic.NewCache(certmagic.CacheOptions{
 			GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) { return cfg, nil },

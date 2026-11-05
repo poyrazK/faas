@@ -278,7 +278,7 @@ func (l *LetsEncryptCertIssuer) leafPath(primary string) (string, error) {
 	if primary == "" {
 		return "", errors.New("gateway: empty primary hostname for leaf path")
 	}
-	return filepath.Join(l.storageDir, "certificates", l.issuerKey(), primary, primary+".crt"), nil
+	return filepath.Join(l.storageDir, filepath.FromSlash(certmagic.StorageKeys.SiteCert(l.issuerKey(), primary))), nil
 }
 
 // issuerKey is the storage key of the configured CA: the ACME issuer's own

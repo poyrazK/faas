@@ -113,6 +113,24 @@ func (q *Queries) LockOrgInvitationTarget(ctx context.Context, db DBTX, id pgtyp
 	return i, err
 }
 
+const lockOrgOwnershipTransferTarget = `-- name: LockOrgOwnershipTransferTarget :one
+SELECT plan,personal_org,deleted_pending FROM orgs WHERE id=$1 FOR NO KEY UPDATE
+`
+
+type LockOrgOwnershipTransferTargetRow struct {
+	Plan           string
+	PersonalOrg    bool
+	DeletedPending bool
+}
+
+// Pin the incoming plan while deciding whether a transfer consumes a Free slot.
+func (q *Queries) LockOrgOwnershipTransferTarget(ctx context.Context, db DBTX, id pgtype.UUID) (LockOrgOwnershipTransferTargetRow, error) {
+	row := db.QueryRow(ctx, lockOrgOwnershipTransferTarget, id)
+	var i LockOrgOwnershipTransferTargetRow
+	err := row.Scan(&i.Plan, &i.PersonalOrg, &i.DeletedPending)
+	return i, err
+}
+
 const lockSharedOrgCreator = `-- name: LockSharedOrgCreator :one
 SELECT id FROM accounts WHERE id=$1 FOR UPDATE
 `

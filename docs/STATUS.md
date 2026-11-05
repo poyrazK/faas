@@ -9,7 +9,7 @@ historical.
 
 ## Management MCP PR #6601 main integration — 2026-11-05 (branch, not released)
 
-The recovery branch integrates main through `a409ec197`. Operation receipts retain
+The recovery branch integrates main through `8cc557447`. Operation receipts retain
 `gregale_get_plan`; original proposal review uses `gregale_get_saved_plan` with
 its original selectors and final guards. History helpers follow operate and
 release/diagnose toolsets; focused core discovery retains its existing boundary.

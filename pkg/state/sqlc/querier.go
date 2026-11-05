@@ -226,6 +226,7 @@ type Querier interface {
 	// the plaintext never loses it.
 	BeginCrashCapturePurge(ctx context.Context, db DBTX, arg BeginCrashCapturePurgeParams) (CrashCapture, error)
 	BeginCrashCaptureStage(ctx context.Context, db DBTX, arg BeginCrashCaptureStageParams) (CrashCapture, error)
+	BeginCustomDomainCertificateAttempt(ctx context.Context, db DBTX, arg BeginCustomDomainCertificateAttemptParams) (int64, error)
 	BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDatabaseVMMoveParams) (int64, error)
 	// Marks a parked database upgrading to upgrade_major as the operation
 	// under the caller's lease; the caller checked its node's room under the
@@ -241,6 +242,8 @@ type Querier interface {
 	BeginProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	BeginProjectWorkerJobEvidence(ctx context.Context, db DBTX, arg BeginProjectWorkerJobEvidenceParams) (int64, error)
+	// Called with the financial subject's row locked, as identity writers do.
+	BillingIdentityForMutation(ctx context.Context, db DBTX, arg BillingIdentityForMutationParams) (BillingIdentityForMutationRow, error)
 	// Each customer who held a plan with a monthly fee in the run's month, with
 	// or without runs (ADR-20261021154511): the assignment in force when the
 	// month starts, or one made during it.
@@ -492,6 +495,7 @@ type Querier interface {
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
+	ClearCustomDomainCertificateAttempt(ctx context.Context, db DBTX, domain string) error
 	ClearCustomDomainProbeObservation(ctx context.Context, db DBTX, domain string) error
 	ClearDatabaseStandbySlotDrop(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	// schedd: a fork command's output comes from inside a copy of production
@@ -727,7 +731,7 @@ type Querier interface {
 	CountOperationsInFlight(ctx context.Context, db DBTX, arg CountOperationsInFlightParams) (int64, error)
 	CountOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg CountOwnedActiveOperationJobTasksForPurgeParams) (int64, error)
 	CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
-	CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	CountPendingCustomerOperations(ctx context.Context, db DBTX, arg CountPendingCustomerOperationsParams) (int64, error)
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
 	CountProductionPendingQueueWorkInLane(ctx context.Context, db DBTX, arg CountProductionPendingQueueWorkInLaneParams) (int64, error)
 	CountProductionQueueBindingActive(ctx context.Context, db DBTX, arg CountProductionQueueBindingActiveParams) (int64, error)
@@ -3511,6 +3515,9 @@ type Querier interface {
 	ListCrashCapturesToPurge(ctx context.Context, db DBTX, rowLimit int32) ([]CrashCapture, error)
 	ListCrashCapturesToStage(ctx context.Context, db DBTX, arg ListCrashCapturesToStageParams) ([]CrashCapture, error)
 	ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCronsForAppRow, error)
+	ListCustomDomainCertificateRetries(ctx context.Context, db DBTX, arg ListCustomDomainCertificateRetriesParams) ([]ListCustomDomainCertificateRetriesRow, error)
+	// Membership hints only: certificate admission still checks the live claim.
+	ListCustomDomainTLSKnownHosts(ctx context.Context, db DBTX, arg ListCustomDomainTLSKnownHostsParams) ([]string, error)
 	ListCustomDomainsForActor(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCustomDomainsForActorRow, error)
 	ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, arg ListCustomerAlertRulesByPresetParams) ([]AlertRule, error)
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
@@ -3582,6 +3589,8 @@ type Querier interface {
 	// (PR-A ships that query; the regression cron uses the same shape).
 	ListDeploymentsForCompare(ctx context.Context, db DBTX, arg ListDeploymentsForCompareParams) ([]ListDeploymentsForCompareRow, error)
 	ListDevBridges(ctx context.Context, db DBTX, arg ListDevBridgesParams) ([]ListDevBridgesRow, error)
+	ListDoctorDomainBatch(ctx context.Context, db DBTX, batchLimit int32) ([]string, error)
+	ListDoctorDomains(ctx context.Context, db DBTX) ([]string, error)
 	ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error)
 	ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error)
 	ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DBTX, maxRows int32) ([]ReleaseDatabaseSwitch, error)
@@ -4083,6 +4092,9 @@ type Querier interface {
 	// Identity writes use the account lock before the provider-qualified row.
 	// This matches subscription termination and SMTP lifecycle fencing.
 	LockBillingIdentityAccount(ctx context.Context, db DBTX, accountID string) (string, error)
+	// The organization is the financial subject after resource adoption; its
+	// identity writes must serialize on that row rather than a human account.
+	LockBillingIdentityOrg(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockBindingPromotionRevision(ctx context.Context, db DBTX, arg LockBindingPromotionRevisionParams) (string, error)
 	LockBindingVerificationRun(ctx context.Context, db DBTX, arg LockBindingVerificationRunParams) (BindingVerificationRun, error)
 	LockBoundOrProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg LockBoundOrProductionQueueTriggerInvocationParams) (pgtype.UUID, error)
@@ -4203,6 +4215,9 @@ type Querier interface {
 	LockEventWorkflowTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockEventWorkflowTargetRow, error)
 	LockExclusiveSnapshotInstance(ctx context.Context, db DBTX, instanceID string) (LockExclusiveSnapshotInstanceRow, error)
 	LockExclusiveWorkAccount(ctx context.Context, db DBTX, accountID string) (LockExclusiveWorkAccountRow, error)
+	// Only unapproved drafts without a physical task can settle on local expiry.
+	// Share the admission predicate and skip lifecycle rows locked by foreground work.
+	LockExpiredDataRepairDrafts(ctx context.Context, db DBTX, arg LockExpiredDataRepairDraftsParams) ([][]byte, error)
 	LockExpiredRevisionPinApps(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockFeatureFlagProject(ctx context.Context, db DBTX, arg LockFeatureFlagProjectParams) (pgtype.UUID, error)
@@ -4302,6 +4317,8 @@ type Querier interface {
 	// Membership accepts and lifecycle/plan writes serialize on the organization.
 	// NO KEY UPDATE remains compatible with foreign-key key-share locks.
 	LockOrgInvitationTarget(ctx context.Context, db DBTX, id pgtype.UUID) (LockOrgInvitationTargetRow, error)
+	// Pin the incoming plan while deciding whether a transfer consumes a Free slot.
+	LockOrgOwnershipTransferTarget(ctx context.Context, db DBTX, id pgtype.UUID) (LockOrgOwnershipTransferTargetRow, error)
 	LockOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg LockOwnedActiveOperationJobTasksForPurgeParams) ([]LockOwnedActiveOperationJobTasksForPurgeRow, error)
 	LockOwnedInvoiceSnapshot(ctx context.Context, db DBTX, arg LockOwnedInvoiceSnapshotParams) (LockOwnedInvoiceSnapshotRow, error)
 	// Lifecycle writers take incompatible locks, held until the transfer commits.
@@ -5166,6 +5183,10 @@ type Querier interface {
 	// A callback may have made this run due while its coordinator still held the
 	// fence. Preserve that earlier wake when the coordinator parks afterwards.
 	ParkCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg ParkCustomerOperationWorkflowRunParams) error
+	PatchOrgBillingInfo(ctx context.Context, db DBTX, arg PatchOrgBillingInfoParams) (int64, error)
+	// Only supplied fields are written; concurrent disjoint PATCHes commute.
+	// A non-null empty string explicitly clears a field.
+	PatchPersonalAccountBillingInfo(ctx context.Context, db DBTX, arg PatchPersonalAccountBillingInfoParams) (int64, error)
 	PauseEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg PauseEnvironmentGitOpsJobUpdateParams) error
 	PauseEnvironmentWorkloadRetirementJob(ctx context.Context, db DBTX, arg PauseEnvironmentWorkloadRetirementJobParams) error
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
@@ -6217,6 +6238,7 @@ type Querier interface {
 	// (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
 	ReadTrafficRouteWriteScopes(ctx context.Context, db DBTX, patterns []string) ([]ReadTrafficRouteWriteScopesRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
+	ReadUsableCustomDomainDefaults(ctx context.Context, db DBTX, arg ReadUsableCustomDomainDefaultsParams) ([]ReadUsableCustomDomainDefaultsRow, error)
 	ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error)
 	// Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.
 	// Management callers retain the complete row; request snapshots omit secrets.
@@ -6475,6 +6497,7 @@ type Querier interface {
 	ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error)
 	ReleaseConfigurationCandidateOwner(ctx context.Context, db DBTX, appID string) (ReleaseConfigurationCandidateOwnerRow, error)
 	ReleaseCustomDomainProbeFailureEmail(ctx context.Context, db DBTX, arg ReleaseCustomDomainProbeFailureEmailParams) error
+	ReleaseCustomDomainVerificationLeases(ctx context.Context, db DBTX, leases []byte) error
 	// Marks the standby VM stopped; it stays synchronized only if keep_synced
 	// (a clean stop after its primary's).
 	ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg ReleaseDatabaseStandbyParams) (int64, error)
@@ -7143,7 +7166,7 @@ type Querier interface {
 	SetComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, arg SetComputeNodeVMMDRestartNoticeParams) (int64, error)
 	// ADR-733 crash snapshots.
 	SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg SetCrashSnapshotSettingsParams) (CrashSnapshotSetting, error)
-	SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (int32, error)
+	SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (bool, error)
 	SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error
 	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
 	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)

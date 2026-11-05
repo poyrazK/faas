@@ -188,7 +188,10 @@ func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID
 	if err != nil {
 		return false, err
 	}
-	return domain.Verified() && domain.EnvironmentID == "" && domain.AppID == appID, nil
+	if !domain.Verified() || domain.EnvironmentID != "" || domain.AppID != appID {
+		return false, nil
+	}
+	return r.cachedCustomDomainPlanAllowed(ctx, domain)
 }
 
 func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
@@ -468,6 +471,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 		if err != nil || !found {
 			return app, found, err
 		}
+		if !customDomainPlanAllowed(dom, app.Plan) {
+			return gateway.App{}, false, nil
+		}
 		app.CustomDomainRoute = true
 		app.DynamicRoute = true
 		return app, true, nil
@@ -482,6 +488,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	resolved, found, err := r.toPublicApp(ctx, app)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	if !customDomainPlanAllowed(dom, resolved.Plan) {
+		return gateway.App{}, false, nil
 	}
 	resolved.CustomDomainRoute = true
 	return resolved, true, nil

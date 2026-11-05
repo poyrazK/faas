@@ -4017,6 +4017,7 @@
       "cert_expires_at",
       "cert_failed_at",
       "cert_last_error",
+      "cert_retry_at",
       "cert_status",
       "challenge_token",
       "dns_last_checked_at",

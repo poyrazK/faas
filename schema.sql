@@ -34545,6 +34545,8 @@ CREATE TABLE public.custom_domains (
     verification_attempts integer DEFAULT 0 NOT NULL,
     verification_expires_at timestamp with time zone DEFAULT (now() + '7 days'::interval) NOT NULL,
     environment_id uuid,
+    cert_retry_at timestamp with time zone,
+    CONSTRAINT custom_domains_cert_retry_at_check CHECK (((cert_retry_at IS NULL) OR isfinite(cert_retry_at))),
     CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
 
@@ -73026,6 +73028,13 @@ CREATE INDEX custom_domains_cert_expiry_idx ON public.custom_domains USING btree
 --
 
 CREATE INDEX custom_domains_cert_failed_idx ON public.custom_domains USING btree (cert_failed_at) WHERE (cert_status = 'failed'::text);
+
+
+--
+-- Name: custom_domains_cert_retry_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_cert_retry_due_idx ON public.custom_domains USING btree (COALESCE(cert_retry_at, '1970-01-01 00:00:00+00'::timestamp with time zone), domain) WHERE ((verified_at IS NOT NULL) AND (domain OPERATOR(public.~~) '*.%'::public.citext));
 
 
 --

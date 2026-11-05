@@ -668,6 +668,7 @@ export type { DebugRunningRequestAttribution } from './DebugRunningRequestAttrib
 export type { DebugRunningResponse } from './DebugRunningResponse.js';
 export type { DebugStatusDeployment } from './DebugStatusDeployment.js';
 export type { DebugStatusHealth } from './DebugStatusHealth.js';
+export type { DebugStatusMemory } from './DebugStatusMemory.js';
 export type { DebugStatusOOMKill } from './DebugStatusOOMKill.js';
 export type { DebugStatusResponse } from './DebugStatusResponse.js';
 export type { DebugSuspectedDependency } from './DebugSuspectedDependency.js';
