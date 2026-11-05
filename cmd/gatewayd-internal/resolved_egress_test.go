@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/netip"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,12 +14,14 @@ import (
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type recordingResolvedEgressClient struct {
-	req *vmmdpb.AllowResolvedEgressRequest
-	err error
+	identity *vmmdpb.ResolveServiceCallerResponse
+	req      *vmmdpb.AllowResolvedEgressRequest
+	err      error
 }
 
 func (c *recordingResolvedEgressClient) AllowResolvedEgress(_ context.Context, in *vmmdpb.AllowResolvedEgressRequest, _ ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error) {
@@ -31,19 +32,19 @@ func (c *recordingResolvedEgressClient) AllowResolvedEgress(_ context.Context, i
 func TestAllowResolvedEgressRequest(t *testing.T) {
 	cli := &recordingResolvedEgressClient{}
 	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.10"), netip.MustParseAddr("2001:db8::1")}
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, 90*time.Second, 0); err != nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, 90*time.Second, 0); err != nil {
 		t.Fatal(err)
 	}
-	if cli.req.GetSourceIp() != "10.100.0.7" || cli.req.GetTtlSeconds() != 90 || len(cli.req.GetAddresses()) != 2 ||
+	if cli.req.GetInstanceId() != "instance" || cli.req.GetNetworkGeneration() != "generation" || cli.req.GetSourceIp() != "10.100.0.7" || cli.req.GetTtlSeconds() != 90 || len(cli.req.GetAddresses()) != 2 ||
 		cli.req.GetAddresses()[1] != "2001:db8::1" {
 		t.Fatalf("request = %+v", cli.req)
 	}
 	cli.err = status.Error(codes.Unimplemented, "old vmmd")
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, time.Minute, 0); err != nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err != nil {
 		t.Fatalf("an older vmmd must not be an error: %v", err)
 	}
 	cli.err = errors.New("unavailable")
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, time.Minute, 0); err == nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err == nil {
 		t.Fatal("a real failure must surface")
 	}
 }
@@ -76,6 +77,25 @@ func (v resolvedEgressVmmd) AllowResolvedEgress(ctx context.Context, in *vmmdpb.
 	return v.rec.AllowResolvedEgress(ctx, in, opts...)
 }
 
+func (v resolvedEgressVmmd) ResolveServiceCaller(_ context.Context, req *vmmdpb.ResolveServiceCallerRequest, _ ...grpc.CallOption) (*vmmdpb.ResolveServiceCallerResponse, error) {
+	if v.rec.identity != nil {
+		return v.rec.identity, nil
+	}
+	app := "app-bound"
+	if req.GetSourceIp() == "10.100.0.3" {
+		app = "app-other"
+	}
+	return &vmmdpb.ResolveServiceCallerResponse{Matched: true, InstanceId: "instance", NetworkGeneration: "generation", AppId: app}, nil
+}
+
+func finishResolvedQuery(prepare gateway.ResolvedEgressPreparation, ctx context.Context, remote, name string, addrs []netip.Addr, ttl time.Duration) error {
+	hook, err := prepare(ctx, remote, name)
+	if err != nil {
+		return err
+	}
+	return hook(ctx, remote, name, addrs, ttl)
+}
+
 type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
@@ -99,11 +119,11 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 	rec := &recordingResolvedEgressClient{}
 	clients := &vmmdByID{clients: map[string]*recordingResolvedEgressClient{id: rec}}
 	local := newLocalNodeID(nodes, name)
-	hook := newResolvedEgressHook(clients, local, nil, nil)
+	hook := newResolvedEgressHook(clients, local, nil)
 	addrs := []netip.Addr{netip.MustParseAddr("104.20.22.46")}
 
 	for i := 0; i < 3; i++ {
-		if err := hook(context.Background(), "10.100.0.2:9186", "api.example.com", addrs, time.Minute); err != nil {
+		if err := finishResolvedQuery(hook, context.Background(), "10.100.0.2:9186", "api.example.com", addrs, time.Minute); err != nil {
 			t.Fatalf("query %d: %v", i, err)
 		}
 	}
@@ -123,11 +143,11 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 	// node is picked up; it runs in the background while the cached id
 	// keeps answering, so DNS answers never wait on the control plane.
 	delete(clients.clients, id)
-	if err := hook(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
+	if err := finishResolvedQuery(hook, context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
 		t.Fatal("an unavailable local vmmd must surface")
 	}
 	clients.clients[id] = rec
-	if err := hook(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err != nil {
+	if err := finishResolvedQuery(hook, context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	local.mu.Lock()
@@ -141,8 +161,8 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 		t.Fatalf("name resolved %d times after a miss, want 2", nodes.calls)
 	}
 
-	unknown := newResolvedEgressHook(clients, newLocalNodeID(nodes, "fsn-9.faas"), nil, nil)
-	if err := unknown(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
+	unknown := newResolvedEgressHook(clients, newLocalNodeID(nodes, "fsn-9.faas"), nil)
+	if err := finishResolvedQuery(unknown, context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
 		t.Fatal("an unregistered node name must surface")
 	}
 }
@@ -159,7 +179,7 @@ func (e *egressEndpoints) ManagedPostgresEgressEndpoints(context.Context) ([]sta
 }
 
 // ADR-20261026150000: a bound database's name carries its port for the bound
-// app only; other names never resolve the caller.
+// app captured before resolution. Every query captures its runtime owner.
 func TestResolvedEgressHookOpensBoundDatabasePorts(t *testing.T) {
 	const name, id = "fsn-2.faas", "da3fb5d2-b517-47cb-921f-b4212378a35d"
 	rec := &recordingResolvedEgressClient{}
@@ -168,14 +188,7 @@ func TestResolvedEgressHookOpensBoundDatabasePorts(t *testing.T) {
 	index := newDatabaseEgressIndex(endpoints)
 	clock := time.Unix(1000, 0)
 	index.now = func() time.Time { return clock }
-	callers := map[string]string{"10.100.0.2": "app-bound", "10.100.0.3": "app-other"}
-	resolved := 0
-	resolveCaller := func(_ context.Context, remote string) (string, error) {
-		resolved++
-		host, _, _ := strings.Cut(remote, ":")
-		return callers[host], nil
-	}
-	hook := newResolvedEgressHook(clients, newLocalNodeID(&namedNodes{ids: map[string]string{name: id}}, name), index, resolveCaller)
+	hook := newResolvedEgressHook(clients, newLocalNodeID(&namedNodes{ids: map[string]string{name: id}}, name), index)
 	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.20")}
 	for _, tc := range []struct {
 		remote, name string
@@ -185,15 +198,15 @@ func TestResolvedEgressHookOpensBoundDatabasePorts(t *testing.T) {
 		{"10.100.0.3:1", "ep-1-pooler.example.com", 0}, // another app's database
 		{"10.100.0.2:1", "api.example.com", 0},         // not a database
 	} {
-		if err := hook(context.Background(), tc.remote, tc.name, addrs, time.Minute); err != nil {
+		if err := finishResolvedQuery(hook, context.Background(), tc.remote, tc.name, addrs, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 		if rec.req.GetDatabasePort() != tc.port {
 			t.Fatalf("%s from %s: database port %d, want %d", tc.name, tc.remote, rec.req.GetDatabasePort(), tc.port)
 		}
 	}
-	if resolved != 2 || endpoints.reads != 1 {
-		t.Fatalf("caller resolutions %d (want 2, database names only), index reads %d (want 1)", resolved, endpoints.reads)
+	if endpoints.reads != 1 {
+		t.Fatalf("index reads %d (want 1)", endpoints.reads)
 	}
 	// A failed refresh keeps the previous index until the next interval.
 	clock = clock.Add(databaseEgressIndexRefresh)
@@ -204,5 +217,45 @@ func TestResolvedEgressHookOpensBoundDatabasePorts(t *testing.T) {
 	index.lookup(context.Background(), "ep-1-pooler.example.com")
 	if endpoints.reads != 2 {
 		t.Fatal("a failed refresh must back off until the next interval")
+	}
+}
+
+func TestResolvedEgressQueryRetainsOriginalOwner(t *testing.T) {
+	rec := &recordingResolvedEgressClient{identity: &vmmdpb.ResolveServiceCallerResponse{
+		Matched: true, InstanceId: "old-instance", NetworkGeneration: "old-generation", AppId: "old-app",
+	}}
+	clients := &vmmdByID{clients: map[string]*recordingResolvedEgressClient{"node-id": rec}}
+	local := newLocalNodeID(&namedNodes{ids: map[string]string{"node-name": "node-id"}}, "node-name")
+	index := newDatabaseEgressIndex(&egressEndpoints{rows: []state.ManagedPostgresEgressEndpoint{
+		{AppID: "old-app", Host: "db.example.com", Port: 5432},
+		{AppID: "new-app", Host: "db.example.com", Port: 6543},
+	}})
+	prepare := newResolvedEgressHook(clients, local, index)
+	finish, err := prepare(t.Context(), "10.100.0.2:1234", "db.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reuse the same response object as well as the address: capture must copy it.
+	rec.identity.InstanceId = "new-instance"
+	rec.identity.NetworkGeneration = "new-generation"
+	rec.identity.AppId = "new-app"
+	if err := finish(t.Context(), "10.100.0.2:1234", "db.example.com", []netip.Addr{netip.MustParseAddr("198.51.100.10")}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if rec.req.GetInstanceId() != "old-instance" || rec.req.GetNetworkGeneration() != "old-generation" || rec.req.GetDatabasePort() != 5432 || len(clients.asked) != 2 {
+		t.Fatalf("DNS completion changed owners: %v, lookups=%v", rec.req, clients.asked)
+	}
+}
+
+func TestResolvedEgressRejectsMissingOwnershipProof(t *testing.T) {
+	for _, identity := range []*vmmdpb.ResolveServiceCallerResponse{
+		{}, {Matched: true, InstanceId: "legacy"}, {Matched: true, NetworkGeneration: "generation"},
+	} {
+		rec := &recordingResolvedEgressClient{identity: identity}
+		clients := &vmmdByID{clients: map[string]*recordingResolvedEgressClient{"node-id": rec}}
+		prepare := newResolvedEgressHook(clients, newLocalNodeID(&namedNodes{ids: map[string]string{"node": "node-id"}}, "node"), nil)
+		if finish, err := prepare(t.Context(), "10.100.0.2:1", "example.com"); err == nil || finish != nil || rec.req != nil {
+			t.Fatalf("unfenced source authorized: finish=%v err=%v", finish != nil, err)
+		}
 	}
 }

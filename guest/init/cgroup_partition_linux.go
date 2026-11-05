@@ -113,7 +113,7 @@ func (s *Supervisor) WorkloadLeaf() string {
 // cgroup; this inner write is needed for multi-workload VMs, where main-app
 // used to retain a boot-time duplicate ceiling that could mask live increases.
 func updateMainWorkloadCPULimit(cpuMillicores int) error {
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores) {
 		return fmt.Errorf("invalid app CPU policy %d millicores", cpuMillicores)
 	}
 	leaf := leafDir("main", "app")
@@ -144,7 +144,7 @@ func prepareWorkloadCgroupWithIO(typ, name string, ramMB int, log *slog.Logger, 
 	if ramMB < 0 {
 		return "", fmt.Errorf("invalid workload cgroup ram_mb %d", ramMB)
 	}
-	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores)) {
 		return "", fmt.Errorf("invalid workload cgroup cpu_millicores %d", cpuMillicores)
 	}
 	if !api.ValidSidecarDiskIOProfile(diskIOProfile) {
@@ -243,7 +243,7 @@ func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile st
 	if leaf == "" {
 		return errors.New("cgroup partition: empty leaf")
 	}
-	if ramMB < 0 || cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+	if ramMB < 0 || cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores)) {
 		return fmt.Errorf("cgroup partition: invalid limits ram_mb=%d cpu_millicores=%d", ramMB, cpuMillicores)
 	}
 	ioWeight, ioConfigured := api.SidecarDiskIOProfileWeight(diskIOProfile)

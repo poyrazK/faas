@@ -1,0 +1,51 @@
+# Page fixtures for FaasEdgeCertificateUnexpected (edgednsd Certificate
+# Transparency watch) and FaasObjectStorageInventorySweepStopped (apid's
+# object storage inventory sweep).
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a certificate edgednsd did not issue pages at once
+    interval: 1m
+    input_series:
+      - series: edge_certificate_transparency_unexpected{job="edgednsd",instance="cp-1"}
+        values: 0 0 2 2 2
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasEdgeCertificateUnexpected
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FaasEdgeCertificateUnexpected
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: edgednsd
+              family: compute_edge
+              public_status: internal
+            exp_annotations:
+              summary: "A publicly trusted certificate for the apps domain that edgednsd did not issue"
+              description: "Certificate Transparency lists 2 unexpired certificate(s) under the apps domain that edgednsd did not issue and the allow list does not cover. edgednsd's log line 'a certificate edgednsd did not issue' names each one."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
+
+  - name: an inventory sweep that stops completing pages after ten minutes plus five
+    interval: 1m
+    input_series:
+      - series: faas_object_storage_inventory_sweep_last_success_timestamp_seconds{job="apid",instance="cp-1"}
+        values: 0x30
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasObjectStorageInventorySweepStopped
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasObjectStorageInventorySweepStopped
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: object_storage
+            exp_annotations:
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+              summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
+              description: "No inventory sweep has completed without error for 20m 0s. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."

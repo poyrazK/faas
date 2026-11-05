@@ -20,6 +20,13 @@ type peeringRouterRecorder struct {
 	fail     bool
 }
 
+func (r *peeringRouterRecorder) RestrictPrivateNetworkPeerings(_ context.Context, nodeID, _, _ string, _ []privatenetwork.FabricSpec, routes []privatenetwork.PeeringRoute) error {
+	if len(routes) == 0 {
+		r.policies[nodeID] = nil
+	}
+	return nil
+}
+
 func (r *peeringRouterRecorder) ReconcilePrivateNetworkFabric(_ context.Context, nodeID, _, _, _ string, _ netip.Prefix) error {
 	r.fabrics[nodeID]++
 	return nil

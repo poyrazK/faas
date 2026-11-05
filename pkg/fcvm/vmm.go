@@ -1870,7 +1870,7 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 	if l.IsBuilder || !l.Plan.Valid() {
 		return fmt.Errorf("vmm: update CPU limit: invalid app lease for instance %s", l.Instance)
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAppCPUCeilingMillicores(l.Plan, cpuMillicores) {
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
@@ -2370,6 +2370,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
+	}
+	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
+		return fmt.Errorf("vmm: %w", err)
 	}
 	v.observeInstancePause(l.Instance, spec.KeepPaused)
 	tLoad := time.Now()
@@ -3458,7 +3461,7 @@ func (v *JailerVMM) UpdateAppWorkloadCPULimit(ctx context.Context, l Lease, cpuM
 	if v == nil || l.Instance == "" || v.chrootBase == "" {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid VMM or instance")
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAppCPUCeilingMillicores(l.Plan, cpuMillicores) {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: cpuMillicores})

@@ -3289,6 +3289,88 @@ var VCPUPerPlan = map[Plan]int{
 	PlanScale: 4,
 }
 
+// GuestVCPUMillicores is the sustained CPU quota one guest vCPU stands for
+// when an app's topology follows its quota instead of its plan
+// (ADR-20261101160231).
+const GuestVCPUMillicores = 1000
+
+// GuestVCPUsForCPUMillicores is the guest vCPU count for a sustained CPU
+// quota: one per GuestVCPUMillicores, at least one (ADR-20261101160231).
+func GuestVCPUsForCPUMillicores(millicores int) int {
+	return max(1, (millicores+GuestVCPUMillicores-1)/GuestVCPUMillicores)
+}
+
+// AppCPUBaselineMillicoresPerGB is the CPU an app instance books, and its
+// share when the node is busy, per GB of plan RAM: 250 m on Free … 2,000 m
+// on Scale (ADR-20261101160231).
+const AppCPUBaselineMillicoresPerGB = 1000
+
+// AppCPUBookingMaxMillicores bounds an instance's stored CPU booking
+// (instances.booked_cpu_millicores): the largest plan baseline.
+const AppCPUBookingMaxMillicores = 2000
+
+// AppCPUCeilingFloorMillicores is the lowest burst ceiling (cpu.max) a plan
+// gets, so no plan bursts below today's one core (ADR-20261101160231).
+const AppCPUCeilingFloorMillicores = DefaultAppCPUMillicores
+
+// AppCPUBaselineMillicores is the plan's booked CPU baseline. Zero for an
+// unknown plan.
+func AppCPUBaselineMillicores(plan Plan) int {
+	l, ok := LimitsFor(plan)
+	if !ok {
+		return 0
+	}
+	return AppCPUBaselineMillicoresForPlanRAM(l.RAMMB)
+}
+
+// AppCPUBaselineMillicoresForPlanRAM is the baseline of a plan with
+// planRAMMB of RAM.
+func AppCPUBaselineMillicoresForPlanRAM(planRAMMB int) int {
+	return planRAMMB * AppCPUBaselineMillicoresPerGB / 1024
+}
+
+// AppCPUCeilingMillicores is the plan's burst ceiling: max(floor, baseline).
+// Zero for an unknown plan.
+func AppCPUCeilingMillicores(plan Plan) int {
+	l, ok := LimitsFor(plan)
+	if !ok {
+		return 0
+	}
+	return AppCPUCeilingMillicoresForPlanRAM(l.RAMMB)
+}
+
+// AppCPUCeilingMillicoresForPlanRAM is the burst ceiling of a plan with
+// planRAMMB of RAM.
+func AppCPUCeilingMillicoresForPlanRAM(planRAMMB int) int {
+	return max(AppCPUCeilingFloorMillicores, AppCPUBaselineMillicoresForPlanRAM(planRAMMB))
+}
+
+// ValidAppCPUCeilingMillicores reports whether a host or guest cgroup may
+// enforce v as an app's sustained CPU on plan: one of the customer shapes
+// (ValidAppCPUMillicores), or whole cores up to the plan's burst ceiling.
+// vmmd and guest-init accept it a release before schedd sends a value above
+// one core (ADR-20261101160231 rollout step 4). Customers still choose only
+// the shapes ValidAppCPUMillicores lists.
+func ValidAppCPUCeilingMillicores(plan Plan, v int) bool {
+	if ValidAppCPUMillicores(v) {
+		return true
+	}
+	return v > DefaultAppCPUMillicores && v%GuestVCPUMillicores == 0 && v <= AppCPUCeilingMillicores(plan)
+}
+
+// ValidAnyAppCPUCeilingMillicores reports whether v is a valid app CPU
+// ceiling on some plan. Code that does not know the app's plan (guest-init,
+// vmmd's per-app policy entry point) checks this; the per-instance cgroup
+// write checks the instance's plan.
+func ValidAnyAppCPUCeilingMillicores(v int) bool {
+	for _, p := range Plans {
+		if ValidAppCPUCeilingMillicores(p, v) {
+			return true
+		}
+	}
+	return false
+}
+
 // BlockRateLimit is a VM's sustained limit on its writable app-layer drive
 // (ADR-910): Firecracker token buckets on bandwidth and on operations. It
 // keeps one tenant's disk flood from starving its neighbours' I/O; the
@@ -12945,6 +13027,16 @@ const (
 	GatewayNewHostLookupsPerSecond = 25
 	GatewayNewHostLookupBurst      = 500
 	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// The gateway and the edge preload every app slug and verified custom
+	// domain (at most KnownRouteHostsMax of each), refreshed every
+	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
+	// new-host budgets above or PublicReadNewHostLookups*. Only names that
+	// are not an app's do: after a restart a flood of random names no longer
+	// answers 503 for apps the process has not yet served. Wildcard custom
+	// domains are not preloaded (ADR-20261103163954 §4).
+	KnownRouteHostsMax             = 1_000_000
+	KnownRouteHostsRefreshInterval = time.Minute
+	KnownRouteHostsRefreshTimeout  = 20 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253

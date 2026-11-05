@@ -19994,8 +19994,8 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		select i.node_id::text,
 		       coalesce(sum(case
 	         when i.startup_cpu_boost_until > now() then
-	           greatest(case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end, $2)
-	         else case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end
+	           greatest(coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end), $2)
+	         else coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end)
 	       end), 0)::bigint
 		  from instances i
 		  join apps a on a.id = i.app_id
