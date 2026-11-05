@@ -5685,6 +5685,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			KernelKey: m.paths.Kernel,
 			BaseKey:   req.BaseKey,
 			LayerKey:  req.LayerKey,
+			VCPUs:     req.VcpuCount,
 			// ADR-022: same vsock device the cold-boot path attaches, derived
 			// from the lease's slot so the guest's listener is reachable at a
 			// globally unique guest_cid.
@@ -7245,7 +7246,7 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 	if revision <= 0 {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid revision %d", revision)
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores) {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid cpu_millicores %d", cpuMillicores)
 	}
 	_, ok := m.vmm.(LiveAppCPULimitUpdater)

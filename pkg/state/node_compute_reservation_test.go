@@ -54,7 +54,15 @@ func newComputeNodeFixture(t *testing.T, s state.Store, resource string, vpcpus,
 
 func (f *computeNodeFixture) admit(t *testing.T, c state.NodeCompute) error {
 	t.Helper()
-	ctx := state.WithNodeAdmission(t.Context(), state.NodeAdmission{NodeID: f.node.ID, Generation: f.node.LifecycleGeneration, Compute: c})
+	return f.admitBooked(t, c, 0)
+}
+
+// admitBooked admits with a CPU booking stamped on the row
+// (ADR-20261101160231 step 5b); zero books the app's CPU.
+func (f *computeNodeFixture) admitBooked(t *testing.T, c state.NodeCompute, booked int) error {
+	t.Helper()
+	ctx := state.WithNodeAdmission(t.Context(), state.NodeAdmission{NodeID: f.node.ID, Generation: f.node.LifecycleGeneration,
+		Compute: c, BookedCPUMillicores: booked})
 	_, err := f.s.CreateInstanceWithMode(ctx, f.app, f.dep, string(state.StateWaking), 128, f.node.ID, uuid.NewString(), string(state.InstanceModeNormal))
 	return err
 }
@@ -116,6 +124,29 @@ func checkNodeComputeReservation(t *testing.T, s state.Store) {
 		discounted.QuietCPUMillicores = api.DefaultAppCPUMillicores
 		if err := f.admit(t, discounted); err != nil {
 			t.Fatalf("admission beside a quiet-paused instance: %v", err)
+		}
+	})
+
+	// ADR-20261101160231 step 5b: a stamped booking replaces the app's CPU
+	// in the node's sum, and an unstamped row keeps the app's.
+	t.Run("booked cpu", func(t *testing.T) {
+		f := newComputeNodeFixture(t, s, "cpu", 64, 1<<20)
+		before := f.usedValue()
+		if err := f.admitBooked(t, state.NodeCompute{CPUMillicores: 250}, 250); err != nil {
+			t.Fatal(err)
+		}
+		booked := f.usedValue()
+		if booked-before != 250 {
+			t.Fatalf("a row booked at 250 m added %d m to the node", booked-before)
+		}
+		if err := f.admit(t, state.NodeCompute{CPUMillicores: api.DefaultAppCPUMillicores}); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.usedValue() - booked; got != api.DefaultAppCPUMillicores {
+			t.Fatalf("an unbooked row added %d m, want its app's %d", got, api.DefaultAppCPUMillicores)
+		}
+		if err := f.admitBooked(t, state.NodeCompute{CPUMillicores: 2000}, 2000); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

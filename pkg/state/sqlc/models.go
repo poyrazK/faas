@@ -6630,6 +6630,7 @@ type Instance struct {
 	CapacityRamMb                     int64
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
+	BookedCpuMillicores               pgtype.Int4
 }
 
 type InstanceApplicationStandardAdmission struct {

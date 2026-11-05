@@ -523,7 +523,7 @@ func handleAppCPULimitConn(f *os.File, log *slog.Logger, lengthHeader []byte, ap
 		return
 	}
 	var req runtimepolicyproto.AppCPULimitUpdate
-	if err := json.Unmarshal(body, &req); err != nil || !api.ValidAppCPUMillicores(req.CPUMillicores) {
+	if err := json.Unmarshal(body, &req); err != nil || !api.ValidAnyAppCPUCeilingMillicores(req.CPUMillicores) {
 		log.Warn("vsock app CPU policy body rejected", "err", err, "cpu_millicores", req.CPUMillicores)
 		_, _ = f.Write([]byte{VsockResumeAckJSON})
 		return

@@ -23,6 +23,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/sync/semaphore"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/chaos"
@@ -43,7 +45,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
-	"golang.org/x/sync/semaphore"
 )
 
 // builderVMCleanupErrorMaxBytes bounds the recorded cleanup failure for a
@@ -158,84 +159,87 @@ type MemStore struct {
 	planChangedAt map[string]time.Time
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
-	totpLastSteps                              map[string]int64
-	migrationContracts                         map[string]projectMigrationContract
-	projectCanaries                            map[string]projectCanaryRecord
-	workerReleasePins                          map[string]projectWorkerReleasePin
-	workerJobEvidence                          map[string]projectWorkerJobObservation
-	projectSubmissions                         map[string]projectSubmissionEntry
-	projectReleaseAdditions                    map[string]projectReleaseAdditionRecord
-	releaseWorkerDrains                        map[string]bool
-	releaseWorkerCandidates                    map[string]string
-	releaseSecretBundles                       map[string]releaseSecretBundle
-	releaseSecretPins                          map[string][]releaseSecretVersion
-	retiredSecretEncryptionKeys                map[string]bool
-	releaseConfigurationIntents                map[string]projectReleaseConfigCapture
-	releaseEnvironmentPins                     map[string][]AppEnv
-	promotionReleaseConfigurations             map[string]promotionReleaseConfiguration
-	migrationVerifications                     map[string]MigrationVerificationRecord
-	migrationCutovers                          map[string]MigrationCutoverRecord
-	projectMigrations                          map[string]ProjectMigrationRecord
-	publicBuildURLs                            map[string]map[string]string
-	operatorAlertEpisodes                      map[string]OperatorAlertEpisode
-	operatorAlertRules                         map[string]OperatorAlertRuleObservation
-	operatorAlertCollection                    OperatorAlertCollection
-	operatorAlertCollectionOutcomes            []OperatorAlertCollectionOutcome
-	operatorAlertCollectionDiagnostics         map[time.Time]api.ObsAlertCollectionRejection
-	operatorAlertRetention                     OperatorAlertRetention
-	initialRecoveryReviews                     map[string]api.WorkflowInitialRecoveryReview
-	initialCompletionNext                      map[string]time.Time
-	eventExecutionRoots                        map[executionLedgerRootKey]executionLedgerRoot
-	eventExecutionOutcomes                     map[executionLedgerOutcomeKey]executionLedgerOutcome
-	eventExecutionCoverage                     map[string]executionCoverage
-	mcpOAuthRetirements                        map[string]mcpRetirementEntry
-	mcpCatalogMonitors                         map[string]api.MCPCatalogMonitorSnapshot
-	mcpCatalogMonitorOwners                    map[string]string
-	mcpTaskPromotionHolds                      map[string]MCPTaskPromotionHold
-	workflowFailureEvidence                    map[string][]workflowFailureEvidence
-	workflowFailureCaptureStartedAt            time.Time
-	recoveryPolicies                           map[string]*memWorkflowRecoveryPolicy
-	eventRecoveryExecutionResults              map[recoveryResultKey]memRecoveryExecutionResult
-	managedRealtimeReducers                    map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
-	managedRealtimeSchedules                   map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
-	managedRealtimeScheduleHistory             map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
-	managedRealtimeEventSchemas                map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
-	realtimeEventSchemas                       *realtimeEventSchemaCache
-	managedRealtimeBatches                     map[managedRealtimeBatchKey]managedRealtimeBatchRecord
-	managedRealtimeSnapshots                   map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
-	realtimeNotificationTimeline               map[string][]api.ManagedRealtimeNotificationTimelineEvent
-	realtimeNotificationTimelineSequence       int64
-	realtimePushRateReservations               map[string]map[string]time.Time
-	deploymentDependencyGates                  map[string]DeploymentDependencyGate
-	invocationAttemptHistory                   map[int64]retainedInvocationAttempt
-	nextInvocationAttemptID                    int64
-	checkedRollbacks                           map[string]api.RollbackOperation
-	alertRollbacks                             map[string]api.AlertRollback
-	alertHistoricalClaims                      map[string]string
-	recoveryPredecessors                       map[string]string
-	bindingReleasePolicies                     map[bindingReleasePolicyKey]api.BindingReleasePolicy
-	bindingReleasePolicyHistory                []api.BindingReleasePolicy
-	operationData                              *operationMemory
-	operationCodePins                          map[string]time.Time
-	qualificationExecutions                    map[string]EnvironmentQualificationExecutionStatus
-	environmentExternalOwners                  map[string]environmentExternalFieldOwner
-	environmentGitOps                          map[string]*environmentGitOpsMemory
-	gitlabOAuthConnections                     map[string]GitLabOAuthConnection
-	financialEvidence                          []FinancialUsageRecord
-	financialSamplingWindows                   map[time.Time]financialSamplingWindow
-	financialNextSequence                      int64
-	financialPrices                            map[string]FinancialPriceSnapshot
-	financialBudgets                           map[string]FinancialBudget
-	financialBudgetRevisions                   map[string][]FinancialBudgetRevision
-	financialRetainedFrom                      time.Time
-	exclusivePolicies                          map[string]ExclusiveWorkPolicy
-	exclusiveTriggerBindings                   map[string]ExclusiveTriggerBinding
-	exclusiveKeys                              map[string]exclusiveKey
-	exclusiveOperations                        map[string]ExclusiveOperation
-	exclusiveEffects                           map[string][]exclusiveStoredEffect
-	exclusiveNow                               func() time.Time
-	exclusiveSubmissions                       map[string]string
-	capacityInstanceResources                  map[string]capacityResources
+	totpLastSteps                        map[string]int64
+	migrationContracts                   map[string]projectMigrationContract
+	projectCanaries                      map[string]projectCanaryRecord
+	workerReleasePins                    map[string]projectWorkerReleasePin
+	workerJobEvidence                    map[string]projectWorkerJobObservation
+	projectSubmissions                   map[string]projectSubmissionEntry
+	projectReleaseAdditions              map[string]projectReleaseAdditionRecord
+	releaseWorkerDrains                  map[string]bool
+	releaseWorkerCandidates              map[string]string
+	releaseSecretBundles                 map[string]releaseSecretBundle
+	releaseSecretPins                    map[string][]releaseSecretVersion
+	retiredSecretEncryptionKeys          map[string]bool
+	releaseConfigurationIntents          map[string]projectReleaseConfigCapture
+	releaseEnvironmentPins               map[string][]AppEnv
+	promotionReleaseConfigurations       map[string]promotionReleaseConfiguration
+	migrationVerifications               map[string]MigrationVerificationRecord
+	migrationCutovers                    map[string]MigrationCutoverRecord
+	projectMigrations                    map[string]ProjectMigrationRecord
+	publicBuildURLs                      map[string]map[string]string
+	operatorAlertEpisodes                map[string]OperatorAlertEpisode
+	operatorAlertRules                   map[string]OperatorAlertRuleObservation
+	operatorAlertCollection              OperatorAlertCollection
+	operatorAlertCollectionOutcomes      []OperatorAlertCollectionOutcome
+	operatorAlertCollectionDiagnostics   map[time.Time]api.ObsAlertCollectionRejection
+	operatorAlertRetention               OperatorAlertRetention
+	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
+	initialCompletionNext                map[string]time.Time
+	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
+	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
+	eventExecutionCoverage               map[string]executionCoverage
+	mcpOAuthRetirements                  map[string]mcpRetirementEntry
+	mcpCatalogMonitors                   map[string]api.MCPCatalogMonitorSnapshot
+	mcpCatalogMonitorOwners              map[string]string
+	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
+	workflowFailureEvidence              map[string][]workflowFailureEvidence
+	workflowFailureCaptureStartedAt      time.Time
+	recoveryPolicies                     map[string]*memWorkflowRecoveryPolicy
+	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
+	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
+	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
+	managedRealtimeScheduleHistory       map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
+	managedRealtimeEventSchemas          map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
+	realtimeEventSchemas                 *realtimeEventSchemaCache
+	managedRealtimeBatches               map[managedRealtimeBatchKey]managedRealtimeBatchRecord
+	managedRealtimeSnapshots             map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
+	realtimeNotificationTimeline         map[string][]api.ManagedRealtimeNotificationTimelineEvent
+	realtimeNotificationTimelineSequence int64
+	realtimePushRateReservations         map[string]map[string]time.Time
+	deploymentDependencyGates            map[string]DeploymentDependencyGate
+	invocationAttemptHistory             map[int64]retainedInvocationAttempt
+	nextInvocationAttemptID              int64
+	checkedRollbacks                     map[string]api.RollbackOperation
+	alertRollbacks                       map[string]api.AlertRollback
+	alertHistoricalClaims                map[string]string
+	recoveryPredecessors                 map[string]string
+	bindingReleasePolicies               map[bindingReleasePolicyKey]api.BindingReleasePolicy
+	bindingReleasePolicyHistory          []api.BindingReleasePolicy
+	operationData                        *operationMemory
+	operationCodePins                    map[string]time.Time
+	qualificationExecutions              map[string]EnvironmentQualificationExecutionStatus
+	environmentExternalOwners            map[string]environmentExternalFieldOwner
+	environmentGitOps                    map[string]*environmentGitOpsMemory
+	gitlabOAuthConnections               map[string]GitLabOAuthConnection
+	financialEvidence                    []FinancialUsageRecord
+	financialSamplingWindows             map[time.Time]financialSamplingWindow
+	financialNextSequence                int64
+	financialPrices                      map[string]FinancialPriceSnapshot
+	financialBudgets                     map[string]FinancialBudget
+	financialBudgetRevisions             map[string][]FinancialBudgetRevision
+	financialRetainedFrom                time.Time
+	exclusivePolicies                    map[string]ExclusiveWorkPolicy
+	exclusiveTriggerBindings             map[string]ExclusiveTriggerBinding
+	exclusiveKeys                        map[string]exclusiveKey
+	exclusiveOperations                  map[string]ExclusiveOperation
+	exclusiveEffects                     map[string][]exclusiveStoredEffect
+	exclusiveNow                         func() time.Time
+	exclusiveSubmissions                 map[string]string
+	capacityInstanceResources            map[string]capacityResources
+	// instanceBookedCPU mirrors instances.booked_cpu_millicores
+	// (ADR-20261101160231 step 5b).
+	instanceBookedCPU                          map[string]int
 	serviceCapacityProtection                  bool
 	serviceRecovery                            map[string]ServiceRecovery
 	devBridgeSessions                          map[string]devbridge.Session
@@ -7722,6 +7726,7 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 			delete(m.instanceRuntimeConfigReceipts, key)
 			m.deleteSecretRuntimeProcessesLocked(key)
 			delete(m.capacityInstanceResources, key)
+			delete(m.instanceBookedCPU, key)
 		}
 	}
 	delete(m.deploymentPolicyStates, id)
@@ -16286,6 +16291,7 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 			return Instance{}, err
 		}
 	}
+	m.recordInstanceBookedCPULocked(ctx, ins)
 	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
 	if binding {
@@ -16384,6 +16390,7 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 			return Instance{}, err
 		}
 	}
+	m.recordInstanceBookedCPULocked(ctx, ins)
 	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
 	if binding {
@@ -17260,6 +17267,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 		delete(m.instanceRuntimeConfigReceipts, row.id)
 		m.deleteSecretRuntimeProcessesLocked(row.id)
 		delete(m.capacityInstanceResources, row.id)
+		delete(m.instanceBookedCPU, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -17305,6 +17313,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
 	delete(m.capacityInstanceResources, id)
+	delete(m.instanceBookedCPU, id)
 	return nil
 }
 
@@ -18145,10 +18154,7 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 			if !ok {
 				continue
 			}
-			cpu := app.CPUMillicores
-			if cpu <= 0 {
-				cpu = api.DefaultAppCPUMillicores
-			}
+			cpu := m.instanceCPUBookingLocked(ins, app)
 			if ins.StartupCPUBoostUntil != nil && ins.StartupCPUBoostUntil.After(now) && cpu < api.DefaultAppCPUMillicores {
 				cpu = api.DefaultAppCPUMillicores
 			}
@@ -24249,6 +24255,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.instanceRuntimeConfigReceipts, iid)
 			m.deleteSecretRuntimeProcessesLocked(iid)
 			delete(m.capacityInstanceResources, iid)
+			delete(m.instanceBookedCPU, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
