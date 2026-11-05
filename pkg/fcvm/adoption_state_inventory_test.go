@@ -51,6 +51,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"staticEgressAliasIPs":              "reset",   // labeled kernel aliases rediscovered on bundle replay
 		"privateNetworkFabric":              "reset",   // idempotency cache; schedd's reconcile probes the kernel
 		"privateNetworkRouters":             "reset",   // probed and repaired on every fabric replay
+		"privateNetworkPeeringPolicies":     "reset",   // unknown policy is restricted to default drop before repair
 		"privateNetworkTransport":           "reset",
 		"privateNetworkTransportPeers":      "reset", // forces one peer sync after a restart, by design
 		"processGenerations":                "rebuilt",
@@ -175,6 +176,7 @@ var adoptionInstanceInventory = map[string]string{
 	"StaticEgressExcluded":            "rebuilt",
 	"networkPolicyMu":                 "reset",
 	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
+	"resolvedEgressGeneration":        "reset", // restart invalidates outstanding DNS grants
 	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
 	"TailCount":                       "reset", // the host only ever sees decrements
 	"tailSecondsAccum":                "reset", // informational, not billed

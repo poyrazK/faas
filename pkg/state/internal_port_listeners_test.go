@@ -62,6 +62,12 @@ func checkInternalPortListenerPolicy(t *testing.T, s internalPortListenerStore, 
 				{Name: "renamed-tcp", Port: 5432, Protocol: api.WorkloadPortTCP, Internal: tc.tcpPrivate},
 				{Name: "renamed-udp", Port: 5432, Protocol: api.WorkloadPortUDP, Internal: tc.udpPrivate},
 			}}
+			if !tc.tcpPrivate {
+				manifest.Ports[0].Name = "tcp-old-name"
+			}
+			if !tc.udpPrivate {
+				manifest.Ports[1].Name = "udp-old-name"
+			}
 			if _, err := s.UpdateApp(ctx, app, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 				t.Fatal(err)
 			}
@@ -80,5 +86,29 @@ func checkInternalPortListenerPolicy(t *testing.T, s internalPortListenerStore, 
 				t.Fatalf("UDP public route: %v", err)
 			}
 		})
+	}
+	for _, ports := range [][]api.WorkloadPort{nil, {{Name: "renamed", Port: 5432}}, {{Name: "tcp-old-name", Port: 5433}}, {{Name: "tcp-old-name", Port: 5432, Protocol: api.WorkloadPortUDP}}} {
+		manifest := state.AppManifest{Ports: ports}
+		if _, err := s.UpdateApp(ctx, app, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+			t.Fatal(err)
+		}
+		if rows, err := s.ListEnabledTCPListeners(ctx); err != nil || len(rows) != 0 {
+			t.Fatalf("withdrawn TCP declaration in inventory: %v, %v", rows, err)
+		}
+		if _, err := s.TCPListenerByPublicPort(ctx, 40130); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("withdrawn TCP declaration still routable: %v", err)
+		}
+	}
+	for _, ports := range [][]api.WorkloadPort{nil, {{Name: "renamed", Port: 5432, Protocol: api.WorkloadPortUDP}}, {{Name: "udp-old-name", Port: 5433, Protocol: api.WorkloadPortUDP}}, {{Name: "udp-old-name", Port: 5432, Protocol: api.WorkloadPortTCP}}} {
+		manifest := state.AppManifest{Ports: ports}
+		if _, err := s.UpdateApp(ctx, app, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+			t.Fatal(err)
+		}
+		if rows, err := s.ListEnabledUDPListeners(ctx); err != nil || len(rows) != 0 {
+			t.Fatalf("withdrawn UDP declaration in inventory: %v, %v", rows, err)
+		}
+		if _, err := s.UDPListenerByPublicPort(ctx, 40130); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("withdrawn UDP declaration still routable: %v", err)
+		}
 	}
 }

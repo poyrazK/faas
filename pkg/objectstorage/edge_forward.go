@@ -14,11 +14,12 @@ type PublicReadForwardConfig struct {
 	Store PublicReadStore
 	// HostLookups bounds store reads for hostnames never seen naming an
 	// app; nil leaves them unbounded (ADR-20261103163954 §4).
-	HostLookups *HostLookupBudget
-	AppsDomain  string
-	Forward     http.Handler
-	Next        http.Handler
-	Log         *slog.Logger
+	HostLookups           *HostLookupBudget
+	AppsDomain            string
+	TenantSurfacesEnabled func() bool
+	Forward               http.Handler
+	Next                  http.Handler
+	Log                   *slog.Logger
 }
 
 type publicReadForwarder struct {
@@ -44,7 +45,7 @@ func NewPublicReadForwarder(c PublicReadForwardConfig) (http.Handler, error) {
 		appsDomain = "gregale.dev"
 	}
 	return &publicReadForwarder{
-		match:   &publicReadHandler{store: c.Store, appsDomain: appsDomain, mounts: newPublicMountCache(), hostLookups: c.HostLookups},
+		match:   &publicReadHandler{store: c.Store, appsDomain: appsDomain, mounts: newPublicMountCache(), hostLookups: c.HostLookups, tenantSurfacesEnabled: c.TenantSurfacesEnabled},
 		forward: c.Forward, next: c.Next, log: c.Log,
 	}, nil
 }

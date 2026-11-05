@@ -89,7 +89,10 @@ the rotation-capable starter everywhere, distribute a new key in
 `previous_owner_keys` while the current key remains active, then switch the
 active `owner_key_id` and keep the old key as previous. After that rollout
 completes, set `payload_encryption_version` to `2`; live payloads are rewrapped
-in bounded background batches. Retain the old owner key for at least 30 days
+in bounded background batches. Rewrapping authenticates the active cipher when
+native and explicit v2 envelopes share a key ID; bounded scans pass already-current
+and locked rows without repeatedly rewriting current ciphertext. Retain the old
+owner key for at least 30 days
 after the active-key rollout completes because caller ownership hashes cannot
 be recomputed.
 
@@ -286,6 +289,17 @@ requested cancellations remain cancelled. Observe the handler cancellation
 signal and make external side effects idempotent using the task ID. HTTP
 connections also have a bounded drain window. Queue recovery falls back to lease
 expiry if the database is unavailable or the process is killed before cleanup.
+
+Execution has a local 30-second lease deadline independent of heartbeat requests.
+Database renewal locks the Task row before checking lease and Task expiry, so
+a row-lock wait cannot revive ownership that expired while it was blocked.
+A recorded cancellation prevents a new execution attempt: after lease expiry,
+the next claim settles the Task as cancelled without invoking the handler or
+spending another attempt. Active handlers still observe cooperative cancellation.
+Failed or blocked renewals cancel the handler context at the last proven deadline;
+successful renewals exclude database response latency. A late response cannot
+revive expired execution. Keep observing the context and make external effects
+idempotent by Task ID.
 
 gregale mcp doctor --url http://127.0.0.1:8080/mcp
 gregale mcp tools --url http://127.0.0.1:8080/mcp

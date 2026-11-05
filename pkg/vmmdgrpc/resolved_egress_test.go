@@ -18,6 +18,7 @@ import (
 
 type recordingAllower struct {
 	*fakeVMM
+	owner        fcvm.ServiceCallerIdentity
 	source       netip.Addr
 	addrs        []netip.Addr
 	ttl          time.Duration
@@ -25,7 +26,8 @@ type recordingAllower struct {
 	err          error
 }
 
-func (r *recordingAllower) AllowResolvedEgress(_ context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+func (r *recordingAllower) AllowResolvedEgress(_ context.Context, source netip.Addr, owner fcvm.ServiceCallerIdentity, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	r.owner = owner
 	r.source, r.addrs, r.ttl, r.databasePort = source, addrs, ttl, databasePort
 	return r.err
 }
@@ -34,29 +36,30 @@ func TestAllowResolvedEgressRPC(t *testing.T) {
 	a := &recordingAllower{fakeVMM: &fakeVMM{}}
 	s := vmmdgrpc.New(a, wire.NewOpsMetrics("vmmd_test"), "1.10.0", nil)
 	ack, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{
-		SourceIp: "10.100.0.7", Addresses: []string{"198.51.100.10", "2001:db8::1"}, TtlSeconds: 300,
+		InstanceId: "instance", NetworkGeneration: "generation", SourceIp: "10.100.0.7", Addresses: []string{"198.51.100.10", "2001:db8::1"}, TtlSeconds: 300,
 	})
 	if err != nil || !ack.GetMatched() {
 		t.Fatalf("ack = %v, %v", ack, err)
 	}
-	if a.source.String() != "10.100.0.7" || len(a.addrs) != 2 || a.ttl != 300*time.Second || a.databasePort != 0 {
+	if a.owner.InstanceID != "instance" || a.owner.NetworkGeneration != "generation" || a.source.String() != "10.100.0.7" || len(a.addrs) != 2 || a.ttl != 300*time.Second || a.databasePort != 0 {
 		t.Fatalf("forwarded = %v %v %v %d", a.source, a.addrs, a.ttl, a.databasePort)
 	}
 	// ADR 20261026150000: a bound database's port rides the same call.
 	if _, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{
-		SourceIp: "10.100.0.7", Addresses: []string{"198.51.100.10"}, TtlSeconds: 300, DatabasePort: 5432,
+		InstanceId: "instance", NetworkGeneration: "generation", SourceIp: "10.100.0.7", Addresses: []string{"198.51.100.10"}, TtlSeconds: 300, DatabasePort: 5432,
 	}); err != nil || a.databasePort != 5432 {
 		t.Fatalf("database port = %d, %v", a.databasePort, err)
 	}
 	a.err = fcvm.ErrResolvedEgressNoInstance
-	if ack, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{SourceIp: "10.100.0.8"}); err != nil || ack.GetMatched() {
+	if ack, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{SourceIp: "10.100.0.8", InstanceId: "instance", NetworkGeneration: "generation"}); err != nil || ack.GetMatched() {
 		t.Fatalf("unknown source = %v, %v; want matched=false, no error", ack, err)
 	}
 	for _, bad := range []*vmmdpb.AllowResolvedEgressRequest{
-		{SourceIp: "nope"},
-		{SourceIp: "10.100.0.7", Addresses: []string{"999.1.1.1"}},
-		{SourceIp: "10.100.0.7", DatabasePort: 70000},
-		{SourceIp: "10.100.0.7", DatabasePort: 25}, // ADR-361 never opens SMTP
+		{SourceIp: "10.100.0.7"},
+		{SourceIp: "nope", InstanceId: "instance", NetworkGeneration: "generation"},
+		{SourceIp: "10.100.0.7", InstanceId: "instance", NetworkGeneration: "generation", Addresses: []string{"999.1.1.1"}},
+		{SourceIp: "10.100.0.7", InstanceId: "instance", NetworkGeneration: "generation", DatabasePort: 70000},
+		{SourceIp: "10.100.0.7", InstanceId: "instance", NetworkGeneration: "generation", DatabasePort: 25}, // ADR-361 never opens SMTP
 	} {
 		if _, err := s.AllowResolvedEgress(context.Background(), bad); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("%v: code = %v, want InvalidArgument", bad, status.Code(err))

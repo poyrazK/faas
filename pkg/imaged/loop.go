@@ -36,9 +36,12 @@ import (
 
 const (
 	staleDeploymentSweepEvery = 5 * time.Minute
-	staleDeploymentThreshold  = 2 * time.Hour
-	staleDeploymentBatchSize  = 64
-	securityScanSweepEvery    = 6 * time.Hour
+	// signatureRevalidationEvery bounds how long a rolled-back image the
+	// current trust list rejects can serve (ADR-20261020085706 amendment 14).
+	signatureRevalidationEvery = 5 * time.Minute
+	staleDeploymentThreshold   = 2 * time.Hour
+	staleDeploymentBatchSize   = 64
+	securityScanSweepEvery     = 6 * time.Hour
 	// Evidence leases are checked much more frequently than the expensive
 	// scanner sweep so an enforce-mode app cannot continue serving after its
 	// last verified result has expired.
@@ -50,6 +53,12 @@ const (
 type Loop struct {
 	handler *Handler
 	store   state.Store
+	// signatureSweep keeps periodic signature revalidations from overlapping.
+	signatureSweep sync.Mutex
+	// leaseRescans records when an expired-evidence rescan started, per
+	// deployment, so the security lease waits for it once (amendment 14).
+	leaseRescanMu sync.Mutex
+	leaseRescans  map[string]time.Time
 	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
 	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
 	crashCaptureCryptoEvery time.Duration
@@ -260,6 +269,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer staleDeploymentTicker.Stop()
 	releaseApprovalTicker := time.NewTicker(releaseApprovalHoldSweepEvery)
 	defer releaseApprovalTicker.Stop()
+	signatureTicker := time.NewTicker(signatureRevalidationEvery)
+	defer signatureTicker.Stop()
 	securityScanEvery := l.securityScanEvery
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
@@ -376,6 +387,18 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.reconcileStaleDeployments(ctx)
 		case <-releaseApprovalTicker.C:
 			l.resumeReleaseApprovalHolds(ctx)
+		case <-signatureTicker.C:
+			// ADR-20261020085706 amendment 14: a rollback (manual or
+			// automatic) or signing turned on later can put an image the
+			// current trust list rejects back into service; revalidate every
+			// live signed image periodically, not only on start and signer
+			// changes.
+			if l.signatureSweep.TryLock() {
+				go func() {
+					defer l.signatureSweep.Unlock()
+					l.reconcileSecuritySignatures(ctx, l.now())
+				}()
+			}
 		case tick := <-l.securityScanCh:
 			l.reconcileSecurityScans(ctx, tick, securityScanEvery)
 		case tick := <-l.securityLeaseCh:

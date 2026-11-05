@@ -137,7 +137,10 @@ func TestNativeNetworkBatchesAndCaptureUseGatedOwnerWithoutLegacyRunner(t *testi
 		t.Fatalf("ip stdin=%q err=%v", data, err)
 	}
 	t.Setenv("GREGALE_NATIVE_HELPER_INPUT_MARKER", "")
-	t.Setenv("GREGALE_NATIVE_HELPER_OUTPUT", "iifname \"tap0\" ip daddr { 1.2.3.0/24 } accept # handle 42\n")
+	// adr: 20261104170000 — database exceptions cannot supply the public handle.
+	t.Setenv("GREGALE_NATIVE_HELPER_OUTPUT",
+		"iifname \"tap0\" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 42\n"+
+			"iifname \"tap0\" ip daddr . tcp dport @egress_db accept # handle 99\n")
 	cap, err := m.networkCaptureRunner(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -366,7 +369,7 @@ func TestNativeNetworkPoliciesRejectStaleLiveGeneration(t *testing.T) {
 			case "circuit":
 				err = m.UpdateEgressCircuit(t.Context(), inst.AppID, []netns.EgressCircuitTarget{circuitTarget("203.0.113.9", 443)})
 			case "dns":
-				err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, time.Minute, 0)
+				err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, resolvedOwner(t, m, inst.Net.HostIP), []netip.Addr{netip.MustParseAddr("1.2.3.4")}, time.Minute, 0)
 			}
 			if err == nil || !strings.Contains(err.Error(), "generation") || len(m.run.(*fakeRunner).commands) != 0 {
 				t.Fatalf("stale %s effect err=%v", operation, err)

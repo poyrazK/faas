@@ -21,6 +21,7 @@ type uncertainAccountingProvider struct {
 	discoveryErr         error
 	discoveryEmpty       bool
 	discoveryHook        func()
+	provisionHook        func()
 	discoveryCalls       int
 	deletionCalls        int
 	lastDiscovery        ResourceDiscoveryRequest
@@ -34,6 +35,9 @@ func (p *uncertainAccountingProvider) Provision(ctx context.Context, request Pro
 		return ObservedDatabase{}, ErrConflict
 	}
 	p.physical = true
+	if p.provisionHook != nil {
+		p.provisionHook()
+	}
 	return ObservedDatabase{}, ErrUnavailable // Accepted creation loses its response.
 }
 

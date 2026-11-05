@@ -13,13 +13,13 @@ import (
 type serviceCallerVMM struct{ *appTaskRuntimeVMM }
 
 func (*serviceCallerVMM) ResolveServiceCaller(address netip.Addr) (fcvm.ServiceCallerIdentity, bool) {
-	return fcvm.ServiceCallerIdentity{InstanceID: "task", AccountID: "account", AppID: "caller", DeploymentID: "deployment", AppTask: true}, address.String() == "10.100.0.7"
+	return fcvm.ServiceCallerIdentity{InstanceID: "task", NetworkGeneration: "generation", AccountID: "account", AppID: "caller", DeploymentID: "deployment", AppTask: true}, address.String() == "10.100.0.7"
 }
 
 func TestServiceCallerIdentityRPC(t *testing.T) {
 	client := newExecutionClient(t, &serviceCallerVMM{&appTaskRuntimeVMM{fakeVMM: &fakeVMM{}}})
 	got, err := client.ResolveServiceCaller(t.Context(), &vmmdpb.ResolveServiceCallerRequest{SourceIp: "10.100.0.7"})
-	if err != nil || !got.GetMatched() || !got.GetAppTask() || got.GetInstanceId() != "task" || got.GetAppId() != "caller" || got.GetDeploymentId() != "deployment" {
+	if err != nil || !got.GetMatched() || !got.GetAppTask() || got.GetInstanceId() != "task" || got.GetNetworkGeneration() != "generation" || got.GetAppId() != "caller" || got.GetDeploymentId() != "deployment" {
 		t.Fatalf("identity RPC = %+v, %v", got, err)
 	}
 	got, err = client.ResolveServiceCaller(t.Context(), &vmmdpb.ResolveServiceCallerRequest{SourceIp: "10.100.0.8"})

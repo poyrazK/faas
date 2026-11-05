@@ -46,6 +46,8 @@ func TestManagedPostgres(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
 	j := &postgresJourney{tg: tg, bindings: map[string]string{}}
+	hidden := hiddenCapabilities(t, tg)
+	skipHidden(t, hidden, "release-commands")
 	j.app = tg.app(t, "pg")
 	j.db, j.restored = tg.slug("pg"), tg.slug("pg-restored")
 	// Bindings go before databases and databases before the app (cleanups
@@ -66,7 +68,10 @@ func TestManagedPostgres(t *testing.T) {
 		}
 	})
 	s.step("attach_database", func(t *testing.T) { j.attach(t, j.db, "DATABASE_URL") })
+	s.step("migrate", j.migrate)
 	s.check("binding_verify", func(t *testing.T) {
+		// The probe runs as an app task.
+		skipHidden(t, hidden, "app-tasks")
 		tg.ok(t, 2*time.Minute, "app", "binding", "verify", j.app, "--postgres", "DATABASE_URL")
 	})
 	s.step("write_and_read", func(t *testing.T) {
@@ -155,10 +160,26 @@ func (j *postgresJourney) bind(t *testing.T, name, key string, extra ...string) 
 // database with a binding cannot be deleted.
 func (j *postgresJourney) detach(t *testing.T, name string) {
 	t.Helper()
-	id := j.bindings[name]
-	if id == "" {
-		return
+	if id := j.bindings[name]; id != "" {
+		j.unbind(t, name, id)
+		delete(j.bindings, name)
 	}
+}
+
+// migrate creates the probe's table the way docs/postgres.md tells
+// customers to run migrations: a release command connecting through a
+// migration binding, since serving credentials cannot change the schema.
+// The migration binding is deleted again, so the delete steps find only
+// DATABASE_URL.
+func (j *postgresJourney) migrate(t *testing.T) {
+	id := j.bind(t, j.db, "MIGRATION_DATABASE_URL", "--access", "migration")
+	j.tg.deploy(t, j.app, "--path", postgresProbeSource(t, "create"), "--rollout", "immediate")
+	j.unbind(t, j.db, id)
+}
+
+// unbind deletes one of name's bindings and waits until it is gone.
+func (j *postgresJourney) unbind(t *testing.T, name, id string) {
+	t.Helper()
 	j.tg.ok(t, time.Minute, "postgres", "bindings", "delete", id)
 	eventually(t, name+" binding deleted", 5*time.Minute, 5*time.Second, func() (bool, string) {
 		list := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "list", name).stdout)
@@ -170,7 +191,6 @@ func (j *postgresJourney) detach(t *testing.T, name string) {
 		}
 		return true, ""
 	})
-	delete(j.bindings, name)
 }
 
 // notes calls the app's /notes for the database bound as key. The first

@@ -2,6 +2,7 @@ package neon
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/url"
 	"time"
@@ -19,6 +20,30 @@ import (
 // that the two agree before enforcement is turned on.
 
 var _ managedpostgres.ComputeCapProvider = (*Provider)(nil)
+
+var _ managedpostgres.ComputeCapLagger = (*Provider)(nil)
+
+// computeCounterLag bounds how long Neon's project consumption counters trail
+// use. Neon checks the quota only when the counters move, so a compute keeps
+// running past its quota until then. Measured in production on 2026-11-04: the
+// counters moved once, 24 to 26 minutes after the use, and a 60 s quota was
+// enforced at that refresh after 372 s (ADR-20261025094915 amendment
+// 2026-11-04). One sample, so the bound has headroom.
+const computeCounterLag = 30 * time.Minute
+
+// CounterLagUnitSeconds is what a database of spec can use at its largest size
+// before Neon's counter shows it. An unknown class counts as the largest.
+func (p *Provider) CounterLagUnitSeconds(spec managedpostgres.Spec) int64 {
+	maximumCU := 0.0
+	if profile, ok := profiles[spec.Class]; ok {
+		maximumCU = profile.maximumCU
+	} else {
+		for _, profile := range profiles {
+			maximumCU = max(maximumCU, profile.maximumCU)
+		}
+	}
+	return int64(math.Ceil(maximumCU * computeCounterLag.Seconds()))
+}
 
 type computeCapProject struct {
 	ID                     string `json:"id"`

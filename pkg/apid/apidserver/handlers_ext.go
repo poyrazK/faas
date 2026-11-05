@@ -2053,6 +2053,10 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.appDependentsProblem(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Read pending work before scheduling deletion, but cancel it only after
 	// the intent transaction accepts the delete. A Git ownership rejection
 	// must preserve the live app and its queued work.
@@ -2299,6 +2303,20 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	promotionID, promotionProblem := s.promotionAttempt(guardCtx, r, app, d, req)
+	if promotionProblem != nil {
+		api.WriteProblem(w, promotionProblem)
+		return
+	}
+	if promotionID != "" {
+		guardCtx = state.ContextWithDeploymentPromotion(guardCtx, promotionID, req)
+	}
+	r = r.WithContext(guardCtx)
 	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
 	if req.TrafficPercent > d.TrafficPercent {
 		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
@@ -2306,12 +2324,6 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	r = r.WithContext(guardCtx)
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -2381,6 +2393,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case trafficguard.PromotionProblem(err) != nil:
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
+		case promotionAttemptProblem(err) != nil:
+			api.WriteProblem(w, promotionAttemptProblem(err))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -2460,6 +2474,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	attempt, problem := s.rollbackAttempt(r.Context(), r, acct, app, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.RestoreDatabases {
 		// The switch belongs to database-rollbacks (ADR-20261023181931, split
 		// from postgres-restore by ADR-20261031091607): while that capability
@@ -2474,7 +2493,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	if req.ExpectedCurrentDeploymentID != nil {
-		s.startCheckedRollback(w, r, acct, app, req)
+		checkedRequest := r
+		if attempt != "" {
+			checkedRequest = r.WithContext(state.ContextWithCheckedRollbackAttempt(r.Context(), attempt))
+		}
+		s.startCheckedRollback(w, checkedRequest, acct, app, req)
 		return
 	}
 	if req.Reason != "" {
@@ -2493,8 +2516,24 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.revalidateRolledBackSignature(r.Context(), app)
 	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// revalidateRolledBackSignature asks imaged to verify the app's live signed
+// images again after a rollback (ADR-20261020085706 amendment 14). A rollback
+// target was verified when it was built, against the trusted signers of the
+// time; a signer removed since (a leaked key) or signing turned on since must
+// not bring it back into service. imaged's revalidation reads the trust table
+// and quarantines an image that no longer verifies; its periodic sweep is the
+// durable fallback when this wake-up is lost.
+func (s *server) revalidateRolledBackSignature(ctx context.Context, app state.App) {
+	if s.notif == nil || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
+		return
+	}
+	_ = s.notif.Notify(ctx, db.NotifyTrustedSignerChanged,
+		fmt.Sprintf(`{"kind":"rollback","app_id":"%s"}`, app.ID))
 }
 
 // warnRollbackCrons tells the caller which crons outlive a rollback
@@ -3779,7 +3818,12 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("default domain storage unavailable"))
 		return
 	}
-	if err := setter.SetDefaultCustomDomain(r.Context(), d.AppID, d.Domain); err != nil {
+	if err := setter.SetDefaultCustomDomain(s.defaultDomainContext(r.Context()), d.AppID, d.Domain); err != nil {
+		if errors.Is(err, state.ErrCustomDomainNotRoutable) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Domain unavailable as default", "This hostname currently routes to another app or a suspended tenant."))
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
 			return
@@ -3944,7 +3988,7 @@ func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDo
 		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
 	}
 	if lookup, ok := s.store.(defaultLookup); ok {
-		if isDefault, err := lookup.IsDefaultCustomDomain(ctx, d.AppID, d.Domain); err == nil {
+		if isDefault, err := lookup.IsDefaultCustomDomain(s.defaultDomainContext(ctx), d.AppID, d.Domain); err == nil {
 			resp.Default = isDefault
 		}
 	}
