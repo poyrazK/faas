@@ -397,6 +397,13 @@ preview answers `403 preview_production_dependency_denied`, and a preview of
 another pull request is refused. To let previews call a production
 dependency, put the apps in a project and use its `preview_service_policy`.
 
+A frontend's public build URLs (`VITE_…_URL`, `NEXT_PUBLIC_…_URL` and the other
+frontend prefixes) follow the pull request too. When a URL names the Gregale
+host of an app the pull request previews, its preview is built with that app's
+preview host instead, so the preview's browser calls reach the PR's own
+backend. URLs on other hosts, including custom domains, are built as they are
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
+
 ## Configuration
 
 Every PR preview runs with `GREGALE_PREVIEW=1`, `GREGALE_PR_NUMBER`,
