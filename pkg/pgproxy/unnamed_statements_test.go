@@ -9,7 +9,7 @@ import (
 )
 
 func TestSkippedUnnamedStatementChangesAreRolledBack(t *testing.T) {
-	s := &pooledSession{statements: map[string]*pgproto3.Parse{}, server: &serverConn{prepared: map[string]bool{}, fe: pgproto3.NewFrontend(bytes.NewReader(nil), &bytes.Buffer{})}}
+	s := &pooledSession{p: &Proxy{}, statements: map[string]*pgproto3.Parse{}, server: &serverConn{prepared: map[string]bool{}, fe: pgproto3.NewFrontend(bytes.NewReader(nil), &bytes.Buffer{})}}
 	if err := s.forward(&pgproto3.Parse{Name: "", Query: "SELECT 11"}); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestSkippedUnnamedStatementChangesAreRolledBack(t *testing.T) {
 func TestFailedParseRestoresNamedAndInvalidatesUnnamed(t *testing.T) {
 	for _, name := range []string{"", "named"} {
 		t.Run(map[bool]string{true: "unnamed", false: "named"}[name == ""], func(t *testing.T) {
-			s := &pooledSession{statements: map[string]*pgproto3.Parse{}, server: &serverConn{prepared: map[string]bool{}, fe: pgproto3.NewFrontend(bytes.NewReader(nil), &bytes.Buffer{})}}
+			s := &pooledSession{p: &Proxy{}, statements: map[string]*pgproto3.Parse{}, server: &serverConn{prepared: map[string]bool{}, fe: pgproto3.NewFrontend(bytes.NewReader(nil), &bytes.Buffer{})}}
 			if err := s.forward(&pgproto3.Parse{Name: name, Query: "SELECT 11"}); err != nil {
 				t.Fatal(err)
 			}

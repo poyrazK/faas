@@ -66,7 +66,7 @@ func TestPostgresCutoverMigrationRetainsAlreadyActivatedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Replay the embedded, batched repair against legacy activated data.
-	data, err := migrations.FS.ReadFile("20261104225604003_managed_postgres_permanent_cutover_targets.sql")
+	data, err := migrations.FS.ReadFile("20261105141918773_managed_postgres_permanent_cutover_targets.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

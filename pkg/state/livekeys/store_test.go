@@ -35,7 +35,7 @@ func open(t *testing.T) *pgxpool.Pool {
 			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql", "20261105102924000_managed_postgres_live_login_dataset.sql", "20261105102924001_managed_postgres_live_login_dataset_validate.sql", "20261105111902000_managed_postgres_live_login_attempts.sql"} {
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql", "20261105141918793_managed_postgres_live_login_dataset.sql", "20261105141918803_managed_postgres_live_login_dataset_validate.sql", "20261105141918820_managed_postgres_live_login_attempts.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

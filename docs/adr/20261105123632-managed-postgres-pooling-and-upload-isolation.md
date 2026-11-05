@@ -11,14 +11,18 @@ the statement. The first client's later Bind then executed the second client's
 SQL. A reproduction with PostgreSQL 16 returned `22` to a client that prepared
 `SELECT 11` after another client prepared `SELECT 22` on the same pooled backend.
 
-The pool now virtualizes empty statement names using the same content-based
-backend names as named protocol statements. Each client retains its own parsed
-query and parameter types; a borrowed backend prepares that query when needed.
+The pool virtualizes empty statement names. Every fresh unnamed Parse receives
+a unique backend name, while named protocol statements retain content-based
+backend names. Each client retains its parsed query, parameter types and backend
+name; a borrowed backend prepares that statement when needed. Reusing identical
+SQL on a fresh unnamed Parse must replan after DDL, including changes to result
+columns: a cached named plan would instead reject it with SQLSTATE `0A000`.
 Close forgets the client's name, simple Query destroys its unnamed statement,
 and a failed unnamed Parse invalidates it. Changes in messages skipped after an
 extended-protocol error are undone. Missing client statements are rejected with
 SQLSTATE `26000` instead of binding a statement another client left behind.
-Existing statement-count limits still bound each backend's cached statements.
+Existing statement-count limits still bound each backend's cached statements;
+a backend exceeding that bound closes when its transaction returns it to the pool.
 
 Archive objects larger than 64 MiB now use S3 multipart upload. Parts stream
 sequentially from seekable sections, so SDK retries rewind only the failed part

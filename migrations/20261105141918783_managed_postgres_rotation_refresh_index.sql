@@ -1,4 +1,4 @@
--- filename: 20261105084107000_managed_postgres_rotation_refresh_index.sql
+-- filename: 20261105141918783_managed_postgres_rotation_refresh_index.sql
 -- migration-compat: expand
 -- ADR-20261105081859: discover rotated credentials that lost their refresh.
 -- +goose NO TRANSACTION

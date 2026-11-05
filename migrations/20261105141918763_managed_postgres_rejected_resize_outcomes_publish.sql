@@ -1,4 +1,4 @@
--- filename: 20261104225604002_managed_postgres_rejected_resize_outcomes_publish.sql
+-- filename: 20261105141918763_managed_postgres_rejected_resize_outcomes_publish.sql
 -- migration-compat: contract
 
 -- The replacement was added NOT VALID and validated in earlier transactions.

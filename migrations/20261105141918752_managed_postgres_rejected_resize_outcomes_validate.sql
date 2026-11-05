@@ -1,4 +1,4 @@
--- filename: 20261104225604001_managed_postgres_rejected_resize_outcomes_validate.sql
+-- filename: 20261105141918752_managed_postgres_rejected_resize_outcomes_validate.sql
 -- migration-compat: expand
 
 -- Validate separately from the constraint replacement's exclusive lock.

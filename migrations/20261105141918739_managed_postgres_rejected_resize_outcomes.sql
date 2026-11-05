@@ -1,4 +1,4 @@
--- filename: 20261104225604000_managed_postgres_rejected_resize_outcomes.sql
+-- filename: 20261105141918739_managed_postgres_rejected_resize_outcomes.sql
 -- migration-compat: expand
 
 -- Confirmed class, storage and idle-policy rejections can finish on the

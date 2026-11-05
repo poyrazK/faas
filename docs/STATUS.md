@@ -459,7 +459,7 @@ retain an immutable failed receipt; uncertain outcomes continue recovery.
 Targeted regressions pass with race detection and real PostgreSQL, including
 legacy cutover writes and the activated-target repair.
 Publishing the expanded resize outcome check requires the full-release data
-step (`20261104225604002`, a contract migration). Production qualification and
+step (`20261105141918763`, a contract migration). Production qualification and
 the separate account-erasure failures above remain open.
 
 The next two review fixes make managed PostgreSQL credential rotations retain
@@ -503,7 +503,7 @@ The following recovery fixes resolve a native restore's historical PostgreSQL
 major before reserving its target, bound proxy backend setup through readiness,
 and order live-login repair by durable attempts so a failing page cannot starve
 later databases ([ADR-20261105111902](adr/20261105111902-managed-postgres-recovery-and-proxy-setup.md)).
-Apply expand migration `20261105111902000` before apid. Historical restores of
+Apply expand migration `20261105141918820` before apid. Historical restores of
 upgraded native databases need the scheduler's new complete-history metadata.
 Local race-enabled catalog regressions and the provider, proxy, live-key and
 scheduler RPC suites pass. Fresh migrations, runtime grants, static analysis,

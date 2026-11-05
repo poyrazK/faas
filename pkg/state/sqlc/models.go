@@ -8493,6 +8493,7 @@ type ManagedPostgresLiveLogin struct {
 	AuthorizedIdentityID pgtype.Text
 }
 
+// Last durable recovery attempt; untried and oldest attempts run first, independently of provider success.
 type ManagedPostgresLiveLoginAttempt struct {
 	DatabaseID  pgtype.UUID
 	AttemptedAt pgtype.Timestamptz

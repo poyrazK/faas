@@ -49,7 +49,7 @@ timeout.
 
 ## Rollout and validation
 
-Apply expand migration `20261105111902000` before the apid upgrade. Older apid
+Apply expand migration `20261105141918820` before the apid upgrade. Older apid
 instances ignore the new attempt table. Deploy the updated scheduler before
 relying on historical restores of upgraded native databases; protobuf readers
 that do not know the new fields continue reading their existing runtime fields.

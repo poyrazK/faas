@@ -1,4 +1,4 @@
--- filename: 20261104225604003_managed_postgres_permanent_cutover_targets.sql
+-- filename: 20261105141918773_managed_postgres_permanent_cutover_targets.sql
 -- migration-compat: expand
 
 -- A temporary restore must never become the app's permanent database.

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgproto3"
@@ -80,7 +81,7 @@ type pooledSession struct {
 	txStatus byte
 	// copyIn: the server waits for the client's COPY data.
 	copyIn     bool
-	statements map[string]*pgproto3.Parse // client name -> its Parse
+	statements map[string]*pgproto3.Parse // client name -> Parse with its backend name
 	// canceler is the client's cancel key's view of the server it holds.
 	canceler *pooledCanceler
 	events   chan serverEvent
@@ -386,8 +387,14 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 	case *pgproto3.Parse:
 		parse := &pgproto3.Parse{Name: m.Name, Query: m.Query, ParameterOIDs: append([]uint32(nil), m.ParameterOIDs...)}
 		e := expectation{kind: 'P', mutates: true, name: m.Name, previous: s.statements[m.Name]}
-		s.statements[m.Name] = parse
 		name := serverStatement(parse)
+		if m.Name == "" {
+			// A new unnamed Parse replans even identical SQL after DDL.
+			// Its identity remains stable when this client borrows another server.
+			name = "gregale_unnamed_" + strconv.FormatUint(s.p.statementSequence.Add(1), 16)
+		}
+		parse.Name = name
+		s.statements[m.Name] = parse
 		if s.server.prepared[name] {
 			e.synthetic = []byte{'1', 0, 0, 0, 4}
 			s.expect = append(s.expect, e)
@@ -462,7 +469,7 @@ func (s *pooledSession) prepare(clientName string) (string, error) {
 	if !ok {
 		return "", &fatal{"26000", fmt.Sprintf("prepared statement %q does not exist", clientName)}
 	}
-	name := serverStatement(parse)
+	name := parse.Name
 	if !s.server.prepared[name] {
 		s.server.fe.Send(&pgproto3.Parse{Name: name, Query: parse.Query, ParameterOIDs: parse.ParameterOIDs})
 		s.server.prepared[name] = true
@@ -471,8 +478,8 @@ func (s *pooledSession) prepare(clientName string) (string, error) {
 	return name, nil
 }
 
-// serverStatement names a statement by its text and parameter types, so
-// clients preparing the same query share it on a server.
+// serverStatement names a named statement by its text and parameter types,
+// so clients preparing the same named query share it on a server.
 func serverStatement(p *pgproto3.Parse) string {
 	h := sha256.New()
 	h.Write([]byte(p.Query))

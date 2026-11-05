@@ -99,7 +99,7 @@ ordinary changes as they do for major upgrades.
 
 The wider outcome check is added and validated in separate migrations. Its
 publication drops and renames a constraint, so
-`20261104225604002_managed_postgres_rejected_resize_outcomes_publish.sql` is a
+`20261105141918763_managed_postgres_rejected_resize_outcomes_publish.sql` is a
 **contract migration applied by the full-release data step**. Apply that step
 before relying on terminal ordinary-change receipts. Until then the old check
 rejects the new outcome and the change remains pending; no pin is released.

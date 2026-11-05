@@ -46,8 +46,8 @@ The customer's live keys and replication slot name are preserved.
 
 ## Release and recovery
 
-Apply the expand migration `20261105102924000` and its separate constraint
-validation `20261105102924001` before the control-plane code. Existing rows
+Apply the expand migration `20261105141918793` and its separate constraint
+validation `20261105141918803` before the control-plane code. Existing rows
 remain valid with both fields NULL. No bulk backfill guesses a branch identity.
 The existing five-minute worker replaces eligible entries in its bounded batches.
 
@@ -66,3 +66,8 @@ Local validation covers SET ROLE for existing and later bindings, legacy-role
 replacement, a retained logical slot where the fixture supports it, disable
 replay, invalid legacy selectors, catalog write failure, stale dataset results,
 and N-1 writes.
+
+Compute-cap suspension holds use the same pinned dataset for observation,
+placement and release as deletion holds. Project-wide quota writes retain their
+lifecycle selector; that selector does not authorize choosing a mutable default
+branch for an endpoint hold.
