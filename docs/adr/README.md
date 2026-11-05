@@ -1,5 +1,11 @@
 # Architecture Decision Records
 
+- [ADR-20261105130932: Preserve PostgreSQL state on rejected work](20261105130932-managed-postgres-admission-and-batch-recovery.md) — roll back skipped named statements, admit resizes before retiring standbys, and reserve archive bytes across concurrent streams
+
+- [ADR-20261105123632: Isolate pooled statements and archive upload failures](20261105123632-managed-postgres-pooling-and-upload-isolation.md) — preserve each client's unnamed SQL, stream multipart backups, keep unrelated databases uploading, and close archive sockets on shutdown
+
+- [ADR-20261105120854: Mirror holds protect PostgreSQL recovery data](20261105120854-managed-postgres-mirror-retention-safety.md) — verify both hold inventories before pruning, protect queued mirror deletions, and discover recovery backups despite incomplete primary listings
+
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
 - [ADR-20261104002000: Serialize rollback recovery](20261104002000-rollback-recovery-serialization.md) — accepted; automatic rollback checks the observed serving release, configuration restoration commits atomically, guards paginate, edge reads hold its mutation lock, database compensation reconciles actual traffic, project rollback conditionally restores all traffic, checked rollback rechecks release controls, and monitor intent commits with its incident link.
 

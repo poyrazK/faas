@@ -130,12 +130,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	var fleet *managedpostgres.Service
-	capLimits := managedPostgresCapLimits(store, accountStore, overage)
+	billingAllowances := managedpg.OverageAllowances(managedPostgresCapLimits(store, accountStore, overage), accountStore, time.Now)
 	usageOptions.AfterSweep = func(ctx context.Context) {
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
 		}
-		deliverManagedPostgresOverage(ctx, store, hooks.charges(), capLimits, log)
+		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, log)
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
@@ -429,7 +429,7 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 // deliverManagedPostgresOverage charges overage through the billing provider
 // after a cap sweep (ADR-20261031110037). Without a provider, or with its
 // managed PostgreSQL policy off, nothing is charged or recorded.
-func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.CapCeiling, log *slog.Logger) {
+func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.OverageAllowance, log *slog.Logger) {
 	if sink == nil {
 		return
 	}

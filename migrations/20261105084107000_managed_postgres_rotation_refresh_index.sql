@@ -1,0 +1,17 @@
+-- filename: 20261105084107000_managed_postgres_rotation_refresh_index.sql
+-- migration-compat: expand
+-- ADR-20261105081859: discover rotated credentials that lost their refresh.
+-- +goose NO TRANSACTION
+
+-- +goose Up
+SET lock_timeout = '5s';
+-- An interrupted concurrent build may leave an invalid index of this name.
+DROP INDEX CONCURRENTLY IF EXISTS managed_postgres_bindings_refresh_reconcile_idx;
+CREATE INDEX CONCURRENTLY managed_postgres_bindings_refresh_reconcile_idx
+ ON managed_postgres_bindings (retry_at,id)
+ WHERE state='ready' AND access<>'migration'
+  AND rotation_previous_generation IS NOT NULL AND NOT rotation_cleanup_ready;
+
+-- +goose Down
+SET lock_timeout = '5s';
+DROP INDEX CONCURRENTLY IF EXISTS managed_postgres_bindings_refresh_reconcile_idx;

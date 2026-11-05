@@ -7370,6 +7370,10 @@ SELECT database_id,database_account_id FROM managed_postgres_bindings WHERE id=$
 -- name: ManagedPostgresDueBindings :many
 SELECT b.* FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
 WHERE (b.state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND b.state IN ('provisioning','failed'))
+    OR (b.state='ready' AND b.access<>'migration' AND b.rotation_previous_generation IS NOT NULL AND NOT b.rotation_cleanup_ready
+      AND NOT EXISTS (SELECT 1 FROM notification_outbox outbox WHERE outbox.channel='runtime_config_restart'
+        AND outbox.payload::jsonb->>'app_id'=b.app_id::text AND outbox.payload::jsonb->>'wake_id'=b.rotation_wake_id::text
+        AND outbox.state IN ('pending','processing')))
     OR (b.rotation_cleanup_ready AND b.state IN ('ready','retiring')
       AND (b.access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task
           WHERE task.account_id=b.account_id AND task.app_id=b.app_id AND task.deployment_scope=b.scope
@@ -14257,6 +14261,51 @@ WHERE s.account_id = sqlc.arg(account_id)::text::uuid
  AND s.app_id = sqlc.arg(app_id)::text::uuid AND s.scope = sqlc.arg(scope)::text
 ORDER BY s.scope, s.key;
 
+-- Rotation refreshes share the app -> binding lock order with publication.
+-- name: LockManagedPostgresRotationApp :exec
+SELECT a.id FROM apps a JOIN managed_postgres_bindings b ON b.app_id=a.id
+WHERE b.id=sqlc.arg(binding_id)::uuid FOR UPDATE OF a;
+
+-- name: LockManagedPostgresRotationBinding :one
+SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
+ app_id::text AS app_id, database_account_id::text AS database_account_id, scope, environment_key, access,
+ coalesce(provider_identity_id, '')::text AS provider_identity_id,
+ coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
+ coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
+ coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
+ state, coalesce(last_error_code, '')::text AS last_error_code,
+ coalesce(lease_token, '')::text AS lease_token, lease_until,
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit FROM managed_postgres_bindings
+WHERE id=sqlc.arg(binding_id)::uuid FOR UPDATE;
+
+-- name: ManagedPostgresRotationRuntime :one
+SELECT EXISTS (SELECT 1 FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid AND status='live') AS live,
+ EXISTS (SELECT 1 FROM instances WHERE app_id=sqlc.arg(app_id)::uuid AND state=ANY(sqlc.arg(resident_states)::text[])) AS resident;
+
+-- name: CompleteIdleManagedPostgresRotationRefresh :exec
+UPDATE managed_postgres_bindings SET rotation_cleanup_ready=true,retry_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE id=sqlc.arg(binding_id)::uuid AND state='ready' AND rotation_previous_generation IS NOT NULL;
+
+-- App and binding locks serialize publication, retries and old-worker repair.
+-- Replay terminal handoffs under the same wake ID until retirement is proven.
+-- name: QueueManagedPostgresRotationRefresh :exec
+WITH previous AS (
+ SELECT id FROM notification_outbox WHERE channel='runtime_config_restart'
+ AND payload::jsonb->>'app_id'=sqlc.arg(app_id)::text
+ AND payload::jsonb->>'wake_id'=sqlc.arg(wake_id)::text
+ ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
+), retried AS (
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
+ WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
+), inserted AS (
+ INSERT INTO notification_outbox(channel,payload)
+ SELECT 'runtime_config_restart',json_build_object('app_id',sqlc.arg(app_id)::text,'wake_id',sqlc.arg(wake_id)::text)::text
+ WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
+)
+SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
+ FROM (SELECT * FROM retried UNION ALL SELECT * FROM inserted) queued;
+
 -- name: FinishManagedPostgresBindingProvision :one
 UPDATE managed_postgres_bindings AS binding SET state = 'ready',
  provider_identity_id = sqlc.arg(provider_identity_id)::text,
@@ -14313,6 +14362,10 @@ SELECT id::text AS id, account_id::text AS account_id, database_id::text AS data
  coalesce(lease_token, '')::text AS lease_token, lease_until,
  attempt_count, retry_at, created_at, updated_at, deleted_at FROM managed_postgres_bindings binding
 WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed'))
+ OR (state='ready' AND access<>'migration' AND rotation_previous_generation IS NOT NULL AND NOT rotation_cleanup_ready
+ AND NOT EXISTS (SELECT 1 FROM notification_outbox o WHERE o.channel='runtime_config_restart'
+ AND o.payload::jsonb->>'app_id'=binding.app_id::text AND o.payload::jsonb->>'wake_id'=binding.rotation_wake_id::text
+ AND o.state IN ('pending','processing')))
  OR (rotation_cleanup_ready AND state IN ('ready','retiring')
   AND (access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task WHERE task.account_id = binding.account_id
  AND task.app_id = binding.app_id AND task.deployment_scope = binding.scope
@@ -14320,13 +14373,16 @@ WHERE (state = 'deleting' OR (sqlc.arg(include_provisioning)::boolean AND state 
  AND retry_at <= sqlc.arg(now)::timestamptz AND (lease_until IS NULL OR lease_until <= sqlc.arg(now))
 ORDER BY retry_at, id LIMIT sqlc.arg(batch_size)::int;
 
+-- The health resource is the concrete observation target, independently of
+-- the catalog lifecycle/deletion selector. Legacy collectors still write the
+-- lifecycle alias; those samples cannot match a pinned dataset in these reads.
 -- name: ClaimManagedPostgresHealthCheck :one
 WITH candidate AS (
  SELECT d.* FROM managed_postgres_databases d
  LEFT JOIN managed_postgres_health h ON h.database_id = d.id
  WHERE d.state = 'ready' AND d.provider_resource_id IS NOT NULL
  AND (h.database_id IS NULL OR h.next_check_at <= sqlc.arg(now)::timestamptz
-  OR h.provider_resource_id <> d.provider_resource_id OR h.backend_fingerprint <> d.backend_fingerprint
+  OR h.provider_resource_id IS DISTINCT FROM coalesce(d.data_resource_id,d.provider_resource_id) OR h.backend_fingerprint <> d.backend_fingerprint
   OR h.backend_id <> d.backend_id OR h.desired_generation <> d.desired_generation)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(now))
  ORDER BY coalesce(h.next_check_at, d.created_at), d.id
@@ -14334,7 +14390,7 @@ WITH candidate AS (
 ), claimed AS (
  INSERT INTO managed_postgres_health AS h
  (database_id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation, next_check_at, lease_token, lease_until)
- SELECT id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation,
+ SELECT id, account_id, backend_id, backend_fingerprint, coalesce(data_resource_id,provider_resource_id), desired_generation,
  sqlc.arg(now), sqlc.arg(lease_token)::text, sqlc.arg(lease_until)::timestamptz FROM candidate
  ON CONFLICT (database_id) DO UPDATE SET
  account_id = EXCLUDED.account_id, backend_id = EXCLUDED.backend_id,
@@ -14357,7 +14413,7 @@ WITH candidate AS (
  RETURNING database_id, attempt_count
 )
 SELECT d.id::text AS id, d.account_id::text AS account_id, d.backend_id, d.backend_fingerprint,
- d.provider_resource_id::text AS provider_resource_id, d.desired_generation,
+ d.provider_resource_id::text AS provider_resource_id, coalesce(d.data_resource_id,'')::text AS data_resource_id, d.desired_generation,
  d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes,
  d.restore_window_seconds, c.attempt_count
 FROM candidate d JOIN claimed c ON c.database_id = d.id;
@@ -14377,7 +14433,7 @@ UPDATE managed_postgres_health h SET
 FROM target d
 WHERE h.database_id = sqlc.arg(database_id)::text::uuid AND h.database_id = d.id AND d.state = 'ready'
  AND h.lease_token = sqlc.arg(lease_token)::text AND h.lease_until > sqlc.arg(checked_at)
- AND (d.account_id,d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ AND (d.account_id,d.backend_id,d.backend_fingerprint,coalesce(d.data_resource_id,d.provider_resource_id),d.desired_generation)
  = (h.account_id,h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation);
 
 -- name: ReadManagedPostgresHealthSnapshots :many
@@ -14386,7 +14442,7 @@ SELECT h.database_id::text AS database_id, h.provider_status, h.compute_state,
 FROM managed_postgres_health h JOIN managed_postgres_databases d ON d.id = h.database_id
 WHERE d.account_id = sqlc.arg(account_id)::text::uuid AND h.account_id = d.account_id AND d.state = 'ready'
  AND h.database_id::text = ANY(sqlc.arg(database_ids)::text[])
- AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ AND (d.backend_id,d.backend_fingerprint,coalesce(d.data_resource_id,d.provider_resource_id),d.desired_generation)
  = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation);
 
 -- name: CountManagedPostgresHealth :one
@@ -14398,7 +14454,7 @@ WITH statuses AS (
  ELSE 'healthy' END AS status
  FROM managed_postgres_databases d LEFT JOIN managed_postgres_health h ON h.database_id = d.id
  AND h.account_id = d.account_id
- AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ AND (d.backend_id,d.backend_fingerprint,coalesce(d.data_resource_id,d.provider_resource_id),d.desired_generation)
  = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
  WHERE d.state = 'ready'
 )
@@ -15094,10 +15150,13 @@ SELECT (status='deleted_pending' AND deletion_includes_managed_postgres)::boolea
 -- name: DueManagedPostgresLifecycleDatabases :many
 SELECT * FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed')))
-    AND retry_at<=sqlc.arg(at)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
+    AND (retry_at<=sqlc.arg(at)::timestamptz OR (state='deleting' AND purge_after>sqlc.arg(at)::timestamptz
+      AND last_error_code='deletion_hold_pending' AND updated_at<=sqlc.arg(hold_retry_before)::timestamptz))
+    AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired')
-ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
+ORDER BY CASE WHEN state='deleting' AND purge_after>sqlc.arg(at)::timestamptz AND last_error_code='deletion_hold_pending'
+    THEN updated_at ELSE retry_at END,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: CountManagedPostgresLifecycleDatabases :one
 -- A delete that can no longer be undone frees the database, including a source
@@ -15129,6 +15188,14 @@ WHERE id=sqlc.arg(id)::uuid RETURNING *;
 SELECT sqlc.embed(d), COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
 FROM managed_postgres_databases d
 WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
+ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
+
+-- name: ListManagedPostgresRestoreSlotPage :many
+SELECT sqlc.embed(d), COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
+FROM managed_postgres_databases d
+WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
+  AND (sqlc.narg(after_until)::timestamptz IS NULL
+    OR (d.restore_slot_until,d.id)>(sqlc.narg(after_until)::timestamptz,sqlc.narg(after_id)::uuid))
 ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
 
 -- name: ClearManagedPostgresRestoreSlot :execrows
@@ -15219,12 +15286,13 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid A
 
 -- name: ClaimManagedPostgresScheduledDelete :one
 -- ADR-20261029174950: a ready database starts its delete window under a
--- lease. The caller holds the provider resource, then releases the lease with
--- retry_at at purge_after, or cancels on failure. Dependants are checked in
+-- lease. Updated reconcilers discover the pending hold by last_error_code;
+-- retry_at stays at purge_after so an older reconciler cannot purge early.
+-- Dependants are checked in
 -- the same transaction, after LockManagedPostgresLifecycleDatabase.
 UPDATE managed_postgres_databases SET state='deleting',purge_after=sqlc.arg(purge_after)::timestamptz,
     lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(lease_until)::timestamptz,attempt_count=0,
-    last_error_code=NULL,retry_at=sqlc.arg(purge_after)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+    last_error_code='deletion_hold_pending',retry_at=sqlc.arg(purge_after)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
 WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND clone_resource_role='target' AND state='ready'
     AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
@@ -15232,7 +15300,7 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid A
 
 -- name: ClaimManagedPostgresUndelete :one
 UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(lease_until)::timestamptz,
-    updated_at=sqlc.arg(at)::timestamptz
+    last_error_code='deletion_hold_pending',updated_at=sqlc.arg(at)::timestamptz
 WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND state='deleting'
     AND purge_after>sqlc.arg(at)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz) RETURNING *;
 
@@ -20203,11 +20271,11 @@ WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='up
     AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(at)::timestamptz AND lease_until>clock_timestamp() RETURNING *;
 
 -- name: FailManagedPostgresResize :execrows
--- Ends a pending major upgrade without its change: the provider refused it
--- or it broke the cluster. Only an upgrade can fail.
+-- Ends a confirmed rejection on its source spec. The caller has confirmed
+-- the provider's settled configuration (or a major upgrade's durable outcome).
 UPDATE managed_postgres_resizes SET state='failed',completed_at=sqlc.arg(at)::timestamptz,error_code=sqlc.arg(error_code)::text
 WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generation=sqlc.arg(generation)::bigint
-    AND state='pending' AND target_postgres_major IS NOT NULL;
+    AND state='pending';
 
 -- name: FailManagedPostgresResizeDatabase :one
 -- Puts the database back to ready on its source spec at the failed

@@ -14,10 +14,12 @@ import (
 )
 
 type deletionHoldFixture struct {
-	mu          sync.Mutex
-	disabled    bool
-	patches     []map[string]map[string]any
-	ignorePatch bool
+	mu                 sync.Mutex
+	disabled           bool
+	patches            []map[string]map[string]any
+	ignorePatch        bool
+	failConfirmation   bool
+	confirmationBranch string
 }
 
 func deletionHoldProvider(t *testing.T, f *deletionHoldFixture) *Provider {
@@ -49,7 +51,15 @@ func deletionHoldProvider(t *testing.T, f *deletionHoldFixture) *Provider {
 			}
 			writeResponse(t, w, http.StatusOK, map[string]any{"endpoint": primary})
 		case r.URL.Path == project+"/endpoints/ep-main-123" && r.Method == http.MethodGet:
+			if f.failConfirmation {
+				f.failConfirmation = false
+				writeResponse(t, w, http.StatusServiceUnavailable, nil)
+				return
+			}
 			primary["disabled"] = f.disabled
+			if f.confirmationBranch != "" {
+				primary["branch_id"] = f.confirmationBranch
+			}
 			writeResponse(t, w, http.StatusOK, map[string]any{"endpoint": primary})
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -58,25 +68,73 @@ func deletionHoldProvider(t *testing.T, f *deletionHoldFixture) *Provider {
 	}))
 }
 
+func TestDeletionHoldRecoversAfterConfirmationFailure(t *testing.T) {
+	f := &deletionHoldFixture{failConfirmation: true}
+	provider := deletionHoldProvider(t, f)
+	ctx := context.Background()
+	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123"); !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("lost confirmation = %v", err)
+	}
+	f.mu.Lock()
+	disabled := f.disabled
+	f.mu.Unlock()
+	if !disabled {
+		t.Fatal("fixture did not reproduce an applied but unconfirmed hold")
+	}
+	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	patches := len(f.patches)
+	f.mu.Unlock()
+	if patches != 1 {
+		t.Fatalf("retry rewrote the applied hold: %d patches", patches)
+	}
+	if err := provider.ReleaseDeletionHold(ctx, "quiet-river-12345678/br-main-123"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeletionHoldDisablesAndEnablesThePrimaryEndpoint(t *testing.T) {
 	f := &deletionHoldFixture{}
 	provider := deletionHoldProvider(t, f)
 	ctx := context.Background()
-	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678"); err != nil || !f.disabled {
+	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123"); err != nil || !f.disabled {
 		t.Fatalf("hold: %v, disabled=%v", err, f.disabled)
 	}
-	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678"); err != nil || len(f.patches) != 1 {
+	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123"); err != nil || len(f.patches) != 1 {
 		t.Fatalf("a repeated hold wrote again: %v, %d patches", err, len(f.patches))
 	}
 	if len(f.patches[0]) != 1 || len(f.patches[0]["endpoint"]) != 1 || f.patches[0]["endpoint"]["disabled"] != true {
 		t.Fatalf("the hold changed more than the disabled flag: %v", f.patches[0])
 	}
-	if err := provider.ReleaseDeletionHold(ctx, "quiet-river-12345678"); err != nil || f.disabled || len(f.patches) != 2 {
+	if err := provider.ReleaseDeletionHold(ctx, "quiet-river-12345678/br-main-123"); err != nil || f.disabled || len(f.patches) != 2 {
 		t.Fatalf("release: %v, disabled=%v patches=%d", err, f.disabled, len(f.patches))
 	}
 
 	f.ignorePatch = true
-	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678"); !errors.Is(err, managedpostgres.ErrUnavailable) {
+	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123"); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("an unconfirmed hold: %v", err)
+	}
+}
+
+func TestDeletionHoldRejectsUnpinnedProject(t *testing.T) {
+	f := &deletionHoldFixture{}
+	provider := deletionHoldProvider(t, f)
+	for _, operation := range []func(context.Context, string) error{provider.HoldForDeletion, provider.ReleaseDeletionHold} {
+		if err := operation(t.Context(), "quiet-river-12345678"); !errors.Is(err, managedpostgres.ErrConflict) {
+			t.Fatalf("mutable default was accepted: %v", err)
+		}
+	}
+	if len(f.patches) != 0 {
+		t.Fatal("unpinned hold changed an endpoint")
+	}
+}
+
+func TestDeletionHoldRejectsConfirmationFromAnotherBranch(t *testing.T) {
+	f := &deletionHoldFixture{confirmationBranch: "br-other-123"}
+	provider := deletionHoldProvider(t, f)
+	if err := provider.HoldForDeletion(t.Context(), "quiet-river-12345678/br-main-123"); !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("another branch confirmed the hold: %v", err)
 	}
 }

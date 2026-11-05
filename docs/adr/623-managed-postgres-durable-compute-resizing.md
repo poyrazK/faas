@@ -73,3 +73,33 @@ order of the product promises) or turning scale-to-zero off (ADR-624). A
 smaller or equal class and turning scale-to-zero on skip usage admission.
 Capability, plan entitlement and database locking still admit every change,
 and accepted intents remain recoverable as before.
+
+## Amendment (2026-11-04): storage admission and confirmed rejections
+
+Growing storage also raises cost, including when combined with a smaller
+compute class. Storage growth therefore passes both account usage admission
+and the fleet spend breaker. A class reduction without storage growth, and
+turning scale-to-zero on, retain their cost-reducing recovery path.
+
+An ordinary resize or compute-policy change can finish `failed` after a
+definitive refusal. `UpdateObserver` must first confirm the pinned lifecycle
+and data identities and a settled source configuration, without replaying the
+mutation. Neon uses its branch-specific resize observation, including pending
+operations; the native adapter reads schedd's runtime and pending-resize flag.
+Missing observation support, unreadable or drifted state and pending work keep
+the intent pinned for retry. Transient errors remain pending. If an earlier
+attempt already reached the target, observation completes the original request
+successfully instead of resetting it to the source.
+
+A confirmed failure atomically retains the source spec, observes the request's
+generation, releases its lease and records a stable error code. Repeating the
+UUID returns that receipt; a corrected request uses a new UUID, and deletion
+is available again. The API and SDKs expose `failed` and `last_error_code` for
+ordinary changes as they do for major upgrades.
+
+The wider outcome check is added and validated in separate migrations. Its
+publication drops and renames a constraint, so
+`20261104225604002_managed_postgres_rejected_resize_outcomes_publish.sql` is a
+**contract migration applied by the full-release data step**. Apply that step
+before relying on terminal ordinary-change receipts. Until then the old check
+rejects the new outcome and the change remains pending; no pin is released.

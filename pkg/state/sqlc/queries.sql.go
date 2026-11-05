@@ -6142,7 +6142,7 @@ WITH candidate AS (
  LEFT JOIN managed_postgres_health h ON h.database_id = d.id
  WHERE d.state = 'ready' AND d.provider_resource_id IS NOT NULL
  AND (h.database_id IS NULL OR h.next_check_at <= $1::timestamptz
-  OR h.provider_resource_id <> d.provider_resource_id OR h.backend_fingerprint <> d.backend_fingerprint
+  OR h.provider_resource_id IS DISTINCT FROM coalesce(d.data_resource_id,d.provider_resource_id) OR h.backend_fingerprint <> d.backend_fingerprint
   OR h.backend_id <> d.backend_id OR h.desired_generation <> d.desired_generation)
  AND (h.lease_until IS NULL OR h.lease_until <= $1)
  ORDER BY coalesce(h.next_check_at, d.created_at), d.id
@@ -6150,7 +6150,7 @@ WITH candidate AS (
 ), claimed AS (
  INSERT INTO managed_postgres_health AS h
  (database_id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation, next_check_at, lease_token, lease_until)
- SELECT id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation,
+ SELECT id, account_id, backend_id, backend_fingerprint, coalesce(data_resource_id,provider_resource_id), desired_generation,
  $1, $2::text, $3::timestamptz FROM candidate
  ON CONFLICT (database_id) DO UPDATE SET
  account_id = EXCLUDED.account_id, backend_id = EXCLUDED.backend_id,
@@ -6173,7 +6173,7 @@ WITH candidate AS (
  RETURNING database_id, attempt_count
 )
 SELECT d.id::text AS id, d.account_id::text AS account_id, d.backend_id, d.backend_fingerprint,
- d.provider_resource_id::text AS provider_resource_id, d.desired_generation,
+ d.provider_resource_id::text AS provider_resource_id, coalesce(d.data_resource_id,'')::text AS data_resource_id, d.desired_generation,
  d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes,
  d.restore_window_seconds, c.attempt_count
 FROM candidate d JOIN claimed c ON c.database_id = d.id
@@ -6191,6 +6191,7 @@ type ClaimManagedPostgresHealthCheckRow struct {
 	BackendID            string
 	BackendFingerprint   string
 	ProviderResourceID   string
+	DataResourceID       string
 	DesiredGeneration    int64
 	Region               string
 	PostgresMajor        int16
@@ -6202,6 +6203,9 @@ type ClaimManagedPostgresHealthCheckRow struct {
 	AttemptCount         int32
 }
 
+// The health resource is the concrete observation target, independently of
+// the catalog lifecycle/deletion selector. Legacy collectors still write the
+// lifecycle alias; those samples cannot match a pinned dataset in these reads.
 func (q *Queries) ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg ClaimManagedPostgresHealthCheckParams) (ClaimManagedPostgresHealthCheckRow, error) {
 	row := db.QueryRow(ctx, claimManagedPostgresHealthCheck, arg.Now, arg.LeaseToken, arg.LeaseUntil)
 	var i ClaimManagedPostgresHealthCheckRow
@@ -6211,6 +6215,7 @@ func (q *Queries) ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, 
 		&i.BackendID,
 		&i.BackendFingerprint,
 		&i.ProviderResourceID,
+		&i.DataResourceID,
 		&i.DesiredGeneration,
 		&i.Region,
 		&i.PostgresMajor,
@@ -6433,7 +6438,7 @@ func (q *Queries) ClaimManagedPostgresResize(ctx context.Context, db DBTX, arg C
 const claimManagedPostgresScheduledDelete = `-- name: ClaimManagedPostgresScheduledDelete :one
 UPDATE managed_postgres_databases SET state='deleting',purge_after=$1::timestamptz,
     lease_token=$2::text,lease_until=$3::timestamptz,attempt_count=0,
-    last_error_code=NULL,retry_at=$1::timestamptz,updated_at=$4::timestamptz
+    last_error_code='deletion_hold_pending',retry_at=$1::timestamptz,updated_at=$4::timestamptz
 WHERE account_id=$5::uuid AND id=$6::uuid AND clone_resource_role='target' AND state='ready'
     AND (lease_until IS NULL OR lease_until<=$4::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
@@ -6450,8 +6455,9 @@ type ClaimManagedPostgresScheduledDeleteParams struct {
 }
 
 // ADR-20261029174950: a ready database starts its delete window under a
-// lease. The caller holds the provider resource, then releases the lease with
-// retry_at at purge_after, or cancels on failure. Dependants are checked in
+// lease. Updated reconcilers discover the pending hold by last_error_code;
+// retry_at stays at purge_after so an older reconciler cannot purge early.
+// Dependants are checked in
 // the same transaction, after LockManagedPostgresLifecycleDatabase.
 func (q *Queries) ClaimManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error) {
 	row := db.QueryRow(ctx, claimManagedPostgresScheduledDelete,
@@ -6506,7 +6512,7 @@ func (q *Queries) ClaimManagedPostgresScheduledDelete(ctx context.Context, db DB
 
 const claimManagedPostgresUndelete = `-- name: ClaimManagedPostgresUndelete :one
 UPDATE managed_postgres_databases SET lease_token=$1::text,lease_until=$2::timestamptz,
-    updated_at=$3::timestamptz
+    last_error_code='deletion_hold_pending',updated_at=$3::timestamptz
 WHERE account_id=$4::uuid AND id=$5::uuid AND state='deleting'
     AND purge_after>$3::timestamptz AND (lease_until IS NULL OR lease_until<=$3::timestamptz) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels
 `
@@ -10028,6 +10034,16 @@ func (q *Queries) CompleteEnvironmentWorkloadServingReceipt(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const completeIdleManagedPostgresRotationRefresh = `-- name: CompleteIdleManagedPostgresRotationRefresh :exec
+UPDATE managed_postgres_bindings SET rotation_cleanup_ready=true,retry_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE id=$1::uuid AND state='ready' AND rotation_previous_generation IS NOT NULL
+`
+
+func (q *Queries) CompleteIdleManagedPostgresRotationRefresh(ctx context.Context, db DBTX, bindingID pgtype.UUID) error {
+	_, err := db.Exec(ctx, completeIdleManagedPostgresRotationRefresh, bindingID)
+	return err
+}
+
 const completeLayerArtifactDeletion = `-- name: CompleteLayerArtifactDeletion :execrows
 UPDATE layer_artifact_retention SET state = 'deleted', deleted_at = coalesce(deleted_at, clock_timestamp())
 WHERE storage_key = $1::text AND deletion_id = $2::uuid
@@ -11012,7 +11028,7 @@ WITH statuses AS (
  ELSE 'healthy' END AS status
  FROM managed_postgres_databases d LEFT JOIN managed_postgres_health h ON h.database_id = d.id
  AND h.account_id = d.account_id
- AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ AND (d.backend_id,d.backend_fingerprint,coalesce(d.data_resource_id,d.provider_resource_id),d.desired_generation)
  = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
  WHERE d.state = 'ready'
 )
@@ -16038,20 +16054,29 @@ func (q *Queries) DropTriggerRecordByOperator(ctx context.Context, db DBTX, arg 
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR ($1::boolean AND state IN ('provisioning','failed')))
-    AND retry_at<=$2::timestamptz AND (lease_until IS NULL OR lease_until<=$2::timestamptz)
+    AND (retry_at<=$2::timestamptz OR (state='deleting' AND purge_after>$2::timestamptz
+      AND last_error_code='deletion_hold_pending' AND updated_at<=$3::timestamptz))
+    AND (lease_until IS NULL OR lease_until<=$2::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired')
-ORDER BY retry_at,id LIMIT $3::integer
+ORDER BY CASE WHEN state='deleting' AND purge_after>$2::timestamptz AND last_error_code='deletion_hold_pending'
+    THEN updated_at ELSE retry_at END,id LIMIT $4::integer
 `
 
 type DueManagedPostgresLifecycleDatabasesParams struct {
 	IncludeProvisioning bool
 	At                  pgtype.Timestamptz
+	HoldRetryBefore     pgtype.Timestamptz
 	RowLimit            int32
 }
 
 func (q *Queries) DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error) {
-	rows, err := db.Query(ctx, dueManagedPostgresLifecycleDatabases, arg.IncludeProvisioning, arg.At, arg.RowLimit)
+	rows, err := db.Query(ctx, dueManagedPostgresLifecycleDatabases,
+		arg.IncludeProvisioning,
+		arg.At,
+		arg.HoldRetryBefore,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -21561,7 +21586,7 @@ func (q *Queries) FailIncompleteMCPRouteDelivery(ctx context.Context, db DBTX, i
 const failManagedPostgresResize = `-- name: FailManagedPostgresResize :execrows
 UPDATE managed_postgres_resizes SET state='failed',completed_at=$1::timestamptz,error_code=$2::text
 WHERE id=$3::uuid AND database_id=$4::uuid AND generation=$5::bigint
-    AND state='pending' AND target_postgres_major IS NOT NULL
+    AND state='pending'
 `
 
 type FailManagedPostgresResizeParams struct {
@@ -21572,8 +21597,8 @@ type FailManagedPostgresResizeParams struct {
 	Generation int64
 }
 
-// Ends a pending major upgrade without its change: the provider refused it
-// or it broke the cluster. Only an upgrade can fail.
+// Ends a confirmed rejection on its source spec. The caller has confirmed
+// the provider's settled configuration (or a major upgrade's durable outcome).
 func (q *Queries) FailManagedPostgresResize(ctx context.Context, db DBTX, arg FailManagedPostgresResizeParams) (int64, error) {
 	result, err := db.Exec(ctx, failManagedPostgresResize,
 		arg.At,
@@ -23679,7 +23704,7 @@ UPDATE managed_postgres_health h SET
 FROM target d
 WHERE h.database_id = $7::text::uuid AND h.database_id = d.id AND d.state = 'ready'
  AND h.lease_token = $8::text AND h.lease_until > $3
- AND (d.account_id,d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ AND (d.account_id,d.backend_id,d.backend_fingerprint,coalesce(d.data_resource_id,d.provider_resource_id),d.desired_generation)
  = (h.account_id,h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
 `
 
@@ -48176,6 +48201,10 @@ SELECT id::text AS id, account_id::text AS account_id, database_id::text AS data
  coalesce(lease_token, '')::text AS lease_token, lease_until,
  attempt_count, retry_at, created_at, updated_at, deleted_at FROM managed_postgres_bindings binding
 WHERE (state = 'deleting' OR ($1::boolean AND state IN ('provisioning','failed'))
+ OR (state='ready' AND access<>'migration' AND rotation_previous_generation IS NOT NULL AND NOT rotation_cleanup_ready
+ AND NOT EXISTS (SELECT 1 FROM notification_outbox o WHERE o.channel='runtime_config_restart'
+ AND o.payload::jsonb->>'app_id'=binding.app_id::text AND o.payload::jsonb->>'wake_id'=binding.rotation_wake_id::text
+ AND o.state IN ('pending','processing')))
  OR (rotation_cleanup_ready AND state IN ('ready','retiring')
   AND (access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task WHERE task.account_id = binding.account_id
  AND task.app_id = binding.app_id AND task.deployment_scope = binding.scope
@@ -51087,6 +51116,84 @@ func (q *Queries) ListManagedPostgresReconciliationCoverage(ctx context.Context,
 			&i.ObservedAt,
 			&i.SourceDatabaseID,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedPostgresRestoreSlotPage = `-- name: ListManagedPostgresRestoreSlotPage :many
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
+FROM managed_postgres_databases d
+WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
+  AND ($1::timestamptz IS NULL
+    OR (d.restore_slot_until,d.id)>($1::timestamptz,$2::uuid))
+ORDER BY d.restore_slot_until, d.id LIMIT $3
+`
+
+type ListManagedPostgresRestoreSlotPageParams struct {
+	AfterUntil pgtype.Timestamptz
+	AfterID    pgtype.UUID
+	BatchSize  int32
+}
+
+type ListManagedPostgresRestoreSlotPageRow struct {
+	ManagedPostgresDatabase ManagedPostgresDatabase
+	SubjectID               pgtype.UUID
+}
+
+func (q *Queries) ListManagedPostgresRestoreSlotPage(ctx context.Context, db DBTX, arg ListManagedPostgresRestoreSlotPageParams) ([]ListManagedPostgresRestoreSlotPageRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresRestoreSlotPage, arg.AfterUntil, arg.AfterID, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresRestoreSlotPageRow{}
+	for rows.Next() {
+		var i ListManagedPostgresRestoreSlotPageRow
+		if err := rows.Scan(
+			&i.ManagedPostgresDatabase.ID,
+			&i.ManagedPostgresDatabase.AccountID,
+			&i.ManagedPostgresDatabase.Name,
+			&i.ManagedPostgresDatabase.Region,
+			&i.ManagedPostgresDatabase.PostgresMajor,
+			&i.ManagedPostgresDatabase.ServiceClass,
+			&i.ManagedPostgresDatabase.Availability,
+			&i.ManagedPostgresDatabase.ScaleToZero,
+			&i.ManagedPostgresDatabase.StorageLimitBytes,
+			&i.ManagedPostgresDatabase.RestoreWindowSeconds,
+			&i.ManagedPostgresDatabase.BackendID,
+			&i.ManagedPostgresDatabase.BackendFingerprint,
+			&i.ManagedPostgresDatabase.ProviderResourceID,
+			&i.ManagedPostgresDatabase.State,
+			&i.ManagedPostgresDatabase.DesiredGeneration,
+			&i.ManagedPostgresDatabase.ObservedGeneration,
+			&i.ManagedPostgresDatabase.LastErrorCode,
+			&i.ManagedPostgresDatabase.LeaseToken,
+			&i.ManagedPostgresDatabase.LeaseUntil,
+			&i.ManagedPostgresDatabase.CreatedAt,
+			&i.ManagedPostgresDatabase.UpdatedAt,
+			&i.ManagedPostgresDatabase.DeletedAt,
+			&i.ManagedPostgresDatabase.AttemptCount,
+			&i.ManagedPostgresDatabase.RetryAt,
+			&i.ManagedPostgresDatabase.RestoreSourceDatabaseID,
+			&i.ManagedPostgresDatabase.RestoreSourceResourceID,
+			&i.ManagedPostgresDatabase.RestorePointInTime,
+			&i.ManagedPostgresDatabase.CutoverID,
+			&i.ManagedPostgresDatabase.EnvironmentCloneOperationID,
+			&i.ManagedPostgresDatabase.DataResourceID,
+			&i.ManagedPostgresDatabase.CloneResourceRole,
+			&i.ManagedPostgresDatabase.AccountingRequired,
+			&i.ManagedPostgresDatabase.OrgID,
+			&i.ManagedPostgresDatabase.PurgeAfter,
+			&i.ManagedPostgresDatabase.RestoreSlotUntil,
+			&i.ManagedPostgresDatabase.Labels,
+			&i.SubjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -59374,6 +59481,89 @@ func (q *Queries) LockManagedPostgresReservationOwner(ctx context.Context, db DB
 	return i, err
 }
 
+const lockManagedPostgresRotationApp = `-- name: LockManagedPostgresRotationApp :exec
+SELECT a.id FROM apps a JOIN managed_postgres_bindings b ON b.app_id=a.id
+WHERE b.id=$1::uuid FOR UPDATE OF a
+`
+
+// Rotation refreshes share the app -> binding lock order with publication.
+func (q *Queries) LockManagedPostgresRotationApp(ctx context.Context, db DBTX, bindingID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockManagedPostgresRotationApp, bindingID)
+	return err
+}
+
+const lockManagedPostgresRotationBinding = `-- name: LockManagedPostgresRotationBinding :one
+SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
+ app_id::text AS app_id, database_account_id::text AS database_account_id, scope, environment_key, access,
+ coalesce(provider_identity_id, '')::text AS provider_identity_id,
+ coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
+ coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
+ coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
+ state, coalesce(last_error_code, '')::text AS last_error_code,
+ coalesce(lease_token, '')::text AS lease_token, lease_until,
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit FROM managed_postgres_bindings
+WHERE id=$1::uuid FOR UPDATE
+`
+
+type LockManagedPostgresRotationBindingRow struct {
+	ID                         string
+	AccountID                  string
+	DatabaseID                 string
+	AppID                      string
+	DatabaseAccountID          string
+	Scope                      string
+	EnvironmentKey             string
+	Access                     string
+	ProviderIdentityID         string
+	CredentialRef              string
+	CredentialGeneration       int64
+	RotationPreviousGeneration int64
+	RotationWakeID             string
+	RotationCleanupReady       bool
+	State                      string
+	LastErrorCode              string
+	LeaseToken                 string
+	LeaseUntil                 pgtype.Timestamptz
+	AttemptCount               int32
+	RetryAt                    pgtype.Timestamptz
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	DeletedAt                  pgtype.Timestamptz
+	ConnectionLimit            int64
+}
+
+func (q *Queries) LockManagedPostgresRotationBinding(ctx context.Context, db DBTX, bindingID pgtype.UUID) (LockManagedPostgresRotationBindingRow, error) {
+	row := db.QueryRow(ctx, lockManagedPostgresRotationBinding, bindingID)
+	var i LockManagedPostgresRotationBindingRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.AppID,
+		&i.DatabaseAccountID,
+		&i.Scope,
+		&i.EnvironmentKey,
+		&i.Access,
+		&i.ProviderIdentityID,
+		&i.CredentialRef,
+		&i.CredentialGeneration,
+		&i.RotationPreviousGeneration,
+		&i.RotationWakeID,
+		&i.RotationCleanupReady,
+		&i.State,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.ConnectionLimit,
+	)
+	return i, err
+}
+
 const lockManagedPostgresUsageResource = `-- name: LockManagedPostgresUsageResource :one
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
 `
@@ -62415,6 +62605,10 @@ func (q *Queries) ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX,
 const managedPostgresDueBindings = `-- name: ManagedPostgresDueBindings :many
 SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id, b.connection_limit, b.database_account_id FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
 WHERE (b.state='deleting' OR ($1::boolean AND b.state IN ('provisioning','failed'))
+    OR (b.state='ready' AND b.access<>'migration' AND b.rotation_previous_generation IS NOT NULL AND NOT b.rotation_cleanup_ready
+      AND NOT EXISTS (SELECT 1 FROM notification_outbox outbox WHERE outbox.channel='runtime_config_restart'
+        AND outbox.payload::jsonb->>'app_id'=b.app_id::text AND outbox.payload::jsonb->>'wake_id'=b.rotation_wake_id::text
+        AND outbox.state IN ('pending','processing')))
     OR (b.rotation_cleanup_ready AND b.state IN ('ready','retiring')
       AND (b.access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task
           WHERE task.account_id=b.account_id AND task.app_id=b.app_id AND task.deployment_scope=b.scope
@@ -62565,6 +62759,28 @@ func (q *Queries) ManagedPostgresRestoreSlotHeld(ctx context.Context, db DBTX, a
 	var held bool
 	err := row.Scan(&held)
 	return held, err
+}
+
+const managedPostgresRotationRuntime = `-- name: ManagedPostgresRotationRuntime :one
+SELECT EXISTS (SELECT 1 FROM deployments WHERE app_id=$1::uuid AND status='live') AS live,
+ EXISTS (SELECT 1 FROM instances WHERE app_id=$1::uuid AND state=ANY($2::text[])) AS resident
+`
+
+type ManagedPostgresRotationRuntimeParams struct {
+	AppID          pgtype.UUID
+	ResidentStates []string
+}
+
+type ManagedPostgresRotationRuntimeRow struct {
+	Live     bool
+	Resident bool
+}
+
+func (q *Queries) ManagedPostgresRotationRuntime(ctx context.Context, db DBTX, arg ManagedPostgresRotationRuntimeParams) (ManagedPostgresRotationRuntimeRow, error) {
+	row := db.QueryRow(ctx, managedPostgresRotationRuntime, arg.AppID, arg.ResidentStates)
+	var i ManagedPostgresRotationRuntimeRow
+	err := row.Scan(&i.Live, &i.Resident)
+	return i, err
 }
 
 const managedPostgresUsageForSubject = `-- name: ManagedPostgresUsageForSubject :one
@@ -77918,6 +78134,37 @@ func (q *Queries) QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const queueManagedPostgresRotationRefresh = `-- name: QueueManagedPostgresRotationRefresh :exec
+WITH previous AS (
+ SELECT id FROM notification_outbox WHERE channel='runtime_config_restart'
+ AND payload::jsonb->>'app_id'=$1::text
+ AND payload::jsonb->>'wake_id'=$2::text
+ ORDER BY (state IN ('pending','processing')) DESC,id DESC LIMIT 1 FOR UPDATE
+), retried AS (
+ UPDATE notification_outbox SET state='pending',attempts=0,available_at=clock_timestamp(),
+ claimed_by=NULL,claimed_at=NULL,lease_until=NULL,delivered_at=NULL,last_error=NULL
+ WHERE id IN (SELECT id FROM previous) AND state IN ('delivered','dead_letter') RETURNING id,payload
+), inserted AS (
+ INSERT INTO notification_outbox(channel,payload)
+ SELECT 'runtime_config_restart',json_build_object('app_id',$1::text,'wake_id',$2::text)::text
+ WHERE NOT EXISTS (SELECT 1 FROM previous) RETURNING id,payload
+)
+SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text)
+ FROM (SELECT id, payload FROM retried UNION ALL SELECT id, payload FROM inserted) queued
+`
+
+type QueueManagedPostgresRotationRefreshParams struct {
+	AppID  string
+	WakeID string
+}
+
+// App and binding locks serialize publication, retries and old-worker repair.
+// Replay terminal handoffs under the same wake ID until retirement is proven.
+func (q *Queries) QueueManagedPostgresRotationRefresh(ctx context.Context, db DBTX, arg QueueManagedPostgresRotationRefreshParams) error {
+	_, err := db.Exec(ctx, queueManagedPostgresRotationRefresh, arg.AppID, arg.WakeID)
+	return err
+}
+
 const queuePollCandidates = `-- name: QueuePollCandidates :many
 with consumer as (
  select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
@@ -83065,7 +83312,7 @@ SELECT h.database_id::text AS database_id, h.provider_status, h.compute_state,
 FROM managed_postgres_health h JOIN managed_postgres_databases d ON d.id = h.database_id
 WHERE d.account_id = $1::text::uuid AND h.account_id = d.account_id AND d.state = 'ready'
  AND h.database_id::text = ANY($2::text[])
- AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ AND (d.backend_id,d.backend_fingerprint,coalesce(d.data_resource_id,d.provider_resource_id),d.desired_generation)
  = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
 `
 

@@ -62,6 +62,11 @@ type expectation struct {
 	// recorded prepared when sent, so later messages of the same batch do
 	// not prepare it again, and forgotten if the server refuses it.
 	prepared string
+	// Client statement changes are tentative until answered. An error
+	// can skip later messages in the batch, whose changes must be undone.
+	mutates  bool
+	name     string
+	previous *pgproto3.Parse
 }
 
 // pooledSession is one pooled client.
@@ -347,15 +352,28 @@ func (s *pooledSession) pop(kind byte) expectation {
 // an extended-protocol batch: everything up to the next sync point. The
 // statements those Parses would have prepared were not.
 func (s *pooledSession) skipToSync() {
+	var skipped []expectation
 	for len(s.expect) > 0 {
 		e := s.expect[0]
 		if e.kind == 'S' || e.kind == 'Q' || e.kind == 'F' {
-			return
+			break
 		}
 		if e.prepared != "" && s.server != nil {
 			delete(s.server.prepared, e.prepared)
 		}
+		skipped = append(skipped, e)
 		s.expect = s.expect[1:]
+	}
+	for i := len(skipped) - 1; i >= 0; i-- {
+		e := skipped[i]
+		if !e.mutates {
+			continue
+		}
+		if i == 0 && e.kind == 'P' && e.name == "" || e.previous == nil {
+			delete(s.statements, e.name)
+		} else {
+			s.statements[e.name] = e.previous
+		}
 	}
 }
 
@@ -366,21 +384,19 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 	fe := s.server.fe
 	switch m := msg.(type) {
 	case *pgproto3.Parse:
-		if m.Name == "" {
-			fe.Send(m)
-			s.expect = append(s.expect, expectation{kind: 'P'})
-			return nil
-		}
 		parse := &pgproto3.Parse{Name: m.Name, Query: m.Query, ParameterOIDs: append([]uint32(nil), m.ParameterOIDs...)}
+		e := expectation{kind: 'P', mutates: true, name: m.Name, previous: s.statements[m.Name]}
 		s.statements[m.Name] = parse
 		name := serverStatement(parse)
 		if s.server.prepared[name] {
-			s.expect = append(s.expect, expectation{kind: 'P', synthetic: []byte{'1', 0, 0, 0, 4}})
+			e.synthetic = []byte{'1', 0, 0, 0, 4}
+			s.expect = append(s.expect, e)
 			return nil
 		}
 		fe.Send(&pgproto3.Parse{Name: name, Query: parse.Query, ParameterOIDs: parse.ParameterOIDs})
 		s.server.prepared[name] = true
-		s.expect = append(s.expect, expectation{kind: 'P', prepared: name})
+		e.prepared = name
+		s.expect = append(s.expect, e)
 	case *pgproto3.Bind:
 		name, err := s.prepare(m.PreparedStatement)
 		if err != nil {
@@ -402,11 +418,12 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 		fe.Send(&d)
 		s.expect = append(s.expect, expectation{kind: 'D'})
 	case *pgproto3.Close:
-		if m.ObjectType == 'S' && m.Name != "" {
+		if m.ObjectType == 'S' {
 			// The server keeps the statement for other clients; this
 			// client only forgets its name.
+			e := expectation{kind: 'C', synthetic: []byte{'3', 0, 0, 0, 4}, mutates: true, name: m.Name, previous: s.statements[m.Name]}
 			delete(s.statements, m.Name)
-			s.expect = append(s.expect, expectation{kind: 'C', synthetic: []byte{'3', 0, 0, 0, 4}})
+			s.expect = append(s.expect, e)
 			return nil
 		}
 		fe.Send(m)
@@ -418,6 +435,7 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 		fe.Send(m)
 		s.expect = append(s.expect, expectation{kind: 'S'})
 	case *pgproto3.Query:
+		delete(s.statements, "") // PostgreSQL simple queries destroy it, even on error.
 		fe.Send(m)
 		s.expect = append(s.expect, expectation{kind: 'Q'})
 	case *pgproto3.FunctionCall:
@@ -437,11 +455,9 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 
 // prepare returns the server's name for a client statement, preparing it
 // on this server if it has not been: a statement may have been parsed on
-// another server of the pool. The unnamed statement passes through.
+// another server of the pool. The empty client name is virtualized too,
+// so a different client's Parse cannot replace the SQL this one binds.
 func (s *pooledSession) prepare(clientName string) (string, error) {
-	if clientName == "" {
-		return "", nil
-	}
 	parse, ok := s.statements[clientName]
 	if !ok {
 		return "", &fatal{"26000", fmt.Sprintf("prepared statement %q does not exist", clientName)}

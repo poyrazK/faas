@@ -1230,6 +1230,8 @@ type BindingStore interface {
 	DueBindings(context.Context, bool, int, time.Time) ([]Binding, error)
 	BeginBindingRotation(context.Context, string, string, string, time.Time) (Binding, bool, error)
 	ClaimBinding(context.Context, string, string, string, BindingState, time.Time, time.Time) (Binding, error)
+	// A rotated serving credential commits its ready receipt with a durable
+	// runtime refresh, or permits cleanup when no old runtime remains.
 	FinishBindingProvision(context.Context, string, string, string, string, time.Time) (Binding, error)
 	FinishBindingRotationCleanup(context.Context, string, string, string, time.Time) (Binding, error)
 	ReleaseBinding(context.Context, string, string, BindingState, string, time.Time, time.Time) error

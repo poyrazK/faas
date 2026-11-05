@@ -54,14 +54,14 @@ func (s *MemoryStore) ReserveResize(ctx context.Context, expected Database, oper
 }
 
 func (s *MemoryStore) FailResize(_ context.Context, expected Database, operation ResizeOperation, code string, now time.Time) (Database, error) {
-	if !operation.MajorUpgrade() || !validRejectionCode(code) {
+	if !validRejectionCode(code) {
 		return Database{}, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[expected.ID]
 	actual, found := s.resizes[operation.ID]
-	if !ok || !found || !actual.MajorUpgrade() || !sameComputeChangeRequest(actual, operation) || actual.State != ResizePending ||
+	if !ok || !found || !sameComputeChangeRequest(actual, operation) || actual.State != ResizePending ||
 		actual.Generation != operation.Generation || !resizeSourceMatches(database, actual) || !resizeSourceMatches(expected, actual) ||
 		database.State != StateUpdating || database.DesiredGeneration != actual.Generation || expected.DesiredGeneration != actual.Generation ||
 		database.ObservedGeneration != actual.Generation-1 || database.LeaseToken == "" || database.LeaseToken != expected.LeaseToken ||
@@ -79,6 +79,8 @@ func (s *MemoryStore) FailResize(_ context.Context, expected Database, operation
 func (s *MemoryStore) resizeView(operation ResizeOperation) ResizeOperation {
 	if operation.State == ResizePending {
 		operation.LastErrorCode = s.databases[operation.DatabaseID].LastErrorCode
+	} else if operation.State == ResizeFailed {
+		operation.LastErrorCode = operation.ErrorCode
 	}
 	return operation
 }

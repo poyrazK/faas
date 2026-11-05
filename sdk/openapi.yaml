@@ -23624,9 +23624,9 @@ components:
         from_scale_to_zero: {type: boolean}
         target_scale_to_zero: {type: boolean}
         generation: {type: integer, format: int64, minimum: 2}
-        state: {type: string, enum: [pending, succeeded]}
+        state: {type: string, enum: [pending, succeeded, failed]}
         connection_interruption_expected: {type: boolean}
-        last_error_code: {type: string, description: "Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery."}
+        last_error_code: {type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
     ResizeManagedPostgresDatabaseRequest:
@@ -23647,9 +23647,9 @@ components:
         from_class: {type: string, enum: [development, burstable, production]}
         target_class: {type: string, enum: [development, burstable, production]}
         generation: {type: integer, format: int64, minimum: 2}
-        state: {type: string, enum: [pending, succeeded]}
+        state: {type: string, enum: [pending, succeeded, failed]}
         connection_interruption_expected: {type: boolean}
-        last_error_code: {type: string, description: "Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes."}
+        last_error_code: {type: string, description: "Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
     ManagedPostgresDatabase:

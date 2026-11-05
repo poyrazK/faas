@@ -113,6 +113,9 @@ func checkActivationDatabases(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, c
 		want := c.Source
 		if cutoverUUID(row.ID) == c.Target.ID {
 			want = c.Target
+			if row.RestoreSlotUntil.Valid {
+				return activationBlocked(ActivationDatabasesChanged)
+			}
 		}
 		if row.State != string(StateReady) || cutoverUUID(row.CutoverID) != c.ID || row.BackendID != want.BackendID ||
 			row.BackendFingerprint != want.BackendFingerprint || row.ProviderResourceID.String != want.ProviderResourceID ||
