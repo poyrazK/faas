@@ -18,11 +18,16 @@ func (s *server) cleanupDevSessionResources(ctx context.Context, app state.App) 
 	if err := s.cleanupDevSessionBuckets(ctx, app); err != nil {
 		return err
 	}
+	if err := s.cleanupPRPreviewPostgresBindings(ctx, app); err != nil {
+		return err
+	}
 	return s.cleanupDevPostgres(ctx, app)
 }
 
+// A PR preview's buckets go too: previews can no longer create one, but a
+// bucket made before ADR-20261103180000 would outlive its preview.
 func (s *server) cleanupDevSessionBuckets(ctx context.Context, app state.App) error {
-	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
+	if app.PreviewOfSlug == "" {
 		return nil
 	}
 	store, ok := s.store.(state.ObjectBucketStore)

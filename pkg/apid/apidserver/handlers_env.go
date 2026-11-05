@@ -520,6 +520,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var activityOutboxID int64
 	activityOutboxed := false
 	var deleteErr error
+	previewRemoval, removesPreviewCopy := s.pendingPRPreviewRemoval(r.Context(), app, scope, key, false)
 	change := s.beginConfigChange(r, acct, app, scope, "")
 	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
 		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
@@ -544,6 +545,9 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	s.finishConfigChange(r.Context(), change, state.ConfigSourceEnvDelete, key, false)
+	if removesPreviewCopy {
+		s.removeFromPRPreviews(r.Context(), acct, app, previewRemoval)
+	}
 	invalidated, err := state.InvalidateAppSnapshotsInScope(r.Context(), s.store, app.ID, scope)
 	if err != nil {
 		s.log.Error("env delete: invalidate snapshots", "app", app.Slug, "err", err)

@@ -22,6 +22,7 @@ type ServicePolicyReader interface {
 	ScenarioTestAppByWorkload(context.Context, string, string, string) (App, error)
 	GetGitHubDeployPolicy(context.Context, string, string) (GitHubDeployPolicy, error)
 	ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+	PRPreviewSetPeerIDs(context.Context, string) ([]string, error)
 }
 
 type ServicePolicySnapshotStore interface {

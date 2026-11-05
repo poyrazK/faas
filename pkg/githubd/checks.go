@@ -1016,7 +1016,18 @@ func (c *ChecksAPI) ownPreviewComment(comment previewIssueComment, marker string
 	if comment.ID == 0 || comment.User.Type != "Bot" || !strings.Contains(comment.Body, marker) {
 		return false
 	}
-	return c.AppID == 0 || comment.PerformedViaGitHubApp == nil || comment.PerformedViaGitHubApp.ID == c.AppID
+	return attributedToApp(c.AppID, comment.PerformedViaGitHubApp)
+}
+
+// attributedToApp reports whether a bot comment may be this App's. GitHub
+// attributes a comment made with an App's installation token to that App;
+// another App's attribution, including github-actions for a workflow's
+// GITHUB_TOKEN, rules it out. A comment GitHub attributes to no App stays
+// adoptable so an existing status comment is not duplicated.
+func attributedToApp(appID int64, performedVia *struct {
+	ID int64 `json:"id"`
+}) bool {
+	return appID == 0 || performedVia == nil || performedVia.ID == appID
 }
 
 // UpsertPreviewComment keeps one customer-facing preview status comment per

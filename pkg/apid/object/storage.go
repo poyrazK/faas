@@ -335,6 +335,12 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
+	// A PR preview runs unreviewed code and is torn down with its pull
+	// request; a bucket on it would outlive it (ADR-20261103180000).
+	if state.IsPRPreviewApp(app) {
+		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("object storage buckets"))
+		return
+	}
 	var req CreateBucketRequest
 	if !decodeBucketRequest(w, r, &req) {
 		return

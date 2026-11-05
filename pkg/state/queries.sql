@@ -8939,6 +8939,14 @@ SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id
 ORDER BY id
 LIMIT 2;
 
+-- name: ServicePolicyPRPreviewSetMemberIDs :many
+-- The apps of the PR preview sets that hold an app. A preview of an app bound
+-- without a project calls only these (ADR-20261103180000).
+SELECT DISTINCT member_id::text AS member_id
+FROM pr_preview_sets, unnest(member_app_ids) AS member_id
+WHERE member_app_ids @> ARRAY[sqlc.arg(app_id)::text]
+ORDER BY member_id;
+
 -- name: ReadServicePolicyTestApp :one
 SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,

@@ -973,6 +973,13 @@ workers, jobs and scheduled workloads join only as declared dependencies
 A dependency that is absent from that set can still resolve to the production
 app, so the gateway applies the project's production-dependency policy.
 
+A PR preview of an app bound without a project has no project policy. It
+calls only the previews of its own pull request's preview set, named by their
+production slugs, and every call to a production app is refused with
+`preview_production_dependency_denied`
+([ADR-20261103180000](adr/20261103180000-previews-without-a-project-stay-in-their-set.md)).
+`gregale dev` sessions keep account-wide resolution.
+
 All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before the proxy discovers or wakes the

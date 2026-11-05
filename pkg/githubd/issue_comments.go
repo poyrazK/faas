@@ -47,14 +47,17 @@ type IssueCommentClient interface {
 type httpIssueComments struct {
 	tokens *TokenCache
 	client HTTPClient
+	appID  int64
 }
 
 // NewHTTPIssueComments writes marker comments through the GitHub REST API.
-func NewHTTPIssueComments(tokens *TokenCache, client HTTPClient) IssueCommentClient {
+// With appID set, a marker comment is adopted only when GitHub attributes it
+// to this App, as the preview status comment is (ADR-20261103180000).
+func NewHTTPIssueComments(tokens *TokenCache, client HTTPClient, appID int64) IssueCommentClient {
 	if client == nil {
 		client = NewHTTPClient()
 	}
-	return &httpIssueComments{tokens: tokens, client: client}
+	return &httpIssueComments{tokens: tokens, client: client, appID: appID}
 }
 
 // UpsertIssueComment checks that the installation is the account's before
@@ -98,6 +101,9 @@ type gitHubIssueComment struct {
 	User    struct {
 		Type string `json:"type"`
 	} `json:"user"`
+	PerformedViaGitHubApp *struct {
+		ID int64 `json:"id"`
+	} `json:"performed_via_github_app"`
 }
 
 func (c *httpIssueComments) UpsertIssueComment(ctx context.Context, installation int64, repository string, number int64, markerKey, body string) (githubdgrpc.IssueComment, error) {
@@ -139,7 +145,9 @@ func (c *httpIssueComments) UpsertIssueComment(ctx context.Context, installation
 }
 
 // find returns the App's comment carrying marker, or nil. Only comments a
-// bot wrote count, so a person quoting the marker does not capture it.
+// bot wrote count, so a person quoting the marker does not capture it, and
+// with the App ID configured only this App's: a pull request's workflow
+// comments as github-actions[bot] and could otherwise post the marker first.
 func (c *httpIssueComments) find(ctx context.Context, token, base string, number int64, marker string) (*gitHubIssueComment, error) {
 	for page := 1; page <= issueCommentPagesMax; page++ {
 		endpoint := fmt.Sprintf("%s/%d/comments?per_page=%d&page=%d", base, number, issueCommentPageSize, page)
@@ -162,7 +170,8 @@ func (c *httpIssueComments) find(ctx context.Context, token, base string, number
 			return nil, status.Error(codes.Unavailable, "githubd: GitHub returned an unreadable comment listing")
 		}
 		for i := range comments {
-			if comments[i].ID > 0 && comments[i].User.Type == "Bot" && strings.Contains(comments[i].Body, marker) {
+			if comments[i].ID > 0 && comments[i].User.Type == "Bot" && strings.Contains(comments[i].Body, marker) &&
+				attributedToApp(c.appID, comments[i].PerformedViaGitHubApp) {
 				return &comments[i], nil
 			}
 		}

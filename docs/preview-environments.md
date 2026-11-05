@@ -380,7 +380,22 @@ previews. It injects the PR's declared internal service bindings after source
 scan. A new PR push clears environment values left on older preview rows.
 `gregale preview create` follows the same rule: the preview gets the
 production app's service binding URLs and none of its environment values.
-Gregale does not provision isolated databases or buckets for the PR.
+Gregale does not provision isolated databases or buckets for the PR. A PR
+preview cannot own a bucket or a managed PostgreSQL binding: both answer
+`409 pr_preview_resource_unsupported`, because the preview runs unreviewed
+code and is torn down with its pull request. Give previews test credentials in
+the production app's `pr-preview` scope instead. Teardown deletes the buckets
+and removes the database bindings a preview was given before this rule; the
+databases themselves are kept
+([ADR-20261103180000](adr/20261103180000-previews-without-a-project-stay-in-their-set.md)).
+
+Apps bound to a repository without a project are previewed together, one
+preview set per pull request. A preview in such a set calls the other apps of
+the set by their production names and reaches their previews of the same pull
+request. It never reaches a production app: a call to an app the set does not
+preview answers `403 preview_production_dependency_denied`, and a preview of
+another pull request is refused. To let previews call a production
+dependency, put the apps in a project and use its `preview_service_policy`.
 
 ## Configuration
 
@@ -408,8 +423,9 @@ A preview gets the rest of its configuration from two places
   They override the PR's Compose values. Anyone who can open a pull request
   runs code with these values, so they can read them: keep test credentials
   here, never production ones. Changing a value reaches each preview
-  at its next build. Removing one from `pr-preview` does not remove it from
-  open previews. Managed database and storage credentials are never given to
+  at its next build. Removing one from `pr-preview` also removes it from
+  each open preview that still holds the copy it was given, and a value you
+  changed on a preview itself stays. Managed database and storage credentials are never given to
   previews. `pr-preview` cannot be the name of a project environment.
 
 Previews keep their production app's access and egress gates: password,

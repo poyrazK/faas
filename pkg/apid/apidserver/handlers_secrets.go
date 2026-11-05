@@ -543,6 +543,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
+	previewRemoval, removesPreviewCopy := s.pendingPRPreviewRemoval(r.Context(), app, scope, key, true)
 	change := s.beginConfigChange(r, acct, app, scope, "")
 	revocation, err := s.store.DeleteAppSecretInScopeWithRevocation(r.Context(), acct.ID, app.ID, scope, key)
 	if err != nil {
@@ -560,6 +561,9 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	}
 	// ADR-1451: deletion is revocation; a guard never restores it.
 	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretDelete, key, true)
+	if removesPreviewCopy {
+		s.removeFromPRPreviews(r.Context(), acct, app, previewRemoval)
+	}
 	if key == "DATA_API_USAGE_URL" {
 		s.forgetDataAPIAccess(r.Context(), acct.ID, app.ID)
 	}

@@ -317,13 +317,18 @@ func TestServiceProxyAuthorizerEnforcesPreviewServicePolicy(t *testing.T) {
 		t.Fatalf("legacy preview authorization = %v, want preview-production denial", err)
 	}
 
-	// Standalone apps have no project-owned policy surface. Preserve their
-	// existing marked-call behaviour until environment-scoped dependencies
-	// exist for them too.
+	// A PR preview of an app without a project has no project policy to
+	// allow production calls: it reaches only its preview set
+	// (ADR-20261103180000).
 	standaloneParent := mk("standalone-parent", "", "")
-	standalonePreview := mk("pr-44-standalone-parent", "", standaloneParent.Slug)
-	if _, err := authorize(ctx, standalonePreview.ID, target.ID); err != nil {
-		t.Fatalf("standalone preview authorization = %v, want legacy allow", err)
+	standalonePreview, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "pr-44-standalone-parent",
+		Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive, PreviewOfSlug: standaloneParent.Slug,
+		PreviewPrNumber: 44, PreviewPrState: state.PreviewPrStateOpen})
+	if err != nil {
+		t.Fatalf("CreateApp standalone preview: %v", err)
+	}
+	if _, err := authorize(ctx, standalonePreview.ID, target.ID); !errors.Is(err, gateway.ErrServiceProxyPreviewProductionDenied) {
+		t.Fatalf("standalone preview authorization = %v, want preview-production denial", err)
 	}
 	danglingPreview := mk("pr-45-missing-parent", "", "missing-parent")
 	if _, err := authorize(ctx, danglingPreview.ID, target.ID); !errors.Is(err, gateway.ErrServiceProxyDenied) {

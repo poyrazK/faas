@@ -100467,6 +100467,35 @@ func (q *Queries) ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byt
 	return snapshot, err
 }
 
+const servicePolicyPRPreviewSetMemberIDs = `-- name: ServicePolicyPRPreviewSetMemberIDs :many
+SELECT DISTINCT member_id::text AS member_id
+FROM pr_preview_sets, unnest(member_app_ids) AS member_id
+WHERE member_app_ids @> ARRAY[$1::text]
+ORDER BY member_id
+`
+
+// The apps of the PR preview sets that hold an app. A preview of an app bound
+// without a project calls only these (ADR-20261103180000).
+func (q *Queries) ServicePolicyPRPreviewSetMemberIDs(ctx context.Context, db DBTX, appID string) ([]string, error) {
+	rows, err := db.Query(ctx, servicePolicyPRPreviewSetMemberIDs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var member_id string
+		if err := rows.Scan(&member_id); err != nil {
+			return nil, err
+		}
+		items = append(items, member_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const servicePolicyPreviewAppIDs = `-- name: ServicePolicyPreviewAppIDs :many
 SELECT id FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
   AND preview_pr_number = $3::integer

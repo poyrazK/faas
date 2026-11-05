@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/servicebinding"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -65,6 +66,22 @@ func newServiceProxyResolver(store servicePolicyApps) gateway.ServiceProxyResolv
 					}
 					if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 						return gateway.ServiceTarget{}, false, fmt.Errorf("resolve preview service %q: %w", service, lookupErr)
+					}
+				}
+				// A PR preview of an app bound without a project names the
+				// other apps of its preview set by their production slugs; the
+				// call reaches their previews. Any other name falls through,
+				// and the authorizer refuses a production target
+				// (ADR-20261103180000).
+				if servicebinding.StandalonePRPreview(caller) {
+					if peers, ok := store.(servicebinding.PreviewSetPeerStore); ok {
+						peer, found, peerErr := servicebinding.PreviewSetPeer(ctx, peers, caller, service)
+						if peerErr != nil {
+							return gateway.ServiceTarget{}, false, peerErr
+						}
+						if found {
+							return serviceTargetFromApp(peer, true), true, nil
+						}
 					}
 				}
 			case errors.Is(err, state.ErrNotFound):

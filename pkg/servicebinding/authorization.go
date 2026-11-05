@@ -101,6 +101,20 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 			}
 		}
+		// A PR preview of an app bound without a project has no project
+		// policy: it calls only its own preview set (ADR-20261103180000).
+		standalonePreview := false
+		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber > 0 && !callerIsTest {
+			projectID, err := previewCallerProjectID(ctx, store, caller)
+			if err != nil {
+				return gateway.ServiceCaller{}, err
+			}
+			if standalonePreview = projectID == ""; standalonePreview {
+				if err := authorizeStandalonePreview(ctx, store, caller, target); err != nil {
+					return gateway.ServiceCaller{}, err
+				}
+			}
+		}
 		// When no same-PR workload exists, the resolver falls back to the
 		// production service. Enforce the customer-owned project policy before
 		// endpoint lookup or wake so a denied call cannot consume production
@@ -134,9 +148,10 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if callerIsTest {
 			bindingTarget = targetTest.Workload
 		}
-		if projectPreviewToPreview {
-			// Compose binds the logical workload name, not the generated
-			// pr-N slug. The environment check above makes this alias safe.
+		if projectPreviewToPreview || standalonePreview {
+			// Compose and the production app bind the logical name, not the
+			// generated pr-N slug. The environment or preview set check above
+			// makes this alias safe.
 			bindingTarget = target.PreviewOfSlug
 		}
 		legacyBindingTarget := bindingTarget
@@ -278,8 +293,8 @@ func slugNamesCaller(ctx context.Context, store AuthorizationStore, caller, targ
 // previewCallerProjectID preserves policy enforcement for preview rows created
 // before githubd copied project_id onto them. New previews take the zero-read
 // fast path; legacy rows pay one parent lookup only while they remain alive.
-// Standalone app previews have no project policy and retain the documented
-// allow-and-mark behaviour.
+// A PR preview of an app without a project answers "": it has no project
+// policy and calls only its own preview set (ADR-20261103180000).
 func previewCallerProjectID(ctx context.Context, store AuthorizationStore, caller state.App) (string, error) {
 	if caller.ProjectID != "" || caller.PreviewOfSlug == "" {
 		return caller.ProjectID, nil

@@ -98,6 +98,7 @@ type servicePolicyEvidenceReader struct {
 	loaded                    map[string]state.App
 	Members                   map[string]state.ScenarioTestMember
 	Projects                  map[string]state.PreviewServicePolicy
+	Peers                     map[string][]string
 }
 
 func (s *servicePolicyEvidenceReader) MarshalJSON() ([]byte, error) {
@@ -105,7 +106,21 @@ func (s *servicePolicyEvidenceReader) MarshalJSON() ([]byte, error) {
 		Apps     map[string]servicePolicyAppInput
 		Members  map[string]state.ScenarioTestMember
 		Projects map[string]state.PreviewServicePolicy
-	}{s.apps, s.Members, s.Projects})
+		Peers    map[string][]string `json:",omitempty"`
+	}{s.apps, s.Members, s.Projects, s.Peers})
+}
+
+// PRPreviewSetPeerIDs records the preview set a standalone PR preview's call
+// was resolved and authorized against (ADR-20261103180000).
+func (s *servicePolicyEvidenceReader) PRPreviewSetPeerIDs(ctx context.Context, appID string) ([]string, error) {
+	ids, err := s.ServicePolicyReader.PRPreviewSetPeerIDs(ctx, appID)
+	if err == nil {
+		if s.Peers == nil {
+			s.Peers = make(map[string][]string)
+		}
+		s.Peers[appID] = append([]string(nil), ids...)
+	}
+	return ids, err
 }
 
 func (s *servicePolicyEvidenceReader) recordApp(app state.App, err error) (state.App, error) {

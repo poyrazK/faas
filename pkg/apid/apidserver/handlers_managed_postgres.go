@@ -617,6 +617,12 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		s.notFound(w, "app not found")
 		return
 	}
+	// A PR preview runs unreviewed code: a binding would hand it the
+	// database's credentials (ADR-20261103180000).
+	if state.IsPRPreviewApp(app) {
+		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("managed PostgreSQL bindings"))
+		return
+	}
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)

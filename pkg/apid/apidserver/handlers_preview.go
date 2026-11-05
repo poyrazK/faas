@@ -132,6 +132,10 @@ func (s *server) tearDownPreviewApp(w http.ResponseWriter, r *http.Request, acct
 		object.BucketProblem(w, err)
 		return false
 	}
+	if err := s.cleanupPRPreviewPostgresBindings(r.Context(), app); err != nil {
+		managedPostgresProblem(w, err)
+		return false
+	}
 	if err := s.cleanupDevPostgres(r.Context(), app); err != nil {
 		managedPostgresProblem(w, err)
 		return false

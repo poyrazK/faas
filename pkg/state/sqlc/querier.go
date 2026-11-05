@@ -6932,6 +6932,9 @@ type Querier interface {
 	SelectSourceBuildRootfs(ctx context.Context, db DBTX, arg SelectSourceBuildRootfsParams) error
 	ServiceCapacityPlacement(ctx context.Context, db DBTX) ([]byte, error)
 	ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byte, error)
+	// The apps of the PR preview sets that hold an app. A preview of an app bound
+	// without a project calls only these (ADR-20261103180000).
+	ServicePolicyPRPreviewSetMemberIDs(ctx context.Context, db DBTX, appID string) ([]string, error)
 	// Two IDs suffice to refuse an ambiguous service name, as production does.
 	ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error)
 	ServiceProjectReleaseStages(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ProjectReleaseStage, error)

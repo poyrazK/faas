@@ -2072,6 +2072,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			if errors.As(reserveErr, &quota) {
 				return reconcile.Result{}, previewSetupFailure("%s", previewQuotaSummary(quota, len(batch)))
 			}
+			if errors.Is(reserveErr, state.ErrPreviewOwnsBuckets) {
+				return reconcile.Result{}, previewSetupFailure("a service this pull request no longer previews still owns object storage buckets on its preview; delete those buckets so the preview can change")
+			}
 			if errors.Is(reserveErr, state.ErrConflict) {
 				return reconcile.Result{}, previewSetupFailure("a preview app name for this pull request is already used by another app or pull request")
 			}
