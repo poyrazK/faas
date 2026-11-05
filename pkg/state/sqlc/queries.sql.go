@@ -67024,7 +67024,7 @@ func (q *Queries) ObjectBucketPruneTombstones(ctx context.Context, db DBTX, acco
 }
 
 const objectBucketReserveLockAccount = `-- name: ObjectBucketReserveLockAccount :one
-SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR NO KEY UPDATE
 `
 
 func (q *Queries) ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
@@ -73714,9 +73714,13 @@ func (q *Queries) ObjectUsageGrantUpsert(ctx context.Context, db DBTX, arg Objec
 }
 
 const objectUsageLockAccount = `-- name: ObjectUsageLockAccount :one
-SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE
+SELECT id FROM resource_namespaces WHERE id = $1 FOR NO KEY UPDATE
 `
 
+// Object writers of one account serialize here. NO KEY UPDATE excludes the
+// other writers and the fences but not the KEY SHARE that foreign-key inserts
+// naming the namespace take (request journal, invocations): FOR UPDATE stalled
+// them for the whole account while an object job ran (2026-11-05).
 func (q *Queries) ObjectUsageLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, objectUsageLockAccount, id)
 	var id_2 pgtype.UUID
