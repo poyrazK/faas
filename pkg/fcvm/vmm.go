@@ -113,6 +113,10 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// resident holds verified copies of the jailer and firecracker executables
+	// on the jail tmpfs (ADR-20261105100000), launched in place of the
+	// installed ones so a wake after an idle spell reads nothing from disk.
+	resident residentExecs
 	// guestDisk is the sandboxed editor every drive read and write goes
 	// through (ADR-20261025090100).
 	guestDisk guestDiskState
@@ -314,13 +318,15 @@ type restoreTimingBreakdown struct {
 	MaterializeVMStateMs int64
 	ResolveImagesMs      int64
 	StageDrivesMs        int64
-	// TunWaitMntnsMs .. CgroupFenceMs split the bind_tun window so an
+	// TunJournalChecksMs .. CgroupFenceMs split the bind_tun window so an
 	// optimisation targets the right thing; see bindTunTimings. Operator-
-	// facing only: they ride the Debug record and are deliberately NOT on
+	// facing only: they ride the Debug record and the tun_* / cgroup_fence
+	// vmmd_restore_phase_duration_seconds phases, and are deliberately NOT on
 	// the wake.restore_breakdown event, which is a customer contract.
-	TunWaitMntnsMs  int64
-	TunWaitChrootMs int64
-	TunSetupJailMs  int64
+	TunJournalChecksMs int64
+	TunWaitMntnsMs     int64
+	TunWaitChrootMs    int64
+	TunSetupJailMs     int64
 	// TunSetupJailWorkUs is the helper's own in-namespace duration, self
 	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
 	TunSetupJailWorkUs int64
@@ -2437,6 +2443,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
 		StageDrivesMs:        tStageDrives.Sub(tResolve).Milliseconds(),
+		TunJournalChecksMs:   tunTimings.JournalChecksMs,
 		TunWaitMntnsMs:       tunTimings.WaitMntnsMs,
 		TunWaitChrootMs:      tunTimings.WaitChrootMs,
 		TunSetupJailMs:       tunTimings.SetupJailMs,
@@ -2502,6 +2509,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"start_jailer_ms", breakdown.StartJailerMs,
 		"network_wait_ms", breakdown.NetworkWaitMs,
 		"bind_tun_ms", breakdown.BindTunMs,
+		"tun_journal_checks_ms", breakdown.TunJournalChecksMs,
 		"tun_wait_mntns_ms", breakdown.TunWaitMntnsMs,
 		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
 		"tun_setup_jail_ms", breakdown.TunSetupJailMs,
@@ -5587,15 +5595,14 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
-	execFile, err := exec.LookPath(FirecrackerBin)
+	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
+	// (jailer follows the symlink); see resolveFCChrootName. The resident copy
+	// keeps that basename.
+	execFile, err := resolveExecutable(FirecrackerBin)
 	if err != nil {
 		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
 	}
-	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
-	// (jailer follows the symlink); see resolveFCChrootName.
-	if real, rErr := filepath.EvalSymlinks(execFile); rErr == nil {
-		execFile = real
-	}
+	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
 		Plan:        l.Plan,
@@ -5612,6 +5619,9 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			return int64(memoryMB) << 20
 		}(),
 	}), extraFCArgs...)
+	if jailerPath, err := resolveExecutable(argv[0]); err == nil {
+		argv[0] = v.residentExecutable("jailer", jailerPath)
+	}
 	// The caller's gRPC context often ends as soon as the boot RPC returns.
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
@@ -6331,6 +6341,9 @@ func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, 
 // the jailer twice, one nsenter process spawn, then the cgroup fence), so it
 // is split before anything is optimised.
 type bindTunTimings struct {
+	// JournalChecksMs is the native path's ownership and journal checks before
+	// it starts waiting for the jailer; zero on the legacy path.
+	JournalChecksMs int64
 	// WaitMntnsMs waits for jailer to unshare its mount namespace.
 	WaitMntnsMs int64
 	// WaitChrootMs waits for the jailed helper and /dev to appear, which
