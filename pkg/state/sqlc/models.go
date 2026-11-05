@@ -3546,6 +3546,18 @@ type DataApiAccessConfig struct {
 	ReportedAt pgtype.Timestamptz
 }
 
+// ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).
+type DataApiChangeHookReport struct {
+	AppID           pgtype.UUID
+	ReportedAt      pgtype.Timestamptz
+	Pending         int64
+	Failed          int64
+	OldestPendingAt pgtype.Timestamptz
+	LastPublishedAt pgtype.Timestamptz
+	LastFailureCode pgtype.Text
+	Publishing      string
+}
+
 type DataApiRuntimeConnectionObservation struct {
 	BindingID            pgtype.UUID
 	InstanceID           pgtype.UUID
@@ -13801,6 +13813,12 @@ type RequestAnalyticsMinute struct {
 type RequestAnalyticsRollupCoverage struct {
 	AppID        pgtype.UUID
 	CoveredSince pgtype.Timestamptz
+}
+
+// App minutes whose analytics rollups apid lost; written only by apid, swept only by meterd (ADR-20261103113952 amendment 1).
+type RequestAnalyticsRollupGap struct {
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
 }
 
 type RequestAuditEvent struct {

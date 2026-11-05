@@ -951,6 +951,30 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/postgres-bindings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listAppPostgresBindings
+      summary: List an app's managed PostgreSQL bindings
+      description: |
+        Lists the app's live managed PostgreSQL bindings on every database it
+        is bound to, including organization databases and project environment
+        copies. Deleting the app is refused while a binding listed here is not
+        being deleted. Bindings on an environment copy are removed by tearing
+        down that environment.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: The app's bindings on every database, without credential material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppPostgresBindingList'}
+        default:
+          description: App lookup, permission or binding listing error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases/{id}/bindings:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -24259,6 +24283,24 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/ManagedPostgresBinding'}}
+    AppPostgresBinding:
+      description: One live managed PostgreSQL binding of an app, without credential material.
+      type: object
+      additionalProperties: false
+      required: [id, database, scope, environment_key, access, state]
+      properties:
+        id: {type: string, description: 'The binding ID that revoking the binding takes.'}
+        database: {type: string, description: The bound database's name.}
+        scope: {type: string}
+        environment_key: {type: string}
+        access: {type: string}
+        state: {type: string, description: A binding in the deleting state no longer blocks deleting the app.}
+    AppPostgresBindingList:
+      description: An app's live managed PostgreSQL bindings on every database it is bound to.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AppPostgresBinding'}}
     CreateManagedPostgresBindingRequest:
       description: Request to inject a managed database credential into an app environment. Access values are provider-neutral; the selected database backend may support only a subset.
       type: object

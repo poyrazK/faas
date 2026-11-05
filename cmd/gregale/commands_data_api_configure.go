@@ -225,6 +225,9 @@ func cmdDataAPIConfigure(args []string) int {
 	}
 	ctx := context.Background()
 	app, receipt := fs.Arg(0), dataAPIConfigureReceipt{App: fs.Arg(0), Scope: *scope, Changed: []string{}}
+	if err = checkDataAPIReportSettings(ctx, client, app, *monthlyCaps, *usageReporting); err != nil {
+		return printErr("Monthly caps unavailable", err)
+	}
 	if err = configureDataAPIAnonymous(ctx, client, app, *scope, []dataAPIAnonymousSetting{
 		{key: "DATA_API_PUBLIC_READ", value: *publicRead, remove: *noPublicRead},
 		{key: "DATA_API_PUBLIC_RPC", value: *publicRPC, remove: *noPublicRPC},

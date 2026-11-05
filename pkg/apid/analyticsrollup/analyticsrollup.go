@@ -6,6 +6,8 @@ package analyticsrollup
 
 import (
 	"context"
+	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -41,6 +43,60 @@ func Covers(ctx context.Context, store any, appID string, from time.Time) (Reade
 	}
 	return reader, !from.Before(since.Add(api.RequestAnalyticsSettleLag))
 }
+
+// WindowIncompleteGap is the analytics telemetry gap reason for requests
+// lost during the window; lost rollups report it too.
+const WindowIncompleteGap = "telemetry_window_incomplete"
+
+// WithRollupGaps adds lost rollups to a completeness answer: when the
+// rollups answer the window and apid lost some of its minutes, the window
+// is incomplete. An unknown answer (nil) stays unknown.
+func WithRollupGaps(ctx context.Context, store any, log *slog.Logger, appID string, from, until time.Time, complete *bool, gaps []string) (*bool, []string) {
+	if complete == nil {
+		return complete, gaps
+	}
+	reader, ok := Covers(ctx, store, appID, from)
+	id, parseErr := uuid.Parse(appID)
+	if !ok || parseErr != nil {
+		return complete, gaps
+	}
+	has, err := reader.RequestAnalyticsRollupHasGap(ctx, id, from, until)
+	if err != nil {
+		if log != nil {
+			log.Warn("request analytics rollup gap check failed", "app_id", appID, "err", err)
+		}
+		return nil, nil
+	}
+	if !has {
+		return complete, gaps
+	}
+	incomplete := false
+	if !slices.Contains(gaps, WindowIncompleteGap) {
+		gaps = append(gaps, WindowIncompleteGap)
+	}
+	return &incomplete, gaps
+}
+
+// RouteDeployments returns requests per route, method and deployment from
+// the rollups.
+func RouteDeployments(ctx context.Context, reader Reader, appID, accountID string, from, until time.Time) (map[RouteDeploymentKey]int64, error) {
+	rows, err := reader.RequestAnalyticsRollupRouteDeployments(ctx, sqlc.RequestAnalyticsRollupRouteDeploymentsParams{
+		AppID: pgUUID(appID), AccountID: pgUUID(accountID),
+		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[RouteDeploymentKey]int64, len(rows))
+	for _, row := range rows {
+		out[RouteDeploymentKey{Route: row.Route, Method: row.Method, DeploymentID: uuid.UUID(row.DeploymentID.Bytes).String()}] += row.Requests
+	}
+	return out, nil
+}
+
+// RouteDeploymentKey is one route, method and deployment.
+type RouteDeploymentKey struct{ Route, Method, DeploymentID string }
 
 // Query is one rollup read.
 type Query struct {
