@@ -165,11 +165,22 @@
 - name: edgednsd_service — apply configuration handlers before readiness
   ansible.builtin.meta: flush_handlers
 
+# A release converges these roles before it activates, so on the first
+# release that ships edgednsd the binary is not under /opt/faas/current yet
+# (rc.323: the unit exited 203/EXEC and the metrics check failed the control
+# plane stage). Enable the unit now; cd-controlplane's post-activation step
+# starts it and checks its metrics once the release is current.
+- name: edgednsd_service — check for the edgednsd binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/edgednsd
+  register: faas_edgednsd_binary
+  when: faas_edgednsd_enabled | bool
+
 - name: edgednsd_service — enable and start edgednsd
   ansible.builtin.systemd_service:
     name: faas-edgednsd.service
     enabled: true
-    state: started
+    state: "{{ 'started' if faas_edgednsd_binary.stat.exists else omit }}"
     daemon_reload: true
   when: faas_edgednsd_enabled | bool
 
@@ -190,4 +201,4 @@
   retries: 10
   delay: 3
   until: faas_edgednsd_metrics.status == 200
-  when: faas_edgednsd_enabled | bool
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_binary.stat.exists
