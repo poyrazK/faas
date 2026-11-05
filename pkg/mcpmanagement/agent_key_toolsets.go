@@ -62,7 +62,7 @@ func (m *management) selectedRecoveryOutput(ctx context.Context, data json.RawMe
 	}
 	var root map[string]json.RawMessage
 	if json.Unmarshal(data, &root) != nil || root == nil {
-		return data, nil
+		return data, nil //nolint:nilerr // Non-object results have no MCP recovery metadata to filter.
 	}
 	var visit func(map[string]json.RawMessage)
 	visit = func(fields map[string]json.RawMessage) {

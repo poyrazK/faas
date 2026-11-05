@@ -170,6 +170,17 @@ func TestAgentKeyCatalogRecoveryMetadata(t *testing.T) {
 	}
 }
 
+func TestAgentKeyCatalogRecoveryPreservesNonObjectResults(t *testing.T) {
+	m := &management{opts: Options{Toolsets: []string{ToolsetAll}, agentKeyToolsetSelection: true}}
+	ctx := context.WithValue(t.Context(), agentKeyToolsetsContextKey{}, []string{ToolsetCore})
+	for _, data := range []json.RawMessage{json.RawMessage(`null`), json.RawMessage(`[1,2]`), json.RawMessage(`"result"`)} {
+		out, err := m.selectedRecoveryOutput(ctx, data)
+		if err != nil || string(out) != string(data) {
+			t.Fatalf("non-object result %s became %s, err=%v", data, out, err)
+		}
+	}
+}
+
 func TestAgentKeyCatalogSelectionDoesNotGrantWrites(t *testing.T) {
 	f := newRemoteFixtureWithOptions(t, true, HTTPOptions{AgentKeys: true, AgentKeyToolsetSelection: true, Toolsets: []string{ToolsetAll}})
 	const token = "fp_test_readonly_catalog"
