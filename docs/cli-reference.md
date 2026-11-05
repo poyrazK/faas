@@ -1793,6 +1793,34 @@ Inspect and recover repository projects
 
 `gregale project [<subcommand>] <project-slug>`
 
+### project preview
+
+secret
+
+#### project preview secret
+
+Set or remove a pull request preview value on every service
+
+`gregale project preview secret <set|unset>`
+
+Values are write-only; previews receive them at their next deploy.
+
+##### project preview secret set
+
+Set KEY=VALUE pairs in every service&#39;s pr-preview scope
+
+`gregale project preview secret set [--from-stdin] <project> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
+
+##### project preview secret unset
+
+Remove keys from every service&#39;s pr-preview scope
+
+`gregale project preview secret unset <project> <KEY...>`
+
 ### project list
 
 List projects in this account
@@ -1840,28 +1868,6 @@ Roll every service back to its previous deployment, dependencies first
 | `--timeout <DURATION>` | wait per service (default 10m) |  |
 
 Stops at the first service that fails and names the rest.
-
-### project preview-secrets
-
-Set or remove a pull request preview value on every service
-
-Values are write-only; previews receive them at their next deploy.
-
-#### project preview-secrets set
-
-Set KEY=VALUE pairs in every service&#39;s pr-preview scope
-
-`gregale project preview-secrets set [--from-stdin] <project> [KEY=VALUE...]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--from-stdin` | read KEY=VALUE pairs from stdin |  |
-
-#### project preview-secrets unset
-
-Remove keys from every service&#39;s pr-preview scope
-
-`gregale project preview-secrets unset <project> <KEY...>`
 
 
 ## build

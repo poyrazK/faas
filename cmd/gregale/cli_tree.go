@@ -128,6 +128,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"preview", "preview"},
 	{"environment migration recover", "projects environments recover-migration"},
 	{"environment", "projects environments"},
+	// #6612 added `projects preview-secrets`; the tree takes no hyphenated
+	// words, so its verbs sit under `project preview secret`.
+	{"project preview secret", "projects preview-secrets"},
 	{"project", "projects"},
 	{"build", "build"},
 	{"github", "github"},
