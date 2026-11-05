@@ -1805,7 +1805,8 @@ identity and readiness work atomically. Reusing an accepted identity returns
 `409 rollback_attempt_accepted` without another rollback, including after the
 operation finishes or fails. A changed original pair or reason returns
 `rollback_attempt_conflict`. Implicit targets, alert attribution, release
-acknowledgement and service/worker attempts cannot use this header.
+acknowledgement, database restoration, named-scope and worker attempts cannot
+use this header.
 
 Call `gregale_get_action_outcome` with the original app/plan ID and default
 `apply` phase. It verifies the exact operation, target/current pair, immutable
@@ -1819,9 +1820,9 @@ recipes expose `recovery.outcome` without reading native receipts or changing
 history. Current read consent, original identities, retention and storage remain
 mandatory. Missing evidence stays unresolved; never reconstruct an expired
 request or issue another rollback to resolve ambiguity. Legacy attempted plans
-receive no replacement identity. Service rollback outcome recovery remains unsupported. Reviewed default and
-named-environment service-abort recovery is
-described below. Request rollback adds no tool or migration. See
+receive no replacement identity. Default-scope service rollback recovery and
+reviewed default/named-environment service-abort recovery are described below.
+Request rollback adds no tool or migration. See
 [ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
 
 ## Resolve an ambiguous reviewed service abort
@@ -1902,9 +1903,9 @@ known deployment ID contains history/outcome calls only; follow the observation
 returned by the outcome rather than inventing a target. Current read consent,
 immutable identities, storage and the retained reference are checked again before
 release. No read replays a write, extends expiry or changes recorded uncertainty.
-Service rollback outcome recovery remains unsupported. Reviewed default and
-named-environment service-abort acceptance is described above. Exact request rollback
-and explicit request promotion recovery are described above. See
+Default-scope service rollback acceptance is described below. Reviewed default
+and named-environment service-abort acceptance, exact request rollback and
+explicit request promotion recovery are described above. See
 [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
 
 ## Resolve an ambiguous route-budget write
@@ -1926,9 +1927,9 @@ plan or extends its expiry. `native_completion` remains `not_observed`.
 Unavailable, missing or mismatched receipts return `unresolved`. This never
 proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
 described above; explicit request promotions support phase=promotion. Reviewed
-default and named-environment service-abort acceptance is described above. Service
-rollback outcome recovery remains unsupported. Older bridges/APIs and expired
-legacy actions without a saved
+default and named-environment service-abort acceptance is described above.
+Default-scope service rollback acceptance is described below. Older bridges/APIs
+and expired legacy actions without a saved
 lookup reference also remain unresolved; do not create a replacement request
 to resolve ambiguity.
 
