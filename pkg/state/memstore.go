@@ -2114,9 +2114,12 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 // in-memory inserts, and return. The mutex serialises concurrent
 // callers so the partial-unique invariant the SQL partial index
 // enforces is preserved in MemStore.
-func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return CreateAccountWithPersonalOrgResult{}, err
+	}
 
 	// 1. Email uniqueness probe.
 	for _, a := range m.accounts {
@@ -2136,18 +2139,12 @@ func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params Create
 		verifiedAt := now
 		acct.EmailVerifiedAt = &verifiedAt
 	}
-	m.storeRouteCheckAccountLocked(acct.ID, acct)
-
 	// 2. Personal org uniqueness probe — mirrors the SQL partial
 	//    unique orgs_one_personal_per_account_uniq.
 	ownerID := acct.ID
 	for _, existing := range m.orgs {
 		if existing.Personal && existing.PersonalOwnerAccountID != nil &&
 			*existing.PersonalOwnerAccountID == ownerID {
-			// Roll back the account insert so the surrounding mutex
-			// doesn't observe a half-state if a future caller relies
-			// on the map's invariants.
-			delete(m.accounts, acct.ID)
 			return CreateAccountWithPersonalOrgResult{}, ErrConflict
 		}
 	}
@@ -2162,6 +2159,13 @@ func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params Create
 		CreatedAt:              now,
 		UpdatedAt:              now,
 	}
+	if params.InitialPasswordHash != "" {
+		if err := m.setAccountPasswordLocked(acct.ID, params.InitialPasswordHash); err != nil {
+			delete(m.accountPasswords, acct.ID)
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
+	m.storeRouteCheckAccountLocked(acct.ID, acct)
 	m.orgs[org.ID] = org
 	m.orgsBySlug[strings.ToLower(org.Slug)] = org.ID
 

@@ -12485,6 +12485,10 @@ paths:
         Stages deletion. The account becomes `deleted_pending` for 30 days
         during which the customer can call `POST /v1/account/restore`. After
         the grace period, all rows are GC'd.
+        An account serving as an organization's billing contact while it has
+        a billing customer must move that contact first (409
+        `billing_contact_member`). If the billing-contact check cannot
+        complete, returns retryable 503 without staging deletion.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -12497,6 +12501,7 @@ paths:
                 example: {"status":"deleted_pending","scheduled_at":"2026-07-23T11:25:00Z","restore_until":"2026-08-22T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   # Issue #1278 — account-wide failed-events inbox. This surface includes
   # app-owned queue/trigger/webhook failures and account-owned job runs.
@@ -53728,6 +53733,8 @@ paths:
         the next rotation observes the new value. `days=0` is atomic
         rotation (no grace); `days=null` (or omission) clears the
         override and falls back to the plan default.
+        A failed save returns retryable 503 without invalidating the cache
+        or emitting a successful change audit event.
       requestBody:
         required: true
         content:
@@ -53748,6 +53755,7 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/account/egress_allowlist_extra:
     get:
@@ -58115,6 +58123,8 @@ paths:
         the organization bills to cannot be removed while the organization
         has a billing customer (409 `billing_contact_member`); set another
         billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+        If the billing-contact check cannot complete, returns retryable 503
+        without removing the member.
       responses:
         '204': { description: Member removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -58141,6 +58151,7 @@ paths:
             `org_memberships_one_owner_idx` partial unique index. Stable code `org_last_owner`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
@@ -58155,7 +58166,9 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org.
+        member of the org. For a Free organization, the recipient must have
+        available Free-organization ownership capacity; admission is serialized
+        with organization creation and other incoming transfers.
       requestBody:
         required: true
         content:
@@ -58170,8 +58183,9 @@ paths:
         '403':
           description: |
             `403 Forbidden` — caller is authenticated but is not the
-            active owner of the target org. Stable code
-            `org_role_forbidden`.
+            active owner of the target org (`org_role_forbidden`), or the
+            recipient already owns the maximum number of Free organizations
+            (`org_free_limit_exceeded`, with limit and observed count).
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404':
           description: 'code: NotFound (new owner is not a member)'

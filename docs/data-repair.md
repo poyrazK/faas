@@ -43,6 +43,12 @@ Limits are defined in `pkg/api/limits.go`. Capture failure aborts the business
 transaction. Readiness and rehearsal establish mechanical/database checks;
 application semantics depend on the checks and dependencies the owner declares.
 
+Apply locks and validates every candidate before restoring the selection in one
+UPDATE statement. Deferrable, initially immediate unique and exclusion constraints
+can therefore validate a complete value swap at statement end. Fields absent
+from a row's inverse retain their native values. Nondeferrable constraints,
+fresh row versions and business checks remain enforced.
+
 ## Inspect repair readiness
 
 Use **Executor readiness** on either review screen, or run the read-only doctor
@@ -544,14 +550,20 @@ GRANT SELECT, INSERT ON public.gregale_operation_inbox TO application_writer;
 
 The owner must first install the selected SDK receipt schema. Optional outboxes
 need separate grants. PostgreSQL trigger invocation does not require caller
-EXECUTE grants on trigger functions. Capture's enrollment check takes a
-`SHARE UPDATE EXCLUSIVE` lock: column-only UPDATE is insufficient. PostgreSQL
-accepts table-level UPDATE, DELETE or TRUNCATE for that lock; the example uses
+EXECUTE grants on trigger functions. READ COMMITTED captures take a
+`ROW EXCLUSIVE` enrollment lock, allowing independent captured writes to share a
+table. An already running concurrent index build or other SHARE UPDATE EXCLUSIVE
+maintenance causes a retryable conflict before capture begins. A later build
+waits for the capture transaction before building its index. REPEATABLE READ and
+SERIALIZABLE retain the stronger `SHARE UPDATE EXCLUSIVE` lock. Column-only UPDATE
+is insufficient for enrollment locking; the example uses table-level
 UPDATE and grants no unnecessary DELETE/TRUNCATE privileges. These are trusted
 backend grants, not end-user database permissions. Do not grant evidence,
 approval, plan-table writes or apply authority to untrusted clients. Database
 owners remain part of the trust boundary. Captured values require an explicit
-retention policy. The reviewed maintenance flow below removes eligible old
+retention policy. Writer and executor roles also need SELECT on
+`pg_catalog.pg_locks`, normally available through PUBLIC; readiness reports it
+if an administrator revoked that grant. The reviewed maintenance flow below removes eligible old
 payloads while preserving identities and receipts; no automatic purge runs.
 
 ## Repair payload retention
@@ -1017,6 +1029,12 @@ recover an existing matching source result for a resolving reservation; it
 never closes a source plan itself. Settlement starts the normal bounded
 result/event retention window again, without refreshing source plan expiry.
 
+Hosted `applying` and `outcome_unknown` repairs also retain their identities,
+events and idempotency records until a source receipt or explicit closure settles
+them. An elapsed result window cannot remove access to reconciliation or
+resolution. Late receipt recovery starts the ordinary result/event retention
+window again; settled repairs expire normally afterward.
+
 Existing installations need the explicit owner `schema --upgrade`. No table
 reenrollment is required. Closure alone keeps source payload held; a verified
 saved replacement can later make its parent eligible for reviewed compaction
@@ -1076,7 +1094,20 @@ and accepts only the same UUID/digest; replays may use the original sequence.
 It appears in operator health with recovery guidance and survives normal ledger
 cleanup. Child admission and the parent's `replaced` phase commit together. An
 expired child recovered after response loss is recorded as failed; its expiry
-and approval authority are not refreshed.
+and approval authority are not refreshed. This historical recovery remains
+available after a plan downgrade or while pending-operation quota is full,
+using the parent's stored limits for result/event retention. Fresh executable
+children still require the current plan and available capacity. Completing a
+replacement restarts the parent's result/event retention windows so a lost
+response can be retried; replays return the same child without extending those
+windows.
+
+Expired, unapproved hosted plans in `prepared` with no active rehearsal stop
+counting toward pending-operation quota immediately. The existing minute-based
+apid operation cleanup loop marks them failed in bounded batches and emits one
+failure event. Ordinary retention then applies. It preserves the saved source
+expiry and does not settle approved plans, active native rehearsals or
+unresolved reservations.
 
 Existing installations require the explicit owner `schema --upgrade`, which adds
 a nullable unique plan reference and replaces the guarded SQL functions. No table
