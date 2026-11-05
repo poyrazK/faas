@@ -147,3 +147,19 @@ by inode and birth time (needs pruning and a birth time on every filesystem,
 which the attribute does not); verifying in parallel with the restore's
 staging (hides at most the ~100 ms of staging and turns a refusal into a
 half-built restore to tear down).
+
+## Amendment 3 (2026-11-05): a release keeps the base when guest-init's code is the same
+
+Consequences above said every base change retires the snapshots on the old
+one, "almost every release, because drive0 bundles guest-init". Production
+confirmed it: each release's guest-init had new bytes (26 digests in 12 days),
+so each release replaced every base and each app's first wake was refused
+(205 of 207 restore fallbacks on rc.322). The bytes changed with guest-init's
+whole import closure, not only with its code: the Go build ID and line table
+of two builds of the same code differ.
+
+The check is unchanged and stays exact. What changes is what the release
+puts in the base: it ships the previous signed release's guest-init while the
+code digest of the new build is the same (ADR-20261105150000). Of five recent
+release pairs one was that case; a release that changes what guest-init runs
+still retires the snapshots once.
