@@ -3,6 +3,7 @@
 package faas
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -49,7 +50,9 @@ func TestServiceAbortReceiptTransport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := ContextWithServiceAbortAttempt(WithIdempotencyKey(t.Context(), IdempotencyKey("private-key")), attempt)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = ContextWithServiceAbortAttempt(WithIdempotencyKey(ctx, IdempotencyKey("private-key")), attempt)
 			if got, err := client.RecoverReviewedServiceRollout(ctx, "alpha", "candidate", "predecessor", "recover", review); err != nil || got.ServiceRecovery == nil || got.ServiceRecovery.RequestID != "native-request" {
 				t.Fatalf("accepted result: %+v %v", got, err)
 			}

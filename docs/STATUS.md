@@ -9,7 +9,7 @@ historical.
 
 ## Management MCP PR #6601 main integration — 2026-11-05 (branch, not released)
 
-The recovery branch integrates main through `ceec5d1bb`. Operation receipts retain
+The recovery branch integrates main through `a409ec197`. Operation receipts retain
 `gregale_get_plan`; original proposal review uses `gregale_get_saved_plan` with
 its original selectors and final guards. History helpers follow operate and
 release/diagnose toolsets; focused core discovery retains its existing boundary.
@@ -29,7 +29,15 @@ The merged MCP race suite completed within five minutes after schema-cache
 wiring; its outdated local-catalog assertion was corrected and the affected
 journey rerun. Node/Python receipt transport checks and generation pass. Native
 handler/state race checks and invalid-index replay now pass. SQLC regeneration
-is clean; CLI/real-client revalidation and GitHub CI remain pending.
+is clean. Pinned Codex revalidation passed all three profiles on `e973989d2`
+with zero model requests and zero native writes. Native handler/state race
+evidence above covers the integration through `ceec5d1bb`; GitHub CI validates
+the final combined head. CI identified a Go 1.23 test-context compatibility issue,
+client drift after main's bucket-retry metadata and missing capability mappings
+for service-abort receipts. Corrections pass Go SDK tests and full vet, Node
+build and seven transport tests, four Python receipt tests and the generated
+preview retry-metadata round trip. Capability coverage has zero unmatched
+entries. CLI revalidation and final GitHub CI remain pending.
 Portable fixtures do not qualify native/provider deployment execution.
 
 ## Management MCP named service-abort outcomes — 2026-11-04 (branch, not released)
