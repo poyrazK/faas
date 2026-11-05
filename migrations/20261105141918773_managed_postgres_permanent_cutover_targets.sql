@@ -25,7 +25,7 @@ BEGIN
  RETURN NEW;
 END;
 $$;
-CREATE TRIGGER managed_postgres_permanent_cutover_target
+CREATE OR REPLACE TRIGGER managed_postgres_permanent_cutover_target
  BEFORE INSERT OR UPDATE OF state, target_database_id ON managed_postgres_cutovers
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_permanent_cutover_target();
 COMMIT;
