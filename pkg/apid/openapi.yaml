@@ -124206,8 +124206,29 @@ components:
         oom_fix:
           type: string
           description: "The remedy for the newest out-of-memory kill, one suggestion per line."
+        memory_pressure:
+          $ref: '#/components/schemas/DebugStatusMemory'
         tracing_enabled: { type: boolean }
         generated_at: { type: string, format: date-time }
+
+    DebugStatusMemory:
+      type: object
+      description: "Present when the app's guests ran short of memory in the last day: the low point and the RAM that would have kept 30% of the guest's memory free. Shown where Gregale has released memory warnings to the account."
+      required: [episodes, lowest_available_mb, total_mb, peak_anon_mb, last_at, current_mb, suggested_mb, plan, plan_mb, fits_plan, advice]
+      properties:
+        episodes: { type: integer, minimum: 0 }
+        lowest_available_mb: { type: integer, minimum: 0 }
+        total_mb: { type: integer, minimum: 0 }
+        peak_anon_mb: { type: integer, minimum: 0 }
+        last_at: { type: string, format: date-time }
+        current_mb: { type: integer, minimum: 0, description: "The app's ram_mb." }
+        suggested_mb: { type: integer, minimum: 0, description: "RAM that would have kept 30% free, in 64 MB steps; always above current_mb." }
+        plan: { type: string }
+        plan_mb: { type: integer, minimum: 0, description: "The most RAM the account's plan allows." }
+        fits_plan: { type: boolean }
+        upgrade_plan: { type: string, description: "The smallest plan that allows suggested_mb, when fits_plan is false; absent when no plan does." }
+        upgrade_mb: { type: integer, minimum: 0 }
+        advice: { type: string, description: "The same suggestion the app health memory check gives." }
 
     DebugStatusOOMKill:
       type: object
