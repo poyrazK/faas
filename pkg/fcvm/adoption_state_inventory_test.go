@@ -28,6 +28,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"appDatabaseResolved":               "reset",    // bound database pairs for seeding (ADR-20261026150000)
 		"backingDigests":                    "reset",    // file digest cache
 		"backingHashing":                    "reset",    // in-flight file digests
+		"backingKeys":                       "reset",    // bases the digest primer follows; wakes note them again, recorded digests cover the rest
 		"backingPending":                    "reset",    // in-flight instance identities; adoption restores instanceBacking
 		"baseGenerations":                   "reset",    // base image generation cache
 		"cidToID":                           "rebuilt",

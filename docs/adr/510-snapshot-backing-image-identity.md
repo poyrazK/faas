@@ -80,3 +80,70 @@ setup) threw away snapshots that were still good everywhere else (bug hunt
   after_restore failure and every other restore failure still mark the
   snapshot stale. Refusals still count as `snapshot_stale` on the
   wake-failure counter.
+
+## Amendment 2 (2026-11-05): the check stays off the wake path's critical time
+
+On production-us (rc.322, 2026-11-04 18:00Z – 11-05 08:00Z) 18 of 194 wakes on
+fsn-2 and fsn-3 spent 270–2,530 ms inside `bring_up` but outside `restore_ms`,
+`cold_boot_ms` and `scan_check_ms`: the backing check, which no timing covered.
+Two causes:
+
+- **Hashing after a vmmd restart.** The digest memo lived only in the vmmd
+  process and start-up priming covered only the configured base generations.
+  Release-addressed bases (`base/releases/…`) were read in full on the first
+  wake that needed them after every restart: one cron app's 426 MiB base cost
+  2,315 ms, 2,419 ms and 2,530 ms on its first wake after three restarts
+  (the nodes have no SHA-NI). A base the release pre-stage replaced under a
+  still-serving vmmd cost 443 and 456 ms before the refusal it led to.
+- **Reading the identity from shared storage.** The snapshot replica runner
+  (`snapshothipd`) cached a capture's memory, vmstate, drive and layers on
+  every node, but not its `…/backing` object, so a restore on a node other than
+  the capturing one read it remotely (~340 ms; the cached memory showed the
+  replica itself was local).
+
+Decisions:
+
+- **Digests persist with the file.** After hashing a file version vmmd records
+  `v1 <size> sha256:<hex>` in the file's `trusted.faas.backing-digest` extended
+  attribute, through the open descriptor. A later vmmd process uses it instead
+  of reading the file. The attribute belongs to the inode: a replacement
+  renamed into place has none, and a recycled inode number starts without one.
+  Only CAP_SYS_ADMIN can read or write the trusted namespace, so vmmd (the only
+  root daemon) is the only writer; imaged and the other daemons sharing the
+  node cache cannot forge one. A record whose size does not match the file is
+  ignored. Where the attribute cannot be written (a read-only kernel image, a
+  filesystem without trusted xattrs) the in-process memo still applies.
+- **The memo key gains the birth time** where the filesystem records one
+  (XFS, ext4): (device, inode, size, birth time). Equal sizes are common
+  (bases are sized in whole megabytes), so a recycled inode number of an
+  evicted base could otherwise inherit its digest within one process.
+- **vmmd keeps priming.** Every 30 s it identifies the kernel, the configured
+  bases and every base key a wake on this node attached or verified (at most
+  256), resolving them without advancing the cache LRU and without fetching.
+  A version it already knows costs an open and a stat. Keys the cache evicted
+  are dropped until a wake attaches them again.
+- **Replicas carry the identity.** `snapshothipd` caches a v2 capture's
+  `…/backing` object with the rest of the replica, best-effort: an absent
+  object (a capture from before this ADR) or a failed read never changes the
+  replica's state, and revalidation adds it to replicas made before this
+  change.
+- **The check is attributed.** `wake ok` logs `backing_check_ms` and its
+  disjoint parts `backing_sidecar_ms`, `backing_fetch_ms`, `backing_hash_ms`.
+  `wake.restore_breakdown` carries them as ADR-192 prepare timings (outside
+  `total_ms`), and `wake.cold_boot_breakdown` carries them when a refused or
+  failed restore preceded the cold boot. Both omit the keys when they are zero.
+
+What the check guarantees is unchanged: every restore compares the capture's
+recorded kernel, base and timer identity with the content identity of the
+files it would attach, and a missing, unreadable or different identity refuses
+the restore before any VM process starts. As before, a rewrite of a cached
+image in place that keeps its inode and size is not detected; every writer
+renames a new file into place (Consequences above). The attribute
+extends that assumption from one vmmd process to the life of the file.
+
+Rejected: trusting imaged's `.digest` sidecar (rejected in the original
+decision; the cached bytes are the evidence); a vmmd-owned digest file keyed
+by inode and birth time (needs pruning and a birth time on every filesystem,
+which the attribute does not); verifying in parallel with the restore's
+staging (hides at most the ~100 ms of staging and turns a refusal into a
+half-built restore to tear down).

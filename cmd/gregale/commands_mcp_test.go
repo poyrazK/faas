@@ -271,6 +271,61 @@ func TestMCPCLIWaitsForAndResumesTaskHandles(t *testing.T) {
 	}
 }
 
+func TestMCPCLIResumedWaitCancellationIsExplicit(t *testing.T) {
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	var output, stderr bytes.Buffer
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	var cancellations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "server/discover":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":[%q],"capabilities":{"tools":{},"extensions":{"%s":{}}}}}`, request.ID, mcphosting.ProtocolVersion, mcphosting.TasksExtensionID)
+		case "tasks/get":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","taskId":"saved","status":"working","createdAt":"2026-10-06T12:00:00Z","lastUpdatedAt":"2026-10-06T12:00:00Z","ttlMs":60000}}`, request.ID)
+		case "subscriptions/listen":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/subscriptions/acknowledged\",\"params\":{\"notifications\":{\"taskIds\":[\"saved\"]}}}\n\n")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case "tasks/cancel":
+			cancellations.Add(1)
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete"}}`, request.ID)
+		default:
+			t.Errorf("unexpected method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int32
+	}{
+		{"observe", nil, 0},
+		{"cancel", []string{"--cancel-on-timeout"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output.Reset()
+			stderr.Reset()
+			cancellations.Store(0)
+			args := []string{"task-wait", "--url", server.URL + "/mcp", "--task-id", "saved", "--timeout", "100ms"}
+			args = append(args, tc.args...)
+			if code := main.CmdMCP(args); code == 0 || cancellations.Load() != tc.want {
+				t.Fatalf("exit=%d cancellations=%d want=%d stderr=%s", code, cancellations.Load(), tc.want, stderr.String())
+			}
+		})
+	}
+}
+
 func TestMCPInteractivePromptAndTTYGate(t *testing.T) {
 	for _, tc := range []struct {
 		name, input, action string

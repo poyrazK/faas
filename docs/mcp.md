@@ -3733,11 +3733,15 @@ on other web replicas.
 `mcp call --wait` also opts in and returns the final tool result. It listens for
 task status notifications when the server supports subscriptions, reopening a
 dropped stream from a fresh snapshot. It falls back to `tasks/get` polling when
-subscriptions are unavailable or keep disconnecting. It reports status changes
+subscriptions are unavailable or keep disconnecting, and periodically reconciles
+a quiet stream using `tasks/get` (at least 30 seconds apart, or the server's
+longer poll interval). It reports status changes
 on stderr. If the task requests form input, use `--interactive` or
 `--input-responses-file`; the CLI sends those replies through `tasks/update`.
-When either wait command reaches its timeout, it makes a best-effort cooperative
-`tasks/cancel` request. Tasks require the modern `2026-07-28` protocol; legacy
+When `call --wait` reaches its timeout, it makes a best-effort cooperative
+`tasks/cancel` request. Resuming a saved task with `client wait` stops observing
+at its deadline without cancelling the task; add `--cancel-on-timeout` to request
+cancellation. Tasks require the modern `2026-07-28` protocol; legacy
 calls keep their existing behavior. Task IDs are opaque and must be saved by
 the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
