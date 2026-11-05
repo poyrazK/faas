@@ -128,7 +128,7 @@ func gcsVersionListKey(key, encoding string) (string, error) {
 }
 
 func parseGCSVersionList(out gcsVersionListXML, r ObjectVersionListRequest) (ObjectVersionListPage, error) {
-	page := ObjectVersionListPage{Items: []ListedObjectVersion{}, CommonPrefixes: []string{}}
+	page := ObjectVersionListPage{Items: []ListedObjectVersion{}, CommonPrefixes: []string{}, GenerationVersions: true}
 	encoding, err := gcsVersionListEncoding(out)
 	if err != nil || out.Truncated == nil || len(out.Markers) != 0 || len(out.Versions)+len(out.Prefixes) > int(r.Limit) {
 		return page, ErrUnavailable

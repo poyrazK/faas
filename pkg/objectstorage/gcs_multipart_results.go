@@ -13,7 +13,6 @@ func (p *GCS) recoverGCSMultipart(ctx context.Context, bucket string, r Multipar
 		}
 		object, err := p.gcsProofObject(ctx, bucket, r.Key)
 		if err == nil && object.Key == r.Key {
-			result.VersionsObserved = object.Version > 0
 			proof, proofErr := gcsReceiptProof(object, r.SessionID, r.SizeBytes, true)
 			if proofErr == nil && (r.Encryption == nil || validGCSStoredEncryption(object, *r.Encryption)) {
 				if etag != "" {

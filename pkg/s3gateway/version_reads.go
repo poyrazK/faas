@@ -29,7 +29,7 @@ func (h *Handler) publicObjectVersionID(w http.ResponseWriter, r *http.Request, 
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer cancel()
-	refs, err := st.RecordObjectVersions(ctx, req.bucket.AccountID, req.bucket.ID, []state.ObjectVersionIdentity{{Key: key, ProviderVersionID: native, DeleteMarker: marker}})
+	refs, err := st.RecordObjectVersions(ctx, req.bucket.AccountID, req.bucket.ID, []state.ObjectVersionIdentity{{Key: key, ProviderVersionID: native, DeleteMarker: marker, GenerationVersion: objectstorage.GenerationVersionIDs(req.provider)}})
 	if err != nil || len(refs) != 1 || !validReturnedVersionIdentity(refs[0], key, native) {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return "", false

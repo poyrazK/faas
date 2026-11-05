@@ -71,13 +71,13 @@ func (s *PgStore) FinishObjectMultipartCompletion(ctx context.Context, u ObjectM
 	}
 	var version string
 	if result.ProviderVersionID != "" {
-		refs, e := recordObjectVersionsTx(ctx, tx, u.BucketID, []ObjectVersionIdentity{{Key: u.Key, ProviderVersionID: result.ProviderVersionID}})
+		refs, e := recordObjectVersionsTx(ctx, tx, u.BucketID, []ObjectVersionIdentity{{Key: u.Key, ProviderVersionID: result.ProviderVersionID, GenerationVersion: result.ProviderGenerationVersion}})
 		if e != nil {
 			return ObjectMultipartUpload{}, e
 		}
 		version = refs[0].ID
 	}
-	row, err := sqlc.New().ObjectMultipartFinishResult(ctx, tx, sqlc.ObjectMultipartFinishResultParams{ChecksumVerified: !u.Checksum.Empty(), ID: mustPgUUID(u.ID), Token: pgtype.Text{String: u.LeaseToken, Valid: true}, Etag: result.ETag, VersionID: version, ProtectionVerified: !old.Protection.Empty(), EncryptionVerified: !old.Encryption.Empty(), VersionsObserved: result.VersionsObserved || result.ProviderVersionID != "" && result.ProviderVersionID != "null"})
+	row, err := sqlc.New().ObjectMultipartFinishResult(ctx, tx, sqlc.ObjectMultipartFinishResultParams{ChecksumVerified: !u.Checksum.Empty(), ID: mustPgUUID(u.ID), Token: pgtype.Text{String: u.LeaseToken, Valid: true}, Etag: result.ETag, VersionID: version, ProtectionVerified: !old.Protection.Empty(), EncryptionVerified: !old.Encryption.Empty(), VersionsObserved: result.VersionsObserved || ProviderVersionObserved(result.ProviderVersionID, result.ProviderGenerationVersion)})
 	if err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
 	}

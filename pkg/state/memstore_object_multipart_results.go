@@ -44,11 +44,11 @@ func (m *MemStore) FinishObjectMultipartCompletion(ctx context.Context, u Object
 	}
 	var version ObjectVersionIdentity
 	if result.ProviderVersionID != "" {
-		version = m.prepareObjectVersionLocked(u.BucketID, ObjectVersionIdentity{Key: u.Key, ProviderVersionID: result.ProviderVersionID})
+		version = m.prepareObjectVersionLocked(u.BucketID, ObjectVersionIdentity{Key: u.Key, ProviderVersionID: result.ProviderVersionID, GenerationVersion: result.ProviderGenerationVersion})
 		old.CompletionVersionID = publicPreparedVersionID(version)
 	}
 	old.CompletionETag, old.CompletionRecoveryCursor = result.ETag, ""
-	old.CompletionVersionsObserved = old.CompletionVersionsObserved || result.VersionsObserved || result.ProviderVersionID != "" && result.ProviderVersionID != "null"
+	old.CompletionVersionsObserved = old.CompletionVersionsObserved || result.VersionsObserved || ProviderVersionObserved(result.ProviderVersionID, result.ProviderGenerationVersion)
 	old.State, old.LeaseToken, old.LeaseUntil = ObjectMultipartCompleted, "", time.Time{}
 	old.AttemptCount, old.LastErrorCode = 0, ""
 	old.UpdatedAt, old.RetryAt = m.clock().UTC(), m.clock().UTC()

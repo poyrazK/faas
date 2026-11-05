@@ -62,7 +62,10 @@ type ObjectUploadCompletion struct {
 	RecoveryVersionsObserved bool   `json:"-"`
 	VersionID                string `json:"-"`
 	// ProviderVersionID is transient completion input, never a public payload.
-	ProviderVersionID         string                        `json:"-"`
+	ProviderVersionID string `json:"-"`
+	// ProviderGenerationVersion marks ProviderVersionID as a generation (GCS),
+	// which alone never shows retained versions (ADR-20261105120000).
+	ProviderGenerationVersion bool                          `json:"-"`
 	Protection                ObjectWriteProtectionSnapshot `json:"-"`
 	VerifiedProtection        string                        `json:"-"`
 	Encryption                ObjectEncryptionSnapshot      `json:"-"`

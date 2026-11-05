@@ -29,7 +29,8 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 	c.VerifiedProtection = result.VerifiedProtection
 	c.VerifiedEncryption = result.Encryption
 	c.ProviderVersionID = result.ProviderVersionID
-	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
+	c.ProviderGenerationVersion = GenerationVersionIDs(writer)
+	c.RecoveryVersionsObserved = state.ProviderVersionObserved(result.ProviderVersionID, c.ProviderGenerationVersion)
 	if err != nil {
 		c.Status = "failed"
 		c.ETag = ""

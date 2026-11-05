@@ -211,14 +211,26 @@ func (p *GCS) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r 
 			if r.Encryption != nil {
 				proof.Encryption = cloneObjectEncryption(r.Encryption.Selection)
 			}
-			page.UploadResult, page.VersionsObserved = proof, true
+			page.UploadResult, page.VersionsObserved = proof, gcsNoncurrentListed(objects)
 			return page, nil
 		}
 	}
-	page.VersionsObserved = len(objects) > 0
+	page.VersionsObserved = gcsNoncurrentListed(objects)
 	page.Cursor, err = encodeGCSHistoryCursor(bucket, r, next)
 	if err != nil {
 		return ObjectHistoryProofPage{Cursor: r.Cursor}, err
 	}
 	return page, ErrConflict
+}
+
+// gcsNoncurrentListed reports whether a version listing holds a noncurrent
+// generation, the only GCS evidence of retained versions: every live object
+// has a generation, versioned bucket or not (ADR-20261105120000).
+func gcsNoncurrentListed(objects []gcsObjectState) bool {
+	for _, object := range objects {
+		if !object.ValidUntil.IsZero() {
+			return true
+		}
+	}
+	return false
 }

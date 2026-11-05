@@ -44,7 +44,7 @@ func (h *Handler) executeMultipartResult(w http.ResponseWriter, r *http.Request,
 			},
 		}, u.CompletionConditions)
 	})
-	proof := state.ObjectMultipartCompletionResult{Checksum: result.Checksum, ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
+	proof := state.ObjectMultipartCompletionResult{Checksum: result.Checksum, ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, ProviderGenerationVersion: objectstorage.GenerationVersionIDs(req.provider), RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
 	if err != nil {

@@ -96,13 +96,16 @@ type ObjectMultipartCompletionStore interface {
 }
 
 type ObjectMultipartCompletionResult struct {
-	ETag               string
-	Checksum           objectchecksum.Digest `json:"-"`
-	ProviderVersionID  string                `json:"-"`
-	RecoveryCursor     string                `json:"-"`
-	VersionsObserved   bool                  `json:"-"`
-	VerifiedProtection string                `json:"-"`
-	VerifiedEncryption api.ObjectEncryption  `json:"-"`
+	ETag              string
+	Checksum          objectchecksum.Digest `json:"-"`
+	ProviderVersionID string                `json:"-"`
+	RecoveryCursor    string                `json:"-"`
+	VersionsObserved  bool                  `json:"-"`
+	// ProviderGenerationVersion marks ProviderVersionID as a generation (GCS),
+	// which alone never shows retained versions (ADR-20261105120000).
+	ProviderGenerationVersion bool                 `json:"-"`
+	VerifiedProtection        string               `json:"-"`
+	VerifiedEncryption        api.ObjectEncryption `json:"-"`
 }
 
 func validObjectMultipartOperation(operation string) bool {

@@ -149,11 +149,11 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	}
 	var version ObjectVersionIdentity
 	if c.Status == "completed" && c.ProviderVersionID != "" {
-		version = m.prepareObjectVersionLocked(old.BucketID, ObjectVersionIdentity{Key: old.Key, ProviderVersionID: c.ProviderVersionID})
+		version = m.prepareObjectVersionLocked(old.BucketID, ObjectVersionIdentity{Key: old.Key, ProviderVersionID: c.ProviderVersionID, GenerationVersion: c.ProviderGenerationVersion})
 		old.VersionID = publicPreparedVersionID(version)
 	}
 	old.RecoveryCursor = ""
-	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved || c.ProviderVersionID != "" && c.ProviderVersionID != "null"
+	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved || ProviderVersionObserved(c.ProviderVersionID, c.ProviderGenerationVersion)
 	old.ETag = c.ETag
 	old.Status = c.Status
 	old.ErrorCode = c.ErrorCode

@@ -50,7 +50,7 @@ func (s *Service) executeObjectMultipartResult(ctx context.Context, uploads stat
 			},
 		}, u.CompletionConditions)
 	})
-	proof := state.ObjectMultipartCompletionResult{Checksum: result.Checksum, ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
+	proof := state.ObjectMultipartCompletionResult{Checksum: result.Checksum, ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, ProviderGenerationVersion: objectstorage.GenerationVersionIDs(provider), RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
 	if err != nil {
 		return s.deferObjectMultipartResult(ctx, store, u, proof, err)
 	}

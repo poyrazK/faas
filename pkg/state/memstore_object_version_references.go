@@ -65,7 +65,7 @@ func (m *MemStore) commitObjectVersionLocked(bucket string, v ObjectVersionIdent
 	identity := versionReferenceIdentity(bucket, v)
 	m.objectVersionReferences[identity] = v
 	m.objectVersionReferenceIDs[v.ID] = identity
-	m.objectVersionObservations[bucket] = m.objectVersionObservations[bucket] || v.ProviderVersionID != "null" || v.DeleteMarker
+	m.objectVersionObservations[bucket] = m.objectVersionObservations[bucket] || ProviderVersionObserved(v.ProviderVersionID, v.GenerationVersion) || v.DeleteMarker
 }
 
 func (m *MemStore) ResolveObjectVersion(ctx context.Context, account, bucket, key, id string) (string, error) {

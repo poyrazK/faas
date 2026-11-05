@@ -46,7 +46,7 @@ func recordObjectVersionsTx(ctx context.Context, transaction sqlc.DBTX, bucket s
 	// on the shared reference type.
 	wire := make([]objectVersionReferenceInput, 0, len(items))
 	for _, v := range items {
-		wire = append(wire, objectVersionReferenceInput{v.Key, v.ProviderVersionID, v.ProviderVersionID != "null" || v.DeleteMarker})
+		wire = append(wire, objectVersionReferenceInput{v.Key, v.ProviderVersionID, ProviderVersionObserved(v.ProviderVersionID, v.GenerationVersion) || v.DeleteMarker})
 	}
 	raw, err := json.Marshal(wire)
 	if err != nil {

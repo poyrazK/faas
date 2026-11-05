@@ -63,7 +63,7 @@ func (s *Service) confirmObjectUpload(ctx context.Context, st state.ObjectTracke
 	if err == nil || errors.Is(err, objectstorage.ErrWriteRejected) {
 		outcome := "completed"
 		c.Status, c.ErrorCode = "completed", ""
-		c.ETag, c.ProviderVersionID = result.ETag, result.ProviderVersionID
+		c.ETag, c.ProviderVersionID, c.ProviderGenerationVersion = result.ETag, result.ProviderVersionID, result.GenerationVersion
 		c.VerifiedProtection, c.VerifiedEncryption = result.VerifiedProtection, result.Encryption
 		if errors.Is(err, objectstorage.ErrWriteRejected) {
 			outcome = "failed"
@@ -148,10 +148,12 @@ func (s *Service) ProbeObjectUpload(ctx context.Context, c state.ObjectUploadCom
 		}
 		proof, err = encrypted.ConfirmEncryptedObject(ctx, b.PhysicalName, c.Key, c.ID, c.Bytes, c.Encryption)
 	}
+	generation := objectstorage.GenerationVersionIDs(backend.Provider)
 	if err == nil {
+		proof.GenerationVersion = generation
 		page.UploadResult = proof
 		page.Cursor = ""
-		page.VersionsObserved = proof.ProviderVersionID != "" && proof.ProviderVersionID != "null"
+		page.VersionsObserved = state.ProviderVersionObserved(proof.ProviderVersionID, generation)
 		return page, nil
 	}
 	if !errors.Is(err, objectstorage.ErrNotFound) && !errors.Is(err, objectstorage.ErrConflict) {
@@ -172,5 +174,6 @@ func (s *Service) ProbeObjectUpload(ctx context.Context, c state.ObjectUploadCom
 	if errors.Is(historyErr, objectstorage.ErrUnsupported) {
 		return page, err
 	}
+	historical.UploadResult.GenerationVersion = generation
 	return historical, historyErr
 }

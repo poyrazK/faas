@@ -74,7 +74,7 @@ func (s TaggingService) Do(ctx context.Context, b state.ObjectBucket, method, ke
 	if out.ProviderVersionID != "" {
 		finish, stop := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectTaggingOperationTimeout)
 		defer stop()
-		refs, e := s.References.RecordObjectVersions(finish, b.AccountID, b.ID, []state.ObjectVersionIdentity{{Key: key, ProviderVersionID: out.ProviderVersionID}})
+		refs, e := s.References.RecordObjectVersions(finish, b.AccountID, b.ID, []state.ObjectVersionIdentity{{Key: key, ProviderVersionID: out.ProviderVersionID, GenerationVersion: native == "" && GenerationVersionIDs(s.Provider)}})
 		if e != nil || len(refs) != 1 || refs[0].Key != key || refs[0].ProviderVersionID != out.ProviderVersionID || !state.ValidObjectVersionID(refs[0].ID) || (refs[0].ID == "null") != (out.ProviderVersionID == "null") || selector != "" && refs[0].ID != selector {
 			return result, ErrUnavailable
 		}

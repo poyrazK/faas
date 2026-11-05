@@ -59,7 +59,7 @@ func PublicObjectVersionPage(ctx context.Context, st state.ObjectVersionReferenc
 		if !ValidKey(v.Key) || !strings.HasPrefix(v.Key, input.Prefix) || !validNativeVersionID(v.ProviderVersionID) || v.LastModified.IsZero() || v.Size < 0 || v.Size > api.MaxObjectUploadBytes || !v.DeleteMarker && !validUploadETag(v.ETag) || !validVersionListText(v.StorageClass) || seen[v.Key+"\x00"+v.ProviderVersionID] {
 			return out, ErrUnavailable
 		}
-		items = append(items, state.ObjectVersionIdentity{Key: v.Key, ProviderVersionID: v.ProviderVersionID, DeleteMarker: v.DeleteMarker})
+		items = append(items, state.ObjectVersionIdentity{Key: v.Key, ProviderVersionID: v.ProviderVersionID, DeleteMarker: v.DeleteMarker, GenerationVersion: page.GenerationVersions && v.IsLatest})
 		seen[v.Key+"\x00"+v.ProviderVersionID] = true
 	}
 	for _, prefix := range page.CommonPrefixes {
@@ -72,7 +72,7 @@ func PublicObjectVersionPage(ctx context.Context, st state.ObjectVersionReferenc
 		if !validNativeVersionID(page.NextProviderVersionMarker) {
 			return out, ErrUnavailable
 		}
-		items = append(items, state.ObjectVersionIdentity{Key: page.NextKeyMarker, ProviderVersionID: page.NextProviderVersionMarker})
+		items = append(items, state.ObjectVersionIdentity{Key: page.NextKeyMarker, ProviderVersionID: page.NextProviderVersionMarker, GenerationVersion: page.GenerationVersions})
 	}
 	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectUploadSettlementTimeout)
 	defer cancel()

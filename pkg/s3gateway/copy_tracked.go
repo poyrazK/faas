@@ -71,7 +71,8 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 	c.VerifiedEncryption = result.Encryption
 	c.Status, c.ETag = "completed", result.ETag
 	c.ProviderVersionID = result.ProviderVersionID
-	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
+	c.ProviderGenerationVersion = objectstorage.GenerationVersionIDs(req.provider)
+	c.RecoveryVersionsObserved = state.ProviderVersionObserved(result.ProviderVersionID, c.ProviderGenerationVersion)
 	done, err := h.finishGatewayPut(r.Context(), st, c, false)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)

@@ -149,13 +149,13 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 	}
 	var version string
 	if c.Status == "completed" && c.ProviderVersionID != "" {
-		refs, e := recordObjectVersionsTx(ctx, tx, old.BucketID, []ObjectVersionIdentity{{Key: old.Key, ProviderVersionID: c.ProviderVersionID}})
+		refs, e := recordObjectVersionsTx(ctx, tx, old.BucketID, []ObjectVersionIdentity{{Key: old.Key, ProviderVersionID: c.ProviderVersionID, GenerationVersion: c.ProviderGenerationVersion}})
 		if e != nil {
 			return old, e
 		}
 		version = refs[0].ID
 	}
-	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved || c.ProviderVersionID != "" && c.ProviderVersionID != "null", VersionID: version, ProtectionVerified: c.Status == "completed" && !old.Protection.Empty(), EncryptionVerified: c.Status == "completed" && !old.Encryption.Empty()})
+	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved || ProviderVersionObserved(c.ProviderVersionID, c.ProviderGenerationVersion), VersionID: version, ProtectionVerified: c.Status == "completed" && !old.Protection.Empty(), EncryptionVerified: c.Status == "completed" && !old.Encryption.Empty()})
 	if err != nil {
 		return old, mapErr(err)
 	}

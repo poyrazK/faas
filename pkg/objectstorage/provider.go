@@ -85,6 +85,9 @@ type ObjectVersionListPage struct {
 	CommonPrefixes            []string
 	NextKeyMarker             string
 	NextProviderVersionMarker string `json:"-"`
+	// GenerationVersions marks the provider IDs as generations (GCS): a latest
+	// version alone is not evidence of retained versions (ADR-20261105120000).
+	GenerationVersions bool `json:"-"`
 }
 
 type ObjectVersionLister interface {
@@ -173,6 +176,9 @@ type UploadResult struct {
 	Encryption         api.ObjectEncryption  `json:"encryption,omitzero"`
 	ETag               string
 	ProviderVersionID  string `json:"-"`
+	// GenerationVersion marks ProviderVersionID as a generation every object
+	// carries (GenerationVersionIDs), not evidence of retained versions.
+	GenerationVersion bool `json:"-"`
 }
 
 type Object struct {

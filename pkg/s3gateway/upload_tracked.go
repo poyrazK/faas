@@ -116,7 +116,8 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 	c.Status = "completed"
 	version := ack.ProviderVersionID
 	c.ProviderVersionID = version
-	c.RecoveryVersionsObserved = version != "" && version != "null"
+	c.ProviderGenerationVersion = objectstorage.GenerationVersionIDs(req.provider)
+	c.RecoveryVersionsObserved = state.ProviderVersionObserved(version, c.ProviderGenerationVersion)
 	done, err := h.finishGatewayPut(r.Context(), st, c, false)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
