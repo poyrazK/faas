@@ -17,18 +17,19 @@ import (
 
 type policyNetworkRunner struct {
 	fakeRunner
-	inputMu   sync.Mutex
-	inputs    []string
-	failInput bool
-	entered   chan struct{}
-	release   chan struct{}
-	blockOnce sync.Once
+	inputMu       sync.Mutex
+	inputs        []string
+	failInput     bool
+	failPortsOnly bool
+	entered       chan struct{}
+	release       chan struct{}
+	blockOnce     sync.Once
 }
 
 func (r *policyNetworkRunner) RunInput(ctx context.Context, argv []string, input []byte) error {
 	r.inputMu.Lock()
 	r.inputs = append(r.inputs, string(input))
-	fail := r.failInput
+	fail := r.failInput && (!r.failPortsOnly || strings.Contains(string(input), "flush set"))
 	r.inputMu.Unlock()
 	if r.entered != nil {
 		var blocked bool
@@ -51,6 +52,10 @@ func (r *policyNetworkRunner) inputCount() int {
 	r.inputMu.Lock()
 	defer r.inputMu.Unlock()
 	return len(r.inputs)
+}
+
+func (r *policyNetworkRunner) RunCapture(_ context.Context, _ []string) ([]byte, error) {
+	return []byte("iifname \"tap0\" ip daddr { 8.8.8.0/24 } tcp dport != 25 accept # handle 100\n"), nil
 }
 
 func seedPolicyInstance(m *Manager, id, app string, plan api.Plan) {
@@ -99,7 +104,7 @@ func TestAppEgressPolicyRejectsStaleConflictingAndLegacyWrites(t *testing.T) {
 
 func TestAppEgressPolicyCanonicalRetryAndDefensiveCopies(t *testing.T) {
 	run := &policyNetworkRunner{}
-	m := newTestManager(run, &fakeVMM{})
+	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(run)
 	seedPolicyInstance(m, "live", "app", api.PlanPro)
 	prefixes := []netip.Prefix{netip.MustParsePrefix("8.8.8.1/24"), netip.MustParsePrefix("1.1.1.0/24"), netip.MustParsePrefix("8.8.8.0/24")}
 	ports := []uint16{6379, 80, 5432, 6379}
@@ -117,8 +122,8 @@ func TestAppEgressPolicyCanonicalRetryAndDefensiveCopies(t *testing.T) {
 }
 
 func TestAppEgressPolicyPartialFailureRetainsNewIntentAndRetries(t *testing.T) {
-	run := &policyNetworkRunner{failInput: true}
-	m := newTestManager(run, &fakeVMM{})
+	run := &policyNetworkRunner{failInput: true, failPortsOnly: true}
+	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(run)
 	seedPolicyInstance(m, "live", "app", api.PlanPro)
 	// Start with an installed allowlist so the CIDR write uses the live
 	// handle patch and only the subsequent port transaction fails.

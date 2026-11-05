@@ -27,45 +27,51 @@ type allowResolvedEgressClient interface {
 	AllowResolvedEgress(ctx context.Context, in *vmmdpb.AllowResolvedEgressRequest, opts ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error)
 }
 
-// newResolvedEgressHook reports each guest DNS answer to this node's vmmd
-// (ADR-373), which lets the guest open TCP to the answered addresses. The
-// query source is the instance's host-side address; vmmd maps it to the
-// instance. A vmmd that predates the RPC has no DNS gate either, so
-// Unimplemented is not an error during a rolling release.
-//
-// The vmmd client cache is keyed by compute_nodes.id, while this daemon knows
-// its node by manifest name (FAAS_NODE_NAME, for example fsn-2.faas). Passing
-// the name looked a hostname up in a UUID column, so no answer was ever
-// registered and DNS-gated egress dropped every guest connection: builds
-// could not reach npm or nodejs.org on the first production-us fleet.
-//
-// When the name is one of the calling app's bound managed databases
-// (ADR-20261026150000), the call also carries the database port so vmmd
-// opens it to those addresses on any plan. Only names in the database index
-// pay for resolving the caller.
-func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID, databases *databaseEgressIndex, resolveCaller gateway.ServiceProxyCallerResolver) gateway.ResolvedEgressHook {
-	return func(ctx context.Context, remote, name string, addrs []netip.Addr, ttl time.Duration) error {
+type resolvedEgressOwner struct {
+	instance, generation, app string
+}
+
+// newResolvedEgressHook captures the current runtime before an upstream DNS
+// lookup, then grants its answer only to that generation. Both RPCs use the
+// captured compute_nodes.id. Bound database ports use the captured app identity.
+// An old vmmd without ownership fences leaves new permissions closed.
+func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID, databases *databaseEgressIndex) gateway.ResolvedEgressPreparation {
+	return func(ctx context.Context, remote, name string) (gateway.ResolvedEgressHook, error) {
 		host := remote
 		if h, _, err := net.SplitHostPort(remote); err == nil {
 			host = h
 		}
-		var databasePort uint16
-		if apps := databases.lookup(ctx, name); len(apps) > 0 && resolveCaller != nil {
-			if appID, err := resolveCaller(ctx, remote); err == nil {
-				databasePort = apps[appID]
-			}
-		}
 		nodeID, err := localNode.Get(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		cli, closer, ok := clients.ClientFor(ctx, nodeID)
 		if !ok {
 			localNode.Forget()
-			return fmt.Errorf("local vmmd %s (%s) unavailable", localNode.name, nodeID)
+			return nil, fmt.Errorf("local vmmd %s (%s) unavailable", localNode.name, nodeID)
 		}
 		defer func() { _ = closer.Close() }()
-		return allowResolvedEgress(ctx, cli, host, addrs, ttl, databasePort)
+		identity, err := cli.ResolveServiceCaller(ctx, &vmmdpb.ResolveServiceCallerRequest{SourceIp: host})
+		if err != nil {
+			return nil, fmt.Errorf("capture DNS network owner: %w", err)
+		}
+		if !identity.GetMatched() || identity.GetInstanceId() == "" || identity.GetNetworkGeneration() == "" {
+			return nil, fmt.Errorf("DNS source has no fenced runtime owner")
+		}
+		owner := resolvedEgressOwner{identity.GetInstanceId(), identity.GetNetworkGeneration(), identity.GetAppId()}
+		return func(ctx context.Context, _, _ string, addrs []netip.Addr, ttl time.Duration) error {
+			var databasePort uint16
+			if owner.app != "" {
+				databasePort = databases.lookup(ctx, name)[owner.app]
+			}
+			client, lease, ok := clients.ClientFor(ctx, nodeID)
+			if !ok {
+				localNode.Forget()
+				return fmt.Errorf("local vmmd %s unavailable for DNS grant", nodeID)
+			}
+			defer func() { _ = lease.Close() }()
+			return allowResolvedEgress(ctx, client, host, owner, addrs, ttl, databasePort)
+		}, nil
 	}
 }
 
@@ -215,8 +221,11 @@ func (l *localNodeID) Forget() {
 	l.mu.Unlock()
 }
 
-func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
-	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
+func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, owner resolvedEgressOwner, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	if owner.instance == "" || owner.generation == "" {
+		return fmt.Errorf("DNS grant requires its original network owner")
+	}
+	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, InstanceId: owner.instance, NetworkGeneration: owner.generation, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
 	for _, a := range addrs {
 		req.Addresses = append(req.Addresses, a.String())
 	}

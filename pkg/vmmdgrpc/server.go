@@ -1927,7 +1927,7 @@ func (s *Server) UpdatePrivateNetwork(ctx context.Context, req *vmmdpb.UpdatePri
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	firewallRules, firewallErr := toPrivateNetworkFirewallRules(req.GetPrivateNetworkFirewallRules(), cidrs)
+	firewallRules, firewallErr := toPrivateNetworkFirewallRules(req.GetPrivateNetworkFirewallRules(), cidrs, req.GetPrivateNetworkAddress())
 	if firewallErr != nil {
 		return nil, grpcerr.ToStatus(toProblem(firewallErr))
 	}
