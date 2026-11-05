@@ -42,19 +42,19 @@ func (s *Service) pushKeptServices(ctx context.Context, project state.Project, s
 }
 
 // pushServicesWaitingForDatabase lists the project's apps that expect a
-// Compose postgres service's address (DATABASE_URL: postgres://…@db/…, or
-// depends_on: [db]) and have no value for that variable in scope. A reviewed
-// deploy creates and binds the managed database for them (ADR-20261025111824);
-// a push cannot, so they are not deployed by it (ADR-20261103112845) rather
-// than starting without their database.
+// Compose datastore's address (DATABASE_URL: postgres://…@db/…,
+// REDIS_URL: redis://cache:6379, or depends_on: [db]) and have no value for
+// that variable in scope. For postgres a reviewed deploy creates and binds the
+// managed database (ADR-20261025111824); a push cannot. Other datastores have
+// no managed equivalent and need an external one (ADR-20261104221217). Either
+// way the push does not deploy them (ADR-20261103112845) rather than start
+// them without their datastore.
 func (s *Service) pushServicesWaitingForDatabase(ctx context.Context, project state.Project, scan reposcan.Result, fsys fs.FS, scope string) (map[string]string, error) {
-	var postgres []reposcan.Managed
-	for _, m := range scan.Managed {
-		if m.Kind == "postgres" {
-			postgres = append(postgres, m)
-		}
-	}
-	if len(postgres) == 0 {
+	// Every Compose datastore: a postgres one waits for a reviewed deploy to
+	// create the managed database; the others have no managed equivalent and
+	// wait for an external one (ADR-20261104221217).
+	datastores := scan.Managed
+	if len(datastores) == 0 {
 		return nil, nil
 	}
 	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(project.AccountID), scan.Workloads)
@@ -72,7 +72,7 @@ func (s *Service) pushServicesWaitingForDatabase(ctx context.Context, project st
 		}
 	}
 	waiting := map[string]string{}
-	for _, m := range postgres {
+	for _, m := range datastores {
 		for _, consumer := range projectsetup.ManagedConsumers(env, scan.Workloads, m.Name, m.EnvHint) {
 			app, ok := byWorkload[consumer.Workload]
 			if !ok {
@@ -86,6 +86,11 @@ func (s *Service) pushServicesWaitingForDatabase(ctx context.Context, project st
 				return nil, fmt.Errorf("githubd: read %s configuration: %w", app.Slug, err)
 			}
 			if len(unset) == 0 {
+				continue
+			}
+			if m.Kind != "postgres" {
+				waiting[app.ID] = fmt.Sprintf("Not deployed: %s needs %s for the Compose %s service %q, which Gregale does not run and has no managed equivalent for. Set %s to an external %s with `gregale env set --app %s`.",
+					consumer.Workload, consumer.EnvKey, m.Kind, m.Name, consumer.EnvKey, m.Kind, app.Slug)
 				continue
 			}
 			waiting[app.ID] = fmt.Sprintf("Not deployed: %s needs %s for the Compose postgres service %q, which a GitHub push cannot create. Deploy with `gregale deploy` or from the dashboard to create and bind the managed database, or set %s with `gregale env set --app %s`.",

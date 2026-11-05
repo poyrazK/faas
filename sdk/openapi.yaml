@@ -34378,6 +34378,11 @@ components:
           type: string
           enum: [unavailable, plan, quota, unsupported, configured, not_referenced, permission]
           description: "Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is set."
+        unbound:
+          type: array
+          items: {type: string}
+          example: [api.REDIS_URL]
+          description: "Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when none."
     PlanManagedProvision:
       description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds."
       type: object
