@@ -1100,8 +1100,16 @@ func packWriteError(capMB int, name string, err error) error {
 	return fmt.Errorf("write %s: %w", name, err)
 }
 
+// sourceUploadLimitErr is a packed source over the upload cap the CLI packed
+// against. resolveSourceUploadCap explains a cap it could not verify.
+type sourceUploadLimitErr struct{ capMB int }
+
+func (e *sourceUploadLimitErr) Error() string {
+	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", e.capMB)
+}
+
 func sourceUploadLimitError(capMB int) error {
-	return fmt.Errorf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", capMB)
+	return &sourceUploadLimitErr{capMB: capMB}
 }
 
 func sourceExpandedLimitError() error {

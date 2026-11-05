@@ -26,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/appwake"
 	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -3084,7 +3085,8 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
-	if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {
+	dep, problem := s.explicitWakeDeployment(r.Context(), app)
+	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -3101,58 +3103,95 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not read the app's running instances"))
 		return
 	}
-	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
+	// A frozen VM thaws under its own wake_id, so the new wake id never
+	// reaches an instance. Name the VM so schedd thaws that one and the
+	// caller can wait on it (#6639).
+	resume := s.frozenInstanceToResume(r.Context(), app.ID, dep.ID)
+	wakeID, err := s.enqueueExplicitAppWakeFor(r.Context(), acct, app, resume)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
 		return
 	}
-	writeJSON(w, http.StatusAccepted, api.AppWakeResponse{WakeID: wakeID})
+	writeJSON(w, http.StatusAccepted, api.AppWakeResponse{WakeID: wakeID, InstanceID: resume})
 }
 
 func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
+	_, problem := s.explicitWakeDeployment(ctx, app)
+	return problem
+}
+
+// explicitWakeDeployment returns the live deployment an explicit wake starts,
+// or the problem that refuses the wake.
+func (s *server) explicitWakeDeployment(ctx context.Context, app state.App) (state.Deployment, *api.Problem) {
 	dep, err := s.store.LiveDeployment(ctx, app.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
 				"App has no live deployment", "deploy the app before requesting a wake")
 		}
-		return api.ErrCapacity("could not resolve the app's live deployment")
+		return state.Deployment{}, api.ErrCapacity("could not resolve the app's live deployment")
 	}
 	if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
-		return api.NewProblem(http.StatusConflict, api.CodeSecurityPostureBlocked,
+		return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeSecurityPostureBlocked,
 			"App is security quarantined",
 			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before requesting a wake")
 	}
 	if app.Status == state.AppEvictedCold {
 		if err := waitForAppInstancesDrained(ctx, s.store, app.ID, 0, 0); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				return api.NewProblem(http.StatusConflict, api.CodeConflict,
+				return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeConflict,
 					"App is still draining", "wait for the preceding park operation to finish before requesting a wake")
 			}
-			return api.ErrCapacity("could not verify app instance drain")
+			return state.Deployment{}, api.ErrCapacity("could not verify app instance drain")
 		}
 	}
-	return nil
+	return dep, nil
+}
+
+// frozenInstanceToResume names the frozen VM of the live deployment that a
+// queued wake resumes, or "". A failed read only drops the hint: schedd still
+// thaws a frozen VM or boots one.
+func (s *server) frozenInstanceToResume(ctx context.Context, appID, deploymentID string) string {
+	instances, err := state.ListLiveInstancesForApp(ctx, s.store, appID)
+	if err != nil {
+		s.log.WarnContext(ctx, "app wake: list live instances", slog.String("app", appID), slog.String("err", err.Error()))
+		return ""
+	}
+	frozen, ok := appwake.ResumableFrozenInstance(instances, deploymentID)
+	if !ok {
+		return ""
+	}
+	return frozen.ID
 }
 
 func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account, app state.App) (string, error) {
+	return s.enqueueExplicitAppWakeFor(ctx, acct, app, "")
+}
+
+// enqueueExplicitAppWakeFor queues an explicit wake. instanceID, when set, is
+// the frozen VM schedd should thaw for it.
+func (s *server) enqueueExplicitAppWakeFor(ctx context.Context, acct state.Account, app state.App, instanceID string) (string, error) {
 	wakeUUID, err := uuid.NewV7()
 	if err != nil {
 		wakeUUID = uuid.New()
 		s.log.Warn("app wake: uuid.NewV7 failed, fell back to v4", "app", app.ID, "err", err)
 	}
 	wakeID := wakeUUID.String()
-	payload, err := json.Marshal(map[string]string{"app_id": app.ID, "wake_id": wakeID})
+	request := map[string]string{"app_id": app.ID, "wake_id": wakeID}
+	audit := map[string]any{"app_id": app.ID, "slug": app.Slug, "wake_id": wakeID}
+	if instanceID != "" {
+		request["instance_id"] = instanceID
+		audit["instance_id"] = instanceID
+	}
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return "", fmt.Errorf("marshal app wake: %w", err)
 	}
 	if err := s.notif.Notify(ctx, db.NotifyAppWake, string(payload)); err != nil {
 		return "", err
 	}
-	s.audit.Emit(ctx, "app.wake_requested", &acct.ID, map[string]any{
-		"app_id": app.ID, "slug": app.Slug, "wake_id": wakeID,
-	})
-	s.log.Info("app wake requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
+	s.audit.Emit(ctx, "app.wake_requested", &acct.ID, audit)
+	s.log.Info("app wake requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID, "instance", instanceID)
 	return wakeID, nil
 }
 
