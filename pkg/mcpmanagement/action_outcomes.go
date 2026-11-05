@@ -18,6 +18,9 @@ type actionOutcome struct {
 	Reason           string              `json:"reason,omitempty"`
 	Receipt          *actionReceipt      `json:"receipt,omitempty"`
 	NativeCompletion string              `json:"native_completion"`
+	RestartRequested *bool               `json:"restart_requested,omitempty"`
+	RestartStatus    string              `json:"restart_status,omitempty"`
+	ConfigChanged    *bool               `json:"config_changed,omitempty"`
 	Instruction      string              `json:"instruction"`
 }
 
@@ -27,7 +30,7 @@ type actionOutcomeArgs struct {
 }
 
 func registerActionOutcomes(s *mcp.Server, m *management) {
-	register(s, m, "gregale_get_action_outcome", "Read native durable receipts for the original apply phase of retained route-budget, deployment and service/worker rollout actions, including after plan expiry. Requires current immutable target/read consent. Receipt verification confirms historical policy intent or deployment acceptance only; missing or unavailable evidence remains unresolved. Never replays a write, changes history or renews expiry. Explicit request-deployment promotion receipts are available with phase=promotion. Exact default-scope request rollback acceptance is also recoverable through its original native operation; Reviewed default and named-environment service-abort receipts recover the original reverse-handoff request ID, separately from ACK/drain completion. Service rollback remains unsupported.", m.getPhasedActionOutcome)
+	register(s, m, "gregale_get_action_outcome", "Read native receipts for retained configuration, scaling, route-budget, deployment, rollout, request rollback, service abort and explicit promotion attempts, including after plan expiry. Requires current immutable target and read consent. Receipts verify historical commit or acceptance, not current state, restart, health or completion. Missing evidence stays unresolved. Never replays writes or renews expiry. Service rollback remains unsupported.", m.getPhasedActionOutcome)
 }
 
 func (m *management) getActionOutcome(ctx context.Context, args getActionArgs) (any, error) {
@@ -51,12 +54,22 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 	entry := history.value.(actionHistoryDetail).Action.actionRecord
 	m.mu.Lock()
 	lookup, found := m.budgetOutcomes[args.PlanID]
+	scalingLookup, scalingFound := m.scalingOutcomes[args.PlanID]
+	configLookup, configFound := m.configOutcomes[args.PlanID]
+	configRollbackLookup, configRollbackFound := m.configRollbacks[args.PlanID]
 	deploymentLookup, deploymentFound := m.deploymentOutcomes[args.PlanID]
 	promotionLookup, promotionFound := m.promotionOutcomes[args.PlanID]
 	rollbackLookup, rollbackFound := m.rollbackOutcomes[args.PlanID]
 	serviceAbortLookup, serviceAbortFound := m.serviceAbortOutcomes[args.PlanID]
 	m.mu.Unlock()
 	out := actionOutcome{Phase: phase, PlanID: entry.PlanID, Action: entry.Action, ObservedAt: time.Now().UTC(), Outcome: "unresolved", NativeCompletion: "not_observed", Instruction: "A verified receipt confirms historical acceptance of the selected phase only. Follow the exact observation call when supplied; current traffic, rollout completion, health and worker queue acknowledgement remain separate. Missing evidence never proves non-commit. Inspect native state; never replace an ambiguous original request or renew its write authority."}
+	if entry.Action == "operation_env" && entry.Config != nil {
+		requested := entry.Config.RestartRequested
+		out.RestartRequested, out.RestartStatus = &requested, "not_requested"
+		if requested {
+			out.RestartStatus = "not_observed"
+		}
+	}
 	switch {
 	case phase == "promotion":
 		switch {
@@ -70,6 +83,36 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 			return nil, invalid("state_unavailable", "promotion outcome reference is invalid")
 		default:
 			m.readPromotionOutcome(ctx, entry, promotionLookup, &out)
+		}
+	case entry.Action == "operation_config_rollback_guarded":
+		if entry.Apply.State == "not_attempted" {
+			out.Reason = "no_recorded_attempt"
+		} else if !configRollbackFound {
+			out.Reason = "lookup_unavailable"
+		} else if !validConfigRollbackLookup(configRollbackLookup) || configRollbackLookup.Binding != actionOutcomeBinding(entry) {
+			return nil, invalid("state_unavailable", "configuration rollback outcome reference is invalid")
+		} else {
+			m.readConfigRollbackOutcome(ctx, entry, configRollbackLookup, &out)
+		}
+	case entry.Action == "operation_env":
+		if entry.Apply.State == "not_attempted" {
+			out.Reason = "no_recorded_attempt"
+		} else if !configFound {
+			out.Reason = "lookup_unavailable"
+		} else if !validConfigOutcomeLookup(configLookup) || configLookup.Binding != configOutcomeBinding(entry) {
+			return nil, invalid("state_unavailable", "configuration outcome reference is invalid")
+		} else {
+			m.readConfigOutcome(ctx, entry, configLookup, &out)
+		}
+	case entry.Action == "operation_scale":
+		if entry.Apply.State == "not_attempted" {
+			out.Reason = "no_recorded_attempt"
+		} else if !scalingFound {
+			out.Reason = "lookup_unavailable"
+		} else if !validScalingOutcomeLookup(scalingLookup) || scalingLookup.Binding != actionOutcomeBinding(entry) {
+			return nil, invalid("state_unavailable", "scaling outcome reference is invalid")
+		} else {
+			m.readScalingOutcome(ctx, entry, scalingLookup, &out)
 		}
 	case entry.Action == "service_abort":
 		if !serviceAbortScopeMatches(entry.Scope, entry.ProjectID, entry.EnvironmentID) {
@@ -124,6 +167,15 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 		}
 		if found && m.budgetOutcomes[entry.PlanID] != lookup {
 			return invalid("state_unavailable", "original outcome reference changed during read")
+		}
+		if scalingFound && m.scalingOutcomes[entry.PlanID] != scalingLookup {
+			return invalid("state_unavailable", "original scaling reference changed during read")
+		}
+		if configFound && m.configOutcomes[entry.PlanID] != configLookup {
+			return invalid("state_unavailable", "original configuration reference changed during read")
+		}
+		if configRollbackFound && m.configRollbacks[entry.PlanID] != configRollbackLookup {
+			return invalid("state_unavailable", "original configuration rollback reference changed during read")
 		}
 		if deploymentFound && m.deploymentOutcomes[entry.PlanID] != deploymentLookup {
 			return invalid("state_unavailable", "original deployment reference changed during read")

@@ -70,7 +70,7 @@ type actionCursor struct {
 }
 
 func registerActionHistory(s *mcp.Server, m *management) {
-	register(s, m, "gregale_list_actions", "List this connection's bounded, redacted deploy, rollback, service/worker rollout, service abort, route-budget and regression-triage action history for one exact app/environment. Historical receipts do not prove deployment completion or grant retry authority. Regression records require current diagnostic consent.", m.listActions)
+	register(s, m, "gregale_list_actions", "List bounded, redacted deploy, rollback, rollout, service abort, configuration, scaling, cron, route-budget and regression-triage history for one app/environment. Receipts do not prove runtime completion or grant retry authority. Regression records require diagnostic consent.", m.listActions)
 	register(s, m, "gregale_get_action", "Inspect one connection-local plan's recorded attempts and receipts, including after plan expiry. Lost responses remain outcome_unknown in recorded history; eligible attempts expose independent native acceptance lookups. Never substitute a new plan for an ambiguous expired attempt.", m.getAction)
 }
 
@@ -116,7 +116,7 @@ func (m *management) guardActionHistory(value any, args appArgs, target actionRe
 }
 
 func (m *management) actionHistoryMetadata(now time.Time) actionHistoryMetadata {
-	return actionHistoryMetadata{ObservedAt: now, Durable: m.opts.planStore != nil, Coverage: "bounded_connection_history_not_account_audit", SupportedActions: []string{"deploy", "rollback", "regression_action", "workload_rollout", "service_abort", "route_budgets"}, RetentionSeconds: int64(api.ManagementMCPActionHistoryRetention / time.Second), Capacity: api.ManagementMCPActionHistoryMax, CapacityScope: "all_connection_action_history", NativeCompletion: "not_observed"}
+	return actionHistoryMetadata{ObservedAt: now, Durable: m.opts.planStore != nil, Coverage: "bounded_connection_history_not_account_audit", SupportedActions: []string{"deploy", "rollback", "regression_action", "workload_rollout", "service_abort", "route_budgets", "operation_scale", "operation_env", "operation_config_rollback_guarded", "operation_cron_update", "operation_cron_delete"}, RetentionSeconds: int64(api.ManagementMCPActionHistoryRetention / time.Second), Capacity: api.ManagementMCPActionHistoryMax, CapacityScope: "all_connection_action_history", NativeCompletion: "not_observed"}
 }
 
 func (m *management) listActions(ctx context.Context, args listActionsArgs) (any, error) {
@@ -193,7 +193,7 @@ func (m *management) getAction(ctx context.Context, args getActionArgs) (any, er
 // original plan review, native guards, plan expiry, or completion observation.
 func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 	view := actionView{actionRecord: entry, PlanAvailable: m.actionPlanAvailable(entry, now), NextStep: "inspect_recorded_receipt"}
-	if view.PlanAvailable {
+	if view.PlanAvailable && entry.Action != "operation_scale" && entry.Action != "operation_env" && entry.Action != "operation_config_rollback_guarded" && !cronHistoryAction(entry.Action) {
 		environment := entry.Scope
 		if environment == api.DefaultEnvScope {
 			environment = ""
@@ -201,7 +201,7 @@ func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 		view.Review = &savedPlanReference{Tool: "gregale_get_saved_plan", Arguments: getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}}
 		view.Recovery = m.recoveryLinks(getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}, false)
 	}
-	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action", "workload_rollout": "gregale_apply_workload_rollout", "service_abort": "gregale_apply_service_abort", "route_budgets": "gregale_apply_route_budgets"}[entry.Action]
+	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action", "workload_rollout": "gregale_apply_workload_rollout", "service_abort": "gregale_apply_service_abort", "route_budgets": "gregale_apply_route_budgets", "operation_scale": "gregale_apply_operation", "operation_env": "gregale_apply_env_change", "operation_config_rollback_guarded": "gregale_apply_operation"}[entry.Action]
 	view.Observation = workloadActionObservation(entry)
 	if entry.Action == "route_budgets" {
 		view.Observation = budgetActionObservation(entry)
@@ -218,14 +218,20 @@ func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 	switch phase.State {
 	case "not_attempted":
 		view.NextStep = "review_original_plan_before_apply"
+		if (entry.Action == "operation_scale" || entry.Action == "operation_env" || entry.Action == "operation_config_rollback_guarded" || cronHistoryAction(entry.Action)) && view.PlanAvailable {
+			view.NextStep = "inspect_original_operation_plan"
+		}
 		if !view.PlanAvailable {
 			view.NextStep = "inspect_native_state_before_replanning"
 		}
 	case "outcome_unknown":
 		view.NextStep = "inspect_native_state_before_replanning"
-		if view.PlanAvailable && m.opts.AllowWrites {
+		if view.PlanAvailable && m.opts.AllowWrites && entry.Action != "operation_config_rollback_guarded" && !cronHistoryAction(entry.Action) && (entry.Action != "operation_scale" || m.toolListed(tool)) && (entry.Action != "operation_env" || entry.Config != nil && !entry.Config.RestartRequested && m.toolListed(tool)) {
 			view.NextStep, view.RetryTool = "retry_same_plan_with_current_authorization", tool
 		}
+	}
+	if cronHistoryAction(entry.Action) && phase.State == "accepted" {
+		view.NextStep = "inspect_current_cron"
 	}
 	return m.addOutcomeRecoveryLinks(view, now)
 }
