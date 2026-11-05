@@ -792,7 +792,12 @@ an active lifecycle lease expires. Deletion discovers and persists identity
 before destroying the resource; an absent lookup keeps deletion pending. Legacy
 unknown tombstones remain stale because their old timestamps do not establish
 provider-confirmed shutdown. Newly reserved resources that never reached provider
-I/O can be deleted without an upstream call. Discovery uses a fleet recovery turn
+I/O can be deleted without an upstream call. An obligation whose provider call is
+still running (the database is provisioning, a worker holds its lease, and it was
+reserved in the current usage window) does not block admission, so creates on
+one account can run in parallel; once the lease lapses or the window closes
+without an identity, it blocks as above
+([ADR-20261104203253](adr/20261104203253-managed-postgres-in-flight-create-does-not-pause-account.md)). Discovery uses a fleet recovery turn
 within the existing per-database request budget.
 See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md) and
 [ADR-581](adr/581-managed-postgres-uncertain-accounting-intent.md).
