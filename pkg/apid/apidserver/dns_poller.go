@@ -161,8 +161,7 @@ func (s *server) verifyCustomDomain(ctx context.Context, log *slog.Logger, d sta
 			// Drifted domains must repair the routing target before the
 			// TXT challenge can restore verification. This prevents a
 			// stale TXT record from immediately re-enabling a wrong CNAME.
-			probeDomain, _ := state.WildcardProbeHost(d.Domain)
-			if pointsToG := checkPointsToGregale(ctx, probeDomain); pointsToG.Status != probeOK {
+			if pointsToG, _ := checkDomainRouting(ctx, d.Domain); pointsToG.Status != probeOK {
 				return
 			}
 		}
@@ -510,12 +509,11 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 	}
 
 	probeDomain, _ := state.WildcardProbeHost(domain)
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, domain)
+	dnsFound, pointsToG, caa, aaaa, routingProbe := runProbesParallel(ctx, domain)
 	// Translate probe results into the observation row
 	// shape. probeOK → true, probeFail → false, probePending
-	// → false (we treat "transient" as "not currently
-	// passing" so the dashboard reflects a degraded
-	// posture; the next 30s tick will refresh it). probeNA
+	// → a conservative boolean and a null DNS check time so newer
+	// readers can report uncertainty. probeNA
 	// → true for dns_found (a CNAME-only setup is healthy
 	// for the DNS check; the points_to_gregale check is
 	// the load-bearing one).
@@ -529,6 +527,12 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		ObservedAAAA:    aaaa.Observed,
 		CAAObserved:     caa.Observed,
 		DNSCheckedAt:    observedAt,
+	}
+	// The existing nullable DNS check time marks an inconclusive probe. Older
+	// readers still receive the conservative booleans, while newer readers
+	// avoid presenting a resolver failure as a definite DNS configuration.
+	if dnsFound.Status == probePending || pointsToG.Status == probePending || aaaa.Status == probePending {
+		obs.DNSCheckedAt = time.Time{}
 	}
 	// CAA is tri-state. ok = true; fail = false; pending
 	// stays nil (NULL in the column) when DNS or issuer restrictions
@@ -572,6 +576,10 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 			obs.CertState = certStatusDialFailed
 			obs.LastError = errCertRoutingMismatch.Error()
 			obs.CertCheckedAt = time.Now().UTC()
+		} else if routingProbe != probeDomain {
+			// The fixed TLS probe has an explicit DNS override. Do not dial it
+			// or issue a new certificate for an arbitrary sample hostname.
+			obs.CertState = certStatusPending
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
 			if obs.CertNotAfter.IsZero() {
@@ -592,7 +600,7 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		// PgStore and MemStore both provide the atomic transition.
 		dnsCheckedAt := obs.DNSCheckedAt
 		if dnsCheckedAt.IsZero() {
-			dnsCheckedAt = time.Now().UTC()
+			dnsCheckedAt = observedAt
 		}
 		drifted := legacyLoaded && legacy.Verified() && pointsToG.Status == probeFail
 		if legacyLoaded && !legacy.Verified() && legacy.CertStatus == state.CustomDomainCertDNSDrifted {

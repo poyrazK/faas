@@ -3284,7 +3284,8 @@ type Querier interface {
 	// spends the new-host lookup budget (ADR-20261103163954 §4). A listed name
 	// only skips that budget; routing still reads and checks the row.
 	KnownRouteAppSlugs(ctx context.Context, db DBTX, limit int32) ([]string, error)
-	// Every verified custom domain, for the same preload as KnownRouteAppSlugs.
+	// Preload verified claims and concrete admitted wildcard hosts. Patterns only
+	// qualify for a separately bounded recovery budget, never a free lookup.
 	KnownRouteCustomDomains(ctx context.Context, db DBTX, limit int32) ([]string, error)
 	LastGraphMemberServingEnd(ctx context.Context, db DBTX, arg LastGraphMemberServingEndParams) (pgtype.Timestamptz, error)
 	LatchAutomationFailurePause(ctx context.Context, db DBTX, arg LatchAutomationFailurePauseParams) error
@@ -3869,6 +3870,8 @@ type Querier interface {
 	ListReadinessNotifications(ctx context.Context, db DBTX, arg ListReadinessNotificationsParams) ([][]byte, error)
 	ListReadinessSubscriptions(ctx context.Context, db DBTX, arg ListReadinessSubscriptionsParams) ([][]byte, error)
 	ListReadyCronActivations(ctx context.Context, db DBTX) ([]string, error)
+	// Admission hints only; callers must still authorize the live claim.
+	ListRecentCustomDomainTLSHosts(ctx context.Context, db DBTX, rowLimit int32) ([]string, error)
 	// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 	// the partial index events_actor_account_idx on
 	// (actor_account_id) WHERE actor_account_id IS NOT NULL
