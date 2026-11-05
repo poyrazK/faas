@@ -929,7 +929,7 @@ export class DeploymentsService {
    * completion also waits for the existing gateway ACK and drain handoff.
    * Stored binding enforcement requires this exact workflow.
    *
-   * @returns DeploymentResponse The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
+   * @returns DeploymentResponse The selected deployment and, for an exact checked request or service rollback, its accepted durable rollback operation. Acceptance does not imply completion.
    * @throws ApiError
    */
   public static rollbackApp({
@@ -949,7 +949,7 @@ export class DeploymentsService {
      */
     idempotencyKey?: string,
     /**
-     * Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+     * Persisted opaque identity for an exact default-scope request or service rollback without alert attribution, database restoration or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
      */
     rollbackAttemptId?: string,
     requestBody?: RollbackRequest,

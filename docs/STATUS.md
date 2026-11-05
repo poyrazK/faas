@@ -7,6 +7,41 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP default-scope service rollback outcomes — 2026-11-05 (branch, not released)
+
+Checked service rollback now persists an original attempt identity with its
+native operation, target readiness and handoff preparation. Default-scope
+request and service attempts share the existing header and native ledger;
+workers, named scopes, release acknowledgement and database restoration remain
+excluded. Matching accepted attempts cannot repeat the original operation.
+
+The bridge saves service-tagged lookup references in an independent encrypted
+namespace. History, resources and prompts recover acceptance after lost replies,
+restart and expiry, with separate exact rollback, rollout and health observation
+calls. Recovery never replays, changes history or renews write authority. Older
+request-lookup formats remain unchanged, and revocation/retention cover service
+references. No migration, endpoint, DTO, tool, prompt or template count changes.
+
+Focused and full MCP race checks pass, including both protocols, encrypted
+restart/expiry, malformed receipts, final guards, legacy non-backfill, older
+journal rewrites and grant cleanup. The full suite, with pinned Codex acceptance,
+completed in 332.859s. All three real-client profiles passed service rollback
+recovery with zero model requests and zero native writes in their read-only
+fixtures. Memory/PostgreSQL and HTTP race tests pass, including concurrent
+acceptance, stale CAS, insertion failure, terminal replay and a lost native reply.
+Node build and six rollback/rollout transport tests pass; pinned Node/Python
+generation and five Python receipt tests pass. Go SDK tests and full vet pass.
+Serial MCP/state/API package lint reports zero issues. Spec/docs parity, typed
+SDK coverage, SDK spec generation, sealed-env/seal-domain scope, shared runner
+sync, capability coverage and store-test convention gates pass. Version-skew
+checks pass against base `bde453f0c`; no release tag is an ancestor of that base.
+Main at `bde453f0c` already contains two unrelated ADR-number collisions
+(`20261104143000`, `20261104170000`), so the repository uniqueness gate still
+fails; this slice adds no collision. No migration was added, and the test-citation
+gate passes.
+Native/provider execution qualification remains separate from portable fixtures.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
+
 ## Management MCP PR #6601 main integration — 2026-11-05 (branch, not released)
 
 The recovery branch integrates main through `8cc557447`. Operation receipts retain

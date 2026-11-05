@@ -94,7 +94,7 @@ func (m *MemStore) CreateCheckedRollback(ctx context.Context, acct, app, target,
 			return api.RollbackOperation{}, checkedRollbackAttemptError(prior, app, target, current, reason)
 		}
 		d := m.deployments[target]
-		if a.Manifest.ExecutionMode != "" && a.Manifest.ExecutionMode != api.ExecutionModeRequest || normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
+		if !checkedRollbackAttemptMode(a.Manifest.ExecutionMode) || normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
 			return api.RollbackOperation{}, ErrInvalidArgument
 		}
 	}

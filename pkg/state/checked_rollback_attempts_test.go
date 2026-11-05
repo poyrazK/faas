@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"sync"
@@ -12,16 +13,26 @@ import (
 	"time"
 )
 
-func TestCheckedRollbackAttemptMem(t *testing.T) { checkedRollbackAttemptSuite(t, state.NewMemStore()) }
+func TestCheckedRollbackAttemptMem(t *testing.T) {
+	checkedRollbackAttemptSuite(t, state.NewMemStore(), false)
+}
 func TestCheckedRollbackAttemptPG(t *testing.T) {
 	s, _ := pgStore(t)
-	checkedRollbackAttemptSuite(t, s)
+	checkedRollbackAttemptSuite(t, s, false)
 }
-func checkedRollbackAttemptSuite(t *testing.T, s state.Store) {
+func TestCheckedRollbackServiceAttemptMem(t *testing.T) {
+	checkedRollbackAttemptSuite(t, state.NewMemStore(), true)
+}
+func TestCheckedRollbackServiceAttemptPG(t *testing.T) {
+	s, _ := pgStore(t)
+	checkedRollbackAttemptSuite(t, s, true)
+}
+
+func checkedRollbackAttemptSuite(t *testing.T, s state.Store, service bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	acct, app, target, current := checkedRollbackFixture(t, s, false)
+	acct, app, target, current := checkedRollbackFixture(t, s, service)
 	store := s.(state.CheckedRollbackStore)
 	attempt := strings.ReplaceAll(uuid.NewString(), "-", "")
 	id := uuid.MustParse(attempt).String()
@@ -54,7 +65,7 @@ func checkedRollbackAttemptSuite(t *testing.T, s state.Store) {
 		t.Fatalf("accepted=%d", accepted)
 	}
 	op, err := store.GetCheckedRollback(ctx, acct.ID, app.ID, id)
-	if err != nil || op.ID != id || op.TargetDeploymentID != target.ID || op.CurrentDeploymentID != current.ID || op.Status != "preparing" || op.Reason != "original" || op.CreatedAt.IsZero() {
+	if err != nil || op.Service != service || op.ID != id || op.TargetDeploymentID != target.ID || op.CurrentDeploymentID != current.ID || op.Status != "preparing" || op.Reason != "original" || op.CreatedAt.IsZero() {
 		t.Fatalf("atomic receipt: %+v %v", op, err)
 	}
 	got, _ := s.DeploymentByID(ctx, current.ID)
@@ -87,19 +98,30 @@ func checkedRollbackAttemptSuite(t *testing.T, s state.Store) {
 		t.Fatalf("invalid attempt: %v", err)
 	}
 }
-func TestCheckedRollbackAttemptRejectsService(t *testing.T) {
+func TestCheckedRollbackAttemptRejectsWorker(t *testing.T) {
 	s := state.NewMemStore()
-	a, app, target, current := checkedRollbackFixture(t, s, true)
+	a, app, target, current := checkedRollbackFixture(t, s, false)
+	manifest := app.Manifest
+	manifest.ExecutionMode = api.ExecutionModeWorker
+	if _, err := s.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
 	ctx := state.ContextWithCheckedRollbackAttempt(t.Context(), strings.Repeat("a", 32))
-	if _, err := s.CreateCheckedRollback(ctx, a.ID, app.ID, target.ID, current.ID, "service"); !errors.Is(err, state.ErrInvalidArgument) {
-		t.Fatalf("service request attempt accepted: %v", err)
+	if _, err := s.CreateCheckedRollback(ctx, a.ID, app.ID, target.ID, current.ID, "worker"); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("worker accepted: %v", err)
 	}
 }
 
 func TestCheckedRollbackAttemptPGInsertFailure(t *testing.T) {
+	checkedRollbackAttemptInsertFailure(t, false)
+}
+func TestCheckedRollbackServiceAttemptPGInsertFailure(t *testing.T) {
+	checkedRollbackAttemptInsertFailure(t, true)
+}
+func checkedRollbackAttemptInsertFailure(t *testing.T, service bool) {
 	s, pool, _ := pgStoreWithPool(t)
 	ctx := t.Context()
-	a, app, target, current := checkedRollbackFixture(t, s, false)
+	a, app, target, current := checkedRollbackFixture(t, s, service)
 	before, err := s.DeploymentByID(ctx, target.ID)
 	if err != nil {
 		t.Fatal(err)

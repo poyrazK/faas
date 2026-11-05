@@ -5680,7 +5680,7 @@ paths:
         - name: Rollback-Attempt-ID
           in: header
           required: false
-          description: Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+          description: Persisted opaque identity for an exact default-scope request or service rollback without alert attribution, database restoration or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
           schema: {type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$'}
       requestBody:
         required: false
@@ -5691,7 +5691,7 @@ paths:
             example: {"target_deployment_id": "0123456789abcdef0123456789abcdef"}
       responses:
         '202':
-          description: The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
+          description: The selected deployment and, for an exact checked request or service rollback, its accepted durable rollback operation. Acceptance does not imply completion.
           content:
             application/json:
               schema:

@@ -99,12 +99,19 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restoreRollbackOutcomeLookups(); err != nil {
 		return err
 	}
+	if err := m.restoreServiceRollbackOutcomeLookups(); err != nil {
+		return err
+	}
 	if err := m.restoreServiceAbortOutcomeLookups(); err != nil {
 		return err
 	}
 	serviceAbortBefore := make(map[string]serviceAbortOutcomeLookup, len(m.serviceAbortOutcomes))
 	for id, ref := range m.serviceAbortOutcomes {
 		serviceAbortBefore[id] = ref
+	}
+	serviceRollbackBefore := make(map[string]rollbackOutcomeLookup, len(m.serviceRollbackOutcomes))
+	for id, ref := range m.serviceRollbackOutcomes {
+		serviceRollbackBefore[id] = ref
 	}
 	rollbackBefore := make(map[string]rollbackOutcomeLookup, len(m.rollbackOutcomes))
 	for id, ref := range m.rollbackOutcomes {
@@ -133,7 +140,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) {
+	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceRollbackBefore, m.serviceRollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -182,6 +189,9 @@ func (m *management) syncActionHistory(now time.Time) error {
 		return err
 	}
 	if err := m.syncRollbackOutcomeLookups(now); err != nil {
+		return err
+	}
+	if err := m.syncServiceRollbackOutcomeLookups(now); err != nil {
 		return err
 	}
 	return m.syncServiceAbortOutcomeLookups(now)

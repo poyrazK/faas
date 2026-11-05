@@ -184,6 +184,7 @@ func (m *management) persistPlans() error {
 	return m.opts.planStore.updateMany(map[string]any{
 		namedServiceAbortOutcomeNamespace + m.opts.planNamespace: named,
 		serviceAbortOutcomeNamespace + m.opts.planNamespace:      defaults,
+		serviceRollbackOutcomeNamespace + m.opts.planNamespace:   rollbackOutcomeSnapshot{Version: 1, Items: m.serviceRollbackOutcomes},
 		rollbackOutcomeNamespace + m.opts.planNamespace:          rollbackOutcomeSnapshot{Version: 1, Items: m.rollbackOutcomes},
 		promotionOutcomeNamespace + m.opts.planNamespace:         promotionOutcomeSnapshot{Version: 1, Items: m.promotionOutcomes},
 		deploymentOutcomeNamespace + m.opts.planNamespace:        deploymentOutcomeSnapshot{Version: 1, Items: m.deploymentOutcomes},

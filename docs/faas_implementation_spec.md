@@ -3211,6 +3211,31 @@ rechecked before release. No MCP tools or quotas are added. Named service aborts
 ADR-20261104173000 above; service rollback remains separate. See
 [ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
 
+## Management MCP service rollback acceptance recovery (ADR-20261105082446)
+
+Exact default-environment service rollbacks can retain the original native
+operation identity before submission. The optional `Rollback-Attempt-ID` commits
+as that operation's UUID under the app lock. Matching accepted attempts cannot
+start another readiness/handoff cycle, including after terminal failure;
+conflicting original pairs or reasons are rejected. Existing serving CAS,
+artifact, approval, release and binding guards still apply. Workers, named
+scopes, database restoration and release acknowledgement are excluded.
+
+After a lost response, encrypted bridge restart or plan expiry, follow retained
+history to `gregale_get_action_outcome`. It verifies the exact original service
+operation and returns redacted historical acceptance. `observation` reads the
+operation, `rollout_observation` inspects target handoff/drain and
+`health_observation` reads current app health. Invoke them separately: acceptance
+does not prove ACKs, drain completion, current serving traffic or health.
+
+Service references use an independent encrypted namespace with a tagged binding,
+shared history retention and grant cleanup. N-1 journal writes preserve it;
+legacy attempted plans never gain new identities. Missing evidence remains
+unresolved. Reads, prompts and resources work with writes disabled, recheck
+consent/identity/retention/storage, and never replay, modify history or renew
+expired authority. The existing tools, prompts and resource templates suffice.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
+
 ## Management MCP request rollback outcomes (ADR-20261105000513)
 
 An exact default-scope manual request rollback may carry a 32-character lowercase

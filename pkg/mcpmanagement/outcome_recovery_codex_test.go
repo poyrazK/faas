@@ -142,7 +142,8 @@ func seedCodexPromotionOutcome(remote *remoteServer) (api.DeploymentPromotionRec
 }
 
 // Seed historical native metadata only; this fixture performs no native writes.
-func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, error) {
+func seedCodexRollbackOutcome(remote *remoteServer, serviceMode ...bool) (api.RollbackOperation, error) {
+	service := len(serviceMode) > 0 && serviceMode[0]
 	remote.mu.Lock()
 	var managers []*management
 	for _, grant := range remote.grants {
@@ -152,6 +153,9 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 	}
 	remote.mu.Unlock()
 	id := strings.Repeat("b", 64)
+	if service {
+		id = strings.Repeat("3", 64)
+	}
 	for _, m := range managers {
 		m.mu.Lock()
 		if _, found := m.actions[id]; !found {
@@ -161,6 +165,9 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 				}
 				seed := *p
 				seed.ID, seed.Action, seed.RolloutMode = id, "rollback", api.ExecutionModeRequest
+				if service {
+					seed.RolloutMode = api.ExecutionModeService
+				}
 				seed.TargetDeploymentID, seed.ExpectedCurrentID = "rollback-target", "rollback-serving"
 				seed.Reason, seed.Source, seed.attempted, seed.result = "PRIVATE_ROLLBACK_REASON", nil, false, nil
 				seed.ExpiresAt = time.Now().Add(-time.Minute)
@@ -179,8 +186,11 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 		}
 		entry, found := m.actions[id]
 		ref := m.rollbackOutcomes[id]
+		if service {
+			ref = m.serviceRollbackOutcomes[id]
+		}
 		if found && validRollbackOutcomeLookup(ref) {
-			operation := api.RollbackOperation{ID: uuid.MustParse(ref.AttemptID).String(), AppID: entry.AppID, Scope: entry.Scope, TargetDeploymentID: ref.TargetID, CurrentDeploymentID: ref.CurrentID, Reason: "PRIVATE_ROLLBACK_REASON", Status: "failed", Code: "later_failure", CreatedAt: entry.RecordedAt, UpdatedAt: time.Now().UTC()}
+			operation := api.RollbackOperation{ID: uuid.MustParse(ref.AttemptID).String(), AppID: entry.AppID, Scope: entry.Scope, Service: service, TargetDeploymentID: ref.TargetID, CurrentDeploymentID: ref.CurrentID, Reason: "PRIVATE_ROLLBACK_REASON", Status: "failed", Code: "later_failure", CreatedAt: entry.RecordedAt, UpdatedAt: time.Now().UTC()}
 			m.mu.Unlock()
 			return operation, nil
 		}

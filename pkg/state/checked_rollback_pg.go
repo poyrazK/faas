@@ -131,7 +131,7 @@ func (s *PgStore) createCheckedRollbackOnce(ctx context.Context, acct, app, targ
 		if targetErr != nil {
 			return api.RollbackOperation{}, targetErr
 		}
-		if a.Manifest.ExecutionMode != "" && a.Manifest.ExecutionMode != api.ExecutionModeRequest || normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
+		if !checkedRollbackAttemptMode(a.Manifest.ExecutionMode) || normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
 			return api.RollbackOperation{}, ErrInvalidArgument
 		}
 	}

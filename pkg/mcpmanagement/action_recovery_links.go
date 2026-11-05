@@ -110,6 +110,11 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 		if !found || !serviceAbortReferenceMatches(entry, ref) || !serviceAbortReferenceMatches(current, ref) {
 			return nil
 		}
+	case entry.Action == "rollback" && m.serviceRollbackOutcomes[entry.PlanID].AttemptID != "":
+		ref := m.serviceRollbackOutcomes[entry.PlanID]
+		if _, collision := m.rollbackOutcomes[entry.PlanID]; collision || !serviceRollbackReferenceMatches(entry, ref) || !serviceRollbackReferenceMatches(current, ref) {
+			return nil
+		}
 	case entry.Action == "rollback":
 		ref, found := m.rollbackOutcomes[entry.PlanID]
 		if !found || !rollbackReferenceMatches(entry, ref) || !rollbackReferenceMatches(current, ref) {
