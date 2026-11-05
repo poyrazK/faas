@@ -2687,6 +2687,11 @@ var WithEntry = withEntry
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
 
+var McpNativeDrainBudget = mcpNativeDrainBudget
+var McpNativeDrainableWorkerIDs = mcpNativeDrainableWorkerIDs
+
+var McpNativeWorkerIDs = mcpNativeWorkerIDs
+
 // Rate comparison seams for boundary regression tests.
 type TestLoadMetrics = testLoadMetrics
 type TestLoadRelativeSpec = testLoadRelativeSpec

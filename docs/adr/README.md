@@ -2039,6 +2039,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261104020000: MCP Task recovery after retry budget changes](20261104020000-mcp-task-retry-budget-rollouts.md)
 - [ADR-20261104033000: MCP release protocol gates and verification budgets](20261104033000-mcp-release-protocol-gates-and-verification-budgets.md)
 - [ADR-20261104050000: MCP observer bindings and Task identity defaults](20261104050000-mcp-observer-bindings-and-task-identity-defaults.md)
+- [ADR-20261104143950: MCP Task release bindings and execution deadlines](20261104143950-mcp-task-release-namespace-and-execution-fences.md)
+- [ADR-20261104195018: MCP Task cancellation and startup validation](20261104195018-mcp-task-cancellation-and-startup-validation.md) — settle cancelled expired leases without execution, authenticate all retained Node payloads, align tool-name validation and canonicalize release source roots
+- [ADR-20261104201707: MCP Task renewal, subscriptions and release checkpoints](20261104201707-mcp-task-renewal-subscriptions-and-release-checkpoints.md) — recheck lease expiry after row locks, release expired Task subscriptions and distinguish release retries from new worker generations
+- [ADR-20261104205633: MCP worker drain budgets, cipher identity and catalog snapshots](20261104205633-mcp-worker-drain-cipher-identity-and-catalog-snapshots.md) — validate actual running-worker budgets, authenticate same-ID formats during rewrap and isolate nested catalog metadata
+- [ADR-20261104212930: MCP live worker receipts and schema snapshots](20261104212930-mcp-live-worker-receipts-and-schema-snapshots.md) — recover native handoffs after log eviction, accept empty previous pools and isolate Zod metadata through Standard Schema snapshots
+- [ADR-20261104220400: MCP subscription setup ownership](20261104220400-mcp-subscription-setup-ownership.md) — reserve pending stream capacity, handle early disconnects and dispose registrations that finish after cancellation
+- [ADR-20261104222700: MCP catalog SDK keys and HTTP framing](20261104222700-mcp-catalog-sdk-keys-and-http-framing.md) — support prototype-property catalog names, honor sample resource replacements and decode bounded Python chunked requests
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
 - [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)
