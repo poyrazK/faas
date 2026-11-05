@@ -2237,6 +2237,34 @@ before replanning an expired action even if its old phase was `not_attempted`. S
 [ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
 [ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
 
+### Recover an ambiguous environment promotion
+
+New promotions retain their original opaque attempt and reviewed fingerprint
+before POST. Native promotion creation, workloads, approval consumption and the
+acceptance receipt commit atomically. An accepted modern attempt cannot dispatch
+again, including after failure. Legacy explicit original-key continuation keeps
+its existing checks and cannot acquire a receipt retroactively.
+
+Follow `recovery.outcome` from environment action history, or call
+`gregale_get_environment_action_outcome` with the original project, target
+environment and plan ID. It now supports promotions as well as rollbacks.
+It works after restart and expiry with writes disabled. A verified receipt
+returns the exact native promotion ID and a `gregale_get_environment_promotion`
+observation. Run that observation explicitly; workload handoff and health remain
+separate. Missing evidence never proves non-commit.
+
+Prompts/resources discover the read passively without fetching receipts. An
+unknown promotion has no guessed observation ID before lookup. Recovery never
+rewrites history, renews expiry, replays, replans or approves. Current immutable
+scope/workload identities, read consent, storage and retention remain required.
+Replaced environments cannot inherit evidence. Catalog counts are unchanged.
+
+The native read is `GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}`,
+with an equivalent organization route. Optional promotion POST headers
+`Environment-Promotion-Attempt-ID` and `Environment-Promotion-Request-Hash` must
+be paired. Neither header nor a retry key is forwarded to receipt GETs.
+See [ADR-20261105153007](adr/20261105153007-management-mcp-environment-promotion-outcomes.md).
+
 ### Recover an ambiguous environment rollback
 
 New project-level environment rollback plans save an opaque original attempt and
@@ -2294,7 +2322,7 @@ current target write consent. Expired review metadata cannot extend approval.
 
 `outcome_unknown` preserves the original retry handle after a lost response.
 Retry the indicated existing promotion/rollback tool with that same unexpired
-plan and current authorization. After expiry, use an exact retained rollback outcome lookup when available;
+plan and current authorization. After expiry, use an exact retained promotion/rollback outcome lookup when available;
 otherwise inspect native state before replanning. `accepted` records a checked promotion ID, not observed completion or
 traffic health, even if a native rollback receipt reported completion. When known,
 `observation` points explicitly to `gregale_get_environment_promotion` with exact

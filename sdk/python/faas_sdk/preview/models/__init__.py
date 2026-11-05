@@ -1633,6 +1633,7 @@ from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
+from .environment_promotion_receipt import EnvironmentPromotionReceipt
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
@@ -7891,6 +7892,7 @@ __all__ = (
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
+    "EnvironmentPromotionReceipt",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",

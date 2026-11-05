@@ -2180,3 +2180,7 @@ var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
 func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentRollbackReceipt(w, r, acct)
 }
+
+func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentPromotionReceipt(w, r, acct)
+}

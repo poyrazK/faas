@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -81,6 +82,11 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 		}
 	}
 
+	receipt, err := prepareEnvironmentPromotionReceipt(ctx, tx, promotion)
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
+
 	row := tx.QueryRow(ctx, `
 		insert into project_environment_promotions
 			 (account_id, project_id, project_slug, from_environment, to_environment,
@@ -101,6 +107,9 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 		promotion.PreviousTargetConfigSnapshot, promotion.TargetConfigVersion, promotion.RollbackConfigVersion)
 	created, err := scanProjectEnvironmentPromotion(row)
 	if err != nil {
+		if _, modern, _ := environmentPromotionIntent(ctx); modern && errors.Is(err, ErrConflict) {
+			return ProjectEnvironmentPromotion{}, nil, ErrEnvironmentPromotionAttemptConflict
+		}
 		return ProjectEnvironmentPromotion{}, nil, err
 	}
 	if promotion.SyncConfig {
@@ -143,6 +152,12 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 			return ProjectEnvironmentPromotion{}, nil, err
 		}
 		createdWorkloads = append(createdWorkloads, createdWorkload)
+	}
+	if receipt != nil {
+		receipt.PromotionID = created.ID
+		if err := insertEnvironmentPromotionReceipt(ctx, tx, created.AccountID, *receipt); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
 	}
 	if promotion.Approval != nil {
 		approval, err := consumePromotionAdmissionApprovalDB(ctx, tx, promotion)

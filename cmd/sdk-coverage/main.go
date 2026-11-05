@@ -2410,6 +2410,8 @@ var methodRouteMap = map[string]string{
 	// names derived from hyphenated route segments.
 	"GET /v1/apps/{slug}/deployment-cron-staging":                                                                                  "GetDeploymentCronStagingSnapshot",
 	"GET /v1/apps/{slug}/deployment-staging":                                                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                                           "GetEnvironmentPromotionReceipt",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       "GetOrgEnvironmentPromotionReceipt",
 	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}":                     "GetEnvironmentRollbackReceipt",
 	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": "GetOrgEnvironmentRollbackReceipt",
 	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":                                                                              "GetServiceAbortReceipt",

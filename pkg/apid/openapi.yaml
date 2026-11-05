@@ -39861,6 +39861,8 @@ paths:
         required: true
         description: Stable key for retrying this promotion without duplicating deployments.
         schema: { type: string, minLength: 1, maxLength: 255 }
+      - $ref: '#/components/parameters/EnvironmentPromotionAttemptHeader'
+      - $ref: '#/components/parameters/EnvironmentPromotionRequestHashHeader'
     post:
       tags: [projects]
       operationId: promoteProjectEnvironment
@@ -40079,6 +40081,28 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 'Task, generation, runtime or destination intent changed; inspect current promotion status.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}:
+    parameters:
+      - { name: slug, in: path, required: true, description: Project containing this original promotion., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Original promotion destination environment., schema: { type: string } }
+      - $ref: '#/components/parameters/EnvironmentPromotionAttempt'
+    get:
+      tags: [projects]
+      operationId: getEnvironmentPromotionReceipt
+      summary: Read acceptance of an original environment promotion attempt.
+      description: Returns immutable admission evidence for the original project, source and target identities. Replacement environments cannot inherit receipts. Promotion completion, per-workload progress and health require separate observations. Missing evidence never proves non-commit. The read never retries a promotion or requires write permission.
+      responses:
+        '200':
+          description: Original promotion acceptance; native completion is not inferred.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentPromotionReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}:
@@ -66018,6 +66042,8 @@ paths:
       - $ref: '#/components/parameters/OrgProjectSlug'
       - $ref: '#/components/parameters/OrgProjectEnvironment'
       - $ref: '#/components/parameters/OrgProjectIdempotencyKey'
+      - $ref: '#/components/parameters/EnvironmentPromotionAttemptHeader'
+      - $ref: '#/components/parameters/EnvironmentPromotionRequestHashHeader'
     post:
       tags: [projects]
       operationId: promoteOrgProjectEnvironment
@@ -66041,6 +66067,29 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
         '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/EnvironmentPromotionAttempt'
+    get:
+      tags: [projects]
+      operationId: getOrgEnvironmentPromotionReceipt
+      summary: Read original company environment promotion acceptance.
+      description: Returns an immutable acceptance receipt within the authenticated company project. Current membership and original source/target identities remain required; replacement environments cannot inherit it. Native progress and workload health require explicit observations. A missing receipt leaves acceptance unresolved, and this read cannot execute a promotion.
+      responses:
+        '200':
+          description: Company-scoped original admission metadata; completion requires separate observation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentPromotionReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -68735,6 +68784,24 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    EnvironmentPromotionAttempt:
+      name: attempt_id
+      in: path
+      required: true
+      description: Original opaque promotion attempt.
+      schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    EnvironmentPromotionAttemptHeader:
+      name: Environment-Promotion-Attempt-ID
+      in: header
+      required: false
+      description: Optional original acceptance attempt. Requires Environment-Promotion-Request-Hash; accepted attempts cannot execute again. Omit both headers for legacy retry behavior.
+      schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    EnvironmentPromotionRequestHashHeader:
+      name: Environment-Promotion-Request-Hash
+      in: header
+      required: false
+      description: SHA-256 binding of the reviewed promotion fingerprint and immutable project/source/target environment IDs. Must accompany Environment-Promotion-Attempt-ID.
+      schema: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
     EnvironmentRollbackAttempt:
       name: attempt_id
       in: path
@@ -95193,6 +95260,19 @@ components:
         scope: { type: string, description: Default scope or the original named environment slug. }
         project_id: { type: string, format: uuid, description: Original project identity; present for named scopes. }
         environment_id: { type: string, format: uuid, description: Original environment identity; present for named scopes. }
+        accepted_at: { type: string, format: date-time }
+    EnvironmentPromotionReceipt:
+      type: object
+      description: Immutable original promotion admission evidence. The source/target identities cannot be reassigned; completion and current health remain separate.
+      required: [attempt_id, request_hash, promotion_id, promotion_hash, project_id, from_environment_id, environment_id, accepted_at]
+      properties:
+        attempt_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        request_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        promotion_id: { type: string, format: uuid }
+        promotion_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        project_id: { type: string, format: uuid }
+        from_environment_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
         accepted_at: { type: string, format: date-time }
     EnvironmentRollbackReceipt:
       type: object

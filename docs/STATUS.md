@@ -7,6 +7,18 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP environment promotion outcomes — 2026-11-05 (branch, not released)
+
+Project promotion acceptance now has a separate original-attempt journal and
+native receipt contract. The existing outcome tool recovers the assigned native
+ID after lost replies, restart and plan expiry, with explicit separate progress
+and workload health reads. Legacy retries retain their guards; unknown recipes
+do not guess native IDs or grant write authority. Catalog counts are unchanged.
+
+Implementation and acceptance validation are in progress. Provider deployment
+qualification remains separate from portable fixtures.
+See [ADR-20261105153007](adr/20261105153007-management-mcp-environment-promotion-outcomes.md).
+
 ## Management MCP environment rollback outcomes — 2026-11-05 (branch, not released)
 
 Project-level rollback now has an original-attempt acceptance contract and an

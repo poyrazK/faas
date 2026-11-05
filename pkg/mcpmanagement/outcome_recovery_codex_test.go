@@ -306,3 +306,46 @@ func seedCodexEnvironmentRollbackOutcome(remote *remoteServer) (api.EnvironmentR
 	}
 	return api.EnvironmentRollbackReceipt{}, errors.New("missing environment promotion fixture plan")
 }
+
+func seedCodexEnvironmentPromotionOutcome(remote *remoteServer) (api.EnvironmentPromotionReceipt, error) {
+	remote.mu.Lock()
+	var managers []*management
+	for _, grant := range remote.grants {
+		if !grant.revoked && grant.management != nil {
+			managers = append(managers, grant.management)
+		}
+	}
+	remote.mu.Unlock()
+	id := strings.Repeat("6", 64)
+	for _, m := range managers {
+		m.mu.Lock()
+		if _, found := m.environmentActions[id]; !found {
+			for _, p := range m.environmentPlans {
+				if p.Action != "environment_promotion" {
+					continue
+				}
+				seed := &environmentPlan{ID: id, Action: "environment_promotion", AccountID: p.AccountID, APIBase: p.APIBase, Project: p.Project, ProjectID: p.ProjectID, FromEnvironment: p.FromEnvironment, FromID: p.FromID, Environment: p.Environment, EnvironmentID: p.EnvironmentID, PromotionHash: p.PromotionHash, Reason: "PRIVATE_ENV_ROLLBACK_REASON", ExpiresAt: time.Now().Add(-time.Minute)}
+				if _, err := m.prepareEnvironmentPromotionOutcome(context.Background(), seed); err != nil {
+					m.mu.Unlock()
+					return api.EnvironmentPromotionReceipt{}, err
+				}
+				seed.attempted = true
+				m.environmentPlans[id] = seed
+				if err := m.persistPlans(); err != nil {
+					m.mu.Unlock()
+					return api.EnvironmentPromotionReceipt{}, err
+				}
+				break
+			}
+		}
+		entry, found := m.environmentActions[id]
+		ref := m.environmentPromotionOutcomes[id]
+		if found && validEnvironmentRollbackLookup(ref) {
+			receipt := api.EnvironmentPromotionReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, PromotionHash: ref.PromotionHash, PromotionID: "3e9f323a-ade6-442b-8444-c91da107fe44", ProjectID: entry.ProjectID, FromEnvironmentID: entry.FromID, EnvironmentID: entry.EnvironmentID, AcceptedAt: entry.RecordedAt}
+			m.mu.Unlock()
+			return receipt, nil
+		}
+		m.mu.Unlock()
+	}
+	return api.EnvironmentPromotionReceipt{}, errors.New("missing environment promotion fixture plan")
+}

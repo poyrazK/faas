@@ -2147,3 +2147,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261105082446: Durable service rollback acceptance recovery](20261105082446-management-mcp-service-rollback-outcomes.md)
 
 - [ADR-20261105102920: Exact environment rollback acceptance recovery](20261105102920-management-mcp-environment-rollback-outcomes.md)
+
+- [ADR-20261105153007: Exact environment promotion acceptance recovery](20261105153007-management-mcp-environment-promotion-outcomes.md)

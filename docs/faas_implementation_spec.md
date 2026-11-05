@@ -3449,3 +3449,20 @@ Validation: `TestEnvironmentRollbackReceiptMem`,
 `TestEnvironmentRollbackOutcomeLostReplyExpiry`,
 `TestEnvironmentRollbackOutcomeEvidenceAndGuards`, and the pinned real-client
 acceptance fixture. Portable fixtures do not qualify provider deployment.
+
+### Management MCP environment promotion outcomes (ADR-20261105153007)
+
+Project environment promotion acceptance can be recovered by its original opaque
+attempt after a lost response, encrypted restart or plan expiry. The native
+receipt commits atomically with admission and approval consumption; original
+project/source/target IDs and the reviewed promotion fingerprint bind it.
+Repeated modern accepted attempts cannot dispatch again, while existing explicit
+legacy checkpoint continuation retains its guards and cannot adopt receipts.
+The existing environment outcome tool reads exact receipts and returns the
+native promotion ID with a separate progress observation. It never retries,
+replans, approves, renews authority or changes recorded uncertainty. Current
+scope/workload identities, consent, storage and retention remain mandatory;
+missing evidence remains unresolved and replacement scopes cannot inherit it.
+No tool/prompt/template counts or GA capability levels change. Portable fixtures
+do not qualify provider/native execution. See ADR-20261105153007 for the wire hash,
+receipt lifecycle and SDK contract.

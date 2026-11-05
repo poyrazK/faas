@@ -13,8 +13,15 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err
 	}
+	receipt, err := m.prepareEnvironmentPromotionReceiptLocked(ctx, promotion)
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
 	for _, existing := range m.projectEnvironmentPromotions {
 		if existing.AccountID == promotion.AccountID && existing.IdempotencyKey == promotion.IdempotencyKey {
+			if _, modern, _ := environmentPromotionIntent(ctx); modern {
+				return ProjectEnvironmentPromotion{}, nil, ErrEnvironmentPromotionAttemptConflict
+			}
 			return ProjectEnvironmentPromotion{}, nil, ErrConflict
 		}
 	}
@@ -99,6 +106,13 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 		approval.ConsumedAt = &at
 		m.projectEnvironmentApprovals[approval.ID] = *approval
 		promotion.ConsumedApproval = approval
+	}
+	if receipt != nil {
+		receipt.PromotionID = promotion.ID
+		if m.environmentPromotionReceipts == nil {
+			m.environmentPromotionReceipts = map[string]api.EnvironmentPromotionReceipt{}
+		}
+		m.environmentPromotionReceipts[promotion.ID] = *receipt
 	}
 	stored := promotion
 	stored.Approval, stored.ConsumedApproval = nil, nil

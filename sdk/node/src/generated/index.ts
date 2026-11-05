@@ -868,6 +868,10 @@ export type { EnvironmentGitSourceUpdate } from './models/EnvironmentGitSourceUp
 export type { EnvironmentJobSchedule } from './models/EnvironmentJobSchedule.js';
 export type { EnvironmentJobSmoke } from './models/EnvironmentJobSmoke.js';
 export type { EnvironmentPolicy } from './models/EnvironmentPolicy.js';
+export type { EnvironmentPromotionAttempt } from './models/EnvironmentPromotionAttempt.js';
+export type { EnvironmentPromotionAttemptHeader } from './models/EnvironmentPromotionAttemptHeader.js';
+export type { EnvironmentPromotionReceipt } from './models/EnvironmentPromotionReceipt.js';
+export type { EnvironmentPromotionRequestHashHeader } from './models/EnvironmentPromotionRequestHashHeader.js';
 export type { EnvironmentQueueBinding } from './models/EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './models/EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './models/EnvironmentRecoveryRetention.js';

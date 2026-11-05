@@ -208,8 +208,13 @@ func (m *management) applyEnvironmentPromotion(ctx context.Context, args applyEn
 		if args.ApprovalToken != "" {
 			p.approval = args.ApprovalToken
 		}
-		p.attempted = true
+
 	}
+	ctx, err = m.prepareEnvironmentPromotionOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	p.attempted = true
 	if err := m.persistEnvironmentPlans(); err != nil {
 		return nil, err
 	}

@@ -87,6 +87,13 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restoreEnvironmentActionHistory(); err != nil {
 		return err
 	}
+	if err := m.restoreEnvironmentPromotionOutcomes(); err != nil {
+		return err
+	}
+	environmentPromotionBefore := make(map[string]environmentRollbackLookup, len(m.environmentPromotionOutcomes))
+	for id, ref := range m.environmentPromotionOutcomes {
+		environmentPromotionBefore[id] = ref
+	}
 	if err := m.restoreEnvironmentRollbackOutcomes(); err != nil {
 		return err
 	}
@@ -147,7 +154,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(environmentRollbackBefore, m.environmentRollbackOutcomes) || !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceRollbackBefore, m.serviceRollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) {
+	if !reflect.DeepEqual(environmentPromotionBefore, m.environmentPromotionOutcomes) || !reflect.DeepEqual(environmentRollbackBefore, m.environmentRollbackOutcomes) || !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceRollbackBefore, m.serviceRollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -193,6 +200,9 @@ func (m *management) syncActionHistory(now time.Time) error {
 		return err
 	}
 	if err := m.syncPromotionOutcomeLookups(now); err != nil {
+		return err
+	}
+	if err := m.syncEnvironmentPromotionOutcomes(now); err != nil {
 		return err
 	}
 	if err := m.syncEnvironmentRollbackOutcomes(now); err != nil {

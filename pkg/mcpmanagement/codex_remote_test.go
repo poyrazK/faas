@@ -69,8 +69,9 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var submissionReads atomic.Int32
 	var rollbackReceipt atomic.Pointer[api.RollbackOperation]
 	var rollbackReads, serviceRollbackReads atomic.Int32
-	var environmentRollbackReads atomic.Int32
+	var environmentRollbackReads, environmentPromotionReads atomic.Int32
 	var environmentRollbackReceipt atomic.Pointer[api.EnvironmentRollbackReceipt]
+	var environmentPromotionReceipt atomic.Pointer[api.EnvironmentPromotionReceipt]
 	var serviceAbortReceipt atomic.Pointer[api.ServiceAbortReceipt]
 	var serviceAbortReads atomic.Int32
 	var promotionReceipt atomic.Pointer[api.DeploymentPromotionReceipt]
@@ -399,6 +400,24 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: receipt.DeploymentID, AppID: receipt.AppID, Scope: receipt.Scope, Status: "live", RolloutState: "aborted", ServiceRolloutHandoff: &api.ServiceRolloutHandoffResponse{Action: "abort", Phase: "complete", PredecessorDeploymentID: receipt.PredecessorDeploymentID, BindingsCheck: &api.ServiceRolloutBindingGate{RequestID: "06cbbcca-b050-4ae3-adca-31a2547c983d", Action: "abort", DeploymentID: receipt.PredecessorDeploymentID, Status: "passed"}}})
 			return true
 		}
+
+		if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/v1/projects/shop/environments/production/promotion-attempts/") {
+			receipt := environmentPromotionReceipt.Load()
+			if receipt == nil || !strings.HasSuffix(req.URL.Path, "/"+receipt.AttemptID) {
+				w.WriteHeader(404)
+				return true
+			}
+			if req.Header.Get(api.EnvironmentPromotionAttemptHeader) != "" || req.Header.Get(api.EnvironmentPromotionHashHeader) != "" || req.Header.Get("Idempotency-Key") != "" {
+				t.Error("promotion lookup forwarded mutation metadata")
+			}
+			environmentPromotionReads.Add(1)
+			_ = json.NewEncoder(w).Encode(receipt)
+			return true
+		}
+		if req.Method == http.MethodGet && req.URL.Path == "/v1/projects/shop/environments/production/promotions/3e9f323a-ade6-442b-8444-c91da107fe44" && environmentPromotionReceipt.Load() != nil {
+			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentPromotionStatusResponse{PromotionID: "3e9f323a-ade6-442b-8444-c91da107fe44", ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production", Status: "failed"})
+			return true
+		}
 		if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/v1/projects/shop/environments/production/promotions/promotion-one/rollback-attempts/") {
 			receipt := environmentRollbackReceipt.Load()
 			if receipt == nil || !strings.HasSuffix(req.URL.Path, "/"+receipt.AttemptID) {
@@ -576,6 +595,16 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			}
 			writeOAuthJSON(w, 200, map[string]string{"plan_id": planID, "deployment_id": receipt.DeploymentID, "request_id": receipt.RequestID, "observed_request_id": "06cbbcca-b050-4ae3-adca-31a2547c983d"})
 			return
+		case "/environment-promotion-outcome-history":
+			receipt, err := seedCodexEnvironmentPromotionOutcome(currentRemote)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			environmentPromotionReceipt.Store(&receipt)
+			writeOAuthJSON(w, 200, map[string]string{"plan_id": strings.Repeat("6", 64), "promotion_id": receipt.PromotionID})
+			return
 		case "/environment-rollback-outcome-history":
 			receipt, err := seedCodexEnvironmentRollbackOutcome(currentRemote)
 			if err != nil {
@@ -749,7 +778,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 		case "/evidence":
 			mu.Lock()
 			defer mu.Unlock()
-			writeOAuthJSON(w, 200, map[string]int{"environment_rollback_reads": int(environmentRollbackReads.Load()), "service_abort_reads": int(serviceAbortReads.Load()), "rollback_reads": int(rollbackReads.Load()), "service_rollback_reads": int(serviceRollbackReads.Load()), "promotion_reads": int(promotionReads.Load()), "submission_reads": int(submissionReads.Load()), "outcome_reads": int(outcomeReads.Load()), "profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
+			writeOAuthJSON(w, 200, map[string]int{"environment_promotion_reads": int(environmentPromotionReads.Load()), "environment_rollback_reads": int(environmentRollbackReads.Load()), "service_abort_reads": int(serviceAbortReads.Load()), "rollback_reads": int(rollbackReads.Load()), "service_rollback_reads": int(serviceRollbackReads.Load()), "promotion_reads": int(promotionReads.Load()), "submission_reads": int(submissionReads.Load()), "outcome_reads": int(outcomeReads.Load()), "profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
 			return
 		default:
 			w.WriteHeader(404)
@@ -782,7 +811,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["environment_rollback_outcomes"] != "passed" || environmentRollbackReads.Load() == 0 || report["named_service_abort_outcomes"] != "passed" || report["service_abort_outcomes"] != "passed" || serviceAbortReads.Load() == 0 || report["service_rollback_outcomes"] != "passed" || serviceRollbackReads.Load() == 0 || report["rollback_outcomes"] != "passed" || rollbackReads.Load() == 0 || report["promotion_outcomes"] != "passed" || promotionReads.Load() == 0 || report["deployment_outcomes"] != "passed" || submissionReads.Load() == 0 || report["outcome_discovery"] != "passed" || outcomeReads.Load() == 0 || report["action_outcomes"] != "passed" || report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
+	if report["environment_promotion_outcomes"] != "passed" || environmentPromotionReads.Load() == 0 || report["environment_rollback_outcomes"] != "passed" || environmentRollbackReads.Load() == 0 || report["named_service_abort_outcomes"] != "passed" || report["service_abort_outcomes"] != "passed" || serviceAbortReads.Load() == 0 || report["service_rollback_outcomes"] != "passed" || serviceRollbackReads.Load() == 0 || report["rollback_outcomes"] != "passed" || rollbackReads.Load() == 0 || report["promotion_outcomes"] != "passed" || promotionReads.Load() == 0 || report["deployment_outcomes"] != "passed" || submissionReads.Load() == 0 || report["outcome_discovery"] != "passed" || outcomeReads.Load() == 0 || report["action_outcomes"] != "passed" || report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

@@ -28,6 +28,7 @@ import type { EnvironmentGitOpsPlan } from '../models/EnvironmentGitOpsPlan.js';
 import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOpsStatusResponse.js';
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
+import type { EnvironmentPromotionReceipt } from '../models/EnvironmentPromotionReceipt.js';
 import type { EnvironmentRollbackReceipt } from '../models/EnvironmentRollbackReceipt.js';
 import type { ListEnvironmentGitReleasesResponse } from '../models/ListEnvironmentGitReleasesResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
@@ -3188,6 +3189,8 @@ export class ProjectsService {
     environment,
     idempotencyKey,
     requestBody,
+    environmentPromotionAttemptId,
+    environmentPromotionRequestHash,
   }: {
     /**
      * Project slug owning the environment promotion.
@@ -3202,6 +3205,14 @@ export class ProjectsService {
      */
     idempotencyKey: string,
     requestBody: PromoteProjectEnvironmentRequest,
+    /**
+     * Optional original acceptance attempt. Requires Environment-Promotion-Request-Hash; accepted attempts cannot execute again. Omit both headers for legacy retry behavior.
+     */
+    environmentPromotionAttemptId?: string,
+    /**
+     * SHA-256 binding of the reviewed promotion fingerprint and immutable project/source/target environment IDs. Must accompany Environment-Promotion-Attempt-ID.
+     */
+    environmentPromotionRequestHash?: string,
   }): CancelablePromise<ProjectEnvironmentPromotionResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -3212,6 +3223,8 @@ export class ProjectsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Environment-Promotion-Attempt-ID': environmentPromotionAttemptId,
+        'Environment-Promotion-Request-Hash': environmentPromotionRequestHash,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -3474,6 +3487,51 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `Task, generation, runtime or destination intent changed; inspect current promotion status.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read acceptance of an original environment promotion attempt.
+   * Returns immutable admission evidence for the original project, source and target identities. Replacement environments cannot inherit receipts. Promotion completion, per-workload progress and health require separate observations. Missing evidence never proves non-commit. The read never retries a promotion or requires write permission.
+   * @returns EnvironmentPromotionReceipt Original promotion acceptance; native completion is not inferred.
+   * @throws ApiError
+   */
+  public static getEnvironmentPromotionReceipt({
+    slug,
+    environment,
+    attemptId,
+  }: {
+    /**
+     * Project containing this original promotion.
+     */
+    slug: string,
+    /**
+     * Original promotion destination environment.
+     */
+    environment: string,
+    /**
+     * Original opaque promotion attempt.
+     */
+    attemptId: string,
+  }): CancelablePromise<EnvironmentPromotionReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -5913,6 +5971,8 @@ export class ProjectsService {
     environment,
     idempotencyKey,
     requestBody,
+    environmentPromotionAttemptId,
+    environmentPromotionRequestHash,
   }: {
     /**
      * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
@@ -5931,6 +5991,14 @@ export class ProjectsService {
      */
     idempotencyKey: string,
     requestBody: PromoteProjectEnvironmentRequest,
+    /**
+     * Optional original acceptance attempt. Requires Environment-Promotion-Request-Hash; accepted attempts cannot execute again. Omit both headers for legacy retry behavior.
+     */
+    environmentPromotionAttemptId?: string,
+    /**
+     * SHA-256 binding of the reviewed promotion fingerprint and immutable project/source/target environment IDs. Must accompany Environment-Promotion-Attempt-ID.
+     */
+    environmentPromotionRequestHash?: string,
   }): CancelablePromise<ProjectEnvironmentPromotionResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -5942,6 +6010,8 @@ export class ProjectsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Environment-Promotion-Attempt-ID': environmentPromotionAttemptId,
+        'Environment-Promotion-Request-Hash': environmentPromotionRequestHash,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -5951,6 +6021,57 @@ export class ProjectsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read original company environment promotion acceptance.
+   * Returns an immutable acceptance receipt within the authenticated company project. Current membership and original source/target identities remain required; replacement environments cannot inherit it. Native progress and workload health require explicit observations. A missing receipt leaves acceptance unresolved, and this read cannot execute a promotion.
+   * @returns EnvironmentPromotionReceipt Company-scoped original admission metadata; completion requires separate observation.
+   * @throws ApiError
+   */
+  public static getOrgEnvironmentPromotionReceipt({
+    organization,
+    slug,
+    environment,
+    attemptId,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Original opaque promotion attempt.
+     */
+    attemptId: string,
+  }): CancelablePromise<EnvironmentPromotionReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

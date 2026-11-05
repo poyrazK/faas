@@ -2389,7 +2389,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx con
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.do(ctx, http.MethodPost, path, req, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, req, &out, environmentPromotionHeaders(ctx))
 }
 
 // PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
@@ -2397,7 +2397,7 @@ func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, tar
 func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+	return out, c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, path, req, &out, idempotencyKey, environmentPromotionHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
