@@ -3319,6 +3319,11 @@ message RunSandboxStart {
   // failure to unpack it is FailedPrecondition with the problem code
   // sandbox_workspace_unavailable.
   string workspace_key = 12;
+  // image_key is a seller image's full-rootfs artifact (jobs/<job>.ext4 or
+  // jobs/<job>__<artifact>.ext4). When set, vmmd boots it as drive1 in
+  // place of layer_key and stages /etc/faas/sandbox.json on the VM's
+  // private copy.
+  string image_key = 13;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),

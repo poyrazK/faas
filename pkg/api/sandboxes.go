@@ -113,7 +113,19 @@ type CreateSandboxRequest struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 	// SnapshotID starts the session from a persisted workspace.
 	SnapshotID string `json:"snapshot_id,omitempty"`
+	// Image boots the session from a customer OCI image in place of a
+	// preset; the session is queued until the image is cached (the
+	// image-run cache, ImageRunCachedImages).
+	Image string `json:"image,omitempty"`
 }
+
+// SandboxPresetImage is the preset recorded for a session booted from a
+// seller image.
+const SandboxPresetImage = "image"
+
+// SandboxImageDefaultRAMMB is a seller-image session's RAM when ram_mb is
+// omitted, within the plan's AgentRunRAMMBMax.
+const SandboxImageDefaultRAMMB = 1024
 
 // SandboxNetwork is a session's egress (ADR-20261027090013 §6).
 type SandboxNetwork struct {
@@ -150,6 +162,8 @@ type Sandbox struct {
 	TokenExpiresAt   *time.Time        `json:"token_expires_at,omitempty"`
 	// SnapshotID is the persisted workspace the session started from.
 	SnapshotID string `json:"snapshot_id,omitempty"`
+	// Image is the normalized seller image the session boots, if any.
+	Image string `json:"image,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a

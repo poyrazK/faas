@@ -21,7 +21,6 @@ import (
 // of an unknown-field error.
 type createBody struct {
 	api.CreateSandboxRequest
-	Image    json.RawMessage `json:"image"`
 	Manifest json.RawMessage `json:"manifest"`
 	Env      json.RawMessage `json:"env"`
 	Ports    json.RawMessage `json:"ports"`
@@ -33,7 +32,6 @@ var notYet = []struct {
 	get    func(createBody) json.RawMessage
 	detail string
 }{
-	{"image", func(b createBody) json.RawMessage { return b.Image }, "seller images are not available for sessions yet; name a preset"},
 	{"manifest", func(b createBody) json.RawMessage { return b.Manifest }, "manifests are not available yet; write files once the session is ready"},
 	{"env", func(b createBody) json.RawMessage { return b.Env }, "session environment is not available yet"},
 	{"ports", func(b createBody) json.RawMessage { return b.Ports }, "exposed ports are not available yet"},
@@ -63,7 +61,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 	}
 	checks := []func() *api.Problem{
 		func() *api.Problem { return validKind(&a) },
-		func() *api.Problem { return validPreset(acct.Plan, &a, in.RAMMB) },
+		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.RAMMB) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
@@ -94,14 +92,25 @@ func validKind(a *agentstore.SandboxAdmission) *api.Problem {
 
 // validPreset resolves the preset and the session's RAM: the preset's
 // default within the plan's AgentRunRAMMBMax, or ram_mb in steps of 512 MB.
-func validPreset(plan api.Plan, a *agentstore.SandboxAdmission, ramMB int) *api.Problem {
-	preset, ok := agentpresets.Lookup(a.Preset)
-	if !ok {
-		return api.ErrValidation("preset must be one of " + strings.Join(agentpresets.Names(), ", "))
-	}
+// A session from a seller image names no preset (or "image") and defaults
+// to SandboxImageDefaultRAMMB.
+func validPreset(plan api.Plan, a *agentstore.SandboxAdmission, image string, ramMB int) *api.Problem {
 	max := api.AgentRunRAMMBMax[plan.PlanIndex()]
+	defaultRAM := api.SandboxImageDefaultRAMMB
+	if image != "" {
+		if a.Preset != "" && a.Preset != api.SandboxPresetImage {
+			return api.ErrValidation("name either preset or image, not both")
+		}
+		a.Preset = api.SandboxPresetImage
+	} else {
+		preset, ok := agentpresets.Lookup(a.Preset)
+		if !ok {
+			return api.ErrValidation("preset must be one of " + strings.Join(agentpresets.Names(), ", ") + ", or name an image")
+		}
+		defaultRAM = preset.DefaultRAMMB
+	}
 	if ramMB == 0 {
-		ramMB = min(preset.DefaultRAMMB, max)
+		ramMB = min(defaultRAM, max)
 	}
 	switch {
 	case ramMB < 512 || ramMB%512 != 0:

@@ -14404,7 +14404,12 @@ type RunSandboxStart struct {
 	// (ADR-20261027090013 step 7), unpacked into /workspace before booted; a
 	// failure to unpack it is FailedPrecondition with the problem code
 	// sandbox_workspace_unavailable.
-	WorkspaceKey  string `protobuf:"bytes,12,opt,name=workspace_key,json=workspaceKey,proto3" json:"workspace_key,omitempty"`
+	WorkspaceKey string `protobuf:"bytes,12,opt,name=workspace_key,json=workspaceKey,proto3" json:"workspace_key,omitempty"`
+	// image_key is a seller image's full-rootfs artifact (jobs/<job>.ext4 or
+	// jobs/<job>__<artifact>.ext4). When set, vmmd boots it as drive1 in
+	// place of layer_key and stages /etc/faas/sandbox.json on the VM's
+	// private copy.
+	ImageKey      string `protobuf:"bytes,13,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -14519,6 +14524,13 @@ func (x *RunSandboxStart) GetNetworkMode() string {
 func (x *RunSandboxStart) GetWorkspaceKey() string {
 	if x != nil {
 		return x.WorkspaceKey
+	}
+	return ""
+}
+
+func (x *RunSandboxStart) GetImageKey() string {
+	if x != nil {
+		return x.ImageKey
 	}
 	return ""
 }
@@ -22169,7 +22181,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05close\x18\x03 \x01(\v2$.onebox.faas.vmmd.v1.RunSandboxCloseH\x00R\x05close\x12R\n" +
 	"\rpersist_grant\x18\x04 \x01(\v2+.onebox.faas.vmmd.v1.RunSandboxPersistGrantH\x00R\fpersistGrant\x12[\n" +
 	"\x10persist_recorded\x18\x05 \x01(\v2..onebox.faas.vmmd.v1.RunSandboxPersistRecordedH\x00R\x0fpersistRecordedB\a\n" +
-	"\x05frame\"\x98\x03\n" +
+	"\x05frame\"\xb5\x03\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -22187,7 +22199,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x14quiet_pause_after_ms\x18\n" +
 	" \x01(\x03R\x11quietPauseAfterMs\x12!\n" +
 	"\fnetwork_mode\x18\v \x01(\tR\vnetworkMode\x12#\n" +
-	"\rworkspace_key\x18\f \x01(\tR\fworkspaceKey\"\x12\n" +
+	"\rworkspace_key\x18\f \x01(\tR\fworkspaceKey\x12\x1b\n" +
+	"\timage_key\x18\r \x01(\tR\bimageKey\"\x12\n" +
 	"\x10RunSandboxFreeze\"\x11\n" +
 	"\x0fRunSandboxClose\"\xac\x04\n" +
 	"\x0fRunSandboxEvent\x12?\n" +

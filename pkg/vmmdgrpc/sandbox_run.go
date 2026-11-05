@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"google.golang.org/grpc/codes"
 )
 
@@ -271,6 +272,7 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		Instance: start.GetInstance(), SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		BaseKey: start.GetBaseKey(), LayerKey: start.GetLayerKey(), VcpuCount: int(start.GetVcpuCount()),
 		MemSizeMiB: int(start.GetMemSizeMib()), CPUMillicores: int(start.GetCpuMillicores()), Network: start.GetNetworkMode(),
+		ImageKey: start.GetImageKey(),
 	}
 	// A schedd from before network modes sends none.
 	if wake.Network == "" {
@@ -282,6 +284,11 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	}
 	if wake.Network != api.SandboxNetworkNone && wake.Network != api.SandboxNetworkRegistries {
 		return fcvm.SandboxWakeRequest{}, invalid("network_mode must be none or registries")
+	}
+	// Only a materialized job image boots as a seller-image session's
+	// drive1, never an app layer, base or snapshot.
+	if wake.ImageKey != "" && !storagekey.IsJobLayer(wake.ImageKey) {
+		return fcvm.SandboxWakeRequest{}, invalid("image_key must be a job image artifact")
 	}
 	ms := start.GetQuietPauseAfterMs()
 	if ms < 0 || ms > api.AgentWaitPauseAfterMaxMillis {

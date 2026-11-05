@@ -552,6 +552,26 @@ func (q *Queries) FailExpiredRunningAgentRuns(ctx context.Context, db DBTX) ([]F
 	return items, nil
 }
 
+const failImageUnavailableSandboxSessions = `-- name: FailImageUnavailableSandboxSessions :execrows
+UPDATE sandbox_sessions sb SET state='failed', outcome_code='image_unavailable',
+  outcome_message=left('the image ' || sb.image_ref || ' could not be prepared' ||
+    coalesce(': ' || (SELECT j.image_materialization_error FROM jobs j WHERE j.id=sb.image_job_id), ''), 2048),
+  closed_at=now(), updated_at=now()
+ WHERE sb.state='queued' AND sb.image_ref IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id AND j.status <> 'deleted'
+   AND j.image_materialization_status <> 'failed')
+`
+
+// A queued session whose image cannot be had never starts: its runner job
+// was evicted or deleted, or its image failed to pull.
+func (q *Queries) FailImageUnavailableSandboxSessions(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, failImageUnavailableSandboxSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findDedupedRun = `-- name: FindDedupedRun :one
 SELECT id::text AS id FROM agent_runs
  WHERE agent_id=$1::text::uuid AND tenant_id IS NOT DISTINCT FROM $2::text::uuid
@@ -1039,7 +1059,7 @@ const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -1070,6 +1090,7 @@ type GetSandboxSessionRow struct {
 	NodeID              string
 	InstanceID          string
 	WorkspaceSnapshotID string
+	ImageRef            string
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -1097,6 +1118,7 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.NodeID,
 		&i.InstanceID,
 		&i.WorkspaceSnapshotID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -1105,9 +1127,12 @@ const getSandboxSessionClaim = `-- name: GetSandboxSessionClaim :one
 SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.network_mode, sb.idle_timeout_sec, sb.expires_at,
   (sb.close_requested_at IS NOT NULL)::boolean AS close_requested,
   coalesce(ws.storage_key, '')::text AS workspace_key,
-  (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing
+  (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing,
+  coalesce(CASE WHEN j.status <> 'deleted' AND j.image_materialization_status='ready' THEN j.image_storage_key END, '')::text AS image_key,
+  (sb.image_ref IS NOT NULL)::boolean AS from_image
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
+ LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
  WHERE sb.id=$1::text::uuid
 `
 
@@ -1122,6 +1147,8 @@ type GetSandboxSessionClaimRow struct {
 	CloseRequested   bool
 	WorkspaceKey     string
 	WorkspaceMissing bool
+	ImageKey         string
+	FromImage        bool
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1140,6 +1167,8 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.CloseRequested,
 		&i.WorkspaceKey,
 		&i.WorkspaceMissing,
+		&i.ImageKey,
+		&i.FromImage,
 	)
 	return i, err
 }
@@ -1525,10 +1554,11 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 }
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
-INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id)
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
+  image_ref,image_job_id)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
-  $9::jsonb,$10::text::uuid)
+  $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid)
 RETURNING id::text AS id
 `
 
@@ -1543,6 +1573,8 @@ type InsertSandboxSessionParams struct {
 	ExpiresAt           pgtype.Timestamptz
 	Labels              []byte
 	WorkspaceSnapshotID pgtype.Text
+	ImageRef            pgtype.Text
+	ImageJobID          pgtype.Text
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -1557,6 +1589,8 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.ExpiresAt,
 		arg.Labels,
 		arg.WorkspaceSnapshotID,
+		arg.ImageRef,
+		arg.ImageJobID,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -1876,8 +1910,11 @@ func (q *Queries) ListClaimableAgentRuns(ctx context.Context, db DBTX, maxRows i
 }
 
 const listClaimableSandboxSessions = `-- name: ListClaimableSandboxSessions :many
-SELECT id::text AS id, account_id::text AS account_id FROM sandbox_sessions
- WHERE state='queued' AND expires_at > now() ORDER BY created_at, id LIMIT $1::integer FOR UPDATE SKIP LOCKED
+SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
+ WHERE sb.state='queued' AND sb.expires_at > now()
+ AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
+   AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL))
+ ORDER BY sb.created_at, sb.id LIMIT $1::integer FOR UPDATE OF sb SKIP LOCKED
 `
 
 type ListClaimableSandboxSessionsRow struct {
@@ -1886,6 +1923,8 @@ type ListClaimableSandboxSessionsRow struct {
 }
 
 // Oldest first; rows another replica holds are skipped, not waited on.
+// A session from a seller image waits until the image-run runner job has
+// its image ready (ADR-20261027090013).
 func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, maxRows int32) ([]ListClaimableSandboxSessionsRow, error) {
 	rows, err := db.Query(ctx, listClaimableSandboxSessions, maxRows)
 	if err != nil {
@@ -1946,7 +1985,7 @@ const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -1984,6 +2023,7 @@ type ListSandboxSessionsRow struct {
 	NodeID              string
 	InstanceID          string
 	WorkspaceSnapshotID string
+	ImageRef            string
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -2024,6 +2064,7 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.NodeID,
 			&i.InstanceID,
 			&i.WorkspaceSnapshotID,
+			&i.ImageRef,
 		); err != nil {
 			return nil, err
 		}

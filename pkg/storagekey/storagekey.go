@@ -85,6 +85,40 @@ func JobLayerAttempt(jobID, artifactID string) string {
 	return "jobs/" + jobID + "__" + artifactID + ".ext4"
 }
 
+// IsJobLayer reports whether key is a materialized job image's key,
+// JobLayer or JobLayerAttempt with UUID IDs: the only artifacts vmmd boots
+// as a seller-image sandbox session's drive1 (ADR-20261027090013).
+func IsJobLayer(key string) bool {
+	name, ok := strings.CutPrefix(key, "jobs/")
+	if !ok {
+		return false
+	}
+	if name, ok = strings.CutSuffix(name, ".ext4"); !ok {
+		return false
+	}
+	job, artifact, attempt := strings.Cut(name, "__")
+	return canonicalUUID(job) && (!attempt || canonicalUUID(artifact))
+}
+
+// canonicalUUID reports whether s is a lowercase hyphenated UUID.
+func canonicalUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case '0' <= c && c <= '9', 'a' <= c && c <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // SnapshotMem is the key of a deployment's snapshot memory blob (the RAM
 // state at Pause): snap/<deploymentID>/mem. It is the
 // snapshots.storage_key value.

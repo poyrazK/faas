@@ -413,6 +413,30 @@ func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLa
 	return v.stageDriveFile(ctx, owner, instance, drive1Img, driveFile{what: "vmm: stageJobManifest", path: jobManifestPath, want: blob, mode: 0o600})
 }
 
+// stageSandboxManifestForOwner writes /etc/faas/sandbox.json to a
+// seller-image sandbox session's private drive1 (ADR-20261027090013), the
+// marker the platform sandbox layer carries, so guest-init serves the
+// session from the customer's rootfs.
+func (v *JailerVMM) stageSandboxManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string) error {
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: stageSandboxManifest: chrootBase not configured")
+	}
+	drive1Img := filepath.Join(v.chrootRoot(instance), layerImageName)
+	if _, err := os.Stat(drive1Img); err != nil {
+		return fmt.Errorf("vmm: stageSandboxManifest: %s missing at %s: %w", layerImageName, drive1Img, err)
+	}
+	return v.stageDriveFile(ctx, owner, instance, drive1Img, driveFile{what: "vmm: stageSandboxManifest", path: sandboxManifestPath,
+		want: []byte(sandboxManifestJSON), mode: 0o644})
+}
+
+// sandboxManifestPath is sandbox.json in the optimized layout; a full-rootfs
+// drive maps it to the ext4 root. sandboxManifestJSON matches imaged's
+// platform sandbox layer and guest-init's validateSandboxManifest.
+const (
+	sandboxManifestPath = "upper/etc/faas/sandbox.json"
+	sandboxManifestJSON = `{"kind":"sandbox","version":1}`
+)
+
 // jobManifestPath is job.json in the optimized layout.
 const jobManifestPath = "upper/etc/faas/job.json"
 

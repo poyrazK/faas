@@ -89,6 +89,9 @@ const (
 	// sandboxOutcomeWorkspace: the persisted workspace the session starts
 	// from is gone or could not be unpacked.
 	sandboxOutcomeWorkspace = "workspace_unavailable"
+	// sandboxOutcomeImage: the seller image the session boots was deleted
+	// or evicted after the claim.
+	sandboxOutcomeImage = "image_unavailable"
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -236,6 +239,10 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeWorkspace, "the snapshot the session starts from was deleted or expired"})
 		return
 	}
+	if claim.ImageMissing {
+		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeImage, "the image the session boots was deleted before it started"})
+		return
+	}
 	vcpu := api.AgentRunVCPUMax[plan.PlanIndex()]
 	streamCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -253,6 +260,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Start{Start: &scheddpb.SandboxRunStart{
 		SandboxId: claim.ID, AccountId: claim.AccountID, Plan: claim.Plan, RamMb: int32(claim.RAMMB), Vcpu: int32(vcpu),
 		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
+		ImageKey: claim.ImageKey,
 	}}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return

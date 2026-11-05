@@ -50,7 +50,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 	}
 	admission := sched.SandboxAdmission{SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
-		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey()}
+		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey(), ImageKey: start.GetImageKey()}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {

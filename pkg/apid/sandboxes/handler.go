@@ -51,6 +51,10 @@ type Handler struct {
 	// <port>-<sandbox id>.<domain>. Without it the port routes answer
 	// sandbox_previews_off.
 	PreviewDomain string
+	// EnsureImage gets or creates the image-run runner job caching a
+	// seller image and returns its ID and the normalized reference. Nil
+	// makes image sessions sandbox_unsupported.
+	EnsureImage func(ctx context.Context, acct state.Account, image string) (jobID, ref string, prob *api.Problem)
 }
 
 // requestMaxBytes bounds a create or change request.
@@ -66,6 +70,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	admission, prob := h.admission(acct, body)
+	if prob == nil && body.Image != "" {
+		prob = h.image(r.Context(), acct, body.Image, &admission)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -77,6 +84,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	h.audit(r.Context(), "sandbox.created", sb)
 	httpkit.WriteJSON(w, http.StatusCreated, h.view(acct, sb, true))
+}
+
+// image caches a seller image for the session after every other check
+// passed, since ensuring may evict another cached image.
+func (h *Handler) image(ctx context.Context, acct state.Account, image string, a *agentstore.SandboxAdmission) *api.Problem {
+	if h.EnsureImage == nil {
+		return api.ErrSandboxUnsupported("image", "seller images need image runs, which are off on this control-plane host; name a preset")
+	}
+	jobID, ref, prob := h.EnsureImage(ctx, acct, image)
+	if prob != nil {
+		return prob
+	}
+	a.ImageRef, a.ImageJobID = ref, jobID
+	return nil
 }
 
 // List handles GET /v1/sandboxes, filtered by state and by a label
@@ -217,7 +238,7 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Image: sb.ImageRef}
 	if out.Labels == nil {
 		out.Labels = map[string]string{}
 	}

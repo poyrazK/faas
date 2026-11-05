@@ -34,6 +34,7 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 	if pool != nil {
 		h.Store = agentstore.New(pool)
 	}
+	h.EnsureImage = s.ensureSessionImage
 	if s.sessions != nil {
 		// Ed25519, derived from apid's session key: gateways verify with
 		// the public key from Auth.SandboxTokenKeys and cannot mint.

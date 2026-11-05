@@ -540,7 +540,15 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
    - **Migration guide:** `docs/sandbox-migration.md`, holding the coverage table, the E2B call mapping, the Agents SDK move, workspaces and network modes. It is not in `customer-pages.json` until launch.
    - **Not built yet:**
      - The Python shim `gregale-sandbox-e2b`.
-     - Template import (`gregale sandbox template build` from `e2b.Dockerfile` and `e2b.toml`). It first needs sessions that start from a seller image: create still refuses `image`, and schedd and vmmd boot only presets. That is its own step: seller-image sessions, then the build command in a builder VM with the start command run before the warm snapshot.
+     - Template import (`gregale sandbox template build` from `e2b.Dockerfile` and `e2b.toml`): the build command in a builder VM, with the start command run before the warm snapshot. It builds on seller-image sessions (part two).
+   - **As built, part two: seller-image sessions (local branch, no PR yet).** `POST /v1/sandboxes {"image": "<ref>"}` boots a customer OCI image in place of a preset.
+     - **Amends §2:** the image is cached in ADR-1161's image-run cache, not a separate per-account seller-image store. apid gets or creates the image's runner job (`imagerun.Handler.EnsureSessionImage`), so sessions and image runs share one cache, one `ImageRunCachedImages` limit and one pull. Image sessions need image runs switched on; otherwise `image` is `sandbox_unsupported`.
+     - **Any OCI image** boots as a full rootfs (imaged's job materialization) with guest-init's sandbox server as PID1, like a job image. The session records preset `image` and defaults to `SandboxImageDefaultRAMMB` (1024 MB). `preset` and `image` together are a validation error.
+     - **A cold image queues.** Create answers 201 `queued`. agentd claims the session only once the runner job's image is ready. A queued session whose image failed or whose job was deleted fails with outcome `image_unavailable`, carrying the pull error (`FailImageUnavailableSandboxSessions`, run by the lease sweep).
+     - **Eviction:** the image-run LRU skips a runner job with a queued, starting, ready or frozen session (`sandbox_sessions.image_job_id`), so a full cache answers `image_run_cache_full` instead of pulling a live session's image away.
+     - **Data path:** agentd passes the image's storage key as `image_key` (schedd `SandboxRunStart` 9, vmmd `RunSandboxStart` 13). vmmd accepts only a job image key (`storagekey.IsJobLayer`), boots it as drive1 in place of the platform sandbox layer, and stages `/etc/faas/sandbox.json` on the VM's private copy of drive1, as job VMs get `job.json`. The cached image is never changed.
+     - **Migration** `20261105112618000_sandbox_session_images` (expand): `image_ref` and `image_job_id` on `sandbox_sessions`.
+     - **Not built:** registry credentials for private images on create (image runs take `registry_auth`; sessions use the runner job's stored credential, if any), `pull: always`, and a metal test of an image session.
      - The pricing calculator and shadow mode from §13.
 11. Billing, with ADR-20261027090011.
 

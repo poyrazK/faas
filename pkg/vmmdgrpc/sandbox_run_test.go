@@ -240,3 +240,40 @@ func TestRunSandboxRefusals(t *testing.T) {
 		})
 	}
 }
+
+// A seller-image session reaches the wake with its image key; any other
+// artifact named as the image is refused before a VM exists.
+func TestRunSandboxTakesOnlyJobImages(t *testing.T) {
+	for key, ok := range map[string]bool{
+		"jobs/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4":      true,
+		"apps/acme/0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10.ext4": false,
+		"base/runner-agent-amd64.ext4":                        false,
+	} {
+		vmm := newSandboxRunVMM()
+		cli := newSandboxRunClient(t, vmm, true)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stream, err := cli.RunSandbox(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := sandboxRunStart()
+		start.GetStart().ImageKey = key
+		if err := stream.Send(start); err != nil {
+			t.Fatal(err)
+		}
+		ev, err := stream.Recv()
+		switch {
+		case ok && (err != nil || ev.GetBooted() == nil):
+			t.Errorf("%s: first event = %v, %v; want booted", key, ev, err)
+		case !ok && status.Code(err) != codes.InvalidArgument:
+			t.Errorf("%s: err = %v, want InvalidArgument", key, err)
+		}
+		vmm.mu.Lock()
+		woken := append([]fcvm.SandboxWakeRequest(nil), vmm.woken...)
+		vmm.mu.Unlock()
+		if ok && (len(woken) != 1 || woken[0].ImageKey != key) || !ok && len(woken) != 0 {
+			t.Errorf("%s: woken %+v", key, woken)
+		}
+		cancel()
+	}
+}

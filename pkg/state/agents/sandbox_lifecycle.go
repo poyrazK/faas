@@ -29,7 +29,12 @@ type SandboxClaim struct {
 	// starts from; WorkspaceMissing marks one whose snapshot is gone.
 	WorkspaceKey     string
 	WorkspaceMissing bool
-	LeaseToken       string
+	// ImageKey is the seller image's artifact (drive1) in the artifact
+	// store; ImageMissing marks a session from an image that is no longer
+	// ready. A preset session has neither.
+	ImageKey     string
+	ImageMissing bool
+	LeaseToken   string
 	SandboxLease
 }
 
@@ -79,7 +84,8 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 		return SandboxClaim{}, false, fmt.Errorf("read claimed session: %w", err)
 	}
 	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
-		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, LeaseToken: token,
+		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
+		ImageMissing: row.FromImage && row.ImageKey == "", LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
 }
@@ -143,5 +149,11 @@ func (s *Store) ExpireSandboxLeases(ctx context.Context) (requeued, failed, expi
 	if expired, err = s.q.ExpireQueuedSandboxSessions(ctx, s.pool); err != nil {
 		return requeued, failed, 0, fmt.Errorf("expire queued sessions: %w", err)
 	}
-	return requeued, failed, expired, nil
+	// A queued session whose seller image cannot be had fails instead of
+	// waiting out its lifetime.
+	unavailable, err := s.q.FailImageUnavailableSandboxSessions(ctx, s.pool)
+	if err != nil {
+		return requeued, failed, expired, fmt.Errorf("fail sessions without their image: %w", err)
+	}
+	return requeued, failed + unavailable, expired, nil
 }

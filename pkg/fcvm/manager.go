@@ -3747,8 +3747,12 @@ type WakeRequest struct {
 	// through the registries-only resolver.
 	sandboxID         string
 	sandboxRegistries bool
-	RehearsalRunID    string // exact durable containment run; ordinary legacy callers may omit it
-	Instance          string
+	// sandboxImage marks a session booted from a seller image: LayerKey is
+	// a full-rootfs job image, and vmmd stages sandbox.json on its private
+	// drive1 before boot (Lease.SandboxImage).
+	sandboxImage   bool
+	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
+	Instance       string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -4760,6 +4764,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.networkless()
 	lease.AgentSized = req.sandboxRegistries
+	lease.SandboxImage = req.sandboxImage
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec

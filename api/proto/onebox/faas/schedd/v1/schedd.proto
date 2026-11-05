@@ -1271,6 +1271,10 @@ message SandboxRunStart {
   // workspace_key is the persisted workspace the session starts from
   // (ADR-20261027090013 step 7).
   string workspace_key = 8;
+  // image_key is the seller image's full-rootfs artifact (the image-run
+  // cache's jobs/<job>.ext4) the session boots as drive1 in place of the
+  // platform sandbox layer; empty for a preset session.
+  string image_key = 9;
 }
 
 message SandboxRunFreeze {}

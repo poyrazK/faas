@@ -14,7 +14,7 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 | OS package installs at run time (`apk`, `apt`, `sudo`) | Root inside the guest, in `registries` network mode | Available at launch |
 | Dev servers and previews | Exposed ports with preview URLs, private behind a token by default | Available at launch |
 | Short untrusted code (playgrounds, judges, user scripts) | Sandbox sessions, or functions and image runs | Available at launch |
-| Custom templates (`e2b.Dockerfile`) | `gregale sandbox template build` | Not yet: sessions start from the codex, opencode or claude-code presets |
+| Custom templates (`e2b.Dockerfile`) | Start a session from your own OCI image (`image` on create); `gregale sandbox template build` to follow | Images at launch; template import not yet |
 | Open internet egress | The `web` network mode | Not yet: `none` and `registries` (package registries and GitHub over 443) only |
 | Headless browser agents | A browser preset, Pro and up | After the agent egress gateway |
 | Code interpreter: stateful Python cells and charts | A stateful kernel preset | Follow-up; until then, run Python with `commands.run` and files |
@@ -70,6 +70,19 @@ The model call stays in your process. `file`, `dir`, `local_file`, `local_dir` a
 ## Move workspaces
 
 Upload a tar.gz of an existing workspace with `POST /v1/sandboxes/{id}/workspace:hydrate`, or `hydrateWorkspace` in either client. To keep a workspace between sessions, persist it (`workspace:persist`, `createSnapshot()` or `persistSnapshot()`) and create the next session with its `snapshot_id`.
+
+## Start from your own image
+
+Create a session with `image` in place of `preset` to boot any OCI image as the session's root filesystem:
+
+```json
+POST /v1/sandboxes
+{ "image": "ghcr.io/acme/agent-tools:1.4", "ram_mb": 2048 }
+```
+
+- The session answers `queued` until the image is pulled and cached, then starts. If the pull fails, the session ends with outcome `image_unavailable` and the registry's error.
+- Images share the image-run cache and its plan limit. A cached image a live session uses is never evicted; when every cached image is in use, create answers `image_run_cache_full`.
+- Commands run as `app` (uid 1000) in `/workspace`, or as root with `user: 'root'`. The image needs a shell (`/bin/sh`) for commands.
 
 ## Choose a network mode
 

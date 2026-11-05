@@ -60,6 +60,9 @@ type Sandbox struct {
 	// WorkspaceSnapshotID is the persisted workspace the session started
 	// from, if any.
 	WorkspaceSnapshotID string
+	// ImageRef is the seller image the session boots, normalized; empty for
+	// a preset.
+	ImageRef string
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -78,6 +81,11 @@ type SandboxAdmission struct {
 	// WorkspaceSnapshotID starts the session from a persisted workspace,
 	// which must be the account's and ready.
 	WorkspaceSnapshotID string
+	// ImageRef and ImageJobID boot the session from a seller image: the
+	// normalized reference and the image-run runner job caching it
+	// (ADR-1161). agentd claims the session once the image is ready.
+	ImageRef   string
+	ImageJobID string
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -117,7 +125,8 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 		}
 		id, err = s.q.InsertSandboxSession(ctx, tx, sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
 			Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
-			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID)})
+			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
+			ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID)})
 		if err != nil {
 			return fmt.Errorf("insert sandbox session: %w", err)
 		}
@@ -228,7 +237,7 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
-		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID}
+		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}

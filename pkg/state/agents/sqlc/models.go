@@ -184,6 +184,15 @@ type GithubInstallation struct {
 	SealedAt       pgtype.Timestamptz
 }
 
+type Job struct {
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	Status                     string
+	ImageStorageKey            pgtype.Text
+	ImageMaterializationStatus string
+	ImageMaterializationError  pgtype.Text
+}
+
 type ObjectBucket struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -244,6 +253,8 @@ type SandboxSession struct {
 	UpdatedAt           pgtype.Timestamptz
 	ClosedAt            pgtype.Timestamptz
 	WorkspaceSnapshotID pgtype.UUID
+	ImageRef            pgtype.Text
+	ImageJobID          pgtype.UUID
 }
 
 type SandboxWorkspaceSnapshot struct {

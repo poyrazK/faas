@@ -1425,6 +1425,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
 		}
 	}
+	if l.SandboxImage {
+		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance); err != nil {
+			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
+		}
+	}
 	stagedRuntimeAt := time.Now()
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {

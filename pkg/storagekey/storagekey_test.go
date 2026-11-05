@@ -70,3 +70,22 @@ func TestParentBaseAliasesStartWithTheHostArch(t *testing.T) {
 		t.Fatalf("aliases %v do not start with the host arch's parent base", aliases)
 	}
 }
+
+func TestIsJobLayer(t *testing.T) {
+	const id, art = "0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10", "9c1a2b3c-4d5e-4f60-8a7b-0c1d2e3f4a5b"
+	for key, want := range map[string]bool{
+		storagekey.JobLayer(id):                               true,
+		storagekey.JobLayerAttempt(id, art):                   true,
+		"jobs/" + id + "__.ext4":                              false,
+		"jobs/" + id:                                          false,
+		"jobs/../" + id + ".ext4":                             false,
+		"jobs/" + id + "/x.ext4":                              false,
+		"apps/" + id + ".ext4":                                false,
+		"jobs/" + "0B6F5C6E-3B0A-4F43-9A55-2F6C1B9D7E10.ext4": false,
+		"": false,
+	} {
+		if got := storagekey.IsJobLayer(key); got != want {
+			t.Errorf("IsJobLayer(%q) = %v, want %v", key, got, want)
+		}
+	}
+}

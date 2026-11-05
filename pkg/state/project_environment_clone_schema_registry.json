@@ -17043,6 +17043,8 @@
       "expires_at",
       "id",
       "idle_timeout_sec",
+      "image_job_id",
+      "image_ref",
       "instance_id",
       "kind",
       "labels",

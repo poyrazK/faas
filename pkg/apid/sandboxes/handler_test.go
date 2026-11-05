@@ -36,6 +36,7 @@ type fakeStore struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	sessions []agentstore.Sandbox
+	admitted agentstore.SandboxAdmission
 	queued   int // queued agent runs, which share the cap
 	err      error
 	// snapshots are persisted workspaces, newest first.
@@ -66,7 +67,8 @@ func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmissi
 	sb := agentstore.Sandbox{ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", len(f.sessions)+1), AccountID: a.AccountID, TenantID: a.TenantID,
 		Kind: a.Kind, Preset: a.Preset, RAMMB: a.RAMMB, NetworkMode: a.NetworkMode, State: agentstore.SandboxQueued,
 		IdleTimeoutSec: a.IdleTimeoutSec, ExpiresAt: a.ExpiresAt, Labels: a.Labels, CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
-		WorkspaceSnapshotID: a.WorkspaceSnapshotID}
+		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef}
+	f.admitted = a
 	f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
 	return sb, nil
 }
@@ -240,7 +242,8 @@ func TestCreateRules(t *testing.T) {
 		{"an idle timeout past the expiry", pro(), `{"preset":"codex","idle_timeout_s":601}`, http.StatusBadRequest, api.CodeValidation},
 		{"a negative lifetime", pro(), `{"preset":"codex","lifetime_s":-1}`, http.StatusBadRequest, api.CodeValidation},
 		{"a lifetime past the plan", pro(), `{"preset":"codex","lifetime_s":14401}`, http.StatusForbidden, api.CodeAgentLimit},
-		{"a seller image", pro(), `{"preset":"codex","image":"ghcr.io/acme/box"}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
+		{"a preset and an image", pro(), `{"preset":"codex","image":"ghcr.io/acme/box"}`, http.StatusBadRequest, api.CodeValidation},
+		{"an image without image runs", pro(), `{"image":"ghcr.io/acme/box"}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"a manifest", pro(), `{"preset":"codex","manifest":{"entries":[]}}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"environment", pro(), `{"preset":"codex","env":{"A":"1"}}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"ports", pro(), `{"preset":"codex","ports":[3000]}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
@@ -259,8 +262,41 @@ func TestCreateRules(t *testing.T) {
 		t.Fatalf("a refused request was admitted: %+v", f.store.sessions)
 	}
 	var p api.Problem
-	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", `{"preset":"codex","image":"x"}`, "", &p); !strings.HasPrefix(p.Detail, "image:") {
+	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", `{"preset":"codex","env":{"A":"1"}}`, "", &p); !strings.HasPrefix(p.Detail, "env:") {
 		t.Fatalf("an unsupported field's detail does not name it: %d %q", code, p.Detail)
+	}
+}
+
+// A session from a seller image records the normalized image and its
+// runner job, takes the image preset and its default RAM, and is not
+// cached when another check refuses the request.
+func TestCreateFromASellerImage(t *testing.T) {
+	f := newFixture(t)
+	var ensured []string
+	f.h.EnsureImage = func(_ context.Context, _ state.Account, image string) (string, string, *api.Problem) {
+		ensured = append(ensured, image)
+		if image == "full" {
+			return "", "", api.ErrImageRunCacheFull(api.PlanPro, 1, 1)
+		}
+		return "11111111-1111-1111-1111-111111111111", "ghcr.io/acme/box:latest", nil
+	}
+	sb, code := f.create(t, pro(), `{"image":"ghcr.io/acme/box"}`)
+	if code != http.StatusCreated || sb.Image != "ghcr.io/acme/box:latest" || sb.Preset != api.SandboxPresetImage ||
+		sb.RAMMB != api.SandboxImageDefaultRAMMB || sb.State != agentstore.SandboxQueued {
+		t.Fatalf("create = %d %+v", code, sb)
+	}
+	if got := f.store.admitted; got.ImageJobID != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("admitted job %q", got.ImageJobID)
+	}
+	if _, code := f.create(t, pro(), `{"image":"ghcr.io/acme/box","lifetime_s":14401}`); code != http.StatusForbidden || len(ensured) != 1 {
+		t.Fatalf("a refused request cached its image: %d %v", code, ensured)
+	}
+	var p api.Problem
+	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", `{"image":"full"}`, "", &p); code != http.StatusConflict || p.Code != api.CodeImageRunCacheFull {
+		t.Fatalf("full cache = %d %+v", code, p)
+	}
+	if len(f.store.sessions) != 1 {
+		t.Fatalf("sessions = %d", len(f.store.sessions))
 	}
 }
 

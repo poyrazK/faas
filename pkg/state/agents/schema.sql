@@ -225,7 +225,9 @@ CREATE TABLE sandbox_sessions (
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now(),
  closed_at timestamptz,
- workspace_snapshot_id uuid
+ workspace_snapshot_id uuid,
+ image_ref text,
+ image_job_id uuid
 );
 CREATE TABLE sandbox_workspace_snapshots (
  id uuid PRIMARY KEY,
@@ -248,4 +250,12 @@ CREATE TABLE sandbox_ports (
  visibility text NOT NULL DEFAULT 'private',
  created_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (sandbox_id, port)
+);
+CREATE TABLE jobs (
+ id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ status text NOT NULL,
+ image_storage_key text,
+ image_materialization_status text NOT NULL,
+ image_materialization_error text
 );

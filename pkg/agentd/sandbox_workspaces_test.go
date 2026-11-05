@@ -256,3 +256,30 @@ func TestSandboxSweepDeletesSnapshotsAndArchives(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSandboxImageKeyReachesSchedd(t *testing.T) {
+	ctx := context.Background()
+	pool, store := openStore(t)
+	var job string
+	if err := pool.QueryRow(ctx, `INSERT INTO jobs (account_id, image_materialization_status, image_storage_key)
+		VALUES ($1, 'ready', 'jobs/' || gen_random_uuid() || '.ext4') RETURNING id::text`, account).Scan(&job); err != nil {
+		t.Fatal(err)
+	}
+	sb, err := store.CreateSandbox(ctx, agentstore.SandboxAdmission{AccountID: account, Kind: "ephemeral", Preset: "image", RAMMB: 1024,
+		NetworkMode: "none", IdleTimeoutSec: 600, ExpiresAt: time.Now().Add(time.Hour), QueuedMax: 100,
+		ImageRef: "ghcr.io/acme/box:latest", ImageJobID: job})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeSandboxSchedd{scripts: map[string]string{sb.ID: "no-workspace"}}
+	if !<-holdSandbox(t, newSandboxes(t, store, fake, agentd.SandboxConfig{})) {
+		t.Fatal("nothing was claimed")
+	}
+	var key string
+	if err := pool.QueryRow(ctx, `SELECT image_storage_key FROM jobs WHERE id = $1`, job).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.starts[0].GetImageKey(); got != key {
+		t.Fatalf("image key %q, want %q", got, key)
+	}
+}

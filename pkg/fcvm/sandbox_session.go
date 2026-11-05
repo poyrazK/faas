@@ -86,6 +86,10 @@ type SandboxWakeRequest struct {
 	// boots it without a network, api.SandboxNetworkRegistries with
 	// DNS-gated egress to package registries and git hosts on TCP 443.
 	Network string
+	// ImageKey boots a seller image (a materialized job image, full rootfs)
+	// as drive1 in place of LayerKey; vmmd stages /etc/faas/sandbox.json
+	// on the VM's private copy, so the customer image is never changed.
+	ImageKey string
 }
 
 // WakeSandbox cold-boots one sandbox session VM on the execution-only path
@@ -109,10 +113,14 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	if !ok {
 		return nil, errors.New("fcvm: the vmm cannot dial sandbox sessions")
 	}
+	layer := req.LayerKey
+	if req.ImageKey != "" {
+		layer = req.ImageKey
+	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxRegistries: registries,
-		AccountID: req.AccountID, Plan: req.Plan,
-		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
+		sandboxImage: req.ImageKey != "", AccountID: req.AccountID, Plan: req.Plan,
+		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter,
 	})
 	if err != nil {

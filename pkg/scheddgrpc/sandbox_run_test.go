@@ -185,6 +185,7 @@ func TestRunSandboxRelaysAPersist(t *testing.T) {
 	}
 	start := sandboxRunStart()
 	start.GetStart().WorkspaceKey = "agents/workspaces/acct/s.tar.gz"
+	start.GetStart().ImageKey = "jobs/j.ext4"
 	for _, r := range []*scheddpb.SandboxRunRequest{start, {Frame: &scheddpb.SandboxRunRequest_Proceed{Proceed: &scheddpb.AgentRunProceed{}}}} {
 		if err := stream.Send(r); err != nil {
 			t.Fatal(err)
@@ -221,7 +222,7 @@ func TestRunSandboxRelaysAPersist(t *testing.T) {
 	if got := <-runner.recorded; got.RequestID != "req-1" || !got.Recorded {
 		t.Fatalf("recorded %+v", got)
 	}
-	if runner.admission.WorkspaceKey != "agents/workspaces/acct/s.tar.gz" {
+	if runner.admission.WorkspaceKey != "agents/workspaces/acct/s.tar.gz" || runner.admission.ImageKey != "jobs/j.ext4" {
 		t.Fatalf("admission %+v", runner.admission)
 	}
 }

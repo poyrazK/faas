@@ -9,14 +9,18 @@ import (
 )
 
 // imageRunIdleJobsSQL selects live runner jobs without queued or claimed
-// tasks and without a live task VM, least recently used first. The predicate
-// matches JobSoftDelete's active-work guard.
+// tasks, without a live task VM and without a live sandbox session booted
+// from the image (ADR-20261027090013), least recently used first. The task
+// and VM predicates match JobSoftDelete's active-work guard. MemStore keeps no
+// sandbox sessions, so its mirror has no session predicate.
 const imageRunIdleJobsSQL = `select id from jobs j
 	 where j.account_id = $1::uuid and j.kind = 'image_run' and j.status <> 'deleted'
 	   and not exists (select 1 from job_runs r join job_tasks t on t.run_id = r.id
 	                    where r.job_id = j.id and t.status in ('queued','claimed'))
 	   and not exists (select 1 from instances i where i.job_id = j.id and i.kind = 'job_task'
 	                    and i.state in ('waking','cold_booting','running'))
+	   and not exists (select 1 from sandbox_sessions s where s.image_job_id = j.id
+	                    and s.state in ('queued','starting','ready','frozen'))
 	 order by j.updated_at, j.id
 	 limit $2
 	 for update of j skip locked`

@@ -44,7 +44,9 @@ func open(t *testing.T) *pgxpool.Pool {
 		CREATE TABLE platform_mail_agent_run_observations (delivery_id uuid PRIMARY KEY, account_id uuid NOT NULL, disposition text NOT NULL);
 		CREATE TABLE workflow_runs (id uuid PRIMARY KEY, status text NOT NULL);
 		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);
-		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);`); err != nil {
+		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);
+		CREATE TABLE jobs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, status text NOT NULL DEFAULT 'active',
+			image_storage_key text, image_materialization_status text NOT NULL DEFAULT 'pending', image_materialization_error text);`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range agentMigrations {
@@ -73,7 +75,8 @@ var agentMigrations = []string{"20261029093503390_agent_runs.sql", "202610290935
 	"20261030205907043_agent_version_pause_during_model_calls.sql",
 	"20261031122245453_agent_run_usage.sql", "20261031215544747_agent_callback_revocations.sql",
 	"20261102075456168_agent_run_callbacks.sql", "20261104123540000_sandbox_sessions.sql",
-	"20261104194554000_sandbox_workspace_snapshots.sql", "20261105081450000_sandbox_ports.sql"}
+	"20261104194554000_sandbox_workspace_snapshots.sql", "20261105081450000_sandbox_ports.sql",
+	"20261105112618000_sandbox_session_images.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}
