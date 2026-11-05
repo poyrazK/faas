@@ -1000,24 +1000,30 @@ whole quota. A replica that cannot take the lock skips that tick.
   a branch inside its source's project, so the two share one quota.
 - Neon checks a quota only when that counter moves. In production it moved
   once in more than 80 minutes of continuous use, so the quota is only a
-  backstop. ADR-20261025094915 amendment 2026-11-05 has the sweep stop the
-  databases itself by holding their computes, as the delete grace period
-  does; that step and qualification version 2 come next, and `on` waits for
-  both. With the hold, a busy account can overshoot
-  its ceiling by its databases' largest sizes for one sweep, about five
-  minutes.
+  backstop. The sweep stops the databases itself
+  (ADR-20261025094915 amendment 2026-11-05): when nothing is left, when the
+  subject is inactive, or when a database is past its plan, it holds each
+  ready or failed database's compute, as the delete grace period does. Neon
+  suspends the compute and refuses new connections. When room returns, the
+  next sweep releases the hold, and the next connection wakes the compute.
+  A busy account can overshoot its ceiling by its databases' largest sizes
+  for one sweep, about five minutes.
 - When nothing is left, every quota equals its project's counter. A cap never
   deletes a database.
+- A database being created or changed is held or released by the first sweep
+  after it settles. One in its delete grace period is not in the sweep, so a
+  cap never releases a deletion hold.
 
 `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` selects the mode:
 
 - `shadow` (the default) logs `managed postgres compute cap (shadow)` with the
-  quota it would set, and writes nothing.
+  quota it would set and `managed postgres compute hold (shadow)` with each
+  hold it would place or release, and writes nothing.
 - `on` writes the quotas, and requires the usage ledger.
 - `off` does nothing.
 
-Quotas written earlier stay on the projects in every mode, so switching to
-`off` or rolling back never lifts a suspension.
+Quotas and holds written earlier stay on the projects in every mode, so
+switching to `off` or rolling back never lifts a suspension.
 
 Customers see the cap in `GET /v1/account/managed-postgres-usage` and
 `gregale postgres usage`:
@@ -1110,6 +1116,9 @@ hour of the UTC month start. Metrics:
 
 - `apid_managed_postgres_cap_accounts{state}`
 - `apid_managed_postgres_cap_quota_decisions_total{outcome}`
+- `apid_managed_postgres_cap_held_databases`
+- `apid_managed_postgres_cap_hold_decisions_total{outcome}`, where `outcome`
+  is `held`, `released` or `shadowed`
 - `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
 - `apid_managed_postgres_cap_enforcement_mode{mode}`
 

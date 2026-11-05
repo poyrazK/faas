@@ -15,12 +15,34 @@ import (
 
 var _ managedpostgres.DeletionHoldProvider = (*Provider)(nil)
 
+// The compute cap sweep holds a database the same way when its account has
+// nothing left (ADR-20261025094915 amendment 2026-11-05).
+var _ managedpostgres.ComputeHoldProvider = (*Provider)(nil)
+
 func (p *Provider) HoldForDeletion(ctx context.Context, providerResourceID string) error {
 	return p.setPrimaryEndpointDisabled(ctx, providerResourceID, true)
 }
 
 func (p *Provider) ReleaseDeletionHold(ctx context.Context, providerResourceID string) error {
 	return p.setPrimaryEndpointDisabled(ctx, providerResourceID, false)
+}
+
+// ComputeHeld reports whether the database branch's read-write endpoint is
+// disabled.
+func (p *Provider) ComputeHeld(ctx context.Context, providerResourceID string) (bool, error) {
+	ref, err := parseResourceRef(providerResourceID)
+	if err != nil {
+		return false, err
+	}
+	metadata, err := p.readDatabaseMetadata(ctx, ref, false)
+	if err != nil {
+		return false, err
+	}
+	_, primary, _ := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	if !validProviderID.MatchString(primary.ID) {
+		return false, managedpostgres.ErrUnavailable
+	}
+	return endpointDisabled(primary), nil
 }
 
 // setPrimaryEndpointDisabled sets the database branch's read-write endpoint's
