@@ -9219,6 +9219,7 @@
       "assigned_account_id",
       "assigned_team_id",
       "attempt",
+      "attempt_claim_id",
       "channel_id",
       "claim_id",
       "claim_until",
