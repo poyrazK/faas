@@ -84,6 +84,9 @@ func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account,
 	}
 	operation, err := store.CreateCheckedRollback(ctx, acct.ID, app.ID, target.ID, currentID, req.Reason)
 	if err != nil {
+		if problem := rollbackAttemptProblem(err); problem != nil {
+			return operation, target, problem
+		}
 		if errors.Is(err, state.ErrLayerArtifactRetired) {
 			return operation, target, rollbackTargetArtifactsReclaimed()
 		}

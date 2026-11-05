@@ -2105,3 +2105,23 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261026163015: Audit log anchors](20261026163015-audit-log-anchors.md) — `gregalectl audit anchor` seals 15-minute windows of `audit_log` (row count + digest) into an HMAC chain keyed off apid's audit HMAC key, logged off-host; daily `audit verify`; tamper, erasure and staleness alerts
 - [ADR-20261027090000: A raw-TCP routed port uses TCP readiness](20261027090000-raw-tcp-routed-port-readiness.md) — accepted; a deployment routed to a declared public TCP listener drops the default `/healthz` probe for TCP accept unless a health path is declared (`health_from_config` marks gregale.yaml's); vmmd names non-HTTP replies instead of "never listened"
 - [ADR-20261028110044: Routes GA blockers](20261028110044-routes-ga-blockers.md) — background route work (monitor, canary guard, recovery, insights, automatic checks) honors capability flags; `route_monitor_incidents` and `route_health_holds` alert metrics and presets; a route health hold aborts after 24 h (`abort_route_health_timeout`); save warnings for unobserved selectors and abort without a worker; monitor rollback `refusal_code`; monitor rollback e2e; Go SDK OpenAPI preview/apply; amendment 1: the monitor follows the production lane (project releases skip auto-rollback as `project_release`), gateway telemetry loss makes route evidence unavailable (`telemetry_incomplete`) without a hold or deadline abort; amendment 2: a gateway silent before the windows is ignored, deadline aborts record the hold as aborted and send `routes.health.aborted` (`hold_deadline_exceeded`), customer grouping needs its identity capability, reports show `hold.aborts_at`; amendment 3: the canary guard ranks latency over warm requests (`latency_requests`), and route evidence skips 5xx platform refusals (`request_telemetry.platform_refusal`); amendment 4: telemetry route labels ignore the per-route metrics opt-in, the gateway reserves labels for guarded and monitored routes, open telemetry minutes are not pending, and `deployments.promoted_at` anchors the monitor on manual promotions; amendment 5: route evidence skips requests to a deployment's own URL or a revision pin (`deployment_pinned`), leaves long-lived responses out of latency (`long_lived`), and pins load in the background
+
+## Management MCP action history and acceptance recovery
+
+- [ADR-20261022161757: Connection-local management MCP action history and recovery](20261022161757-management-mcp-action-history.md)
+- [ADR-20261022183756: Management MCP workload rollout and service abort history](20261022183756-management-mcp-workload-action-history.md)
+- [ADR-20261022192200: Management MCP environment promotion and rollback history](20261022192200-management-mcp-environment-action-history.md)
+- [ADR-20261023130958: Management MCP route-budget action history](20261023130958-management-mcp-route-budget-action-history.md)
+- [ADR-20261023184309: Management MCP saved-plan review](20261023184309-management-mcp-saved-plan-review.md)
+- [ADR-20261024120000: Management MCP advisory plan applicability](20261024120000-management-mcp-plan-applicability.md)
+- [ADR-20261024123000: Management MCP plan drift details](20261024123000-management-mcp-plan-drift-details.md)
+- [ADR-20261024160000: Management MCP saved-plan recovery resources](20261024160000-management-mcp-saved-plan-recovery-resources.md)
+- [ADR-20261024180000: Management MCP history recovery discovery](20261024180000-management-mcp-history-recovery-discovery.md)
+- [ADR-20261024210000: Read-only route-budget action outcomes](20261024210000-management-mcp-budget-outcomes.md)
+- [ADR-20261024223000: Discover retained route-budget outcome recovery](20261024223000-management-mcp-outcome-recovery-discovery.md)
+- [ADR-20261024234500: Durable MCP deployment submission outcomes](20261024234500-management-mcp-deployment-submission-outcomes.md)
+- [ADR-20261104144000: Durable service-abort acceptance recovery](20261104144000-management-mcp-service-abort-outcomes.md)
+- [ADR-20261104173000: Named-environment service-abort acceptance recovery](20261104173000-management-mcp-named-service-abort-outcomes.md)
+- [ADR-20261105000511: Management MCP saved-plan recovery prompts](20261105000511-management-mcp-saved-plan-recovery-prompts.md)
+- [ADR-20261105000512: Durable request promotion outcome recovery](20261105000512-management-mcp-promotion-outcomes.md)
+- [ADR-20261105000513: Durable request rollback acceptance recovery](20261105000513-management-mcp-rollback-outcomes.md)

@@ -1333,6 +1333,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -1637,6 +1638,8 @@ from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
+from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
@@ -2188,6 +2191,7 @@ from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
+from .get_environment_route_budget_receipt_scope import GetEnvironmentRouteBudgetReceiptScope
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
@@ -5619,6 +5623,7 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
+from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -7586,6 +7591,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",
@@ -7889,6 +7895,8 @@ __all__ = (
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRouteBudgetReceipt",
+    "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
@@ -8406,6 +8414,7 @@ __all__ = (
     "GetDeploymentOpenAPIDocResponse200",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
+    "GetEnvironmentRouteBudgetReceiptScope",
     "GetEnvironmentRouteBudgetsScope",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
@@ -11589,6 +11598,7 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
+    "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",

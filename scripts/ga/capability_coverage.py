@@ -321,7 +321,7 @@ RULES = [
     (r"release-gate|gate", "Release gates"),
     (r"preview", "Pull-request previews"),
     (r"alias", "Deployment aliases"),
-    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion", "Progressive rollouts"),
+    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion|service-aborts|service-abort-attempts", "Progressive rollouts"),
     (r"rollback", "Rollback to a named revision"),
     # --- deploy and build
     (r"queue-control|reorder|deploy-immediately|queued-deploy|cancel-ops|reorder-ops", "Deploy queue controls"),

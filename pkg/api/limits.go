@@ -53,6 +53,14 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Management MCP history is connection-local metadata, not an account audit log.
+const (
+	ManagementMCPActionHistoryMax       = 256
+	ManagementMCPActionHistoryPageMax   = 50
+	ManagementMCPActionHistoryRetention = 24 * time.Hour
+	ManagementMCPActionCursorMaxBytes   = 1024
+)
+
 // Keys minted by a JSON password sign-in (POST /v1/auth/login and
 // /v1/auth/signup) lapse like CLI device-code keys, and an account keeps at
 // most SignInAPIKeysMax of them: the next sign-in revokes the oldest.

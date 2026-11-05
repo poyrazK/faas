@@ -2303,6 +2303,20 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	promotionID, promotionProblem := s.promotionAttempt(guardCtx, r, app, d, req)
+	if promotionProblem != nil {
+		api.WriteProblem(w, promotionProblem)
+		return
+	}
+	if promotionID != "" {
+		guardCtx = state.ContextWithDeploymentPromotion(guardCtx, promotionID, req)
+	}
+	r = r.WithContext(guardCtx)
 	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
 	if req.TrafficPercent > d.TrafficPercent {
 		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
@@ -2310,12 +2324,6 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	r = r.WithContext(guardCtx)
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -2385,6 +2393,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case trafficguard.PromotionProblem(err) != nil:
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
+		case promotionAttemptProblem(err) != nil:
+			api.WriteProblem(w, promotionAttemptProblem(err))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -2464,6 +2474,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	attempt, problem := s.rollbackAttempt(r.Context(), r, acct, app, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.RestoreDatabases {
 		// The switch belongs to database-rollbacks (ADR-20261023181931, split
 		// from postgres-restore by ADR-20261031091607): while that capability
@@ -2478,7 +2493,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	if req.ExpectedCurrentDeploymentID != nil {
-		s.startCheckedRollback(w, r, acct, app, req)
+		checkedRequest := r
+		if attempt != "" {
+			checkedRequest = r.WithContext(state.ContextWithCheckedRollbackAttempt(r.Context(), attempt))
+		}
+		s.startCheckedRollback(w, checkedRequest, acct, app, req)
 		return
 	}
 	if req.Reason != "" {
