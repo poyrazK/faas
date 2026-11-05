@@ -41811,6 +41811,58 @@ func (q *Queries) KnownCustomDomainTLSHost(ctx context.Context, db DBTX, arg Kno
 	return known, err
 }
 
+const knownRouteAppSlugs = `-- name: KnownRouteAppSlugs :many
+select slug from apps limit $1
+`
+
+// Every app slug, preloaded by the gateway and edge so a real app's host never
+// spends the new-host lookup budget (ADR-20261103163954 §4). A listed name
+// only skips that budget; routing still reads and checks the row.
+func (q *Queries) KnownRouteAppSlugs(ctx context.Context, db DBTX, limit int32) ([]string, error) {
+	rows, err := db.Query(ctx, knownRouteAppSlugs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		items = append(items, slug)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const knownRouteCustomDomains = `-- name: KnownRouteCustomDomains :many
+select domain::text from custom_domains where verified_at is not null limit $1
+`
+
+// Every verified custom domain, for the same preload as KnownRouteAppSlugs.
+func (q *Queries) KnownRouteCustomDomains(ctx context.Context, db DBTX, limit int32) ([]string, error) {
+	rows, err := db.Query(ctx, knownRouteCustomDomains, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, err
+		}
+		items = append(items, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz

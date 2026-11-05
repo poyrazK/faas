@@ -3266,6 +3266,12 @@ type Querier interface {
 	// reclaim its own generation before the replay proceeds.
 	KeyedWorkLaneHead(ctx context.Context, db DBTX, arg KeyedWorkLaneHeadParams) (KeyedWorkLaneHeadRow, error)
 	KnownCustomDomainTLSHost(ctx context.Context, db DBTX, arg KnownCustomDomainTLSHostParams) (bool, error)
+	// Every app slug, preloaded by the gateway and edge so a real app's host never
+	// spends the new-host lookup budget (ADR-20261103163954 §4). A listed name
+	// only skips that budget; routing still reads and checks the row.
+	KnownRouteAppSlugs(ctx context.Context, db DBTX, limit int32) ([]string, error)
+	// Every verified custom domain, for the same preload as KnownRouteAppSlugs.
+	KnownRouteCustomDomains(ctx context.Context, db DBTX, limit int32) ([]string, error)
 	LatchAutomationFailurePause(ctx context.Context, db DBTX, arg LatchAutomationFailurePauseParams) error
 	LatestAppConfigGuard(ctx context.Context, db DBTX, arg LatestAppConfigGuardParams) (AppConfigGuard, error)
 	LatestAppConfigRevision(ctx context.Context, db DBTX, arg LatestAppConfigRevisionParams) (AppConfigRevision, error)

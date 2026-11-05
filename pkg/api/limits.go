@@ -13027,6 +13027,16 @@ const (
 	GatewayNewHostLookupsPerSecond = 25
 	GatewayNewHostLookupBurst      = 500
 	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// The gateway and the edge preload every app slug and verified custom
+	// domain (at most KnownRouteHostsMax of each), refreshed every
+	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
+	// new-host budgets above or PublicReadNewHostLookups*. Only names that
+	// are not an app's do: after a restart a flood of random names no longer
+	// answers 503 for apps the process has not yet served. Wildcard custom
+	// domains are not preloaded (ADR-20261103163954 §4).
+	KnownRouteHostsMax             = 1_000_000
+	KnownRouteHostsRefreshInterval = time.Minute
+	KnownRouteHostsRefreshTimeout  = 20 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
