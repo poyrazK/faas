@@ -4830,9 +4830,11 @@ func cmdWake(args []string) int {
 		return printErr("Wake did not start a replica", errors.New(idleWorker))
 	}
 	status := "waking"
-	instanceID := ""
+	// A wake that resumes a frozen VM names it: the VM keeps its own wake_id
+	// when it thaws, so it is waited on by id (#6639).
+	instanceID := response.InstanceID
 	if *wait {
-		instance, waitErr := waitForAppWake(context.Background(), client, slug, response.WakeID, *waitTimeout, *pollInterval)
+		instance, waitErr := waitForAppWakeOrInstance(context.Background(), client, slug, response.WakeID, response.InstanceID, *waitTimeout, *pollInterval)
 		if waitErr != nil {
 			return printErr("Wake failed", waitErr)
 		}
@@ -4876,6 +4878,14 @@ func idleScaleToZeroWorker(ctx context.Context, client *Client, slug string) str
 }
 
 func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
+	return waitForAppWakeOrInstance(ctx, client, slug, wakeID, "", timeout, pollInterval)
+}
+
+// waitForAppWakeOrInstance waits for the instance a wake stamped with wakeID
+// to run or, when resumeID is set, for that frozen instance to run under its
+// own wake_id. Only the wake's own instance can fail the wait: a frozen VM
+// schedd parks instead of thawing is replaced by a boot under wakeID.
+func waitForAppWakeOrInstance(ctx context.Context, client *Client, slug, wakeID, resumeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -4894,6 +4904,11 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 			}
 		} else {
 			for _, instance := range instances {
+				if resumeID != "" && instance.ID == resumeID && instance.State == "running" {
+					return instance, nil
+				}
+			}
+			for _, instance := range instances {
 				if instance.WakeID != wakeID {
 					continue
 				}
@@ -4908,10 +4923,14 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 
 		select {
 		case <-waitCtx.Done():
-			if lastReadErr != nil {
-				return api.InstanceResponse{}, fmt.Errorf("wake %s did not reach running within %s (last status read failed: %w)", wakeID, timeout, lastReadErr)
+			subject := "wake " + wakeID
+			if resumeID != "" {
+				subject += " (resuming frozen instance " + resumeID + ")"
 			}
-			return api.InstanceResponse{}, fmt.Errorf("wake %s did not reach running within %s", wakeID, timeout)
+			if lastReadErr != nil {
+				return api.InstanceResponse{}, fmt.Errorf("%s did not reach running within %s (last status read failed: %w)", subject, timeout, lastReadErr)
+			}
+			return api.InstanceResponse{}, fmt.Errorf("%s did not reach running within %s", subject, timeout)
 		case <-ticker.C:
 		}
 	}
