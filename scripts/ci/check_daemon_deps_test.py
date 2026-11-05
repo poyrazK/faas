@@ -95,8 +95,8 @@ class RulesTest(unittest.TestCase):
         rule = next(r for r in rules if r["package"] == "pkg/db" and r["binaries"] == ["init"])
         graph = {
             f"{M}/guest/init": {"imports": {f"{M}/pkg/datarepair/guest"}},
-            f"{M}/pkg/datarepair/guest": {"imports": {f"{M}/pkg/db/poolbounds"}},
-            f"{M}/pkg/db/poolbounds": {"imports": set()},
+            f"{M}/pkg/datarepair/guest": {"imports": {f"{M}/pkg/pgpoolbounds"}},
+            f"{M}/pkg/pgpoolbounds": {"imports": set()},
         }
         self.assertEqual(cdd.violations([rule], {"init": graph}, M), [])
         graph[f"{M}/pkg/datarepair/guest"]["imports"].add(f"{M}/pkg/db")

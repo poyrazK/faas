@@ -1,4 +1,4 @@
-package poolbounds
+package pgpoolbounds
 
 import (
 	"context"

@@ -1,5 +1,5 @@
-// Package poolbounds applies pgx deadlines without daemon wiring or migrations.
-package poolbounds
+// Package pgpoolbounds applies pgx deadlines without daemon wiring or migrations.
+package pgpoolbounds
 
 import (
 	"time"

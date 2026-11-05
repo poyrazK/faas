@@ -655,7 +655,7 @@ test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 
 
 .PHONY: test-outbound-resilience
 test-outbound-resilience: ## Deadline, pool saturation/recovery and retry regressions; optional DATABASE_URL for Postgres
-	$(GO_TEST) -race -p=1 -count=1 -timeout=10m -run 'Test(BoundedPool|OutboundRedisPool|ClientDeadline|RemoteCompilerDeadline|AMQPCallInterruptsStalledBroker|Delay|Cancellation|AcquireDeadline|QueryDeadline)' ./pkg/db ./pkg/db/poolbounds ./pkg/gateway ./pkg/outbound ./pkg/livequery ./pkg/retry ./pkg/sched
+	$(GO_TEST) -race -p=1 -count=1 -timeout=10m -run 'Test(BoundedPool|OutboundRedisPool|ClientDeadline|RemoteCompilerDeadline|AMQPCallInterruptsStalledBroker|Delay|Cancellation|AcquireDeadline|QueryDeadline)' ./pkg/db ./pkg/pgpoolbounds ./pkg/gateway ./pkg/outbound ./pkg/livequery ./pkg/retry ./pkg/sched
 
 .PHONY: test-outbound-resilience-load
 test-outbound-resilience-load: ## Explicit Postgres/Redis fixtures: concurrency, latency, pool recovery and retry accounting

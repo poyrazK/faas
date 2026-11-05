@@ -63,7 +63,7 @@ and background pools remain separate; LISTEN uses the hub/direct pool. No daemon
 maximum is raised without pool-wait and database capacity evidence. Pool pressure
 now fails within the acquisition budget instead of building an unbounded wait.
 
-The shared deadline tracer lives in `pkg/db/poolbounds`, which has no migration
+The shared deadline tracer lives in `pkg/pgpoolbounds`, which has no migration
 or server-wiring dependencies. The repair guest uses this leaf directly; the
 daemon package delegates to it and retains abandoned-acquisition metrics.
 

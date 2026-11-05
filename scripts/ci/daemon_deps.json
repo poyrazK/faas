@@ -3,7 +3,7 @@
     {
       "package": "pkg/db",
       "binaries": ["init"],
-      "reason": "Guest pool deadlines use pkg/db/poolbounds. The server DB package embeds migrations and imports goose, which pulls text/template and its reflection code into PID 1."
+      "reason": "Guest pool deadlines use pkg/pgpoolbounds. The server DB package embeds migrations and imports goose, which pulls text/template and its reflection code into PID 1."
     },
     {
       "package": "pkg/sched",

@@ -20,7 +20,7 @@ same timeout configuration. Finite HTTP calls have defaults; long-lived streams
 keep their existing cancellation lifecycle and phase/stall bounds.
 
 The shared pgx deadline implementation lives in the lightweight
-`pkg/db/poolbounds` package. Guest code imports this leaf directly so pool bounds
+`pkg/pgpoolbounds` package. Guest code imports this leaf directly so pool bounds
 do not pull server migrations, goose or template reflection into guest-init.
 
 Generated Go and Node MCP task starters size their Postgres pools for configured

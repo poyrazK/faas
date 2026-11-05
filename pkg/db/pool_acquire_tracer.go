@@ -13,11 +13,11 @@ package db
 import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/onebox-faas/faas/pkg/db/poolbounds"
+	"github.com/onebox-faas/faas/pkg/pgpoolbounds"
 )
 
 // Keep daemon pool metrics on the same lightweight tracer the guest uses.
-type acquireAbandonTracer = poolbounds.Tracer
+type acquireAbandonTracer = pgpoolbounds.Tracer
 
 // abandonedAcquires reports the tracer's count for pool, or false when the
 // pool was built without it.
