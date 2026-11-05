@@ -20,7 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	core "github.com/onebox-faas/faas/pkg/datarepair"
-	dbbounds "github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/poolbounds"
 )
 
 const postgresBin = "/usr/lib/postgresql/16/bin"
@@ -98,7 +98,7 @@ func Run(parent context.Context, in core.RehearsalInput, workspace string) (resu
 	}
 	cfg.ConnConfig.Host, cfg.ConnConfig.Database = socket, in.Database
 	cfg.MaxConns = 2
-	dbbounds.ConfigureTimeouts(cfg)
+	poolbounds.ConfigureTimeouts(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return fail("database_connect")

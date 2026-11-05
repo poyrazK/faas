@@ -5,16 +5,15 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/db/poolbounds"
 )
 
 // ConfigureTimeouts applies the same connection, acquisition and fallback
 // query bounds as daemon pools without changing roles, DSNs or pool sizes.
 // Call before NewWithConfig. An existing tracer is retained.
 func ConfigureTimeouts(cfg *pgxpool.Config) {
-	if cfg.ConnConfig.ConnectTimeout <= 0 {
-		cfg.ConnConfig.ConnectTimeout = ConnectTimeout
-	}
-	instrumentAcquires(cfg)
+	poolbounds.ConfigureTimeouts(cfg)
 }
 
 // NewBoundedPool opens a non-daemon pool with an explicit concurrency budget.

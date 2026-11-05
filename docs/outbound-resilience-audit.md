@@ -63,6 +63,10 @@ and background pools remain separate; LISTEN uses the hub/direct pool. No daemon
 maximum is raised without pool-wait and database capacity evidence. Pool pressure
 now fails within the acquisition budget instead of building an unbounded wait.
 
+The shared deadline tracer lives in `pkg/db/poolbounds`, which has no migration
+or server-wiring dependencies. The repair guest uses this leaf directly; the
+daemon package delegates to it and retains abandoned-acquisition metrics.
+
 Redis clients now set `MaxActiveConns` as well as `PoolSize`; response cache and
 retry-budget consults have a 100ms latency budget, so excess concurrent calls
 wait only within that budget. Trigger Redis has four slots for polling,

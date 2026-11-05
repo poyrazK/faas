@@ -90,6 +90,21 @@ class ViolationsTest(unittest.TestCase):
 
 
 class RulesTest(unittest.TestCase):
+    def test_guest_pool_deadlines_do_not_allow_server_db_imports(self):
+        rules = cdd.load_rules(HERE / "daemon_deps.json")
+        rule = next(r for r in rules if r["package"] == "pkg/db" and r["binaries"] == ["init"])
+        graph = {
+            f"{M}/guest/init": {"imports": {f"{M}/pkg/datarepair/guest"}},
+            f"{M}/pkg/datarepair/guest": {"imports": {f"{M}/pkg/db/poolbounds"}},
+            f"{M}/pkg/db/poolbounds": {"imports": set()},
+        }
+        self.assertEqual(cdd.violations([rule], {"init": graph}, M), [])
+        graph[f"{M}/pkg/datarepair/guest"]["imports"].add(f"{M}/pkg/db")
+        graph[f"{M}/pkg/db"] = {"imports": set()}
+        self.assertEqual(cdd.violations([rule], {"init": graph}, M), [
+            (rule, "init", ["guest/init", "pkg/datarepair/guest", "pkg/db"]),
+        ])
+
     def test_rules_need_every_field(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json") as fh:
             json.dump({"rules": [{"package": "pkg/sched", "binaries": ["vmmd"]}]}, fh)
@@ -114,7 +129,7 @@ class RulesTest(unittest.TestCase):
         # The reason guest-init builds with grpcnotrace: these three reach
         # reflect.Value.MethodByName (ADR-20261105150000).
         forbidden = {r["package"] for r in cdd.load_rules(cdd.DEFAULT_CONFIG) if r["binaries"] == ["init"]}
-        self.assertEqual(forbidden, {"golang.org/x/net/trace", "html/template", "text/template"})
+        self.assertEqual(forbidden, {"pkg/db", "golang.org/x/net/trace", "html/template", "text/template"})
         makefile = (REPO / "Makefile").read_text(encoding="utf-8")
         self.assertIn("grpcnotrace", cdd.guest_tags(makefile))
 

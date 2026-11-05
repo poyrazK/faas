@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/db/poolbounds"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -247,10 +248,10 @@ const (
 	pingTimeout       = 5 * time.Second
 	// Bound every new connection, including background replenishment after
 	// startup. A Ping deadline alone does not cover those later dials.
-	ConnectTimeout = 5 * time.Second
+	ConnectTimeout = poolbounds.ConnectTimeout
 	// Pool contention must fail within a bounded interval even for background
 	// callers using a process-lifetime context. Request deadlines may be shorter.
-	AcquireTimeout = 5 * time.Second
+	AcquireTimeout = poolbounds.AcquireTimeout
 )
 
 // OpenWithAppName is Open plus an application_name tag set on every
@@ -352,7 +353,7 @@ const (
 // either setting keeps its own value. LISTEN and session advisory locks are
 // idle outside a transaction, so neither bound touches them.
 const (
-	DaemonStatementTimeout                = 5 * time.Minute
+	DaemonStatementTimeout                = poolbounds.StatementTimeout
 	DaemonIdleInTransactionSessionTimeout = 2 * time.Minute
 )
 

@@ -174,8 +174,8 @@ func TestOutboundRedisPoolsLoad(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = cache.Close() })
-		runPoolLoad(t, func(context.Context) error {
-			_, err := cache.Get(gateway.CacheKey{AppID: "outbound-pool-load", NormalizedPath: "/missing"})
+		runPoolLoad(t, func(ctx context.Context) error {
+			_, err := cache.GetContext(ctx, gateway.CacheKey{AppID: "outbound-pool-load", NormalizedPath: "/missing"})
 			return err
 		})
 	})

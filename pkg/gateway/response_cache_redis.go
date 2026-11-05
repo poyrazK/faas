@@ -85,10 +85,16 @@ func redisResponseCacheOptions(rawURL string) (*redis.Options, error) {
 }
 
 func (c *RedisResponseCache) Get(key CacheKey) (*cacheEntry, error) {
+	return c.GetContext(context.Background(), key)
+}
+
+// GetContext retains caller cancellation and earlier deadlines while keeping
+// the cache's 100ms whole-operation budget.
+func (c *RedisResponseCache) GetContext(parent context.Context, key CacheKey) (*cacheEntry, error) {
 	if c == nil || c.client == nil {
 		return nil, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), redisResponseCacheIOTimeout)
+	ctx, cancel := context.WithTimeout(parent, redisResponseCacheIOTimeout)
 	defer cancel()
 	raw, err := c.client.Get(ctx, redisResponseCacheKey(key)).Bytes()
 	if errors.Is(err, redis.Nil) {

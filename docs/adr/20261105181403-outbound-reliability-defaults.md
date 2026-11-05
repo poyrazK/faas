@@ -19,6 +19,10 @@ connection budgets. Alternative pools use explicit concurrency budgets and the
 same timeout configuration. Finite HTTP calls have defaults; long-lived streams
 keep their existing cancellation lifecycle and phase/stall bounds.
 
+The shared pgx deadline implementation lives in the lightweight
+`pkg/db/poolbounds` package. Guest code imports this leaf directly so pool bounds
+do not pull server migrations, goose or template reflection into guest-init.
+
 Generated Go and Node MCP task starters size their Postgres pools for configured
 workers plus four slots for notifications, polling, maintenance and foreground
 requests. Web and observer roles reserve four slots without worker capacity.

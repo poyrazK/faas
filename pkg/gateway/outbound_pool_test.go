@@ -25,8 +25,8 @@ func TestOutboundRedisPoolSaturationAndRecovery(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = cache.Close() })
 				client = cache.client.(*redis.Client)
-				operation = func(context.Context) error {
-					_, err := cache.Get(CacheKey{AppID: "pool-pressure", NormalizedPath: "/"})
+				operation = func(ctx context.Context) error {
+					_, err := cache.GetContext(ctx, CacheKey{AppID: "pool-pressure", NormalizedPath: "/"})
 					return err
 				}
 			} else {
@@ -95,5 +95,19 @@ func TestOutboundRedisPoolSaturationAndRecovery(t *testing.T) {
 				t.Fatalf("pool did not recover after pressure subsided: %v", err)
 			}
 		})
+	}
+}
+
+func TestOutboundRedisPoolUsesCallerCancellation(t *testing.T) {
+	server := miniredis.RunT(t)
+	cache, err := NewRedisResponseCache(t.Context(), "redis://"+server.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := cache.GetContext(ctx, CacheKey{AppID: "canceled", NormalizedPath: "/"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cache ignored caller cancellation: %v", err)
 	}
 }
