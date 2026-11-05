@@ -10676,6 +10676,8 @@ SELECT id, account_id, org_id FROM apps WHERE id = sqlc.arg(app_id) FOR UPDATE;
 SELECT account_id, org_id FROM apps WHERE id = sqlc.arg(app_id);
 -- name: IssuePolicyLockAccount :one
 SELECT plan, status, abuse_hold_at FROM accounts WHERE id = sqlc.arg(account_id) FOR SHARE;
+-- name: IssuePolicyOrg :one
+SELECT personal_org, personal_owner_account_id FROM orgs WHERE id=sqlc.arg(org_id);
 -- name: IssuePolicyLockOrg :one
 SELECT personal_org, personal_owner_account_id, resource_ownership_enabled, plan, status, deleted_pending, abuse_hold_at
 FROM orgs WHERE id = sqlc.arg(org_id) FOR SHARE;
@@ -10902,8 +10904,7 @@ INSERT INTO issue_activity(issue_id,action,actor_account_id,created_at,details) 
 -- name: IssueAddResolution :exec
 INSERT INTO issue_resolutions(issue_id,fixed_deployment_id,resolved_at,actor_account_id) VALUES(sqlc.arg(issue_id),sqlc.arg(deployment_id),sqlc.arg(resolved_at),sqlc.arg(actor_account_id));
 -- name: IssueAssigneeAllowed :one
-SELECT EXISTS(SELECT 1 FROM apps a LEFT JOIN org_memberships m ON m.org_id=a.org_id AND m.account_id=sqlc.arg(assignee) AND m.removed_at IS NULL
-WHERE a.id=sqlc.arg(app_id) AND (a.account_id=sqlc.arg(assignee) OR m.account_id IS NOT NULL));
+SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=sqlc.arg(app_id) AND issue_actor_current_member(a.id,sqlc.arg(assignee)));
 -- name: IssueInsertToken :one
 INSERT INTO issue_ingest_tokens(account_id,app_id,deployment_id,environment,name,token_hash,expires_at)
 VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(deployment_id),sqlc.arg(environment),sqlc.arg(name),sqlc.arg(token_hash),sqlc.arg(expires_at)) RETURNING *;
@@ -10938,19 +10939,19 @@ AND expires_at>now() LIMIT 2;
 -- name: IssueTokenStillValid :one
 SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND revoked_at IS NULL AND expires_at>sqlc.arg(now));
 -- name: IssuePurgePlanEvents :execrows
-WITH candidate_apps AS MATERIALIZED (
+WITH candidate_apps AS (
  SELECT a.id FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id
  JOIN LATERAL (SELECT e.received_at FROM issue_events e
   WHERE e.app_id=a.id AND e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT 1) oldest ON true
  WHERE c.plan=sqlc.arg(plan) ORDER BY oldest.received_at,a.id
- LIMIT sqlc.arg(batch_limit) FOR UPDATE OF a SKIP LOCKED
-), locked_usage AS MATERIALIZED (
- SELECT u.app_id FROM issue_event_usage u JOIN candidate_apps a ON a.id=u.app_id
- ORDER BY u.app_id FOR UPDATE OF u SKIP LOCKED
+ FOR UPDATE OF a SKIP LOCKED
 ), eligible_apps AS MATERIALIZED (
  SELECT a.id FROM candidate_apps a
- WHERE EXISTS (SELECT 1 FROM locked_usage u WHERE u.app_id=a.id)
- OR NOT EXISTS (SELECT 1 FROM issue_event_usage u WHERE u.app_id=a.id)
+ LEFT JOIN LATERAL (SELECT u.app_id FROM issue_event_usage u WHERE u.app_id=a.id FOR UPDATE OF u SKIP LOCKED) locked_usage ON true
+ JOIN LATERAL (SELECT e.event_id FROM issue_events e WHERE e.app_id=a.id AND e.received_at<sqlc.arg(before)
+   ORDER BY e.received_at LIMIT 1 FOR UPDATE OF e SKIP LOCKED) unlocked_event ON true
+ WHERE locked_usage.app_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM issue_event_usage u WHERE u.app_id=a.id)
+ LIMIT sqlc.arg(batch_limit)
 ), expired AS (
  SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN eligible_apps a ON a.id=e.app_id
  WHERE e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT sqlc.arg(batch_limit) FOR UPDATE OF e SKIP LOCKED

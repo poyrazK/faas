@@ -1557,8 +1557,11 @@ can still produce duplicates. Failed roots hold later replies until terminal or
 successful, and a channel change starts a new thread.
 Failures before dispatch, including an unavailable token key or a temporary
 readiness-check failure, are retried until delivery expiry without consuming
-the send-attempt budget after all apid workers have been upgraded. Older
-workers still count each claim as an attempt during a rolling upgrade.
+the send-attempt budget after all apid workers have been upgraded. The budget
+counts completed transport results; a worker that stops after invoking Slack but
+before recording its result can retry until the 24-hour expiry, so the displayed
+attempt count can be lower than the number of requests Slack received. Older
+workers retain their previous counting behavior during a rolling upgrade.
 
 Queue plus retained application delivery history is capped at 1,000 records per
 app. The oldest terminal record makes room first. If every slot is live, the new
@@ -2338,8 +2341,8 @@ retained delivery records.
 
 **Recent Slack deliveries** shows up to 50 retained deliveries, including status,
 total attempts, fixed failure reason, HTTP status and the next scheduled retry.
-The worker uses the existing webhook retry ladder: up to seven automatic attempts
-within 24 hours, with jitter and Slack rate-limit delays. A failed first post holds
+The worker uses the existing webhook retry ladder: up to seven recorded automatic
+attempts within 24 hours, with jitter and Slack rate-limit delays. A failed first post holds
 later notices in the same incident thread until it succeeds or becomes terminal.
 Other incidents can proceed. The owner can retry retained failed/dead deliveries
 for the current enabled destination, starting a fresh attempt cycle while preserving
@@ -2461,9 +2464,15 @@ issue thread there if needed; later reminders use that thread. Transport retries
 reuse the same message ID and do not consume another escalation attempt.
 
 Current backup team members who remain organization members can read the narrow
-response page and acknowledge or snooze the issue. This grants no occurrence
-evidence or general app access. Membership removal or a new response revokes the
-backup grant. Assignment owners keep their existing response access.
+response page. Eligible members can also acknowledge or snooze the issue. This
+grants no occurrence evidence or general app access. Membership removal or a new
+response revokes the backup grant. Assignment owners keep their existing response
+access.
+
+For company apps, response actions require a current owner, admin, or developer
+membership. Owners and admins can manage tracker notifications across the company;
+their actions are recorded under their own account. Eligibility follows the app's
+resource owner, including the company plan when company resource ownership is enabled.
 
 The response page separates reminder responsibility from issue assignment and shows
 **Native escalation history**, target team, admission outcome and retained transport

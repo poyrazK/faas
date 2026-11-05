@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgIssueCreationUsesCurrentOwnerLimits(t *testing.T) {
@@ -115,6 +117,9 @@ func TestPgIssueRetentionSkipsLockedUsageAndContinues(t *testing.T) {
 	}
 	record(a1, app1, dep1)
 	record(a2, app2, dep2)
+	if _, err := pool.Exec(ctx, `UPDATE issue_events SET received_at=now()-interval '32 days' WHERE app_id=$1`, app1.ID); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +130,10 @@ func TestPgIssueRetentionSkipsLockedUsageAndContinues(t *testing.T) {
 	}
 	short, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err = s.MaintainIssueRetention(short, now); err != nil {
+	purge := func(ctx context.Context) (int64, error) {
+		return sqlc.New().IssuePurgePlanEvents(ctx, pool, sqlc.IssuePurgePlanEventsParams{Plan: string(api.PlanPro), Before: pgtype.Timestamptz{Time: now.AddDate(0, 0, -30), Valid: true}, BatchLimit: 1})
+	}
+	if _, err = purge(short); err != nil {
 		t.Fatalf("locked usage stalled other cleanup: %v", err)
 	}
 	var one, two int
@@ -154,6 +162,27 @@ func TestPgIssueRetentionSkipsLockedUsageAndContinues(t *testing.T) {
 	}
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM issue_events WHERE app_id=$1`, app2.ID).Scan(&two); err != nil || two != 0 {
 		t.Fatalf("legacy event not cleaned: %d %v", two, err)
+	}
+	// The oldest app must also be skipped when its event, rather than its
+	// usage row, is locked independently of its app row.
+	record(a1, app1, dep1)
+	record(a2, app2, dep2)
+	if _, err = pool.Exec(ctx, `UPDATE issue_events SET received_at=now()-interval '32 days' WHERE app_id=$1`, app1.ID); err != nil {
+		t.Fatal(err)
+	}
+	tx2, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx2.Rollback(ctx) }()
+	if _, err = tx2.Exec(ctx, `SELECT id FROM issue_events WHERE app_id=$1 FOR UPDATE`, app1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := purge(ctx); err != nil || n != 1 {
+		t.Fatalf("locked event stalled later app: deleted=%d err=%v", n, err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM issue_events WHERE app_id=$1`, app2.ID).Scan(&two); err != nil || two != 0 {
+		t.Fatalf("later app not cleaned: %d %v", two, err)
 	}
 }
 
@@ -210,6 +239,28 @@ func TestPgSlackPreflightDoesNotSpendDeliveryAttempts(t *testing.T) {
 		t.Fatalf("expired claim began sending: %v", err)
 	}
 	claim = replacement
+	ready, err := s.IssueSlackDeliveryReady(ctx, claim)
+	if err != nil || !ready {
+		t.Fatalf("pre-downgrade readiness: %v %v", ready, err)
+	}
+	if err = s.UpdateAccountPlan(ctx, account.ID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginIssueSlackAttempt(ctx, claim); !errors.Is(err, state.ErrIssuePolicyChanged) {
+		t.Fatalf("downgraded owner began sending: %v", err)
+	}
+	if err = s.UpdateAccountPlan(ctx, account.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE issue_application_slack_policies SET enabled=false WHERE app_id=$1`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginIssueSlackAttempt(ctx, claim); !errors.Is(err, state.ErrIssueSlackClaimLost) {
+		t.Fatalf("ineligible source began sending: %v", err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE issue_application_slack_policies SET enabled=true WHERE app_id=$1`, app.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.BeginIssueSlackAttempt(ctx, claim); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +268,50 @@ func TestPgSlackPreflightDoesNotSpendDeliveryAttempts(t *testing.T) {
 		t.Fatalf("attempt was double-counted: %v", err)
 	}
 	var attempt int
-	if err = pool.QueryRow(ctx, `SELECT attempt FROM issue_team_slack_deliveries WHERE id=$1`, claim.ID).Scan(&attempt); err != nil || attempt != 1 {
+	if err = pool.QueryRow(ctx, `SELECT attempt FROM issue_team_slack_deliveries WHERE id=$1`, claim.ID).Scan(&attempt); err != nil || attempt != 0 {
 		t.Fatalf("attempt=%d err=%v", attempt, err)
+	}
+	// A crash after the claim is prepared but before a transport call leaves
+	// the budget intact when the lease is recovered.
+	if _, err = pool.Exec(ctx, `UPDATE issue_team_slack_deliveries SET claim_until=clock_timestamp()-interval '1 second' WHERE id=$1`, claim.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE issue_team_slack_destinations SET claim_until=clock_timestamp()-interval '1 second' WHERE id=$1`, claim.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, ok, err = s.ClaimIssueSlackDelivery(ctx)
+	if err != nil || !ok || replacement.Attempt != 1 || replacement.ClaimID == claim.ClaimID {
+		t.Fatalf("dispatch lease recovery: %+v %v %v", replacement, ok, err)
+	}
+	if err = s.BeginIssueSlackAttempt(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishIssueSlackDelivery(ctx, replacement, state.IssueSlackResult{Status: "failed", Error: "transport_error", Attempted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT attempt FROM issue_team_slack_deliveries WHERE id=$1`, claim.ID).Scan(&attempt); err != nil || attempt != 1 {
+		t.Fatalf("completed transport attempt=%d err=%v", attempt, err)
+	}
+	for want := 2; want <= api.IssueSlackMaxAttempts; want++ {
+		if _, err = pool.Exec(ctx, `UPDATE issue_team_slack_destinations SET next_send_at=clock_timestamp()-interval '1 second' WHERE id=$1`, claim.DestinationID); err != nil {
+			t.Fatal(err)
+		}
+		next, found, err := s.ClaimIssueSlackDelivery(ctx)
+		if err != nil || !found || next.Status != "in_flight" || next.Attempt != want {
+			t.Fatalf("attempt %d claim: %+v %v %v", want, next, found, err)
+		}
+		if err = s.BeginIssueSlackAttempt(ctx, next); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.FinishIssueSlackDelivery(ctx, next, state.IssueSlackResult{Status: "failed", Error: "transport_error", Attempted: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = pool.Exec(ctx, `UPDATE issue_team_slack_destinations SET next_send_at=clock_timestamp()-interval '1 second' WHERE id=$1`, claim.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	exhausted, found, err := s.ClaimIssueSlackDelivery(ctx)
+	if err != nil || !found || exhausted.Status != "dead" {
+		t.Fatalf("completed attempts did not exhaust budget: %+v %v %v", exhausted, found, err)
 	}
 }

@@ -19826,6 +19826,44 @@ $$;
 
 
 --
+-- Name: issue_actor_can_manage_tracker(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_actor_can_manage_tracker(p_app uuid, p_actor uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS (
+  SELECT 1 FROM apps a LEFT JOIN orgs o ON o.id=a.org_id
+  WHERE a.id=p_app AND (
+   (a.org_id IS NULL AND a.account_id=p_actor)
+   OR (o.personal_org AND o.personal_owner_account_id=a.account_id AND a.account_id=p_actor)
+   OR (NOT o.personal_org AND EXISTS (SELECT 1 FROM org_memberships m
+      WHERE m.org_id=a.org_id AND m.account_id=p_actor AND m.removed_at IS NULL AND m.role IN ('owner','admin')))
+  )
+ );
+$$;
+
+
+--
+-- Name: issue_actor_current_member(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_actor_current_member(p_app uuid, p_actor uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS (
+  SELECT 1 FROM apps a LEFT JOIN orgs o ON o.id=a.org_id
+  WHERE a.id=p_app AND (
+   (a.org_id IS NULL AND a.account_id=p_actor)
+   OR (o.personal_org AND o.personal_owner_account_id=a.account_id AND a.account_id=p_actor)
+   OR (NOT o.personal_org AND EXISTS (SELECT 1 FROM org_memberships m
+      WHERE m.org_id=a.org_id AND m.account_id=p_actor AND m.removed_at IS NULL))
+  )
+ );
+$$;
+
+
+--
 -- Name: issue_event_usage_app_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -42609,24 +42647,6 @@ CREATE TABLE public.issue_team_slack_destinations (
 
 
 --
--- Name: org_memberships; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.org_memberships (
-    org_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    role text NOT NULL,
-    invited_by_account_id uuid,
-    joined_at timestamp with time zone DEFAULT now() NOT NULL,
-    removed_at timestamp with time zone,
-    access_revision bigint NOT NULL,
-    CONSTRAINT org_memberships_access_revision_chk CHECK ((access_revision > 0)),
-    CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
-    CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
-);
-
-
---
 -- Name: issue_application_response_access; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -42641,9 +42661,10 @@ CREATE VIEW public.issue_application_response_access AS
             ELSE i.assignee_team_id
         END AS responsible_team_id,
     route.team_id AS routed_team_id
-   FROM ((((((public.app_issues i
+   FROM (((((((public.app_issues i
      JOIN public.apps a ON (((a.id = i.app_id) AND (a.account_id = i.account_id))))
-     JOIN public.accounts owner ON ((owner.id = a.account_id)))
+     JOIN public.app_resource_accounts owner ON ((owner.app_id = a.id)))
+     LEFT JOIN public.orgs issue_owner_org ON ((issue_owner_org.id = a.org_id)))
      LEFT JOIN public.issue_application_triage tr ON ((tr.issue_id = i.id)))
      LEFT JOIN public.issue_application_slack_policies p ON (((p.app_id = a.id) AND p.enabled)))
      LEFT JOIN LATERAL ( SELECT dst.team_id
@@ -42654,9 +42675,7 @@ CREATE VIEW public.issue_application_response_access AS
                     ELSE i.assignee_team_id
                 END, p.fallback_team_id])) AND (EXISTS ( SELECT 1
                    FROM public.app_issue_team_members member
-                  WHERE ((member.team_id = dst.team_id) AND ((member.account_id = a.account_id) OR (EXISTS ( SELECT 1
-                           FROM public.org_memberships m
-                          WHERE ((m.org_id = a.org_id) AND (m.account_id = member.account_id) AND (m.removed_at IS NULL)))))))))
+                  WHERE ((member.team_id = dst.team_id) AND public.issue_actor_current_member(a.id, member.account_id)))))
           ORDER BY
                 CASE
                     WHEN (dst.team_id =
@@ -42667,12 +42686,10 @@ CREATE VIEW public.issue_application_response_access AS
                     ELSE 1
                 END
          LIMIT 1) route ON (true))
-     JOIN public.accounts actor ON (((actor.id = a.account_id) OR (EXISTS ( SELECT 1
-           FROM public.org_memberships m
-          WHERE ((m.org_id = a.org_id) AND (m.account_id = actor.id) AND (m.removed_at IS NULL)))))))
-  WHERE ((a.deleted_at IS NULL) AND (a.status <> 'deleted'::text) AND (owner.status = 'active'::text) AND (owner.abuse_hold_at IS NULL) AND (NOT (EXISTS ( SELECT 1
+     JOIN public.accounts actor ON (public.issue_actor_current_member(a.id, actor.id)))
+  WHERE ((a.deleted_at IS NULL) AND (a.status <> 'deleted'::text) AND (owner.status = 'active'::text) AND (owner.abuse_hold_at IS NULL) AND ((issue_owner_org.id IS NULL) OR (issue_owner_org.personal_org AND (issue_owner_org.personal_owner_account_id = a.account_id)) OR ((NOT issue_owner_org.personal_org) AND (issue_owner_org.status = 'active'::text) AND (NOT issue_owner_org.deleted_pending) AND (issue_owner_org.abuse_hold_at IS NULL))) AND (NOT (EXISTS ( SELECT 1
            FROM public.issue_group_links gl
-          WHERE (gl.issue_id = i.id)))) AND ((actor.id = a.account_id) OR (actor.id = i.assignee_account_id) OR (EXISTS ( SELECT 1
+          WHERE (gl.issue_id = i.id)))) AND (public.issue_actor_can_manage_tracker(a.id, actor.id) OR (actor.id = a.account_id) OR (actor.id = i.assignee_account_id) OR (EXISTS ( SELECT 1
            FROM public.app_issue_team_members tm
           WHERE ((tm.account_id = actor.id) AND ((tm.team_id = i.assignee_team_id) OR ((tr.escalated_at IS NOT NULL) AND (tm.team_id = tr.escalation_team_id)) OR (tm.team_id = route.team_id)))))));
 
@@ -42974,6 +42991,7 @@ CREATE TABLE public.issue_team_slack_deliveries (
     reminder_id uuid,
     routing_revision bigint DEFAULT 0 NOT NULL,
     routing_rule_key text DEFAULT ''::text NOT NULL,
+    attempt_claim_id uuid,
     CONSTRAINT issue_slack_routing_snapshot CHECK ((((activity_id IS NOT NULL) OR ((routing_revision = 0) AND (routing_rule_key = ''::text))) AND ((routing_rule_key = ''::text) OR (routing_revision > 0)))),
     CONSTRAINT issue_slack_source_check CHECK ((((notification_id IS NOT NULL) AND (activity_id IS NULL) AND (reminder_id IS NULL) AND (application_policy_revision IS NULL) AND (recipient_account_ids IS NULL) AND (assigned_team_id IS NULL) AND (assigned_account_id IS NULL)) OR ((notification_id IS NULL) AND (num_nonnulls(activity_id, reminder_id) = 1) AND (application_policy_revision IS NOT NULL) AND (application_policy_revision > 0) AND (recipient_account_ids IS NOT NULL) AND (cardinality(recipient_account_ids) > 0)))),
     CONSTRAINT issue_team_slack_deliveries_attempt_check CHECK (((attempt >= 0) AND (attempt <= 7))),
@@ -43062,9 +43080,7 @@ CREATE VIEW public.issue_slack_delivery_sources AS
         CASE
             WHEN (d.notification_id IS NOT NULL) THEN ((a.account_id = n.account_id) AND p.enabled AND (n.team_id = dst.team_id) AND (EXISTS ( SELECT 1
                FROM public.app_issue_team_members tm
-              WHERE ((tm.team_id = dst.team_id) AND (tm.account_id = ANY (n.recipient_account_ids)) AND ((tm.account_id = a.account_id) OR (EXISTS ( SELECT 1
-                       FROM public.org_memberships m
-                      WHERE ((m.org_id = a.org_id) AND (m.account_id = tm.account_id) AND (m.removed_at IS NULL)))))))))
+              WHERE ((tm.team_id = dst.team_id) AND (tm.account_id = ANY (n.recipient_account_ids)) AND public.issue_actor_current_member(a.id, tm.account_id)))))
             ELSE (ap.enabled AND ((d.activity_id IS NULL) OR ((d.routing_revision = COALESCE(( SELECT cr.revision
                FROM public.issue_slack_routing_policies cr
               WHERE (cr.app_id = a.id)), (0)::bigint)) AND ((d.routing_rule_key = ''::text) OR (EXISTS ( SELECT 1
@@ -43076,9 +43092,7 @@ CREATE VIEW public.issue_slack_delivery_sources AS
                FROM public.issue_application_triage tr_1
               WHERE ((tr_1.issue_id = i.id) AND (tr_1.snoozed_until > clock_timestamp()))))) AND (EXISTS ( SELECT 1
                FROM public.app_issue_team_members tm
-              WHERE ((tm.team_id = dst.team_id) AND (tm.account_id = ANY (d.recipient_account_ids)) AND ((tm.account_id = a.account_id) OR (EXISTS ( SELECT 1
-                       FROM public.org_memberships m
-                      WHERE ((m.org_id = a.org_id) AND (m.account_id = tm.account_id) AND (m.removed_at IS NULL)))))))))
+              WHERE ((tm.team_id = dst.team_id) AND (tm.account_id = ANY (d.recipient_account_ids)) AND public.issue_actor_current_member(a.id, tm.account_id)))))
         END, false) AS eligible,
     COALESCE(((d.notification_id IS NOT NULL) OR (ap.enabled AND ((d.activity_id IS NULL) OR ((d.routing_revision = COALESCE(( SELECT cr.revision
            FROM public.issue_slack_routing_policies cr
@@ -48584,6 +48598,24 @@ CREATE TABLE public.org_invitations (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT org_invitations_role_chk CHECK ((role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text]))),
     CONSTRAINT org_invitations_state_chk CHECK ((((consumed_at IS NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NOT NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NULL) AND (revoked_at IS NOT NULL))))
+);
+
+
+--
+-- Name: org_memberships; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_memberships (
+    org_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    role text NOT NULL,
+    invited_by_account_id uuid,
+    joined_at timestamp with time zone DEFAULT now() NOT NULL,
+    removed_at timestamp with time zone,
+    access_revision bigint NOT NULL,
+    CONSTRAINT org_memberships_access_revision_chk CHECK ((access_revision > 0)),
+    CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
+    CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
 );
 
 
