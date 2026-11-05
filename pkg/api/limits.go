@@ -15147,6 +15147,11 @@ const (
 	// largest DATA_API_POOL an owner may set.
 	DataAPIDefaultPoolConnections = 2
 	DataAPIMaxPoolConnections     = 8
+	// A pool above the default needs an app of at least this much RAM. The
+	// runtime (Node gateway + PostgREST 14.3) measured 96 MB idle and 151 MB
+	// at peak with the default pool, 197 MB at peak with 8 connections, before
+	// guest overhead: the default fits a 256 MB app, a larger pool does not.
+	DataAPILargePoolMinRAMMB = 512
 	// Read-only connection-budget planning, not SQL quotas or reservations.
 	DataAPIConnectionBudgetMaxDatabases      = 100
 	DataAPIConnectionBudgetMaxBindings       = 1024
@@ -15203,6 +15208,23 @@ const (
 	DataAPIChangeEventsPublishTimeout = 10 * time.Second
 	DataAPIChangeEventsIdleMin        = time.Second
 	DataAPIChangeEventsIdleMax        = 30 * time.Second
+	// Change hook delivery reports, mirrored in the runtime's limits: the
+	// report body bound, the largest count it carries, the clock skew its
+	// times may show, how often a runtime reports a change in delivery and how
+	// often it reports while nothing changes.
+	DataAPIChangeHookReportMaxBytes  = 4 << 10
+	DataAPIChangeHookReportCountMax  = 1_000_000_000_000
+	DataAPIChangeHookReportClockSkew = 5 * time.Minute
+	DataAPIChangeHookReportInterval  = time.Minute
+	DataAPIChangeHookReportHeartbeat = 10 * time.Minute
+	// A drain schedule (a cron the CLI creates) wakes a parked Data API so
+	// changes recorded by other writers publish: each run waits at most
+	// DataAPIChangeHooksDrainWait for the backlog and the cron allows
+	// DataAPIChangeHooksDrainCronTimeout. DataAPIChangeHooksDrainPath is the
+	// runtime route, answered only for platform cron requests.
+	DataAPIChangeHooksDrainWait        = 45 * time.Second
+	DataAPIChangeHooksDrainCronTimeout = 60 * time.Second
+	DataAPIChangeHooksDrainPath        = "/__gregale/hooks/drain"
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

@@ -9233,10 +9233,11 @@ Creates the change event table, its trigger and the enable and disable helpers.
 
 Publish recorded changes as events from the Data API app&#39;s source
 
-`gregale data-api hooks enable [--env <SCOPE>] [--no-restart] <name>`
+`gregale data-api hooks enable [--drain-every <DURATION|off>] [--env <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--drain-every <DURATION|off>` | wake a parked API this often to publish waiting changes (1m-30m dividing an hour, 1h-12h dividing a day, or 24h) |  |
 | `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
@@ -9244,11 +9245,14 @@ Examples:
 
 ```sh
 gregale data-api hooks enable shop-data
+gregale data-api hooks enable shop-data --drain-every 5m
 ```
+
+--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan&#39;s cron limits and each run is app time.
 
 #### data-api hooks status
 
-Show whether change hooks are on and their event source
+Show change hooks, their drain schedule and delivery
 
 `gregale data-api hooks status [--env <SCOPE>] <name>`
 
@@ -9258,7 +9262,7 @@ Show whether change hooks are on and their event source
 
 #### data-api hooks disable
 
-Stop publishing; recorded changes stay in the table
+Stop publishing and remove the drain schedule
 
 `gregale data-api hooks disable [--env <SCOPE>] [--no-restart] <name>`
 
@@ -9489,6 +9493,8 @@ gregale data-api delete shop-data --yes
 ```
 
 Deleting the app alone is refused while its bindings are live.
+
+An API with storage buckets is refused before anything is revoked: delete its buckets first.
 
 ### data-api configure
 
