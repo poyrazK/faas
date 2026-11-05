@@ -819,6 +819,11 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	task, ok := m.appTasks[taskID]
+	if ok && task.Kind == AppTaskKindRelease {
+		if admitted := m.clock().UTC(); admitted.After(startedAt) {
+			startedAt = admitted
+		}
+	}
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
 		m.financialPreviewCommandHeldLocked(task, startedAt) ||
 		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) ||

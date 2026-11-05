@@ -10602,6 +10602,13 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture route policy for %s: %w", dep.ID, err)
 	}
+	retained, err := sqlc.New().ReadRetainedDeploymentOpenAPISnapshot(ctx, tx, mustPgUUID(dep.ID))
+	if err == nil {
+		return OpenAPISnapshot{DeploymentID: dep.ID, AppID: uuidString(retained.AppID), Scope: retained.Scope, Snapshot: retained.Snapshot, SHA256: retained.Sha256, SchemaVersion: int(retained.SchemaVersion), CapturedAt: retained.CapturedAt.Time}, policySnapshot, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read retained deployment contract: %w", err)
+	}
 	var importedDoc []byte
 	err = tx.QueryRow(ctx, `
 		select doc
@@ -10724,6 +10731,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if dep.DeletedAt != nil {
 		return ErrInvalidStateTransition
 	}
+	if err := checkDatabaseSwitchLeaseTx(ctx, tx, dep); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 {
 		if err := deploymentActivationServingMatchesTx(ctx, tx, dep, expectedServingID[0]); err != nil {
 			return err
@@ -10803,6 +10813,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			}
 			return ErrDeploymentSuperseded
 		}
+	}
+	if err := checkPlainRollbackReleasesTx(ctx, tx, dep); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!dep.Kind.RequiresLatestRevision() || dep.Revision <= 0) {
@@ -10970,11 +10983,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
 			// Only traffic-bearing siblings receive a new deadline. Already
 			// retained revisions keep the original cutover deadline.
-			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-				select id, app_id, now() + ($4::integer * interval '1 second')
-				  from deployments
-				 where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
-				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
+			if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
 				return fmt.Errorf("state: retain replaced revisions: %w", err)
 			}
 		}
@@ -12290,6 +12299,12 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if err := lockProjectDeploymentEnvironment(ctx, tx, target.AppID, normalizedDeploymentScope(target.Scope)); err != nil {
 		return Deployment{}, err
 	}
+	if err := checkDatabaseSwitchLeaseTx(ctx, tx, target); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkAppRollbackGraphTx(ctx, tx, appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -12309,6 +12324,10 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	// A target whose layers were reclaimed cannot cold boot; refuse it here
 	// rather than fail its readiness prime later (Hunt 21 H21-1).
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
+
+	if err := preserveRollbackSuccessTx(ctx, tx, target); err != nil {
 		return Deployment{}, err
 	}
 
@@ -12341,6 +12360,9 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 		targetDeploymentID, appID, now))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback update target: %w", err)
+	}
+	if err := persistPlainRollbackReview(ctx, tx, targetDeploymentID); err != nil {
+		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback commit: %w", err)

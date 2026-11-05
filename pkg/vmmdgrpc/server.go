@@ -272,6 +272,9 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// resolvedEgressRefusals rate-limits the refused DNS grant log
+	// (ADR-373). The zero value is ready to use.
+	resolvedEgressRefusals refusalLog
 	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
 	// The zero value is ready to use.
 	hostCPU hostCPUSampler

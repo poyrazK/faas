@@ -337,6 +337,14 @@ type CapSweepSummary struct {
 	PlanExcessScopesShared    int
 	PlanExcessNoticed         int
 	PlanExcessNotifyFailed    int
+
+	// Compute holds (ADR-20261025094915 amendment 2026-11-05): databases
+	// held after the sweep, and the holds it placed, released or only
+	// logged in shadow mode.
+	HeldDatabases int
+	HoldsApplied  int
+	HoldsReleased int
+	HoldsShadowed int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -538,7 +546,9 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		ceiling = 1
 	case ceiling <= 0:
 		summary.Uncapped++
-		return nil
+		// An uncapped subject has nothing to stop: a hold left from
+		// before is released.
+		return e.holdDatabases(ctx, accountID, databases, capHoldNone, nil, summary)
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -589,6 +599,18 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		}
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
+	}
+	// The hold is what stops a database; the quota is a backstop, so a
+	// failed quota write does not skip it.
+	all := capHoldNone
+	switch {
+	case limits.Inactive:
+		all = capHoldInactive
+	case plan.suspended():
+		all = capHoldCeiling
+	}
+	if err := e.holdDatabases(ctx, accountID, databases, all, suspended, summary); err != nil {
+		failures = append(failures, err)
 	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)

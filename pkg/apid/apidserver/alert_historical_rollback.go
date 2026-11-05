@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -33,8 +32,8 @@ func (s *server) queueHistoricalAlertRollback(ctx context.Context, r api.AlertRo
 		}
 		return "failed", problem.Code, nil, nil
 	}
-	if api.ApiContractDiffEnabled() && strings.EqualFold(target.Scope, "prod") {
-		check, err := openapidiff.CheckDeploymentPromotion(ctx, s.store, r.AppID, target.ID, "prod")
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
+		check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, r.AppID, target.ID, r.CandidateDeploymentID, target.Scope)
 		if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 			return "", "", nil, err
 		}
