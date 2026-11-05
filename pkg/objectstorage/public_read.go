@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -67,6 +69,7 @@ type publicReadHandler struct {
 	now                   func() time.Time
 	log                   *slog.Logger
 	mounts                *publicMountCache
+	lookups               singleflight.Group
 	hostLookups           *HostLookupBudget
 	limiters              *publicReadLimiters
 }
@@ -349,10 +352,45 @@ func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string,
 
 // hostMounts resolves host to its servable public buckets, reusing a recent
 // answer (see publicMountTTL). A host that names no app has no mounts.
+//
+// Concurrent misses for one host share one lookup. Each used to read the
+// control plane and spend the new-host budget on its own, so every expiry of a
+// busy host's mounts, and every host after an edge restart, sent one store
+// read per request in flight. The shared lookup runs apart from the request
+// that started it, bounded by api.PublicReadHostLookupTimeout, so one caller's
+// cancellation does not fail the others; each caller still leaves at its own
+// deadline.
 func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]state.ObjectBucket, error) {
+	checkTenant := !strings.HasSuffix(host, "."+h.appsDomain) && h.tenantSurfacesOn()
+	if buckets, ok := h.mounts.get(host, time.Now()); ok && (!checkTenant || len(buckets) == 0) {
+		return buckets, nil
+	}
+	key := host
+	if checkTenant {
+		key = "tenant\x00" + host
+	}
+	shared := h.lookups.DoChan(key, func() (any, error) {
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.PublicReadHostLookupTimeout)
+		defer cancel()
+		return h.resolveHostMounts(lookupCtx, host, checkTenant)
+	})
+	select {
+	case result := <-shared:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		buckets, _ := result.Val.([]state.ObjectBucket)
+		return buckets, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// resolveHostMounts reads host's mounts from the store and caches them. A
+// lookup that finished while this one waited to start is reused.
+func (h *publicReadHandler) resolveHostMounts(ctx context.Context, host string, checkTenant bool) ([]state.ObjectBucket, error) {
 	now := time.Now()
 	cacheKey := host
-	checkTenant := !strings.HasSuffix(host, "."+h.appsDomain) && h.tenantSurfacesOn()
 	var binding *state.PlatformTenantHostBinding
 	if checkTenant {
 		if buckets, ok := h.mounts.get(host, now); ok && len(buckets) == 0 {

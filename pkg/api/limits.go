@@ -3934,6 +3934,12 @@ const (
 	PublicReadWildcardRecoveryPerSecond = 5
 	PublicReadWildcardRecoveryBurst     = 50
 	PublicReadKnownHostsMax             = 100_000
+	// PublicReadHostLookupTimeout bounds one host's mount lookup (app and
+	// buckets). Concurrent misses for a host share that one lookup, so it runs
+	// apart from the request that started it; each waiting request still
+	// leaves at its own deadline. It covers dialing a fresh control-plane
+	// connection from a compute edge.
+	PublicReadHostLookupTimeout = 2 * time.Second
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
