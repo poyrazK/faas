@@ -17,9 +17,9 @@ const savedEnvironmentReviewGuidance = "Both original immutable environments and
 
 func registerSavedPlanResources(s *mcp.Server, m *management) {
 	for _, entry := range []struct{ uri, name string }{{savedDefaultPlanTemplate, "gregale_default_saved_plan_review"}, {savedNamedPlanTemplate, "gregale_named_saved_plan_review"}, {savedEnvironmentPlanTemplate, "gregale_environment_saved_plan_review"}} {
-		description := "Read-only original-plan recovery recipe with exact history/review/check calls. Requires current consent and an unexpired connection-local plan. No fresh baselines, approvals or writes. Cached recipes grant no authority; reread and use guarded tools."
+		description := "Read-only original-plan recovery recipe. Review/check calls require current consent and an unexpired connection-local plan. No fresh baselines, approvals or writes. Cached recipes grant no authority; reread and use guarded tools."
 		if entry.uri != savedEnvironmentPlanTemplate {
-			description += " Retained deployment, explicit request promotion, service/worker rollout and route-budget attempts can provide outcome recovery after expiry, without review/check calls. Follow any observation call returned by the lookup."
+			description += " Retained configuration, scaling, deployment, promotion, rollout and route-budget attempts can provide outcome recovery after expiry, without review/check calls. Follow any observation call returned by the lookup."
 		}
 		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: entry.uri, Name: entry.name, MIMEType: "application/json", Description: description}, m.readSavedPlanResource)
 	}

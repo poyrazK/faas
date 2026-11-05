@@ -2,6 +2,8 @@
 
 - [ADR-20261105181403: Bound outbound work and pace retries without an explicit policy](20261105181403-outbound-reliability-defaults.md)
 
+- [ADR-20261105180352: Preserve PostgreSQL hold ownership and fresh plan lifetimes](20261105180352-managed-postgres-hold-publication-and-plan-lifetimes.md) — durable mirror pins, independent mirror uploads, fresh named plans, and lifecycle-fenced cap holds
+
 - [ADR-20261105150000: A release keeps the previous guest-init while its code is the same, so bases and snapshots survive it](20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md) — proposed; amends ADR-510's consequences: every refusal traced to a release whose guest-init digest differed (26 digests in 12 days); the release ships the previous signed release's guest-init while its code digest (ADR-1650) is the same, guest-init builds with `grpcnotrace`, and a nightly check keeps unreferenced pkg/api changes out of its code; releases that change what the guest runs still retire snapshots (1 of 5 pairs was reusable)
 
 - [ADR-20261105133000: Fence app rollback routing and preserve migration evidence](20261105133000-rollback-routing-ownership-and-evidence-budgets.md)
@@ -2082,6 +2084,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261104212930: MCP live worker receipts and schema snapshots](20261104212930-mcp-live-worker-receipts-and-schema-snapshots.md) — recover native handoffs after log eviction, accept empty previous pools and isolate Zod metadata through Standard Schema snapshots
 - [ADR-20261104220400: MCP subscription setup ownership](20261104220400-mcp-subscription-setup-ownership.md) — reserve pending stream capacity, handle early disconnects and dispose registrations that finish after cancellation
 - [ADR-20261104222700: MCP catalog SDK keys and HTTP framing](20261104222700-mcp-catalog-sdk-keys-and-http-framing.md) — support prototype-property catalog names, honor sample resource replacements and decode bounded Python chunked requests
+- [ADR-20261105104950: MCP subscription output and rejected request framing](20261105104950-mcp-subscription-output-and-rejected-request-framing.md) — bound notification buffers and writes, preserve retry framing after early rejection and classify JSON parser errors
+- [ADR-20261105161206: Durable MCP Task output contracts](20261105161206-mcp-task-output-contracts.md) — preserve accepted handles, await admission validators and validate worker results against the saved schema
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
 - [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)

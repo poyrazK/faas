@@ -6225,6 +6225,91 @@ func (q *Queries) ClaimManagedPostgresBindingRetirement(ctx context.Context, db 
 	return i, err
 }
 
+const claimManagedPostgresComputeHold = `-- name: ClaimManagedPostgresComputeHold :one
+WITH locked AS MATERIALIZED (
+    SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels FROM managed_postgres_databases
+    WHERE id=$9::uuid AND account_id=$10::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=$1::text,
+    lease_until=clock_timestamp()+$2::bigint*interval '1 millisecond'
+FROM locked l WHERE d.id=l.id
+    AND l.state=$3::text AND l.state IN ('ready','failed')
+    AND l.desired_generation=$4::bigint
+    AND l.backend_id=$5::text AND l.backend_fingerprint=$6::text
+    AND l.provider_resource_id=$7::text
+    AND COALESCE(l.data_resource_id,l.provider_resource_id)=$8::text
+    AND (l.lease_until IS NULL OR l.lease_until<=clock_timestamp())
+RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels
+`
+
+type ClaimManagedPostgresComputeHoldParams struct {
+	LeaseToken         string
+	LeaseMilliseconds  int64
+	State              string
+	Generation         int64
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+}
+
+func (q *Queries) ClaimManagedPostgresComputeHold(ctx context.Context, db DBTX, arg ClaimManagedPostgresComputeHoldParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, claimManagedPostgresComputeHold,
+		arg.LeaseToken,
+		arg.LeaseMilliseconds,
+		arg.State,
+		arg.Generation,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.ProviderResourceID,
+		arg.DataResourceID,
+		arg.DatabaseID,
+		arg.AccountID,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+		&i.OrgID,
+		&i.PurgeAfter,
+		&i.RestoreSlotUntil,
+		&i.Labels,
+	)
+	return i, err
+}
+
 const claimManagedPostgresCutover = `-- name: ClaimManagedPostgresCutover :one
 UPDATE managed_postgres_cutovers SET lease_token=$1::text,lease_until=$2::timestamptz,
 attempt_count=least(attempt_count+1,30),updated_at=$3::timestamptz
@@ -70676,20 +70761,22 @@ func (q *Queries) ObjectNotificationInvocationExisting(ctx context.Context, db D
 }
 
 const objectNotificationInvocationInsert = `-- name: ObjectNotificationInvocationInsert :exec
-INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9)
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy,deployment_scope,queue_binding_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9,nullif($10::text,''),$11::uuid)
 `
 
 type ObjectNotificationInvocationInsertParams struct {
-	ID          pgtype.UUID
-	AppID       pgtype.UUID
-	AccountID   pgtype.UUID
-	Source      string
-	QueueName   string
-	Payload     []byte
-	Headers     []byte
-	DueAt       pgtype.Timestamptz
-	RetryPolicy []byte
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	Source          string
+	QueueName       string
+	Payload         []byte
+	Headers         []byte
+	DueAt           pgtype.Timestamptz
+	RetryPolicy     []byte
+	DeploymentScope string
+	QueueBindingID  pgtype.UUID
 }
 
 func (q *Queries) ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error {
@@ -70703,19 +70790,10 @@ func (q *Queries) ObjectNotificationInvocationInsert(ctx context.Context, db DBT
 		arg.Headers,
 		arg.DueAt,
 		arg.RetryPolicy,
+		arg.DeploymentScope,
+		arg.QueueBindingID,
 	)
 	return err
-}
-
-const objectNotificationLockAccount = `-- name: ObjectNotificationLockAccount :one
-SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
-`
-
-func (q *Queries) ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
-	row := db.QueryRow(ctx, objectNotificationLockAccount, id)
-	var plan string
-	err := row.Scan(&plan)
-	return plan, err
 }
 
 const objectNotificationLockApp = `-- name: ObjectNotificationLockApp :one
@@ -70729,6 +70807,32 @@ type ObjectNotificationLockAppParams struct {
 
 func (q *Queries) ObjectNotificationLockApp(ctx context.Context, db DBTX, arg ObjectNotificationLockAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, objectNotificationLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectNotificationLockQueueEnvironment = `-- name: ObjectNotificationLockQueueEnvironment :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=$1::uuid AND e.slug=$2::text
+ AND a.id=$3::uuid AND a.account_id=$4::uuid AND a.status<>'deleted'
+FOR SHARE OF e
+`
+
+type ObjectNotificationLockQueueEnvironmentParams struct {
+	EnvironmentID   pgtype.UUID
+	DeploymentScope string
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationLockQueueEnvironment(ctx context.Context, db DBTX, arg ObjectNotificationLockQueueEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectNotificationLockQueueEnvironment,
+		arg.EnvironmentID,
+		arg.DeploymentScope,
+		arg.AppID,
+		arg.AccountID,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -70779,8 +70883,8 @@ func (q *Queries) ObjectNotificationTargetInReach(ctx context.Context, db DBTX, 
 	return in_reach, err
 }
 
-const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :one
-SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled
+const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :many
+SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2
 `
 
 type ObjectNotificationTargetQueueParams struct {
@@ -70789,16 +70893,41 @@ type ObjectNotificationTargetQueueParams struct {
 	QueueName string
 }
 
-type ObjectNotificationTargetQueueRow struct {
-	ID          pgtype.UUID
-	RetryPolicy []byte
-}
-
-func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) (ObjectNotificationTargetQueueRow, error) {
-	row := db.QueryRow(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
-	var i ObjectNotificationTargetQueueRow
-	err := row.Scan(&i.ID, &i.RetryPolicy)
-	return i, err
+func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error) {
+	rows, err := db.Query(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QueueBinding{}
+	for rows.Next() {
+		var i QueueBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.QueueName,
+			&i.Mode,
+			&i.WorkloadClass,
+			&i.Enabled,
+			&i.MaxConcurrency,
+			&i.RetryPolicy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetiredAt,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
+			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows
@@ -96162,6 +96291,29 @@ UPDATE account_async_quota SET current_inflight=greatest(current_inflight-1,0),u
 func (q *Queries) ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, releaseEnvironmentQueueDeliveryQuota, accountID)
 	return err
+}
+
+const releaseManagedPostgresComputeHold = `-- name: ReleaseManagedPostgresComputeHold :execrows
+WITH locked AS MATERIALIZED (
+    SELECT id,state,lease_token,lease_until FROM managed_postgres_databases
+    WHERE id=$2::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
+FROM locked l WHERE d.id=l.id AND l.lease_token=$1::text
+    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp()
+`
+
+type ReleaseManagedPostgresComputeHoldParams struct {
+	LeaseToken string
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReleaseManagedPostgresComputeHold(ctx context.Context, db DBTX, arg ReleaseManagedPostgresComputeHoldParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseManagedPostgresComputeHold, arg.LeaseToken, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const releaseManagedPostgresCutover = `-- name: ReleaseManagedPostgresCutover :execrows

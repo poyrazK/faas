@@ -204,28 +204,17 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for name, values := range signed.Headers {
 		upstream.Header.Set(name, values)
 	}
-	for _, name := range []string{"Range", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
+	for _, name := range []string{"Range", "If-Range", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
 		if value := r.Header.Get(name); value != "" {
 			upstream.Header.Set(name, value)
 		}
 	}
-	if h.requestMetrics != nil && read == nil {
-		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), policy); err != nil {
-			writePublicReadRefusal(w, err)
-			return
-		}
-	}
-	response, err := h.client.Do(upstream)
-	if err != nil {
-		http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
+	response, read, ok := h.readPublicObject(w, r, upstream, bucket, key, policy, read)
+	if !ok {
 		return
 	}
 	defer func() { _ = response.Body.Close() }() // best effort; the provider response is already accounted
-	if response.StatusCode == http.StatusNotModified {
-		copyPublicObjectHeaders(w.Header(), response.Header)
-		w.Header().Set("Cache-Control", publicCacheControl)
-		w.Header().Del("Content-Disposition")
-		w.WriteHeader(response.StatusCode)
+	if writePublicReadCondition(w, response) {
 		return
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
@@ -236,8 +225,12 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if _, err := ProviderReadEncryption(backend.Provider, backend.Encryption, bucket.AccountID, response.Header); err != nil {
+		http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if _, gcs := backend.Provider.(*GCS); gcs {
-		if _, err := ProviderReadEncryption(backend.Provider, backend.Encryption, bucket.AccountID, response.Header); err != nil || response.Uncompressed {
+		if response.Uncompressed {
 			http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -267,6 +260,34 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.log.Warn("public object egress metric write failed", "bucket_id", bucket.ID)
 		}
 	}
+}
+
+// Conditions describe the selected public representation, not a provider
+// outage. Keep their HTTP status and safe validators, without exposing the
+// provider's XML error body, body framing or private response metadata.
+func writePublicReadCondition(w http.ResponseWriter, response *http.Response) bool {
+	switch response.StatusCode {
+	case http.StatusNotModified:
+		copyPublicObjectHeaders(w.Header(), response.Header)
+		w.Header().Set("Cache-Control", publicCacheControl)
+		w.Header().Del("Content-Disposition")
+	case http.StatusPreconditionFailed, http.StatusRequestedRangeNotSatisfiable:
+		for _, name := range []string{"ETag", "Last-Modified", "Accept-Ranges"} {
+			if value := response.Header.Get(name); value != "" {
+				w.Header().Set(name, value)
+			}
+		}
+		if response.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			if value := response.Header.Get("Content-Range"); value != "" {
+				w.Header().Set("Content-Range", value)
+			}
+		}
+		w.Header().Set("Cache-Control", "no-store")
+	default:
+		return false
+	}
+	w.WriteHeader(response.StatusCode)
+	return true
 }
 
 // admit admits an anonymous read. Under gateway safety with a read admitter

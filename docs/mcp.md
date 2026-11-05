@@ -82,6 +82,9 @@ Only keys with the `agent` scope work here; a deploy key or an admin key is
 refused with a pointer to agent keys. The key's other scopes stand in for the
 consent screen:
 
+The table describes scope eligibility; the selected catalog also controls which
+of those tools are listed.
+
 | Key scope | Tools |
 |---|---|
 | `agent` (always with `apps:read`) | Inspection |
@@ -96,6 +99,24 @@ its next request. The hosted journal preserves completed receipts and resumable 
 for the same key across bridge restarts. Pending upload files are temporary;
 after a restart, inspect deployments and resources before uploading or planning
 again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+
+Hosted agent-key connections use the `core` catalog unless the client sends a
+`Gregale-MCP-Toolsets` header on every MCP request. Select a comma-separated
+catalog such as `core,operate`, `core,diagnose` or `all`:
+
+```sh
+claude mcp add --transport http gregale https://api.gregale.dev/mcp \
+  --header "Authorization: Bearer $GREGALE_AGENT_KEY" \
+  --header "Gregale-MCP-Toolsets: core,operate"
+```
+
+The selection is bounded by the bridge operator's allowed toolsets. Its hosted
+default allows all toolsets to be selected while each connection defaults to
+`core`; an operator can restrict the maximum with `mcp-bridged --tools`.
+Selecting a catalog does not grant key scopes or app access. Requests using the
+same key share one plan journal even when their selected catalogs differ. OAuth
+connections choose their catalog during consent; the agent-key header does not
+change an OAuth grant's selection.
 
 ### Limit a headless agent to one app
 
@@ -252,7 +273,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback (bounded deployment and inspection catalog) |
+| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
@@ -266,8 +287,10 @@ onboarding. Existing connections without a saved selection use `core` when the
 operator permits it, or the operator's narrower selection. An explicitly empty
 selection stays empty.
 Plan receipt and verification tools accompany `core`, `release`, `provision`
-and `operate`. Core also includes `gregale_get_restart` for configuration
-changes that request a restart.
+and `operate`. Core includes saved-plan review, checks and retained action
+history and outcome lookups, as well as `gregale_get_restart` for configuration
+changes that request a restart. These reads use the same connection and app
+consent as other tools; inclusion in the catalog grants no additional access.
 The resource-change apply tool also accompanies `provision`.
 Write tools still need `--allow-writes`. Resources and prompts are always
 listed.
@@ -285,7 +308,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only consent, native operation authorization, release-review/health/operations compatibility and durable-state checks. `operation` is `deploy` (default), `restart`, `scale` or `env_change`; admission is checked separately. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
-| `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort and regression-triage history for one exact app/environment, with keyset continuation. |
+| `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort, configuration, scaling, cron, route-budget and regression-triage history for one exact app/environment, with keyset continuation. |
 | `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
 | `gregale_list_environment_actions` | Connection-local promotion/rollback history for an exact project and target environment; requires consent for both environments and every project workload. |
 | `gregale_get_environment_action` | One environment plan's recorded approval/attempt, redacted promotion reference and recovery guidance; no approval credentials or automatic execution. |
@@ -323,7 +346,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
 | `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
-| `gregale_get_action_outcome` | Read the native durable receipt for a retained route-budget attempt, including after plan expiry; missing evidence stays unresolved. |
+| `gregale_get_action_outcome` | Read supported native receipts for a retained action attempt, including after plan expiry; missing evidence stays unresolved. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
 | `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |
@@ -1951,15 +1974,73 @@ See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
 
 Use `gregale_list_actions` with `app` and optional `project`/`environment` to find
 this connection's recorded image/source deploy, rollback, service/worker rollout,
-service abort, route-budget and regression-triage plans. Use `gregale_get_action`
+service abort, configuration, scaling, cron, route-budget and regression-triage plans. Use `gregale_get_action`
 with the same selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
 separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
-History helpers are available in `operate`, `release` and `diagnose`, or through
-`--tools all`; environment history belongs to `release`. Catalog discovery
-follows the selected toolsets, transport and current grant.
+History helpers are available in `core`, `operate`, `release` and `diagnose`, or through
+`--tools all`; `provision` also includes the action list and action detail reads.
+Environment history belongs to `release`. Catalog discovery follows the selected
+toolsets, transport and current grant.
 `gregale_get_plan` reads an operation receipt; `gregale_get_saved_plan` reviews
-the original proposal.
+the original proposal for supported release actions. Scaling and configuration
+history identify `operation_scale`, `operation_env`, and
+`operation_config_rollback_guarded` actions; their recipes provide outcome
+recovery rather than saved-plan review or applicability checks.
+
+For a new identity-pinned configuration batch, history and its recipe link to
+`gregale_get_action_outcome` even after the plan expires. The lookup reads the
+original native value-free receipt without repeating the batch. It checks the
+original private receipt proof, request, app, scope, environment identity, expected revision and key
+set; it exposes neither variable names nor values. A `verified_receipt` confirms
+the historical configuration commit only. `restart_requested` reports whether
+the original plan requested a restart; `restart_status: not_observed` does not
+claim that restart succeeded or failed. Inspect current configuration, any known
+restart and health independently. Missing, mismatched or expired receipts remain
+unresolved and never prove non-commit.
+
+Retained references contain no replayable request or values and are encrypted
+when durable bridge storage is configured. Native receipt retention and bridge
+history retention have separate clocks. Older unpinned MCP plans and legacy
+named-environment receipts cannot prove the immutable target and do not gain a
+new lookup. Identity-pinned plans require a control plane that understands the
+new batch identity fields; older control planes reject those requests before a
+write. Current read consent and immutable identity checks still apply.
+
+Reviewed configuration rollback plans pin the current revision and immutable
+app and environment identities in the native restore transaction. An intervening
+change is refused rather than overwritten, including for a no-op restore.
+After a lost response, use the retained `operation_config_rollback_guarded`
+action and `gregale_get_action_outcome` to inspect the value-free original
+receipt. Recovery uses current read access and a private proof, never replays
+the restore, and reports the historical configuration revision plus
+`config_changed` to distinguish a restore from a no-op. Secret restoration,
+restart and health remain separate. Missing receipts remain unresolved.
+Older MCP rollback plans without native guards cannot be applied by this bridge.
+An older bridge fails closed on new guarded plans, and an older control plane
+rejects the new request fields before writing. See
+[ADR-20261105152500](adr/20261105152500-management-mcp-reviewed-config-rollback.md).
+
+Cron history records the exact cron ID and whether the bridge received a
+successful response or the original attempt remains unknown. It omits the
+cron schedule, path and review reason. A successful response is historical;
+it does not prove the cron's current state or completion of already-running
+work. Legacy delete receipts that predate the missing-cron safeguard remain
+unknown. History never repeats a cron write, and it cannot recover a native
+receipt that does not yet exist.
+
+For an attempted scaling plan, the retained `recovery.outcome` call checks the
+original native scaling receipt after plan expiry, and after a bridge restart when
+durable storage is configured.
+It verifies the immutable app/environment, request identity, reviewed revision
+and resulting settings. A `verified_receipt` confirms that configuration commit
+only; follow its `gregale_get_app` observation to inspect current configuration
+and check runtime health separately. Missing or mismatched receipts remain
+`unresolved` and do not prove non-commit. The reference contains a settings digest,
+not a replayable request; durable storage encrypts it. Recovery never changes configuration,
+renews the plan or authorizes a retry. Retention and current read consent apply.
+Scaling plans and applies are in the `operate` toolset; the recovery reads also
+accompany `core`.
 
 Use `gregale_get_saved_plan` with the same app/project/environment selector and
 `plan_id` to reopen the original unexpired proposal. Environment promotion and
@@ -2467,7 +2548,14 @@ are excluded; catalog state does not prove connectivity or runtime readiness.
 Use `gregale_plan_cron_change` to update or delete an exact cron, or
 `gregale_plan_domain_removal` to detach a domain. Apply with
 `gregale_apply_operation`; changed resource ownership/configuration refuses
-the old plan. Native policies remain authoritative.
+the old plan when the bridge observes the change before sending the write.
+The native cron mutation does not yet check that reviewed state atomically;
+concurrent edits can still race with an apply. After an interrupted cron update
+or deletion, inspect the exact cron and its native audit trail rather than
+repeating the write. A missing cron alone does not establish which actor
+deleted it. Native policies remain authoritative. The proposed native guard
+and resumable deletion design is tracked in
+[ADR-20261105161908](adr/20261105161908-reviewed-cron-mutation-recovery.md).
 
 For long provisioning, pass `async: true` to `gregale_apply_provision`. It
 returns a `plan_id` immediately. Poll `gregale_get_provision`, or request
@@ -3297,6 +3385,20 @@ Replacing the sample `customer_record` resource uses the supplied URI/template,
 handler and completion callbacks. Custom handlers enforce ownership of their
 application data; the original sample retains its own ownership checks.
 
+Custom tool arguments are validated against the declared `inputSchema` before
+the handler runs or a task is queued. Validation leaves argument values and
+defaults unchanged. Go supports Draft 7 and 2020-12 schemas; Python uses
+`jsonschema` (2020-12 by default). Local schema references work without network
+access. Go rejects unresolved external references at registration; Python
+rejects calls requiring external retrieval. Handlers enforce business rules
+and ownership. A custom tool handler's successful result must include
+`structuredContent` matching its declared `outputSchema`. Error results with
+`isError: true` and intermediate `input_required` responses may omit structured
+output. Both schemas are checked before
+catalog registration or replacement, and invalid output is returned as a
+redacted tool error. Node uses the SDK's resource-template matcher for both reads
+and subscriptions, including parameter names such as `{item.id}`.
+
 For a serving guard against catalog drift, set the same
 `MCP_CATALOG_EXPECTED_SHA256` environment value on every serving replica. Start
 one instance without the pin and read `catalog_sha256` from `/healthz`, then
@@ -3494,6 +3596,10 @@ The CLI sends form responses only after an explicit opt-in and bounds the
 number and size of requests it handles. Calls without either input option keep
 the existing single-request behavior.
 
+Consent forms with `properties: {}` are supported in interactive calls and Task
+input requests. They still require an explicit response; accepting an empty form
+uses `"action": "accept", "content": {}`.
+
 ## MCP Tasks
 
 Gregale's Go client supports the `io.modelcontextprotocol/tasks` extension, and
@@ -3502,6 +3608,29 @@ tools. Tasks use the modern `2026-07-28` protocol. Each starter includes
 `build_report`, a safe example that returns a task handle for opted-in clients
 when durable tasks are enabled. Other calls stay synchronous. The server
 returns the handle only after PostgreSQL can read the new row.
+
+For tools declaring `outputSchema`, each starter saves a JSON snapshot with the
+task at admission. Workers check final successful `structuredContent` against
+that original contract, including after retry, input pause, worker restart or
+catalog replacement. Invalid output fails with a redacted error and is not saved
+as a successful result. Tool results marked `isError: true` may omit structured
+output. Node also awaits asynchronous task validators before persistence and
+keeps handle delivery separate from final output validation.
+
+The Go worker also catches panics raised by application Task executors and records
+a generic terminal failure without logging the panic value. Cancellation,
+shutdown and lease ownership checks still apply, and the worker can process
+subsequent Tasks.
+
+Existing Task databases require an explicit starter migration to add the nullable
+`output_schema` JSONB column, even if schema version 1 is installed: use
+`npm run tasks:migrate -- apply`, `go run . tasks-migrate apply`, or
+`python task_schema.py apply` with the migration binding. Migrate first, then
+upgrade and drain all older workers before deploying producers that rely on the
+contract check; old workers ignore this metadata. Tasks without a saved schema
+retain their prior behavior. Schemas contain reviewed catalog metadata in
+plaintext; task payload encryption is unchanged. See
+[the Task output-contract decision](adr/20261105161206-mcp-task-output-contracts.md).
 
 The Go and Python starters support durable enqueue, worker execution, task
 status reads, cancellation, encrypted client input through `tasks/update`, the
@@ -3683,6 +3812,10 @@ the worker then replays the handler from its beginning with the saved responses
 available under the same keys. Request and response payloads are encrypted
 with the task key, and request keys cannot be reused for a different prompt.
 The original client must have declared support for each embedded request type.
+An `elicitation/create` request without `params.mode` uses form mode in all three
+starters and requires the client's form elicitation capability. Explicit modes
+must be `form` or `url`. Requests retain their original shape when persisted so
+the same handler request can replay after the client responds.
 Keep handlers idempotent because worker recovery can also replay them after a
 crash.
 
@@ -3701,6 +3834,19 @@ and Python starters also compare catalogs on a bounded poll, so a missed hint
 is recovered within five seconds (or the configured task poll interval when
 longer). A snapshot poll also recovers missed task notifications and listener
 reconnects. Active streams and watched task IDs are capped per process.
+
+Node also caps pending setup messages and socket output at 1 MiB each. It closes
+a stream on overflow or when backpressure persists for 15 seconds; later events
+cannot extend that deadline. Go bounds each subscription write and flush,
+including keepalive comments, by 15 seconds or the remaining verified token
+lifetime. Idle streams retain their normal lifetime. Clients can reconnect for
+fresh task snapshots and refetch resource contents after a stream closes.
+
+Python closes the HTTP connection when rejecting a POST before reading its body,
+so a subsequent retry starts on a clean connection. Successful requests preserve
+normal HTTP keepalive. Node reports malformed JSON as HTTP 400 with JSON-RPC
+parse error `-32700`, and bodies over 1 MiB as HTTP 413 with `request_too_large`;
+neither response includes submitted content.
 
 Each starter exposes a resource update publisher for application-owned changes:
 Node returns `notifyResourceUpdated(uri)` from `createApp`, Go provides
@@ -3959,6 +4105,25 @@ entries missing from it; `{}` hides and denies every entry of that catalog
 type. Null maps and scope arrays fail configuration validation. Open mode
 accepts only empty scope arrays. The generated public starter lists its
 harmless entries explicitly.
+
+Provider JWKs must permit signature verification: when `key_ops` is present,
+it must contain `verify`. Encryption-only or signing-only keys cannot validate
+access tokens. Failed JWKS refreshes have a 30-second cooldown in every starter,
+including HTTP, network and malformed-response failures. A still-fresh cached
+verification key remains usable during the cooldown; expired keys are not used.
+JWKS responses are limited to 1 MiB in every starter. Refreshes have a total
+five-second deadline, including body reads. Python coalesces concurrent
+refreshes, discards results arriving after the deadline, and verifies tokens
+with fresh cached keys while a refresh is pending.
+Go likewise coalesces refreshes without holding the cache lock during network
+I/O, so fresh cached keys remain usable while a rotation refresh is pending.
+The token algorithm must also match a JWK's declared `alg`. Without a JWT
+`kid`, selection requires exactly one key eligible for that algorithm, key
+type, purpose and operation; ambiguous key sets are rejected. A mixed RSA/EC
+key set can provide one eligible key for each supported algorithm.
+The OAuth provider doctor's signing-key check applies the same `key_ops`
+requirement and does not count encryption-only or malformed-operation keys
+as usable verification keys.
 
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
@@ -4606,8 +4771,8 @@ explanation instead of being interpreted as zero work. Queue explanations includ
 `unsupported_handler`, `no_active_workers`, and `idle_queue`.
 
 Workers register their supported tool/handler-version pairs in
-`gregale_mcp_task_workers`. Heartbeats refresh at a bounded cadence (20–30 seconds,
-depending on polling), expire after 90 seconds using database time, and are
+`gregale_mcp_task_workers` in all three starters. Heartbeats refresh at a bounded cadence (10–30 seconds,
+depending on the runtime and polling), expire after 90 seconds using database time, and are
 withdrawn when a worker stops accepting work. Worker registrations describe
 availability to claim work; they are not a guarantee that a handler succeeds.
 Expired registrations do not participate in inventory and are pruned by workers.
@@ -4615,6 +4780,15 @@ The observer reads this table without writing registrations or migrating schema.
 Run `npm run tasks:migrate -- apply` with migration credentials before
 starting an upgraded observer. Include read access to the worker registry in any
 observer database grants, and upgrade every worker so the inventory is complete.
+
+For Go and Python upgrades, run their explicit `tasks-migrate apply` command
+before deploying the new runtime, even when the native schema marker is already
+version 1. This creates the shared worker registry used by the complete health
+gauges. Runtime worker roles need `SELECT`, `INSERT`, `UPDATE` and `DELETE` on
+`gregale_mcp_task_workers`; observer roles need only `SELECT` on that table.
+Native workers mark themselves draining before withdrawing handler availability,
+retain their drain registration through the configured drain deadline, and remove
+it when stopping. Late local heartbeats cannot reactivate the worker.
 
 `mcp_tasks_active_workers` counts unexpired registrations.
 `mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and

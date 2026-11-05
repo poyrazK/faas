@@ -120,7 +120,9 @@ func TestMCPAppAgentCredentials(t *testing.T) {
 		for _, tool := range listed.Tools {
 			catalog[tool.Name] = true
 		}
-		if !catalog["gregale_plan_env_change"] || !catalog["gregale_get_plan"] || !catalog["gregale_verify_plan"] || !catalog["gregale_get_restart"] || catalog["gregale_get_trace"] || catalog["gregale_plan_deploy"] {
+		if !catalog["gregale_plan_env_change"] || !catalog["gregale_get_plan"] || !catalog["gregale_verify_plan"] || !catalog["gregale_get_restart"] ||
+			!catalog["gregale_get_saved_plan"] || !catalog["gregale_check_plan"] || !catalog["gregale_list_actions"] || !catalog["gregale_get_action"] || !catalog["gregale_get_action_outcome"] ||
+			catalog["gregale_get_trace"] || catalog["gregale_plan_deploy"] {
 			t.Fatal("hosted default catalog was not core")
 		}
 		call := func(name string, args map[string]any) map[string]any {
@@ -135,6 +137,52 @@ func TestMCPAppAgentCredentials(t *testing.T) {
 			}
 			return object(t, raw)
 		}
+		actions := call("gregale_list_actions", map[string]any{"app": slug, "limit": 1})
+		if items, ok := actions["items"].([]any); !ok || len(items) != 0 {
+			t.Fatal("new app-bound connection did not return its empty action history")
+		}
+		supported, ok := actions["supported_actions"].([]any)
+		scaling := false
+		for _, action := range supported {
+			if action == "operation_scale" {
+				scaling = true
+			}
+		}
+		if !ok || !scaling {
+			t.Fatal("default action history did not advertise scaling recovery")
+		}
+		operationsClient := &http.Client{Transport: journeyAgentBearer{token: token, toolsets: "operate"}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		operations, err := mcp.NewClient(&mcp.Implementation{Name: "gregale-journeys-operate", Version: "1"}, nil).Connect(ctx,
+			&mcp.StreamableClientTransport{Endpoint: tg.api + "/mcp", HTTPClient: operationsClient, DisableStandaloneSSE: true}, nil)
+		if err != nil {
+			t.Fatalf("operations MCP connect: %v", err)
+		}
+		defer func() { _ = operations.Close() }()
+		operationTools, err := operations.ListTools(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundScale := false
+		for _, tool := range operationTools.Tools {
+			if tool.Name == "gregale_plan_scale" {
+				foundScale = true
+			}
+		}
+		if !foundScale {
+			t.Fatal("agent key could not select the operations catalog")
+		}
+		scale, err := operations.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_plan_scale", Arguments: map[string]any{"app": slug, "reason": "journey catalog selection", "ram_mb": 512}})
+		if err != nil || scale.IsError {
+			t.Fatalf("operations catalog scale plan: %v", err)
+		}
+		rawScale, err := json.Marshal(scale.StructuredContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scaleID := str(object(t, rawScale), "plan_id")
+		if scaleID == "" || str(call("gregale_get_plan", map[string]any{"plan_id": scaleID}), "plan_id") != scaleID {
+			t.Fatal("catalog selections did not share the original plan")
+		}
 		plan := call("gregale_plan_env_change", map[string]any{"app": slug, "reason": "journey configuration", "values": map[string]string{"LOG_LEVEL": "debug", "FEATURE_MODE": "journey"}})
 		id := str(plan, "plan_id")
 		if id == "" || strings.Contains(compact(plan), "debug") {
@@ -143,6 +191,10 @@ func TestMCPAppAgentCredentials(t *testing.T) {
 		first := call("gregale_apply_env_change", map[string]any{"plan_id": id})
 		if str(first, "verification.status") != "not_required" || str(first, "verification.goal") != "configuration_commit" {
 			t.Fatal("configuration-only receipt confused commit with runtime readiness")
+		}
+		outcome := call("gregale_get_action_outcome", map[string]any{"app": slug, "plan_id": id})
+		if str(outcome, "outcome") != "verified_receipt" || str(outcome, "restart_status") != "not_requested" || strings.Contains(compact(outcome), "debug") || strings.Contains(compact(outcome), "LOG_LEVEL") {
+			t.Fatal("configuration outcome did not preserve value-free commit and restart semantics")
 		}
 		replayed := call("gregale_apply_env_change", map[string]any{"plan_id": id})
 		if compact(first) != compact(replayed) {
@@ -173,6 +225,23 @@ func TestMCPAppAgentCredentials(t *testing.T) {
 		failure := object(t, raw)
 		if str(failure, "outcome") != "refused" || str(failure, "recovery.action") != "replan" || str(failure, "recovery.tool") != "gregale_plan_env_change" {
 			t.Fatal("stale batch omitted deterministic recovery")
+		}
+		rollback, err := operations.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_plan_config_rollback", Arguments: map[string]any{"app": slug, "revision": int64(num(first, "result.revision")), "reason": "journey reviewed rollback"}})
+		if err != nil || rollback.IsError {
+			t.Fatalf("reviewed rollback plan: %v", err)
+		}
+		raw, err = json.Marshal(rollback.StructuredContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rollbackID := str(object(t, raw), "plan_id")
+		applied, err := operations.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_apply_operation", Arguments: map[string]any{"plan_id": rollbackID}})
+		if err != nil || applied.IsError {
+			t.Fatalf("reviewed rollback apply: %v", err)
+		}
+		rollbackOutcome := call("gregale_get_action_outcome", map[string]any{"app": slug, "plan_id": rollbackID})
+		if str(rollbackOutcome, "outcome") != "verified_receipt" || strings.Contains(compact(rollbackOutcome), "FEATURE_MODE") || strings.Contains(compact(rollbackOutcome), "debug") {
+			t.Fatal("rollback outcome omitted its value-free receipt")
 		}
 	})
 	s.check("connection_revocation", func(t *testing.T) {
@@ -259,10 +328,13 @@ func TestMCPPostWriteVerification(t *testing.T) {
 	}
 }
 
-type journeyAgentBearer struct{ token string }
+type journeyAgentBearer struct{ token, toolsets string }
 
 func (b journeyAgentBearer) RoundTrip(req *http.Request) (*http.Response, error) {
 	copyReq := req.Clone(req.Context())
 	copyReq.Header.Set("Authorization", "Bearer "+b.token)
+	if b.toolsets != "" {
+		copyReq.Header.Set("Gregale-MCP-Toolsets", b.toolsets)
+	}
 	return http.DefaultTransport.RoundTrip(copyReq)
 }

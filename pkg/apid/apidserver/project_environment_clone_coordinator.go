@@ -120,7 +120,10 @@ func cloneCoordinatorRetryDelay(attempt int32) time.Duration {
 }
 
 func cloneCoordinatorErrorCode(err error) string {
+	var copySize *objectstorage.SnapshotCopySizeError
 	switch {
+	case errors.As(err, &copySize):
+		return state.CloneFailureObjectCopySize
 	case errors.Is(err, errCloneCheckpointUnavailable):
 		return "data_checkpoint_unavailable"
 	case errors.Is(err, errCloneCompensationUnavailable):

@@ -24,6 +24,13 @@ class EnvBatchRequest:
 
     request_id: UUID
     expected_revision: int
+    expected_app_id: UUID | Unset = UNSET
+    """Optional immutable app identity; required when expected_environment_id is supplied."""
+    expected_environment_id: UUID | Unset = UNSET
+    """Immutable named-environment identity for an identity-pinned batch; omit for the default scope."""
+    receipt_proof: str | Unset = UNSET
+    """Optional private random proof required to read this batch receipt; never returned in a receipt. Requires
+    expected_app_id."""
     values: EnvBatchRequestValues | Unset = UNSET
     """Non-secret variable values to set, omitted from receipts."""
     delete: list[str] | Unset = UNSET
@@ -32,6 +39,16 @@ class EnvBatchRequest:
         request_id = str(self.request_id)
 
         expected_revision = self.expected_revision
+
+        expected_app_id: str | Unset = UNSET
+        if not isinstance(self.expected_app_id, Unset):
+            expected_app_id = str(self.expected_app_id)
+
+        expected_environment_id: str | Unset = UNSET
+        if not isinstance(self.expected_environment_id, Unset):
+            expected_environment_id = str(self.expected_environment_id)
+
+        receipt_proof = self.receipt_proof
 
         values: dict[str, Any] | Unset = UNSET
         if not isinstance(self.values, Unset):
@@ -49,6 +66,12 @@ class EnvBatchRequest:
                 "expected_revision": expected_revision,
             }
         )
+        if expected_app_id is not UNSET:
+            field_dict["expected_app_id"] = expected_app_id
+        if expected_environment_id is not UNSET:
+            field_dict["expected_environment_id"] = expected_environment_id
+        if receipt_proof is not UNSET:
+            field_dict["receipt_proof"] = receipt_proof
         if values is not UNSET:
             field_dict["values"] = values
         if delete is not UNSET:
@@ -65,6 +88,22 @@ class EnvBatchRequest:
 
         expected_revision = d.pop("expected_revision")
 
+        _expected_app_id = d.pop("expected_app_id", UNSET)
+        expected_app_id: UUID | Unset
+        if isinstance(_expected_app_id, Unset):
+            expected_app_id = UNSET
+        else:
+            expected_app_id = UUID(_expected_app_id)
+
+        _expected_environment_id = d.pop("expected_environment_id", UNSET)
+        expected_environment_id: UUID | Unset
+        if isinstance(_expected_environment_id, Unset):
+            expected_environment_id = UNSET
+        else:
+            expected_environment_id = UUID(_expected_environment_id)
+
+        receipt_proof = d.pop("receipt_proof", UNSET)
+
         _values = d.pop("values", UNSET)
         values: EnvBatchRequestValues | Unset
         if isinstance(_values, Unset):
@@ -77,6 +116,9 @@ class EnvBatchRequest:
         env_batch_request = cls(
             request_id=request_id,
             expected_revision=expected_revision,
+            expected_app_id=expected_app_id,
+            expected_environment_id=expected_environment_id,
+            receipt_proof=receipt_proof,
             values=values,
             delete=delete,
         )

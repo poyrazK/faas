@@ -49,7 +49,7 @@ func TestComputeHoldUsesPinnedDataset(t *testing.T) {
 	}
 	database := Database{ID: "database", State: StateReady, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
 		ProviderResourceID: "project", DataResourceID: "project/pinned"}
-	enforcer := &CapEnforcer{registry: registry, mode: CapEnforcementOn, logger: slog.Default()}
+	enforcer := &CapEnforcer{store: &capTestStore{databases: []Database{database}}, registry: registry, mode: CapEnforcementOn, logger: slog.Default()}
 	for _, hold := range []bool{true, false} {
 		reason := capHoldNone
 		if hold {

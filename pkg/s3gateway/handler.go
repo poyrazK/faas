@@ -356,6 +356,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if presigned && applyPresignedObjectHeaders(r) != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The signed object request fields are invalid or ambiguous.", r.URL.Path, requestID)
+		return
+	}
 	if h.accountLimiter != nil && !h.accountLimiter.Allow(bucket) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, requestID)
 		return

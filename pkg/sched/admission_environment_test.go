@@ -265,6 +265,37 @@ func TestSeedLedgerDoesNotDowngradeTransientOwnershipFailure(t *testing.T) {
 	}
 }
 
+func TestDeletedEnvironmentParkRetainsCapacityUntilDestroyConfirmed(t *testing.T) {
+	f := sched.SeedStageSnapshotPolicy(t, 0, false)
+	ins, err := (*f.Store()).CreateInstance(t.Context(), (*f.App()).ID, (*f.Stage()).ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyErr := errors.New("vmmd retirement unconfirmed")
+	vmm := &sched.FakeVMM{}
+	*vmm.DestroyErr() = destroyErr
+	engine := sched.XNewEngine(t, (*f.Store()), vmm, &sched.FakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.RecreateStage(t.Context(), t)
+	if err := engine.Park(t.Context(), ins.ID); !errors.Is(err, destroyErr) {
+		t.Fatalf("park hid uncertain retirement: %v", err)
+	}
+	current, err := (*f.Store()).InstanceByID(t.Context(), ins.ID)
+	if err != nil || !state.IsLive(current.State) || (*engine.XLedger()).ResidentRAM() != 256+api.PerVMOverheadMB {
+		t.Fatalf("uncertain retirement released live capacity: %+v %v", current, err)
+	}
+	*vmm.DestroyErr() = nil
+	if err := engine.Park(t.Context(), ins.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err = (*f.Store()).InstanceByID(t.Context(), ins.ID)
+	if err != nil || state.IsLive(current.State) || (*engine.XLedger()).ResidentRAM() != 0 {
+		t.Fatalf("confirmed retirement retained capacity: %+v %v", current, err)
+	}
+}
+
 func TestEnvironmentLedgerRecoveryRecordsOverCapServingRows(t *testing.T) {
 	ledger := sched.NewNodeLedger()
 	for i, id := range []string{"first", "second", "third"} {

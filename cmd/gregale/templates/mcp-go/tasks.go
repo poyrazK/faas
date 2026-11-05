@@ -194,6 +194,7 @@ type durableMCPTask struct {
 	InputRequests  map[string]any
 	Result         any
 	Error          any
+	OutputSchema   json.RawMessage
 }
 
 type taskInputState struct {
@@ -235,6 +236,7 @@ type mcpTaskRuntime struct {
 	executionCancel          context.CancelFunc
 	closeOnce                sync.Once
 	workerID                 string
+	workerRegistryMu         sync.Mutex
 	deploymentID             string
 	rewrapCancel             context.CancelFunc
 	rewrapDone               chan struct{}
@@ -500,6 +502,13 @@ func (runtime *mcpTaskRuntime) beginDrain() {
 	if runtime.cancel != nil {
 		runtime.cancel()
 	}
+	if runtime.pool != nil && runtime.workerID != "" && runtime.cancel != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := runtime.markWorkerDraining(ctx); err != nil {
+			log.Printf("MCP task worker drain registration failed")
+		}
+		cancel()
+	}
 	log.Printf("MCP task drain started: active=%d deadline=%s", count, runtime.drainStarted.Add(runtime.drainTimeout).UTC().Format(time.RFC3339))
 }
 
@@ -575,6 +584,11 @@ func (runtime *mcpTaskRuntime) close() {
 			runtime.rewrapCancel()
 			<-runtime.rewrapDone
 		}
+		if runtime.cancel != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = runtime.removeWorkerRegistration(ctx)
+			cancel()
+		}
 		runtime.pool.Close()
 	})
 }
@@ -585,6 +599,9 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, taskTable); err != nil {
 		return err
 	}
@@ -609,6 +626,7 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			tool_name text NOT NULL, handler_version text NOT NULL, arguments_encrypted bytea NOT NULL,
 			status text NOT NULL CHECK (status IN ('queued','running','input_required','completed','cancelled','failed')),
 			result_encrypted bytea, error_encrypted bytea, input_state_encrypted bytea,
+			output_schema jsonb CHECK(output_schema IS NULL OR jsonb_typeof(output_schema)='object'),
 			input_methods text[] NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
 			updated_at timestamptz NOT NULL DEFAULT clock_timestamp(), expires_at timestamptz NOT NULL,
 			attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0), resume_pending boolean NOT NULL DEFAULT false,
@@ -621,6 +639,7 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}',
 			ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false,
 			ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz`,
+		`ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK(output_schema IS NULL OR jsonb_typeof(output_schema)='object')`,
 		`ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check`,
 		`ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check
 			CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))`,
@@ -640,6 +659,7 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE gregale_mcp_task_worker_handlers ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx ON gregale_mcp_task_worker_handlers(namespace,tool_name,handler_version,heartbeat_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx ON gregale_mcp_task_worker_handlers(namespace,heartbeat_at)`,
+		mcpTaskWorkerRegistrySchema,
 		`CREATE OR REPLACE FUNCTION gregale_mcp_task_notify_change() RETURNS trigger
 			LANGUAGE plpgsql AS $$
 			BEGIN
@@ -873,7 +893,7 @@ func (runtime *mcpTaskRuntime) decrypt(value []byte, taskID, field string, out a
 	return json.Unmarshal(plain, out)
 }
 
-func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map[string]any, identity *authContext, clientCapabilities map[string]any) (map[string]any, error) {
+func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map[string]any, identity *authContext, clientCapabilities map[string]any, outputSchemas ...map[string]any) (map[string]any, error) {
 	runtime.drainMu.Lock()
 	draining := !runtime.drainStarted.IsZero()
 	runtime.drainMu.Unlock()
@@ -889,6 +909,17 @@ func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map
 	}
 	if err := registered.definition.Validate(args); err != nil {
 		return nil, err
+	}
+	var outputSchema any
+	if len(outputSchemas) > 0 && outputSchemas[0] != nil {
+		if _, err := compileMCPToolSchema(map[string]any{"outputSchema": outputSchemas[0]}, "outputSchema"); err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(outputSchemas[0])
+		if err != nil {
+			return nil, errors.New("invalid MCP Task output schema")
+		}
+		outputSchema = string(encoded)
 	}
 	id, err := newTaskUUID()
 	if err != nil {
@@ -922,9 +953,9 @@ func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map
 		return nil, errors.New("MCP task queue capacity reached; retry after outstanding tasks finish")
 	}
 	var created, updated, expires time.Time
-	err = tx.QueryRow(ctx, `INSERT INTO gregale_mcp_tasks(namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,input_methods,status,expires_at)
-		VALUES($1,$2::uuid,$3,$4,$5,$6,$7::text[],'queued',clock_timestamp()+($8::double precision*interval '1 millisecond'))
-		RETURNING created_at,updated_at,expires_at`, runtime.namespace, id, owner, name, registered.definition.Version, encoded, inputMethods, runtime.ttl.Milliseconds()).Scan(&created, &updated, &expires)
+	err = tx.QueryRow(ctx, `INSERT INTO gregale_mcp_tasks(namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,input_methods,status,expires_at,output_schema)
+		VALUES($1,$2::uuid,$3,$4,$5,$6,$7::text[],'queued',clock_timestamp()+($8::double precision*interval '1 millisecond'),$9::jsonb)
+		RETURNING created_at,updated_at,expires_at`, runtime.namespace, id, owner, name, registered.definition.Version, encoded, inputMethods, runtime.ttl.Milliseconds(), outputSchema).Scan(&created, &updated, &expires)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,6 +1084,14 @@ func outstandingTaskInputRequests(state taskInputState) map[string]any {
 	return requests
 }
 
+func taskElicitationMode(params map[string]any) string {
+	if _, present := params["mode"]; !present {
+		return "form"
+	}
+	mode, _ := params["mode"].(string)
+	return mode
+}
+
 func validateTaskInputRequests(requests map[string]any) error {
 	if len(requests) < 1 || len(requests) > 64 {
 		return errors.New("MCP task input request batches must contain between 1 and 64 requests")
@@ -1071,7 +1110,7 @@ func validateTaskInputRequests(requests map[string]any) error {
 			return errors.New("MCP task input requests must use a supported server-to-client MCP method")
 		}
 		if method == "elicitation/create" {
-			mode, _ := params["mode"].(string)
+			mode := taskElicitationMode(params)
 			if mode != "form" && mode != "url" {
 				return errors.New("MCP elicitation task requests must declare form or url mode")
 			}
@@ -1092,7 +1131,7 @@ func (runtime *mcpTaskRuntime) requestTaskInputs(ctx context.Context, task *dura
 		method, _ := request["method"].(string)
 		capability := method
 		if method == "elicitation/create" {
-			capability += ":" + request["params"].(map[string]any)["mode"].(string)
+			capability += ":" + taskElicitationMode(request["params"].(map[string]any))
 		}
 		if !containsString(task.InputMethods, capability) {
 			return nil, false, fmt.Errorf("MCP task client did not declare support for %s", method)
@@ -1437,6 +1476,7 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 		}
 		if time.Since(lastCapabilityCleanup) >= time.Hour {
 			_, _ = runtime.pool.Exec(ctx, `DELETE FROM gregale_mcp_task_worker_handlers WHERE namespace=$1 AND heartbeat_at<clock_timestamp()-interval '1 day'`, runtime.namespace)
+			_, _ = runtime.pool.Exec(ctx, `DELETE FROM gregale_mcp_task_workers WHERE namespace=$1 AND expires_at<=clock_timestamp() AND NOT draining`, runtime.namespace)
 			lastCapabilityCleanup = time.Now()
 		}
 		for ctx.Err() == nil && len(semaphore) < cap(semaphore) {
@@ -1477,6 +1517,14 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 }
 
 func (runtime *mcpTaskRuntime) heartbeatWorkerCapabilities(ctx context.Context) error {
+	runtime.workerRegistryMu.Lock()
+	defer runtime.workerRegistryMu.Unlock()
+	runtime.drainMu.Lock()
+	draining := !runtime.drainStarted.IsZero()
+	runtime.drainMu.Unlock()
+	if draining {
+		return nil
+	}
 	if len(runtime.taskExecutors) == 0 {
 		return nil
 	}
@@ -1486,14 +1534,35 @@ func (runtime *mcpTaskRuntime) heartbeatWorkerCapabilities(ctx context.Context) 
 		toolNames = append(toolNames, handler.toolName)
 		handlerVersions = append(handlerVersions, handler.version)
 	}
-	_, err := runtime.pool.Exec(ctx, `
+	tx, err := runtime.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	handlers := make([]map[string]string, 0, len(toolNames))
+	for index, name := range toolNames {
+		handlers = append(handlers, map[string]string{"name": name, "version": handlerVersions[index]})
+	}
+	encoded, err := json.Marshal(handlers)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO gregale_mcp_task_workers(namespace,worker_id,handlers,heartbeat_at,expires_at)
+		VALUES($1,$2::uuid,$3::jsonb,clock_timestamp(),clock_timestamp()+interval '90 seconds')
+		ON CONFLICT(namespace,worker_id) DO UPDATE SET handlers=EXCLUDED.handlers,heartbeat_at=EXCLUDED.heartbeat_at,expires_at=EXCLUDED.expires_at`, runtime.namespace, runtime.workerID, encoded); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
 		INSERT INTO gregale_mcp_task_worker_handlers(namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at)
 		SELECT $1,$2::uuid,handler.tool_name,handler.handler_version,$5,clock_timestamp()
 		  FROM unnest($3::text[],$4::text[]) AS handler(tool_name,handler_version)
 		ON CONFLICT (namespace,worker_id,tool_name,handler_version)
 		DO UPDATE SET deployment_id=EXCLUDED.deployment_id,heartbeat_at=EXCLUDED.heartbeat_at
 	`, runtime.namespace, runtime.workerID, toolNames, handlerVersions, runtime.deploymentID)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPTask) {
@@ -1502,6 +1571,11 @@ func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPT
 	}
 	execute := runtime.taskExecutors[mcpTaskHandlerKey{toolName: task.ToolName, version: task.HandlerVersion}]
 	if execute == nil {
+		runtime.failTask(parent, task)
+		return
+	}
+	validateOutput, err := compileMCPTaskOutput(task.OutputSchema)
+	if err != nil {
 		runtime.failTask(parent, task)
 		return
 	}
@@ -1559,7 +1633,7 @@ func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPT
 		}
 		return responses, nil
 	}
-	result, executeErr := execute(ctx, task.Arguments, execution)
+	result, executeErr := invokeMCPTaskExecutor(execute, ctx, task.Arguments, execution)
 	lease.close()
 	cancel()
 	<-finished
@@ -1589,6 +1663,11 @@ func (runtime *mcpTaskRuntime) runTask(parent context.Context, task *durableMCPT
 	}
 	if executeErr != nil || result == nil {
 		runtime.failTaskWithRetry(parent, task, errors.Is(executeErr, ErrRetryableMCPTask))
+		return
+	}
+	encodedResult, err := json.Marshal(result)
+	if err != nil || validateOutput(encodedResult) != nil {
+		runtime.failTask(parent, task)
 		return
 	}
 	encrypted, err := runtime.encrypt(result, task.ID, "result", 1024*1024)

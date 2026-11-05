@@ -5211,9 +5211,26 @@ func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (Config
 
 // RollbackConfig restores a scope's variables to a config revision.
 func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	return c.RollbackConfigReviewed(ctx, slug, scope, ConfigRollbackRequest{Revision: revision})
+}
+
+// RollbackConfigReviewed submits the original revision and optional native guards.
+func (c *Client) RollbackConfigReviewed(ctx context.Context, slug, scope string, request ConfigRollbackRequest) (ConfigRollbackResponse, error) {
 	var out ConfigRollbackResponse
 	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
-		ConfigRollbackRequest{Revision: revision}, &out)
+		request, &out)
+}
+
+// GetConfigRollbackReceipt reads an original reviewed rollback without replaying it.
+func (c *Client) GetConfigRollbackReceipt(ctx context.Context, slug, scope, requestID, proof string) (ConfigRollbackReceipt, error) {
+	var out ConfigRollbackReceipt
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/rollback/requests/" + url.PathEscape(requestID)
+	headers := http.Header{}
+	if proof != "" {
+		headers.Set(EnvBatchReceiptProofHeader, proof)
+	}
+	err := c.doWithHeaders(ctx, http.MethodGet, c.scopeQuery(path, scope), nil, &out, headers)
+	return out, err
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is
