@@ -26,9 +26,8 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	if !protected {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
-			"Environment is not protected", "approvals are only required for protected project environments"))
+	if problem := approvalTargetProblem(r, protected); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	var req api.CreateProjectEnvironmentApprovalRequest
@@ -67,6 +66,16 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusCreated, projectEnvironmentApprovalResponse(approvalToken, approval))
+}
+
+// approvalTargetProblem refuses an approval of an unprotected environment,
+// which needs none, and one from an automation credential (bug hunt H70).
+func approvalTargetProblem(r *http.Request, protected bool) *api.Problem {
+	if !protected {
+		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+			"Environment is not protected", "approvals are only required for protected project environments")
+	}
+	return humanApprovalProblem(r)
 }
 
 func (s *server) getProjectEnvironmentApprovalStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {

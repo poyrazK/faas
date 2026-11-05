@@ -62,3 +62,24 @@ or expired reviews need a new plan. A stable session sealing key is required to
 resume the native review across apid restart, alongside bridge encrypted state.
 The existing deployment API remains the sole executor of customer intent.
 Live-account acceptance and other agent clients remain separate validation.
+
+## Amendment 1 (2026-11-05): automation credentials cannot approve
+
+Bug hunt H70: the protected-environment approval route
+(`POST /v1/[orgs/{organization}/]projects/{slug}/environments/{environment}/approvals`)
+required only MFA and the deploy-write scope, which a CI key, an OIDC deploy
+bearer and an agent's MCP key all carry. The credential that deploys could
+approve its own release, so a protected environment had no human gate.
+
+The route now accepts a browser session or an interactive sign-in key: the
+dashboard sign-in key (`signup`) or the key `gregale login` mints
+(`cli-login`). Every other key is refused with 403 and told to ask a person,
+who approves from the dashboard, `gregale login`, or this ADR's browser review.
+The MCP login key (`mcp-login`) is refused: an agent holds it. The three
+interactive labels are reserved; creating or rotating a key with one of them
+is refused with 400, so a CI key cannot pose as a person's sign-in.
+
+Not decided here: recording the approving principal (session or key ID)
+and refusing an approval whose principal also applies the promotion, and a
+TOTP step-up on the approval itself. Both need the approval row and the CLI
+flow to carry the principal; the route keeps today's MFA requirement.

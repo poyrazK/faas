@@ -4922,6 +4922,10 @@ func cronRunFromInvocation(inv state.Invocation) api.CronRun {
 func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	scopes, err := api.NormalizeCreateKeyScopes(req.Scopes)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
