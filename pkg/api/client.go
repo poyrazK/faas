@@ -190,7 +190,9 @@ const DefaultClientTimeout = 30 * time.Second
 // settings without coupling this client to that global lifecycle.
 func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return transport.Clone()
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = DefaultClientTimeout
+		return clone
 	}
 	return http.DefaultTransport
 }

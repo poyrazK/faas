@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
@@ -232,7 +233,7 @@ func TestSessionScopedAcquiresRouteThroughDirectPool(t *testing.T) {
 					return true
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || sel.Sel == nil || sel.Sel.Name != "Acquire" {
+				if !ok || sel.Sel == nil || sel.Sel.Name != "Acquire" || len(call.Args) != 1 {
 					return true
 				}
 				acquires = append(acquires, sel.X)

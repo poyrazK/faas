@@ -180,6 +180,7 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
 		return nil, err
 	}
+	ConfigureTimeouts(cfg)
 	cfg.MaxConns = directMaxConns(appName)
 	cfg.MinConns = 0
 	// No MaxConnIdleTime: a LISTEN connection is idle by definition between

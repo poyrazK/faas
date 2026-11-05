@@ -2568,6 +2568,53 @@ jobs:
         run: python -m pytest tests/ --ignore=tests/debug_chain.py -v
 
 
+  outbound-pool-load:
+    name: outbound resilience (deadlines and pool load)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_DB: faas
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: mirror.gcr.io/library/redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      GO_TEST_MEMLIMIT: 3GiB
+      GOMAXPROCS: 2
+      DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
+      FAAS_RESILIENCE_DATABASE_URL: postgres://faas@127.0.0.1:5432/faas?sslmode=disable
+      FAAS_RESILIENCE_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Check deadlines, pool saturation and recovery
+        run: make test-outbound-resilience
+      - name: Check pool capacity and recovery at both concurrency levels
+        run: |
+          failed=0
+          for concurrency in 32 64; do
+            if ! FAAS_RESILIENCE_CONCURRENCY="$concurrency" make test-outbound-resilience-load; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+
   load:
     # M4 acceptance gate (spec §14 row 2): "1,000 rps to hot app adds < 2 ms p50".
     # Decoupled from the `test` job because (a) it is a load test, not a

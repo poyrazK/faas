@@ -73,6 +73,11 @@ func redisResponseCacheOptions(rawURL string) (*redis.Options, error) {
 	opts.ReadTimeout = redisResponseCacheIOTimeout
 	opts.WriteTimeout = redisResponseCacheIOTimeout
 	opts.PoolSize = 8
+	opts.MaxActiveConns = opts.PoolSize
+	opts.PoolTimeout = redisResponseCacheIOTimeout
+	opts.MaxRetries = 2
+	opts.MinRetryBackoff = 5 * time.Millisecond
+	opts.MaxRetryBackoff = 25 * time.Millisecond
 	// Bound the whole operation, including connection initialization and
 	// retries, instead of giving each socket operation a fresh IO timeout.
 	opts.ContextTimeoutEnabled = true

@@ -96,7 +96,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 			clone.ResponseHeaderTimeout = 30 * time.Second
 			transport = clone
 		}
-		c.HTTPClient = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		c.HTTPClient = &http.Client{Transport: transport, Timeout: c.Registry.TransferTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }

@@ -354,7 +354,16 @@ func startMCPTaskRuntime(config mcpConfig, role string) (*mcpTaskRuntime, error)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, errors.New("could not initialize the PostgreSQL MCP task store")
+	}
+	poolWorkers := 0
+	if role == "combined" || role == "worker" {
+		poolWorkers = workerConcurrency
+	}
+	configureTaskDatabasePool(poolConfig, poolWorkers)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, errors.New("could not initialize the PostgreSQL MCP task store")
 	}

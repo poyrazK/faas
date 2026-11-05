@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // CheckOAuthProvider follows only the explicit, validated source configuration.
@@ -17,6 +18,9 @@ import (
 // Public metadata does not establish real token issuance or token authorization.
 func CheckOAuthProvider(ctx context.Context, auth AuthConfig) []Check {
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if _, bounded := ctx.Deadline(); !bounded {
+		client.Timeout = 10 * time.Second
+	}
 	return checkOAuthProvider(ctx, client, auth)
 }
 
