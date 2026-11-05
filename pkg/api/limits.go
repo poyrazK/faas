@@ -17513,6 +17513,7 @@ const (
 	DataPipelineCheckConcurrency           = 2
 	DataPipelineSetupConcurrency           = 2
 	DataPipelineWorkerIdleInterval         = time.Second
+	DataPipelineCatalogRetryMax            = 30 * time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17547,22 +17548,23 @@ const (
 // Pipeline health webhooks have one encrypted destination per pipeline. The
 // independent catalog worker debounces incidents and recovery before delivery.
 const (
-	DataPipelineAlertDebounce           = 2 * time.Minute
-	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
-	DataPipelineAlertCheckInterval      = 15 * time.Second
-	DataPipelineAlertWorkerInterval     = time.Second
-	DataPipelineAlertBatch              = 32
-	DataPipelineAlertHistoryMax         = 100
-	DataPipelineAlertPendingMax         = 100
-	DataPipelineAlertAttemptsMax        = 7
-	DataPipelineAlertAttemptTimeout     = 10 * time.Second
-	DataPipelineAlertLease              = 30 * time.Second
-	DataPipelineAlertRetryBase          = 30 * time.Second
-	DataPipelineAlertRetryMax           = 6 * time.Hour
-	DataPipelineAlertURLMaxBytes        = 2048
-	DataPipelineAlertSecretMinBytes     = 32
-	DataPipelineAlertSecretMaxBytes     = 256
-	DataPipelineAlertRetryAfterMaxBytes = 256
+	DataPipelineAlertDebounce            = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce    = 30 * time.Second
+	DataPipelineAlertCheckInterval       = 15 * time.Second
+	DataPipelineAlertWorkerInterval      = time.Second
+	DataPipelineAlertBatch               = 32
+	DataPipelineAlertDeliveryConcurrency = 8
+	DataPipelineAlertHistoryMax          = 100
+	DataPipelineAlertPendingMax          = 100
+	DataPipelineAlertAttemptsMax         = 7
+	DataPipelineAlertAttemptTimeout      = 10 * time.Second
+	DataPipelineAlertLease               = 30 * time.Second
+	DataPipelineAlertRetryBase           = 30 * time.Second
+	DataPipelineAlertRetryMax            = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes         = 2048
+	DataPipelineAlertSecretMinBytes      = 32
+	DataPipelineAlertSecretMaxBytes      = 256
+	DataPipelineAlertRetryAfterMaxBytes  = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
