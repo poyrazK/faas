@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [ADR-20261104203253: A managed PostgreSQL create in flight does not pause its account](20261104203253-managed-postgres-in-flight-create-does-not-pause-account.md) — accepted; amends ADR-581: an unresolved obligation still provisioning under a held lease, reserved in the current usage window, does not block admission, so parallel creates work; a lost reply blocks again when the lease lapses or the window closes
+- [ADR-20261104143000: Deleting a managed PostgreSQL database does not pause the account for its correction tail](20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md) — accepted; amends ADR-569 and ADR-582: a deleted database blocks new databases, restores and resizes only until its windows are covered through the end of the hour it was deleted in (usually under an hour, was 3–4 h); its three-window correction tail is still replayed and blocks as `final_correction_pending` only once overdue by `usage.stale_after_seconds`
 - [ADR-20261104104521: Recoverable app scaling](20261104104521-recoverable-app-scaling.md) — accepted; native app/environment identity and revision guards, atomic scaling receipts, safe MCP retries, and configuration verification.
 
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)

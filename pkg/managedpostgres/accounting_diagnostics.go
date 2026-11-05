@@ -84,7 +84,7 @@ func accountingDiagnostic(row AccountingCoverage, policy UsagePolicy, now time.T
 				d.RequiredUntil = time.Time{}
 			}
 			if !d.RequiredUntil.IsZero() {
-				d.CorrectionRequiredAt = d.RequiredUntil.Add(recentUsageCorrectionWindows * policy.Window)
+				d.CorrectionRequiredAt = finalCorrectionDeadline(d.RequiredUntil, policy.Window)
 			}
 		}
 	}
@@ -131,6 +131,12 @@ func (p UsageProgress) creationInFlight(policy UsagePolicy, now time.Time) bool 
 		!p.CreatedAt.Before(now.UTC().Truncate(policy.Window))
 }
 
+// finalCorrectionDeadline is when every window of a deleted resource's final
+// correction tail, which ends at end, has been replayed (ADR-569).
+func finalCorrectionDeadline(end time.Time, window time.Duration) time.Time {
+	return end.Add(recentUsageCorrectionWindows * window)
+}
+
 // blockingIssues is shared with admission. Diagnosing evidence must not relax
 // the fail-closed guardrail or introduce a different notion of freshness.
 func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIssues {
@@ -165,7 +171,13 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		if p.CollectedUntil.Before(end) {
 			issues |= usageCoverageIncomplete
 		}
-		if p.CorrectionObservedAt.Before(end.Add(recentUsageCorrectionWindows * policy.Window)) {
+		// The final correction tail revises windows that already have a
+		// reading, so admission does not wait for it: it blocks only once the
+		// tail is overdue by the same bound an active resource's observation
+		// gets. A provider that keeps failing still fails closed
+		// (ADR-20261104143000).
+		settledBy := finalCorrectionDeadline(end, policy.Window)
+		if p.CorrectionObservedAt.Before(settledBy) && now.Sub(settledBy) > policy.StaleAfter {
 			issues |= usageFinalCorrectionPending
 		}
 		return issues

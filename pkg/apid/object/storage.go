@@ -181,7 +181,16 @@ func (s *Service) providerRefusingCredentials() bool {
 type BucketView = api.ObjectBucket
 
 func viewBucket(b state.ObjectBucket) BucketView {
-	return BucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, Public: b.PublicRead, ServeAt: b.ServeAt, CreatedAt: b.CreatedAt}
+	return BucketView{ID: b.ID, Name: b.Name, Scope: b.Scope, Region: b.Region, State: b.State, Public: b.PublicRead, ServeAt: b.ServeAt, CreatedAt: b.CreatedAt, Retry: bucketRetry(b)}
+}
+
+// bucketRetry explains a create or delete that failed and is being retried.
+// A fresh claim clears last_error_code, so only a recorded failure shows.
+func bucketRetry(b state.ObjectBucket) *api.ObjectBucketRetry {
+	if b.State != "provisioning" && b.State != "deleting" || b.LastErrorCode == "" {
+		return nil
+	}
+	return &api.ObjectBucketRetry{Reason: b.LastErrorCode, Detail: api.ObjectBucketRetryDetail(b.LastErrorCode), Attempts: b.AttemptCount, RetryAt: b.RetryAt.UTC()}
 }
 
 // ErrObjectStorageDisabled marks the operator gate: the installation has

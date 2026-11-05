@@ -768,8 +768,14 @@ consumption and a finite accounting endpoint: the policy window containing the
 provider-confirmed shutdown, rounded up only when shutdown is inside that window.
 The collector waits for an open final window to close, then recovers through that
 endpoint and replays its final three-window tail. Every tail window must have an
-observation at or after the endpoint plus three policy windows. Failed final
-replay leaves admission stale; a newer successful window cannot hide it.
+observation at or after the endpoint plus three policy windows. Admission waits
+for the coverage through the endpoint, not for the tail: the tail revises windows
+that already have a reading, so it blocks admission only once it is overdue by
+`usage.stale_after_seconds` past that deadline. A failed final replay then leaves
+admission stale; a newer successful window cannot hide it. With hourly windows a
+deletion pauses new databases, restores and resizes until the hour it happened in
+has closed and been collected, not for the three hours after
+([ADR-20261104143000](adr/20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md)).
 
 After that bounded evidence is complete, the tombstone needs no provider calls
 and never ages into staleness merely because it has been deleted. Restore
@@ -842,7 +848,9 @@ Each resource includes its accounting root, required/collected ranges, observati
 times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
 `legacy_identity_unknown`, `coverage_missing`, `window_mismatch`,
 `shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
-`final_correction_pending`. Shared restores use their root's evidence. Unknown
+`final_correction_pending` (the final correction tail is overdue: its deadline,
+`correction_required_at`, passed more than `usage.stale_after_seconds` ago).
+Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not
 establish budget headroom or final provider settlement. Provider IDs and credential
@@ -988,6 +996,12 @@ whole quota. A replica that cannot take the lock skips that tick.
 - Each Neon project gets `settings.quota.compute_time_seconds` set to its own
   use plus what the account has left. A restore is a branch inside its source's
   project, so the two share one quota.
+- Neon checks a quota only when its counters move, about every 25 minutes, so
+  what the account has left first keeps back each database's largest size for
+  30 minutes (1,800 CU-s for development, 3,600 for burstable, 7,200 for
+  production). A busy database is therefore suspended up to that much before
+  the ceiling, not that much after it (ADR-20261025094915 amendment
+  2026-11-04).
 - When nothing is left, every quota equals its project's use, and Neon suspends
   the computes until the quota is raised or the counters reset on the 1st. A
   cap never deletes a database.
@@ -1120,7 +1134,9 @@ The run creates a disposable database, probes it, and deletes it. The probe:
    the largest-to-smallest size ratio plus a quarter, so the quota and the
    ledger count the same compute-unit seconds.
 3. Sets the quota to the counter and waits for the compute to suspend; a
-   connection must then fail.
+   connection must then fail. Neon suspends only when its counters next move,
+   so steps 2 and 3 each wait up to 35 minutes, and the run defaults to a
+   150-minute timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it).
 4. Raises the quota and waits for a connection to wake the compute.
 5. Checks that `logical_size_bytes` did not change.
 
