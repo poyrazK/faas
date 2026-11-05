@@ -83,7 +83,6 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 	m.egressCircuitMu.Lock()
 	defer m.egressCircuitMu.Unlock()
 	ttl = clampResolvedTTL(ttl)
-	now := time.Now()
 	source = source.Unmap()
 	m.mu.Lock()
 	id := owner.InstanceID
@@ -106,19 +105,41 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 		m.mu.Unlock()
 		return nil
 	}
+	now := time.Now()
+	pruneTimedGrants(inst.resolvedEgress, now)
+	pruneTimedGrants(inst.databaseEgress, now)
 	var add []netip.Addr
 	var addDatabase []netip.Addr
+	seen := make(map[netip.Addr]bool, len(addrs))
 	for _, a := range addrs {
 		a = a.Unmap()
-		if !a.IsValid() {
+		if !a.IsValid() || seen[a] {
 			continue
 		}
+		seen[a] = true
 		if until, ok := inst.resolvedEgress[a]; gated && (!ok || until.Sub(now) <= ttl/2) {
 			add = append(add, a)
 		}
 		if until, ok := inst.databaseEgress[databaseEgressKey{a, databasePort}]; database && (!ok || until.Sub(now) <= ttl/2) {
 			addDatabase = append(addDatabase, a)
 		}
+	}
+	until := now.Add(ttl)
+	resolved := make(map[netip.Addr]time.Time, len(add))
+	pairs := make(map[databaseEgressKey]time.Time, len(addDatabase))
+	for _, a := range add {
+		resolved[a] = until
+	}
+	for _, a := range addDatabase {
+		pairs[databaseEgressKey{a, databasePort}] = until
+	}
+	if err := timedGrantCapacity(inst.resolvedEgress, resolved, api.DNSGatedEgressInstanceFamilyMax, func(a netip.Addr) bool { return a.Is4() }); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	if err := timedGrantCapacity(inst.databaseEgress, pairs, api.DatabaseEgressInstanceFamilyMax, func(k databaseEgressKey) bool { return k.addr.Is4() }); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	nc, appID := inst.Net, inst.AppID
 	m.mu.Unlock()
@@ -129,12 +150,9 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 	if err != nil {
 		return err
 	}
-	cmds := nc.ResolvedEgressAddCommands(add, ttl)
-	cmds = append(cmds, nc.DatabaseEgressAddCommands(addDatabase, databasePort, ttl)...)
-	if err := m.runNftCommands(ctx, nc.Netns, cmds); err != nil {
+	if err := m.refreshTimedEgress(ctx, id, nc, resolved, pairs); err != nil {
 		return fmt.Errorf("fcvm: allow resolved egress for %s: %w", id, err)
 	}
-	until := now.Add(ttl)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cur, ok := m.live[id]; ok && cur == inst {
@@ -234,10 +252,12 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 		return
 	}
 	now := time.Now()
+	pruneTimedGrants(inst.resolvedEgress, now)
+	pruneTimedGrants(inst.databaseEgress, now)
 	addrs := map[netip.Addr]time.Time{}
 	if inst.Net.DNSGated {
 		for a, until := range m.appResolved[inst.AppID] {
-			if until.Sub(now) >= time.Second {
+			if until.Sub(now) >= time.Second && until.After(inst.resolvedEgress[a]) {
 				addrs[a] = until
 			}
 		}
@@ -245,11 +265,14 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 	pairs := map[databaseEgressKey]time.Time{}
 	if inst.Net.DatabaseEgress {
 		for k, until := range m.appDatabaseResolved[inst.AppID] {
-			if until.Sub(now) >= time.Second {
+			if until.Sub(now) >= time.Second && until.After(inst.databaseEgress[k]) {
 				pairs[k] = until
 			}
 		}
 	}
+	// Seeds are best effort; retain valid grants when the instance is full.
+	limitTimedSeeds(inst.resolvedEgress, addrs, api.DNSGatedEgressInstanceFamilyMax, func(a netip.Addr) bool { return a.Is4() })
+	limitTimedSeeds(inst.databaseEgress, pairs, api.DatabaseEgressInstanceFamilyMax, func(k databaseEgressKey) bool { return k.addr.Is4() })
 	nc := inst.Net
 	m.mu.Unlock()
 	if len(addrs) == 0 && len(pairs) == 0 {
@@ -262,24 +285,7 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 		}
 		return
 	}
-	var cmds [][]string
-	for address, until := range addrs {
-		remaining := time.Until(until)
-		if remaining < time.Second {
-			delete(addrs, address)
-			continue
-		}
-		cmds = append(cmds, nc.ResolvedEgressAddCommands([]netip.Addr{address}, remaining)...)
-	}
-	for pair, until := range pairs {
-		remaining := time.Until(until)
-		if remaining < time.Second {
-			delete(pairs, pair)
-			continue
-		}
-		cmds = append(cmds, nc.DatabaseEgressAddCommands([]netip.Addr{pair.addr}, pair.port, remaining)...)
-	}
-	if err := m.runNftCommands(ctx, nc.Netns, cmds); err != nil {
+	if err := m.refreshTimedEgress(ctx, instance, nc, addrs, pairs); err != nil {
 		if m.log != nil {
 			m.log.Warn("fcvm: seed resolved egress failed", "instance", instance, "addresses", len(addrs), "databases", len(pairs), "err", err)
 		}

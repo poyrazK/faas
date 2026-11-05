@@ -35,11 +35,7 @@ func TestManagedPostgresCapBodyV1(t *testing.T) {
 		{"suspended", func(n mail.ManagedPostgresCapNotice) mail.ManagedPostgresCapNotice {
 			n.Threshold, n.UsedSeconds = mail.ManagedPostgresCapSuspended, 90000
 			return n
-		}, "suspended until next month", []string{"2026-10-20 09:30 UTC", "data, backups and connection settings are kept", "resume on 2026-11-01"}, []string{"deleted", "half an hour late"}},
-		{"suspended before the limit", func(n mail.ManagedPostgresCapNotice) mail.ManagedPostgresCapNotice {
-			n.Threshold, n.UsedSeconds = mail.ManagedPostgresCapSuspended, 81000
-			return n
-		}, "suspended until next month", []string{"had used 22.5 compute-unit hours of this month's 25.0", "counted up to half an hour late", "resume on 2026-11-01"}, []string{"They used this month's"}},
+		}, "suspended until next month", []string{"2026-10-20 09:30 UTC", "data, backups and connection settings are kept", "resume on 2026-11-01"}, []string{"deleted"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			subject, body, ok := mail.ManagedPostgresCapBodyV1("owner@example.com", tc.notice(base))

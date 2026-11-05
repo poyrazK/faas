@@ -8955,6 +8955,11 @@ const (
 	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
 	// keeps per app to seed new instances of that app.
 	DNSGatedEgressAppSeedMax = 4096
+
+	// Timed egress grants are bounded per instance and address family by the
+	// corresponding kernel set capacities (ADR 20261105120000).
+	DNSGatedEgressInstanceFamilyMax = 65535
+	DatabaseEgressInstanceFamilyMax = 1024
 	// ADR-371 egress flow log: rows are kept EgressFlowLogRetentionDays
 	// (long enough to answer a provider abuse report, which can arrive
 	// weeks later) and an operator lookup returns at most
@@ -17513,6 +17518,7 @@ const (
 	DataPipelineCheckConcurrency           = 2
 	DataPipelineSetupConcurrency           = 2
 	DataPipelineWorkerIdleInterval         = time.Second
+	DataPipelineCatalogRetryMax            = 30 * time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17547,22 +17553,23 @@ const (
 // Pipeline health webhooks have one encrypted destination per pipeline. The
 // independent catalog worker debounces incidents and recovery before delivery.
 const (
-	DataPipelineAlertDebounce           = 2 * time.Minute
-	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
-	DataPipelineAlertCheckInterval      = 15 * time.Second
-	DataPipelineAlertWorkerInterval     = time.Second
-	DataPipelineAlertBatch              = 32
-	DataPipelineAlertHistoryMax         = 100
-	DataPipelineAlertPendingMax         = 100
-	DataPipelineAlertAttemptsMax        = 7
-	DataPipelineAlertAttemptTimeout     = 10 * time.Second
-	DataPipelineAlertLease              = 30 * time.Second
-	DataPipelineAlertRetryBase          = 30 * time.Second
-	DataPipelineAlertRetryMax           = 6 * time.Hour
-	DataPipelineAlertURLMaxBytes        = 2048
-	DataPipelineAlertSecretMinBytes     = 32
-	DataPipelineAlertSecretMaxBytes     = 256
-	DataPipelineAlertRetryAfterMaxBytes = 256
+	DataPipelineAlertDebounce            = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce    = 30 * time.Second
+	DataPipelineAlertCheckInterval       = 15 * time.Second
+	DataPipelineAlertWorkerInterval      = time.Second
+	DataPipelineAlertBatch               = 32
+	DataPipelineAlertDeliveryConcurrency = 8
+	DataPipelineAlertHistoryMax          = 100
+	DataPipelineAlertPendingMax          = 100
+	DataPipelineAlertAttemptsMax         = 7
+	DataPipelineAlertAttemptTimeout      = 10 * time.Second
+	DataPipelineAlertLease               = 30 * time.Second
+	DataPipelineAlertRetryBase           = 30 * time.Second
+	DataPipelineAlertRetryMax            = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes         = 2048
+	DataPipelineAlertSecretMinBytes      = 32
+	DataPipelineAlertSecretMaxBytes      = 256
+	DataPipelineAlertRetryAfterMaxBytes  = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.

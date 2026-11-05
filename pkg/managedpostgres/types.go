@@ -724,6 +724,9 @@ type UsageProgress struct {
 	// CreationLeaseUntil is snapshot metadata: while the resource is
 	// provisioning, when its worker's lifecycle lease ends. Zero otherwise.
 	CreationLeaseUntil time.Time
+	// DatabaseID is snapshot metadata: the database this coverage is for.
+	// The compute cap sweep reads a scope's use since it.
+	DatabaseID string
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an

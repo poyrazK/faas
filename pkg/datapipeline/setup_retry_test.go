@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestSetupRetryRefreshesFailedEvidenceAndKeepsCooldown(t *testing.T) {
@@ -126,6 +127,9 @@ func TestSetupRetryRefreshesNegativeCapacityForExactDestination(t *testing.T) {
 			database := ""
 			if phase == "checking_mirror" {
 				database = job.DatabaseID
+				if _, err = store.pool.Exec(ctx, `UPDATE data_pipeline_setups SET phase='checking_mirror' WHERE id=$1`, job.ID); err != nil {
+					t.Fatal(err)
+				}
 				finishSetupCheck(t, store, account, connection, database)
 			}
 			if _, err = store.pool.Exec(ctx, `UPDATE data_connection_checks SET result=jsonb_set(result,'{capacity,source,state}','"needs_qualification"') WHERE connection_id=$1`, connection.ID); err != nil {
@@ -158,5 +162,66 @@ func TestSetupRejectsUnavailableExistingMirrorBeforeReservation(t *testing.T) {
 	jobs, err := store.Setups(t.Context(), account)
 	if err != nil || len(jobs) != 0 {
 		t.Fatal("failed admission saved a reservation", jobs, err)
+	}
+}
+
+func TestSetupProtectsCheckFromConflictingManualRequest(t *testing.T) {
+	service, store, account, connection, request := setupFixture(t)
+	ctx := t.Context()
+	job, err := service.StartSetup(ctx, account, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An earlier source check may already be in flight when setup advances.
+	if _, err = store.pool.Exec(ctx, `UPDATE data_connection_checks SET state='pending',observed_at=NULL WHERE connection_id=$1`, connection.ID); err != nil {
+		t.Fatal(err)
+	}
+	old, err := store.ClaimCheck(ctx, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.pool.Exec(ctx, `UPDATE data_pipeline_setups SET phase='checking_mirror' WHERE id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	job = setupTick(t, service, store, job.ID)
+	if job.State != "working" || job.Phase != "checking_mirror" {
+		t.Fatal("setup failed rather than waiting for the in-flight check", job)
+	}
+	if _, err = service.RequestCheck(ctx, account, connection.ID, api.RequestDataConnectionCheck{ExpectedRevision: connection.Revision}); !errors.Is(err, ErrCheckBusy) {
+		t.Fatalf("manual check should wait: %v", err)
+	}
+	if err = store.FinishCheck(ctx, old, api.DataConnectionCheck{State: "passed"}); err != nil {
+		t.Fatalf("setup invalidated the old check: %v", err)
+	}
+	job = setupTick(t, service, store, job.ID)
+	current, err := store.ClaimCheck(ctx, uuid.NewString())
+	if err != nil || current.DatabaseID != job.DatabaseID {
+		t.Fatal(current, err)
+	}
+	if _, err = service.RequestCheck(ctx, account, connection.ID, api.RequestDataConnectionCheck{ExpectedRevision: connection.Revision}); !errors.Is(err, ErrCheckBusy) {
+		t.Fatalf("manual check displaced the setup: %v", err)
+	}
+	now := time.Now().UTC()
+	endpoint := &api.DataEndpointCapacity{State: "ready", UsableConnections: 100, RequiredConnections: 5, ObservedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(api.DataPipelineCapacityMaxAge).Format(time.RFC3339Nano)}
+	result := api.DataConnectionCheck{State: "passed", Tables: []api.DataSourceTable{{Name: "orders", Supported: true}}, Capacity: &api.DataPipelineCapacity{State: "ready", Source: endpoint, Destination: endpoint}}
+	if err = store.FinishCheck(ctx, current, result); err != nil {
+		t.Fatalf("manual check invalidated setup's lease: %v", err)
+	}
+	if _, err = service.RequestCheck(ctx, account, connection.ID, api.RequestDataConnectionCheck{ExpectedRevision: connection.Revision}); !errors.Is(err, ErrCheckBusy) {
+		t.Fatalf("completed evidence was displaced before setup used it: %v", err)
+	}
+	job = setupTick(t, service, store, job.ID)
+	if job.State != "working" || job.Phase != "starting" {
+		t.Fatal("setup did not consume its check", job)
+	}
+	if _, err = service.RequestCheck(ctx, account, connection.ID, api.RequestDataConnectionCheck{ExpectedRevision: connection.Revision}); !errors.Is(err, ErrCheckBusy) {
+		t.Fatalf("evidence was displaced before pipeline creation: %v", err)
+	}
+	job = setupTick(t, service, store, job.ID)
+	if job.State != "working" || job.Phase != "syncing" || job.PipelineID == "" {
+		t.Fatal("setup did not create the pipeline", job)
+	}
+	if _, err = service.RequestCheck(ctx, account, connection.ID, api.RequestDataConnectionCheck{ExpectedRevision: connection.Revision}); err != nil {
+		t.Fatalf("check slot stayed reserved after pipeline creation: %v", err)
 	}
 }
