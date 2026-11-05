@@ -56,7 +56,7 @@ func TestPgCommitPublicationKeepsCompanyBoundary(t *testing.T) {
 		return app
 	}
 	company, personal := newApp("company", org.ID), newApp("personal", "")
-	source, err := store.CreateCommitSource(ctx, state.CommitSource{AccountID: creator.ID, AppID: company.ID, Name: "orders", Destination: "event"})
+	source, err := store.CreateCommitSource(ctx, state.CommitSource{AccountID: creator.ID, AppID: company.ID, Name: "orders", Destination: "event", ContractVersion: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
