@@ -1238,6 +1238,7 @@ type Querier interface {
 	EnvironmentQueueDeliveryClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	EnvironmentRecoveryReleaseFirstServing(ctx context.Context, db DBTX, arg EnvironmentRecoveryReleaseFirstServingParams) (pgtype.Timestamptz, error)
+	EnvironmentRollbackScope(ctx context.Context, db DBTX, arg EnvironmentRollbackScopeParams) (EnvironmentRollbackScopeRow, error)
 	EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error)
 	EnvironmentSecretReferenceSourcePresent(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceSourcePresentParams) (bool, error)
 	// Public controls check authority before source/quota checks, including a
@@ -2682,8 +2683,10 @@ type Querier interface {
 	InsertEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsRunParams) (EnvironmentGitopsRun, error)
 	InsertEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsRuntimeEffectParams) (int64, error)
 	InsertEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg InsertEnvironmentGitRevisionApprovalParams) error
+	InsertEnvironmentPromotionReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentPromotionReceiptParams) error
 	InsertEnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationConfigReceiptParams) (EnvironmentQualificationConfigReceipt, error)
 	InsertEnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error)
+	InsertEnvironmentRollbackReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentRollbackReceiptParams) error
 	InsertEnvironmentWorkloadRetirement(ctx context.Context, db DBTX, arg InsertEnvironmentWorkloadRetirementParams) (EnvironmentWorkloadRetirement, error)
 	InsertEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentWorkloadServingReceiptParams) (int64, error)
 	InsertEventExecutionLineageBackfillCase(ctx context.Context, db DBTX, arg InsertEventExecutionLineageBackfillCaseParams) (int64, error)
@@ -4231,6 +4234,7 @@ type Querier interface {
 	LockEnvironmentGitSourceForSecretMutation(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForSecretMutationParams) ([]pgtype.UUID, error)
 	LockEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg LockEnvironmentGitSourcePollParams) (pgtype.UUID, error)
 	LockEnvironmentInvocationCleanup(ctx context.Context, db DBTX, arg LockEnvironmentInvocationCleanupParams) (pgtype.UUID, error)
+	LockEnvironmentPromotionAttempt(ctx context.Context, db DBTX, arg LockEnvironmentPromotionAttemptParams) error
 	LockEnvironmentQualificationAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error)
 	LockEnvironmentQualificationCleanupWriters(ctx context.Context, db DBTX) error
 	LockEnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error)
@@ -5855,6 +5859,7 @@ type Querier interface {
 	ReadEnvironmentBudgetIdentity(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetIdentityParams) (ReadEnvironmentBudgetIdentityRow, error)
 	ReadEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptParams) (ReadEnvironmentBudgetReceiptRow, error)
 	ReadEnvironmentBudgetReceiptForApp(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptForAppParams) (ReadEnvironmentBudgetReceiptForAppRow, error)
+	ReadEnvironmentPromotionReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentPromotionReceiptParams) (ReadEnvironmentPromotionReceiptRow, error)
 	ReadEnvironmentQueueAdmissionProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	// ADR-531: private stage transport, independent of the legacy completion inbox.
 	ReadEnvironmentQueueDeliveryAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ReadEnvironmentQueueDeliveryAccountRow, error)
@@ -5863,6 +5868,7 @@ type Querier interface {
 	ReadEnvironmentQueueProducerPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	ReadEnvironmentRecoveryPolicy(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]byte, error)
 	ReadEnvironmentRecoveryServingHistory(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Timestamptz, error)
+	ReadEnvironmentRollbackReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentRollbackReceiptParams) (ReadEnvironmentRollbackReceiptRow, error)
 	ReadEnvironmentRouteBudgets(ctx context.Context, db DBTX, arg ReadEnvironmentRouteBudgetsParams) ([]byte, error)
 	ReadExclusiveWorkKey(ctx context.Context, db DBTX, arg ReadExclusiveWorkKeyParams) (ExclusiveWorkKey, error)
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)

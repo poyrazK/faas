@@ -9,19 +9,21 @@ import (
 )
 
 type actionOutcome struct {
-	Phase            string              `json:"phase"`
-	Observation      *savedPlanReference `json:"observation,omitempty"`
-	PlanID           string              `json:"plan_id"`
-	Action           string              `json:"action"`
-	ObservedAt       time.Time           `json:"observed_at"`
-	Outcome          string              `json:"outcome"`
-	Reason           string              `json:"reason,omitempty"`
-	Receipt          *actionReceipt      `json:"receipt,omitempty"`
-	NativeCompletion string              `json:"native_completion"`
-	RestartRequested *bool               `json:"restart_requested,omitempty"`
-	RestartStatus    string              `json:"restart_status,omitempty"`
-	ConfigChanged    *bool               `json:"config_changed,omitempty"`
-	Instruction      string              `json:"instruction"`
+	RolloutObservation *savedPlanReference `json:"rollout_observation,omitempty"`
+	HealthObservation  *savedPlanReference `json:"health_observation,omitempty"`
+	Phase              string              `json:"phase"`
+	Observation        *savedPlanReference `json:"observation,omitempty"`
+	PlanID             string              `json:"plan_id"`
+	Action             string              `json:"action"`
+	ObservedAt         time.Time           `json:"observed_at"`
+	Outcome            string              `json:"outcome"`
+	Reason             string              `json:"reason,omitempty"`
+	Receipt            *actionReceipt      `json:"receipt,omitempty"`
+	NativeCompletion   string              `json:"native_completion"`
+	Instruction        string              `json:"instruction"`
+	RestartRequested   *bool               `json:"restart_requested,omitempty"`
+	RestartStatus      string              `json:"restart_status,omitempty"`
+	ConfigChanged      *bool               `json:"config_changed,omitempty"`
 }
 
 type actionOutcomeArgs struct {
@@ -30,7 +32,7 @@ type actionOutcomeArgs struct {
 }
 
 func registerActionOutcomes(s *mcp.Server, m *management) {
-	register(s, m, "gregale_get_action_outcome", "Read native receipts for retained configuration, scaling, route-budget, deployment, rollout, request rollback, service abort and explicit promotion attempts, including after plan expiry. Requires current immutable target and read consent. Receipts verify historical commit or acceptance, not current state, restart, health or completion. Missing evidence stays unresolved. Never replays writes or renews expiry. Service rollback remains unsupported.", m.getPhasedActionOutcome)
+	register(s, m, "gregale_get_action_outcome", "Read native receipts for retained configuration, scaling, route-budget, deployment, rollout, request rollback, default-scope service rollback, service abort and explicit promotion attempts, including after plan expiry. Requires current immutable target and read consent. Receipts verify historical commit or acceptance, not current configuration, restart, health or completion. Missing evidence stays unresolved. Never replays writes or renews expiry. Service rollback acceptance supplies separate rollout and health observation calls for handoff/drain and readiness evidence.", m.getPhasedActionOutcome)
 }
 
 func (m *management) getActionOutcome(ctx context.Context, args getActionArgs) (any, error) {
@@ -60,6 +62,7 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 	deploymentLookup, deploymentFound := m.deploymentOutcomes[args.PlanID]
 	promotionLookup, promotionFound := m.promotionOutcomes[args.PlanID]
 	rollbackLookup, rollbackFound := m.rollbackOutcomes[args.PlanID]
+	serviceRollbackLookup, serviceRollbackFound := m.serviceRollbackOutcomes[args.PlanID]
 	serviceAbortLookup, serviceAbortFound := m.serviceAbortOutcomes[args.PlanID]
 	m.mu.Unlock()
 	out := actionOutcome{Phase: phase, PlanID: entry.PlanID, Action: entry.Action, ObservedAt: time.Now().UTC(), Outcome: "unresolved", NativeCompletion: "not_observed", Instruction: "A verified receipt confirms historical acceptance of the selected phase only. Follow the exact observation call when supplied; current traffic, rollout completion, health and worker queue acknowledgement remain separate. Missing evidence never proves non-commit. Inspect native state; never replace an ambiguous original request or renew its write authority."}
@@ -126,6 +129,11 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 		} else {
 			m.readServiceAbortOutcome(ctx, entry, serviceAbortLookup, &out)
 		}
+	case entry.Action == "rollback" && serviceRollbackFound:
+		if rollbackFound || !serviceRollbackReferenceMatches(entry, serviceRollbackLookup) {
+			return nil, invalid("state_unavailable", "service rollback outcome reference is invalid")
+		}
+		m.readServiceRollbackOutcome(ctx, entry, serviceRollbackLookup, &out)
 	case entry.Action == "rollback":
 		if entry.Apply.State == "not_attempted" {
 			out.Reason = "no_recorded_attempt"
@@ -182,6 +190,9 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 		}
 		if serviceAbortFound && (m.serviceAbortOutcomes[entry.PlanID] != serviceAbortLookup || !serviceAbortReferenceMatches(current, serviceAbortLookup)) {
 			return invalid("state_unavailable", "original service abort reference changed during read")
+		}
+		if serviceRollbackFound && (m.rollbackOutcomes[entry.PlanID].AttemptID != "" || m.serviceRollbackOutcomes[entry.PlanID] != serviceRollbackLookup || !serviceRollbackReferenceMatches(current, serviceRollbackLookup)) {
+			return invalid("state_unavailable", "original service rollback reference changed during read")
 		}
 		if rollbackFound && (m.rollbackOutcomes[entry.PlanID] != rollbackLookup || !rollbackReferenceMatches(current, rollbackLookup)) {
 			return invalid("state_unavailable", "original rollback reference changed during read")

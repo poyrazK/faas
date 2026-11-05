@@ -102,6 +102,20 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restoreEnvironmentActionHistory(); err != nil {
 		return err
 	}
+	if err := m.restoreEnvironmentPromotionOutcomes(); err != nil {
+		return err
+	}
+	environmentPromotionBefore := make(map[string]environmentRollbackLookup, len(m.environmentPromotionOutcomes))
+	for id, ref := range m.environmentPromotionOutcomes {
+		environmentPromotionBefore[id] = ref
+	}
+	if err := m.restoreEnvironmentRollbackOutcomes(); err != nil {
+		return err
+	}
+	environmentRollbackBefore := make(map[string]environmentRollbackLookup, len(m.environmentRollbackOutcomes))
+	for id, ref := range m.environmentRollbackOutcomes {
+		environmentRollbackBefore[id] = ref
+	}
 	if err := m.restoreBudgetOutcomeLookups(); err != nil {
 		return err
 	}
@@ -123,12 +137,19 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restoreRollbackOutcomeLookups(); err != nil {
 		return err
 	}
+	if err := m.restoreServiceRollbackOutcomeLookups(); err != nil {
+		return err
+	}
 	if err := m.restoreServiceAbortOutcomeLookups(); err != nil {
 		return err
 	}
 	serviceAbortBefore := make(map[string]serviceAbortOutcomeLookup, len(m.serviceAbortOutcomes))
 	for id, ref := range m.serviceAbortOutcomes {
 		serviceAbortBefore[id] = ref
+	}
+	serviceRollbackBefore := make(map[string]rollbackOutcomeLookup, len(m.serviceRollbackOutcomes))
+	for id, ref := range m.serviceRollbackOutcomes {
+		serviceRollbackBefore[id] = ref
 	}
 	rollbackBefore := make(map[string]rollbackOutcomeLookup, len(m.rollbackOutcomes))
 	for id, ref := range m.rollbackOutcomes {
@@ -169,7 +190,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(scalingBefore, m.scalingOutcomes) || !reflect.DeepEqual(configBefore, m.configOutcomes) || !reflect.DeepEqual(configRollbacksBefore, m.configRollbacks) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) {
+	if !reflect.DeepEqual(environmentPromotionBefore, m.environmentPromotionOutcomes) || !reflect.DeepEqual(environmentRollbackBefore, m.environmentRollbackOutcomes) || !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) || !reflect.DeepEqual(serviceRollbackBefore, m.serviceRollbackOutcomes) || !reflect.DeepEqual(serviceAbortBefore, m.serviceAbortOutcomes) || !reflect.DeepEqual(scalingBefore, m.scalingOutcomes) || !reflect.DeepEqual(configBefore, m.configOutcomes) || !reflect.DeepEqual(configRollbacksBefore, m.configRollbacks) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -226,7 +247,16 @@ func (m *management) syncActionHistory(now time.Time) error {
 	if err := m.syncPromotionOutcomeLookups(now); err != nil {
 		return err
 	}
+	if err := m.syncEnvironmentPromotionOutcomes(now); err != nil {
+		return err
+	}
+	if err := m.syncEnvironmentRollbackOutcomes(now); err != nil {
+		return err
+	}
 	if err := m.syncRollbackOutcomeLookups(now); err != nil {
+		return err
+	}
+	if err := m.syncServiceRollbackOutcomeLookups(now); err != nil {
 		return err
 	}
 	return m.syncServiceAbortOutcomeLookups(now)

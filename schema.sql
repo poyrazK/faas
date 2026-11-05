@@ -53302,6 +53302,28 @@ CREATE TABLE public.project_environment_promotion_migrations (
 
 
 --
+-- Name: project_environment_promotion_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_receipts (
+    account_id uuid NOT NULL,
+    promotion_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    request_hash text NOT NULL,
+    promotion_hash text NOT NULL,
+    project_id uuid NOT NULL,
+    from_environment_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_promotion_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
+    CONSTRAINT project_environment_promotion_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT project_environment_promotion_receipts_check CHECK ((from_environment_id <> environment_id)),
+    CONSTRAINT project_environment_promotion_receipts_promotion_hash_check CHECK ((promotion_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_receipts_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: project_environment_promotion_release_config; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53490,6 +53512,28 @@ CREATE TABLE public.project_environment_queue_runtime_sets (
     CONSTRAINT project_environment_queue_runtime_sets_queue_revision_check CHECK ((queue_revision > 0)),
     CONSTRAINT project_environment_queue_runtime_sets_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_queue_runtime_sets_state_check CHECK ((state = 'prepared'::text))
+);
+
+
+--
+-- Name: project_environment_rollback_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_rollback_receipts (
+    account_id uuid NOT NULL,
+    promotion_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    request_hash text NOT NULL,
+    promotion_hash text NOT NULL,
+    project_id uuid NOT NULL,
+    from_environment_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_rollback_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
+    CONSTRAINT project_environment_rollback_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT project_environment_rollback_receipts_check CHECK ((from_environment_id <> environment_id)),
+    CONSTRAINT project_environment_rollback_receipts_promotion_hash_check CHECK ((promotion_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_rollback_receipts_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -68921,6 +68965,22 @@ ALTER TABLE ONLY public.project_environment_promotion_migrations
 
 
 --
+-- Name: project_environment_promotion_receipts project_environment_promotion_receipt_account_id_attempt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_receipts
+    ADD CONSTRAINT project_environment_promotion_receipt_account_id_attempt_id_key UNIQUE (account_id, attempt_id);
+
+
+--
+-- Name: project_environment_promotion_receipts project_environment_promotion_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_receipts
+    ADD CONSTRAINT project_environment_promotion_receipts_pkey PRIMARY KEY (promotion_id);
+
+
+--
 -- Name: project_environment_promotion_release_config project_environment_promotion_release_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69022,6 +69082,22 @@ ALTER TABLE ONLY public.project_environment_queue_runtime_sets
 
 ALTER TABLE ONLY public.project_environment_queue_runtime_sets
     ADD CONSTRAINT project_environment_queue_runtime_sets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_rollback_receipts project_environment_rollback_receipts_account_id_attempt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_rollback_receipts
+    ADD CONSTRAINT project_environment_rollback_receipts_account_id_attempt_id_key UNIQUE (account_id, attempt_id);
+
+
+--
+-- Name: project_environment_rollback_receipts project_environment_rollback_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_rollback_receipts
+    ADD CONSTRAINT project_environment_rollback_receipts_pkey PRIMARY KEY (promotion_id);
 
 
 --
@@ -102002,6 +102078,30 @@ ALTER TABLE ONLY public.project_environment_promotions
 
 
 --
+-- Name: project_environment_promotion_receipts project_environment_promotion_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_receipts
+    ADD CONSTRAINT project_environment_promotion_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_receipts project_environment_promotion_receipts_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_receipts
+    ADD CONSTRAINT project_environment_promotion_receipts_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_receipts project_environment_promotion_receipts_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_receipts
+    ADD CONSTRAINT project_environment_promotion_receipts_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_promotion_release_config project_environment_promotion_release_config_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -102191,6 +102291,30 @@ ALTER TABLE ONLY public.project_environment_queue_runtime_sets
 
 ALTER TABLE ONLY public.project_environment_queue_runtime_sets
     ADD CONSTRAINT project_environment_queue_runtime_sets_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_rollback_receipts project_environment_rollback_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_rollback_receipts
+    ADD CONSTRAINT project_environment_rollback_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_rollback_receipts project_environment_rollback_receipts_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_rollback_receipts
+    ADD CONSTRAINT project_environment_rollback_receipts_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_rollback_receipts project_environment_rollback_receipts_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_rollback_receipts
+    ADD CONSTRAINT project_environment_rollback_receipts_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
 
 
 --

@@ -13282,6 +13282,18 @@ type ProjectEnvironmentPromotionMigrationRecovery struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ProjectEnvironmentPromotionReceipt struct {
+	AccountID         pgtype.UUID
+	PromotionID       pgtype.UUID
+	AttemptID         string
+	RequestHash       string
+	PromotionHash     string
+	ProjectID         pgtype.UUID
+	FromEnvironmentID pgtype.UUID
+	EnvironmentID     pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentPromotionReleaseConfig struct {
 	PromotionID pgtype.UUID
 	Payload     []byte
@@ -13358,6 +13370,18 @@ type ProjectEnvironmentQueueRuntimeSet struct {
 	BookHash       string
 	State          string
 	CreatedAt      pgtype.Timestamptz
+}
+
+type ProjectEnvironmentRollbackReceipt struct {
+	AccountID         pgtype.UUID
+	PromotionID       pgtype.UUID
+	AttemptID         string
+	RequestHash       string
+	PromotionHash     string
+	ProjectID         pgtype.UUID
+	FromEnvironmentID pgtype.UUID
+	EnvironmentID     pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
 }
 
 type ProjectEnvironmentRoutePolicy struct {

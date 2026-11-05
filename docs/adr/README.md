@@ -12,7 +12,7 @@
 
 - [ADR-20261105120854: Mirror holds protect PostgreSQL recovery data](20261105120854-managed-postgres-mirror-retention-safety.md) — verify both hold inventories before pruning, protect queued mirror deletions, and discover recovery backups despite incomplete primary listings
 
-- [ADR-20261105120000: Repair catalog references and retained outcome resolution](20261105120000-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
+- [ADR-20261105185744: Repair catalog references and retained outcome resolution](20261105185744-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
 
 - [ADR-20261105110000: Repair preparation recovery and monetary locales](20261105110000-repair-prepare-recovery-and-money-locales.md) — preserves pending prepare identities and refresh paths, canonicalizes money capture, and qualifies monetary fingerprint rendering without rewriting history
 
@@ -2179,6 +2179,12 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261105000511: Management MCP saved-plan recovery prompts](20261105000511-management-mcp-saved-plan-recovery-prompts.md)
 - [ADR-20261105000512: Durable request promotion outcome recovery](20261105000512-management-mcp-promotion-outcomes.md)
 - [ADR-20261105000513: Durable request rollback acceptance recovery](20261105000513-management-mcp-rollback-outcomes.md)
+
+
+
+- [ADR-20261105082446: Durable service rollback acceptance recovery](20261105082446-management-mcp-service-rollback-outcomes.md)
+- [ADR-20261105102920: Exact environment rollback acceptance recovery](20261105102920-management-mcp-environment-rollback-outcomes.md)
 - [ADR-20261105103000: Recover egress policy after uncertain writes and restarts](20261105103000-egress-retry-and-restart-policy-recovery.md)
 - [ADR-20261105115100: Gate public raw ingress on production readiness and teardown](20261105115100-public-raw-ingress-production-readiness-and-teardown.md)
 - [ADR-20261105120000: Enforce network quarantine, timed grants and release ports](20261105120000-network-quarantine-renewal-and-release-ports.md) — bounds per-instance, per-family DNS/database grants at the existing kernel set capacities
+- [ADR-20261105153007: Exact environment promotion acceptance recovery](20261105153007-management-mcp-environment-promotion-outcomes.md)

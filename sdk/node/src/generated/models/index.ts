@@ -869,9 +869,17 @@ export type { EnvironmentGitSourceUpdate } from './EnvironmentGitSourceUpdate.js
 export type { EnvironmentJobSchedule } from './EnvironmentJobSchedule.js';
 export type { EnvironmentJobSmoke } from './EnvironmentJobSmoke.js';
 export type { EnvironmentPolicy } from './EnvironmentPolicy.js';
+export type { EnvironmentPromotionAttempt } from './EnvironmentPromotionAttempt.js';
+export type { EnvironmentPromotionAttemptHeader } from './EnvironmentPromotionAttemptHeader.js';
+export type { EnvironmentPromotionReceipt } from './EnvironmentPromotionReceipt.js';
+export type { EnvironmentPromotionRequestHashHeader } from './EnvironmentPromotionRequestHashHeader.js';
 export type { EnvironmentQueueBinding } from './EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './EnvironmentRecoveryRetention.js';
+export type { EnvironmentRollbackAttempt } from './EnvironmentRollbackAttempt.js';
+export type { EnvironmentRollbackAttemptHeader } from './EnvironmentRollbackAttemptHeader.js';
+export type { EnvironmentRollbackReceipt } from './EnvironmentRollbackReceipt.js';
+export type { EnvironmentRollbackRequestHashHeader } from './EnvironmentRollbackRequestHashHeader.js';
 export type { EnvironmentRouteBudgetReceipt } from './EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './EnvironmentRouteContract.js';

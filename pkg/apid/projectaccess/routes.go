@@ -9,8 +9,10 @@ import (
 // Routes are individually reviewed. Unlisted GitOps, data-service, full clone
 // and browser-approval operations remain outside shared project administration.
 var routeActions = map[string]authz.OrgAction{
-	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": authz.OrgActionReadQueues,
-	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": authz.OrgActionConfigureQueues,
+	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionReadQueues,
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionConfigureQueues,
 	"GET /v1/projects":                                                               authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}":                                                        authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments":                                           authz.OrgActionReadProject,

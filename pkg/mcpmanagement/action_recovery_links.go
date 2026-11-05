@@ -125,6 +125,11 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 		if !found || !serviceAbortReferenceMatches(entry, ref) || !serviceAbortReferenceMatches(current, ref) {
 			return nil
 		}
+	case entry.Action == "rollback" && m.serviceRollbackOutcomes[entry.PlanID].AttemptID != "":
+		ref := m.serviceRollbackOutcomes[entry.PlanID]
+		if _, collision := m.rollbackOutcomes[entry.PlanID]; collision || !serviceRollbackReferenceMatches(entry, ref) || !serviceRollbackReferenceMatches(current, ref) {
+			return nil
+		}
 	case entry.Action == "rollback":
 		ref, found := m.rollbackOutcomes[entry.PlanID]
 		if !found || !rollbackReferenceMatches(entry, ref) || !rollbackReferenceMatches(current, ref) {
@@ -169,8 +174,19 @@ func (m *management) addOutcomeRecoveryLinks(view actionView, now time.Time) act
 }
 
 func (m *management) currentEnvironmentRecoveryLinks(view environmentActionView, now time.Time) environmentActionView {
+	hadOutcome := view.Recovery != nil && view.Recovery.Outcome != nil
 	if view.PlanAvailable && !m.environmentActionPlanAvailable(view.environmentActionRecord, now) {
-		return m.environmentActionView(view.environmentActionRecord, now)
+		view = m.environmentActionView(view.environmentActionRecord, now)
+	}
+	if view.Recovery != nil {
+		links := *view.Recovery
+		if !hadOutcome || m.environmentOutcomeReference(view.environmentActionRecord, now) == nil {
+			links.Outcome = nil
+		}
+		view.Recovery = &links
+		if !view.PlanAvailable && links.Outcome == nil {
+			view.Recovery = nil
+		}
 	}
 	return view
 }

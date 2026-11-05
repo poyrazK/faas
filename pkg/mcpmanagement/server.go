@@ -78,30 +78,33 @@ type Options struct {
 }
 
 type management struct {
-	grantLifecycle       *Lifecycle
-	lifecycle            *Lifecycle
-	toolWrites           map[string]bool
-	toolNames            map[string]bool
-	admission            *requestAdmission
-	resourceServer       *mcp.Server
-	subscriptions        *resourceSubscriptions
-	client               *api.Client
-	opts                 Options
-	mu                   sync.Mutex
-	plans                map[string]*releasePlan
-	environmentPlans     map[string]*environmentPlan
-	actions              map[string]actionRecord
-	environmentActions   map[string]environmentActionRecord
-	budgetOutcomes       map[string]budgetOutcomeLookup
-	scalingOutcomes      map[string]scalingOutcomeLookup
-	configOutcomes       map[string]configOutcomeLookup
-	configRollbacks      map[string]configRollbackLookup
-	deploymentOutcomes   map[string]deploymentOutcomeLookup
-	promotionOutcomes    map[string]promotionOutcomeLookup
-	rollbackOutcomes     map[string]rollbackOutcomeLookup
-	serviceAbortOutcomes map[string]serviceAbortOutcomeLookup
-	secretRequests       map[string]*secretRequest
-	provisions           map[string]*provisionWork
+	grantLifecycle               *Lifecycle
+	lifecycle                    *Lifecycle
+	toolWrites                   map[string]bool
+	toolNames                    map[string]bool
+	admission                    *requestAdmission
+	resourceServer               *mcp.Server
+	subscriptions                *resourceSubscriptions
+	client                       *api.Client
+	opts                         Options
+	mu                           sync.Mutex
+	plans                        map[string]*releasePlan
+	environmentPlans             map[string]*environmentPlan
+	actions                      map[string]actionRecord
+	environmentActions           map[string]environmentActionRecord
+	environmentRollbackOutcomes  map[string]environmentRollbackLookup
+	environmentPromotionOutcomes map[string]environmentRollbackLookup
+	budgetOutcomes               map[string]budgetOutcomeLookup
+	deploymentOutcomes           map[string]deploymentOutcomeLookup
+	promotionOutcomes            map[string]promotionOutcomeLookup
+	rollbackOutcomes             map[string]rollbackOutcomeLookup
+	serviceRollbackOutcomes      map[string]rollbackOutcomeLookup
+	serviceAbortOutcomes         map[string]serviceAbortOutcomeLookup
+	secretRequests               map[string]*secretRequest
+	provisions                   map[string]*provisionWork
+	scalingOutcomes              map[string]scalingOutcomeLookup
+	configOutcomes               map[string]configOutcomeLookup
+	configRollbacks              map[string]configRollbackLookup
 }
 
 // NewServer constructs a management server without making API calls.

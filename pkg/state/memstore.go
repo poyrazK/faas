@@ -617,6 +617,8 @@ type MemStore struct {
 	deployFailedEmailAt          map[string]time.Time
 	deployments                  map[string]Deployment
 	deploymentSubmissionReceipts map[string]api.DeploymentSubmissionReceipt
+	environmentRollbackReceipts  map[string]api.EnvironmentRollbackReceipt
+	environmentPromotionReceipts map[string]api.EnvironmentPromotionReceipt
 	deploymentPromotionReceipts  map[string]api.DeploymentPromotionReceipt
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
@@ -4054,7 +4056,17 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			detachedApps[appID] = app
 		}
 	}
+	for id, receipt := range m.environmentPromotionReceipts {
+		if receipt.ProjectID == projectID {
+			delete(m.environmentPromotionReceipts, id)
+		}
+	}
 	delete(m.projects, projectID)
+	for id, receipt := range m.environmentRollbackReceipts {
+		if receipt.ProjectID == projectID {
+			delete(m.environmentRollbackReceipts, id)
+		}
+	}
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.ProjectID == projectID {
 			delete(m.environmentGitOps, sourceID)
@@ -24735,6 +24747,16 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	for promotionID := range m.environmentPromotionReceipts {
+		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
+			delete(m.environmentPromotionReceipts, promotionID)
+		}
+	}
+	for promotionID := range m.environmentRollbackReceipts {
+		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
+			delete(m.environmentRollbackReceipts, promotionID)
+		}
+	}
 	if m.internalCI != nil {
 		m.internalCI.RemoveAccount(id)
 	}

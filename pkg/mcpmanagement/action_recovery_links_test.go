@@ -242,8 +242,16 @@ func TestActionRecoveryLinksExpireDuringHistoryRead(t *testing.T) {
 						if json.Unmarshal(row, &retained) != nil || retained.Recovery == nil || retained.Recovery.Outcome == nil || retained.Recovery.Check.Tool != "" {
 							t.Fatal("retained outcome lookup missing or expired check advertised")
 						}
-					} else if bytes.Contains(row, []byte(`"recovery"`)) {
-						t.Fatal("unavailable environment plan advertised discovery")
+					} else {
+						var retained environmentActionView
+						if json.Unmarshal(row, &retained) != nil || retained.Recovery == nil || retained.Recovery.Outcome == nil || retained.Recovery.Check.Tool != "" || retained.Recovery.Outcome.Tool != "gregale_get_environment_action_outcome" {
+							t.Fatal("retained environment outcome lookup missing or expired check advertised")
+						}
+						selectors, err := json.Marshal(retained.Recovery.Outcome.Arguments)
+						var exact getEnvironmentActionArgs
+						if err != nil || json.Unmarshal(selectors, &exact) != nil || exact.Project != "shop" || exact.Environment != "production" || exact.PlanID != id {
+							t.Fatal("retained environment lookup changed original selectors")
+						}
 					}
 					after, err := os.ReadFile(statePath)
 					if err != nil || !bytes.Equal(before, after) {

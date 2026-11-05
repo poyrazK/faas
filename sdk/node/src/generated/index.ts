@@ -874,9 +874,17 @@ export type { EnvironmentGitSourceUpdate } from './models/EnvironmentGitSourceUp
 export type { EnvironmentJobSchedule } from './models/EnvironmentJobSchedule.js';
 export type { EnvironmentJobSmoke } from './models/EnvironmentJobSmoke.js';
 export type { EnvironmentPolicy } from './models/EnvironmentPolicy.js';
+export type { EnvironmentPromotionAttempt } from './models/EnvironmentPromotionAttempt.js';
+export type { EnvironmentPromotionAttemptHeader } from './models/EnvironmentPromotionAttemptHeader.js';
+export type { EnvironmentPromotionReceipt } from './models/EnvironmentPromotionReceipt.js';
+export type { EnvironmentPromotionRequestHashHeader } from './models/EnvironmentPromotionRequestHashHeader.js';
 export type { EnvironmentQueueBinding } from './models/EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './models/EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './models/EnvironmentRecoveryRetention.js';
+export type { EnvironmentRollbackAttempt } from './models/EnvironmentRollbackAttempt.js';
+export type { EnvironmentRollbackAttemptHeader } from './models/EnvironmentRollbackAttemptHeader.js';
+export type { EnvironmentRollbackReceipt } from './models/EnvironmentRollbackReceipt.js';
+export type { EnvironmentRollbackRequestHashHeader } from './models/EnvironmentRollbackRequestHashHeader.js';
 export type { EnvironmentRouteBudgetReceipt } from './models/EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './models/EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './models/EnvironmentRouteContract.js';

@@ -1828,7 +1828,8 @@ identity and readiness work atomically. Reusing an accepted identity returns
 `409 rollback_attempt_accepted` without another rollback, including after the
 operation finishes or fails. A changed original pair or reason returns
 `rollback_attempt_conflict`. Implicit targets, alert attribution, release
-acknowledgement and service/worker attempts cannot use this header.
+acknowledgement, database restoration, named-scope and worker attempts cannot
+use this header.
 
 Call `gregale_get_action_outcome` with the original app/plan ID and default
 `apply` phase. It verifies the exact operation, target/current pair, immutable
@@ -1842,9 +1843,9 @@ recipes expose `recovery.outcome` without reading native receipts or changing
 history. Current read consent, original identities, retention and storage remain
 mandatory. Missing evidence stays unresolved; never reconstruct an expired
 request or issue another rollback to resolve ambiguity. Legacy attempted plans
-receive no replacement identity. Service rollback outcome recovery remains unsupported. Reviewed default and
-named-environment service-abort recovery is
-described below. Request rollback adds no tool or migration. See
+receive no replacement identity. Default-scope service rollback recovery and
+reviewed default/named-environment service-abort recovery are described below.
+Request rollback adds no tool or migration. See
 [ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
 
 ## Resolve an ambiguous reviewed service abort
@@ -1925,9 +1926,9 @@ known deployment ID contains history/outcome calls only; follow the observation
 returned by the outcome rather than inventing a target. Current read consent,
 immutable identities, storage and the retained reference are checked again before
 release. No read replays a write, extends expiry or changes recorded uncertainty.
-Service rollback outcome recovery remains unsupported. Reviewed default and
-named-environment service-abort acceptance is described above. Exact request rollback
-and explicit request promotion recovery are described above. See
+Default-scope service rollback acceptance is described below. Reviewed default
+and named-environment service-abort acceptance, exact request rollback and
+explicit request promotion recovery are described above. See
 [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
 
 ## Resolve an ambiguous route-budget write
@@ -1949,9 +1950,9 @@ plan or extends its expiry. `native_completion` remains `not_observed`.
 Unavailable, missing or mismatched receipts return `unresolved`. This never
 proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
 described above; explicit request promotions support phase=promotion. Reviewed
-default and named-environment service-abort acceptance is described above. Service
-rollback outcome recovery remains unsupported. Older bridges/APIs and expired
-legacy actions without a saved
+default and named-environment service-abort acceptance is described above.
+Default-scope service rollback acceptance is described below. Older bridges/APIs
+and expired legacy actions without a saved
 lookup reference also remain unresolved; do not create a replacement request
 to resolve ambiguity.
 
@@ -1969,6 +1970,31 @@ receive the request UUID/fingerprint for verification, immutable target IDs and
 original revision/source metadata; policy configuration and routes are omitted.
 Go, Node and Python clients expose this read. No schema migration is needed.
 See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
+## Management MCP service rollback acceptance recovery (ADR-20261105082446)
+
+Exact default-environment service rollbacks can retain the original native
+operation identity before submission. The optional `Rollback-Attempt-ID` commits
+as that operation's UUID under the app lock. Matching accepted attempts cannot
+start another readiness/handoff cycle, including after terminal failure;
+conflicting original pairs or reasons are rejected. Existing serving CAS,
+artifact, approval, release and binding guards still apply. Workers, named
+scopes, database restoration and release acknowledgement are excluded.
+
+After a lost response, encrypted bridge restart or plan expiry, follow retained
+history to `gregale_get_action_outcome`. It verifies the exact original service
+operation and returns redacted historical acceptance. `observation` reads the
+operation, `rollout_observation` inspects target handoff/drain and
+`health_observation` reads current app health. Invoke them separately: acceptance
+does not prove ACKs, drain completion, current serving traffic or health.
+
+Service references use an independent encrypted namespace with a tagged binding,
+shared history retention and grant cleanup. N-1 journal writes preserve it;
+legacy attempted plans never gain new identities. Missing evidence remains
+unresolved. Reads, prompts and resources work with writes disabled, recheck
+consent/identity/retention/storage, and never replay, modify history or renew
+expired authority. The existing tools, prompts and resource templates suffice.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
 
 ## Recover reviewed actions
 
@@ -2292,6 +2318,71 @@ before replanning an expired action even if its old phase was `not_attempted`. S
 [ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
 [ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
 
+### Recover an ambiguous environment promotion
+
+New promotions retain their original opaque attempt and reviewed fingerprint
+before POST. Native promotion creation, workloads, approval consumption and the
+acceptance receipt commit atomically. An accepted modern attempt cannot dispatch
+again, including after failure. Legacy explicit original-key continuation keeps
+its existing checks and cannot acquire a receipt retroactively.
+
+Follow `recovery.outcome` from environment action history, or call
+`gregale_get_environment_action_outcome` with the original project, target
+environment and plan ID. It now supports promotions as well as rollbacks.
+It works after restart and expiry with writes disabled. A verified receipt
+returns the exact native promotion ID and a `gregale_get_environment_promotion`
+observation. Run that observation explicitly; workload handoff and health remain
+separate. Missing evidence never proves non-commit.
+
+Prompts/resources discover the read passively without fetching receipts. An
+unknown promotion has no guessed observation ID before lookup. Recovery never
+rewrites history, renews expiry, replays, replans or approves. Current immutable
+scope/workload identities, read consent, storage and retention remain required.
+Replaced environments cannot inherit evidence. Catalog counts are unchanged.
+
+The native read is `GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}`,
+with an equivalent organization route. Optional promotion POST headers
+`Environment-Promotion-Attempt-ID` and `Environment-Promotion-Request-Hash` must
+be paired. Neither header nor a retry key is forwarded to receipt GETs.
+See [ADR-20261105153007](adr/20261105153007-management-mcp-environment-promotion-outcomes.md).
+
+### Recover an ambiguous environment rollback
+
+New project-level environment rollback plans save an opaque original attempt and
+scope fingerprint before their first POST. The native acceptance receipt commits
+atomically with rollback admission and pins the promotion ID/hash plus immutable
+project, source and target environment IDs. Matching accepted attempt-bearing POSTs cannot
+admit work again, including after failure. Explicit legacy original-key retries
+retain native checkpoint continuation without minting or altering the receipt.
+Changed attempts conflict; earlier legacy
+or automatic rollbacks never acquire a replacement receipt.
+
+Follow `recovery.outcome` from `gregale_get_environment_action`, or call
+`gregale_get_environment_action_outcome` with the original project, target
+environment and plan ID. It works after encrypted restart and plan expiry with
+writes disabled. `verified_receipt` confirms admission only and supplies the
+exact `gregale_get_environment_promotion` observation. Follow that explicitly,
+then inspect each workload's restoration, handoff/drain and health independently.
+A failed rollback can still have a verified original acceptance receipt.
+
+Retained history and the existing environment review prompt/resource discover
+this lookup passively. Retrieving a recipe does not fetch native receipts or
+restore review/check/apply authority to an expired plan. Missing, unavailable or
+mismatched receipts stay unresolved and never prove non-commit. Reads never
+replay, replan, approve, modify history or renew expiry. Current source/target
+consent, all project workload identities, storage, retention and the original
+reference are checked again before release. Replacement environment slugs cannot
+inherit an old receipt. Legacy attempts without a saved lookup remain unresolved.
+
+The native read is `GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}`,
+with an equivalent organization route. Optional POST headers
+`Environment-Rollback-Attempt-ID` and `Environment-Rollback-Request-Hash` must be
+provided together. One immutable receipt is retained per promotion; no credentials,
+retry keys, configuration or workload payloads appear in the receipt. Existing
+release/protection/CAS/binding guards remain in force. This adds one read tool;
+existing prompt and resource-template counts are unchanged.
+See [ADR-20261105102920](adr/20261105102920-management-mcp-environment-rollback-outcomes.md).
+
 ### Recover environment promotions and rollbacks
 
 Use `gregale_list_environment_actions` with
@@ -2312,8 +2403,8 @@ current target write consent. Expired review metadata cannot extend approval.
 
 `outcome_unknown` preserves the original retry handle after a lost response.
 Retry the indicated existing promotion/rollback tool with that same unexpired
-plan and current authorization. After expiry, inspect native state before
-replanning. `accepted` records a checked promotion ID, not observed completion or
+plan and current authorization. After expiry, use an exact retained promotion/rollback outcome lookup when available;
+otherwise inspect native state before replanning. `accepted` records a checked promotion ID, not observed completion or
 traffic health, even if a native rollback receipt reported completion. When known,
 `observation` points explicitly to `gregale_get_environment_promotion` with exact
 selectors. A rollback can reference its reviewed promotion before acceptance;
