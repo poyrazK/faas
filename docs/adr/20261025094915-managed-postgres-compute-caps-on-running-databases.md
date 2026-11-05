@@ -371,11 +371,12 @@ Status: accepted (owner, 2026-11-05: "Gregale stops it"). It supersedes the
 The 2026-11-04 amendment assumed Neon's project counters refresh about every
 25 minutes. A second production measurement on 2026-11-05 found no bound:
 
-- A disposable project's compute ran without pause from 09:46Z. Its
-  `compute_time_seconds` counter moved once, at 10:01Z, and then stayed put
-  for the rest of the run, more than 80 minutes of continuous use.
-- A quota set at 10:01Z at that counter was never enforced, although use
-  reached seven times the quota.
+- A disposable project's compute ran without pause from 09:46Z to 12:27Z.
+  Its `compute_time_seconds` counter moved only at 10:01Z, 11:27Z and
+  12:19Z: 15, 86 and 52 minutes apart.
+- A quota set at 10:01Z at that counter (202 CU-s) was enforced only at the
+  11:27Z refresh, after 1,492 CU-s, 7.4 times the quota. Raising the quota
+  let a connection in again within 34 seconds.
 - Over the same time, the consumption report the ledger reads
   (`/consumption_history/v2/projects`, hourly) was current to about a minute,
   including the hour still open.
