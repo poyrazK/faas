@@ -213,7 +213,7 @@ func (s *StateStore) updateManySnapshot(values map[string]any, sequences map[str
 	if snapshot, ok := values["oauth"].(oauthSnapshot); ok && (sequences["oauth"] == 0 || sequences["oauth"] >= s.seqs["oauth"]) {
 		now := time.Now()
 		for key := range s.records {
-			for _, prefix := range []string{"plans/", "environment-plans/", "actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, budgetOutcomeNamespace, deploymentOutcomeNamespace, promotionOutcomeNamespace, rollbackOutcomeNamespace, serviceAbortOutcomeNamespace, namedServiceAbortOutcomeNamespace} {
+			for _, prefix := range []string{"plans/", "environment-plans/", "actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, scalingActionsNamespace, configActionsNamespace, configRollbackActionsNamespace, cronActionsNamespace, budgetOutcomeNamespace, scalingOutcomeNamespace, configOutcomeNamespace, configRollbackOutcomeNamespace, deploymentOutcomeNamespace, promotionOutcomeNamespace, rollbackOutcomeNamespace, serviceAbortOutcomeNamespace, namedServiceAbortOutcomeNamespace} {
 				if grantID, matched := strings.CutPrefix(key, prefix); matched {
 					if strings.HasPrefix(grantID, "agent-key/") && retainedAgentState(s.records, grantID, now) {
 						break
@@ -245,7 +245,7 @@ func retainedAgentState(records map[string]json.RawMessage, grantID string, now 
 	if liveAgentPlans(records["plans/"+grantID], now) || liveAgentPlans(records["environment-plans/"+grantID], now) {
 		return true
 	}
-	for _, prefix := range []string{"actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace} {
+	for _, prefix := range []string{"actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, scalingActionsNamespace, configActionsNamespace, configRollbackActionsNamespace, cronActionsNamespace} {
 		var saved struct {
 			Items map[string]struct {
 				RetainedUntil time.Time `json:"retained_until"`

@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
@@ -219,6 +220,10 @@ var DaemonConnectionWarmups = map[string]string{
 // new connection out of the pool.
 const connectionWarmupTimeout = 2 * time.Second
 
+// connectionWarmupGrace is how much longer than the server's own bound the
+// client waits before it gives up on the warm-up and the connection with it.
+const connectionWarmupGrace = time.Second
+
 // warmConnection returns the AfterConnect hook for appName's warm-up, or nil.
 // A warm-up is best effort: when it fails the connection joins the pool cold,
 // unless the failure closed it.
@@ -227,15 +232,52 @@ func warmConnection(appName string) func(context.Context, *pgx.Conn) error {
 	if statement == "" {
 		return nil
 	}
-	return runWarmup(statement)
+	return runWarmup(statement, connectionWarmupTimeout)
 }
 
-func runWarmup(statement string) func(context.Context, *pgx.Conn) error {
+// runWarmup bounds the warm-up on the server. pgx answers an expired context
+// by closing the connection, so a client-side bound threw away every new
+// connection whose warm-up ran long, and the next request dialed another one
+// into the same slow database (2026-11-05 17:29). The server's
+// statement_timeout fails the warm-up and keeps the session. A one-message
+// query runs as one implicit transaction, so SET LOCAL ends with it.
+func runWarmup(statement string, timeout time.Duration) func(context.Context, *pgx.Conn) error {
+	bounded := fmt.Sprintf("SET LOCAL statement_timeout = %d; %s", timeout.Milliseconds(), statement)
 	return func(ctx context.Context, conn *pgx.Conn) error {
-		warmCtx, cancel := context.WithTimeout(ctx, connectionWarmupTimeout)
+		warmCtx, cancel := context.WithTimeout(ctx, timeout+connectionWarmupGrace)
 		defer cancel()
-		if _, err := conn.Exec(warmCtx, statement); err != nil && conn.IsClosed() {
+		if _, err := conn.Exec(warmCtx, bounded); err != nil && conn.IsClosed() {
 			return fmt.Errorf("db: warm connection: %w", err)
+		}
+		return nil
+	}
+}
+
+// connectionDialsPerSecond paces how fast a pool dials once it has spent its
+// burst. pgx answers a cancelled context by closing the connection, so when a
+// stall makes callers give up, every cancelled query costs the pool a
+// connection, and every acquire behind it dials a replacement: TLS, SCRAM and
+// a new backend each, on a database that is already behind. On 2026-11-05 at
+// 17:29 both gateways rebuilt their pools at once and the 2-vCPU control plane
+// reached a load average of 34.
+//
+// A pool may still open its whole budget at once (the burst is MaxConns), so
+// startup and a pool emptied by a quiet minute are not slowed; past that it
+// refills at this rate. pgxpool dials on a context detached from the acquire,
+// so an acquire that cannot wait fails with its own context error, as it would
+// have once the database stalled, and the paced dial still joins the pool.
+const connectionDialsPerSecond = 2
+
+// paceDials limits how fast cfg's pool dials, keeping any BeforeConnect hook.
+func paceDials(cfg *pgxpool.Config) {
+	limiter := rate.NewLimiter(connectionDialsPerSecond, max(int(cfg.MaxConns), 1))
+	next := cfg.BeforeConnect
+	cfg.BeforeConnect = func(ctx context.Context, conn *pgx.ConnConfig) error {
+		if err := limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("db: pace connection dial: %w", err)
+		}
+		if next != nil {
+			return next(ctx, conn)
 		}
 		return nil
 	}
@@ -399,6 +441,7 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)
 	instrumentAcquires(cfg)
+	paceDials(cfg)
 	return cfg, nil
 }
 

@@ -420,6 +420,7 @@ export type { ConfigGuardQuery } from './models/ConfigGuardQuery.js';
 export type { ConfigGuardSummary } from './models/ConfigGuardSummary.js';
 export type { ConfigRevision } from './models/ConfigRevision.js';
 export type { ConfigRevisionDetail } from './models/ConfigRevisionDetail.js';
+export type { ConfigRollbackReceipt } from './models/ConfigRollbackReceipt.js';
 export type { ConfigRollbackRequest } from './models/ConfigRollbackRequest.js';
 export type { ConfigRollbackResponse } from './models/ConfigRollbackResponse.js';
 export type { ConfigSecretDifference } from './models/ConfigSecretDifference.js';
