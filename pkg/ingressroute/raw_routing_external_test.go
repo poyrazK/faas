@@ -27,6 +27,9 @@ func TestRawRoutingProductionScope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if _, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+				t.Fatal(err)
+			}
 			app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, WorkloadName: "api", Slug: "audit-scope", Status: state.AppActive, RAMMB: 128, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "tcp", Port: 9000}, {Name: "udp", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
 			if err != nil {
 				t.Fatal(err)
