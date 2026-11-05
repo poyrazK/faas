@@ -311,7 +311,7 @@ func (w *Worker) switchRelease(ctx context.Context, sw state.DatabaseSwitch) sta
 			}
 		}
 		if target.Status == state.DeploySuperseded || (target.Status == state.DeployLive && target.TrafficPercent == 0) {
-			if _, err := w.Releases.PrepareDeploymentRollback(state.WithExpectedRollbackCurrent(ctx, sw.FromDeploymentID), sw.AppID, sw.TargetDeploymentID); err != nil {
+			if _, err := w.prepareRelease(ctx, sw, sw.TargetDeploymentID, sw.FromDeploymentID); err != nil {
 				return w.beginAbort(sw, codeReleaseSwitchFailed, "The rollback target could not be prepared: "+errorCode(err)+".")
 			}
 		}
@@ -387,7 +387,7 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 			return w.retry(sw, errorCode(err))
 		}
 		if live.ID == sw.TargetDeploymentID {
-			if _, err := w.Releases.PrepareDeploymentRollback(state.WithExpectedRollbackCurrent(ctx, sw.TargetDeploymentID), sw.AppID, sw.FromDeploymentID); err != nil &&
+			if _, err := w.prepareRelease(ctx, sw, sw.FromDeploymentID, sw.TargetDeploymentID); err != nil &&
 				!errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 				return w.retry(sw, errorCode(err))
 			}
@@ -424,7 +424,7 @@ func (w *Worker) restoreTarget(ctx context.Context, sw state.DatabaseSwitch) err
 	if live.ID != sw.FromDeploymentID {
 		return nil
 	}
-	if _, err := w.Releases.PrepareDeploymentRollback(state.WithExpectedRollbackCurrent(ctx, sw.FromDeploymentID), sw.AppID, sw.TargetDeploymentID); err != nil &&
+	if _, err := w.prepareRelease(ctx, sw, sw.TargetDeploymentID, sw.FromDeploymentID); err != nil &&
 		!errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 		return err
 	}
