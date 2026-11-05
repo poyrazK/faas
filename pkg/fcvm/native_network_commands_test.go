@@ -137,7 +137,10 @@ func TestNativeNetworkBatchesAndCaptureUseGatedOwnerWithoutLegacyRunner(t *testi
 		t.Fatalf("ip stdin=%q err=%v", data, err)
 	}
 	t.Setenv("GREGALE_NATIVE_HELPER_INPUT_MARKER", "")
-	t.Setenv("GREGALE_NATIVE_HELPER_OUTPUT", "iifname \"tap0\" ip daddr { 1.2.3.0/24 } accept # handle 42\n")
+	// adr: 20261104170000 — database exceptions cannot supply the public handle.
+	t.Setenv("GREGALE_NATIVE_HELPER_OUTPUT",
+		"iifname \"tap0\" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 42\n"+
+			"iifname \"tap0\" ip daddr . tcp dport @egress_db accept # handle 99\n")
 	cap, err := m.networkCaptureRunner(ctx)
 	if err != nil {
 		t.Fatal(err)
