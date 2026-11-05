@@ -55,9 +55,9 @@ func cmdJobsArtifacts(args []string) int {
 	}
 	if taskSet {
 		if len(args) == 0 {
-			defaults, path, err := readJobDefaults()
+			defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "artifacts", "my-job", "latest", "--task", "0"})
 			if err != nil {
-				return printErr("Could not read Job defaults", err)
+				return printJobDefaultsSelectionError("Could not read Job defaults", err)
 			}
 			args = []string{defaults.Job}
 			if !jsonOutput {
