@@ -28,17 +28,17 @@ const (
 
 var errSignature = errors.New("s3 gateway: invalid signature")
 
-// errHeadersNotSigned refuses a presigned request carrying an x-amz-* header
-// its signer did not sign. Whoever holds a presigned URL is not the key's
-// owner: an unsigned x-amz-object-lock-mode, x-amz-copy-source,
+// errHeadersNotSigned refuses a request carrying an x-amz-* header its signer
+// did not sign. Holding a signed request does not establish ownership of its
+// key: an unsigned x-amz-object-lock-mode, x-amz-copy-source,
 // x-amz-bypass-governance-retention or x-amz-tagging would otherwise change
 // what a request the owner authorized does. AWS refuses these the same way.
 var errHeadersNotSigned = fmt.Errorf("%w: x-amz headers present in the request were not signed", errSignature)
 
-// unsignedPresignHeader names an x-amz-* request header missing from
+// unsignedAmzHeader names an x-amz-* request header missing from
 // signedHeaders. x-amz-content-sha256 is exempt: it is the payload line of
 // the canonical request, so a changed value already fails the signature.
-func unsignedPresignHeader(header http.Header, signedHeaders map[string]bool) string {
+func unsignedAmzHeader(header http.Header, signedHeaders map[string]bool) string {
 	for name := range header {
 		lower := strings.ToLower(name)
 		if strings.HasPrefix(lower, "x-amz-") && lower != "x-amz-content-sha256" && !signedHeaders[lower] {
@@ -98,6 +98,9 @@ func parseSigV4(r *http.Request, region string, now time.Time) (sigV4Request, er
 	}
 	if !seen["host"] || !seen["x-amz-date"] || !seen["x-amz-content-sha256"] {
 		return sigV4Request{}, errSignature
+	}
+	if unsignedAmzHeader(r.Header, seen) != "" {
+		return sigV4Request{}, errHeadersNotSigned
 	}
 	dateValue := r.Header.Get("X-Amz-Date")
 	signedAt, err := time.Parse("20060102T150405Z", dateValue)
@@ -178,7 +181,7 @@ func parsePresignedSigV4(r *http.Request, region string, now time.Time) (sigV4Re
 	if !seen["host"] {
 		return sigV4Request{}, errSignature
 	}
-	if unsignedPresignHeader(r.Header, seen) != "" {
+	if unsignedAmzHeader(r.Header, seen) != "" {
 		return sigV4Request{}, errHeadersNotSigned
 	}
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")

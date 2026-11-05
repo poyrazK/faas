@@ -85235,6 +85235,16 @@ components:
         public: { type: boolean }
         serve_at: { type: string }
         created_at: { type: string, format: date-time }
+        retry: { $ref: '#/components/schemas/ObjectBucketRetry' }
+    ObjectBucketRetry:
+      description: Set while a bucket create or delete has failed and Gregale is retrying it. Reason is a bounded code, never a provider message.
+      type: object
+      required: [reason, detail, attempts, retry_at]
+      properties:
+        reason: { type: string, enum: [temporary, conflict, configuration, invalid, protected, cleanup_pending] }
+        detail: { type: string, description: Customer-facing explanation of the reason. }
+        attempts: { type: integer, format: int32 }
+        retry_at: { type: string, format: date-time, description: When Gregale next tries the operation. }
     ObjectEncryptionCapabilities:
       description: Operator enrollment for this bucket placement. Contains no native key identity, key material or permission assertion.
       type: object
