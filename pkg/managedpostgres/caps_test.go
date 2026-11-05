@@ -101,6 +101,24 @@ type capTestProvider struct {
 	observed map[string]ComputeCapObservation
 	setErr   map[string]error
 	set      map[string]int64
+	holds    map[string]bool
+}
+
+func (p *capTestProvider) ComputeHeld(_ context.Context, id string) (bool, error) {
+	return p.holds[id], nil
+}
+
+func (p *capTestProvider) HoldForDeletion(_ context.Context, id string) error {
+	if p.holds == nil {
+		p.holds = map[string]bool{}
+	}
+	p.holds[id] = true
+	return nil
+}
+
+func (p *capTestProvider) ReleaseDeletionHold(_ context.Context, id string) error {
+	delete(p.holds, id)
+	return nil
 }
 
 func (p *capTestProvider) ObserveComputeCap(_ context.Context, id string) (ComputeCapObservation, error) {
