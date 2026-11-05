@@ -405,8 +405,7 @@ func (m *WakePhaseMetrics) ObserveRestorePhases(b restoreTimingBreakdown) {
 		"start_jailer": b.StartJailerMs, "bind_tun": b.BindTunMs,
 		"tun_journal_checks": b.TunJournalChecksMs, "tun_wait_mntns": b.TunWaitMntnsMs,
 		"tun_wait_chroot": b.TunWaitChrootMs, "tun_setup_jail": b.TunSetupJailMs, "cgroup_fence": b.CgroupFenceMs,
-		"load_snapshot": b.LoadSnapshotMs,
-		"resume_hook": b.ResumeHookMs, "wait_ready": b.WaitReadyMs,
+		"load_snapshot": b.LoadSnapshotMs, "resume_hook": b.ResumeHookMs, "wait_ready": b.WaitReadyMs,
 		"journal_sync": b.JournalSyncMs, "journal_lock_wait": b.JournalLockWaitMs,
 	}
 	for _, phase := range restorePhaseNames {
