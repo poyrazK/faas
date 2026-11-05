@@ -166,6 +166,7 @@ export type { AppLogDrainAnalyticsSummary } from './models/AppLogDrainAnalyticsS
 export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
 export type { ApplyAppOpenAPIPolicyRequest } from './models/ApplyAppOpenAPIPolicyRequest.js';
+export type { ApplyAppScalingRequest } from './models/ApplyAppScalingRequest.js';
 export type { ApplyCachedProjectPlanRequest } from './models/ApplyCachedProjectPlanRequest.js';
 export type { ApplyPlatformTenantConsumerRequest } from './models/ApplyPlatformTenantConsumerRequest.js';
 export type { ApplyPlatformTenantConsumerResponse } from './models/ApplyPlatformTenantConsumerResponse.js';
@@ -219,6 +220,9 @@ export type { ApproveEnvironmentGitRevisionRequest } from './models/ApproveEnvir
 export type { ApproveEnvironmentGitRevisionResponse } from './models/ApproveEnvironmentGitRevisionResponse.js';
 export type { ApproveRouteLifecycleRequest } from './models/ApproveRouteLifecycleRequest.js';
 export type { ApproveRouteRemovalRequest } from './models/ApproveRouteRemovalRequest.js';
+export type { AppScalingReceipt } from './models/AppScalingReceipt.js';
+export type { AppScalingSettings } from './models/AppScalingSettings.js';
+export type { AppScalingSnapshot } from './models/AppScalingSnapshot.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './models/AppSecretReferenceListResponse.js';
@@ -669,6 +673,7 @@ export type { DebugRunningRequestAttribution } from './models/DebugRunningReques
 export type { DebugRunningResponse } from './models/DebugRunningResponse.js';
 export type { DebugStatusDeployment } from './models/DebugStatusDeployment.js';
 export type { DebugStatusHealth } from './models/DebugStatusHealth.js';
+export type { DebugStatusMemory } from './models/DebugStatusMemory.js';
 export type { DebugStatusOOMKill } from './models/DebugStatusOOMKill.js';
 export type { DebugStatusResponse } from './models/DebugStatusResponse.js';
 export type { DebugSuspectedDependency } from './models/DebugSuspectedDependency.js';
@@ -712,6 +717,7 @@ export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.j
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './models/DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './models/DeploymentRelease.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
@@ -865,6 +871,7 @@ export type { EnvironmentPolicy } from './models/EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './models/EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './models/EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './models/EnvironmentRecoveryRetention.js';
+export type { EnvironmentRouteBudgetReceipt } from './models/EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './models/EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './models/EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './models/EnvironmentServiceBinding.js';
@@ -1551,6 +1558,7 @@ export type { ObjectBucketNotificationsRequest } from './models/ObjectBucketNoti
 export type { ObjectBucketObjectLock } from './models/ObjectBucketObjectLock.js';
 export type { ObjectBucketObjectLockConfiguration } from './models/ObjectBucketObjectLockConfiguration.js';
 export type { ObjectBucketObjectLockRequest } from './models/ObjectBucketObjectLockRequest.js';
+export type { ObjectBucketRetry } from './models/ObjectBucketRetry.js';
 export type { ObjectBucketVersioning } from './models/ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './models/ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './models/ObjectCapacityReconciliation.js';
@@ -2940,6 +2948,7 @@ export type { SelectedTraceLookupResponse } from './models/SelectedTraceLookupRe
 export type { SelectedTraceRequest } from './models/SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './models/SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './models/SendAppMessageResponse.js';
+export type { ServiceAbortReceipt } from './models/ServiceAbortReceipt.js';
 export type { ServiceAuthorizationCheck } from './models/ServiceAuthorizationCheck.js';
 export type { ServiceBindingExplanation } from './models/ServiceBindingExplanation.js';
 export type { ServiceBindingInventoryContext } from './models/ServiceBindingInventoryContext.js';

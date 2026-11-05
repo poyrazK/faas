@@ -201,6 +201,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
+			InitialPasswordHash:      phc,
 		})
 		created := res.Account
 		if createErr != nil {
@@ -246,12 +247,6 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("signup.create_account", "err", createErr, "email", email)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 				"internal_error", "Internal Error", "failed to create account"))
-			return
-		}
-		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
-			s.log.Error("signup.set_password", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to set password"))
 			return
 		}
 		s.sendEmailVerification(r.Context(), r, created)
@@ -1004,6 +999,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
+			InitialPasswordHash:      phc,
 		})
 		if createErr != nil {
 			if errors.Is(createErr, errSignupNetworkCap) {
@@ -1038,12 +1034,6 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		created := res.Account
-		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
-			s.log.Error("v1auth_signup.set_password", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to set password"))
-			return
-		}
 		s.sendEmailVerification(r.Context(), r, created)
 		s.mintAndWriteV1AuthJSON(w, r, created, email)
 		return

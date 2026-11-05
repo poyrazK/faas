@@ -61,6 +61,7 @@ func (l *NodeLedger) Freeze(instance string, chargeMB int) bool {
 	}
 	e.admissionMB = chargeMB
 	e.vcpu, e.cpuMillicores, e.cpuBoostMillicores = 0, 0, 0
+	delete(l.boosted, e)
 	e.frozen = true
 	e.frozenAt, e.compressTried = l.clock(), false
 	return true
@@ -107,11 +108,11 @@ func (l *NodeLedger) admitFrozen_locked(r Request) {
 	}
 	node.residentRAM += charge
 	node.frozenRAM += charge
-	l.entries[r.Instance] = &reservation{
+	l.putEntry_locked(r.Instance, &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production: r.ProductionEnvironment, deploymentScope: r.DeploymentScope,
 		admissionMB: charge, frozen: true, admittedAt: l.clock(), frozenAt: l.clock(), frozenSeeded: true,
-	}
+	})
 }
 
 // SettleSeededFrozenCharge rebooks a frozen reservation that SeedLedger
@@ -148,8 +149,8 @@ func (l *NodeLedger) FrozenCountForNode(nodeID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := 0
-	for _, e := range l.entries {
-		if e.frozen && e.nodeID == nodeID {
+	for _, e := range l.entriesOnNode_locked(nodeID) {
+		if e.frozen {
 			n++
 		}
 	}
@@ -247,8 +248,8 @@ func (l *NodeLedger) HasUntriedFrozen(nodeID string) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for _, e := range l.entries {
-		if e.frozen && !e.compressTried && e.nodeID == nodeID {
+	for _, e := range l.entriesOnNode_locked(nodeID) {
+		if e.frozen && !e.compressTried {
 			return true
 		}
 	}

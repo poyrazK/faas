@@ -12485,6 +12485,10 @@ paths:
         Stages deletion. The account becomes `deleted_pending` for 30 days
         during which the customer can call `POST /v1/account/restore`. After
         the grace period, all rows are GC'd.
+        An account serving as an organization's billing contact while it has
+        a billing customer must move that contact first (409
+        `billing_contact_member`). If the billing-contact check cannot
+        complete, returns retryable 503 without staging deletion.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -12497,6 +12501,7 @@ paths:
                 example: {"status":"deleted_pending","scheduled_at":"2026-07-23T11:25:00Z","restore_until":"2026-08-22T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   # Issue #1278 — account-wide failed-events inbox. This surface includes
   # app-owned queue/trigger/webhook failures and account-owned job runs.
@@ -25999,6 +26004,78 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/service-aborts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before reviewed service abort.
+        schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    get:
+      tags: [deployments]
+      operationId: getServiceAbortReceipt
+      summary: Read the immutable acceptance receipt for a service-abort attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns immutable acceptance
+        of an exact reviewed default or named-environment service abort, including the original native
+        reverse-handoff request ID, even after the current handoff changes. Acceptance
+        does not establish gateway acknowledgement, request draining, completion or
+        current health. Compare the request ID separately with the observed handoff.
+        A 404 means no retained evidence; it never proves rejection or permits replay.
+        The receipt is retained with the candidate deployment audit and app. Named receipts
+        also require the original project/environment UUIDs to match the current app
+        and environment. Deleted, replaced or moved targets return no evidence.
+      responses:
+        '200':
+          description: The immutable receipt for the original reviewed service abort.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceAbortReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Service-abort receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/deployment-promotions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before guarded traffic promotion.
+        schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    get:
+      tags: [deployments]
+      operationId: getDeploymentPromotionReceipt
+      summary: Read the immutable acceptance receipt for a promotion attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns the original
+        candidate and original serving guard even after traffic changes. A 404 means no retained
+        receipt is available; it does not establish rejection and must never
+        trigger automatic resubmission. Receipts expire when their deployment
+        or app is purged. Named environment identities must still exist. This lookup never changes traffic.
+      responses:
+        '200':
+          description: The immutable receipt for the original guarded traffic promotion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentPromotionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Promotion receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/deployment-submissions/{attempt_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -27350,6 +27427,40 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-budgets/receipts/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: request_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Exact original nonzero request UUID.
+      - name: scope
+        in: query
+        schema: { type: string, enum: [default] }
+        description: Select scope=default or one registered environment; exactly one selector is required.
+      - name: environment
+        in: query
+        schema: { type: string }
+        description: Current named environment containing the original receipt; mutually exclusive with scope=default.
+    get:
+      tags: [apps]
+      operationId: getEnvironmentRouteBudgetReceipt
+      summary: Read an original durable environment budget receipt.
+      description: Requires current app read access and completed MFA. Matches account, app and current immutable project/environment identities. Returns historical committed policy revisions and the exact original request fingerprint, excluding configuration values. Later policy edits do not replace this receipt. A missing, inaccessible or unavailable receipt never proves non-commit. This endpoint performs no mutation, replay, approval or expiry renewal and does not establish runtime health.
+      responses:
+        '200':
+          description: Historical policy-intent receipt, not current configuration or runtime completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentRouteBudgetReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/route-monitor:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -28514,6 +28625,11 @@ paths:
         Stored binding enforcement requires this exact workflow.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Rollback-Attempt-ID
+          in: header
+          required: false
+          description: Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       requestBody:
         required: false
         content:
@@ -28534,7 +28650,7 @@ paths:
         '404': { $ref: '#/components/responses/RollbackTargetNotFound' }
         '409':
           $ref: '#/components/responses/RollbackConflict'
-          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required'
+          description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required | rollback_attempt_accepted | rollback_attempt_conflict'
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/alert-rollbacks:
@@ -28739,6 +28855,18 @@ paths:
         request and never substitute a different predecessor.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Service-Abort-Attempt-ID
+          in: header
+          required: false
+          description: |
+            Opaque identity saved before an exact reviewed default or named-environment service abort.
+            Acceptance is recorded atomically with reverse-handoff intent. Accepted
+            repeats return 409 service_abort_attempt_accepted; a changed reviewed
+            request returns 409 service_abort_attempt_conflict. Read the retained
+            service-aborts receipt after a lost response; never replay accepted intent.
+            Named scopes require the complete project/environment release review and current
+            unprotected write admission. Unsupported recovery modes reject this header.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       requestBody:
         required: true
         content:
@@ -31251,6 +31379,93 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/scaling:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: environment, in: query, schema: { type: string }, description: Named project environment; omit for the default app. }
+    get:
+      tags: [apps]
+      operationId: getAppScaling
+      summary: Read scaling settings and their revision.
+      description: Requires read access. Named environments must have a materialized workload revision.
+      responses:
+        '200':
+          description: Current desired configuration; does not imply running instance convergence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppScalingSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: applyAppScaling
+      summary: Commit reviewed scaling settings with a recoverable request ID.
+      description: |
+        Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+        The expected app UUID and revision are checked under the write lock. Default revisions advance for
+        every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+        Named environments use their workload revision, including no-op revision semantics.
+        Settings and the receipt commit atomically. Reuse request_id with the exact original
+        body after an interruption to recover the original receipt even after later writes.
+        Changing the body under an accepted ID returns scaling_request_conflict; a stale
+        revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+        Named production and protected environments require their existing approved workflow.
+        A receipt confirms desired configuration only; named settings require a subsequent
+        deployment, and default settings do not prove guest readiness or replica convergence.
+      requestBody:
+        description: Reviewed scaling fields and the revision and request identity to preserve on retry.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyAppScalingRequest' }
+      responses:
+        '200':
+          description: Original durable configuration receipt, including on replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppScalingReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Write permission, MFA, capability or plan admission denied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Scaling revision changed, request ID reused, or environment protected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Commit outcome uncertain; recover or retry the original request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/scaling/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: environment, in: query, schema: { type: string }, description: Environment of the original scaling request; omit to recover a default-app request. }
+      - { name: request_id, in: path, required: true, schema: { type: string, format: uuid }, description: Original scaling request UUID. }
+    get:
+      tags: [apps]
+      operationId: getAppScalingReceipt
+      summary: Recover a scaling configuration receipt without performing a write.
+      description: Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+      responses:
+        '200':
+          description: Original durable configuration receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppScalingReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/env/batch:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -32339,6 +32554,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id32'
     patch:
+      parameters:
+        - name: Deployment-Promotion-Attempt-ID
+          in: header
+          required: false
+          description: Opaque durable identity for guarded 100 percent promotion. An accepted retry returns 409 deployment_promotion_attempt_accepted without changing traffic; read its receipt separately. Never reuse it with another body.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       tags: [deployments]
       operationId: updateDeploymentTraffic
       summary: Set the per-deployment traffic-split weight.
@@ -33642,7 +33863,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: The domain is not verified and cannot be selected.
+          description: The domain is unverified, routes to another app, or belongs to a suspended tenant and cannot be selected.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -53641,6 +53862,8 @@ paths:
         the next rotation observes the new value. `days=0` is atomic
         rotation (no grace); `days=null` (or omission) clears the
         override and falls back to the plan default.
+        A failed save returns retryable 503 without invalidating the cache
+        or emitting a successful change audit event.
       requestBody:
         required: true
         content:
@@ -53661,6 +53884,7 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/account/egress_allowlist_extra:
     get:
@@ -58028,6 +58252,8 @@ paths:
         the organization bills to cannot be removed while the organization
         has a billing customer (409 `billing_contact_member`); set another
         billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+        If the billing-contact check cannot complete, returns retryable 503
+        without removing the member.
       responses:
         '204': { description: Member removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -58054,6 +58280,7 @@ paths:
             `org_memberships_one_owner_idx` partial unique index. Stable code `org_last_owner`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/orgs/{slug}/transfer_ownership:
     parameters:
@@ -58068,7 +58295,9 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org.
+        member of the org. For a Free organization, the recipient must have
+        available Free-organization ownership capacity; admission is serialized
+        with organization creation and other incoming transfers.
       requestBody:
         required: true
         content:
@@ -58083,8 +58312,9 @@ paths:
         '403':
           description: |
             `403 Forbidden` — caller is authenticated but is not the
-            active owner of the target org. Stable code
-            `org_role_forbidden`.
+            active owner of the target org (`org_role_forbidden`), or the
+            recipient already owns the maximum number of Free organizations
+            (`org_free_limit_exceeded`, with limit and observed count).
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404':
           description: 'code: NotFound (new owner is not a member)'
@@ -79492,6 +79722,20 @@ components:
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         config: { $ref: '#/components/schemas/RouteMonitorConfig' }
+    EnvironmentRouteBudgetReceipt:
+      description: Original durable policy-intent receipt. Request fingerprints bind exact bodies but grant no write authority. No configuration values are exposed.
+      type: object
+      required: [request_id, request_hash, app_id, scope, revision, app_revision, budget_source]
+      properties:
+        request_id: { type: string, format: uuid }
+        request_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        budget_source: { type: string, enum: [app_policy, environment_policy] }
     SetEnvironmentRouteBudgetsRequest:
       description: Compare-and-swap update of the selected environment route-budget override.
       type: object
@@ -80564,7 +80808,7 @@ components:
         server_errors: { type: integer, format: int64, minimum: 0 }
         error_rate: { type: number, minimum: 0, maximum: 1 }
         p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
-        latency_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the p95 ranked. The canary guard ranks only requests that did not cold boot, and the latency minimum applies to this count. Omitted when every request was ranked.' }
+        latency_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the p95 ranked, to which the latency minimum applies. The canary guard ranks only requests that did not cold boot, and no reader ranks a long-lived response such as a WebSocket or an event stream. Omitted when every request was ranked.' }
         unauthenticated: { type: integer, format: int64, minimum: 0, description: 'Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).' }
     RouteHealthWindowEvidence:
       type: object
@@ -85005,6 +85249,16 @@ components:
         public: { type: boolean }
         serve_at: { type: string }
         created_at: { type: string, format: date-time }
+        retry: { $ref: '#/components/schemas/ObjectBucketRetry' }
+    ObjectBucketRetry:
+      description: Set while a bucket create or delete has failed and Gregale is retrying it. Reason is a bounded code, never a provider message.
+      type: object
+      required: [reason, detail, attempts, retry_at]
+      properties:
+        reason: { type: string, enum: [temporary, conflict, configuration, invalid, protected, cleanup_pending] }
+        detail: { type: string, description: Customer-facing explanation of the reason. }
+        attempts: { type: integer, format: int32 }
+        retry_at: { type: string, format: date-time, description: When Gregale next tries the operation. }
     ObjectEncryptionCapabilities:
       description: Operator enrollment for this bucket placement. Contains no native key identity, key material or permission assertion.
       type: object
@@ -86618,6 +86872,7 @@ components:
         key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
         key_app: { $ref: '#/components/schemas/AppAgentBinding' }
         key_org: { $ref: '#/components/schemas/KeyOrg' }
+        key_projects: { type: array, items: { type: string }, description: "Slugs of the projects the authenticating key is limited to; absent when the key reaches every project." }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
 
     AppAgentBinding:
@@ -86792,7 +87047,8 @@ components:
         api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyExportResponse' } }
         app_secrets: { type: array, items: { $ref: '#/components/schemas/AppSecretExportResponse' } }
         edge_rules: { type: array, items: { $ref: '#/components/schemas/EdgeRuleResponse' }, description: "Edge rules on the exported apps." }
-        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's edge rule lists, with their items." }
+        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's personal edge rule lists, with their items. An organization's lists are not part of a member's export." }
+        cors_presets: { type: array, items: { $ref: '#/components/schemas/CorsPresetResponse' }, description: "The account's CORS presets: account-wide ones and those scoped to the exported apps." }
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
@@ -88941,6 +89197,50 @@ components:
         apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
         next_cursor: { type: string, maxLength: 1024 }
         evaluated_at: { type: string, format: date-time }
+
+    AppScalingSettings:
+      description: Stored RAM, CPU, concurrency and instance-floor settings.
+      type: object
+      required: [ram_mb, cpu_millicores, max_concurrency, min_instances]
+      properties:
+        ram_mb: { type: integer }
+        cpu_millicores: { type: integer, description: Stored CPU allowance; zero uses the plan default. }
+        max_concurrency: { type: integer }
+        min_instances: { type: integer }
+    AppScalingSnapshot:
+      description: Current desired scaling configuration and its compare-and-swap revision.
+      type: object
+      required: [app_id, scope, revision, settings]
+      properties:
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        environment_id: { type: string, format: uuid, description: Immutable identity for a named environment. }
+        revision: { type: integer, format: int64 }
+        settings: { $ref: '#/components/schemas/AppScalingSettings' }
+    ApplyAppScalingRequest:
+      description: A reviewed partial scaling change with a durable request identity.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_app_id, expected_revision]
+      properties:
+        expected_app_id: { type: string, format: uuid, description: Immutable app UUID from the reviewed scaling snapshot. }
+        request_id: { type: string, format: uuid }
+        expected_environment_id: { type: string, format: uuid, description: Required for a named environment; must match its immutable identity. }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        ram_mb: { type: integer, minimum: 1 }
+        cpu_millicores: { type: integer, minimum: 1 }
+        max_concurrency: { type: integer, minimum: 1 }
+        min_instances: { type: integer, minimum: 0 }
+    AppScalingReceipt:
+      description: Original atomic scaling configuration commit; does not establish runtime readiness.
+      allOf:
+        - $ref: '#/components/schemas/AppScalingSnapshot'
+        - type: object
+          required: [request_id, previous_revision, committed_at]
+          properties:
+            request_id: { type: string, format: uuid }
+            previous_revision: { type: integer, format: int64 }
+            committed_at: { type: string, format: date-time }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."
@@ -94810,6 +95110,35 @@ components:
         app_id: { type: string, format: uuid }
         status: { type: string, enum: [staged, cleaned, prepared, activated, conflict, discarded] }
         revision: { type: integer, format: int64, minimum: 0 }
+    ServiceAbortReceipt:
+      description: Immutable acceptance of an original reviewed service-abort intent; ACK/drain completion and the current handoff remain separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, predecessor_deployment_id, request_id, scope, accepted_at]
+      properties:
+        attempt_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        request_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        predecessor_deployment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        scope: { type: string, description: Default scope or the original named environment slug. }
+        project_id: { type: string, format: uuid, description: Original project identity; present for named scopes. }
+        environment_id: { type: string, format: uuid, description: Original environment identity; present for named scopes. }
+        accepted_at: { type: string, format: date-time }
+    DeploymentPromotionReceipt:
+      description: Immutable acceptance of an original guarded 100 percent traffic promotion; current traffic and health are separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, expected_serving_deployment_id, scope, accepted_at]
+      properties:
+        attempt_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        request_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        expected_serving_deployment_id: { type: string, description: Original serving guard; empty requires no serving sibling. }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        accepted_at: { type: string, format: date-time }
     DeploymentSubmissionReceipt:
       description: Immutable acceptance evidence for one opaque deployment submission attempt.
       type: object
@@ -111927,6 +112256,7 @@ components:
         expires_at: { type: string, format: date-time }
         org_id: { type: string, format: uuid, description: The organization the agent acts in. }
         member: { type: string, description: "Email of the member who connected the agent, in an organization's list." }
+        projects: { type: array, items: { type: string }, description: "Slugs of the projects the agent is limited to; absent when it reaches every project." }
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
 
     AgentConnectionsResponse:
@@ -112016,6 +112346,7 @@ components:
         plaintext:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
+        projects: { type: array, items: { type: string }, description: "Project slugs the key was limited to, on the create response of a limited agent key." }
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: [apps:read, deploy:write], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
 
     DeployTokenResponse:
@@ -112088,6 +112419,7 @@ components:
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
+        projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
 
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
@@ -112115,6 +112447,7 @@ components:
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
+        projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }
 
     ListOrgAPIKeysResponse:
       description: "GET /v1/orgs/{slug}/keys body. Returns every key minted against the org (active + grace + revoked). Newest first; matches the legacy `GET /v1/keys` ordering."
@@ -113837,7 +114170,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -113846,7 +114179,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -124064,8 +124397,29 @@ components:
         oom_fix:
           type: string
           description: "The remedy for the newest out-of-memory kill, one suggestion per line."
+        memory_pressure:
+          $ref: '#/components/schemas/DebugStatusMemory'
         tracing_enabled: { type: boolean }
         generated_at: { type: string, format: date-time }
+
+    DebugStatusMemory:
+      type: object
+      description: "Present when the app's guests ran short of memory in the last day: the low point and the RAM that would have kept 30% of the guest's memory free. Shown where Gregale has released memory warnings to the account."
+      required: [episodes, lowest_available_mb, total_mb, peak_anon_mb, last_at, current_mb, suggested_mb, plan, plan_mb, fits_plan, advice]
+      properties:
+        episodes: { type: integer, minimum: 0 }
+        lowest_available_mb: { type: integer, minimum: 0 }
+        total_mb: { type: integer, minimum: 0 }
+        peak_anon_mb: { type: integer, minimum: 0 }
+        last_at: { type: string, format: date-time }
+        current_mb: { type: integer, minimum: 0, description: "The app's ram_mb." }
+        suggested_mb: { type: integer, minimum: 0, description: "RAM that would have kept 30% free, in 64 MB steps; always above current_mb." }
+        plan: { type: string }
+        plan_mb: { type: integer, minimum: 0, description: "The most RAM the account's plan allows." }
+        fits_plan: { type: boolean }
+        upgrade_plan: { type: string, description: "The smallest plan that allows suggested_mb, when fits_plan is false; absent when no plan does." }
+        upgrade_mb: { type: integer, minimum: 0 }
+        advice: { type: string, description: "The same suggestion the app health memory check gives." }
 
     DebugStatusOOMKill:
       type: object

@@ -5,12 +5,24 @@ SET LOCAL lock_timeout = '5s';
 
 -- Keep a revision even when the final secret is deleted. N-1 writers also
 -- advance it through these triggers; a master-key reseal does not.
-ALTER TABLE project_environments ADD COLUMN shared_secret_generation bigint NOT NULL DEFAULT 0;
-ALTER TABLE project_environments ADD CONSTRAINT project_environments_shared_secret_generation_check
-    CHECK (shared_secret_generation >= 0) NOT VALID;
+ALTER TABLE project_environments ADD COLUMN IF NOT EXISTS shared_secret_generation bigint NOT NULL DEFAULT 0;
+
+-- Preserve the validated constraint when the schema is ahead of the ledger.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'project_environments'::regclass
+          AND conname = 'project_environments_shared_secret_generation_check') THEN
+        ALTER TABLE project_environments ADD CONSTRAINT project_environments_shared_secret_generation_check
+            CHECK (shared_secret_generation >= 0) NOT VALID;
+    END IF;
+END;
+$$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION advance_project_shared_secret_generation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION advance_project_shared_secret_generation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p uuid; environment text;
 BEGIN
     IF TG_OP = 'DELETE' THEN
@@ -24,10 +36,10 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER project_shared_secret_set_membership
+CREATE OR REPLACE TRIGGER project_shared_secret_set_membership
     AFTER INSERT OR DELETE ON project_environment_secrets
     FOR EACH ROW EXECUTE FUNCTION advance_project_shared_secret_generation();
-CREATE TRIGGER project_shared_secret_set_value
+CREATE OR REPLACE TRIGGER project_shared_secret_set_value
     AFTER UPDATE ON project_environment_secrets
     FOR EACH ROW WHEN (OLD.secret_version IS DISTINCT FROM NEW.secret_version OR OLD.value_hash IS DISTINCT FROM NEW.value_hash)
     EXECUTE FUNCTION advance_project_shared_secret_generation();

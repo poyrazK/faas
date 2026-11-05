@@ -113,6 +113,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if !errors.Is(err, ErrNotFound) {
 		return Setup{}, err
 	}
+	if r.DatabaseID != "" {
+		state, err := s.MirrorState(ctx, account, r.DatabaseID)
+		if err != nil {
+			return Setup{}, err
+		}
+		if state == "deleting" || state == "deleted" {
+			return Setup{}, ErrConflict
+		}
+	}
 	check, err := s.Store.Check(ctx, account, r.SourceConnectionID)
 	if err != nil {
 		return Setup{}, ErrCheckRequired

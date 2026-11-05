@@ -560,7 +560,9 @@ started. The post-release watch judges them again for 30 minutes after the
 release reaches 100%. When a gate fails, the canary is aborted (rule
 `abort_release_gate`) or the release is rolled back (rule
 `abort_post_release_gate`). The rollout decision names the gate and what it
-measured.
+measured. Because the post-release watch needs `rollback_on_5xx`, a
+production release of an app with gates that takes traffic without a canary
+cannot also turn `--rollback-on-5xx` off (`409`): nothing would judge it.
 
 How each gate judges:
 - **`slo` gates** compare the release's bad requests with the SLO's error
@@ -703,10 +705,24 @@ the moment it runs and aborting a canary does not undo it. It is listed in
 `gregale release approval pending` like any waiting release, for the same
 timeout. Once approved, the command runs and the release rolls out without
 waiting again. If it is rejected or times out, the deployment fails without
-running the command and production keeps the current release. The app's
-first production release has no canary to wait in, so its command runs at
-once
-([amendment 12](adr/20261020085706-release-approvals.md#amendment-12-2026-11-04-a-release-waits-for-approval-before-its-release-command)).
+running the command and production keeps the current release. When it is
+approved, Gregale checks again before running the command:
+- **A newer release:** if you deployed a newer release of the app to the
+  same environment meanwhile, this one is superseded and its command never
+  runs.
+- **The break-glass pause:** it waits until the pause is lifted.
+- **A deploy freeze:** a freeze that started after you deployed fails it
+  with `release_frozen`. A freeze you overrode when deploying does not.
+- **Its schedule:** a scheduled release whose schedule ended (expired an
+  hour after its time, blocked or cancelled) before it was approved fails
+  without running its command. Deploy and schedule it again.
+
+A newer release that failed or was cancelled does not replace one that
+waits; only a newer release that can still ship does.
+
+The app's first production release has no canary to wait in, so its command
+runs at once
+([amendments 12 and 13](adr/20261020085706-release-approvals.md#amendment-12-2026-11-04-a-release-waits-for-approval-before-its-release-command)).
 
 A person approves on the release's approval page in the dashboard
 (`/dashboard/releases/<deployment>/approval`, linked from the notification),

@@ -157,6 +157,17 @@ UPDATE data_pipeline_setups SET state=sqlc.arg(state),revision=revision+1,reason
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND (state='blocked' OR (sqlc.arg(state)::text='cancelled' AND state='working')) RETURNING *;
 
+-- name: PipelineSetupLock :one
+SELECT * FROM data_pipeline_setups WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid FOR UPDATE;
+
+-- name: PipelineSetupInvalidateFailedCheck :exec
+UPDATE data_connection_checks SET observed_at=NULL
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND connection_id=sqlc.arg(connection_id)::text::uuid
+ AND database_id=sqlc.arg(database_id)::text
+ AND (state='blocked' OR (state='passed' AND sqlc.arg(capacity_retry)::boolean AND
+  (coalesce(result#>>'{capacity,source,state}','')<>'ready' OR
+   (database_id<>'' AND coalesce(result#>>'{capacity,destination,state}','')<>'ready'))));
+
 -- name: PipelineSetupClaim :one
 WITH candidate AS (
  SELECT id FROM data_pipeline_setups WHERE state='working' AND retry_at<=clock_timestamp()
@@ -235,9 +246,15 @@ VALUES(sqlc.arg(pipeline_id)::text::uuid,sqlc.arg(change_id),sqlc.arg(attempt),s
 ON CONFLICT DO NOTHING;
 
 -- name: PipelineSchemaApps :many
-SELECT DISTINCT a.id,a.slug,a.status FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+SELECT DISTINCT a.id,a.slug,a.status,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.status='live') AS has_live_deployment
+FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
 WHERE b.account_id=sqlc.arg(account_id)::text::uuid AND b.database_id=sqlc.arg(database_id)::text::uuid AND b.state<>'deleted' AND a.status<>'deleted'
 ORDER BY a.id LIMIT sqlc.arg(page_limit);
+
+-- name: PipelineSchemaRefreshQueued :one
+SELECT EXISTS(SELECT 1 FROM notification_outbox WHERE channel='runtime_config_restart'
+ AND payload::jsonb->>'app_id'=sqlc.arg(app_id)::text AND payload::jsonb->>'wake_id'=sqlc.arg(wake_id)::text);
 
 -- name: PipelineSchemaRefreshStamp :exec
 INSERT INTO app_runtime_config_changes(app_id,changed_at) VALUES(sqlc.arg(app_id)::text::uuid,clock_timestamp())
@@ -258,7 +275,7 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
 -- name: PipelineRequestTableRecovery :execrows
 UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
  schema_change=jsonb_set(schema_change,'{Recovery}',CASE WHEN sqlc.arg(kind)::text='live'
- THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined')
+ THEN (schema_change->'Recovery')||jsonb_build_object('State','requested','ID','','Stage','quarantined','CopyRetry',reason IN ('table_copy_stalled','table_addition_tracking_lost'))
  ELSE jsonb_build_object('Table',sqlc.arg(table_name)::text,'Kind',sqlc.arg(kind)::text,'State','requested') END)
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND desired_state='running' AND state='blocked'
@@ -270,7 +287,9 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  AND ((sqlc.arg(kind)::text='live' AND schema_change->'Recovery'->>'Kind'='live' AND reason IN ('live_table_mismatch','replica_mismatch')
  AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=sqlc.arg(table_name)::text)
  OR (sqlc.arg(kind)::text='' AND coalesce(schema_change->'Recovery'->>'Kind','')<>'live' AND reason='replica_mismatch' AND verification_progress->>'State'='mismatch' AND verification_progress->>'Table'=sqlc.arg(table_name)::text)
- OR (sqlc.arg(kind)::text='copy' AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
+ OR ((sqlc.arg(kind)::text='copy' OR (sqlc.arg(kind)::text='live' AND schema_change->'Recovery'->>'Kind'='live'
+ AND schema_change->'Recovery'->>'State'='blocked' AND schema_change->'Recovery'->>'Stage'='copying'))
+ AND reason IN ('table_copy_stalled','table_addition_tracking_lost')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) c WHERE c->>'Table'=sqlc.arg(table_name)::text
  AND coalesce(c->>'NativeState','')<>'r' AND (coalesce((c->>'Stalled')::boolean,false) OR c->>'Phase'='missing'))
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(schema_change->'Copies','[]')) other_copy WHERE other_copy->>'Table'<>sqlc.arg(table_name)::text AND coalesce(other_copy->>'NativeState','')='')))

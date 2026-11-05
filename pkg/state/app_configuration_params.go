@@ -10,6 +10,10 @@ import (
 // applyAppConfigurationParams is shared by legacy app edits and environment
 // revisions. Ownership, quotas and lifecycle side effects stay in the stores.
 func applyAppConfigurationParams(a App, p UpdateAppParams) App {
+	if a.ScalingRevision < 1 {
+		a.ScalingRevision = 1
+	}
+	beforeScaling := scalingSettings(a)
 	if p.SetMaintenanceMode {
 		a.MaintenanceMode = boolOrFalse(p.MaintenanceMode)
 	}
@@ -310,6 +314,9 @@ func applyAppConfigurationParams(a App, p UpdateAppParams) App {
 			now := time.Now().UTC()
 			a.StaticEgressIPSetAt = &now
 		}
+	}
+	if scalingSettings(a) != beforeScaling {
+		a.ScalingRevision++
 	}
 	return a
 }

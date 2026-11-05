@@ -80,6 +80,18 @@ Event routing names no app, which leaves two holes:
 - `app.<id>` sources are reserved to their app since
   [ADR 20261026140000](20261026140000-event-app-sources-and-publish-rate.md).
 
+## Amendment 2026-11-04: object notification rules
+
+Bucket notification rules (ADR-552) add their recipients to a storage event
+after the fanout trigger has filtered its subscriptions, and a rule's target
+was checked only against the bucket's account. A creator who pointed a rule on
+a company bucket at a personal app kept receiving that bucket's object events
+after leaving the company. Notification recipients now pass the same
+`event_recipients_in_producer_reach` filter when they are captured, and a rule
+whose target the bucket's app may not reach is refused
+(`ErrObjectNotificationInvalid`, 400) when it is set. A rule written while the
+creator was a member stays stored but stops delivering once they leave.
+
 ## Alternatives
 
 - **Move company apps to an organization storage account.** The real fix for

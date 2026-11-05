@@ -321,7 +321,7 @@ RULES = [
     (r"release-gate|gate", "Release gates"),
     (r"preview", "Pull-request previews"),
     (r"alias", "Deployment aliases"),
-    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion", "Progressive rollouts"),
+    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion|service-aborts|service-abort-attempts", "Progressive rollouts"),
     (r"rollback", "Rollback to a named revision"),
     # --- deploy and build
     (r"queue-control|reorder|deploy-immediately|queued-deploy|cancel-ops|reorder-ops", "Deploy queue controls"),
@@ -394,6 +394,8 @@ INFRA_RULES = [
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.
     r"^edge-client-limits$",
+    # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
+    r"^edge-proxy-cidrs$",
 ]
 
 

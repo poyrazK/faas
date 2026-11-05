@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -124,7 +125,7 @@ func printAgentConnections(items []api.AgentConnectionResponse) {
 		_, _ = fmt.Fprintln(osStdout, "No agents are connected to this account.")
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %s\n", "ID", "KIND", "AGENT", "LAST USED", "EXPIRES", "MEMBER")
+	_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %s\n", "ID", "KIND", "AGENT", "LAST USED", "EXPIRES", "MEMBER", "PROJECTS")
 	for _, c := range items {
 		kind, agent := "agent key", c.Label
 		if c.Kind == api.AgentConnectionHostedMCP {
@@ -133,7 +134,11 @@ func printAgentConnections(items []api.AgentConnectionResponse) {
 				agent += " (" + c.ClientSite + ")"
 			}
 		}
-		_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %s\n", c.ID, kind, dashIfEmpty(agent), dashIfEmpty(c.LastUsedAt), dashIfEmpty(c.ExpiresAt), dashIfEmpty(c.Member))
+		projects := "all"
+		if len(c.Projects) > 0 {
+			projects = strings.Join(c.Projects, ",")
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s  %-10s  %-32s  %-20s  %-20s  %-24s  %s\n", c.ID, kind, dashIfEmpty(agent), dashIfEmpty(c.LastUsedAt), dashIfEmpty(c.ExpiresAt), dashIfEmpty(c.Member), projects)
 	}
 }
 

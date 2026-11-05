@@ -1,6 +1,7 @@
 """Minimal stateless MCP Streamable HTTP server for Gregale."""
 
 from protocol_headers import validate_mcp_headers
+from http_body import RequestBodyError, read_request_body
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -821,7 +822,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 self.server.app_config.get("auth", {}),
             )
             health["ok"] = health["ready"]
-            health["instance_id"] = os.environ.get("FAAS_INSTANCE_ID", "").strip()
+            health["instance_id"] = self.headers.get("X-Faas-Instance-Id", "").strip()
             self.send_json(200 if health["ready"] else 503, {key: value for key, value in health.items() if key != "ready"})
             return
         if path == self.server.app_config["endpoint"]:
@@ -889,16 +890,14 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_text(415, "content type must be application/json")
             return
         try:
-            length = int(self.headers.get("Content-Length", ""))
-        except ValueError:
-            self.send_text(400, "invalid content length")
-            return
-        if length <= 0 or length > MAX_REQUEST_BYTES:
-            self.send_text(413, "request body is missing or exceeds 1 MiB")
+            body = read_request_body(self.rfile, self.headers, MAX_REQUEST_BYTES)
+        except RequestBodyError as error:
+            self.close_connection = True
+            self.send_text(error.status, str(error))
             return
         try:
             message = json.loads(
-                self.rfile.read(length),
+                body,
                 parse_constant=reject_json_constant,
             )
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError):
@@ -1504,6 +1503,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 

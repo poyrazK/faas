@@ -7,6 +7,12 @@ SET LOCAL lock_timeout = '5s';
 -- Keep checked graph authorization and deferred deactivation aligned with
 -- environment admission, including services configured only in another stage.
 -- +goose StatementBegin
+DO $upgrade$
+BEGIN
+-- A later migration retains stage origins after environment deletion. Replaying
+-- this earlier definition must not replace that stronger admission fence.
+IF to_regclass('project_app_stage_admissions') IS NULL THEN
+EXECUTE $definition$
 CREATE OR REPLACE FUNCTION project_release_environment_apps(target_project uuid, target_environment text)
 RETURNS SETOF apps LANGUAGE sql STABLE AS $members$
  SELECT a.* FROM apps a
@@ -27,6 +33,10 @@ RETURNS SETOF apps LANGUAGE sql STABLE AS $members$
    OR EXISTS (SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=target_environment)
  ) END
 $members$;
+$definition$;
+END IF;
+END;
+$upgrade$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin

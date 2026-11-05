@@ -61,11 +61,13 @@ export {
   currentGregaleRelease,
   currentGregaleRequestDeadline,
   gregaleReleaseMetaTag,
+  gregaleRequestTimeRemainingMs,
   withGregaleReleaseContext,
   withGregaleRequestContext,
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
   GREGALE_REQUEST_DEADLINE_HEADER,
+  GREGALE_DEADLINE_MS_HEADER,
 } from './release-context.js';
 // Server-side verification of incoming service-binding identity assertions.
 export {
