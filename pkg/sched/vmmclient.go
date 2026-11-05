@@ -457,6 +457,9 @@ type AppSpec struct {
 	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
 	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// RequestConcurrency is vmmd's HTTP admission limit for the instance
+	// (ADR-20261101215228, vmmRequestConcurrency); 0 keeps the plan bound.
+	RequestConcurrency int32
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -1962,22 +1965,23 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
-		RehearsalRunId:  a.RehearsalRunID,
-		BaseKey:         a.BaseKey,
-		LayerKey:        a.LayerKey,
-		VcpuCount:       a.VCPUCount,
-		MemSizeMib:      a.MemSizeMiB,
-		CpuMillicores:   a.CPUMillicores,
-		EgressMbit:      a.EgressMbit,
-		AppId:           a.AppID,
-		SealedEnv:       sealed,
-		ApiEnv:          apiEnv,
-		Sidecars:        sidecars,
-		MainDependsOn:   mainDependsOn,
-		EgressAllowlist: a.EgressAllowlist,
-		EgressPorts:     egressPortsToWire(a.EgressPorts),
-		Quarantine:      a.Quarantine,
-		Port:            uint32(a.Port),
+		RehearsalRunId:     a.RehearsalRunID,
+		BaseKey:            a.BaseKey,
+		LayerKey:           a.LayerKey,
+		VcpuCount:          a.VCPUCount,
+		MemSizeMib:         a.MemSizeMiB,
+		CpuMillicores:      a.CPUMillicores,
+		RequestConcurrency: a.RequestConcurrency,
+		EgressMbit:         a.EgressMbit,
+		AppId:              a.AppID,
+		SealedEnv:          sealed,
+		ApiEnv:             apiEnv,
+		Sidecars:           sidecars,
+		MainDependsOn:      mainDependsOn,
+		EgressAllowlist:    a.EgressAllowlist,
+		EgressPorts:        egressPortsToWire(a.EgressPorts),
+		Quarantine:         a.Quarantine,
+		Port:               uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
 		HealthcheckPath:          a.HealthcheckPath,

@@ -4029,7 +4029,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
-		EgressMbit: int32(limits.EgressMbit),
+		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -6139,14 +6139,15 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: %w", err)
 	}
 	return AppSpec{
-		migrationRuntime: migrationInputs,
-		WakeID:           ins.WakeID,
-		BaseKey:          pinnedBase,
-		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:        int32(e.guestVCPUs(app, limits)),
-		MemSizeMiB:       int32(app.RAMMB),
-		CPUMillicores:    int32(e.appCPUMillicores(app, limits)),
-		EgressMbit:       int32(limits.EgressMbit),
+		migrationRuntime:   migrationInputs,
+		WakeID:             ins.WakeID,
+		BaseKey:            pinnedBase,
+		LayerKey:           layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:          int32(e.guestVCPUs(app, limits)),
+		MemSizeMiB:         int32(app.RAMMB),
+		CPUMillicores:      int32(e.appCPUMillicores(app, limits)),
+		EgressMbit:         int32(limits.EgressMbit),
+		RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -10859,6 +10860,24 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 // absorbs: its declared scaling_policy.per_instance_concurrency, or the
 // plan's concurrency_per_vm (ADR-20261022203523). Wake fan-out and the
 // in-flight scale-in floor divide demand by it, matching the gateway's gate.
+// vmmRequestConcurrency is the per-instance limit schedd sends vmmd's HTTP
+// admission (ADR-20261101215228): 0 while runtime config sets no request
+// limit, so vmmd keeps the plan bound; else the app's declaration up to the
+// maximum, or the maximum. vmmd admits from every gateway at once, so an app
+// without a declaration gets the maximum there, not the default the gateways
+// apply.
+func vmmRequestConcurrency(app state.App, limits api.Limits) int32 {
+	rc := api.CurrentRequestConcurrency()
+	if !rc.Set() {
+		return 0
+	}
+	bound := rc.Bound(limits)
+	if app.ScalingPolicy != nil && app.ScalingPolicy.PerInstanceConcurrency > 0 {
+		return int32(min(app.ScalingPolicy.PerInstanceConcurrency, bound)) //nolint:gosec // bounded by api.AppRequestConcurrencyBound
+	}
+	return int32(bound) //nolint:gosec // bounded by api.AppRequestConcurrencyBound
+}
+
 func effectivePerInstanceConcurrency(app state.App, limits api.Limits) int {
 	requested := 0
 	if app.ScalingPolicy != nil {

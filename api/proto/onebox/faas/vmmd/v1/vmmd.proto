@@ -935,6 +935,12 @@ message AppSpec {
   // Non-production deployments keep shared egress even when their app has a pin.
   // False preserves production eligibility for older callers.
   bool static_egress_excluded = 36;
+  // ADR-20261101215228: requests vmmd's HTTP admission lets through to this
+  // instance at once. schedd sends it once runtime config sets the request
+  // limits: the app's declared per_instance_concurrency, or else
+  // app_request_concurrency_max. 0 (an older schedd, or nothing set) keeps the
+  // plan's concurrency_per_vm. vmmd clamps it to api.AppRequestConcurrencyBound.
+  int32 request_concurrency = 37;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

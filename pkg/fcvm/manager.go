@@ -595,7 +595,12 @@ type Instance struct {
 	// needing to thread the plan through the vmm-side Lease type.
 	// The Lease stays allocator-owned and instance-id-keyed; the Plan
 	// is schedd-owned and recorded at Wake time.
-	Plan                  api.Plan
+	Plan api.Plan
+	// RequestConcurrency is the HTTP admission limit schedd sent with the
+	// wake (ADR-20261101215228); 0 keeps the plan's concurrency_per_vm. It
+	// is not journaled: an instance adopted after a vmmd restart keeps the
+	// plan bound until its next wake.
+	RequestConcurrency    int
 	httpForwardGeneration string
 
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
@@ -3785,6 +3790,9 @@ type WakeRequest struct {
 	CPUMillicores int
 	EgressMbit    int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	Snapshot      *Snapshot // nil => cold boot
+	// RequestConcurrency is the instance's HTTP admission limit
+	// (ADR-20261101215228); 0 keeps the plan's concurrency_per_vm.
+	RequestConcurrency int
 	// KeepPaused restores a snapshot into the warm pool without resuming the
 	// guest. It is intentionally valid only with Snapshot; cold boots cannot
 	// produce a paused pool entry.
@@ -5389,7 +5397,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		StaticEgressExcluded: req.StaticEgressExcluded,
 		WakeID:               wakeID, NodeID: fields.NodeID,
-		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),

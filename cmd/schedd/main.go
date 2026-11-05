@@ -812,8 +812,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261101215228: the values that shape a listed app's CPU, and the
 	// list itself, are runtime config.
 	cpuShape := &cpuShapeConfig{engine: engine}
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...),
+	requestConcurrency := &runtimeconfig.RequestConcurrency{}
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...), runtimeconfig.RequestConcurrencyKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			if handled, err := requestConcurrency.Apply(key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
 			if handled, err := cpuShape.apply(key, value); handled {
 				if err == nil {
 					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
