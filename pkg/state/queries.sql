@@ -14536,6 +14536,21 @@ WITH candidate AS (
  AND (task.kind<>'release' OR NOT EXISTS(SELECT 1 FROM project_environment_promotion_migrations m JOIN project_environment_promotions p ON p.id=m.promotion_id
   WHERE p.project_id=app.project_id AND m.task_id IS DISTINCT FROM task.id AND ((p.status='running' OR EXISTS(SELECT 1 FROM project_environment_promotion_migration_recoveries recovery WHERE recovery.promotion_id=p.id AND recovery.status IN ('quiescing','verifying'))) OR EXISTS(SELECT 1 FROM app_tasks previous WHERE previous.id=m.task_id AND previous.started_at IS NOT NULL AND previous.exit_code IS NULL AND NOT EXISTS(SELECT 1 FROM project_promotion_migration_resolved_tasks resolved WHERE resolved.task_id=previous.id)))))
  AND app.managed_postgres_admission_cutover_id IS NULL
+ -- ADR-1448 amendment 1: one release command per app scope at a time, oldest first.
+ AND (task.kind<>'release' OR NOT EXISTS(SELECT 1 FROM app_tasks other
+  WHERE other.account_id=task.account_id AND other.app_id=task.app_id AND other.kind='release' AND other.id<>task.id
+  AND coalesce(nullif(other.deployment_scope,''),'default')=coalesce(nullif(task.deployment_scope,''),'default')
+  AND (other.status IN ('restoring','running') OR (other.status='queued' AND other.cancel_requested_at IS NULL
+   AND (other.created_at<task.created_at OR (other.created_at=task.created_at AND other.id<task.id))))))
+ -- ADR-1448 amendment 1: nor after one whose outcome is unknown and unchecked (see UncertainReleaseTask).
+ AND (task.kind<>'release' OR NOT EXISTS(SELECT 1 FROM app_tasks prior
+  WHERE prior.account_id=task.account_id AND prior.app_id=task.app_id AND prior.kind='release' AND prior.id<>task.id
+  AND coalesce(nullif(prior.deployment_scope,''),'default')=coalesce(nullif(task.deployment_scope,''),'default')
+  AND prior.started_at IS NOT NULL AND prior.exit_code IS NULL AND prior.status IN ('failed','timed_out','cancelled')
+  AND NOT EXISTS(SELECT 1 FROM release_outcome_checks c WHERE c.task_id=prior.id)
+  AND NOT EXISTS(SELECT 1 FROM app_tasks later WHERE later.account_id=prior.account_id AND later.app_id=prior.app_id
+   AND later.kind='release' AND later.status='succeeded' AND later.started_at>prior.started_at
+   AND coalesce(nullif(later.deployment_scope,''),'default')=coalesce(nullif(prior.deployment_scope,''),'default'))))
  AND NOT financial_app_command_held(task.app_id,task.deployment_id,sqlc.arg(claimed_at)::timestamptz)
  AND task.created_at<=sqlc.arg(claimed_at)::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=sqlc.arg(claimed_at))
@@ -27474,6 +27489,35 @@ JOIN app_tasks t ON t.app_id = target.app_id
 JOIN deployments d ON d.id = t.deployment_id
 WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY t.started_at, t.id;
+
+-- name: UncertainReleaseTask :one
+-- ADR-1448 amendment 1: the newest release command of the app scope that
+-- started but ended without an exit code, which nobody has checked and no
+-- later release command in the scope has succeeded after. The predicate is
+-- repeated in ClaimNextUnfencedAppTask.
+SELECT prior.* FROM app_tasks prior
+WHERE prior.account_id=sqlc.arg(account_id)::text::uuid AND prior.app_id=sqlc.arg(app_id)::text::uuid
+ AND prior.kind='release' AND prior.deployment_id<>sqlc.arg(exclude_deployment_id)::text::uuid
+ AND coalesce(nullif(prior.deployment_scope,''),'default')=sqlc.arg(scope)::text
+ AND prior.started_at IS NOT NULL AND prior.exit_code IS NULL AND prior.status IN ('failed','timed_out','cancelled')
+ AND NOT EXISTS(SELECT 1 FROM release_outcome_checks c WHERE c.task_id=prior.id)
+ AND NOT EXISTS(SELECT 1 FROM app_tasks later WHERE later.account_id=prior.account_id AND later.app_id=prior.app_id
+  AND later.kind='release' AND later.status='succeeded' AND later.started_at>prior.started_at
+  AND coalesce(nullif(later.deployment_scope,''),'default')=coalesce(nullif(prior.deployment_scope,''),'default'))
+ORDER BY prior.started_at DESC, prior.id
+LIMIT 1;
+
+-- name: InsertReleaseOutcomeCheck :one
+-- ADR-1448 amendment 1: records that a person checked the database after a
+-- release command with an unknown outcome. Only such a command can be checked.
+INSERT INTO release_outcome_checks(task_id,account_id,app_id,deployment_id,checked_by,note,checked_at)
+SELECT t.id,t.account_id,t.app_id,t.deployment_id,sqlc.arg(checked_by)::text,sqlc.arg(note)::text,sqlc.arg(checked_at)::timestamptz
+FROM app_tasks t
+WHERE t.id=sqlc.arg(task_id)::text::uuid AND t.account_id=sqlc.arg(account_id)::text::uuid AND t.kind='release'
+ AND t.started_at IS NOT NULL AND t.exit_code IS NULL AND t.status IN ('failed','timed_out','cancelled')
+ON CONFLICT (task_id) DO NOTHING
+RETURNING task_id::text AS task_id, account_id::text AS account_id, app_id::text AS app_id,
+ deployment_id::text AS deployment_id, checked_by, note, checked_at;
 
 -- name: ReleaseMigrationDatabases :many
 -- ADR-1448: managed PostgreSQL databases whose migration binding delivers a

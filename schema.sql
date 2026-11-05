@@ -54115,6 +54115,23 @@ CREATE TABLE public.release_gate_probe_results (
 
 
 --
+-- Name: release_outcome_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_outcome_checks (
+    task_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    checked_by text NOT NULL,
+    note text NOT NULL,
+    checked_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT release_outcome_checks_checked_by_check CHECK (((length(checked_by) >= 1) AND (length(checked_by) <= 200))),
+    CONSTRAINT release_outcome_checks_note_check CHECK (((length(btrim(note)) >= 1) AND (length(btrim(note)) <= 1000)))
+);
+
+
+--
 -- Name: release_secret_key_retirement_fence; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69129,6 +69146,14 @@ ALTER TABLE ONLY public.release_gate_probe_results
 
 
 --
+-- Name: release_outcome_checks release_outcome_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_outcome_checks
+    ADD CONSTRAINT release_outcome_checks_pkey PRIMARY KEY (task_id);
+
+
+--
 -- Name: release_secret_key_retirement_fence release_secret_key_retirement_fence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79798,6 +79823,13 @@ CREATE INDEX release_freezes_unlifted ON public.release_freezes USING btree (acc
 --
 
 CREATE INDEX release_gate_probe_results_window ON public.release_gate_probe_results USING btree (window_start);
+
+
+--
+-- Name: release_outcome_checks_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_outcome_checks_app_idx ON public.release_outcome_checks USING btree (account_id, app_id);
 
 
 --
@@ -102464,6 +102496,14 @@ ALTER TABLE ONLY public.release_gate_probe_results
 
 ALTER TABLE ONLY public.release_gate_probe_results
     ADD CONSTRAINT release_gate_probe_results_gate_id_fkey FOREIGN KEY (gate_id) REFERENCES public.app_release_gates(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_outcome_checks release_outcome_checks_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_outcome_checks
+    ADD CONSTRAINT release_outcome_checks_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --

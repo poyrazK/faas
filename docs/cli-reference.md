@@ -1704,6 +1704,25 @@ gregale release timeline v42 --app my-api
 gregale release timeline v42 --app my-api --json
 ```
 
+### release resolve
+
+Record a database check after a release command was lost
+
+`gregale release resolve --note <TEXT> [--app <SLUG>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--note <TEXT>` | what you checked in the database | required |
+| `--app <SLUG>` | app slug, to resolve vN revisions |  |
+
+Examples:
+
+```sh
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+Use it when a release command ended without an exit code: the next release command of the scope waits for this check.
+
 ### release hide
 
 Hide one deployment from the list

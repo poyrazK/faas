@@ -300,6 +300,7 @@ touch them. The tables below map each earlier name.
 | `gregale deploy retry` | `gregale release attempt retry` |
 | `gregale deploy status` | `gregale release attempt get` |
 | `gregale deployment diff` | `gregale release diff` |
+| `gregale deployment resolve` | `gregale release resolve` |
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |

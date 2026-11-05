@@ -2639,6 +2639,7 @@ export type { RealtimeWorkerHeartbeatRequest } from './models/RealtimeWorkerHear
 export type { RebindEnvironmentGitSourceRequest } from './models/RebindEnvironmentGitSourceRequest.js';
 export type { ReconcileObjectStorageComputeTriggersRequest } from './models/ReconcileObjectStorageComputeTriggersRequest.js';
 export type { RecordDevSyncRequest } from './models/RecordDevSyncRequest.js';
+export type { RecordReleaseOutcomeCheckRequest } from './models/RecordReleaseOutcomeCheckRequest.js';
 export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
 export type { RegisterEventSchemaRequest } from './models/RegisterEventSchemaRequest.js';
 export type { RegisterEventSchemaResponse } from './models/RegisterEventSchemaResponse.js';
@@ -2663,6 +2664,7 @@ export type { ReleaseFreezeStatus } from './models/ReleaseFreezeStatus.js';
 export type { ReleaseFreezeWeekly } from './models/ReleaseFreezeWeekly.js';
 export type { ReleaseGate } from './models/ReleaseGate.js';
 export type { ReleaseGateResult } from './models/ReleaseGateResult.js';
+export type { ReleaseOutcomeCheck } from './models/ReleaseOutcomeCheck.js';
 export type { ReleaseRestorePoint } from './models/ReleaseRestorePoint.js';
 export type { ReleaseTimeline } from './models/ReleaseTimeline.js';
 export type { ReleaseTimelineEvent } from './models/ReleaseTimelineEvent.js';

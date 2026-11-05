@@ -1047,6 +1047,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
+	// amendment 1), keyed by task id.
+	releaseOutcomeChecks map[string]ReleaseOutcomeCheck
 	// appForks are production fork intents (ADR-732), keyed by fork id.
 	appForks map[string]AppFork
 	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).

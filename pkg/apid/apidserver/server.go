@@ -4800,6 +4800,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/release-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseApprovals)))
 	mux.HandleFunc("GET /v1/deployments/{id}/approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseApproval)))
 	mux.HandleFunc("POST /v1/deployments/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.decideReleaseApproval)))))
+	// ADR-1448 amendment 1: record a check after a release command whose outcome is unknown.
+	mux.HandleFunc("POST /v1/deployments/{id}/release-outcome", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordReleaseOutcomeCheck)))))
 	// Release diff (ADR-20261021101117).
 	mux.HandleFunc("GET /v1/deployments/{id}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseDiff)))
 	// ADR-20261022120744: one release's phase and history.

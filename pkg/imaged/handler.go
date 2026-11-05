@@ -2161,6 +2161,16 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if held, err := h.holdReleaseCommandForApproval(ctx, app, dep); err != nil || held {
 			return err
 		}
+		// ADR-20261022140000 amendment 2: no release command starts during
+		// the break-glass pause, whenever its release was created.
+		if held, err := h.holdReleaseCommandForPause(ctx, dep); err != nil || held {
+			return err
+		}
+		// ADR-1448 amendment 1: no release command after one whose effect
+		// on the database is unknown, until a person checks it.
+		if closed, err := h.failAfterUncertainRelease(ctx, app, dep); err != nil || closed {
+			return err
+		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) {
 			return nil
@@ -2168,6 +2178,7 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if err != nil {
 			return err
 		}
+		h.retireOutpacedReleases(ctx, dep)
 		wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
 		if err != nil || wait {
 			return err

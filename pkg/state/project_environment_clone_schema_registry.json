@@ -19732,6 +19732,19 @@
     "kind": "operational"
   },
   {
+    "table": "release_outcome_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checked_at",
+      "checked_by",
+      "deployment_id",
+      "note",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "release_approval_events",
     "columns": [
       "account_id",

@@ -399,6 +399,23 @@ rollout, so the old code always runs against the new schema for a while.
 Write migrations that the previous release can live with: add columns and
 tables first, and remove what the old code uses only in a later release.
 
+Release commands of one app run one at a time per environment, oldest first.
+If you deploy again while a release's command is still waiting to start, the
+newer release replaces it and the older command never runs. A command that
+already started finishes before the next one starts.
+
+A release command can end without an exit code: its worker was lost, it timed
+out, or it was cancelled while running. It may have changed part of the
+database. The next release of that environment then fails with
+`release_outcome_uncertain` before its own command runs. Check the database,
+record what you found, and deploy again:
+
+```bash
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+A later release command of the environment that succeeds also clears it.
+
 A rollback restores code, never the database. Rolling back to the release
 that was serving when the migration ran is the usual case and needs nothing
 extra: that code already ran against the migrated schema. Rolling back
@@ -909,7 +926,9 @@ every account
 and new schedules then fail with 503 `platform_release_paused`, which nothing
 in the request overrides. A release you deployed earlier with `--no-traffic`
 can't take its first traffic during the pause either. Queued builds wait, and
-scheduled releases start once the pause is lifted. Your running apps keep
+scheduled releases start once the pause is lifted. A release deployed before
+the pause still finishes its build, but its release command (a migration)
+waits for the pause to be lifted. Your running apps keep
 serving, rollbacks to a release that served before still
 work, and you can still change env vars and secrets, so you can rotate a
 credential during the incident. Retry the deploy after the pause is lifted.

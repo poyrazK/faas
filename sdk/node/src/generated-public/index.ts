@@ -975,6 +975,7 @@ export type { QueueReleaseRequirements } from './models/QueueReleaseRequirements
 export type { QuotaBlock } from './models/QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './models/RaiseOverageCapRequest.js';
 export type { RealtimeTriggerConfig } from './models/RealtimeTriggerConfig.js';
+export type { RecordReleaseOutcomeCheckRequest } from './models/RecordReleaseOutcomeCheckRequest.js';
 export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
 export type { ReleaseApprovalDecision } from './models/ReleaseApprovalDecision.js';
 export type { ReleaseApprovalStatus } from './models/ReleaseApprovalStatus.js';
@@ -991,6 +992,7 @@ export type { ReleaseDiffSide } from './models/ReleaseDiffSide.js';
 export type { ReleaseFreeze } from './models/ReleaseFreeze.js';
 export type { ReleaseFreezeWeekly } from './models/ReleaseFreezeWeekly.js';
 export type { ReleaseGateResult } from './models/ReleaseGateResult.js';
+export type { ReleaseOutcomeCheck } from './models/ReleaseOutcomeCheck.js';
 export type { ReleaseRestorePoint } from './models/ReleaseRestorePoint.js';
 export type { ReleaseTimeline } from './models/ReleaseTimeline.js';
 export type { ReleaseTimelineEvent } from './models/ReleaseTimelineEvent.js';

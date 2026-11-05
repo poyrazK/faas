@@ -5005,6 +5005,7 @@ from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
 from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
 from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
+from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .refresh_automatic_route_check_response_202 import RefreshAutomaticRouteCheckResponse202
@@ -5056,6 +5057,8 @@ from .release_gate_comparison import ReleaseGateComparison
 from .release_gate_kind import ReleaseGateKind
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
+from .release_outcome_check import ReleaseOutcomeCheck
+from .release_outcome_check_task_status import ReleaseOutcomeCheckTaskStatus
 from .release_restore_point import ReleaseRestorePoint
 from .release_timeline import ReleaseTimeline
 from .release_timeline_event import ReleaseTimelineEvent
@@ -10990,6 +10993,7 @@ __all__ = (
     "ReconcileObjectStorageComputeTriggersRequest",
     "RecordDevSyncRequest",
     "RecordDevSyncRequestStatus",
+    "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
     "RefreshAutomaticRouteCheckResponse202",
@@ -11041,6 +11045,8 @@ __all__ = (
     "ReleaseGateKind",
     "ReleaseGateResult",
     "ReleaseGateResultKind",
+    "ReleaseOutcomeCheck",
+    "ReleaseOutcomeCheckTaskStatus",
     "ReleaseRestorePoint",
     "ReleaseTimeline",
     "ReleaseTimelineEvent",
