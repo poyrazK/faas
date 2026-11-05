@@ -6444,12 +6444,17 @@ var cliCommands = []cliCommand{
 			{Name: "rm", Aliases: []string{"delete"}, Short: "Preview or delete a project", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "preview affected state"},
 				{Name: "yes", Short: "confirm project deletion"},
+				{Name: "detach-services", Short: "delete even though its services call each other by name", Bool: true},
 			}},
 			{Name: "rollback", Short: "Roll every service back to its previous deployment, dependencies first", Notes: []string{"Stops at the first service that fails and names the rest."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "print the rollback order", Bool: true},
 				{Name: "yes", Short: "roll every service back", Bool: true},
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
+			}},
+			{Name: "preview-secrets", Short: "Set or remove a pull request preview value on every service", Notes: []string{"Values are write-only; previews receive them at their next deploy."}, Subcommands: []cliSub{
+				{Name: "set", Short: "Set KEY=VALUE pairs in every service's pr-preview scope", Positionals: []string{"<project>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin", Bool: true}}},
+				{Name: "unset", Short: "Remove keys from every service's pr-preview scope", Positionals: []string{"<project>", "<KEY...>"}},
 			}},
 		},
 		Positionals:         []string{"<project-slug>"},

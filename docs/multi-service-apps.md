@@ -122,7 +122,12 @@ Gregale reads, in this order:
   ([ADR-20261025134512](adr/20261025134512-go-module-commands-as-services.md)).
 
 Datastore images in Compose (`postgres`, `redis`, `mysql`, `mongo` and similar)
-are not run as apps.
+are not run as apps. Only `postgres` has a managed equivalent (below). For the
+others the plan says so and lists each service variable that points at them
+and will have no value, such as `api.REDIS_URL`; set those to an external
+provider before the first request. A GitHub push does not deploy a service
+whose variable is still unset, and its check names the variable
+([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)).
 
 Where [managed PostgreSQL](managed-postgres.md) is available to your account, a
 `postgres` service becomes a managed database named `<project>-<service>` in
@@ -283,8 +288,10 @@ warns when a name cannot be called this way, or when two services share one
 ([ADR-20261026170512](adr/20261026170512-service-dns-names.md)).
 
 Addresses from Docker, such as `http://billing:8080`, do not resolve on Gregale.
-Use the `.internal` name instead, or declare the dependency and read the URL
-Gregale injects:
+A Compose `environment:` value that calls another service this way is imported
+as that service's Gregale address on reviewed deploys, without any opt-in
+(see [Configuration](#configuration)). In code, use the `.internal` name, or
+declare the dependency and read the URL Gregale injects:
 
 ```yaml
 services:
@@ -375,6 +382,9 @@ address, and the plan says so), keeping the path. The service mesh forwards to t
 is dropped; a value for a second listener of that service, or for another
 protocol, needs its address set by hand
 ([ADR-20261026181020](adr/20261026181020-compose-service-address-import.md)).
+These service addresses are imported even without `x-gregale-env-import`,
+because they are never credentials and the Docker address cannot work here
+([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)); every other plain value still needs the opt-in.
 
 The plan lists imported names under **Imported from Compose**, names each
 rewritten address, and gives the reason beside each value it skips. Gregale
@@ -424,7 +434,10 @@ change before anything is applied:
 - **`gregale project delete`** deletes the project but not its services: each one
   keeps running as a standalone app, with its domains, environment values and
   crons. Detached apps are no longer one project, so they cannot call each
-  other by service name; delete them with `gregale app delete`.
+  other by service name; delete them with `gregale app delete`. While its
+  services call each other, `gregale project delete --yes` is refused and names
+  the calls that would stop working; `--dry-run` lists them too. Add
+  `--detach-services` once they no longer call each other by name.
 
 ## Roll back
 
@@ -483,8 +496,38 @@ credentials. It gets:
   gregale env set --app shop-web --env pr-preview STRIPE_KEY=sk_test_…
   ```
 
+  To set one for every service of the project at once:
+
+  ```sh
+  gregale project preview-secrets set shop STRIPE_KEY=sk_test_…
+  printf 'STRIPE_KEY=%s\n' "$KEY" | gregale project preview-secrets set shop --from-stdin
+  gregale project preview-secrets unset shop STRIPE_KEY
+  ```
+
+  It writes the value to each service's `pr-preview` scope; a service added
+  later needs the command again ([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)).
+
 `pr-preview` values override the PR's Compose values. See
 [preview environments](preview-environments.md#configuration).
+
+## Service settings in gregale.yaml
+
+A service may keep a `gregale.yaml` in its directory. Its settings apply on
+every deploy of the service, including project deploys and GitHub pushes:
+the `lifecycle` block (`after_restore` and `before_checkpoint` hooks, restart
+policy, timeouts, replicas), `scaling` and `retry_policy`. For example, a
+service that holds a database pool reconnects after a snapshot restore with:
+
+```yaml
+lifecycle:
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 500
+```
+
+See [cold wake](cold-wake.md#refresh-application-state-after-restore).
+Before [ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md) project deploys and GitHub pushes ignored
+these settings.
 
 ## Cold starts and tracing
 

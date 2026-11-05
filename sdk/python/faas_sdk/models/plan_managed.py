@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -39,6 +39,9 @@ class PlanManaged:
     not_provisioned_reason: PlanManagedNotProvisionedReason | Unset = UNSET
     """Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is
     set."""
+    unbound: list[str] | Unset = UNSET
+    """Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when
+    none (ADR-20261104221217)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +63,10 @@ class PlanManaged:
         if not isinstance(self.not_provisioned_reason, Unset):
             not_provisioned_reason = self.not_provisioned_reason
 
+        unbound: list[str] | Unset = UNSET
+        if not isinstance(self.unbound, Unset):
+            unbound = self.unbound
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +82,8 @@ class PlanManaged:
             field_dict["provision"] = provision
         if not_provisioned_reason is not UNSET:
             field_dict["not_provisioned_reason"] = not_provisioned_reason
+        if unbound is not UNSET:
+            field_dict["unbound"] = unbound
 
         return field_dict
 
@@ -107,6 +116,8 @@ class PlanManaged:
         else:
             not_provisioned_reason = check_plan_managed_not_provisioned_reason(_not_provisioned_reason)
 
+        unbound = cast(list[str], d.pop("unbound", UNSET))
+
         plan_managed = cls(
             name=name,
             kind=kind,
@@ -115,6 +126,7 @@ class PlanManaged:
             image=image,
             provision=provision,
             not_provisioned_reason=not_provisioned_reason,
+            unbound=unbound,
         )
 
         plan_managed.additional_properties = d
