@@ -243,7 +243,7 @@ export class EnvService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Receipt storage is unavailable.`,
+        503: `Configuration batch receipt storage is unavailable.`,
       },
     });
   }
@@ -463,6 +463,9 @@ export class EnvService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Original reviewed rollback request UUID.
+     */
     requestId: string,
     /**
      * Original private receipt proof. Never put it in a URL.

@@ -7501,7 +7501,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503':
-          description: Receipt storage is unavailable.
+          description: Configuration batch receipt storage is unavailable.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -7601,7 +7601,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/EnvScope'
-      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}, description: Original reviewed rollback request UUID.}
       - {name: X-Gregale-Env-Receipt-Proof, in: header, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Original private receipt proof. Never put it in a URL.}
     get:
       tags: [env]
@@ -38389,6 +38389,7 @@ components:
         request_id: {type: string, format: uuid, description: Original reviewed rollback request identity.}
         receipt_proof: {type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Private proof required for receipt recovery.}
     ConfigRollbackReceipt:
+      description: Value-free evidence of a reviewed configuration rollback.
       type: object
       required: [request_id, app_id, scope, restored_revision, config_revision, changed]
       properties:

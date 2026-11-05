@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ConfigRollbackReceipt")
 
 @_attrs_define
 class ConfigRollbackReceipt:
+    """Value-free evidence of a reviewed configuration rollback."""
+
     request_id: UUID
     app_id: UUID
     scope: str

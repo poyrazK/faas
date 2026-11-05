@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Value-free evidence of a reviewed configuration rollback.
+ */
 export type ConfigRollbackReceipt = {
   request_id: string;
   app_id: string;
