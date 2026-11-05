@@ -61,9 +61,10 @@
      IDs or `*`. Empty (the default) keeps today's plan topology. A list of
      apps, not nodes, lets two identical apps on the same node be compared at
      the same time. The same list later applies the baseline and ceiling.
-     ADR-20261101215228 replaces this environment variable with the runtime
-     config key `guest_vcpu_from_cpu_apps`, and makes the baseline per GB,
-     the ceiling floor and the millicores per vCPU runtime config too.
+     ADR-20261101215228 replaced this environment variable, before it was
+     released, with the runtime config key `guest_vcpu_from_cpu_apps`, and
+     made the baseline per GB, the ceiling floor and the millicores per vCPU
+     runtime config too.
 - **Why CPU follows RAM:** billing is plan RAM per running second (§4.7),
   but today every app books one core and may use one core whatever its RAM.
   So one billed GB-second carried four cores' worth of ceiling on Free and
@@ -150,7 +151,7 @@
   2. vmmd's restore check (`pkg/fcvm/restore_vcpus.go`). It is inert while
      no app is listed: every snapshot was captured at the count its wakes ask
      for.
-  3. schedd's `guest_vcpu_from_cpu_apps` / `FAAS_GUEST_VCPU_FROM_CPU_APPS`:
+  3. The `guest_vcpu_from_cpu_apps` list (runtime config, read by schedd):
      boot specs and admission bookings of listed apps use the derived count.
   4. vmmd accepts a 2,000-millicore ceiling. It ships a release before
      schedd sends one, because an older vmmd rejects an unknown

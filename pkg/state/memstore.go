@@ -211,6 +211,8 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	checkedRollbackReleaseReviews        map[string][]ReleaseRun
+	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
 	alertHistoricalClaims                map[string]string
 	recoveryPredecessors                 map[string]string
@@ -1459,6 +1461,8 @@ type MemStore struct {
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
 	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
+	projectSharedSecretGenerations            map[string]int64
+	projectAppStageAdmissions                 map[string]string
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -4303,7 +4307,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			continue
 		}
 		for _, deployment := range m.deployments {
-			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
+			if deployment.AppID == app.ID && !deployment.Status.IsTerminal() &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
 				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
@@ -4328,6 +4332,16 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 
 	m.deleteEnvironmentInvocationsLocked(environmentID)
+	// Retirement is atomic with deletion: history keeps its terminal outcome,
+	// but a recreated slug cannot reactivate a release whose settings are gone.
+	now := time.Now().UTC()
+	for id, deployment := range m.deployments {
+		if app := m.apps[deployment.AppID]; app.ProjectID == projectID &&
+			normalizedDeploymentScope(deployment.Scope) == slug && deployment.DeletedAt == nil {
+			deployment.DeletedAt, deployment.DeletedByPrincipal = &now, "system:environment-deletion"
+			m.putDeploymentLocked(id, deployment)
+		}
+	}
 
 	for key, env := range m.envs {
 		if env.Scope != slug {
@@ -5066,7 +5080,7 @@ func (m *MemStore) ApplyProjectReconcile(
 	m.apps, m.crons = stagedApps, stagedCrons
 	for _, spec := range stagedSpecs {
 		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
-		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(spec.EnvironmentID, spec.AppID)] = spec.ID
+		m.putWorkloadSpecHeadLocked(spec)
 	}
 	// Allocate addresses only once both traffic and capacity validation have
 	// accepted the proposed topology. Refused creates must not consume indices.
@@ -8416,6 +8430,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(app, normalizedDeploymentScope(d.Scope)); err != nil {
+		return Deployment{}, 0, err
+	}
 	if err := guardReleaseAdditionDeployment(d, m.projectReleaseAdditions[d.AppID]); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -8713,7 +8730,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	m.recordRecoveryPredecessorLocked(d)
 	if reviewedSpec.ID != "" {
 		m.projectEnvironmentWorkloadSpecs[reviewedSpec.ID] = reviewedSpec
-		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(reviewedSpec.EnvironmentID, app.ID)] = reviewedSpec.ID
+		m.putWorkloadSpecHeadLocked(reviewedSpec)
 	}
 	for id, row := range proposed {
 		m.putDeploymentLocked(id, row)
@@ -9672,7 +9689,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID, scope st
 	found := false
 	for _, d := range m.deployments {
 		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
-		if d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
+		if d.DeletedAt == nil && d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
 	}
@@ -9698,7 +9715,7 @@ func (m *MemStore) GetDeploymentByIDScopedToSuperseded(_ context.Context, appID,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[deploymentID]
-	if !ok || d.AppID != appID {
+	if !ok || d.AppID != appID || d.DeletedAt != nil {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q: %w", deploymentID, appID, ErrNoRollbackTarget)
 	}
 	if d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
@@ -9971,6 +9988,9 @@ func (m *MemStore) UpdateDeploymentStatus(ctx context.Context, id string, status
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	if d.DeletedAt != nil && !status.IsTerminal() {
+		return ErrInvalidStateTransition
+	}
 
 	if status == DeployLive && d.Status != DeployLive && (d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope)) {
 		return ErrInvalidStateTransition
@@ -10063,6 +10083,11 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	if previousStatus != DeployFailed {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
+	}
+	// A late failure can still finish its historical record, but its old
+	// environment may already have been recreated with different releases.
+	if d.DeletedAt != nil {
+		return
 	}
 
 	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
@@ -10164,8 +10189,17 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if !ok {
 		return ErrNotFound
 	}
+	if err = m.checkDatabaseSwitchLeaseLocked(ctx, d); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
 		return ErrConflict
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[d.AppID], normalizedDeploymentScope(d.Scope)); err != nil {
+		return err
+	}
+	if d.DeletedAt != nil {
+		return ErrInvalidStateTransition
 	}
 	if recovery {
 		if d.Status == DeploySuperseded {
@@ -10253,6 +10287,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		delete(m.rollbackPrepared, id)
 		return ErrDeploymentSuperseded
+	}
+	if err = m.checkPlainRollbackReleasesLocked(ctx, d); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -10412,11 +10449,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
 			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-				if other.TrafficPercent > 0 {
-					if _, exists := m.revisionPins[otherID]; !exists {
-						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-					}
-				}
+				m.retainServingRevisionLocked(other, time.Now().UTC())
 				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
@@ -11242,8 +11275,17 @@ func (m *MemStore) PrepareDeploymentRollback(ctx context.Context, appID, targetD
 }
 func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
 	target, ok := m.deployments[targetDeploymentID]
-	if !ok || target.AppID != appID {
+	if !ok || target.AppID != appID || target.DeletedAt != nil {
 		return Deployment{}, ErrNoRollbackTarget
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[target.AppID], normalizedDeploymentScope(target.Scope)); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkAppRollbackGraphLocked(appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkDatabaseSwitchLeaseLocked(ctx, target); err != nil {
+		return Deployment{}, err
 	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
@@ -11261,6 +11303,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(target)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.preserveRollbackSuccessLocked(target); err != nil {
+		return Deployment{}, err
+	}
+
 	now := time.Now().UTC()
 	var prior StageState
 	if len(target.StageState) > 0 {
@@ -11298,6 +11344,11 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 		m.rollbackPrepared = map[string]time.Time{}
 	}
 	m.rollbackPrepared[targetDeploymentID] = now
+	if m.plainRollbackReleaseReviews == nil {
+		m.plainRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.plainRollbackReleaseReviews[targetDeploymentID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
+
 	return target, nil
 }
 

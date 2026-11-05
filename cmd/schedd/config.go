@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -240,12 +239,6 @@ type Config struct {
 	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
-	// GuestVCPUFromCPUApps (ADR-20261101160231) lists the apps, by ID or "*"
-	// for all, that boot one guest vCPU per 1,000 sustained millicores
-	// instead of their plan's count. Empty by default. Turn it on only once
-	// every vmmd refuses a restore at another vCPU count.
-	// FAAS_GUEST_VCPU_FROM_CPU_APPS (comma-separated) overrides it.
-	GuestVCPUFromCPUApps []string `toml:"guest_vcpu_from_cpu_apps"`
 	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
 	// surplus worker that holds no queue lease instead of stopping it, and
 	// thaw it before booting a new one. Off by default and ignored unless
@@ -277,6 +270,12 @@ type Config struct {
 	// (app_runtime_changed); the admission insert commits only while that
 	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
 	OwnerCache bool `toml:"owner_cache"`
+
+	// AsyncWakeFinalize (ADR-20261105090246) answers a booted wake as soon as
+	// its RUNNING publication commits and records what the boot proved (the
+	// observed workload class and the secret delivery) afterwards. Off by
+	// default. FAAS_ASYNC_WAKE_FINALIZE overrides it.
+	AsyncWakeFinalize bool `toml:"async_wake_finalize"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -655,8 +654,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.OwnerCache = enabled
 	}
-	if v, ok := os.LookupEnv("FAAS_GUEST_VCPU_FROM_CPU_APPS"); ok {
-		c.GuestVCPUFromCPUApps = strings.Split(v, ",")
+	// ADR-20261105090246: FAAS_ASYNC_WAKE_FINALIZE overrides async_wake_finalize.
+	if v := os.Getenv("FAAS_ASYNC_WAKE_FINALIZE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_ASYNC_WAKE_FINALIZE must be a boolean (got %q)", v)
+		}
+		c.AsyncWakeFinalize = enabled
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

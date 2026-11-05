@@ -150,6 +150,12 @@ workers. Retries persist a due time and release their execution slot while
 waiting. Cancellation, exhausted attempts and Task TTL take precedence. Input
 resume does not consume another attempt. Ordinary handler errors are terminal.
 
+A panic raised by a Task executor becomes a generic terminal failure, with no
+panic value exposed in the stored error or logs. The worker can process the next
+Task. Cancellation, shutdown and lease ownership still take precedence over the
+failure write. Executors remain responsible for any additional goroutines they
+start.
+
 Lowering `max_attempts` fails exhausted queued retries on the next worker poll,
 even before their retry due time. Live attempts can finish, and input or drain
 resumptions keep their existing attempt count even above the new budget. A later
@@ -199,7 +205,15 @@ if err := RegisterMCPTool(map[string]any{
 }
 ```
 
-Tool handlers validate arguments against the advertised schema. Resource
+The starter validates a custom tool's declared `inputSchema` before invoking
+its handler or queuing a task. Draft 7 and 2020-12 schemas and local references
+are supported; external references are rejected at registration. Validation
+does not coerce values or insert defaults. Handlers still enforce business
+rules and ownership. Successful custom tool handler results must include
+`structuredContent` matching a declared `outputSchema`; `isError: true`
+results and intermediate `input_required` responses may omit it. Both schemas
+are compiled when registering or replacing the tool, and invalid results
+produce a redacted tool error. Resource
 handlers return `[]map[string]any` contents and receive URI-template variables;
 prompt handlers return the MCP prompt result. `MCPRequestContext` includes
 verified subject, client ID, and scopes, but no bearer token. Mutations send
@@ -381,6 +395,21 @@ and scopes; cookies and credentialed CORS are not enabled.
 
 ## Task schema setup and upgrade
 
+Tasks save the advertised `outputSchema` in a nullable `output_schema` JSONB
+column at admission. Workers validate final successful `structuredContent`
+against that snapshot before completing the task. Invalid output fails with a
+redacted error; `isError: true` tool results may omit structured output. Retries,
+input pauses, retained handler versions, worker restarts and catalog replacements
+keep the original contract. Schemas are reviewed catalog metadata stored in
+plaintext; task arguments, results, errors and input state remain encrypted.
+
+Existing queues must run `go run . tasks-migrate apply` to add the column, even
+with starter schema version 1 already installed. Startup checks for it without
+running DDL. Migrate first, then upgrade and drain every older worker before
+deploying producers that rely on output validation: older workers ignore the
+saved contract. Tasks admitted without a schema retain their prior behavior;
+the migration does not infer a contract from today's catalog.
+
 Run schema setup from a trusted operator environment using a schema-owner account:
 
 ```sh
@@ -414,7 +443,7 @@ Use a dedicated schema without CREATE privileges for PUBLIC. Configure the same
 search_path (that schema, then pg_catalog) for migration and service accounts.
 For example, after migration, grant the existing runtime role USAGE on that
 schema, SELECT/INSERT/UPDATE/DELETE on gregale_mcp_tasks and
-gregale_mcp_task_worker_handlers and gregale_mcp_task_owners, and SELECT on
+gregale_mcp_task_worker_handlers, gregale_mcp_task_workers and gregale_mcp_task_owners, and SELECT on
 gregale_mcp_task_starter_schema. An observer needs SELECT on all four tables and USAGE on the schema; its existing
 read-only privilege checks still apply. Do not grant schema CREATE, table
 ownership, TRIGGER or write access to the version table to service accounts.

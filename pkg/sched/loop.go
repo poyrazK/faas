@@ -2370,6 +2370,9 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	var p struct {
 		AppID  string `json:"app_id"`
 		WakeID string `json:"wake_id"`
+		// InstanceID names the frozen VM apid expects this wake to resume
+		// (#6639). It is a thaw preference only, like a session hint.
+		InstanceID string `json:"instance_id"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 		return fmt.Errorf("sched: decode app_wake payload: %w", err)
@@ -2378,6 +2381,7 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 		return errors.New("sched: app_wake payload requires app_id and wake_id")
 	}
 	wakeCtx := withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID)
+	wakeCtx = WithPreferredInstance(wakeCtx, p.InstanceID)
 	if handled, err := l.engine.WakeWorkerApp(wakeCtx, p.AppID); handled {
 		if err != nil {
 			return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
@@ -2391,6 +2395,7 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	}
 	if out.Instance != nil {
 		l.log.Info("sched: explicit app wake completed", "app", p.AppID, "wake_id", out.Instance.WakeID, "instance", out.Instance.InstanceID)
+		l.engine.noteWakeServedByInstance(wakeCtx, p.AppID, p.WakeID, out.Instance)
 	}
 	return nil
 }

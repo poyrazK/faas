@@ -276,6 +276,8 @@ from .app_operational_recovery import AppOperationalRecovery
 from .app_operational_rollback import AppOperationalRollback
 from .app_operational_summary import AppOperationalSummary
 from .app_operational_summary_version import AppOperationalSummaryVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_private_network_attachment import AppPrivateNetworkAttachment
 from .app_private_network_attachment_request import AppPrivateNetworkAttachmentRequest
 from .app_private_network_attachment_response import AppPrivateNetworkAttachmentResponse
@@ -1118,6 +1120,11 @@ from .data_api_change_event import DataAPIChangeEvent
 from .data_api_change_event_batch import DataAPIChangeEventBatch
 from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
 from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
+from .data_api_change_hook_report import DataAPIChangeHookReport
+from .data_api_change_hook_report_publishing import DataAPIChangeHookReportPublishing
+from .data_api_change_hook_report_version import DataAPIChangeHookReportVersion
+from .data_api_change_hook_status import DataAPIChangeHookStatus
+from .data_api_change_hook_status_publishing import DataAPIChangeHookStatusPublishing
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -1130,6 +1137,8 @@ from .data_api_server_key import DataAPIServerKey
 from .data_api_server_key_permission_set import DataAPIServerKeyPermissionSet
 from .data_api_server_key_permission_set_access import DataAPIServerKeyPermissionSetAccess
 from .data_api_server_key_slot import DataAPIServerKeySlot
+from .data_api_status import DataAPIStatus
+from .data_api_status_runtime_reports import DataAPIStatusRuntimeReports
 from .data_api_usage import DataAPIUsage
 from .data_api_usage_bucket import DataAPIUsageBucket
 from .data_api_usage_counts import DataAPIUsageCounts
@@ -6666,6 +6675,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppPrivateNetworkAttachment",
     "AppPrivateNetworkAttachmentRequest",
     "AppPrivateNetworkAttachmentResponse",
@@ -7381,6 +7392,11 @@ __all__ = (
     "DataAPIChangeEventBatch",
     "DataAPIChangeEventBatchResponse",
     "DataAPIChangeEventBatchVersion",
+    "DataAPIChangeHookReport",
+    "DataAPIChangeHookReportPublishing",
+    "DataAPIChangeHookReportVersion",
+    "DataAPIChangeHookStatus",
+    "DataAPIChangeHookStatusPublishing",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -7393,6 +7409,8 @@ __all__ = (
     "DataAPIServerKeyPermissionSet",
     "DataAPIServerKeyPermissionSetAccess",
     "DataAPIServerKeySlot",
+    "DataAPIStatus",
+    "DataAPIStatusRuntimeReports",
     "DataAPIUsage",
     "DataAPIUsageBucket",
     "DataAPIUsageCounts",

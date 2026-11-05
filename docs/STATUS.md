@@ -532,6 +532,94 @@ Open evidence:
   ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md),
   not released).
 
+The 2026-11-05 code review fixes uncertain deletion holds and worker-crash
+recovery without letting an older reconciler purge early. Storage caps retain
+the sizes of deleted sources kept for restore copies, and restore-slot sweeps
+page past copies waiting for deletion. These fixes do not replace the pending
+production journey and provider qualification evidence above.
+
+Local verification passes the new regressions with race detection and real
+PostgreSQL. The durable restart/SQL and reused-run qualification tests also pass
+on an isolated TLS/SCRAM fixture; the plaintext development fixture cannot run
+those credential checks. Two existing catalog tests still block a completely
+green suite: `TestAccountingReconciliationAuditReplayAndAccountErasure` and
+`TestUsageImportEvidenceAllowsFinalAccountErasure`. Both reproduce at
+`46aad2a12` without these fixes: their append-only evidence triggers reject final
+account erasure. They remain separate account-erasure work.
+
+The follow-up review fixes four more managed PostgreSQL issues. Overage
+billing resolves compute and storage allowances from the billed month's
+recorded plans, preserving included usage after a later downgrade; missing
+closed-month terms defer new charges without blocking immutable pending
+steps. A compute read or write failure no longer skips storage enforcement.
+Restore retries adopt their existing copy while the source is updating or
+being deleted. A ready restore copy's expiry notice commits with its deletion
+schedule, and sweeps repair notices missed by an older worker before releasing
+the slot. No additional migration is needed. The targeted race-enabled
+regressions include a real PostgreSQL notice-insert failure that proves the
+deletion schedule rolls back with it; production qualification remains open.
+
+This review closes temporary-copy adoption by database rollbacks, storage
+growth bypassing usage and fleet spend admission, and ordinary resize requests
+remaining pinned after a confirmed rejection. Cutover admission and activation
+also have catalog protection for N-1 workers; a bounded migration clears the
+expiry of still-live targets already activated by an older worker. Rejected
+resizes require settled provider observation before releasing their pins and
+retain an immutable failed receipt; uncertain outcomes continue recovery.
+Targeted regressions pass with race detection and real PostgreSQL, including
+legacy cutover writes and the activated-target repair.
+Publishing the expanded resize outcome check requires the full-release data
+step (`20261105141918763`, a contract migration). Production qualification and
+the separate account-erasure failures above remain open.
+
+The next two review fixes make managed PostgreSQL credential rotations retain
+their runtime-refresh handoff through provider failures and worker restarts,
+with recovery for legacy ready receipts and terminal scheduler events
+([ADR-20261105081859](adr/20261105081859-managed-postgres-rotation-refresh-recovery.md)).
+Deletion holds and releases address the pinned Neon branch and reject an
+unpinned project selector; legacy root rows need a verified dataset identity
+before these holds can proceed. An expand migration indexes the recovery lookup.
+Local race-enabled PostgreSQL and API regressions pass, including failed
+outbox inserts, legacy recovery, and the index migration on a fresh catalog.
+Provider qualification and the earlier account-erasure work remain open.
+
+The following review fixes credential retirement after a verified Neon dataset
+backfill, pending storage-charge recovery after overage opt-out, and health
+checks following a project's changed default branch. Credential retirement
+includes historical project-scoped names on the pinned branch. Pending billing
+steps remain discoverable without a compute cap event or delivery receipt.
+Health targets, cached samples and leases follow the concrete dataset, including
+discarding alias-based samples from older collectors. No additional migration
+is needed. Local service regressions, the Neon and native provider suites, and
+HTTP health/overage tests pass with race detection. Static analysis, sqlc
+generation, documentation links and compatibility checks pass. Production
+qualification and the separate account-erasure work above remain open.
+
+The latest review pins live-query login authorization and storage observations
+to the catalog dataset. Existing root live logins are discovered and replaced
+through the missing-login worker, preserving live keys and replication slots;
+new nullable authorization receipts distinguish legacy writes from repaired
+entries ([ADR-20261105102924](adr/20261105102924-managed-postgres-live-login-dataset-recovery.md)).
+Reserved billing steps are paged and settled independently of the seven-day
+window for new charges, without starving later entries behind a failed one.
+Apply the live-login expand and validation migrations and the concurrent pending
+recovery index before upgrading the control plane. Local race-enabled service,
+provider and HTTP regressions pass, including slot-position preservation with
+logical decoding and the final migrations on a fresh catalog. Static analysis,
+SQL generation, migration lint, documentation and compatibility checks pass.
+Production qualification and the separate account-erasure work above remain open.
+
+The following recovery fixes resolve a native restore's historical PostgreSQL
+major before reserving its target, bound proxy backend setup through readiness,
+and order live-login repair by durable attempts so a failing page cannot starve
+later databases ([ADR-20261105111902](adr/20261105111902-managed-postgres-recovery-and-proxy-setup.md)).
+Apply expand migration `20261105141918820` before apid. Historical restores of
+upgraded native databases need the scheduler's new complete-history metadata.
+Local race-enabled catalog regressions and the provider, proxy, live-key and
+scheduler RPC suites pass. Fresh migrations, runtime grants, static analysis,
+SQL/protobuf generation, migration lint and compatibility checks pass. Native
+hardware qualification and the separate account-erasure work remain open.
+
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 
 The 2026-10-26 crons GA review found four blockers; #5649 fixes them

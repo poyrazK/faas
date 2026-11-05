@@ -34,9 +34,9 @@ func cmdJobsInfoWaitArgs(args []string) int {
 	}
 	name := fs.Arg(0)
 	if name == "" {
-		defaults, path, err := readJobDefaults()
+		defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "info", "my-job"})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		name = defaults.Job
 		if !jsonOutput {

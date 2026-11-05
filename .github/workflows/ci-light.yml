@@ -351,11 +351,14 @@ jobs:
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
           python3 scripts/ci/binary_code_test.py
+          python3 scripts/ci/guest_init_reuse_test.py
+          python3 scripts/ci/guest_init_stability_test.py
           python3 scripts/ci/warm_unit_build_cache_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_host_config_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
           bash scripts/unit-release-verify_test.sh
+          bash scripts/reuse-release-guest-init_test.sh
           bash scripts/ci/unit_deploy_test.sh
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh
@@ -418,7 +421,7 @@ jobs:
         run: |
           set -euo pipefail
           ZIP="$RUNNER_TEMP/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-          curl --fail --silent --show-error --location --output "$ZIP" \
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 2 --output "$ZIP" \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
           echo "${PROTOC_SHA256_LINUX_AMD64}  $ZIP" | sha256sum --check --strict

@@ -122,6 +122,27 @@ func (q *Queries) RecordRequestAnalyticsRollupCoverage(ctx context.Context, db D
 	return err
 }
 
+const recordRequestAnalyticsRollupGaps = `-- name: RecordRequestAnalyticsRollupGaps :exec
+INSERT INTO request_analytics_rollup_gaps (app_id, bucket_start)
+SELECT g.app_id, g.bucket_start
+FROM (
+    SELECT unnest($1::uuid[]) AS app_id,
+           unnest($2::timestamptz[]) AS bucket_start
+) AS g
+ON CONFLICT (app_id, bucket_start) DO NOTHING
+`
+
+type RecordRequestAnalyticsRollupGapsParams struct {
+	AppIds       []pgtype.UUID
+	BucketStarts []pgtype.Timestamptz
+}
+
+// ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
+func (q *Queries) RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error {
+	_, err := db.Exec(ctx, recordRequestAnalyticsRollupGaps, arg.AppIds, arg.BucketStarts)
+	return err
+}
+
 const requestAnalyticsRollupGroups = `-- name: RequestAnalyticsRollupGroups :many
 WITH filtered AS (
     SELECT CASE WHEN $1::bool THEN date_bin('1 hour', bucket_start, 'epoch'::timestamptz)
@@ -220,6 +241,89 @@ func (q *Queries) RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg
 			&i.RequestTimeMs,
 			&i.LatencyMaxMs,
 			&i.LatencyHist,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestAnalyticsRollupHasGap = `-- name: RequestAnalyticsRollupHasGap :one
+SELECT EXISTS (
+    SELECT 1 FROM request_analytics_rollup_gaps
+    WHERE app_id = $1
+      AND bucket_start >= $2::timestamptz
+      AND bucket_start <  $3::timestamptz
+)::bool AS has_gap
+`
+
+type RequestAnalyticsRollupHasGapParams struct {
+	AppID       pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// Whether any minute starting inside the window lost rollups.
+func (q *Queries) RequestAnalyticsRollupHasGap(ctx context.Context, db DBTX, arg RequestAnalyticsRollupHasGapParams) (bool, error) {
+	row := db.QueryRow(ctx, requestAnalyticsRollupHasGap, arg.AppID, arg.WindowFrom, arg.WindowUntil)
+	var has_gap bool
+	err := row.Scan(&has_gap)
+	return has_gap, err
+}
+
+const requestAnalyticsRollupRouteDeployments = `-- name: RequestAnalyticsRollupRouteDeployments :many
+SELECT dimension::text AS route,
+       method::text AS method,
+       deployment_id::uuid AS deployment_id,
+       SUM(requests)::bigint AS requests
+FROM request_analytics_minutes
+WHERE app_id = $1
+  AND account_id = $2
+  AND dimension_kind = 'route'
+  AND bucket_start >= $3::timestamptz
+  AND bucket_start <  $4::timestamptz
+GROUP BY dimension, method, deployment_id
+`
+
+type RequestAnalyticsRollupRouteDeploymentsParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+type RequestAnalyticsRollupRouteDeploymentsRow struct {
+	Route        string
+	Method       string
+	DeploymentID pgtype.UUID
+	Requests     int64
+}
+
+// Requests per route, method and deployment from the rollups, for the
+// analytics route and deployment cost splits.
+func (q *Queries) RequestAnalyticsRollupRouteDeployments(ctx context.Context, db DBTX, arg RequestAnalyticsRollupRouteDeploymentsParams) ([]RequestAnalyticsRollupRouteDeploymentsRow, error) {
+	rows, err := db.Query(ctx, requestAnalyticsRollupRouteDeployments,
+		arg.AppID,
+		arg.AccountID,
+		arg.WindowFrom,
+		arg.WindowUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestAnalyticsRollupRouteDeploymentsRow{}
+	for rows.Next() {
+		var i RequestAnalyticsRollupRouteDeploymentsRow
+		if err := rows.Scan(
+			&i.Route,
+			&i.Method,
+			&i.DeploymentID,
+			&i.Requests,
 		); err != nil {
 			return nil, err
 		}

@@ -89,6 +89,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
+| `FAAS_ASYNC_WAKE_FINALIZE` | schedd | `default` |  |  | `` | optional boolean switch for ADR-20261105090246: a booted wake answers after its RUNNING publication and records its workload class and secret delivery afterwards; production default is off |
 | `FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native service-addition qualification; operator opt-in only |
 | `FAAS_ATOMIC_WORKER_RELEASES_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
 | `FAAS_AUDIT_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
@@ -452,7 +453,6 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRYPE_BIN` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_GUEST_TRACING_ENABLED` | apid, shared, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958); boot fallback for the guest_tracing platform flag (ADR-1700), ignored once an operator writes platform_flag.guest_tracing |
-| `FAAS_GUEST_VCPU_FROM_CPU_APPS` | schedd | `default` |  |  | `` | ADR-20261101160231 comma-separated app IDs, or *, that boot one guest vCPU per 1,000 sustained millicores instead of the plan count; empty default keeps every app on its plan; set only once every vmmd refuses a restore at another vCPU count |
 | `FAAS_HANDOFF_CHECK_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: a JSON list of the check connections it serves (ADR 20261020214632) |
 | `FAAS_HANDOFF_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set by a daemon for the successor it starts on `systemctl reload`: how many listening sockets follow fd 3 (ADR-1736) |
 | `FAAS_HANDOFF_GO_FD` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: the pipe its predecessor writes go on once every check passed (ADR 20261020214632) |

@@ -284,6 +284,7 @@ var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
+var ErrCDNCert = &errCDNCert
 var ErrCertFailure = &errCertFailure
 var ErrClassifierHostHashFailed = &errClassifierHostHashFailed
 var ErrClassifierInsert = &errClassifierInsert

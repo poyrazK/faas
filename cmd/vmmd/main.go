@@ -413,7 +413,13 @@ func defaultDeps() runDeps {
 		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
 		capacityInterval:    durationPtr(CapacityInterval),
 		prepareJailHelper: func(jailer *fcvm.JailerVMM) error {
-			return jailer.PrepareJailHelper()
+			if err := jailer.PrepareJailHelper(); err != nil {
+				return err
+			}
+			// Best effort: a launch stages on demand and falls back to the
+			// installed jailer and firecracker (ADR-20261105100000).
+			jailer.PrepareResidentBinaries()
+			return nil
 		},
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
@@ -1431,8 +1437,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
-	// first restore after this start does not hash a base in its wake path.
-	go mgr.PrimeBackingDigests(ctx)
+	// first restore after this start does not hash a base in its wake path,
+	// and keep following them: a release pre-stage replaces bases while this
+	// process still serves wakes (amendment 2).
+	go mgr.RunBackingDigestPrimer(ctx, fcvm.BackingDigestPrimeInterval)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a

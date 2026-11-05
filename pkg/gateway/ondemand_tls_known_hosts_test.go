@@ -16,7 +16,7 @@ import (
 )
 
 func drainTLSLookupBucket(ctx context.Context, p *OnDemandTLSPolicy) {
-	for n := range 2 * api.OnDemandTLSAskLookupBurst {
+	for n := range api.OnDemandTLSAskLookupBurst {
 		p.Decide(ctx, fmt.Sprintf("scan-%d.unregistered.example.org", n))
 	}
 }
@@ -241,6 +241,337 @@ func (s *tlsHintBlockingStore) ListCustomDomainTLSKnownHosts(ctx context.Context
 		return s.OnDemandTLSStore.(state.CustomDomainTLSKnownHostReader).ListCustomDomainTLSKnownHosts(ctx, after, limit)
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+func TestOnDemandTLSKnownHintsRefreshDoesNotBlockKnownHost(t *testing.T) {
+	s, initial, _ := onDemandTLSFixture(t)
+	if allowed, decision := initial.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("seed durable admission: %s", decision)
+	}
+	store := &tlsHintBlockingStore{OnDemandTLSStore: s, started: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(store.release) }) })
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("load initial hints: %s", decision)
+	}
+	p.store = store
+	p.mu.Lock()
+	p.hintsNextLoad = time.Time{}
+	p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if allowed, decision := p.Decide(ctx, "shop.example.com"); !allowed {
+		t.Fatalf("known host blocked on background refresh: %s", decision)
+	}
+	select {
+	case <-store.started:
+	case <-ctx.Done():
+		t.Fatal("background refresh did not start")
+	}
+	release.Do(func() { close(store.release) })
+}
+
+type tlsHintConcurrentAdmissionStore struct {
+	OnDemandTLSStore
+	remote *OnDemandTLSPolicy
+}
+
+func (s *tlsHintConcurrentAdmissionStore) ListCustomDomainTLSKnownHosts(ctx context.Context, after string, limit int) ([]string, error) {
+	if after == "" {
+		hosts := make([]string, limit)
+		for n := range hosts[:limit-1] {
+			hosts[n] = fmt.Sprintf("b%06d.example.com", n)
+		}
+		hosts[limit-1] = "shop.example.com"
+		return hosts, nil
+	}
+	if allowed, decision := s.remote.Decide(ctx, "a.tenants.example.net"); !allowed {
+		return nil, fmt.Errorf("remote admission: %s", decision)
+	}
+	return nil, nil
+}
+
+func (s *tlsHintConcurrentAdmissionStore) ListRecentCustomDomainTLSHosts(ctx context.Context, limit int) ([]string, error) {
+	return s.OnDemandTLSStore.(state.CustomDomainTLSRecentHostReader).ListRecentCustomDomainTLSHosts(ctx, limit)
+}
+
+func TestOnDemandTLSKnownHintsCatchUpCrossEdgeAdmissionUnderLoad(t *testing.T) {
+	s, other, _ := onDemandTLSFixture(t)
+	other.SetNow(time.Now)
+	store := &tlsHintConcurrentAdmissionStore{OnDemandTLSStore: s, remote: other}
+	p := NewOnDemandTLSPolicy(store, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("warm inventory: %s", decision)
+	}
+	// The second page admitted this hostname behind the inventory cursor.
+	p.mu.Lock()
+	p.tokens = 0
+	p.refilled = time.Now().Add(time.Minute)
+	p.mu.Unlock()
+	if allowed, decision := p.Decide(t.Context(), "a.tenants.example.net"); !allowed {
+		t.Fatalf("durably admitted remote hostname was throttled: %s", decision)
+	}
+}
+
+type tlsHintStaleInventoryStore struct{ OnDemandTLSStore }
+
+func (s *tlsHintStaleInventoryStore) ListCustomDomainTLSKnownHosts(context.Context, string, int) ([]string, error) {
+	return []string{"shop.example.com"}, nil
+}
+
+func (s *tlsHintStaleInventoryStore) ListRecentCustomDomainTLSHosts(ctx context.Context, limit int) ([]string, error) {
+	return s.OnDemandTLSStore.(state.CustomDomainTLSRecentHostReader).ListRecentCustomDomainTLSHosts(ctx, limit)
+}
+
+func TestOnDemandTLSKnownHintsPreserveCatchUpDuringScan(t *testing.T) {
+	s, remote, _ := onDemandTLSFixture(t)
+	remote.SetNow(time.Now)
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("warm inventory: %s", decision)
+	}
+	if allowed, decision := remote.Decide(t.Context(), "a.tenants.example.net"); !allowed {
+		t.Fatalf("remote admission: %s", decision)
+	}
+	if !p.catchUpRecentTLSHosts(t.Context(), "a.tenants.example.net") {
+		t.Fatal("recent admissions were not loaded")
+	}
+	// Simulate a completed paginated scan that missed an insertion behind
+	// its cursor: the catch-up set must survive replacement of the filter.
+	p.mu.Lock()
+	previous := p.hints
+	p.hintsNextLoad = time.Time{}
+	p.mu.Unlock()
+	p.store = &tlsHintStaleInventoryStore{OnDemandTLSStore: s}
+	if err := p.refreshKnownHostHints(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Refreshes run asynchronously; wait for the single flight to finish.
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		p.mu.Lock()
+		refreshing := p.hintsRefreshing
+		known := p.hints.contains("a.tenants.example.net")
+		replaced := p.hints != previous
+		p.mu.Unlock()
+		if !refreshing {
+			if !replaced {
+				t.Fatal("inventory refresh did not replace the filter")
+			}
+			if !known {
+				t.Fatal("replacement filter lost recent admission")
+			}
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("refresh did not finish")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+type tlsRecentBlockingStore struct {
+	OnDemandTLSStore
+	started chan struct{}
+	release chan struct{}
+	reads   atomic.Int32
+}
+
+func (s *tlsRecentBlockingStore) ListRecentCustomDomainTLSHosts(ctx context.Context, limit int) ([]string, error) {
+	if s.reads.Add(1) == 1 {
+		close(s.started)
+	}
+	select {
+	case <-s.release:
+		return s.OnDemandTLSStore.(state.CustomDomainTLSRecentHostReader).ListRecentCustomDomainTLSHosts(ctx, limit)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestOnDemandTLSRecentCatchUpSharesBoundedRead(t *testing.T) {
+	s, _, _ := onDemandTLSFixture(t)
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("warm inventory: %s", decision)
+	}
+	store := &tlsRecentBlockingStore{OnDemandTLSStore: s, started: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(store.release) }) })
+	p.store = store
+	p.mu.Lock()
+	p.tokens = 0
+	p.refilled = time.Now().Add(time.Minute)
+	p.mu.Unlock()
+	const callers = 32
+	var wg sync.WaitGroup
+	for n := range callers {
+		wg.Go(func() {
+			if allowed, decision := p.Decide(t.Context(), fmt.Sprintf("unknown-%d.example.org", n)); allowed || decision != OnDemandTLSDenyOverload {
+				t.Errorf("unknown host: allowed=%v decision=%s", allowed, decision)
+			}
+		})
+	}
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("recent catch-up did not start")
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		p.mu.Lock()
+		waiting := p.recentWaiters
+		p.mu.Unlock()
+		if waiting == callers {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("only %d callers joined the catch-up", waiting)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	release.Do(func() { close(store.release) })
+	wg.Wait()
+	if got := store.reads.Load(); got > 2 {
+		t.Fatalf("overload made %d recent-host reads, want at most 2", got)
+	}
+}
+
+type tlsRecentSnapshotStore struct {
+	OnDemandTLSStore
+	started chan struct{}
+	release chan struct{}
+	reads   atomic.Int32
+}
+
+func (s *tlsRecentSnapshotStore) ListRecentCustomDomainTLSHosts(ctx context.Context, limit int) ([]string, error) {
+	hosts, err := s.OnDemandTLSStore.(state.CustomDomainTLSRecentHostReader).ListRecentCustomDomainTLSHosts(ctx, limit)
+	if s.reads.Add(1) == 1 {
+		close(s.started)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return hosts, err
+}
+
+func TestOnDemandTLSRecentCatchUpRetriesOlderSnapshot(t *testing.T) {
+	s, remote, _ := onDemandTLSFixture(t)
+	remote.SetNow(time.Now)
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("warm inventory: %s", decision)
+	}
+	store := &tlsRecentSnapshotStore{OnDemandTLSStore: s, started: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(store.release) }) })
+	p.store = store
+	p.mu.Lock()
+	p.tokens = 0
+	p.refilled = time.Now().Add(time.Minute)
+	p.mu.Unlock()
+	unknown := make(chan string, 1)
+	go func() { _, decision := p.Decide(t.Context(), "unknown.example.org"); unknown <- decision }()
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("first snapshot did not start")
+	}
+	if allowed, decision := remote.Decide(t.Context(), "a.tenants.example.net"); !allowed {
+		t.Fatalf("remote admission: %s", decision)
+	}
+	result := make(chan bool, 1)
+	go func() { allowed, _ := p.Decide(t.Context(), "a.tenants.example.net"); result <- allowed }()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		p.mu.Lock()
+		waiting := p.recentWaiters
+		p.mu.Unlock()
+		if waiting == 2 {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("only %d requests joined the snapshot", waiting)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	release.Do(func() { close(store.release) })
+	select {
+	case decision := <-unknown:
+		if decision != OnDemandTLSDenyOverload {
+			t.Fatalf("unknown host: %s", decision)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("unknown host did not finish")
+	}
+	select {
+	case allowed := <-result:
+		if !allowed {
+			t.Fatal("remote admission was lost behind an older ledger snapshot")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("newer ledger snapshot did not finish")
+	}
+	if got := store.reads.Load(); got != 2 {
+		t.Fatalf("ledger reads = %d, want 2", got)
+	}
+}
+
+type tlsRecentStaticStore struct {
+	OnDemandTLSStore
+	hosts []string
+}
+
+func (s *tlsRecentStaticStore) ListRecentCustomDomainTLSHosts(context.Context, int) ([]string, error) {
+	return s.hosts, nil
+}
+
+func TestOnDemandTLSRecentHintsNeverGrantPermission(t *testing.T) {
+	s, _, _ := onDemandTLSFixture(t)
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("warm inventory: %s", decision)
+	}
+	p.store = &tlsRecentStaticStore{OnDemandTLSStore: s, hosts: []string{"pending.example.com", "unknown.example.com"}}
+	p.mu.Lock()
+	p.tokens = 0
+	p.refilled = time.Now().Add(time.Minute)
+	p.mu.Unlock()
+	for host, want := range map[string]string{"pending.example.com": OnDemandTLSDenyUnverified, "unknown.example.com": OnDemandTLSDenyUnknown} {
+		if allowed, decision := p.Decide(t.Context(), host); allowed || decision != want {
+			t.Errorf("%s: allowed=%v decision=%s, want %s", host, allowed, decision, want)
+		}
+	}
+}
+
+func TestOnDemandTLSRecentCatchUpRejectsExcessWaiters(t *testing.T) {
+	s, _, _ := onDemandTLSFixture(t)
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", nil, nil)
+	if allowed, decision := p.Decide(t.Context(), "shop.example.com"); !allowed {
+		t.Fatalf("warm inventory: %s", decision)
+	}
+	store := &tlsRecentBlockingStore{OnDemandTLSStore: s, started: make(chan struct{}), release: make(chan struct{})}
+	p.store = store
+	p.mu.Lock()
+	p.tokens = 0
+	p.refilled = time.Now().Add(time.Minute)
+	p.recentWaiters = api.OnDemandTLSAskRecentHostWaiters
+	p.mu.Unlock()
+	if allowed, decision := p.Decide(t.Context(), "unknown.example.org"); allowed || decision != OnDemandTLSDenyOverload {
+		t.Fatalf("excess waiter: allowed=%v decision=%s", allowed, decision)
+	}
+	if got := store.reads.Load(); got != 0 {
+		t.Fatalf("excess waiter started %d reads", got)
 	}
 }
 

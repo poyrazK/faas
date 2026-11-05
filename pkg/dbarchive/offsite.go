@@ -24,8 +24,9 @@ import (
 // off-site provider never delays the bucket's recovery point. Whatever
 // the store deletes, the holds it writes and the files a handoff releases
 // are first recorded in a local journal, which Offsite replays in order
-// on its next pass. Pruning, drops and handoffs never wait on the off-site
-// provider, and the mirror deletes only what the store deleted: it never
+// on its next pass. Pruning verifies both tiers' holds before deleting;
+// drops and handoffs never wait on the off-site provider. The mirror
+// deletes only what the store deleted, subject to its own holds: it never
 // infers a deletion from what the bucket lacks, so an emptied bucket
 // cannot empty the mirror. Reads fall back to the mirror when the bucket
 // fails or lacks an object.
@@ -184,8 +185,11 @@ func NewOffsite(store *LocalStore, bucket Remote, bucketPrefix string, remote Re
 }
 
 // RunOnce replays the journal, then uploads every local archive file the
-// mirror lacks. It returns how many files and entries it applied. A
-// failure stops the pass where it is; the next pass resumes there.
+// mirror lacks. It returns how many files and entries it applied. An
+// application or upload failure stops the pass; the next resumes there.
+// Protected or unverified file deletions stay queued while later entries,
+// including hold releases, can proceed. Failed retention checks are
+// reported after replaying those other entries.
 func (o *Offsite) RunOnce(ctx context.Context) (int, error) {
 	applied, err := o.replay(ctx)
 	if err == nil {
@@ -241,26 +245,53 @@ func (o *Offsite) replay(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	dir := filepath.Join(o.Store.dir, offsiteJournalDir)
-	for i, name := range names {
+	type checkedRetention struct {
+		plan offsiteRetention
+		err  error
+	}
+	plans := map[string]checkedRetention{}
+	applied := 0
+	var deferredErr error
+	for _, name := range names {
 		path := filepath.Join(dir, name)
 		raw, err := os.ReadFile(path) //nolint:gosec // a journal entry under the store root
 		if err != nil {
-			return i, err
+			return applied, err
 		}
 		var op offsiteOp
 		if err := json.Unmarshal(raw, &op); err != nil || !op.valid() {
 			// Never written by journalOffsite; applying it could delete the
 			// wrong objects.
-			return i, fmt.Errorf("dbarchive: corrupt off-site journal entry %s", name)
+			return applied, fmt.Errorf("dbarchive: corrupt off-site journal entry %s", name)
+		}
+		if op.Op == offsiteDelete && !strings.HasPrefix(op.Path, "holds/") {
+			checked, ok := plans[op.Database]
+			if !ok {
+				checked.plan, checked.err = o.retention(ctx, op.Database)
+				plans[op.Database] = checked
+			}
+			if checked.err != nil {
+				if deferredErr == nil {
+					deferredErr = fmt.Errorf("dbarchive: read off-site holds for %s: %w", op.Database, checked.err)
+				}
+				continue
+			}
+			if checked.plan.protects(op.Path) {
+				continue
+			}
 		}
 		if err := o.apply(ctx, op); err != nil {
-			return i, fmt.Errorf("dbarchive: off-site %s %s/%s: %w", op.Op, op.Database, op.Path, err)
+			return applied, fmt.Errorf("dbarchive: off-site %s %s/%s: %w", op.Op, op.Database, op.Path, err)
+		}
+		if op.Op == offsiteDrop || strings.HasPrefix(op.Path, "holds/") {
+			delete(plans, op.Database)
 		}
 		if err := os.Remove(path); err != nil {
-			return i, err
+			return applied, err
 		}
+		applied++
 	}
-	return len(names), nil
+	return applied, deferredErr
 }
 
 func (o *Offsite) apply(ctx context.Context, op offsiteOp) error {

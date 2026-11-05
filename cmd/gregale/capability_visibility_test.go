@@ -166,8 +166,11 @@ func TestLoggedOutHelpShowsTierDefaults(t *testing.T) {
 		t.Fatal("bash completion must offer realtime once every capability is released")
 	}
 	clearCapabilityReleaseAll(t)
-	if _, reference, _ := runCLI(t, "man", "--markdown"); !strings.Contains(reference, "realtime") {
-		t.Fatal("the generated reference must document every released command")
+	// The public reference documents GA and beta commands only (CLI audit
+	// 2026-11-04), whatever the account or the release-all switch shows.
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
+	if _, reference, _ := runCLI(t, "man", "--markdown"); strings.Contains(reference, "\n## realtime\n") || !strings.Contains(reference, "\n## cron\n") {
+		t.Fatal("the generated reference must document GA cron and leave out preview realtime")
 	}
 }
 

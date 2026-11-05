@@ -313,6 +313,12 @@ period stays active).
 - No cap threshold is recorded or mailed: the account's suspension notice is
   the customer's explanation.
 
+
+Amendment 2026-11-05: storage observations address each catalog row's pinned
+dataset, retaining the legacy selector only when no pin exists. A root's
+lifecycle project still names its quota scope for writes; changing that
+project's default branch must not replace the root's measured size with a
+smaller copy and invent headroom elsewhere in the subject's pool.
 ## Amendment 2026-11-04: the quotas keep back Neon's counter lag
 
 Status: accepted (owner, 2026-11-04: "Neon quota + margin").
@@ -362,3 +368,78 @@ Consequences:
 - A provider without counter lag implements nothing and is unchanged.
 - If more samples show a longer lag, raise `computeCounterLag`. If they show a
   shorter one, lower it and the early stop shrinks with it.
+
+## Amendment 2026-11-05: Gregale stops the databases; Neon's quota is a backstop
+
+Status: accepted (owner, 2026-11-05: "Gregale stops it"). It supersedes the
+2026-11-04 amendment's decisions 1 and 3.
+
+The 2026-11-04 amendment assumed Neon's project counters refresh about every
+25 minutes. A second production measurement on 2026-11-05 found no bound:
+
+- A disposable project's compute ran without pause from 09:46Z to 12:27Z.
+  Its `compute_time_seconds` counter moved only at 10:01Z, 11:27Z and
+  12:19Z: 15, 86 and 52 minutes apart.
+- A quota set at 10:01Z at that counter (202 CU-s) was enforced only at the
+  11:27Z refresh, after 1,492 CU-s, 7.4 times the quota. Raising the quota
+  let a connection in again within 34 seconds.
+- Over the same time, the consumption report the ledger reads
+  (`/consumption_history/v2/projects`, hourly) was current to about a minute,
+  including the hour still open.
+- The 2026-11-05 compute cap qualification failed for the same reason: the
+  counters did not move within its 35-minute wait.
+
+Neon checks a quota only when that counter moves, so no margin bounds the
+overshoot. Decision 5's premise, that the counters have no lag, is wrong.
+
+Decision:
+
+1. **Use comes from the consumption report.** For each subject the sweep
+   works out `U = L + Σ g_i`. `L` is the ledger's use this month: complete
+   windows for every database, including deleted ones. `g_i` is scope `i`'s
+   compute in the consumption report from the end of its ledger coverage until
+   now, open hour included. What remains is `R = max(0, C − U)`. There is no
+   lag margin, so a Free account gets its whole allowance.
+2. **Gregale holds the databases.** When `R = 0`, when the subject is
+   inactive (amendment 2026-11-03), or when a database is past its plan
+   (ADR-20261102125208), the sweep holds each affected database's compute.
+   It uses the delete grace period's hold (ADR-20261029174950), which
+   disables the Neon endpoint: Neon suspends the compute and refuses new
+   connections. When room returns (a new month, an upgrade, overage on,
+   reactivation), the next sweep releases the hold, and the next connection
+   wakes the compute. A database in its delete grace period is not in the
+   sweep, so a cap never releases a deletion hold. Between two sweeps, a
+   subject can overshoot by its databases' largest sizes times the sweep
+   interval (5 minutes) plus the report's delay of about a minute. For Free,
+   that is about 2% of its allowance.
+3. **Neon's quota stays as a backstop.** Each scope's quota is `c_i + R`.
+   `c_i` is Neon's own counter, so the quota still trips if the hold fails,
+   or if apid stops, whenever Neon's counter next moves.
+4. **Qualification checks what enforcement relies on.** `managed-postgres-qualify
+   --compute-cap` checks four things on a disposable resource. First, the
+   consumption report shows a held interval in compute-unit seconds within
+   minutes, open hour included. Second, the hold suspends the compute and
+   refuses a connection, and releasing it lets a connection wake the
+   compute. Third, a quota write keeps the storage limit. Fourth, the
+   consumption period starts at the UTC month start. It no longer waits for
+   Neon to enforce a quota. The artifact's version rises to 2, and `on`
+   refuses version 1.
+5. **The suspension email returns to the ceiling.** Use reaches the ceiling
+   when the hold starts, so the `suspended` notice no longer says use was
+   counted late.
+
+Consequences:
+
+- Each sweep makes more provider requests: one consumption read per scope,
+  and one endpoint read and, on a change, one write per database.
+- A database deleted during the open window is counted only through its
+  ledger windows until the ledger records its last one.
+- A provider whose counters are current implements no report and keeps
+  decision 5's use, the larger of the ledger and its counters.
+- A hold outlives apid. If apid stops at a month start, held databases stay
+  held until it runs again; Neon's quota resets by itself, but the hold
+  does not. Before this amendment, the same outage left databases running
+  past their caps.
+- Delivery: (a) live use and the planner without a margin, (b) the hold and
+  release, (c) qualification version 2. Each step can merge on its own:
+  `on` needs a version 2 artifact, which only (c) writes.

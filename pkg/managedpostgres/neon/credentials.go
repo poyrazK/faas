@@ -95,27 +95,40 @@ func (p *Provider) RevokeCredentials(ctx context.Context, request managedpostgre
 		}
 		return err
 	}
-	role := p.credentialRole(request)
 	owner, err := p.ownerCredentials(ctx, ref.projectID, branchID)
 	if err != nil {
 		return err
 	}
-	if err := p.roles.Revoke(ctx, owner, role); err != nil {
+	if err := p.revokeCredentialIdentity(ctx, owner, ref.projectID, branchID, request); err != nil {
+		return err
+	}
+	if ref.branchID != "" {
+		// A verified dataset backfill changes the request's selector, but
+		// credentials issued before it still use the project-scoped names.
+		// Retire those aliases on this same branch; never resolve its default.
+		request.ProviderResourceID = ref.projectID
+		return p.revokeCredentialIdentity(ctx, owner, ref.projectID, branchID, request)
+	}
+	return nil
+}
+
+func (p *Provider) revokeCredentialIdentity(ctx context.Context, owner managedpostgres.CredentialMaterial, projectID, branchID string, request managedpostgres.CredentialRequest) error {
+	if err := p.roles.Revoke(ctx, owner, p.credentialRole(request)); err != nil {
 		return credentialSQLError(err)
 	}
 	// Previous preview releases created a deterministic API administrator role
 	// for this identity. Its retirement remains recoverable after upgrading.
 	legacy := p.roleName(request.ProviderResourceID, request.IdentityKey)
-	path := "/projects/" + url.PathEscape(ref.projectID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(legacy)
+	path := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(branchID) + "/roles/" + url.PathEscape(legacy)
 	var response roleResponse
-	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, http.StatusOK, http.StatusNoContent)
+	err := p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, http.StatusOK, http.StatusNoContent)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return p.waitForOperations(ctx, ref.projectID, response.Operations)
+	return p.waitForOperations(ctx, projectID, response.Operations)
 }
 
 // Owner credentials are control-plane only and never reach CredentialSink.

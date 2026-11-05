@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -15,6 +17,70 @@ type fakeSource struct {
 	err            error
 	limit          int
 	calls          int
+}
+
+type recentTestSource struct {
+	fakeSource
+	names []string
+}
+
+func (f *recentTestSource) ListRecentCustomDomainTLSHosts(context.Context, int) ([]string, error) {
+	return f.names, nil
+}
+
+func TestRecoverRecentlyVerifiedOrAdmittedHost(t *testing.T) {
+	s := New("gregale.dev")
+	source := &recentTestSource{names: []string{"new.example.com", "customer.wild.example.com", "*.wild.example.com"}}
+	if err := s.Refresh(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Recover(t.Context(), "customer.wild.example.com") || !s.Has("new.example.com") {
+		t.Fatal("recent concrete hosts were not recovered")
+	}
+	if s.Has("random.wild.example.com") || s.Has("*.wild.example.com") {
+		t.Fatal("wildcard pattern bypassed the lookup budget")
+	}
+}
+
+type blockedRecentSource struct {
+	fakeSource
+	started chan struct{}
+	release chan struct{}
+	reads   atomic.Int64
+}
+
+func (f *blockedRecentSource) ListRecentCustomDomainTLSHosts(ctx context.Context, _ int) ([]string, error) {
+	if f.reads.Add(1) == 1 {
+		close(f.started)
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-f.release:
+		return []string{"admitted.example.com"}, nil
+	}
+}
+
+func TestRecoverSharesReadAndKeepsAuthorizationExternal(t *testing.T) {
+	s := New("gregale.dev")
+	source := &blockedRecentSource{started: make(chan struct{}), release: make(chan struct{})}
+	if err := s.Refresh(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Go(func() {
+			if !s.Recover(t.Context(), "admitted.example.com") {
+				t.Error("recent host not recovered")
+			}
+		})
+	}
+	<-source.started
+	close(source.release)
+	wg.Wait()
+	if got := source.reads.Load(); got != 1 {
+		t.Fatalf("concurrent catch-up reads = %d, want one", got)
+	}
 }
 
 func (f *fakeSource) KnownRouteHosts(_ context.Context, limit int) ([]string, []string, error) {
@@ -52,6 +118,18 @@ func TestSetHas(t *testing.T) {
 	}
 	if got := s.Len(); got != 4 {
 		t.Fatalf("Len = %d, want 4 (2 slugs, 2 exact domains)", got)
+	}
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{"x.wild.example.org", true}, {"deep.x.wild.example.org", true},
+		{"wild.example.org", false}, {"badwild.example.org", false},
+		{"*.wild.example.org", false},
+	} {
+		if got := s.WildcardCandidate(tc.host); got != tc.want {
+			t.Errorf("WildcardCandidate(%q) = %v, want %v", tc.host, got, tc.want)
+		}
 	}
 }
 

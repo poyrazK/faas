@@ -17,28 +17,23 @@ func TestCapThresholds(t *testing.T) {
 		used    int64
 		limits  CapLimits
 		ceiling int64
-		// suspended is the sweep's verdict: the counter lag the quotas keep
-		// back can suspend the databases before use reaches the ceiling.
-		suspended bool
-		want      []string
+		want    []string
 	}{
-		{"under 80%", 7999, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance, false, nil},
-		{"80% warns", 8000, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance, false, []string{CapThresholdWarning}},
-		{"the allowance without overage suspends", allowance, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance, false,
+		{"under 80%", 7999, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance, nil},
+		{"80% warns", 8000, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance, []string{CapThresholdWarning}},
+		{"the allowance without overage suspends", allowance, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance,
 			[]string{CapThresholdWarning, CapThresholdAllowance, CapThresholdSuspended}},
-		{"past the allowance with overage", 12000, CapLimits{Allowance: allowance, Ceiling: 2 * allowance, Overage: true}, 2 * allowance, false,
+		{"past the allowance with overage", 12000, CapLimits{Allowance: allowance, Ceiling: 2 * allowance, Overage: true}, 2 * allowance,
 			[]string{CapThresholdWarning, CapThresholdAllowance}},
-		{"80% of the ceiling with overage", 16000, CapLimits{Allowance: allowance, Ceiling: 2 * allowance, Overage: true}, 2 * allowance, false,
+		{"80% of the ceiling with overage", 16000, CapLimits{Allowance: allowance, Ceiling: 2 * allowance, Overage: true}, 2 * allowance,
 			[]string{CapThresholdWarning, CapThresholdAllowance, CapThresholdCeilingWarning}},
-		{"the ceiling with overage", 20000, CapLimits{Allowance: allowance, Ceiling: 2 * allowance, Overage: true}, 2 * allowance, false,
+		{"the ceiling with overage", 20000, CapLimits{Allowance: allowance, Ceiling: 2 * allowance, Overage: true}, 2 * allowance,
 			[]string{CapThresholdWarning, CapThresholdAllowance, CapThresholdCeilingWarning, CapThresholdSuspended}},
-		{"an operator cap below the allowance suspends first", 5000, CapLimits{Allowance: allowance, Ceiling: allowance}, 5000, false,
+		{"an operator cap below the allowance suspends first", 5000, CapLimits{Allowance: allowance, Ceiling: allowance}, 5000,
 			[]string{CapThresholdSuspended}},
-		{"the counter lag suspends before the allowance", 9000, CapLimits{Allowance: allowance, Ceiling: allowance}, allowance, true,
-			[]string{CapThresholdWarning, CapThresholdSuspended}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := capThresholds(tc.used, tc.limits, tc.ceiling, tc.suspended); !slices.Equal(got, tc.want) {
+			if got := capThresholds(tc.used, tc.limits, tc.ceiling); !slices.Equal(got, tc.want) {
 				t.Fatalf("thresholds %v; want %v", got, tc.want)
 			}
 		})

@@ -62,3 +62,21 @@ SELECT config,reported_at FROM data_api_access_configs WHERE app_id=sqlc.arg(app
 -- name: DeleteAccessConfig :execrows
 DELETE FROM data_api_access_configs c USING apps a
  WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND a.id=c.app_id AND a.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: UpsertChangeHookReport :execrows
+-- Zero rows: the token's app no longer belongs to its account or was deleted.
+-- Each relay knows only its own publications, so the latest one is kept.
+INSERT INTO data_api_change_hook_reports (app_id,reported_at,pending,failed,oldest_pending_at,last_published_at,last_failure_code,publishing)
+SELECT a.id, sqlc.arg(reported_at)::timestamptz, sqlc.arg(pending)::bigint, sqlc.arg(failed)::bigint,
+       sqlc.narg(oldest_pending_at)::timestamptz, sqlc.narg(last_published_at)::timestamptz,
+       sqlc.narg(last_failure_code)::text, sqlc.arg(publishing)::text
+  FROM apps a
+ WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.deleted_at IS NULL
+ON CONFLICT (app_id) DO UPDATE SET reported_at=EXCLUDED.reported_at, pending=EXCLUDED.pending, failed=EXCLUDED.failed,
+  oldest_pending_at=EXCLUDED.oldest_pending_at,
+  last_published_at=GREATEST(data_api_change_hook_reports.last_published_at, EXCLUDED.last_published_at),
+  last_failure_code=EXCLUDED.last_failure_code, publishing=EXCLUDED.publishing;
+
+-- name: GetChangeHookReport :one
+SELECT reported_at,pending,failed,oldest_pending_at,last_published_at,last_failure_code,publishing
+  FROM data_api_change_hook_reports WHERE app_id=sqlc.arg(app_id)::text::uuid;

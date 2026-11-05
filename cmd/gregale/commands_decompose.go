@@ -709,6 +709,13 @@ func printManagedServices(w io.Writer, managed []api.PlanManaged) {
 				reason = "   (" + text + ")"
 			}
 			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s%s\n", m.Name, m.Kind, m.EnvHint, m.Image, reason)
+			if len(m.Unbound) > 0 {
+				if m.Kind != "postgres" {
+					fmt.Fprintf(w, "      not run on Gregale and no managed equivalent; set to an external %s: %s\n", m.Kind, strings.Join(m.Unbound, ", "))
+				} else {
+					fmt.Fprintf(w, "      no value for: %s\n", strings.Join(m.Unbound, ", "))
+				}
+			}
 		}
 	}
 }

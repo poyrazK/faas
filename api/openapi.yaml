@@ -8463,6 +8463,36 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getDataAPIStatus
+      summary: Read a Data API's platform status
+      description: |
+        Returns what the platform knows about the app's Data API without
+        waking it: the runtime version this control plane serves, whether
+        this installation accepts runtime reports, and the change hook
+        delivery the app's runtime last reported. Without runtime reports,
+        usage reports, monthly caps, keyless live reads and change hooks do
+        not reach the platform. `change_hooks` is absent until a runtime with
+        change hooks on has reported.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The Data API's status
+          headers:
+            Cache-Control: { schema: { type: string }, description: Prevents caching; runtimes report while awake. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIStatus' }
+        default:
+          description: App lookup, permission or status read failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/data-api/contract-tasks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -8558,6 +8588,30 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/postgres-bindings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listAppPostgresBindings
+      summary: List an app's managed PostgreSQL bindings
+      description: |
+        Lists the app's live managed PostgreSQL bindings on every database it
+        is bound to, including organization databases and project environment
+        copies. Deleting the app is refused while a binding listed here is not
+        being deleted. Bindings on an environment copy are removed by tearing
+        down that environment.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: The app's bindings on every database, without credential material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppPostgresBindingList' }
+        default:
+          description: App lookup, permission or binding listing error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/bindings:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -16887,6 +16941,25 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/change-status:
+    post:
+      tags: [managed_postgres]
+      operationId: reportDataAPIChangeStatus
+      summary: Report Data API change hook delivery
+      description: Private runtime surface for change hook delivery. Requires the same gregale:data-api:events workload assertion from a live instance of an active app as publication; account and app come from it, never from the body. The report carries counts the runtime read from its change event table (waiting and rejected changes, when the oldest waiting change was recorded, the latest rejection code, whether publications keep failing) and when it last published; it never carries change data. Owners read the latest report in the app's Data API status. Owner API keys and application JWTs are not accepted.
+      x-internal: true
+      security:
+        - dataAPIEventsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIChangeHookReport' }
+      responses:
+        '204': { description: The report is stored. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
@@ -84627,9 +84700,9 @@ components:
         from_scale_to_zero: { type: boolean }
         target_scale_to_zero: { type: boolean }
         generation: { type: integer, format: int64, minimum: 2 }
-        state: { type: string, enum: [pending, succeeded] }
+        state: { type: string, enum: [pending, succeeded, failed] }
         connection_interruption_expected: { type: boolean }
-        last_error_code: { type: string, description: "Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery." }
+        last_error_code: { type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     ResizeManagedPostgresDatabaseRequest:
@@ -84650,9 +84723,9 @@ components:
         from_class: { type: string, enum: [development, burstable, production] }
         target_class: { type: string, enum: [development, burstable, production] }
         generation: { type: integer, format: int64, minimum: 2 }
-        state: { type: string, enum: [pending, succeeded] }
+        state: { type: string, enum: [pending, succeeded, failed] }
         connection_interruption_expected: { type: boolean }
-        last_error_code: { type: string, description: "Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes." }
+        last_error_code: { type: string, description: "Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain pending." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     ManagedPostgresDatabase:
@@ -84995,6 +85068,41 @@ components:
         version: { type: string, pattern: '^[0-9a-f]{16}$', description: Digest of the runtime's image files; running Data APIs report it as runtime_version on /healthz. }
         archive_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Lowercase hex SHA-256 of the decoded archive. }
         archive: { type: string, format: byte, maxLength: 2796204, description: 'Base64 gzipped tar of the runtime under one data-api/ directory, at most 2 MiB decoded.' }
+    DataAPIStatus:
+      description: What the platform knows about a Data API without waking it.
+      type: object
+      additionalProperties: false
+      required: [runtime_version, runtime_reports]
+      properties:
+        runtime_version: { type: string, pattern: '^[0-9a-f]{16}$', description: The runtime version this control plane serves; running Data APIs report theirs as runtime_version on /healthz. }
+        runtime_reports: { type: string, enum: [available, unavailable], description: 'unavailable when this installation accepts no runtime reports: usage reports, monthly caps, keyless live reads and change hooks then do not reach the platform.' }
+        change_hooks: { $ref: '#/components/schemas/DataAPIChangeHookStatus' }
+    DataAPIChangeHookStatus:
+      description: The change hook delivery the app's runtime last reported.
+      type: object
+      additionalProperties: false
+      required: [reported_at, pending, failed, publishing]
+      properties:
+        reported_at: { type: string, format: date-time, description: When the platform received the report. }
+        pending: { type: integer, format: int64, minimum: 0, maximum: 1000000000000, description: Recorded changes waiting to publish. }
+        failed: { type: integer, format: int64, minimum: 0, maximum: 1000000000000, description: 'Changes the platform rejected, kept until retried or discarded in SQL.' }
+        oldest_pending_at: { type: string, format: date-time, description: When the oldest waiting change was recorded. }
+        last_published_at: { type: string, format: date-time, description: When a runtime last published changes. }
+        last_failure_code: { type: string, pattern: '^[a-z0-9_]{1,64}$', description: The code of the latest rejected change. }
+        publishing: { type: string, enum: [ok, retrying], description: retrying when waiting changes are held back by publications that keep failing. }
+    DataAPIChangeHookReport:
+      description: A runtime's change hook delivery report, read from its change event table. oldest_pending_at is present exactly when changes are pending.
+      type: object
+      additionalProperties: false
+      required: [version, pending, failed, publishing]
+      properties:
+        version: { type: integer, enum: [1] }
+        pending: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
+        failed: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
+        oldest_pending_at: { type: string, format: date-time }
+        last_published_at: { type: string, format: date-time }
+        last_failure_code: { type: string, pattern: '^[a-z0-9_]{1,64}$' }
+        publishing: { type: string, enum: [ok, retrying] }
     DataAPIConnectionBudgets:
       description: Read-only planning snapshots. Not applicable means the app has no visible Data API binding.
       type: object
@@ -85237,6 +85345,24 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresBinding' } }
+    AppPostgresBinding:
+      description: One live managed PostgreSQL binding of an app, without credential material.
+      type: object
+      additionalProperties: false
+      required: [id, database, scope, environment_key, access, state]
+      properties:
+        id: { type: string, description: 'The binding ID that revoking the binding takes.' }
+        database: { type: string, description: The bound database's name. }
+        scope: { type: string }
+        environment_key: { type: string }
+        access: { type: string }
+        state: { type: string, description: A binding in the deleting state no longer blocks deleting the app. }
+    AppPostgresBindingList:
+      description: An app's live managed PostgreSQL bindings on every database it is bound to.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AppPostgresBinding' } }
     CreateManagedPostgresBindingRequest:
       description: Request to inject a managed database credential into an app environment. Access values are provider-neutral; the selected database backend may support only a subset.
       type: object
@@ -91616,7 +91742,7 @@ components:
       properties:
         wake_id: { type: string, format: uuid, description: "Wake id on the admitted instance and wake timeline (the running instance's when already_running)." }
         already_running: { type: boolean, description: "True when the app already had a routable running instance and no wake was queued." }
-        instance_id: { type: string, format: uuid, description: "The running instance, present when already_running is true." }
+        instance_id: { type: string, format: uuid, description: "The instance the wake resolves to: the running instance when already_running is true, or the frozen instance a queued wake resumes under its own wake_id." }
 
     PreAuthRateLimitConfig:
       description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe mode records threshold crossings without rejecting requests."
@@ -107118,6 +107244,10 @@ components:
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
+        project_secrets_revision_hash:
+          description: Opaque shared-secret set identity observed before qualification probes. Submit it as the project:secrets entry in secret_revision_hashes; it changes on secret additions, rotations, and deletions, but not master-key reseals. Omitted by older servers.
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         feature_flags_hash:
           description: Fingerprint of the environment identity, current flag version, and configuration observed before qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released workload settings hash when submitting workload_config_hashes.
           type: string
@@ -107679,7 +107809,7 @@ components:
         promotion_token: { type: string, minLength: 1 }
 
     CreateProjectEnvironmentQualificationRequest:
-      description: Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and per-workload secret revision fingerprints.
+      description: Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and workload and shared-secret revision fingerprints observed before probes.
       type: object
       additionalProperties: false
       required: [release_set_id, configuration_version, configuration_hash, secret_revision_hashes, checks]
@@ -107693,9 +107823,10 @@ components:
         configuration_version: { type: integer, minimum: 0 }
         configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         secret_revision_hashes:
+          description: Per-workload secret fingerprints plus the reserved project:secrets identity from the pre-probe environment state. The shared identity is required once the environment has held shared secrets, including after the final key is deleted.
           type: object
           minProperties: 1
-          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          propertyNames: { type: string, pattern: '^([a-z0-9][a-z0-9-]{0,62}|project:secrets)$' }
           additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         checks:
           type: array
@@ -107750,7 +107881,7 @@ components:
           description: SHA-256 of canonical non-secret environment configuration; empty only for a legacy receipt that cannot qualify for promotion.
         secret_revision_hashes:
           type: object
-          description: Opaque per-workload fingerprints of secret keys, version metadata, and managed credential generations; no secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for promotion.
+          description: Opaque per-workload secret fingerprints and, for tracked shared-secret sets, the reserved project:secrets identity. No secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for promotion.
           additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         status: { type: string, enum: [passed, failed] }
         checks:
@@ -109192,6 +109323,11 @@ components:
           type: string
           enum: [unavailable, plan, quota, unsupported, configured, not_referenced, permission]
           description: "Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is set."
+        unbound:
+          type: array
+          items: { type: string }
+          example: [api.REDIS_URL]
+          description: "Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when none."
 
     PlanManagedProvision:
       description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds."
