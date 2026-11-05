@@ -19,7 +19,7 @@ type previewSetPeerStore interface {
 	state.PRPreviewSetPeerReader
 }
 
-// ADR-20261103180000: a standalone PR preview's service calls are scoped by
+// ADR-20261105090226: a standalone PR preview's service calls are scoped by
 // the preview set that holds it.
 func TestPRPreviewSetPeerIDs(t *testing.T) {
 	t.Run("mem", func(t *testing.T) { checkPRPreviewSetPeerIDs(t, state.NewMemStore()) })

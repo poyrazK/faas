@@ -3,7 +3,7 @@ package api
 import "net/http"
 
 // CodePRPreviewResourceUnsupported refuses a bucket or a managed database
-// binding on a PR preview (ADR-20261103180000).
+// binding on a PR preview (ADR-20261105090226).
 const CodePRPreviewResourceUnsupported = "pr_preview_resource_unsupported"
 
 // ErrPRPreviewResourceUnsupported is the 409 for a stateful resource asked

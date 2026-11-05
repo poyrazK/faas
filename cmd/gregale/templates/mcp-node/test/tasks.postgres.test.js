@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, createCipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from '../task-store.js';
+import { createMcpTaskPayloadCipher } from '../task-crypto.js';
 import { createMcpTaskRuntime, RetryableMcpTaskError } from '../tasks.js';
 
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
@@ -25,7 +26,7 @@ function principal(subject) {
   };
 }
 
-async function harness(t, { legacySchema = false, maxRunning = 64, maxRunningPerOwner = 64 } = {}) {
+async function harness(t, { legacySchema = false, maxRunning = 64, maxRunningPerOwner = 64, ownerKey = randomBytes(48).toString('base64url'), encryptionKeys } = {}) {
   const adminPool = new Pool({ connectionString: databaseURL, max: 1, connectionTimeoutMillis: 5_000, statement_timeout: 10_000 });
   const schema = `gregale_mcp_test_${randomUUID().replaceAll('-', '')}`;
   let schemaCreated = false;
@@ -80,17 +81,302 @@ async function harness(t, { legacySchema = false, maxRunning = 64, maxRunningPer
   }
 
   const namespace = `test-${randomUUID()}`;
-  const ownerKey = randomBytes(48).toString('base64url');
   const store = createPostgresMcpTaskStore({
     pool,
     namespace,
     ownerKey,
+    encryptionKeys,
     ttlMs: 60_000,
     maxRunning, maxRunningPerOwner,
   });
   await store.migrate({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   return { adminPool, namespace, ownerKey, pool, schema, store };
 }
+
+test('cancelled expired leases settle without another execution attempt', postgresOnly, async t => {
+  for (const maxAttempts of [1, 3]) await t.test(`budget ${maxAttempts}`, async t => {
+    const { store, pool } = await harness(t);
+    const task = await create(store, 'alice');
+    const original = await store.claim(maxAttempts, 30_000);
+    assert.equal(await store.requestCancel({ taskID: task.task_id, authInfo: principal('alice'), authMode: 'external-oauth' }), true);
+    assert.equal(await store.claim(maxAttempts, 30_000), null);
+    const live = (await pool.query('SELECT status,lease_token::text FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0];
+    assert.deepEqual(live, { status: 'running', lease_token: original.lease_token });
+    await pool.query("UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE task_id=$1", [task.task_id]);
+    const next = await create(store, 'bob');
+    assert.equal((await store.claim(maxAttempts, 30_000)).task_id, next.task_id);
+    const settled = (await pool.query(`SELECT status,attempt_count,
+      lease_token IS NULL AND lease_expires_at IS NULL AND NOT resume_pending AND next_attempt_at IS NULL AS cleared
+      FROM gregale_mcp_tasks WHERE task_id=$1`, [task.task_id])).rows[0];
+    assert.deepEqual(settled, { status: 'cancelled', attempt_count: 1, cleared: true });
+  });
+});
+
+test('visible ASCII tool names work through admission, worker claims and results', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  const admission = createMcpTaskAdmissionController({ pool, namespace });
+  for (const name of ['BuildReport', 'acme:report/build', '9lookup', '_lookup', 'a'.repeat(128)]) {
+    const handlers = { [name]: { version: '1', async execute() { return { content: [{ type: 'text', text: name }] }; } } };
+    await store.migrate({ admissionHandlers: [{ name, version: '1' }] });
+    const runtime = createMcpTaskRuntime({ store, handlers });
+    try {
+      await runtime.start();
+      const task = await runtime.create(name, {}, principal('alice'), 'external-oauth');
+      let result;
+      for (let n = 0; n < 100; n++) {
+        result = await store.get({ taskID: task.taskId, authInfo: principal('alice'), authMode: 'external-oauth' });
+        if (result.status === 'completed') break;
+        await delay(10);
+      }
+      assert.equal(result.status, 'completed');
+      assert.equal(result.result.content[0].text, name);
+      await admission.change('disable', name, '1');
+      await assert.rejects(runtime.create(name, {}, principal('alice'), 'external-oauth'), /not accepting/);
+    } finally { await runtime.stop(); }
+  }
+});
+
+test('preflight authenticates every retained legacy payload before retiring a key', postgresOnly, async t => {
+  for (const [field, column, value] of [
+    ['arguments', 'arguments_encrypted', { report: 'retained' }],
+    ['result', 'result_encrypted', { content: [] }],
+    ['error', 'error_encrypted', { code: -32603, message: 'Failure' }],
+    ['input-state', 'input_state_encrypted', { requests: {}, responses: {} }],
+  ]) await t.test(field, async t => {
+    const { pool, namespace, schema, ownerKey } = await harness(t);
+    const previousKey = randomBytes(48).toString('base64url');
+    const nativeOwnerKeys = [{ id: 'default', key: ownerKey }, { id: 'previous', key: previousKey }];
+    const full = createPostgresMcpTaskStore({ pool, namespace, ownerKey, nativeOwnerKeys, ttlMs: 60_000 });
+    await full.migrate({ admissionHandlers: [{ name: 'build_report', version: '2' }] });
+    const records = [];
+    for (let n = 0; n < 34; n++) records.push(await full.create({ toolName: 'build_report', handlerVersion: '2', args: {}, authMode: 'open' }));
+    records.sort((a, b) => a.task_id.localeCompare(b.task_id));
+    const retained = records.at(-1); // Neither a sample nor the first batch proves readability.
+    const payload = createMcpTaskPayloadCipher(previousKey).encrypt(Buffer.from(JSON.stringify(value)), `gregale-mcp-task:v1:${namespace}:${retained.task_id}:${field}`);
+    await pool.query(`UPDATE gregale_mcp_tasks SET ${column}=$1 WHERE task_id=$2`, [payload, retained.task_id]);
+    await full.initialize();
+    const reduced = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000 });
+    await assert.rejects(reduced.initialize(), /authentication failed/);
+    await assert.rejects(reduced.migrate(), /authentication failed/);
+    const { run } = await taskDoctorFixture(t, { schema, namespace, ownerKey });
+    const doctor = await run('task-doctor.js');
+    assert.equal(doctor.code, 1);
+    assert.ok(doctor.report.checks.some(check => check.name === 'encryption_keys' && check.status === 'failed'));
+    assert.equal(JSON.stringify(doctor.report).includes(previousKey), false);
+    await pool.query("UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp()-interval '1 second' WHERE task_id=$1", [retained.task_id]);
+    await reduced.initialize();
+    await reduced.migrate();
+  });
+});
+
+test('a claim committed during shutdown is released without exhausting its unexecuted attempt', postgresOnly, async t => {
+  const { store, pool } = await harness(t);
+  const task = await create(store, 'alice');
+  let committed, releaseResponse, drained, executions = 0;
+  const committedPromise = new Promise(resolve => { committed = resolve; });
+  const responsePromise = new Promise(resolve => { releaseResponse = resolve; });
+  const drainedPromise = new Promise(resolve => { drained = resolve; });
+  const originalClaim = store.claim.bind(store), originalDraining = store.workerDraining.bind(store);
+  store.claim = async (...args) => { const row = await originalClaim(...args); committed(); await responsePromise; return row; };
+  store.workerDraining = async (...args) => { await originalDraining(...args); drained(); };
+  const runtime = createMcpTaskRuntime({ store, maxAttempts: 1, handlers: { build_report: { version: '1', async execute() { executions++; return { content: [] }; } } } });
+  const starting = runtime.start();
+  await committedPromise;
+  const stopping = runtime.stop();
+  await drainedPromise;
+  releaseResponse();
+  await starting;
+  assert.deepEqual(await stopping, { timedOut: false });
+  assert.equal(executions, 0);
+  const row = (await pool.query('SELECT status,attempt_count,resume_pending FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0];
+  assert.deepEqual(row, { status: 'queued', attempt_count: 1, resume_pending: true });
+  const recovered = await originalClaim(1, 30000);
+  assert.ok(recovered);
+  assert.equal(recovered.attempt_count, 1);
+});
+
+test('canonical UUID aliases preserve input updates and runtime subscriptions for both encryption formats', postgresOnly, async t => {
+  for (const encryptionKeys of [undefined, { activeKeyId: 'current', keys: { current: 'test-encryption-'.repeat(3) } }]) {
+    await t.test(encryptionKeys ? 'v2' : 'v1', async t => {
+      const { store } = await harness(t, { encryptionKeys });
+      const task = await create(store, 'alice');
+      const claimed = await store.claim(3, 30000);
+      await store.requestInputs({ taskID: task.task_id, leaseToken: claimed.lease_token, requests: { approval: { method: 'roots/list', params: {} } } });
+      const authInfo = principal('alice'), upper = task.task_id.toUpperCase();
+      const runtime = createMcpTaskRuntime({ store, handlers: {}, workerEnabled: false });
+      await runtime.start();
+      try {
+        const subscription = await runtime.subscribe([task.task_id, upper], authInfo, 'external-oauth', () => true, () => {});
+        assert.deepEqual(subscription.taskIds, [task.task_id]);
+        assert.equal(subscription.tasks.length, 1);
+        subscription.close();
+        assert.equal(await store.updateInputs({ taskID: upper, authInfo, authMode: 'external-oauth', inputResponses: { approval: { roots: [] } } }), true);
+        assert.equal((await store.get({ taskID: task.task_id, authInfo, authMode: 'external-oauth' })).status, 'queued');
+        assert.equal(await store.get({ taskID: upper, authInfo: principal('bob'), authMode: 'external-oauth' }), null);
+      } finally { await runtime.stop(); }
+    });
+  }
+});
+
+test('canonical and retained Go owner aliases share execution capacity across authentication and group merges', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t, { maxRunning: 3, maxRunningPerOwner: 1 });
+  const first = await create(store, 'alice');
+  const second = await create(store, 'alice');
+  const aliases = (await pool.query('SELECT owner_hash FROM gregale_mcp_task_owners WHERE namespace=$1', [namespace])).rows.map(row => row.owner_hash);
+  const canonical = (await pool.query('SELECT owner_hash FROM gregale_mcp_tasks WHERE task_id=$1', [first.task_id])).rows[0].owner_hash;
+  const legacy = aliases.find(value => !value.equals(canonical));
+  await pool.query('UPDATE gregale_mcp_tasks SET owner_hash=$2 WHERE task_id=$1', [second.task_id, legacy]);
+  // Simulate an upgraded queue whose callers have not returned yet.
+  await pool.query('DELETE FROM gregale_mcp_task_owners WHERE namespace=$1', [namespace]);
+  assert.ok(await store.claim(3, 30000));
+  assert.equal(await store.claim(3, 30000), null);
+  await get(store, first.task_id, 'alice');
+  assert.equal(await store.claim(3, 30000), null);
+  const bob = await create(store, 'bob');
+  assert.equal((await store.claim(3, 30000)).task_id, bob.task_id);
+  const { associateMcpTaskOwners } = await import('../task-owners.js');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await associateMcpTaskOwners(client, namespace, [Buffer.from('old-generation'), canonical]);
+    await associateMcpTaskOwners(client, namespace, [Buffer.from('new-generation'), Buffer.from('old-generation')]);
+    await client.query('COMMIT');
+  } finally { await client.query('ROLLBACK'); client.release(); }
+  const groups = await pool.query('SELECT COUNT(DISTINCT owner_group)::int AS count FROM gregale_mcp_task_owners WHERE namespace=$1 AND owner_hash=ANY($2::bytea[])', [namespace, [...aliases, Buffer.from('old-generation'), Buffer.from('new-generation')]]);
+  assert.equal(groups.rows[0].count, 1);
+  const metrics = await store.queueMetrics();
+  assert.equal(metrics.runningTasks, 2);
+  assert.equal(metrics.capacityWaitingTasks, 1);
+});
+
+test('migration and runtime startup accept retained native v2 Tasks and preserve authenticated payloads', postgresOnly, async t => {
+  const { pool, namespace, ownerKey, store } = await harness(t);
+  const task = await create(store, 'alice');
+  const nativeID = 'initial';
+  const handoff = createPostgresMcpTaskStore({ pool, namespace, ownerKey, nativeOwnerKeys: [{ id: nativeID, key: ownerKey }], ttlMs: 60000 });
+  function nativePayload(value, field) {
+    const key = createHmac('sha256', ownerKey).update('gregale-mcp-task-payload:v1').digest();
+    const nonce = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, nonce);
+    cipher.setAAD(Buffer.from(`gregale-mcp-task:v1:${namespace}:${task.task_id}:${field}`));
+    const encrypted = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final()]);
+    return Buffer.concat([Buffer.from([2, nativeID.length]), Buffer.from(nativeID), nonce, cipher.getAuthTag(), encrypted]);
+  }
+  await pool.query('UPDATE gregale_mcp_tasks SET arguments_encrypted=$2 WHERE task_id=$1', [task.task_id, nativePayload({ report: 'retained' }, 'arguments')]);
+  await handoff.migrate({ admissionHandlers: [{ name: 'build_report', version: '1' }] });
+  await handoff.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }] });
+  const leased = await handoff.claim(3, 30000);
+  assert.deepEqual(leased.arguments, { report: 'retained' });
+  await handoff.complete(leased.task_id, leased.lease_token, { content: [] });
+  await pool.query('UPDATE gregale_mcp_tasks SET result_encrypted=$2 WHERE task_id=$1', [task.task_id, nativePayload({ content: [{ type: 'text', text: 'retained result' }] }, 'result')]);
+  await handoff.initialize();
+  const retained = await get(handoff, task.task_id, 'alice');
+  assert.equal(retained.result.content[0].text, 'retained result');
+  const wrong = createPostgresMcpTaskStore({ pool, namespace, ownerKey, nativeOwnerKeys: [{ id: nativeID, key: 'wrong'.repeat(8) }], ttlMs: 60000 });
+  await assert.rejects(wrong.initialize(), /stable/);
+});
+
+test('owner cleanup keeps every alias until the final retained Task expires', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const task = await create(store, 'alice');
+  const canonical = (await pool.query('SELECT owner_hash FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0].owner_hash;
+  const legacy = (await pool.query('SELECT owner_hash FROM gregale_mcp_task_owners WHERE namespace=$1 AND owner_hash<>$2', [namespace, canonical])).rows[0].owner_hash;
+  await pool.query('UPDATE gregale_mcp_tasks SET owner_hash=$2 WHERE task_id=$1', [task.task_id, legacy]);
+  await get(store, task.task_id, 'unused-owner');
+  await store.cleanupExpired();
+  assert.equal((await pool.query('SELECT 1 FROM gregale_mcp_task_owners WHERE namespace=$1', [namespace])).rowCount, 2);
+  await pool.query("UPDATE gregale_mcp_tasks SET created_at=clock_timestamp()-interval '1 hour',expires_at=clock_timestamp()-interval '1 second' WHERE task_id=$1", [task.task_id]);
+  await store.cleanupExpired();
+  assert.equal((await pool.query('SELECT 1 FROM gregale_mcp_task_owners WHERE namespace=$1', [namespace])).rowCount, 0);
+});
+
+test('claims roll back unreadable payloads without consuming attempts', postgresOnly, async t => {
+  const { pool, store } = await harness(t);
+  for (const column of ['arguments_encrypted', 'result_encrypted', 'error_encrypted', 'input_state_encrypted']) {
+    const task = await create(store, 'alice');
+    await pool.query(`UPDATE gregale_mcp_tasks SET ${column}=$2 WHERE task_id=$1`, [task.task_id, Buffer.from('corrupted payload')]);
+    for (let attempt=0; attempt<3; attempt++) await assert.rejects(store.claim(3, 30000));
+    const row = (await pool.query('SELECT status,attempt_count,lease_token FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0];
+    assert.deepEqual(row, { status: 'queued', attempt_count: 0, lease_token: null }, column);
+    await pool.query('DELETE FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id]);
+  }
+});
+
+test('worker writes require a live lease and unexpired Task', postgresOnly, async t => {
+  const { pool, store } = await harness(t);
+  for (const operation of ['complete', 'cancel', 'input', 'retry']) {
+    for (const condition of ['live', 'lease-expired', 'ttl-expired', 'replaced']) {
+      const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: { report: 'test' },
+        authInfo: principal('alice'), authMode: 'external-oauth', inputMethods: ['elicitation/create:form'] });
+      const leased = await store.claim(3, 30000);
+      const patch = { 'lease-expired': "lease_expires_at=clock_timestamp()-interval '1 second'",
+        'ttl-expired': "created_at=clock_timestamp()-interval '1 hour',expires_at=clock_timestamp()-interval '1 second'",
+        replaced: 'lease_token=gen_random_uuid()' }[condition];
+      if (patch) await pool.query(`UPDATE gregale_mcp_tasks SET ${patch} WHERE task_id=$1`, [task.task_id]);
+      if (operation==='complete') await store.complete(task.task_id, leased.lease_token, { content: [] });
+      if (operation==='cancel') await store.finishCancelled(task.task_id, leased.lease_token);
+      if (operation==='retry') await store.fail(task.task_id, leased.lease_token, { code: -32603, message: 'test' }, { retryable: true });
+      if (operation==='input') await store.requestInputs({ taskID: task.task_id, leaseToken: leased.lease_token,
+        requests: { approve: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } } });
+      const row = (await pool.query('SELECT status,result_encrypted,input_state_encrypted FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0];
+      const expected = condition==='live' ? { complete: 'completed', cancel: 'cancelled', input: 'input_required', retry: 'queued' }[operation] : 'running';
+      assert.equal(row.status, expected, `${operation}/${condition}`);
+      if (condition!=='live') { assert.equal(row.result_encrypted, null); assert.equal(row.input_state_encrypted, null); }
+      await pool.query("UPDATE gregale_mcp_tasks SET status='failed',lease_token=NULL,lease_expires_at=NULL WHERE task_id=$1", [task.task_id]);
+    }
+  }
+});
+
+test('completion rechecks lease expiry after waiting for a row lock', postgresOnly, async t => {
+  const { pool, store } = await harness(t);
+  const task = await create(store, 'alice');
+  const lease = await store.claim(3, 30000);
+  await pool.query("UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()+interval '1 second' WHERE task_id=$1", [task.task_id]);
+  const lock = await pool.connect();
+  let completion;
+  try {
+    await lock.query('BEGIN');
+    await lock.query('SELECT 1 FROM gregale_mcp_tasks WHERE task_id=$1 FOR UPDATE', [task.task_id]);
+    completion = store.complete(task.task_id, lease.lease_token, { content: [] });
+    const deadline=Date.now()+5000;
+    while (!(await pool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'WITH lease AS MATERIALIZED%') AS waiting")).rows[0].waiting) {
+      assert.ok(Date.now()<deadline, 'completion did not block on the row lock'); await delay(5);
+    }
+    while (!(await pool.query('SELECT lease_expires_at<=clock_timestamp() AS expired FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0].expired) {
+      assert.ok(Date.now()<deadline, 'lease did not expire'); await delay(5);
+    }
+    await lock.query('COMMIT');
+    assert.equal(await completion, null);
+    assert.equal((await pool.query('SELECT status FROM gregale_mcp_tasks WHERE task_id=$1', [task.task_id])).rows[0].status, 'running');
+  } finally { await lock.query('ROLLBACK'); lock.release(); await completion?.catch(() => {}); }
+});
+
+test('Node preserves canonical identity and access to retained Go owner hashes', postgresOnly, async t => {
+  const ownerKey = '01234567890123456789012345678901';
+  const { pool, namespace, store } = await harness(t, { ownerKey });
+  const alice = { resource: new URL('https://example.com/mcp'), extra: { subject: 'alice' }, clientId: 'test-client' };
+  const bob = { ...alice, extra: { subject: 'bob' } };
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '2', args: { report: 'test', steps: 1 }, authInfo: alice, authMode: 'external-oauth' });
+  const raw = await pool.query("SELECT encode(owner_hash,'hex') AS owner FROM gregale_mcp_tasks WHERE task_id=$1", [task.task_id]);
+  assert.equal(raw.rows[0].owner, '4fbc7a60b90569b9ac1b0d8b0c1f59ce770120370a5da54c662ce779b04edcab');
+  const claimed = await store.claim(3, 30_000, [{ name: 'build_report', version: '2' }]);
+  await store.requestInputs({ taskID: task.task_id, leaseToken: claimed.lease_token,
+    requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } } });
+  await pool.query("UPDATE gregale_mcp_tasks SET owner_hash=decode($2,'hex') WHERE task_id=$1",
+    [task.task_id, '803002df4e65c74a4f74c141874d907b0d661cb39332bc05c3424af3145a2928']);
+  const request = { taskID: task.task_id, authInfo: alice, authMode: 'external-oauth' };
+  assert.equal((await store.get(request)).task_id, task.task_id);
+  assert.equal((await store.getMany({ ...request, taskIDs: [task.task_id] })).length, 1);
+  assert.equal(await store.get({ ...request, authInfo: bob }), null);
+  assert.equal(await store.updateInputs({ ...request, authInfo: bob, inputResponses: { approval: { action: 'accept' } } }), false);
+  assert.equal(await store.requestCancel({ ...request, authInfo: bob }), false);
+  assert.equal(await store.updateInputs({ ...request, inputResponses: { approval: { action: 'accept' } } }), true);
+  const limited = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000, maxOutstandingPerOwner: 1 });
+  await assert.rejects(limited.create({ toolName: 'build_report', handlerVersion: '2', args: {}, authInfo: alice, authMode: 'external-oauth' }), /capacity/);
+  assert.equal(await store.requestCancel(request), true);
+  assert.equal((await store.get(request)).status, 'cancelled');
+});
 
 function create(store, subject, args = { report: 'weekly' }) {
   return store.create({
@@ -220,7 +506,7 @@ test('PostgreSQL persists encrypted task inputs, results, and failures with call
 });
 
 test('PostgreSQL observer metrics require a role without table writes or schema creation privileges', postgresOnly, async t => {
-  const { adminPool, namespace, schema } = await harness(t);
+  const { adminPool, namespace, schema, pool, store } = await harness(t);
   const role = `gregale_mcp_observer_${randomUUID().replaceAll('-', '')}`;
   const password = randomBytes(32).toString('hex');
   const quotedRole = sqlIdentifier(role);
@@ -236,7 +522,7 @@ test('PostgreSQL observer metrics require a role without table writes or schema 
     await adminPool.query(`GRANT CONNECT ON DATABASE ${quotedDatabase} TO ${quotedRole}`);
     await adminPool.query(`GRANT USAGE ON SCHEMA ${quotedSchema} TO ${quotedRole}`);
     await adminPool.query(`GRANT SELECT ON TABLE ${quotedSchema}.gregale_mcp_tasks TO ${quotedRole}`);
-    await adminPool.query(`GRANT SELECT ON TABLE ${quotedSchema}.gregale_mcp_task_worker_handlers TO ${quotedRole}`);
+    await adminPool.query(`GRANT SELECT ON TABLE ${quotedSchema}.gregale_mcp_task_worker_handlers, ${quotedSchema}.gregale_mcp_task_owners TO ${quotedRole}`);
 
     const observerURL = new URL(databaseURL);
     observerURL.username = role;
@@ -256,6 +542,32 @@ test('PostgreSQL observer metrics require a role without table writes or schema 
     assert.equal(metrics.withoutCompatibleWorkerTasks, 0);
     assert.deepEqual(metrics.handlerCompatibility, []);
     assert.equal(metrics.compatibilityTruncated, false);
+    const retry = await create(store, 'alice');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const lease = await store.claim(5, 30_000);
+      assert.equal(lease.attempt_count, attempt);
+      await store.fail(retry.task_id, lease.lease_token, { code: -32603, message: 'Retryable failure' }, { retryable: true, maxAttempts: 5, retryDelayMs: 10_000 });
+      if (attempt < 3) await pool.query("UPDATE gregale_mcp_tasks SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE task_id=$1", [retry.task_id]);
+    }
+    const retryObserver = createMcpTaskQueueObserver({ pool: observerPool, namespace, maxAttempts: 5, compatibility: true });
+    const delayed = await retryObserver.queueMetrics();
+    assert.equal(delayed.retryWaitingTasks, 1);
+    assert.equal(delayed.withoutCompatibleWorkerTasks, 0, 'future retries are not currently blocked work');
+    await pool.query("UPDATE gregale_mcp_tasks SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE task_id=$1", [retry.task_id]);
+    const due = await retryObserver.queueMetrics();
+    assert.equal(due.withoutCompatibleWorkerTasks, 1, 'a due fourth attempt still needs a compatible worker');
+    assert.equal(due.handlerCompatibility[0].waiting_tasks, 1);
+    assert.equal((await observer.queueMetrics()).withoutCompatibleWorkerTasks, 0, 'the default budget remains three attempts');
+    const fourth = await store.claim(5, 30_000);
+    assert.equal(fourth.attempt_count, 4);
+    assert.equal((await retryObserver.queueMetrics()).withoutCompatibleWorkerTasks, 0, 'live leases are not blocked work');
+    await store.releaseMany([fourth]);
+    assert.equal((await observer.queueMetrics()).withoutCompatibleWorkerTasks, 1, 'a drain resume remains eligible above the current budget');
+    for (const privilege of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
+      await adminPool.query(`GRANT ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_task_owners TO ${quotedRole}`);
+      await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
+      await adminPool.query(`REVOKE ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_task_owners FROM ${quotedRole}`);
+    }
     for (const privilege of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
       await adminPool.query(`GRANT ${privilege} ON TABLE ${quotedSchema}.gregale_mcp_task_workers TO ${quotedRole}`);
       await assert.rejects(observer.queueMetrics(), /read-only PostgreSQL access/);
@@ -747,6 +1059,48 @@ test('PostgreSQL fails a task after its retry limit is exhausted', postgresOnly,
   assert.equal(failed.attempt_count, 2);
 });
 
+test('PostgreSQL settles queued retries when the attempt budget is reduced', postgresOnly, async t => {
+  const { pool, store } = await harness(t);
+  const record = await create(store, 'alice');
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const lease = await store.claim(5, 30_000);
+    assert.equal(lease.attempt_count, attempt);
+    await store.fail(record.task_id, lease.lease_token, { code: -32603, message: 'Retryable failure' }, { retryable: true, maxAttempts: 5, retryDelayMs: 10_000 });
+    if (attempt < 3) await pool.query("UPDATE gregale_mcp_tasks SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE task_id=$1", [record.task_id]);
+  }
+  assert.equal(await store.claim(3, 30_000), null);
+  const task = await get(store, record.task_id, 'alice');
+  assert.equal(task.status, 'failed');
+  assert.equal(task.attempt_count, 3);
+  assert.equal((await pool.query('SELECT next_attempt_at,resume_pending FROM gregale_mcp_tasks WHERE task_id=$1', [record.task_id])).rows[0].next_attempt_at, null);
+  assert.equal((await store.queueMetrics()).outstandingTasks, 0);
+});
+
+test('PostgreSQL preserves live attempts and input/drain resumptions after lowering the budget', postgresOnly, async t => {
+  const { pool, store } = await harness(t);
+  for (const mode of ['input', 'drain']) {
+    const record = await create(store, 'alice');
+    await pool.query('UPDATE gregale_mcp_tasks SET attempt_count=3 WHERE task_id=$1', [record.task_id]);
+    const active = await store.claim(5, 30_000);
+    assert.equal(active.attempt_count, 4);
+    assert.equal(await store.claim(3, 30_000), null, 'a reduced budget must preserve a live attempt');
+    if (mode === 'input') {
+      await store.requestInputs({ taskID: record.task_id, leaseToken: active.lease_token,
+        requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } },
+      });
+      await store.updateInputs({ taskID: record.task_id, authInfo: principal('alice'), authMode: 'external-oauth',
+        inputResponses: { approval: { action: 'accept', content: {} } },
+      });
+    } else await store.releaseMany([active]);
+    const resumed = await store.claim(3, 30_000);
+    assert.equal(resumed.task_id, record.task_id);
+    assert.equal(resumed.attempt_count, 4, 'resumption must keep the existing attempt count');
+    await store.fail(record.task_id, resumed.lease_token, { code: -32603, message: 'Failed' }, { retryable: true, maxAttempts: 3 });
+    assert.equal((await get(store, record.task_id, 'alice')).status, 'failed');
+    assert.equal(await store.claim(3, 30_000), null, 'resumption must not grant another attempt');
+  }
+});
+
 test('PostgreSQL resumes input on the final attempt without granting another retry', postgresOnly, async t => {
   const { namespace, pool, store } = await harness(t);
   const record = await create(store, 'alice');
@@ -867,6 +1221,28 @@ test('heartbeat renewal waits for the capacity lock and rechecks lease expiratio
     lock.release();
     await renewal;
   }
+});
+
+test('heartbeat renewal rechecks lease and Task expiry after a row lock', postgresOnly, async t => {
+  for (const field of ['lease_expires_at', 'expires_at']) await t.test(field, async t => {
+    const { pool, store } = await harness(t);
+    const task = await create(store, 'alice');
+    const lease = await store.claim(3, 30_000);
+    await pool.query(`UPDATE gregale_mcp_tasks SET ${field}=clock_timestamp()+interval '1 second' WHERE task_id=$1`, [task.task_id]);
+    const lock = await pool.connect();
+    let renewal;
+    try {
+      await lock.query('BEGIN');
+      await lock.query('SELECT task_id FROM gregale_mcp_tasks WHERE task_id=$1 FOR UPDATE', [task.task_id]);
+      renewal = store.heartbeat(task.task_id, lease.lease_token, 30_000);
+      await eventually(async () => (await pool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%UPDATE gregale_mcp_tasks%lease_expires_at%') AS waiting")).rows[0].waiting, 'heartbeat must wait for the row lock');
+      await eventually(async () => (await pool.query(`SELECT ${field}<=clock_timestamp() AS expired FROM gregale_mcp_tasks WHERE task_id=$1`, [task.task_id])).rows[0].expired, 'Task or lease must expire while locked');
+      await lock.query('COMMIT');
+      assert.deepEqual(await renewal, { owned: false, cancelRequested: false });
+      assert.equal((await pool.query(`SELECT ${field}<=clock_timestamp() AS expired FROM gregale_mcp_tasks WHERE task_id=$1`, [task.task_id])).rows[0].expired, true);
+      if (field === 'lease_expires_at') assert.notEqual((await store.claim(3, 30_000)).lease_token, lease.lease_token);
+    } finally { await lock.query('ROLLBACK'); lock.release(); await renewal?.catch(() => {}); }
+  });
 });
 
 
@@ -1029,15 +1405,14 @@ test('draining registrations are separate from available handler coverage', post
   assert.equal((await store.queueMetrics()).drainingWorkers, 0);
 });
 
-test('Task doctor and compatibility command return safe deployment reports', postgresOnly, async t => {
-  const { pool, schema, namespace, ownerKey, store } = await harness(t);
+async function taskDoctorFixture(t, { schema, namespace, ownerKey }) {
   const { mkdtemp, copyFile, writeFile, rm } = await import('node:fs/promises');
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'doctor-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'tasks-admission.js', 'tasks-migrate.js', 'tasks-roles.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'tasks-admission.js', 'tasks-migrate.js', 'tasks-roles.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'DOCTOR_DATABASE', owner_key_env: 'DOCTOR_OWNER' } }));
   const url = new URL(databaseURL);
@@ -1047,6 +1422,12 @@ test('Task doctor and compatibility command return safe deployment reports', pos
     try { const result = await promisify(execFile)(process.execPath, [script, ...args], { cwd: fixture, env: { ...env, ...overrides }, timeout: 15000 }); return { code: 0, report: JSON.parse(result.stdout) }; }
     catch (error) { return { code: error.code, report: JSON.parse(error.stdout) }; }
   };
+  return { run, url };
+}
+
+test('Task doctor and compatibility command return safe deployment reports', postgresOnly, async t => {
+  const { pool, schema, namespace, ownerKey, store } = await harness(t);
+  const { run, url } = await taskDoctorFixture(t, { schema, namespace, ownerKey });
   await store.workerHeartbeat(randomUUID(), [{ name: 'build_report', version: '1' }]);
   const ready = await run('task-doctor.js');
   assert.equal(ready.code, 0, JSON.stringify(ready.report));
@@ -1404,7 +1785,7 @@ test('release CLI executes bounded adapters without migration credentials', post
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'release-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), '{"type":"module"}');
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'RELEASE_DATABASE', owner_key_env: 'RELEASE_OWNER' } }));
   // The current candidate executes version 2 and retains version 1 for queued work.
@@ -1426,7 +1807,8 @@ test('release CLI executes bounded adapters without migration credentials', post
       }
     } finally { await pool.end(); }
   `);
-  await writeFile(join(fixture, 'plan.json'), JSON.stringify({ timeoutMs: 5000, start: [process.execPath, join(fixture, 'adapter.js'), 'start'], drain: [process.execPath, join(fixture, 'adapter.js'), 'drain'] }));
+  const releasePlan = { releaseId: 'candidate-one', checkpointPath: join(fixture, 'checkpoint.json'), timeoutMs: 5000, start: [process.execPath, join(fixture, 'adapter.js'), 'start'], drain: [process.execPath, join(fixture, 'adapter.js'), 'drain'] };
+  await writeFile(join(fixture, 'plan.json'), JSON.stringify(releasePlan));
   const url = new URL(databaseURL);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const result = await promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } });
@@ -1435,6 +1817,19 @@ test('release CLI executes bounded adapters without migration credentials', post
   const readiness = await promisify(execFile)(process.execPath, ['tasks-release-readiness.js'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: '', MCP_TASK_NAMESPACE: namespace, MCP_TASK_RELEASE_INPUT: JSON.stringify({ replacementWorkerIDs }) } });
   assert.deepEqual(JSON.parse(readiness.stdout), { ok: true });
   assert.equal((await pool.query('SELECT 1 FROM gregale_mcp_task_workers WHERE worker_id=$1', [previous])).rowCount, 0);
+  const options = { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } };
+  const retry = await promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], options);
+  assert.deepEqual(JSON.parse(retry.stdout).replacementWorkerIDs, replacementWorkerIDs);
+  await writeFile(join(fixture, 'plan.json'), JSON.stringify({ ...releasePlan, releaseId: 'candidate-two' }));
+  const next = JSON.parse((await promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], options)).stdout);
+  assert.equal(next.ok, true);
+  assert.notDeepEqual(next.replacementWorkerIDs, replacementWorkerIDs);
+  assert.deepEqual((await pool.query('SELECT worker_id::text FROM gregale_mcp_task_workers WHERE namespace=$1', [namespace])).rows.map(row => row.worker_id), next.replacementWorkerIDs);
+  const receipt = JSON.parse(await (await import('node:fs/promises')).readFile(releasePlan.checkpointPath, 'utf8'));
+  assert.equal(receipt.completed, true);
+  assert.equal(receipt.releaseID, 'candidate-two');
+  await writeFile(join(fixture, 'plan.json'), JSON.stringify({ ...releasePlan, releaseId: undefined }));
+  await assert.rejects(promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], options), error => JSON.parse(error.stdout).stage === 'configuration');
   await writeFile(join(fixture, 'plan.json'), JSON.stringify({ timeoutMs: 1000, start: [process.execPath, '-e', "console.log('private-hook-output'); setInterval(() => {}, 1000)"], drain: [process.execPath, '-e', "throw new Error('must not drain')"] }));
   await assert.rejects(promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } }), error => {
     assert.equal(error.code, 1);
@@ -1452,7 +1847,9 @@ test('release checkpoint resumes after drain failure without treating replacemen
   const previous = randomUUID(), replacement = randomUUID();
   await store.workerHeartbeat(previous, inventory);
   let checkpoint;
+  let starts = 0;
   const base = { pool, namespace, store, handlers, timeoutMs: 1000, migrate: async () => {}, saveCheckpoint: async value => { checkpoint = value; }, start: async input => {
+    starts++;
     assert.deepEqual(input.previousWorkerIDs, [previous]);
     await store.workerHeartbeat(replacement, inventory);
     return [replacement];
@@ -1466,9 +1863,77 @@ test('release checkpoint resumes after drain failure without treating replacemen
     await store.workerStopped(previous);
   } });
   assert.equal(resumed.ok, true);
+  assert.equal(starts, 1, 'resuming must reuse recorded replacement workers');
+  assert.equal(checkpoint.completed, true);
   assert.equal(checkpoint.startedAt, originalTimestamp);
   const mismatch = await releaseMcpTasks({ ...base, checkpoint: { ...checkpoint, namespace: 'other-namespace' }, drain: async () => assert.fail('must not drain') });
   assert.equal(mismatch.ok, false);
+});
+
+test('completed checkpoints distinguish retries from a new rollout', postgresOnly, async t => {
+  const { releaseMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  const inventory = [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }];
+  const original = randomUUID(), first = randomUUID(), second = randomUUID();
+  await store.workerHeartbeat(original, inventory);
+  let checkpoint, starts = 0, drains = [];
+  const base = { pool, namespace, store, handlers, timeoutMs: 1000, migrate: async () => {},
+    saveCheckpoint: async value => { checkpoint = value; },
+    start: async ({ releaseID }) => {
+      starts++;
+      const id = releaseID === 'release-one' ? first : second;
+      await store.workerHeartbeat(id, inventory);
+      return [id];
+    },
+    drain: async ({ previousWorkerIDs }) => {
+      drains.push(previousWorkerIDs);
+      for (const id of previousWorkerIDs) await store.workerStopped(id);
+    },
+  };
+  assert.equal((await releaseMcpTasks({ ...base, releaseID: 'release-one' })).ok, true);
+  assert.equal(checkpoint.version, 1);
+  assert.equal(checkpoint.completed, true);
+  assert.deepEqual(checkpoint.replacementWorkerIDs, [first]);
+  const retry = await releaseMcpTasks({ ...base, checkpoint, releaseID: 'release-one' });
+  assert.deepEqual(retry, { ok: true, stage: 'complete', replacementWorkerIDs: [first] });
+  assert.equal(starts, 1);
+  assert.equal(drains.length, 1);
+  assert.equal((await releaseMcpTasks({ ...base, checkpoint, releaseID: 'release-two' })).ok, true);
+  assert.equal(starts, 2);
+  assert.deepEqual(drains, [[original], [first]]);
+  assert.deepEqual((await pool.query('SELECT worker_id::text FROM gregale_mcp_task_workers WHERE namespace=$1', [namespace])).rows, [{ worker_id: second }]);
+  // Completed receipt reuse cannot turn a dead replacement into a healthy release.
+  await store.workerStopped(second);
+  assert.equal((await releaseMcpTasks({ ...base, checkpoint, releaseID: 'release-two' })).ok, false);
+  assert.equal(starts, 2);
+});
+
+test('checkpoint failures preserve release identity and replacement recovery', postgresOnly, async t => {
+  const { releaseMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  const inventory = [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }];
+  let checkpoint, starts = 0, failCompletion = true;
+  const id = randomUUID();
+  const base = { pool, namespace, store, handlers, releaseID: 'recoverable', timeoutMs: 1000, migrate: async () => {},
+    saveCheckpoint: async value => { if (value.completed && failCompletion) throw new Error('disk unavailable'); checkpoint = value; },
+    start: async () => { starts++; await store.workerHeartbeat(id, inventory); return [id]; }, drain: async () => {},
+  };
+  assert.deepEqual(await releaseMcpTasks(base), { ok: false, stage: 'checkpoint_complete' });
+  assert.deepEqual(checkpoint.replacementWorkerIDs, [id]);
+  assert.equal(checkpoint.completed, undefined);
+  assert.deepEqual(await releaseMcpTasks({ ...base, checkpoint, releaseID: 'another-release', migrate: async () => assert.fail('must not migrate') }), { ok: false, stage: 'checkpoint' });
+  failCompletion = false;
+  assert.equal((await releaseMcpTasks({ ...base, checkpoint })).ok, true);
+  assert.equal(starts, 1);
+  for (const invalid of [
+    { namespace, previousWorkerIDs: [], startedAt: checkpoint.startedAt },
+    { ...checkpoint, version: 99 },
+    { ...checkpoint, previousWorkerIDs: ['invalid'] },
+    { ...checkpoint, startedAt: 'invalid' },
+    { ...checkpoint, replacementWorkerIDs: undefined },
+  ]) assert.deepEqual(await releaseMcpTasks({ ...base, checkpoint: invalid, migrate: async () => assert.fail('must not migrate') }), { ok: false, stage: 'checkpoint' });
 });
 
 test('native replacement recheck rejects stale, draining and unsupported registrations', postgresOnly, async t => {

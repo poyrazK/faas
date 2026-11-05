@@ -48,7 +48,8 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
        image_materialized_at, image_materialization_attempts,
        image_materialization_next_attempt_at, coalesce(cron_schedule, ''),
        cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision,
-       coalesce(image_entrypoint, '{}'), coalesce(image_cmd, '{}'), image_entrypoint is not null`
+       coalesce(image_entrypoint, '{}'), coalesce(image_cmd, '{}'), image_entrypoint is not null,
+       coalesce(environment_git_source_id::text, '')`
 
 // jobRunSelectCols is the canonical column order for job_runs.
 // Includes dead_letter_count (00574). ORDER BY id keeps the contract
@@ -102,7 +103,7 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 		&j.ImageMaterializationError, &j.ImageMaterializedAt,
 		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt,
 		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt, &j.SchedulePolicy, &j.FailureRules, &j.ScheduleRevision,
-		&j.ImageEntrypoint, &j.ImageCmd, &j.ImageConfigRecorded); err != nil {
+		&j.ImageEntrypoint, &j.ImageCmd, &j.ImageConfigRecorded, &j.EnvironmentGitSourceID); err != nil {
 		return Job{}, err
 	}
 	if len(envOverrides) > 0 {

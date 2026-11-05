@@ -71,6 +71,29 @@ func TestLoadConfig_RoutingEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+// adr: 20261101160231 — the env list overrides the TOML, even when empty.
+func TestLoadConfig_GuestVCPUFromCPUAppsEnvironmentOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(path, []byte(`guest_vcpu_from_cpu_apps = ["0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11"]`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(cfg.GuestVCPUFromCPUApps) != 1 {
+		t.Fatalf("TOML list = %v, want one app", cfg.GuestVCPUFromCPUApps)
+	}
+	t.Setenv("FAAS_GUEST_VCPU_FROM_CPU_APPS", "*,7e0d4a52-91b3-4f7e-8a3c-5d2e9b1f6c44")
+	if cfg, err = LoadConfig(path); err != nil || len(cfg.GuestVCPUFromCPUApps) != 2 || cfg.GuestVCPUFromCPUApps[0] != "*" {
+		t.Fatalf("env list = %v, %v; want [* 7e0d4a52-…]", cfg.GuestVCPUFromCPUApps, err)
+	}
+	t.Setenv("FAAS_GUEST_VCPU_FROM_CPU_APPS", "")
+	if cfg, err = LoadConfig(path); err != nil || strings.Join(cfg.GuestVCPUFromCPUApps, "") != "" {
+		t.Fatalf("empty env = %v, %v; want the switch off", cfg.GuestVCPUFromCPUApps, err)
+	}
+}
+
 // The listen address the unit renders wins over the TOML, so the durable
 // socket rendered from the same variable always matches (ADR-1736).
 func TestLoadConfig_ListenAddrEnvironmentOverridesTOML(t *testing.T) {

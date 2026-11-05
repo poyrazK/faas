@@ -322,6 +322,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Account.
 	{"account mfa", "mfa"},
 	{"account", "account"},
+	{"org agent policy", "orgs agent-policy"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -552,6 +553,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"ai request-policy get", "ai request-policy"},
+	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
 	{"automation recovery-policy get", "automations recovery-policy"},
@@ -1523,7 +1526,7 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 	}
 	if slices.Equal(typed, args) {
 		// Help reached by an earlier name is spelled in the tree too.
-		words := typed[:oldPathDepth(typed)]
+		words := manifestVerbNames(typed[:oldPathDepth(typed)])
 		spelled, ok := cliTreeSpelling(words)
 		if !ok {
 			return "", "", false
@@ -1544,6 +1547,28 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 		to += " " + typed[used]
 	}
 	return from, to, true
+}
+
+// manifestVerbNames spells each verb of today's path by its manifest name,
+// as help prints it: `cors ls` reads `cors list` once list takes ls as an
+// alias.
+func manifestVerbNames(path []string) []string {
+	if len(path) == 0 {
+		return path
+	}
+	command, ok := lookupCliCommand(path[0])
+	if !ok {
+		return path
+	}
+	out, subs := slices.Clone(path), command.Subcommands
+	for i := 1; i < len(out); i++ {
+		sub, ok := findCliSubcommand(subs, out[i])
+		if !ok {
+			break
+		}
+		out[i], subs = sub.Name, sub.Subcommands
+	}
+	return out
 }
 
 // renameHelpPath spells `gregale <from>` as `gregale <to>` in help text. Its

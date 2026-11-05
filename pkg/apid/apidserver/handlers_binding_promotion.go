@@ -182,7 +182,7 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	query.Del("scope")
 	inventoryRequest.URL.RawQuery = query.Encode()
 	inventory := s.collectBindingInventory(r.Context(), inventoryRequest, acct, app, "")
-	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: app.Slug, DeploymentID: deployment.ID, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements}, time.Now())
+	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: app.Slug, DeploymentID: deployment.ID, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements, AllowPreparedRollback: preparedBindingRollback(r.Context(), deployment)}, time.Now())
 	if err != nil {
 		return observation, api.ErrInternal("could not evaluate binding promotion policy")
 	}

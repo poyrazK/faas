@@ -12,6 +12,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// Only the database-switch worker sets this after checking the store's
+// prepared-rollback marker. Public probe/task selectors still require live.
+type preparedBindingRollbackKey struct{}
+
+func preparedBindingRollback(ctx context.Context, d state.Deployment) bool {
+	id, _ := ctx.Value(preparedBindingRollbackKey{}).(string)
+	return id != "" && id == d.ID && d.Status == state.DeploySnapshotting && d.TrafficPercent == 0
+}
+
 func (s *server) selectBindingVerificationDeployment(ctx context.Context, app state.App, id string) (state.Deployment, *api.Problem) {
 	parsed, err := uuid.Parse(id)
 	if err != nil {
@@ -28,7 +37,7 @@ func (s *server) selectBindingVerificationDeployment(ctx context.Context, app st
 	if err != nil {
 		return state.Deployment{}, api.ErrInternal("could not read binding verification deployment")
 	}
-	if deployment.Status != state.DeployLive || deployment.RootfsKey == "" || deployment.ImageDigest == "" {
+	if deployment.Status != state.DeployLive && !preparedBindingRollback(ctx, deployment) || deployment.RootfsKey == "" || deployment.ImageDigest == "" {
 		return state.Deployment{}, appTaskDeploymentUnavailableProblem()
 	}
 	return deployment, nil

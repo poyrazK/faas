@@ -65,6 +65,15 @@ func (s *PgStore) AdmitEventWorkflowRecipient(ctx context.Context, claim Publish
 	var created, deferred bool
 	if matched {
 		runID, created, err = admitEventWorkflowTx(ctx, q, tx, receipt.ID, recipient, receipt.Payload)
+		if errors.Is(err, errWorkflowFailurePolicyLatched) {
+			if err := validateEventRoutingClaim(ctx, q, tx, claim); err != nil {
+				return result, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return result, err
+			}
+			return result, ErrWorkflowEventTargetUnavailable
+		}
 		// The app's run limit is capacity, not a routing failure: wait like a
 		// full delivery capacity without spending a routing attempt. The
 		// refusal wrote nothing, so the transaction records the wait.

@@ -56,6 +56,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -82,7 +87,12 @@ def sync_detailed(
      Owner-only (`org.remove_members`). Stamps `removed_at` on
     the row (the row stays for audit; live-cap count drops).
     Self-removal is rejected at the boundary; the last-owner
-    invariant surfaces as 409 `org_last_owner`.
+    invariant surfaces as 409 `org_last_owner`. The member whose email
+    the organization bills to cannot be removed while the organization
+    has a billing customer (409 `billing_contact_member`); set another
+    billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+    If the billing-contact check cannot complete, returns retryable 503
+    without removing the member.
 
     Args:
         slug (str):
@@ -119,7 +129,12 @@ def sync(
      Owner-only (`org.remove_members`). Stamps `removed_at` on
     the row (the row stays for audit; live-cap count drops).
     Self-removal is rejected at the boundary; the last-owner
-    invariant surfaces as 409 `org_last_owner`.
+    invariant surfaces as 409 `org_last_owner`. The member whose email
+    the organization bills to cannot be removed while the organization
+    has a billing customer (409 `billing_contact_member`); set another
+    billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+    If the billing-contact check cannot complete, returns retryable 503
+    without removing the member.
 
     Args:
         slug (str):
@@ -151,7 +166,12 @@ async def asyncio_detailed(
      Owner-only (`org.remove_members`). Stamps `removed_at` on
     the row (the row stays for audit; live-cap count drops).
     Self-removal is rejected at the boundary; the last-owner
-    invariant surfaces as 409 `org_last_owner`.
+    invariant surfaces as 409 `org_last_owner`. The member whose email
+    the organization bills to cannot be removed while the organization
+    has a billing customer (409 `billing_contact_member`); set another
+    billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+    If the billing-contact check cannot complete, returns retryable 503
+    without removing the member.
 
     Args:
         slug (str):
@@ -186,7 +206,12 @@ async def asyncio(
      Owner-only (`org.remove_members`). Stamps `removed_at` on
     the row (the row stays for audit; live-cap count drops).
     Self-removal is rejected at the boundary; the last-owner
-    invariant surfaces as 409 `org_last_owner`.
+    invariant surfaces as 409 `org_last_owner`. The member whose email
+    the organization bills to cannot be removed while the organization
+    has a billing customer (409 `billing_contact_member`); set another
+    billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+    If the billing-contact check cannot complete, returns retryable 503
+    without removing the member.
 
     Args:
         slug (str):

@@ -25,7 +25,7 @@ func (s *server) cleanupDevSessionResources(ctx context.Context, app state.App) 
 }
 
 // A PR preview's buckets go too: previews can no longer create one, but a
-// bucket made before ADR-20261103180000 would outlive its preview.
+// bucket made before ADR-20261105090226 would outlive its preview.
 func (s *server) cleanupDevSessionBuckets(ctx context.Context, app state.App) error {
 	if app.PreviewOfSlug == "" {
 		return nil

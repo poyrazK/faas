@@ -452,12 +452,29 @@ const (
 	// stores more than the target plan's storage ceiling (ADR-20261101214152).
 	CodePlanLimitObjectStorage = "plan_limit_object_storage"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
-	CodeInvalidAppCPU          = "invalid_cpu_millicores"
-	CodeInvalidAppRAM          = "invalid_ram_mb"
-	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile = "invalid_resource_profile"
-	CodeSourceTooLarge         = "source_too_large"
-	CodeSourceInvalid          = "source_invalid"
+	// CodeBillingEmailInUse refuses a billing email another billing subject
+	// already pays with: the billing provider keeps one customer per email
+	// (ADR-20261103131742).
+	CodeBillingEmailInUse = "billing_email_in_use"
+	// CodeBillingContactMember refuses removing the member whose email an
+	// organization bills to until the organization moves its billing email
+	// (ADR-20261103131742).
+	CodeBillingContactMember = "billing_contact_member"
+	// CodeBillingSubscriptionEnding refuses a plan change while the
+	// subscription is scheduled to end: the billing provider changes no plan
+	// on a cancelled subscription until the cancellation is undone
+	// (ADR-20261103131742 amendment 1).
+	CodeBillingSubscriptionEnding = "billing_subscription_ending"
+	// CodePaymentAuthenticationRequired answers an upgrade whose charge the
+	// customer's bank asked to confirm (3-D Secure). Nothing was charged and
+	// the plan is unchanged (ADR-20261103131742 amendment 1).
+	CodePaymentAuthenticationRequired = "payment_authentication_required"
+	CodeInvalidAppCPU                 = "invalid_cpu_millicores"
+	CodeInvalidAppRAM                 = "invalid_ram_mb"
+	CodeInvalidCPURAMPair             = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile        = "invalid_resource_profile"
+	CodeSourceTooLarge                = "source_too_large"
+	CodeSourceInvalid                 = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -695,6 +712,9 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeColdWakeRateLimited is the 429 a client gets past the number of
+	// different parked apps it may wake through one gateway a minute (H75).
+	CodeColdWakeRateLimited = "cold_wake_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
@@ -2154,7 +2174,8 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
-		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
+		CodeBillingEmailInUse, CodeBillingContactMember, CodeBillingSubscriptionEnding:
 		return http.StatusConflict
 	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
 		return http.StatusForbidden
@@ -2361,7 +2382,7 @@ func StatusForCode(code string) int {
 		// distinguishes this from CodeValidation by the `code`
 		// (gate lives on the gateway hot path, not the apid layer).
 		return http.StatusUnprocessableEntity
-	case CodePayment, CodeWildcardDomainsNotAllowed, CodePlanPlatformTenantRequiredNotAllowed:
+	case CodePayment, CodePaymentAuthenticationRequired, CodeWildcardDomainsNotAllowed, CodePlanPlatformTenantRequiredNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanLimitSecrets:
 		return http.StatusForbidden
@@ -2750,6 +2771,58 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
 		WithDocs(docsBase + "/plans#ram")
+}
+
+// ErrBillingEmailInUse refuses a billing email that another Gregale account or
+// organization already pays with. organization is true when the refused
+// subject is an organization, which can move to its own billing email.
+func ErrBillingEmailInUse(organization bool) *Problem {
+	detail := "this email already pays for another Gregale account or organization, and the billing provider keeps one customer per email; " +
+		"if it pays for an organization, give that organization its own billing email with PUT /v1/orgs/{slug}/billing/email"
+	if organization {
+		detail = "this organization bills to an email that already pays for another Gregale account or organization; " +
+			"set the organization's own billing email with PUT /v1/orgs/{slug}/billing/email, then upgrade"
+	}
+	return NewProblem(http.StatusConflict, CodeBillingEmailInUse, "Billing email in use", detail).
+		WithDocs(docsBase + "/billing#billing-email")
+}
+
+// ErrBillingSubscriptionEnding refuses a plan change while the subject's
+// subscription is scheduled to end at endsAt (zero when unknown). Asking for
+// the current plan keeps the subscription; the plan can then change.
+// organization selects the organization plan route.
+func ErrBillingSubscriptionEnding(current Plan, endsAt time.Time, organization bool) *Problem {
+	route := "PATCH /v1/account/plan"
+	if organization {
+		route = "PATCH /v1/orgs/{slug}/plan"
+	}
+	when := "at the end of the billing period"
+	if !endsAt.IsZero() {
+		when = "on " + endsAt.UTC().Format("2006-01-02")
+	}
+	return NewProblem(http.StatusConflict, CodeBillingSubscriptionEnding, "Subscription is scheduled to end",
+		fmt.Sprintf("the %s subscription is scheduled to end %s instead of renewing, and a subscription that is ending cannot change plans; "+
+			"keep it with %s {\"plan\": %q} (or Keep subscription on the billing page), then change plans", current, when, route, current)).
+		WithDocs(docsBase + "/billing#cancel-and-resume")
+}
+
+// ErrPaymentAuthenticationRequired answers an upgrade whose prorated charge
+// the customer's bank asked to confirm (3-D Secure). The caller attaches the
+// billing portal link, where adding the card again lets the bank confirm it.
+func ErrPaymentAuthenticationRequired(target Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePaymentAuthenticationRequired, "Bank confirmation required",
+		fmt.Sprintf("your bank asked to confirm the charge for the upgrade to %s; nothing was charged and the current plan remains active; "+
+			"add the card again in the billing portal, where your bank can confirm it, then retry the upgrade", target)).
+		WithDocs(docsBase + "/billing#upgrades")
+}
+
+// ErrBillingContactMember refuses removing the organization member whose
+// email the organization bills to: the billing provider sends that address
+// the organization's invoices and lets it manage the subscription.
+func ErrBillingContactMember() *Problem {
+	return NewProblem(http.StatusConflict, CodeBillingContactMember, "Member is the billing contact",
+		"this member's email is the organization's billing email; set another billing email with PUT /v1/orgs/{slug}/billing/email first").
+		WithDocs(docsBase + "/billing#billing-email")
 }
 
 // ErrInvalidAppRAM rejects an explicit update that cannot satisfy the
@@ -3192,6 +3265,20 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs(docsBase + "/errors#api_rate_limited")
+}
+
+// ErrColdWakeRateLimited refuses a request that would wake one more parked
+// app than its client network may wake through this gateway a minute.
+func ErrColdWakeRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeColdWakeRateLimited,
+		"Too many app wakes",
+		fmt.Sprintf("This network may wake %d different parked apps a minute. Retry after %d seconds.", limit, retryAfterS)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/errors#cold_wake_rate_limited")
 }
 
 // DetailServerFailure is the detail of a 5xx problem whose cause is an
@@ -4538,6 +4625,15 @@ func ErrCronSuspendedRun(reason string) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeConflict, "Cron suspended", detail).
 		WithDocs(docsBase + "/crons#suspension")
+}
+
+// ErrCronDisabledRun is the 409 for a manual run of a disabled cron. The
+// scheduler refuses the run, so the request used to be accepted and fail a
+// moment later (crons audit 2026-11-03).
+func ErrCronDisabledRun() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron disabled",
+		"this cron is disabled; enable it with `gregale cron update CRON_ID --enable` before running it").
+		WithDocs(docsBase + "/crons#run-a-cron-now")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already
@@ -7060,6 +7156,13 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
+}
+
+// ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
+func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
+	p := ErrOrgFreeLimitExceeded(limit, observed)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	return p
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

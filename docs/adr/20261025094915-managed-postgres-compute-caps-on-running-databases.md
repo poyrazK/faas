@@ -288,3 +288,77 @@ Each step is its own PR, in this order:
 - A per-database cap, or per-database priority within an account's pool.
 - Native (non-Neon) providers. A provider without a compute quota is skipped
   and counted as `unsupported`; its databases are capped only by admission.
+
+## Amendment 2026-11-03: an inactive subject's databases are suspended
+
+Status: accepted (cost-control audit 2026-11-03).
+
+The cap sweep gave every subject its plan's ceiling whatever its status. A
+suspended (unpaid or Free hard stop), abuse-held or pending-deletion subject
+had its apps parked and its buckets refused within seconds, but its
+databases kept their compute: its own code elsewhere, or anyone holding a
+connection string, ran them up to the ceiling at the provider's price, and
+with overage on they kept accruing charges for a subject that was not
+paying. `postgresaccess` refused only management changes.
+
+Decision: the sweep suspends every compute of a subject that may not run
+workloads (`state.Account.Active()` is false; a past-due subject in its grace
+period stays active).
+
+- `CapLimits.Inactive` holds the subject to one compute-unit second, so its
+  quotas drop to what it used, through the same reversible quota write as a
+  reached ceiling. An uncapped subject is suspended too.
+- Data, branches and credentials are untouched; the first sweep after
+  reactivation restores the plan's headroom.
+- No cap threshold is recorded or mailed: the account's suspension notice is
+  the customer's explanation.
+
+## Amendment 2026-11-04: the quotas keep back Neon's counter lag
+
+Status: accepted (owner, 2026-11-04: "Neon quota + margin").
+
+Decision 5 assumed Neon stops a database "the moment it alone uses up what
+remains", and that its counters "have no ledger lag". A production measurement
+on 2026-11-04 found otherwise:
+
+- A compute ran from about 13:38Z to 13:40Z. Neon's project counters did not
+  move until 14:04Z, 24 to 26 minutes later, and then moved once.
+- A 60 s quota was enforced at that refresh, after 372 s of use (6.2×).
+
+Neon checks a quota only when its counters move. Between two refreshes a
+database keeps running at up to its largest size, whatever its quota. For a
+Free account (5 CU-h, one database of up to 1 CU) that is up to 0.5 CU-h past
+the allowance each time the account reaches it. This is one sample.
+
+Decision:
+
+1. **The quotas keep back the lag.** A provider whose counters trail use
+   reports, for each database, what it can use at its largest size before its
+   counter shows it (`ComputeCapLagger`). Neon reports its largest compute
+   size for the class times a 30-minute bound (`computeCounterLag`): 1,800
+   CU-s for development, 3,600 for burstable and 7,200 for production. What
+   remains becomes `R = max(0, C − L − U)`, where `L` is the sum over the
+   account's live databases. The quotas, `u_i + R`, then trip a lag early, so
+   the database stops near `C` rather than up to `L` past it.
+2. **The suspension is recorded and mailed when it happens.** With `L` kept
+   back, the databases can be suspended before use reaches `C`. The
+   `suspended` threshold is now recorded when a sweep leaves nothing remaining,
+   not only when use reaches the ceiling.
+3. **The qualification probe waits for the lag.** It waits up to the lag plus
+   5 minutes for the counters to show its held interval, and as long again for
+   the suspension. `managed-postgres-qualify --compute-cap` defaults to a
+   150-minute timeout unless `FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides
+   it.
+
+Consequences:
+
+- At its largest size, a database is suspended up to one lag's worth of use
+  before its account's ceiling: up to 10% of Free's 5 CU-h, and less on paid
+  plans. A database running below its largest size stops before the ceiling
+  by the difference. When a suspension comes before the ceiling, the
+  `suspended` email gives the use so far and says use is counted up to half
+  an hour late, rather than claiming the limit was used.
+- Several databases in one account keep back the sum of their lags.
+- A provider without counter lag implements nothing and is unchanged.
+- If more samples show a longer lag, raise `computeCounterLag`. If they show a
+  shorter one, lower it and the early stop shrinks with it.

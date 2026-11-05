@@ -144,6 +144,9 @@ type egressWatcher struct {
 	render      renderStagingFunc
 	stagingDir  string
 	livePath    string
+	// afterReload, when set, runs after each successful reload under the
+	// lock: the public block list re-adds the elements the reload flushed.
+	afterReload func(context.Context)
 }
 
 // Render satisfies fcvm.HostRenderer. Manager cache mutations (including a
@@ -333,6 +336,9 @@ func (w *egressWatcher) reload(ctx context.Context, ifChanged bool) error {
 	}
 	w.appliedBody = body
 	w.hasApplied = true
+	if w.afterReload != nil {
+		w.afterReload(ctx)
+	}
 	return nil
 }
 

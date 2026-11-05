@@ -51,7 +51,7 @@ var (
 
 // ErrPreviewOwnsBuckets refuses to retire a PR preview that still owns object
 // storage buckets: retiring it in the set transaction would leave them behind
-// (ADR-20261103180000). It is an ErrConflict.
+// (ADR-20261105090226). It is an ErrConflict.
 var ErrPreviewOwnsBuckets = fmt.Errorf("%w: a retired PR preview still owns object storage buckets", ErrConflict)
 
 // retiredPreviewSetRoot reports whether a preview set's root app is deleted

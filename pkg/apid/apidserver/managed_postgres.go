@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -154,6 +155,9 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		}
 		return enabled
 	}
+	// Work on existing databases outlives a lapsed production approval
+	// (ADR-20261103091657).
+	operationsGate := managedpostgres.NewOperationsGate(registry, getenv, time.Now)
 	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
 		// Production releases accounts by the capability flag, staging by
@@ -169,6 +173,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
 		ProvisioningEnabled: provisioningGate,
+		OperationsEnabled:   operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
 		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -251,7 +256,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
-		IncludeProvisioning: provisioningGate,
+		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.ReconcileObservation) {
 			if metrics != nil {
 				metrics.ObserveReconcile(ob)
@@ -278,7 +283,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
-		ProvisioningEnabled: provisioningGate,
+		ProvisioningEnabled: operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
 	})
 	if err != nil {
@@ -294,7 +299,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	reconciler.SetRestoreSlots(restoreSlots)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
-		IncludeProvisioning: provisioningGate,
+		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {
 			if metrics != nil {
 				metrics.ObserveBindingReconcile(ob)
@@ -348,6 +353,20 @@ func hostCredentialIdentities() []*age.X25519Identity {
 	return nil
 }
 
+// managedPostgresCapNoticeReady refuses compute cap enforcement while the
+// cap notice email cannot be sent: enforcement suspends a subject's
+// databases at its ceiling, and the threshold email is the customer's only
+// warning (bug hunt H88). The notice goes through the internal mail
+// producer outbox behind its own opt-in.
+func managedPostgresCapNoticeReady(getenv func(string) string) error {
+	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) {
+		return nil
+	}
+	return fmt.Errorf("%s=on suspends databases at their ceiling, and customers are warned only by the cap notice email: "+
+		"set %s=1 with the internal mail producer outbox enabled, or keep enforcement at shadow",
+		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
+}
+
 // loadManagedPostgresCapEnforcer builds the compute cap enforcer
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
@@ -375,6 +394,9 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
+		if err := managedPostgresCapNoticeReady(getenv); err != nil {
+			return nil, err
+		}
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
 		if err != nil {
 			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.CapEnforcementEnv, managedpostgres.CapQualificationPathEnv, err)
@@ -418,7 +440,7 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
 			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes,
-			Entitlement: limits}, nil
+			Entitlement: limits, Inactive: !account.Active()}, nil
 	}
 }
 

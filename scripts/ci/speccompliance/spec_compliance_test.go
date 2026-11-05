@@ -63,6 +63,8 @@ const (
 	corsPresetsFile                  = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile                = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile              = "managed_postgres.go"
+	envBatchFile                     = "env_batch.go"        // ADR-20261103171917
+	agentInspectionFile              = "agent_inspection.go" // ADR-20261103211147
 	openapiContractFile              = "openapi_contract.go"
 	executionsFile                   = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
 	appTasksFile                     = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
@@ -555,6 +557,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/mfa":                                            true, // TOTP challenge page for mfa_pending sessions
 	"POST /dashboard/mfa":                                           true, // HTML form, TOTP challenge
 	"GET /dashboard/account/export":                                 true, // session-auth twin of /v1/account/export
+	"GET /dashboard/account/mfa":                                    true, // ADR-20261103202000: browser-only session form over the documented /v1/account/mfa actions
 	"GET /dashboard/account/dpa":                                    true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                             true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                       true, // HTML form (hosted-checkout hand-off)
@@ -1809,6 +1812,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "source_review.go"),
 		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
 		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
+		filepath.Join(root, "pkg", "api", "deployment_promotion_receipts.go"),
+		filepath.Join(root, "pkg", "api", "service_abort_attempts.go"), // ADR-20261104144000
+		filepath.Join(root, "pkg", "api", "environment_route_budget_receipts.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),
@@ -1862,6 +1868,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", envBatchFile),
+		filepath.Join(root, "pkg", "api", "app_scaling.go"), // ADR-20261104104521
+		filepath.Join(root, "pkg", "api", agentInspectionFile),
+		filepath.Join(root, "pkg", "api", "app_resource_inventory.go"),
 		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
 		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),

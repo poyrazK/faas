@@ -17,6 +17,9 @@ import (
 )
 
 func progressClient(t *testing.T, b *httptest.Server, opts Options, version string, httpTransport bool, onProgress func(*mcp.ProgressNotificationParams)) (*mcp.ClientSession, context.Context) {
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
 	t.Helper()
 	s, err := NewServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {

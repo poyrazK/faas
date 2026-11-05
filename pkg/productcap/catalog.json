@@ -261,6 +261,9 @@
       "routes": [
         "/dashboard/apps/{}/alert-rollbacks",
         "/v1/apps/{}/alert-rollbacks"
+      ],
+      "cli": [
+        "alerts actions"
       ]
     },
     {
@@ -340,6 +343,8 @@
         "/v1/account/keys",
         "/v1/agent-connections",
         "/v1/keys",
+        "/v1/orgs/{}/agent-connections",
+        "/v1/orgs/{}/agent-policy",
         "/v1/orgs/{}/keys"
       ],
       "cli": [
@@ -411,7 +416,8 @@
       "parent": "billing",
       "routes": [
         "/dashboard/app-costs",
-        "/v1/billing/costs"
+        "/v1/billing/costs",
+        "/v1/apps/{}/costs"
       ],
       "cli": [
         "app costs",
@@ -458,6 +464,11 @@
       "routes": [
         "/dashboard/apps/{}/tasks",
         "/v1/apps/{}/tasks"
+      ],
+      "cli": [
+        "app cp",
+        "app exec",
+        "app port-forward"
       ]
     },
     {
@@ -548,11 +559,15 @@
         "/dashboard/apps/{}/restore",
         "=/v1/apps",
         "=/v1/apps/{}",
+        "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
+        "/v1/apps/{}/service-aborts",
         "/v1/deleted-apps",
         "/dashboard/apps/{}/deployment-submissions",
         "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-promotions",
         "/v1/apps/{}/deployment-submissions",
         "=/v1/apps/{}/deployments",
         "/v1/apps/{}/deployments/clear-obsolete",
@@ -689,6 +704,9 @@
       ],
       "docs_url": "/docs/scaling-policy",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero",
+      "routes": [
+        "/v1/apps/{}/scaling"
+      ],
       "settings": [
         "app.function_concurrency",
         "app.max_concurrency",
@@ -1237,6 +1255,7 @@
         "=/dashboard",
         "/dashboard/apps/new",
         "/dashboard/assets",
+        "/doctor.js",
         "/history.js",
         "/replacement.js",
         "/resolution.js",
@@ -1383,7 +1402,6 @@
       "docs_url": "/docs/cli",
       "acceptance_test": "pkg/apid/apidserver/handlers_debug_running_test.go::TestDebugRunning_IsPlanGated",
       "routes": [
-        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug"
       ],
       "cli": [
@@ -4230,7 +4248,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths",
       "parent": "debug",
       "routes": [
-        "/dashboard/apps/{}/debug/requests",
+        "/dashboard/apps/{}/debug",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests",
@@ -4360,7 +4378,7 @@
       "id": "projects",
       "name": "Projects",
       "category": "delivery",
-      "description": "Deploy a Compose file or a repository of several services as one project: each service is an app, and they call each other by name.",
+      "description": "Deploy a Compose file or repository as one project: each service counts toward the plan's app limit. Free supports one service; multi-service projects require Hobby or higher, and services call each other by name.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -4381,11 +4399,15 @@
         "=/v1/projects/{}",
         "/v1/projects/{}/delete-preview",
         "/v1/projects/{}/deployment-readiness",
+        "/v1/projects/{}/environments/{}/config",
+        "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
         "/v1/projects/{}/release-secrets"
       ],
       "cli": [
-        "projects"
+        "projects",
+        "projects environments config",
+        "projects environments secrets"
       ]
     },
     {

@@ -72,6 +72,9 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 			if err == nil {
 				err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
 			}
+			if err == nil {
+				err = s.revokeDeletedBucketBindings(callCtx, b)
+			}
 		}
 	}
 	// Only the provider's own refusal says the credentials are bad; a bucket
@@ -234,8 +237,17 @@ func (s *Service) ReconcileObjectMultipartUploads(ctx context.Context, observe f
 func (s *Service) RunObjectStorageRecovery(ctx context.Context) {
 	attempts := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_recovery_attempts_total", Help: "Claimed object-storage recovery attempts by operation and outcome."}, []string{"operation", "outcome"})
 	settlements := newNodeSettlementMetrics()
+	// While a provider refuses the credentials, stalled creates are skipped
+	// and the attempt counter stays flat, so the refusal needs its own signal
+	// (Hunt 14 H14-14 ran three weeks unnoticed).
+	refusing := prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "faas_object_storage_provider_refusing_credentials", Help: "1 while a storage provider refused this installation's credentials within the last hour and object storage is withdrawn."}, func() float64 {
+		if s.providerRefusingCredentials() {
+			return 1
+		}
+		return 0
+	})
 	if s.Host.Ops() != nil {
-		s.Host.Ops().Registry().MustRegister(attempts, settlements.backlog, settlements.oldest)
+		s.Host.Ops().Registry().MustRegister(attempts, settlements.backlog, settlements.oldest, refusing)
 	}
 	observe := func(operation, outcome string) { attempts.WithLabelValues(operation, outcome).Inc() }
 	ticker := time.NewTicker(objectRecoveryInterval)

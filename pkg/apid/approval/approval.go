@@ -282,3 +282,103 @@ func TakesTrafficWithoutCanary(req *api.CreateDeploymentRequest) bool {
 	}
 	return req.TrafficPercent == nil || *req.TrafficPercent > 0
 }
+
+// WaitsBeforeReleaseCommand reports whether d's pinned release command must
+// wait for the app's approvals before it runs (ADR-20261020085706 amendment
+// 12). A release command (a migration) changes production data the moment it
+// runs, so a release that will wait for approval in its canary waits before
+// its release command instead: the approval covers the command and the
+// traffic. Releases the policy does not gate, and the app's first production
+// release, which has no canary to wait in, run their command at once.
+func WaitsBeforeReleaseCommand(ctx context.Context, store any, policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) (bool, error) {
+	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting || d.EnvironmentWorkloadHeld() {
+		return false, nil
+	}
+	if !Gated(policy, app, d) {
+		return false, nil
+	}
+	return CanaryRequired(ctx, store, app, d.Scope, "")
+}
+
+// ReleaseCommandStatus is the approval state of a release waiting before its
+// release command. It waits from when it reached its release phase (since)
+// for the policy's timeout, like a canary waits in its stage.
+func ReleaseCommandStatus(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment, decisions []state.ReleaseApproval, since, now time.Time) api.ReleaseApprovalStatus {
+	status := Status(policy, app, d, decisions, now)
+	if policy == nil || status.State != api.ReleaseApprovalStateWaiting {
+		return status
+	}
+	expires := since.Add(time.Duration(policy.TimeoutMinutes) * time.Minute)
+	status.WaitingSince = since.UTC().Format(time.RFC3339)
+	status.ExpiresAt = expires.UTC().Format(time.RFC3339)
+	if !now.Before(expires) {
+		status.State = api.ReleaseApprovalStateExpired
+	}
+	return status
+}
+
+// ReleasePhaseStartedAt is when d entered its current pipeline stage (for a
+// release waiting before its release command, its release phase), or its
+// creation when the stage has no start.
+func ReleasePhaseStartedAt(d state.Deployment) time.Time {
+	started := d.CreatedAt
+	var stages state.StageState
+	if len(d.StageState) == 0 || json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
+		return started
+	}
+	if stages.CurrentStartedAt.After(started) {
+		return *stages.CurrentStartedAt
+	}
+	return started
+}
+
+// releaseCommandReader is what LoadReleaseCommandWait reads.
+type releaseCommandReader interface {
+	ReleaseApprovalPolicy(ctx context.Context, appID string) (state.ReleaseApprovalPolicy, error)
+	ListReleaseApprovals(ctx context.Context, deploymentID string) ([]state.ReleaseApproval, error)
+}
+
+// ReleaseCommandWait is a release's wait for approval before its release
+// command (ADR-20261020085706 amendment 12). Waits is false when the release
+// does not wait; Status is its approval state when it does.
+type ReleaseCommandWait struct {
+	Waits  bool
+	Policy *state.ReleaseApprovalPolicy
+	Status api.ReleaseApprovalStatus
+}
+
+// Pending reports whether the release still waits for its approvals.
+func (w ReleaseCommandWait) Pending() bool {
+	return w.Waits && w.Status.State == api.ReleaseApprovalStateWaiting
+}
+
+// LoadReleaseCommandWait reads whether d waits for approval before its
+// release command, and its approval state at now. imaged holds the command
+// on it; apid's watchdog and imaged's stale sweep leave a pending wait alone.
+// Stores without approvals never wait.
+func LoadReleaseCommandWait(ctx context.Context, store any, app state.App, d state.Deployment, now time.Time) (ReleaseCommandWait, error) {
+	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting {
+		return ReleaseCommandWait{}, nil
+	}
+	reader, ok := store.(releaseCommandReader)
+	if !ok {
+		return ReleaseCommandWait{}, nil
+	}
+	policy, err := reader.ReleaseApprovalPolicy(ctx, app.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return ReleaseCommandWait{}, nil
+	}
+	if err != nil {
+		return ReleaseCommandWait{}, fmt.Errorf("read release approval policy: %w", err)
+	}
+	waits, err := WaitsBeforeReleaseCommand(ctx, store, &policy, app, d)
+	if err != nil || !waits {
+		return ReleaseCommandWait{}, err
+	}
+	decisions, err := reader.ListReleaseApprovals(ctx, d.ID)
+	if err != nil {
+		return ReleaseCommandWait{}, fmt.Errorf("list release approvals: %w", err)
+	}
+	status := ReleaseCommandStatus(&policy, app, d, decisions, ReleasePhaseStartedAt(d), now)
+	return ReleaseCommandWait{Waits: true, Policy: &policy, Status: status}, nil
+}

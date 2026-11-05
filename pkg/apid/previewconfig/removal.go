@@ -56,7 +56,7 @@ func PendingRemoval(ctx context.Context, store HoldingStore, parent state.App, k
 // PreviewsHolding returns parent's PR previews that still hold the copy a
 // sync gave them of removal. A preview whose value was changed on the preview
 // itself keeps it: that value is no longer the production app's
-// (ADR-20261103180000).
+// (ADR-20261105090226).
 func PreviewsHolding(ctx context.Context, store HoldingStore, parent state.App, removal Removal) ([]state.App, error) {
 	previews, err := store.PreviewAppsByParent(ctx, parent.AccountID, parent.Slug)
 	if err != nil {

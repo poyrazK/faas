@@ -23,6 +23,21 @@ var actions = map[string]authz.OrgAction{
 	"DELETE /v1/postgres/bindings/{id}":                                  authz.OrgActionBindPostgres,
 	"POST /v1/postgres/bindings/{id}/rotate":                             authz.OrgActionManagePostgres,
 	"GET /v1/postgres/usage":                                             authz.OrgActionReadPostgresUsage,
+	// Reviewed in bug hunt 37: in no map, so every member of the database's
+	// organization, owners included, was refused them.
+	"GET /v1/postgres/databases/{id}/status":                authz.OrgActionReadPostgres,
+	"GET /v1/postgres/databases/{id}/connection-budget":     authz.OrgActionReadPostgres,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": authz.OrgActionReadPostgres,
+	"GET /v1/postgres/overage":                              authz.OrgActionReadPostgresUsage,
+	"PUT /v1/postgres/overage":                              authz.OrgActionManagePostgres,
+	"PATCH /v1/postgres/databases/{id}/labels":              authz.OrgActionManagePostgres,
+	"POST /v1/postgres/databases/{id}/upgrade":              authz.OrgActionManagePostgres,
+	// Live queries carry a signing secret (rotate), so even reading them is
+	// the database administrators'.
+	"GET /v1/postgres/databases/{id}/live":         authz.OrgActionManagePostgres,
+	"POST /v1/postgres/databases/{id}/live":        authz.OrgActionManagePostgres,
+	"POST /v1/postgres/databases/{id}/live/rotate": authz.OrgActionManagePostgres,
+	"DELETE /v1/postgres/databases/{id}/live":      authz.OrgActionManagePostgres,
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {

@@ -103,9 +103,20 @@ databases. The staging canary list is not read in production. Until
 `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` are both `on`, only an account
 a flag rule names, or one that opted in, is released: the flag's default, the
 GA tier included, releases nobody while databases would run uncapped. apid
-logs `managed postgres release held to accounts a flag rule names` at start. When the
-approval ends, new databases, bindings, restores and resizes close; existing
-databases and credentials keep working.
+logs `managed postgres release held to accounts a flag rule names` at start.
+
+The approval gates new databases only
+([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md)).
+When it ends, or the backend's fingerprint changes and awaits a new
+approval, creating a database closes. Work on databases that exist follows
+`provisioning_enabled` alone and keeps going:
+
+- restores and rollbacks that restore the database;
+- resizes;
+- new bindings and credential rotation;
+- finishing a database that was already reserved.
+
+Set `provisioning_enabled` to false to stop all of it.
 
 The fleet ceilings apply across every account:
 
@@ -415,6 +426,23 @@ portable region name; `settings.region_id` is the current Neon placement for
 that region. Existing database rows contain a fingerprint of this non-secret
 placement. Changing the organization, physical region, or limits fences those
 rows instead of silently moving provider operations to a new destination.
+
+To change `max_storage_bytes` or `max_restore_window_seconds` without fencing
+the existing databases, add the backend's old `settings` to
+`previous_settings` in the same change:
+
+```json
+"settings": {"region_id": "aws-us-east-1", "max_storage_bytes": "214748364800", "max_restore_window_seconds": "604800"},
+"previous_settings": [
+  {"region_id": "aws-us-east-1", "max_storage_bytes": "107374182400", "max_restore_window_seconds": "604800"}
+]
+```
+
+Databases created under an entry keep resolving to the backend, which applies
+its current limits. An entry that differs in any other setting fails startup:
+that is a placement change. The backend's fingerprint still changes, so in
+production renew the approval for the new fingerprint before new databases
+open again ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md)).
 
 The adapter requires explicit `max_storage_bytes` and
 `max_restore_window_seconds` settings. Set them to promises supported by the
@@ -740,8 +768,14 @@ consumption and a finite accounting endpoint: the policy window containing the
 provider-confirmed shutdown, rounded up only when shutdown is inside that window.
 The collector waits for an open final window to close, then recovers through that
 endpoint and replays its final three-window tail. Every tail window must have an
-observation at or after the endpoint plus three policy windows. Failed final
-replay leaves admission stale; a newer successful window cannot hide it.
+observation at or after the endpoint plus three policy windows. Admission waits
+for the coverage through the endpoint, not for the tail: the tail revises windows
+that already have a reading, so it blocks admission only once it is overdue by
+`usage.stale_after_seconds` past that deadline. A failed final replay then leaves
+admission stale; a newer successful window cannot hide it. With hourly windows a
+deletion pauses new databases, restores and resizes until the hour it happened in
+has closed and been collected, not for the three hours after
+([ADR-20261104143000](adr/20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md)).
 
 After that bounded evidence is complete, the tombstone needs no provider calls
 and never ages into staleness merely because it has been deleted. Restore
@@ -758,7 +792,12 @@ an active lifecycle lease expires. Deletion discovers and persists identity
 before destroying the resource; an absent lookup keeps deletion pending. Legacy
 unknown tombstones remain stale because their old timestamps do not establish
 provider-confirmed shutdown. Newly reserved resources that never reached provider
-I/O can be deleted without an upstream call. Discovery uses a fleet recovery turn
+I/O can be deleted without an upstream call. An obligation whose provider call is
+still running (the database is provisioning, a worker holds its lease, and it was
+reserved in the current usage window) does not block admission, so creates on
+one account can run in parallel; once the lease lapses or the window closes
+without an identity, it blocks as above
+([ADR-20261104203253](adr/20261104203253-managed-postgres-in-flight-create-does-not-pause-account.md)). Discovery uses a fleet recovery turn
 within the existing per-database request budget.
 See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md) and
 [ADR-581](adr/581-managed-postgres-uncertain-accounting-intent.md).
@@ -809,7 +848,9 @@ Each resource includes its accounting root, required/collected ranges, observati
 times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
 `legacy_identity_unknown`, `coverage_missing`, `window_mismatch`,
 `shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
-`final_correction_pending`. Shared restores use their root's evidence. Unknown
+`final_correction_pending` (the final correction tail is overdue: its deadline,
+`correction_required_at`, passed more than `usage.stale_after_seconds` ago).
+Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not
 establish budget headroom or final provider settlement. Provider IDs and credential
@@ -955,6 +996,12 @@ whole quota. A replica that cannot take the lock skips that tick.
 - Each Neon project gets `settings.quota.compute_time_seconds` set to its own
   use plus what the account has left. A restore is a branch inside its source's
   project, so the two share one quota.
+- Neon checks a quota only when its counters move, about every 25 minutes, so
+  what the account has left first keeps back each database's largest size for
+  30 minutes (1,800 CU-s for development, 3,600 for burstable, 7,200 for
+  production). A busy database is therefore suspended up to that much before
+  the ceiling, not that much after it (ADR-20261025094915 amendment
+  2026-11-04).
 - When nothing is left, every quota equals its project's use, and Neon suspends
   the computes until the quota is raised or the counters reset on the 1st. A
   cap never deletes a database.
@@ -989,6 +1036,10 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
+- A suspended, abuse-held or pending-deletion account's databases are
+  suspended whatever their usage, as its apps are stopped. Their data is kept,
+  and the next cap sweep after the account is reactivated resumes them
+  ([ADR-20261025094915 amendment](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
 - Compute above the allowance costs $0.2331 per CU-hour
   (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`): Neon Scale's
   $0.222 plus 5% ([ADR-20261102072425](adr/20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)).
@@ -1083,7 +1134,9 @@ The run creates a disposable database, probes it, and deletes it. The probe:
    the largest-to-smallest size ratio plus a quarter, so the quota and the
    ledger count the same compute-unit seconds.
 3. Sets the quota to the counter and waits for the compute to suspend; a
-   connection must then fail.
+   connection must then fail. Neon suspends only when its counters next move,
+   so steps 2 and 3 each wait up to 35 minutes, and the run defaults to a
+   150-minute timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it).
 4. Raises the quota and waits for a connection to wake the compute.
 5. Checks that `logical_size_bytes` did not change.
 
@@ -1230,10 +1283,17 @@ per-target usage isolation; the usage collector exposes skipped descendants as
 `included_in_source` rather than as independently metered databases. Providers
 that can meter restores independently may instead declare that capability.
 If a create response is lost, branch-name discovery recovers the accepted
-branch without a second POST. Deleting a source is rejected while an active
-restore descendant exists, and deleting a restore target removes only its
-branch. Cutover remains an explicit binding operation; restore never silently
-rewires an app.
+branch without a second POST. Deleting a restore target removes only its
+branch. A source with an active restore descendant can be deleted
+([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md)):
+- its undo window runs as usual;
+- its purge then keeps the project, holds it, and leaves the row in `deleting`
+  with `last_error_code` `restore_copies_remain`;
+- an hourly retry deletes the project once no undeleted descendant remains.
+
+Past the undo window it no longer counts toward the owner's database limit;
+its usage, which includes the descendants', is still metered. Cutover remains
+an explicit binding operation; restore never silently rewires an app.
 
 ## Restore cutover preparation and verification
 

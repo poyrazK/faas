@@ -36,6 +36,14 @@ repeated request headers arrive joined into one value. Async, queue and cron inv
 of the function may run just as long: the longer of its request timeout
 and 30 s (ADR-1180).
 
+A Node or Python function that loads the Gregale SDK runs each call inside
+the SDK's request context, with no wrapper of its own. Service calls made
+through `createGregaleFetch` (Node) or the SDK's HTTPX transports (Python)
+then carry the time still left, the release and the signed chain deadline,
+so a downstream service stops when this request runs out. A Go function gets
+the same by serving `faas.GregaleReleaseMiddleware(handler)` and calling
+services through an `http.Client` that uses `faas.NewGregaleReleaseTransport`.
+
 An idle function parks after 30 seconds by default on every plan; set
 `gregale app APP --idle SECONDS` to keep it warm longer (see
 [scale-to-zero](cold-wake.md#when-an-instance-parks)).

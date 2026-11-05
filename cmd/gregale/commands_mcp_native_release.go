@@ -98,6 +98,15 @@ func readMCPNativePlan(path string) (mcpNativeReleasePlan, error) {
 			*value = filepath.Join(base, *value)
 		}
 	}
+	// Canonical roots keep journal containment and source fingerprints consistent
+	// when the plan is reached through a symlinked parent directory.
+	for _, value := range []*string{&p.WebPath, &p.WorkerPath} {
+		resolved, err := filepath.EvalSymlinks(*value)
+		if err != nil {
+			return p, fmt.Errorf("resolve release source: %w", err)
+		}
+		*value = resolved
+	}
 	// Source paths are relative to the plan, never to an adapter's working directory.
 	return p, nil
 }
@@ -171,6 +180,14 @@ func mcpNativeFingerprint(p mcpNativeReleasePlan) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+func requireMCPNativeNodeWorker(workerPath string) error {
+	info, err := os.Lstat(filepath.Join(workerPath, "tasks-release.js"))
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("native MCP Task releases require a Node worker project with tasks-release.js; use a manual rollout for Go/Python workers as described in docs/mcp.md")
+	}
+	return nil
+}
 func loadMCPNativeState(path, fingerprint string) (mcpNativeReleaseState, error) {
 	s := mcpNativeReleaseState{Version: 1, Fingerprint: fingerprint, Stage: "prepared", PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 	b, err := os.ReadFile(path)
@@ -208,6 +225,11 @@ func cmdMCPTaskRelease(args []string) int {
 	p, err := readMCPNativePlan(*planPath)
 	if err != nil {
 		return printErr("MCP release plan", err)
+	}
+	if action != "status" && (action != "recover" || *resume) {
+		if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+			return printErr("MCP release runtime", err)
+		}
 	}
 	absoluteState, err := filepath.Abs(*statePath)
 	if err != nil {
@@ -295,6 +317,9 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 	if s.Stage == "complete" {
 		return jsonOut(writeJSON(s))
 	}
+	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+		return printErr("MCP release runtime", err)
+	}
 	if err := preflightMCPControlPlane(); err != nil {
 		return printErr("MCP control-plane compatibility", err)
 	}
@@ -323,7 +348,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 	if err != nil {
 		return printErr("MCP release", err)
 	}
-	gatePlan := map[string]any{"timeoutMs": p.TimeoutSeconds * 1000, "checkpointPath": state + ".gate", "start": []string{binary, "--json", "mcp", "tasks", "release", "start", "--plan", plan, "--state", state}, "drain": []string{binary, "--json", "mcp", "tasks", "release", "drain", "--plan", plan, "--state", state}}
+	gatePlan := map[string]any{"timeoutMs": p.TimeoutSeconds * 1000, "releaseId": s.Fingerprint, "checkpointPath": state + ".gate", "start": []string{binary, "--json", "mcp", "tasks", "release", "start", "--plan", plan, "--state", state}, "drain": []string{binary, "--json", "mcp", "tasks", "release", "drain", "--plan", plan, "--state", state}}
 	b, _ := json.Marshal(gatePlan)
 	f, err := os.CreateTemp("", "gregale-native-release-*.json")
 	if err != nil {
@@ -377,6 +402,12 @@ func mcpNativeObserverHealthy(ctx context.Context, c *Client, p mcpNativeRelease
 	app, err := c.GetApp(ctx, p.ObserverApp)
 	if err != nil {
 		return err
+	}
+	if !mcpNativeTaskNamespaceMatches(app) {
+		return errors.New("observer must use the release's explicit MCP_TASK_NAMESPACE as a non-secret setting")
+	}
+	if !mcpTasksObserverMetricsTargetMatches(app, p.ObserverMetricApp) {
+		return errors.New("observer metric destination must match observer_metric_app as a non-secret setting")
 	}
 	if !isWorkerApp(app) || app.Manifest.WorkerReplicas == nil || app.Manifest.WorkerReplicas.Min < 1 {
 		return errors.New("observer must be an always-on worker app")
@@ -563,7 +594,7 @@ func mcpNativeWorkerLogs(reader io.Reader, instances []api.InstanceResponse, dep
 			ClaimFence bool   `json:"claimFence"`
 		}
 		if json.Unmarshal([]byte(envelope.Line), &event) == nil && event.Event == "mcp_task_worker_started" && mcpWorkerUUID.MatchString(event.WorkerID) && (len(requireFence) == 0 || !requireFence[0] || event.ClaimFence) {
-			if len(requireFence) > 0 && requireFence[0] && found[envelope.Instance] != "" && found[envelope.Instance] != event.WorkerID {
+			if found[envelope.Instance] != "" && found[envelope.Instance] != event.WorkerID {
 				return nil, errors.New("candidate instance has multiple startup worker IDs; refusing quarantine")
 			}
 			found[envelope.Instance] = event.WorkerID
@@ -573,7 +604,7 @@ func mcpNativeWorkerLogs(reader io.Reader, instances []api.InstanceResponse, dep
 		return nil, err
 	}
 	if len(wanted) == 0 || len(found) != len(wanted) {
-		return nil, errors.New("current candidate instances lack worker startup IDs")
+		return nil, errMCPNativeWorkerReceiptsMissing
 	}
 	ids := []string{}
 	for _, id := range found {
@@ -587,14 +618,13 @@ func mcpNativeWorkerIDs(ctx context.Context, c *Client, app, dep string, require
 	if err != nil {
 		return nil, err
 	}
-	body, err := c.StreamAppLogs(ctx, app, dep, false, api.LogFilter{Grep: "mcp_task_worker_started"})
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = body.Close() }()
-	return mcpNativeWorkerLogs(body, instances, dep, requireFence...)
+	ids, _, err := mcpNativeWorkerReceipts(ctx, c, app, dep, instances, len(requireFence) > 0 && requireFence[0], false)
+	return ids, err
 }
 func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState) error {
+	if err := mcpNativeWebTaskBindings(ctx, c, p); err != nil {
+		return err
+	}
 	cfg, err := mcphosting.Load(p.WebPath)
 	if err != nil {
 		return err
@@ -666,9 +696,7 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 	if cfg.Auth.Mode == "external-oauth" {
 		probe.ExpectedAuth = &cfg.Auth
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	report := mcphosting.Doctor(probeCtx, probe, cfg.Legacy, "", nil)
+	report := mcpReleaseDoctor(ctx, probe, cfg.Legacy)
 	if !report.OK {
 		return errors.New("candidate MCP endpoint failed verification")
 	}
@@ -676,19 +704,24 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 	if err != nil {
 		return err
 	}
-	if mcpReleaseRequiresAuthorization(roles) {
-		fleet := qualifyMCPProtocolDeployment(probeCtx, c, p.WebApp, s.WebDeployment, candidate, cfg.Endpoint, roles, 2*time.Second)
-		if !fleet.Qualified {
-			return errors.New("candidate replicas failed reviewed MCP authorization qualification")
-		}
+	protocolRoles := roles
+	if len(protocolRoles) == 0 {
+		protocolRoles = []mcpReleaseRole{{Name: "default", token: token}}
 	}
-	_, err = verifyMCPRoles(probeCtx, candidate, roles)
+	fleet := qualifyMCPProtocolDeployment(ctx, c, p.WebApp, s.WebDeployment, candidate, cfg.Endpoint, protocolRoles, 2*time.Second)
+	if !fleet.Qualified {
+		return errors.New("candidate replicas failed MCP protocol or authorization qualification")
+	}
+	if _, ready := checkMCPReleaseReadiness(ctx, candidate, s.WebDeployment, protocolRoles); !ready {
+		return errors.New("candidate public MCP readiness failed")
+	}
+	_, err = verifyMCPRoles(ctx, candidate, roles)
 	if err != nil {
 		return err
 	}
 	s.AccessPolicyExpectation = nil
 	if p.AccessAudit != nil {
-		audit := collectMCPAccessAudit(probeCtx, c, p.WebApp, cfg, roles, *p.AccessAudit)
+		audit := collectMCPAccessAudit(ctx, c, p.WebApp, cfg, roles, *p.AccessAudit)
 		if !audit.OK {
 			return errors.New("reviewed MCP access policy drift or missing evidence blocks release verification")
 		}
@@ -734,6 +767,9 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 	}
 	if !api.Plan(account.Plan).StreamingEnabled() {
 		return errors.New("MCP release requires a streaming-enabled plan")
+	}
+	if err := mcpNativeWebTaskBindings(ctx, c, p); err != nil {
+		return err
 	}
 	if err := mcpNativeObserverHealthy(ctx, c, p); err != nil {
 		return err
@@ -781,10 +817,6 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if cfg.Tasks == nil || cfg.Tasks.Enabled == nil || !*cfg.Tasks.Enabled {
 			return errors.New("candidate requires enabled Tasks")
 		}
-		shutdownDeadline := time.Duration(cfg.Tasks.ShutdownTimeoutMS) * time.Millisecond
-		if shutdownDeadline == 0 {
-			shutdownDeadline = 30 * time.Second
-		}
 		for _, slug := range p.PreviousWorkerApps {
 			app, err := c.GetApp(ctx, slug)
 			if err != nil {
@@ -793,9 +825,6 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			if !isWorkerApp(app) || app.ID == candidate.ID {
 				return errors.New("previous workers must be distinct worker apps")
 			}
-			if app.Manifest.StopGracePeriod <= shutdownDeadline {
-				return errors.New("previous worker stop grace must exceed the Task shutdown deadline")
-			}
 			dep, err := c.GetLatestAppDeployment(ctx, slug)
 			if err != nil {
 				return err
@@ -803,7 +832,7 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			if dep.AppID != app.ID {
 				return errors.New("previous deployment ownership mismatch")
 			}
-			ids, err := mcpNativeWorkerIDs(ctx, c, slug, dep.ID)
+			ids, err := mcpNativeDrainableWorkerIDs(ctx, c, app, slug, dep.ID, true)
 			if err != nil {
 				return err
 			}
@@ -922,11 +951,21 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if dep.ID != s.PreviousDeployments[slug] {
 			return errors.New("previous worker deployment changed; refusing app-wide drain")
 		}
+		app, err := c.GetApp(ctx, slug)
+		if err != nil {
+			return err
+		}
+		if _, err := mcpNativeDrainableWorkerIDs(ctx, c, app, slug, dep.ID, true); err != nil {
+			return err
+		}
 	}
 	if err := mcpNativeCheckWorkers(ctx, c, p, s); err != nil {
 		return err
 	}
 	if !s.Promoted {
+		if err := mcpNativeWebTaskBindings(ctx, c, p); err != nil {
+			return err
+		}
 		_, err := c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, s.WebDeployment, 100, s.ServingDeployment, s.AccessPolicyExpectation)
 		if err != nil {
 			var apiErr *api.APIError
@@ -965,6 +1004,16 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			return errors.New("previous worker deployment changed before park")
 		}
 		if err := mcpNativeCheckWorkers(ctx, c, p, s); err != nil {
+			return err
+		}
+		if err := mcpNativeWebTaskBindings(ctx, c, p); err != nil {
+			return err
+		}
+		app, err := c.GetApp(ctx, slug)
+		if err != nil {
+			return err
+		}
+		if _, err := mcpNativeDrainableWorkerIDs(ctx, c, app, slug, dep.ID, true); err != nil {
 			return err
 		}
 		if err := c.ParkIfDeployment(ctx, slug, s.PreviousDeployments[slug]); err != nil {

@@ -156,7 +156,7 @@ func (m *Manager) adoptClassified(ctx context.Context, adopter guestAdopter, c a
 	rep.Adoptable = rep.Adopted
 	if rep.Adopted > 0 {
 		// Host-level policy renders from the live set; include the adopted.
-		m.renderHostSMTPAllowlistRules(ctx, false)
+		_ = m.renderHostSMTPAllowlistRules(ctx, false)
 	}
 	return rep, ctx.Err()
 }
@@ -173,7 +173,7 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedAdmitted, "the block does not carry the admission receipt"
 	case (a.Network.PrivateNetworkHandleV4 != 0 || a.Network.PrivateNetworkHandleV6 != 0) && a.Network.Private == nil:
 		return adoptionRefusedPrivateNetwork, "private network member recorded before attachments were"
-	case a.Network.StaticEgressIP != "":
+	case a.Network.StaticEgressIP != "" || a.Network.StaticEgressBlocked:
 		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
@@ -237,6 +237,9 @@ func (m *Manager) adoptOne(ctx context.Context, adopter guestAdopter, c adoption
 		// execution occupancy and migration authority the block does not
 		// record.
 		return refuse(v.Instance, adoptionRefusedFunction, "function execution state is not recorded")
+	}
+	if private := r.Adoption.Network.Private; m.privateNetworkMemberSource != nil && private != nil && (private.NetworkID == "" || private.AppID == "" || private.AccountID == "") {
+		return refuse(v.Instance, adoptionRefusedPrivateNetwork, "private member predates durable instance identities; replace this guest")
 	}
 	if err := m.adoptGuest(ctx, adopter, r); err != nil {
 		return refuse(v.Instance, adoptionRefusedAdoptFailed, err.Error())
@@ -321,13 +324,28 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		}
 	}
 	lease := m.beginProcessAttempt(r.Lease)
+	inst := m.adoptedInstance(lease, r.Adoption)
+	if inst.Net.PrivateNetworkAddress.IsValid() {
+		if err := m.reservePrivateNetworkAddresses(inst.Net, id); err != nil {
+			return err
+		}
+	}
+	adopted := false
+	defer func() {
+		if !adopted {
+			local := inst.Net
+			local.PrivateNetworkID = ""
+			_ = m.releasePrivateNetworkMember(context.WithoutCancel(ctx), local, id, false)
+		}
+	}()
 	owner := adoptedOwner{AppID: r.Adoption.Instance.AppID, DeploymentID: r.Adoption.Instance.DeploymentID}
 	if err := adopter.adoptGuestProcess(lease, *r.Process, owner, jails, binds, files); err != nil {
 		m.alloc.unadopt(id)
 		return err
 	}
 	m.adoptDriveHandoff(ctx, adopter, lease, r)
-	inst := m.adoptedInstance(lease, r.Adoption)
+
+	adopted = true
 	m.restoreAdoptedPolicy(id, inst.AppID, r.Adoption)
 	m.mu.Lock()
 	m.live[id] = inst
@@ -391,6 +409,7 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		AllowlistHandleV6:      a.Network.AllowlistHandleV6,
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,
 		PrivateNetworkHandleV6: a.Network.PrivateNetworkHandleV6,
+		StaticEgressExcluded:   a.Network.StaticEgressExcluded,
 		adoptionVCPUs:          a.Firecracker.VCPUs,
 		adoptionMemSizeMiB:     a.Firecracker.MemoryMiB,
 		devPatched:             in.DevPatched,

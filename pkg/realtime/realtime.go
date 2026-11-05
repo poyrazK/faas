@@ -342,6 +342,10 @@ type Config struct {
 	PresenceSyncInterval       time.Duration
 	PresenceLeaseRenewInterval time.Duration
 	FleetReportFailure         func(error)
+	// EndpointsChanged is called after an endpoint is registered or
+	// removed, so the process can save its registrations for the process
+	// that replaces it (EndpointSnapshot, RestoreEndpoints).
+	EndpointsChanged func()
 	// UsageReporter records per-endpoint usage with the control plane
 	// (ADR-1323). Nil disables usage recording.
 	UsageReporter       UsageReporter
@@ -674,7 +678,8 @@ type Manager struct {
 	fleetPresenceTombstones map[channelKey]map[string]time.Time
 	fleetPresenceLastSync   map[channelKey]time.Time
 	resumeSignalRates       map[channelKey]*resumeSignalRate
-	routeReportMu           sync.Mutex
+	routeReportMu           sync.Mutex // guards routeReportLocks only
+	routeReportLocks        map[channelKey]*routeReportLock
 	channelRouteInstance    string
 	channelRouteRevision    uint64
 	reserved                atomic.Int64
@@ -781,6 +786,14 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 
 // RegisterEndpoint publishes an endpoint to the local ingress route.
 func (m *Manager) RegisterEndpoint(e Endpoint) error {
+	err := m.registerEndpoint(e)
+	if err == nil {
+		m.endpointsChanged()
+	}
+	return err
+}
+
+func (m *Manager) registerEndpoint(e Endpoint) error {
 	if m == nil || m.closed.Load() {
 		return ErrConnectionClosed
 	}
@@ -915,6 +928,7 @@ func (m *Manager) RemoveEndpoint(id string) {
 	if m == nil {
 		return
 	}
+	defer m.endpointsChanged()
 	m.endpointsMu.Lock()
 	value, ok := m.endpoints.Load(id)
 	if ok {

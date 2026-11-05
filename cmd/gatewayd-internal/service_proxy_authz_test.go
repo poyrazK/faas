@@ -319,7 +319,7 @@ func TestServiceProxyAuthorizerEnforcesPreviewServicePolicy(t *testing.T) {
 
 	// A PR preview of an app without a project has no project policy to
 	// allow production calls: it reaches only its preview set
-	// (ADR-20261103180000).
+	// (ADR-20261105090226).
 	standaloneParent := mk("standalone-parent", "", "")
 	standalonePreview, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "pr-44-standalone-parent",
 		Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive, PreviewOfSlug: standaloneParent.Slug,

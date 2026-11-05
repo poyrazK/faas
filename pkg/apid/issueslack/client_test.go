@@ -138,6 +138,8 @@ type fakeStore struct {
 	claims    []state.IssueSlackClaim
 	calls     int
 	ready     bool
+	readyErr  error
+	begins    int
 	result    state.IssueSlackResult
 	finishErr error
 }
@@ -152,7 +154,11 @@ func (s *fakeStore) ClaimIssueSlackDelivery(context.Context) (state.IssueSlackCl
 	return c, true, nil
 }
 func (s *fakeStore) IssueSlackDeliveryReady(context.Context, state.IssueSlackClaim) (bool, error) {
-	return s.ready, nil
+	return s.ready, s.readyErr
+}
+func (s *fakeStore) BeginIssueSlackAttempt(context.Context, state.IssueSlackClaim) error {
+	s.begins++
+	return nil
 }
 func (s *fakeStore) FinishIssueSlackDelivery(_ context.Context, _ state.IssueSlackClaim, r state.IssueSlackResult) error {
 	s.result = r
@@ -181,5 +187,14 @@ func TestSlackWorkerBoundsCancellationAndEligibility(t *testing.T) {
 	w = Worker{Store: s, OpenToken: func([]byte) (string, error) { return "", errors.New("secret decryption failure") }}
 	if ok, err := w.Step(t.Context()); err != nil || !ok || s.result.Error != "token_unavailable" {
 		t.Fatal(ok, err, s.result)
+	}
+	if s.result.Status != "failed" || !s.result.RetryAt.After(time.Now()) || s.begins != 0 {
+		t.Fatalf("key failure must remain retryable without spending an attempt: %+v", s.result)
+	}
+	want := errors.New("database unavailable")
+	s = &fakeStore{claims: []state.IssueSlackClaim{{Status: "in_flight"}}, readyErr: want}
+	w = Worker{Store: s, OpenToken: func([]byte) (string, error) { return "xoxb-fake-token", nil }}
+	if ok, err := w.Step(t.Context()); !ok || !errors.Is(err, want) || s.result.Status != "failed" || s.begins != 0 {
+		t.Fatalf("readiness failure did not release the claim for retry: ok=%v err=%v result=%+v", ok, err, s.result)
 	}
 }

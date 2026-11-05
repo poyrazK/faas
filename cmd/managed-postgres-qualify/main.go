@@ -278,7 +278,8 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
 		return liveQualification{}, false
 	}
-	timeout := 20 * time.Minute
+	// The usage check waits for the hour the resource was created in to close.
+	timeout := 90 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
@@ -290,6 +291,11 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout, close: closeFactories}, true
 }
 
+// computeCapQualifyTimeout covers the compute cap probe, which waits a whole
+// Neon counter lag twice (over an hour), on top of provisioning and the usage
+// checks. FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
+const computeCapQualifyTimeout = 150 * time.Minute
+
 // runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
 // disposable resource and writes the artifact that
 // FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on requires. It is separate from the
@@ -300,13 +306,18 @@ func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) in
 		return 2
 	}
 	defer live.close()
+	timeout := live.timeout
+	if strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")) == "" {
+		timeout = computeCapQualifyTimeout
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: live.backend.Driver,
 		ResourceID:   live.resourceID,
 		Spec:         live.spec,
-		Timeout:      live.timeout,
+		Timeout:      timeout,
 		Mutating:     true,
 		ComputeCap:   true,
+		WaitForUsage: true,
 	})
 	artifact := managedpostgres.ComputeCapQualification{
 		Version: managedpostgres.ComputeCapQualificationVersion, BackendID: live.backend.ID,
@@ -343,6 +354,7 @@ func runStorageCap(getenv func(string) string, output, errorOutput io.Writer) in
 		Timeout:      live.timeout,
 		Mutating:     true,
 		StorageCap:   true,
+		WaitForUsage: true,
 	})
 	artifact := managedpostgres.StorageCapQualification{
 		Version: managedpostgres.StorageCapQualificationVersion, BackendID: live.backend.ID,
@@ -402,6 +414,7 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		Timeout:                   timeout,
 		Mutating:                  true,
 		ContinueAfterUsageFailure: continueAfterUsageFailure,
+		WaitForUsage:              true,
 	})
 	result := qualificationOutput{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: spec, Report: report}
 	if qualificationErr == nil && durableQualificationEnabled(getenv) {

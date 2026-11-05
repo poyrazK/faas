@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-20261103180000: a PR preview runs unreviewed code and is torn down with
+// ADR-20261105090226: a PR preview runs unreviewed code and is torn down with
 // its pull request, so it cannot own a bucket; its production app still can.
 func TestPRPreviewRefusesObjectStorageBuckets(t *testing.T) {
 	t.Cleanup(apidserver.WithTestRecipient(t))
@@ -36,7 +36,7 @@ func TestPRPreviewRefusesObjectStorageBuckets(t *testing.T) {
 	}
 }
 
-// ADR-20261103180000: binding a database to a PR preview would hand its
+// ADR-20261105090226: binding a database to a PR preview would hand its
 // credentials to unreviewed code.
 func TestPRPreviewRefusesManagedPostgresBindings(t *testing.T) {
 	env := apidserver.NewSourceRefTestServer(t, api.PlanPro, "bound-shop", 9005)
@@ -63,7 +63,7 @@ func TestPRPreviewRefusesManagedPostgresBindings(t *testing.T) {
 	}
 }
 
-// ADR-20261103180000: removing a value from the production app's pr-preview
+// ADR-20261105090226: removing a value from the production app's pr-preview
 // scope removes the copy its open previews hold, and keeps a value set on a
 // preview itself.
 func TestDeletingAPRPreviewValueRemovesPreviewCopies(t *testing.T) {

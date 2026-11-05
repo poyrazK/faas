@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import sys
 import threading
 import time
 import traceback
 import uuid
+from http.client import HTTPException
 from collections import deque
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from functools import wraps
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -23,8 +26,32 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _retry_after(value: str | None) -> float:
+    delay = 60.0
+    if value:
+        if value.isascii() and value.isdecimal():
+            delay = float(min(int(value[:10]), 86400)) if len(value) <= 10 else 86400.0
+        else:
+            try:
+                delay = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
+            except (ValueError, TypeError, OverflowError):
+                pass
+    return min(86400.0, max(1.0, delay))
+
+
 def _bounded(value: str, size: int) -> str:
     return value.encode("utf-8", errors="replace")[:size].decode("utf-8", errors="ignore")
+
+
+def _breadcrumb_time(value: str, occurred_at: str | None) -> bool:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value):
+        return False
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        occurred = datetime.fromisoformat(occurred_at.replace("Z", "+00:00")) if occurred_at else datetime.now(UTC)
+        return stamp.tzinfo is not None and stamp != datetime.min.replace(tzinfo=UTC) and occurred.tzinfo is not None and (stamp - occurred).total_seconds() <= 300
+    except (ValueError, OverflowError, TypeError):
+        return False
 
 
 _ISSUE_TAG_KEYS = (
@@ -57,6 +84,14 @@ def _copy_operational_context(event: dict[str, Any], context: dict[str, Any]) ->
             ):
                 dropped = min(2147483647, dropped + 1)
                 continue
+            try:
+                stamp.encode("utf-8")
+            except UnicodeEncodeError:
+                dropped = min(2147483647, dropped + 1)
+                continue
+            if not _breadcrumb_time(stamp, event.get("occurred_at")):
+                dropped = min(2147483647, dropped + 1)
+                continue
             copied.append({"occurred_at": stamp, "category": category, "level": level, "message": _bounded(message, 256)})
         if copied:
             event["breadcrumbs"] = copied
@@ -68,6 +103,32 @@ def _copy_operational_context(event: dict[str, Any], context: dict[str, Any]) ->
                        if isinstance(tags.get(key), str) and "\0" not in tags[key]}
         if copied_tags:
             event["tags"] = copied_tags
+
+
+def _trim_event(event: dict[str, Any]) -> bool:
+    """Bound grouping evidence independently of optional context."""
+    optional_keys = ("breadcrumbs", "breadcrumbs_dropped", "tags", "request_id", "trace_id", "span_id", "invocation_id", "route", "http_status")
+    optional = {key: event.pop(key) for key in optional_keys if key in event}
+
+    def size() -> int:
+        return len(json.dumps(event, ensure_ascii=False).encode())
+
+    while event.get("causes") and size() > 61440:
+        event["causes"].pop()
+        event["causes_incomplete"] = True
+    if size() > 61440:
+        event.pop("stack_trace", None)
+    while len(event["frames"]) > 1 and size() > 61440:
+        event["frames"].pop(0)  # Python tracebacks are oldest first.
+    if size() > 61440:
+        return False
+    event.update(optional)
+    while event.get("breadcrumbs") and size() > 65536:
+        event["breadcrumbs"].pop(0)
+        event["breadcrumbs_dropped"] = min(2147483647, event.get("breadcrumbs_dropped", 0) + 1)
+    if size() > 65536:
+        event.pop("tags", None)
+    return size() <= 65536
 
 
 class IssueReporter:
@@ -126,6 +187,7 @@ class IssueReporter:
         self._closing = False
         self._accepted = 0
         self._dropped = 0
+        self._retry_delay = 1.0
         self._thread = threading.Thread(target=self._run, name="gregale-issues", daemon=True)
         self._thread.start()
 
@@ -141,7 +203,7 @@ class IssueReporter:
         frames = traceback.extract_tb(error.__traceback__)[-32:]
         event: dict[str, Any] = {
             "event_id": str(uuid.uuid4()),
-            "occurred_at": datetime.now(UTC).isoformat(),
+            "occurred_at": datetime.now(UTC).isoformat(timespec="microseconds"),
             "exception_type": _bounded(f"{type(error).__module__}.{type(error).__name__}", 256),
             "message": _bounded(str(error), 2048),
             "stack_trace": _bounded(
@@ -215,10 +277,30 @@ class IssueReporter:
         ):
             if key in context and isinstance(context[key], str):
                 event[key] = _bounded(context[key], 256)
-        if self._grouping_strategy == "cause-chain-v1":
-            while event["causes"] and len(json.dumps(event, ensure_ascii=False).encode()) > 65536:
-                event["causes"].pop()
-                event["causes_incomplete"] = True
+        status = context.get("http_status")
+        if type(status) is int and 400 <= status <= 599:
+            event["http_status"] = status
+        for key, length in (("trace_id", 32), ("span_id", 16)):
+            if key in event:
+                value = event[key].lower()
+                if len(value) == length and re.fullmatch(r"[0-9a-f]+", value) and int(value, 16):
+                    event[key] = value
+                else:
+                    event.pop(key)
+        if "invocation_id" in event:
+            try:
+                invocation = uuid.UUID(event["invocation_id"])
+                if invocation.int == 0:
+                    raise ValueError("nil UUID")
+                event["invocation_id"] = str(invocation)
+            except (ValueError, AttributeError):
+                event.pop("invocation_id")
+        if event.get("source_kind") not in (None, "", "exception", "worker"):
+            event.pop("source_kind")
+        if not _trim_event(event):
+            with self._cv:
+                self._dropped += 1
+            return None
         with self._cv:
             if self._closing or self._stopped or len(self._queue) >= self._max_queue:
                 self._dropped += 1
@@ -228,21 +310,27 @@ class IssueReporter:
         return event["event_id"]
 
     def _send(self, event: dict[str, Any]) -> bool | None:
-        request = Request(
-            self._url,
-            data=json.dumps(event, ensure_ascii=False).encode(),
-            method="POST",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self._token}", "User-Agent": self._user_agent},
-        )
         try:
+            request = Request(
+                self._url,
+                data=json.dumps(event, ensure_ascii=False).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {self._token}", "User-Agent": self._user_agent},
+            )
             with self._opener.open(request, timeout=self._timeout) as response:
                 return response.status == 202
         except HTTPError as error:
             status = error.code
+            if status == 429 or (status == 503 and error.headers and error.headers.get("Retry-After")):
+                self._retry_delay = _retry_after(error.headers.get("Retry-After") if error.headers else None)
             error.close()
             return None if status == 429 or status >= 500 else False
-        except (URLError, TimeoutError, OSError):
+        except (URLError, HTTPException, TimeoutError, OSError):
             return None
+        except (UnicodeError, ValueError, TypeError):
+            # A malformed event or request cannot succeed on retry. Do not
+            # let it terminate the worker and strand unrelated events.
+            return False
 
     def _run(self) -> None:
         while True:
@@ -251,6 +339,7 @@ class IssueReporter:
                 if self._stopped:
                     return
                 event = self._queue[0]
+            self._retry_delay = 1.0
             outcome = self._send(event)
             with self._cv:
                 if outcome is not None:
@@ -261,7 +350,12 @@ class IssueReporter:
                         self._dropped += 1
                     self._cv.notify_all()
                 else:
-                    self._cv.wait(timeout=1.0)
+                    deadline = time.monotonic() + self._retry_delay
+                    while not self._stopped:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        self._cv.wait(timeout=remaining)
 
     def flush(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -272,7 +366,7 @@ class IssueReporter:
                 if remaining <= 0:
                     return False
                 self._cv.wait(timeout=remaining)
-            return not self._queue
+            return not self._queue and self._dropped == 0
 
     def close(self, timeout: float = 5.0) -> bool:
         with self._cv:

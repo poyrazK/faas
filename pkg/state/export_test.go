@@ -1145,6 +1145,16 @@ func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
 
 var LiveServiceProxyIdentities = liveServiceProxyIdentities
 
+// XFreezeDeploymentRuntime stores a reviewed candidate's frozen runtime on an
+// existing deployment, as GitOps candidate preparation does.
+func (m *MemStore) XFreezeDeploymentRuntime(id, raw string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.deployments[id]
+	d.EnvironmentWorkloadRuntime = raw
+	m.deployments[id] = d
+}
+
 // OperatorIntents exposes the MemStore's operator intents to tests.
 func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }
 
@@ -1164,4 +1174,13 @@ func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID
 		return nil, err
 	}
 	return tx, nil
+}
+
+// SeedLegacyWorkflowEvent inserts a retained event as written by an older
+// version, before the current event payload limit existed.
+func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
+	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
 }

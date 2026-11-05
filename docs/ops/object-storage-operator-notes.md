@@ -553,7 +553,10 @@ concurrent writes to the same part return 409. Different parts remain concurrent
 Successful verified transfers settle their token. Failed or uncertain transfers
 block finalization for a conservative 36-minute window (30-minute transfer
 context, 60-second internal URL, five-minute grace). Expiry alone releases no
-capacity. Completion checks the part revision and absence of in-flight writes,
+capacity. An abort settles an uncertain attempt once its window has ended and
+the native abort is verified (no parts or `NoSuchUpload`), so an upload a
+client abandoned mid-part finishes aborting instead of retrying forever
+(ADR-20261104151650); completion still waits for proof. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
 Conditional completion also persists its immutable condition in a distinct
@@ -939,7 +942,10 @@ storage from capabilities until `max_account_bytes` and `max_bucket_bytes`
 reach the largest plan ceiling (1,000 GiB), `max_monthly_egress_bytes` the
 largest plan egress (2,000 GiB) and `max_account_keys` one million; every
 environment logs the shortfall at startup (`object storage safety policy
-sells plans less than they promise`). A support grant above
+sells plans less than they promise`). CD sets `FAAS_ENVIRONMENT=production`
+for apid in every `production*` environment (the control-plane role's
+`faas_environment`, staged by `scripts/ci/faas_environment_vars.sh`); before
+2026-11-03 no deploy set it, so the refusal never ran. A support grant above
 `max_account_bytes` is refused, because it would not take effect.
 
 A provider that refuses the installation's credentials withdraws object

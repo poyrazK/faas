@@ -354,6 +354,13 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 		if pendingRuntime || runtimeDrift {
 			return ErrConflict
 		}
+		targets, err := readGitOpsRuntime(ctx, tx, lease.Source)
+		if err != nil {
+			return err
+		}
+		if !gitOpsRuntimeReady(targets) {
+			return ErrConflict
+		}
 	}
 	count, err := q.FinishEnvironmentGitOpsRun(ctx, tx, sqlc.FinishEnvironmentGitOpsRunParams{
 		RunID: mustPgUUID(lease.RunID), SourceID: mustPgUUID(lease.Source.ID), Generation: lease.Source.Generation,

@@ -16,9 +16,9 @@ func TestCmdMCPInitMaterializesEachLanguage(t *testing.T) {
 		language string
 		files    []string
 	}{
-		{language: "node", files: []string{"package.json", "server.js", "protocol-telemetry.js", "gregale-mcp.json", "gregale.yaml"}},
-		{language: "go", files: []string{"main.go", "auth.go", "tasks.go", "task_schema.go", "cors.go", "protocol_telemetry.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml"}},
-		{language: "python", files: []string{"server.py", "auth.py", "tasks.py", "task_schema.py", "protocol_telemetry.py", "test_server.py", "requirements.txt", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "node", files: []string{"package.json", "server.js", "task-owners.js", "protocol-telemetry.js", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "go", files: []string{"main.go", "auth.go", "tasks.go", "task_schema.go", "task_owners.go", "task_execution.go", "task_lease.go", "task_keys.go", "protocol_headers.go", "cors.go", "protocol_telemetry.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "python", files: []string{"server.py", "auth.py", "tasks.py", "task_schema.py", "task_owners.py", "task_execution.py", "task_keys.py", "http_body.py", "protocol_headers.py", "protocol_telemetry.py", "test_server.py", "test_http_body.py", "requirements.txt", "gregale-mcp.json", "gregale.yaml"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.language, func(t *testing.T) {

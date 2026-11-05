@@ -20,7 +20,7 @@ type PreviewSetPeerStore interface {
 // StandalonePRPreview reports a PR preview of an app bound without a project.
 // It has no project to scope its service names, so it calls only the other
 // previews of its PR's preview set and never a production app
-// (ADR-20261103180000).
+// (ADR-20261105090226).
 func StandalonePRPreview(app state.App) bool {
 	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 && app.ProjectID == ""
 }
@@ -65,7 +65,7 @@ func livePreviewSetPeer(caller, peer state.App) bool {
 		peer.PreviewPrState != state.PreviewPrStateTornDown
 }
 
-// authorizeStandalonePreview applies ADR-20261103180000 to a call from a PR
+// authorizeStandalonePreview applies ADR-20261105090226 to a call from a PR
 // preview of an app bound without a project: a production target is refused,
 // and a preview target must be a live peer in the caller's preview set.
 func authorizeStandalonePreview(ctx context.Context, store AuthorizationStore, caller, target state.App) error {

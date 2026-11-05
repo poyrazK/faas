@@ -55,9 +55,14 @@ func watchProgressTransport(normal, watch, progress http.Handler) http.Handler {
 	})
 }
 
+// The SDK's localhost protection refuses a request that reaches a loopback
+// listener with a non-loopback Host. The hosted bridge listens on loopback
+// behind gatewayd-public, which forwards the public Host, so that check
+// refused every authenticated call. The remote handler already admits only
+// its public Host and Origin, which is the DNS-rebinding defense.
 func newWatchHTTPHandler(getServer func(*http.Request) *mcp.Server) http.Handler {
-	normal := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true})
-	watch := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true})
-	progress := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true})
+	normal := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true, DisableLocalhostProtection: true})
+	watch := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true, DisableLocalhostProtection: true})
+	progress := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true, DisableLocalhostProtection: true})
 	return watchProgressTransport(normal, watch, progress)
 }

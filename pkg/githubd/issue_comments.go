@@ -52,7 +52,7 @@ type httpIssueComments struct {
 
 // NewHTTPIssueComments writes marker comments through the GitHub REST API.
 // With appID set, a marker comment is adopted only when GitHub attributes it
-// to this App, as the preview status comment is (ADR-20261103180000).
+// to this App, as the preview status comment is (ADR-20261105090226).
 func NewHTTPIssueComments(tokens *TokenCache, client HTTPClient, appID int64) IssueCommentClient {
 	if client == nil {
 		client = NewHTTPClient()

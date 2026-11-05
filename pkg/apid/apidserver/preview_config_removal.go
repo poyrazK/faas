@@ -11,7 +11,7 @@ import (
 
 // pendingPRPreviewRemoval reads the pr-preview entry a delete is about to
 // remove from a production app, so the previews that hold its copy can lose
-// it too (ADR-20261103180000). ok is false for any other delete.
+// it too (ADR-20261105090226). ok is false for any other delete.
 func (s *server) pendingPRPreviewRemoval(ctx context.Context, app state.App, scope, key string, secret bool) (previewconfig.Removal, bool) {
 	if scope != api.PreviewEnvScope || app.PreviewOfSlug != "" {
 		return previewconfig.Removal{}, false

@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 )
 
-// ADR-20261103180000: removing a pr-preview entry from the production app
+// ADR-20261105090226: removing a pr-preview entry from the production app
 // finds the previews that still hold the copy a sync gave them, and leaves a
 // preview whose value was changed on the preview itself.
 func TestPreviewsHoldingFindsUnchangedCopies(t *testing.T) {

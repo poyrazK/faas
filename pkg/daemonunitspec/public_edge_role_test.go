@@ -89,9 +89,21 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	}
 	// An edge with no Cloudflare in front opts out of the guard.
 	vars["faas_public_edge_cloudflare_only"] = false
-	if text := renderPublicEdgeBlock(t, block, vars); strings.Contains(text, "abort") {
-		t.Errorf("an edge that opted out of Cloudflare-only still aborts direct peers:\n%s", text)
+	// With nothing in front to overwrite it, a client-sent CF-Connecting-IP
+	// must not become the caller IP (ADR-20261103172551), with or without
+	// the gRPC hop.
+	for _, grpc := range []bool{false, true} {
+		vars["faas_public_edge_grpc_h2c"] = grpc
+		text := renderPublicEdgeBlock(t, block, vars)
+		if strings.Contains(text, "abort") {
+			t.Errorf("gRPC %v: an edge that opted out of Cloudflare-only still aborts direct peers:\n%s", grpc, text)
+		}
+		if strings.Contains(text, "{http.request.header.CF-Connecting-IP}") ||
+			!strings.Contains(text, "header_up X-Forwarded-For {remote_host}") || !strings.Contains(text, "header_up -CF-Connecting-IP") {
+			t.Errorf("gRPC %v: an edge with no Cloudflare in front trusts a client-sent CF-Connecting-IP:\n%s", grpc, text)
+		}
 	}
+	delete(vars, "faas_public_edge_grpc_h2c")
 	delete(vars, "faas_public_edge_cloudflare_only")
 
 	// ADR-520: customer domains open 443 to everyone. The platform site must

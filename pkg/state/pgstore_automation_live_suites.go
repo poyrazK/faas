@@ -99,7 +99,7 @@ func (s *PgStore) SaveAutomationLiveSuite(ctx context.Context, appID, name, id s
 	if err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
-	if err := q.PruneAutomationLiveSuites(ctx, tx, sqlc.PruneAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, Retained: api.AutomationLiveSuiteRetainedLimit, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteStartWindow))}); err != nil {
+	if err := q.PruneAutomationLiveSuites(ctx, tx, sqlc.PruneAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, Retained: api.AutomationLiveSuiteRetainedLimit, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteProtectedWindow))}); err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

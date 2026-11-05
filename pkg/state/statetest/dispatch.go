@@ -27,6 +27,10 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ListEdgeRulesForApp":                    true,
+	"ApplyConfigRestore":                     true,
+	"EvaluateAutomationFailurePolicies":      true,
+	"GetAutomationFailurePolicy":             true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -34,6 +38,7 @@ var memDispatched = map[string]bool{
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
+	"DeleteProjectIfNoStages":                true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
@@ -69,6 +74,8 @@ var memDispatched = map[string]bool{
 	"ListInstancesForApp":                                     true,
 	"ListLiveInstancesForApps":                                true,
 	"AccountByID":                                             true,
+	"SetAccountKeyGraceWindow":                                true,
+	"RestoreAccount":                                          true,
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
@@ -110,6 +117,7 @@ var memDispatched = map[string]bool{
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
 	"ListAllAccounts":                                         true,
+	"ListReleaseFreezes":                                      true,
 	"MarkDunningStep":                                         true,
 	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
@@ -121,6 +129,7 @@ var memDispatched = map[string]bool{
 	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
+	"ListInstancesByStatesOlderThan":                          true,
 	"IssueObjectMultipartURLCredential":                       true,
 	"JobRunAttachSession":                                     true,
 	"LatestParkedDeploymentForApp":                            true,
@@ -289,6 +298,42 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) ListEdgeRulesForApp(ctx context.Context, app string) ([]state.EdgeRule, error) {
+	if over, ok := s.over.(interface {
+		ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+	}); ok {
+		return over.ListEdgeRulesForApp(ctx, app)
+	}
+	return s.MemStore.ListEdgeRulesForApp(ctx, app)
+}
+
+func (s *Mem) ApplyConfigRestore(ctx context.Context, restore state.ConfigRestore) (state.ConfigRevision, error) {
+	if over, ok := s.over.(interface {
+		ApplyConfigRestore(context.Context, state.ConfigRestore) (state.ConfigRevision, error)
+	}); ok {
+		return over.ApplyConfigRestore(ctx, restore)
+	}
+	return s.MemStore.ApplyConfigRestore(ctx, restore)
+}
+
+func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
+	if o, ok := s.over.(interface {
+		EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
+	}); ok {
+		return o.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+	}
+	return s.MemStore.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+}
+
+func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string) (api.AutomationFailurePolicyResponse, error) {
+	if o, ok := s.over.(interface {
+		GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
+	}); ok {
+		return o.GetAutomationFailurePolicy(ctx, appID, name)
+	}
+	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -559,6 +604,13 @@ func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time
 	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
 }
 
+func (s *Mem) DeleteProjectIfNoStages(ctx context.Context, accountID, projectID string) error {
+	if o, ok := s.over.(state.CheckedProjectDeleteStore); ok {
+		return o.DeleteProjectIfNoStages(ctx, accountID, projectID)
+	}
+	return s.MemStore.DeleteProjectIfNoStages(ctx, accountID, projectID)
+}
+
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
 	if o, ok := s.over.(interface {
 		DeleteAppPermanently(context.Context, string) error
@@ -665,6 +717,15 @@ func (s *Mem) CreateCheckedRollback(p0 context.Context, p1 string, p2 string, p3
 		return o.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
 	}
 	return s.MemStore.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ListReleaseFreezes(ctx context.Context, owner state.ReleaseFreezeOwner, now time.Time) ([]state.ReleaseFreeze, error) {
+	if o, ok := s.over.(interface {
+		ListReleaseFreezes(context.Context, state.ReleaseFreezeOwner, time.Time) ([]state.ReleaseFreeze, error)
+	}); ok {
+		return o.ListReleaseFreezes(ctx, owner, now)
+	}
+	return s.MemStore.ListReleaseFreezes(ctx, owner, now)
 }
 
 func (s *Mem) CreateInstance(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string, p6 string) (state.Instance, error) {
@@ -890,6 +951,15 @@ func (s *Mem) InstanceByID(p0 context.Context, p1 string) (state.Instance, error
 		return o.InstanceByID(p0, p1)
 	}
 	return s.MemStore.InstanceByID(p0, p1)
+}
+
+func (s *Mem) ListInstancesByStatesOlderThan(p0 context.Context, p1 []state.State, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesByStatesOlderThan(context.Context, []state.State, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesByStatesOlderThan(p0, p1, p2)
+	}
+	return s.MemStore.ListInstancesByStatesOlderThan(p0, p1, p2)
 }
 
 func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.ObjectS3Credential, p2 state.ObjectMultipartUpload, p3 api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {
@@ -1862,6 +1932,24 @@ func (s *Mem) AccountByID(p0 context.Context, p1 string) (state.Account, error) 
 	return s.MemStore.AccountByID(p0, p1)
 }
 
+func (s *Mem) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
+	if over, ok := s.over.(interface {
+		SetAccountKeyGraceWindow(context.Context, string, *int) error
+	}); ok {
+		return over.SetAccountKeyGraceWindow(ctx, accountID, days)
+	}
+	return s.MemStore.SetAccountKeyGraceWindow(ctx, accountID, days)
+}
+
+func (s *Mem) RestoreAccount(ctx context.Context, id string) error {
+	if o, ok := s.over.(interface {
+		RestoreAccount(context.Context, string) error
+	}); ok {
+		return o.RestoreAccount(ctx, id)
+	}
+	return s.MemStore.RestoreAccount(ctx, id)
+}
+
 func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]state.RecoveryInstance, error) {
 	if o, ok := s.over.(interface {
 		InstanceListByNodeForRecovery(context.Context, string) ([]state.RecoveryInstance, error)
@@ -1873,76 +1961,79 @@ func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]st
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
-	"MigrateInstanceOwnerWithRuntimeConfig":                              true,
-	"ResolveInstanceMigrationCommit":                                     true,
-	"ScenarioWebhookDeliveryBlocked":                                     true,
-	"SubmitOperatorRecovery":                                             true,
-	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
-	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
-	"AcquireProjectEnvironmentCloneConfigurationFence":                   true,
-	"AcquireProjectEnvironmentCloneObjectWriteFence":                     true,
-	"AdoptProjectEnvironmentCloneCheckpoint":                             true,
-	"AdoptProjectEnvironmentClonePostgresSnapshotRestore":                true,
-	"AdvanceProjectEnvironmentCloneCheckpointIntent":                     true,
-	"AdvanceProjectEnvironmentCloneOperation":                            true,
-	"AllocateProjectEnvironmentClonePostgresVerificationRead":            true,
-	"BeginProjectEnvironmentClonePostgresCopyReaderCleanup":              true,
-	"BeginProjectEnvironmentClonePostgresCopyTargetCleanup":              true,
-	"BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup":         true,
-	"ClaimNextProjectEnvironmentClone":                                   true,
-	"ClaimProjectEnvironmentCloneCheckpointCaptureRetirement":            true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectCopy":                   true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectRetirement":             true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectTarget":                 true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectVerification":           true,
-	"ClaimProjectEnvironmentCloneCheckpointPgActivation":                 true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresCopyRetirement":       true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresCredential":           true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresCredentialRetirement": true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresIsolation":            true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresRuntime":              true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresTargetCompensation":   true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresVerification":         true,
-	"ClaimProjectEnvironmentCloneCheckpointRelease":                      true,
-	"ClaimProjectEnvironmentCloneCheckpointSourceCompensation":           true,
-	"ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement":           true,
-	"ClaimProjectEnvironmentClonePostgresArchiveUpload":                  true,
-	"ClaimProjectEnvironmentClonePostgresCopyReaderCleanup":              true,
-	"ClaimProjectEnvironmentClonePostgresCopyReaderRequest":              true,
-	"ClaimProjectEnvironmentClonePostgresImport":                         true,
-	"ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest":         true,
-	"ClaimProjectEnvironmentClonePostgresVerification":                   true,
-	"ClaimProjectEnvironmentClonePostgresVerificationAttempt":            true,
-	"CleanupProjectEnvironmentCloneConfigurationForLease":                true,
-	"CleanupProjectEnvironmentCloneDeploymentsForLease":                  true,
-	"CleanupProjectEnvironmentCloneEnvironmentForLease":                  true,
-	"CleanupProjectEnvironmentCloneWorkloadsForLease":                    true,
-	"CompleteInvocationClaim":                                            true,
-	"CompleteProjectEnvironmentCloneCheckpointCompensation":              true,
-	"ConsumerKeyByAppAndPrefix":                                          true,
-	"DispatchProjectEnvironmentCloneObjectGrantRevocation":               true,
-	"EnqueueInvocation": true,
-	"FinishProjectEnvironmentCloneCheckpointCaptureRetirement":            true,
-	"FinishProjectEnvironmentCloneCheckpointObjectCopy":                   true,
-	"FinishProjectEnvironmentCloneCheckpointObjectRetirement":             true,
-	"FinishProjectEnvironmentCloneCheckpointObjectTarget":                 true,
-	"FinishProjectEnvironmentCloneCheckpointObjectVerification":           true,
-	"FinishProjectEnvironmentCloneCheckpointPgActivation":                 true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresCopyRetirement":       true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresCredential":           true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresCredentialRetirement": true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresIsolation":            true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresRuntime":              true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresTargetCompensation":   true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresVerification":         true,
-	"FinishProjectEnvironmentCloneCheckpointRelease":                      true,
-	"FinishProjectEnvironmentCloneCheckpointSourceCompensation":           true,
-	"FinishProjectEnvironmentCloneCheckpointWorkloadRetirement":           true,
-	"FinishProjectEnvironmentClonePostgresCopyReaderCleanup":              true,
-	"FinishProjectEnvironmentClonePostgresCopyTargetCleanup":              true,
-	"FinishProjectEnvironmentClonePostgresSnapshotCleanup":                true,
-	"FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup":         true,
-	"FinishProjectEnvironmentClonePostgresWriteFenceAbandonment":          true,
+	"AccountByID":                                                            true,
+	"SetAccountKeyGraceWindow":                                               true,
+	"DeploymentByID":                                                         true,
+	"MigrateInstanceOwnerWithRuntimeConfig":                                  true,
+	"ResolveInstanceMigrationCommit":                                         true,
+	"ScenarioWebhookDeliveryBlocked":                                         true,
+	"SubmitOperatorRecovery":                                                 true,
+	"AbandonProjectEnvironmentCloneConfigurationFence":                       true,
+	"AbandonProjectEnvironmentCloneObjectWriteFences":                        true,
+	"AcquireProjectEnvironmentCloneConfigurationFence":                       true,
+	"AcquireProjectEnvironmentCloneObjectWriteFence":                         true,
+	"AdoptProjectEnvironmentCloneCheckpoint":                                 true,
+	"AdoptProjectEnvironmentClonePostgresSnapshotRestore":                    true,
+	"AdvanceProjectEnvironmentCloneCheckpointIntent":                         true,
+	"AdvanceProjectEnvironmentCloneOperation":                                true,
+	"AllocateProjectEnvironmentClonePostgresVerificationRead":                true,
+	"BeginProjectEnvironmentClonePostgresCopyReaderCleanup":                  true,
+	"BeginProjectEnvironmentClonePostgresCopyTargetCleanup":                  true,
+	"BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup":             true,
+	"ClaimNextProjectEnvironmentClone":                                       true,
+	"ClaimProjectEnvironmentCloneCheckpointCaptureRetirement":                true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectCopy":                       true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectRetirement":                 true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectTarget":                     true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectVerification":               true,
+	"ClaimProjectEnvironmentCloneCheckpointPgActivation":                     true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresCopyRetirement":           true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresCredential":               true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresCredentialRetirement":     true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresIsolation":                true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresRuntime":                  true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresTargetCompensation":       true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresVerification":             true,
+	"ClaimProjectEnvironmentCloneCheckpointRelease":                          true,
+	"ClaimProjectEnvironmentCloneCheckpointSourceCompensation":               true,
+	"ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement":               true,
+	"ClaimProjectEnvironmentClonePostgresArchiveUpload":                      true,
+	"ClaimProjectEnvironmentClonePostgresCopyReaderCleanup":                  true,
+	"ClaimProjectEnvironmentClonePostgresCopyReaderRequest":                  true,
+	"ClaimProjectEnvironmentClonePostgresImport":                             true,
+	"ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest":             true,
+	"ClaimProjectEnvironmentClonePostgresVerification":                       true,
+	"ClaimProjectEnvironmentClonePostgresVerificationAttempt":                true,
+	"CleanupProjectEnvironmentCloneConfigurationForLease":                    true,
+	"CleanupProjectEnvironmentCloneDeploymentsForLease":                      true,
+	"CleanupProjectEnvironmentCloneEnvironmentForLease":                      true,
+	"CleanupProjectEnvironmentCloneWorkloadsForLease":                        true,
+	"CompleteInvocationClaim":                                                true,
+	"CompleteProjectEnvironmentCloneCheckpointCompensation":                  true,
+	"ConsumerKeyByAppAndPrefix":                                              true,
+	"DispatchProjectEnvironmentCloneObjectGrantRevocation":                   true,
+	"EnqueueInvocation":                                                      true,
+	"FinishProjectEnvironmentCloneCheckpointCaptureRetirement":               true,
+	"FinishProjectEnvironmentCloneCheckpointObjectCopy":                      true,
+	"FinishProjectEnvironmentCloneCheckpointObjectRetirement":                true,
+	"FinishProjectEnvironmentCloneCheckpointObjectTarget":                    true,
+	"FinishProjectEnvironmentCloneCheckpointObjectVerification":              true,
+	"FinishProjectEnvironmentCloneCheckpointPgActivation":                    true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresCopyRetirement":          true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresCredential":              true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresCredentialRetirement":    true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresIsolation":               true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresRuntime":                 true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresTargetCompensation":      true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresVerification":            true,
+	"FinishProjectEnvironmentCloneCheckpointRelease":                         true,
+	"FinishProjectEnvironmentCloneCheckpointSourceCompensation":              true,
+	"FinishProjectEnvironmentCloneCheckpointWorkloadRetirement":              true,
+	"FinishProjectEnvironmentClonePostgresCopyReaderCleanup":                 true,
+	"FinishProjectEnvironmentClonePostgresCopyTargetCleanup":                 true,
+	"FinishProjectEnvironmentClonePostgresSnapshotCleanup":                   true,
+	"FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup":            true,
+	"FinishProjectEnvironmentClonePostgresWriteFenceAbandonment":             true,
 	"GetAPIConsumerByID":                                                     true,
 	"MaterializeProjectEnvironmentCloneForLease":                             true,
 	"PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues":         true,
@@ -2013,6 +2104,33 @@ var pgDispatched = map[string]bool{
 
 	"WithPublicHostPolicySnapshot":  true,
 	"WithInvocationVersionSnapshot": true,
+}
+
+func (s *Pg) AccountByID(ctx context.Context, accountID string) (state.Account, error) {
+	if over, ok := s.over.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	}); ok {
+		return over.AccountByID(ctx, accountID)
+	}
+	return s.PgStore.AccountByID(ctx, accountID)
+}
+
+func (s *Pg) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
+	if over, ok := s.over.(interface {
+		SetAccountKeyGraceWindow(context.Context, string, *int) error
+	}); ok {
+		return over.SetAccountKeyGraceWindow(ctx, accountID, days)
+	}
+	return s.PgStore.SetAccountKeyGraceWindow(ctx, accountID, days)
+}
+
+func (s *Pg) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.DeploymentByID(ctx, id)
+	}
+	return s.PgStore.DeploymentByID(ctx, id)
 }
 
 func (s *Pg) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {

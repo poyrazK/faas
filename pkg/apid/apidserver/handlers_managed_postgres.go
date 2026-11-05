@@ -439,7 +439,18 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	database, err := s.managedPostgres.Create(r.Context(), managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec})
+	request := managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec}
+	var database managedpostgres.Database
+	if req.RequestID != "" {
+		id, parseErr := uuid.Parse(req.RequestID)
+		if parseErr != nil || id == uuid.Nil {
+			managedPostgresProblem(w, managedpostgres.ErrInvalid)
+			return
+		}
+		database, err = s.managedPostgres.CreateWithID(r.Context(), request, id.String())
+	} else {
+		database, err = s.managedPostgres.Create(r.Context(), request)
+	}
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -618,7 +629,7 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// A PR preview runs unreviewed code: a binding would hand it the
-	// database's credentials (ADR-20261103180000).
+	// database's credentials (ADR-20261105090226).
 	if state.IsPRPreviewApp(app) {
 		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("managed PostgreSQL bindings"))
 		return

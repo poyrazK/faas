@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestStandalonePRPreviewCallsOnlyItsPreviewSet covers ADR-20261103180000: a
+// TestStandalonePRPreviewCallsOnlyItsPreviewSet covers ADR-20261105090226: a
 // PR preview of an app bound without a project reaches the previews of its
 // own PR set by their production names and never a production app.
 func TestStandalonePRPreviewCallsOnlyItsPreviewSet(t *testing.T) {

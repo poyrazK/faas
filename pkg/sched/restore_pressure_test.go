@@ -195,8 +195,8 @@ func TestChooseRestorePlacementFallsBackToLocalCounts(t *testing.T) {
 	releaseFirst()
 	releaseSecond()
 	releaseThird()
-	if len(e.restorePlacementFallbackInFlight) != 0 {
-		t.Fatalf("fallback counts after release = %#v, want empty", e.restorePlacementFallbackInFlight)
+	if len(e.restorePlacementInFlight) != 0 || len(e.restorePlacementLeases) != 0 {
+		t.Fatalf("local counts after release = %#v %#v, want empty", e.restorePlacementInFlight, e.restorePlacementLeases)
 	}
 }
 
@@ -204,8 +204,12 @@ type unavailableRestorePressureStore struct {
 	state.Store
 }
 
-func (unavailableRestorePressureStore) AcquireSnapshotRestorePressure(context.Context) (state.SnapshotRestorePressureSession, error) {
-	return nil, errors.New("coordinator unavailable")
+func (unavailableRestorePressureStore) ActiveSnapshotRestoreCounts(context.Context, []string) (map[string]int, error) {
+	return nil, errors.New("restore pressure leases unavailable")
+}
+
+func (unavailableRestorePressureStore) ReserveSnapshotRestore(context.Context, string, string, time.Duration) (func(), error) {
+	return nil, errors.New("restore pressure leases unavailable")
 }
 
 func TestWakeBurstSpreadsSnapshotRestoresAfterWatermark(t *testing.T) {

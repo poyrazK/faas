@@ -104,7 +104,7 @@ func readTestConnections(ctx context.Context, client *http.Client, baseURL strin
 		return 0, "", errors.New("invalid connection observation URL")
 	}
 	if spec.As != "" {
-		token := keys[spec.As]
+		token := testHTTPConsumerKey(keys, spec.As)
 		if token == "" {
 			return 0, "", errors.New("connection observation consumer credential unavailable")
 		}
@@ -164,11 +164,12 @@ func monitorTestConnectionLeaks(ctx context.Context, baseURL string, env []strin
 		if ctx.Err() != nil {
 			return samples
 		}
+		finished := time.Now()
 		// A response spanning a transition is not attributed to either phase.
-		if clock.phaseAt(time.Now()) != phase {
+		if clock.phaseAt(finished) != phase {
 			continue
 		}
-		sample := testConnectionSample{At: started, Phase: phase, Active: count, Instance: id}
+		sample := testConnectionSample{At: finished, Phase: phase, Active: count, Instance: id}
 		if err != nil {
 			sample.Error = err.Error()
 		}
@@ -233,10 +234,11 @@ func checkTestConnectionsAfterDrain(ctx context.Context, baseURL string, env []s
 	var healthy time.Time
 	keys := testHTTPConsumerKeys(env)
 	for {
-		at := time.Now()
 		pollCtx, stop := context.WithTimeout(cleanupCtx, 250*time.Millisecond)
 		count, id, err := readTestConnections(pollCtx, client, baseURL, spec, keys)
 		stop()
+		// Health is observed when the response completes, after its HTTP latency.
+		at := time.Now()
 		e.Samples++
 		e.Remaining = count
 		if count > e.Peak {
@@ -255,13 +257,13 @@ func checkTestConnectionsAfterDrain(ctx context.Context, baseURL string, env []s
 		} else if healthy.IsZero() {
 			healthy = at
 		}
-		if !healthy.IsZero() && healthy.Sub(started) <= within && time.Since(healthy) >= sustain && e.Samples >= 3 {
+		if !healthy.IsZero() && healthy.Sub(started) <= within && at.Sub(healthy) >= sustain && e.Samples >= 3 {
 			e.Passed = true
 			ms := healthy.Sub(started).Milliseconds()
 			e.RecoveryMS = &ms
 			return e
 		}
-		if time.Since(started) > within && (healthy.IsZero() || healthy.Sub(started) > within) {
+		if at.Sub(started) > within && (healthy.IsZero() || healthy.Sub(started) > within) {
 			e.Error = "post-drain connections did not return to the initial baseline within the deadline"
 			return e
 		}

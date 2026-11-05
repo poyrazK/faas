@@ -7,6 +7,389 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP PR #6601 main integration — 2026-11-05 (branch, not released)
+
+The recovery branch integrates main through `8cc557447`. Operation receipts retain
+`gregale_get_plan`; original proposal review uses `gregale_get_saved_plan` with
+its original selectors and final guards. History helpers follow operate and
+release/diagnose toolsets; focused core discovery retains its existing boundary.
+The local read-only core fixture has 18 tools. Full-catalog fixtures have 76 local
+read tools, or 73 read/83 write-enabled tools for their remote grants; historical
+catalog counts below describe earlier branch snapshots.
+
+History/replay batches commit through both file and leased PostgreSQL backends,
+retain ordered OAuth updates and preserve headless recovery until history expiry.
+Rollback admission preserves monitor claims, reclaimed-artifact checks and the
+original attempt identity; database-restore requests cannot use request-rollback
+attempt headers. Shared SDK schema caches reuse only fixed tool contracts and
+input types across connections. Contract equivalence and concurrent reuse are
+covered by race tests, along with grant isolation and stale-snapshot refusal.
+
+The merged MCP race suite completed within five minutes after schema-cache
+wiring; its outdated local-catalog assertion was corrected and the affected
+journey rerun. Node/Python receipt transport checks and generation pass. Native
+handler/state race checks and invalid-index replay now pass. SQLC regeneration
+is clean. Pinned Codex revalidation passed all three profiles on `e973989d2`
+with zero model requests and zero native writes. Native handler/state race
+evidence above covers the integration through `ceec5d1bb`; GitHub CI validates
+the final combined head. CI identified a Go 1.23 test-context compatibility issue,
+client drift after main's bucket-retry metadata and missing capability mappings
+for service-abort receipts. Corrections pass Go SDK tests and full vet, Node
+build and seven transport tests, four Python receipt tests and the generated
+preview retry-metadata round trip. Capability coverage has zero unmatched
+entries. CLI revalidation and final GitHub CI remain pending.
+Portable fixtures do not qualify native/provider deployment execution.
+
+## Management MCP named service-abort outcomes — 2026-11-04 (branch, not released)
+
+Named service-abort recovery now preserves project/environment UUIDs in the native
+acceptance receipt and the existing MCP outcome workflow. Scoped reads reject
+replaced/deleted environments and moved apps; retained acceptance independently
+blocks replay. Fresh writes retain release-review and protection guards. Passive
+history, resources and prompts survive expiry/restart and preserve named rollout
+selectors. No catalog counts or migrations change.
+
+Memory/PostgreSQL and HTTP race checks pass, including concurrent duplicates,
+protected fresh intents, lost replies and environment replacement. Focused and
+full MCP race tests and all three pinned Codex profiles pass named recovery
+through restart, refresh and revocation, with zero model requests and zero native
+writes in the read-only fixtures. Go SDK tests, 781 Node transport/smoke tests,
+nine Node generator tests and four Python transport tests pass. SQLC regeneration
+is clean; Node/Python generation is deterministic. API, state, handler and MCP lint
+report zero issues. Spec/docs parity, typed-client coverage, migration, ADR, store,
+sealing and shared-runner gates pass. Version-skew checks preserve all proto and
+guest JSON keys against the feature baseline.
+
+Native/provider deployment qualification remains separate from portable fixtures.
+See [ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md).
+
+## Management MCP service-abort outcomes — 2026-11-04 (branch, not released)
+
+Reviewed default-scope service aborts now retain immutable acceptance evidence in
+native intent audit rows. An opaque attempt is saved before POST and cannot queue
+another handoff once accepted. Retained MCP history, resources and prompts discover
+read-only recovery after restart or expiry. Recovery returns the original native
+request ID and an exact rollout observation call; gateway ACK/drain completion and
+current health remain separate. Legacy attempted plans receive no new identity.
+Catalog counts remain 58 read/planning tools, 67 with writes, eight prompts and
+11 resource templates. A concurrent audit index is the only schema addition.
+
+Native memory/PostgreSQL and HTTP race tests pass, including concurrent
+attempts, audit-write rollback, lost replies, terminal retries and SDK UUID
+round trips. Full MCP race tests and all three pinned Codex recovery profiles
+pass through restart, refresh and revocation with zero model requests and zero
+native writes in those read-only profiles. Go SDK tests, Node build/transports,
+seven Python transport tests and deterministic Node/Python generation pass.
+Populated audit-index replay, duplicate rejection, interrupted-index refusal and
+cleanup/retry pass. API, state, HTTP-handler, MCP and shared-runner lint are green.
+Spec/docs parity, typed-client coverage, SQLC generation, version-skew, migration
+identity/collision, ADR, store and sealing gates pass.
+
+One existing cross-session subscription test hit its short deadline in the first
+full race run; it then passed ten isolated repeats and the unchanged full rerun.
+Native/provider deployment qualification remains separate from portable fixtures.
+See [ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
+
+## Management MCP request rollback outcomes — 2026-10-26 (branch, not released)
+
+Exact default-scope request rollbacks persist an opaque attempt before POST.
+The existing native operation ledger commits that identity and readiness work
+atomically; accepted attempts cannot execute twice, even after completion.
+The bridge verifies the original operation/pair and request fingerprint after
+restart or expiry, returning historical acceptance and an exact progress call.
+Passive history/prompts/resources discover recovery without native receipt reads
+or renewed authority. Service rollback/abort remain separate. No migration,
+new tool or quota is added.
+
+Full API/MCP race tests and pinned Codex acceptance pass. All three read-only
+Codex profiles follow expired recovery links through restart/refresh/revocation,
+verify acceptance and separately observe later failure, with zero model requests
+and zero native writes. Native memory/PostgreSQL races cover concurrent attempts,
+stale serving guards, insert-failure rollback, terminal retries, ownership and
+UUID spelling. The concurrency test exposed and verified a fix for transaction
+app reads borrowing a second pooled connection while holding the app lock.
+Real HTTP tests drop an accepted network reply, recover the operation, reject
+changed attempts and preserve existing worker/traffic guards. Go SDK tests,
+Node build/transport, Python transport and deterministic SDK regeneration pass.
+Spec/docs, typed coverage, test-store, seal-domain and ADR gates pass. API, MCP, state and HTTP-server lint pass. Native/provider
+execution qualification remains separate. See
+[ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
+
+## Management MCP promotion outcome recovery — 2026-10-25 (branch, not released)
+
+Explicit request promotion now has an independent durable native receipt,
+committed atomically with guarded traffic. The bridge persists its encrypted
+lookup before PATCH and offers `phase: promotion` recovery after plan expiry.
+History and passive recipes expose independent apply/promotion lookup calls.
+Recovered acceptance is historical; current traffic and health require separate
+observation. Legacy attempted plans never receive replacement identities, and
+all recovery reads retain current consent, immutable targets, retention and
+storage guards. Catalog remains 58 read/planning tools, 67 with writes, eight
+prompts and eleven templates. Migration: `20261025090000001`.
+
+Full MCP race tests and pinned Codex 0.159.0-alpha.3 acceptance pass, including
+both protocol versions, image/source lost replies, expired restart, independent
+phase links, malformed evidence, final read guards, retention and N-1 journal
+reconciliation. All three read-only Codex profiles follow a synthetic historical
+promotion receipt across restart/refresh/revocation with zero model requests and
+zero native writes. Native Mem/Pg race and real HTTP lost-network-reply tests
+pass, including concurrent attempts, serving/review refusals, atomic receipt
+failure rollback, later traffic changes and UUID representation normalization.
+Fresh migration application, populated replay, down/up and candidate purge pass.
+Go SDK, Node build/tests, Python transport/auth/diagnostics and receipt tests,
+and byte-identical Node/Python generation pass. MCP, API, state and HTTP-server
+lint pass. SQLC, spec/documentation, typed-client coverage, test-store,
+seal-domain, migration and ADR integrity gates pass. Portable fixtures do not
+qualify native/provider execution. See
+[ADR-20261105000512](adr/20261105000512-management-mcp-promotion-outcomes.md).
+
+## Management MCP deployment acceptance outcomes — 2026-10-24 (branch, not released)
+
+New image/source deployment and service/worker rollout attempts atomically save
+and send a stable native deployment-attempt ID. A minimal encrypted reference
+survives plan expiry, shares bounded history retention and is removed on grant
+revocation. Legacy attempted plans never receive a replacement identity. The
+existing outcome reader verifies native submission receipts and immutable scoped
+artifact identity, returns original apply acceptance plus an exact observation
+call, and preserves recorded history, expiry and uncertainty. Acceptance remains
+separate from completion, health, promotion and worker queue acknowledgement.
+History/prompts/resources expose the same read-only recovery after expiry.
+Catalog stays 58 read/planning tools, 67 with writes, eight prompts and eleven
+templates; native APIs/SDKs/schema/quotas are unchanged.
+
+Full MCP race tests pass, including both protocols, image/source request/service/
+worker cases, persistence before writes, retry after HTTP-cache loss, encrypted
+expired restart, named immutable identities, mismatched/missing evidence, final
+read guards, legacy non-backfill, format validation, pruning and grant isolation.
+Pinned real Codex 0.159.0-alpha.3 follows synthetic expired source-acceptance
+receipts and explicitly observes a failed deployment across restart/refresh and
+revocation in all three read-only profiles. Fixtures make zero model requests
+and native writes; native/provider deployment qualification remains separate.
+Native HTTP submission regressions, changed-package lint, spec/docs and
+test-store/seal-domain/ADR gates pass. See
+[ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
+## Management MCP outcome recovery discovery — 2026-10-24 (branch, not released)
+
+Eligible route-budget action rows include `recovery.outcome` and the existing
+resource/prompt links after plan expiry. Live recipes retain saved review/check
+calls and can add outcome/current-policy observation; unavailable-plan recipes
+contain only history/outcome/observation. Exact selectors, retained bindings and
+current consent are checked again before release. Discovery preserves history,
+expiry, uncertainty and replay boundaries, and performs no receipt/baseline reads.
+Catalog remains 58 read/planning tools, 67 with writes enabled, eight prompts and
+eleven templates.
+
+Full MCP race tests pass. Focused protocol/default/named tests follow discovered
+links after encrypted restart with writes disabled, distinguish historical receipt
+revision 1 from current policy revision 2, and verify no state writes or native
+replays. Guards cover reference/history/storage/consent/identity loss and no
+snapshot upgrades; missing or mismatched original plans still permit independent
+retained receipt recovery. Pinned real Codex 0.159.0-alpha.3 follows expired
+history/resource/outcome/observation links across restart/refresh in all three
+read-only profiles; revocation removes access. Those controls seed synthetic
+bridge history and native GET metadata with zero model requests/native writes;
+native/provider deployment qualification remains separate. MCP lint, spec/docs,
+test-store/seal-domain and ADR integrity gates pass.
+See [ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
+
+## Management MCP route-budget outcomes — 2026-10-24 (branch, not released)
+
+Read-only `gregale_get_action_outcome` verifies historical native policy receipts
+for retained route-budget attempts, including after original plan expiry. An
+atomic encrypted companion keeps only the request UUID, original fingerprint
+and history binding; no expired payload or write authority is reconstructed.
+Missing/mismatched evidence remains unresolved and cannot prove non-commit.
+Receipt reads preserve history, expiry, current revisions and native-completion
+uncertainty. Catalog: 58 read/planning tools, 67 with writes enabled, eight
+prompts and eleven resource templates. Go/Node/Python clients expose the new
+account/app/environment-scoped native receipt GET; no migration is needed.
+
+Full MCP race tests pass, including both protocols, encrypted expired-plan
+restart with writes disabled, later-policy edits, missing/mismatched receipts,
+legacy compatibility, retention pruning and final storage/identity/consent
+checks. Pinned real Codex 0.159.0-alpha.3 checks unattempted outcomes across
+restart/refresh in all three read-only profiles with zero model requests and
+native writes; positive receipt recovery uses native store and MCP fixtures.
+MemStore/PostgreSQL, native HTTP read-only/ownership, CLI and Go SDK tests pass;
+Node build/unit/smoke/generator tests and 70 Python tests pass. SQLC
+regeneration and SDK replay are clean. Affected core packages pass lint. Full
+Go SDK lint reports the same 56 findings as the exact baseline snapshot, all
+in unchanged files; this feature introduces none. Spec/docs, typed-client
+coverage and test-store/seal-domain gates pass.
+Native/provider deployment qualification remains separate. See
+[ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
+## Management MCP history recovery discovery — 2026-10-24 (branch, not released)
+
+Action list/detail rows advertise original-plan recovery resource, prompt and
+check calls. Final guards remove hints if availability expires or disappears
+during a read, preserving retained uncertainty/receipts and original cursors.
+Read-only discovery does not confer write authority or refresh native evidence.
+Catalog stays 57 read/planning tools, 66 with writes enabled, eight prompts and
+eleven templates. Full MCP race tests pass; final selector/discovery race tests
+and pinned real Codex 0.159.0-alpha.3 acceptance confirm following returned URIs
+and check calls across restart/refresh in all three read-only profiles. Native
+SDK clients also follow prompt links on both protocols, for default/named app
+and environment promotion/rollback plans. Tests cover in-flight expiry/removal/
+binding changes, retained ambiguity, unchanged encrypted state and no availability
+upgrades. Read fixtures make zero model requests and native writes. CLI contracts,
+affected-package lint, fake-store/seal-domain guards and spec/docs gates pass
+without generated drift. Native/provider qualification remains separate.
+See [ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
+## Management MCP saved-plan recovery resources — 2026-10-24 (branch, not released)
+
+Three canonical JSON resource templates expose the same fixed guarded recovery
+recipes as saved-plan prompts. No private proposal/replay/approval values, fresh
+baselines, mutations or expiry renewals are introduced. Current consent and
+original plan availability remain mandatory, including after restart. Catalog:
+57 read/planning tools, 66 with writes enabled, eight prompts and eleven resource
+templates. Full MCP race tests pass. Pinned real Codex 0.159.0-alpha.3 reads
+source, worker, budget and environment-promotion recipes and follows their saved
+review calls across restart/OAuth refresh in all three read-only profiles;
+post-revocation reads expose no contents. Fixtures make zero model requests and
+native writes. SDK tests cover all URI forms/both protocols, canonical parsing,
+non-enumerating completion, passive retrieval, encrypted restart, ambiguity,
+expiry, diagnostic/whole-project consent, final guards and HTTP grant isolation.
+CLI contracts, affected-package lint, fake-store/seal-domain guards and spec/docs
+gates pass without generated drift. Native/provider qualification remains
+separate.
+See [ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
+## Management MCP saved-plan recovery prompts — 2026-10-24 (branch, not released)
+
+Two prompts bind a read-only recovery recipe to original saved app/environment
+plan IDs. Final saved-plan guards protect consent, identities, storage, presence
+and expiry; prompt text contains fixed guidance and exact selectors without saved
+proposal prose or credentials. Ambiguous attempts preserve original requests;
+review does not apply, replan, renew expiry or start/poll approval. Catalog stays
+57 read/planning tools, 66 with writes enabled; prompts increase to eight.
+Full MCP race tests pass, including SDK retrieval on both protocols, HTTP grant
+isolation, encrypted restart, ambiguity, diagnostic consent and final expiry/
+identity/storage/presence checks. Passive-read tests verify retrieval fetches no
+fresh baselines, receipts or approvals and performs no native writes. Existing
+pinned Codex 0.159.0-alpha.3 tool/resource acceptance passes in all three profiles;
+its app-server API does not expose prompt-get. CLI contracts, affected-package
+lint, fake-store/seal-domain guards and spec/docs gates pass without generated
+drift. Native/provider deployment qualification remains separate.
+See [ADR-20261105000511](adr/20261105000511-management-mcp-saved-plan-recovery-prompts.md).
+
+## Management MCP plan drift details — 2026-10-24 (branch, not released)
+
+Applicability checks explain individual changed baselines through fixed safe
+metadata comparisons and value-free configuration/preview markers. Attempted
+plans retain original retries without comparing state their operation may have
+advanced. Catalog stays 57 read/planning tools, 66 with writes enabled. Full MCP
+race tests and pinned Codex 0.159.0-alpha.3 acceptance pass in all three read-only
+profiles, including safe drift on the same source plan across restart/refresh
+and unchanged saved proposals. Read fixtures make zero model requests and native
+writes. Targeted race tests cover combined changes, redaction, policy revision
+boundaries, invalid/unavailable evidence, consent loss, encrypted restart and
+original retries. CLI contracts, affected-package lint, fake-store/seal-domain
+guards and spec/docs checks pass with no generated drift. Native/provider
+deployment qualification remains separate.
+See [ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
+## Management MCP plan applicability — 2026-10-24 (branch, not released)
+
+Two read-only tools observe saved app/environment plan applicability under
+current consent. They compare first-attempt baselines, preserve original retries
+for ambiguous attempts and report approval/native uncertainty without renewing
+plans or starting approvals. Rollback coverage explicitly retains native guards.
+Catalog: 57 read/planning tools, 66 with writes enabled. Full MCP race tests and
+pinned real Codex 0.159.0-alpha.3 acceptance pass across ordinary and diagnostic
+denied/approved profiles, including original-plan checks after restart and OAuth
+refresh. Read-only fixtures made zero model requests and native writes. Targeted
+race tests cover changed configuration/policy/observations, unknown native reads,
+consent/expiry/storage guards and original retries after a committed lost response.
+CLI contracts, lint (both affected packages), fake-store/seal-domain guards and
+spec/documentation checks pass without generated drift. Native/provider deployment
+qualification remains separate.
+See [ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
+
+## Management MCP saved-plan review — 2026-10-23 (branch, not released)
+
+Read-only app/environment plan retrieval reopens original proposed changes,
+pinned revisions and expiry after action-history discovery or encrypted restart.
+Fixed projections omit private execution/approval material and environment-variable/secret
+values; final guards recheck consent, identity, storage, plan presence and expiry.
+Saved intent remains separate from current apply eligibility and human approval.
+Catalog: 55 read/planning tools, 64 with writes enabled. Full MCP race tests and
+pinned real Codex 0.159.0-alpha.3 acceptance pass, including unchanged source,
+worker, budget and environment reviews across restart/refresh/revocation in three
+read-only fixture profiles with zero model requests and native writes. Tests
+cover both protocols, stale baselines, expiry, credential/configuration redaction
+and consent/identity races. Stdio CLI contracts, scoped lint for both changed Go
+packages and the spec/documentation gate pass without generated drift.
+See [ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+Native/provider deployment qualification remains separate.
+
+## Management MCP route-budget action history — 2026-10-23 (branch, not released)
+
+App/environment action listing and detail now include reviewed budget overrides
+and inheritance resets, with recorded attempts, unknown outcomes and committed
+policy revisions. History excludes policy payloads and native request keys;
+explicit observation selects current budgets without claiming better performance.
+An additive journal shares atomic replay/history persistence and the 256-record
+connection bound. Catalog remains 53 read/planning tools, 62 with writes enabled.
+Full MCP race checks and pinned real Codex 0.159.0-alpha.3 acceptance pass,
+including the same budget plan across restart/refresh/revocation in three
+read-only client profiles with zero model requests and native writes. Recovery
+checks cover expiry, consent, both policy revision conflicts, malformed cached
+receipts and storage failures before/after native mutation. Scoped Go lint and
+the spec/documentation gate pass without generated drift. See
+[ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+Native/provider deployment qualification remains separate.
+
+## Management MCP environment action history — 2026-10-22 (branch, not released)
+
+Project/environment listing and detail now cover promotion/rollback plans,
+recorded human approval, ambiguous attempts and redacted promotion references.
+Reads recheck both immutable environments and whole-project workload consent;
+they do not poll approval or apply releases. All replay/history namespaces commit
+atomically and share the 256-record connection bound. Catalog: 53 read/planning
+tools, 62 with writes enabled. Full MCP race checks and pinned real Codex
+0.159.0-alpha.3 acceptance pass, including the same environment plan across
+restart/refresh/revocation in three read-only client profiles with zero model
+requests and deployment writes. Both changed Go packages pass lint; stdio CLI
+contracts and the spec/documentation gate pass without generated drift.
+See [ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
+Native/provider deployment qualification remains separate.
+
+## Management MCP workload action history — 2026-10-22 (branch, not released)
+
+Action listing/inspection now includes image/source service and worker rollouts
+and service aborts, with redacted exact generation/recovery references and explicit
+scoped rollout observation arguments. Accepted intent remains separate from
+native completion and queue processing. A companion namespace preserves N-1
+history readers while sharing atomic replay/history commits and the combined
+256-record bound. Catalog remains 51 read/planning tools, 60 with writes enabled.
+Full MCP race tests pass, including receipts, encrypted restart, lost-response
+recovery, expiry, named consent/identity changes, OAuth isolation and
+compatibility/capacity. Pinned real Codex 0.159.0-alpha.3 verifies the same worker
+plan across restart/refresh/revocation in all three read-only client profiles,
+with zero model requests and deployment writes. Scoped lint, stdio CLI contracts
+and the spec/documentation gate pass without generated drift.
+See [ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+Native/provider deployment qualification remains separate.
+
+## Management MCP action history — 2026-10-22 (branch, not released)
+
+The bridge adds read-only, connection-scoped action listing and inspection for
+deploy/rollback and regression-triage plans. Redacted history commits atomically
+with replay state, survives encrypted restart and retains expired metadata without
+restoring write authority. Catalog: 51 read/planning tools, 60 with writes enabled.
+Full MCP race tests and pinned Codex 0.159.0-alpha.3 restart/refresh/revocation
+acceptance pass, along with API tests and stdio CLI contracts. Read-only client
+fixtures make zero model requests and zero deployment writes. Scoped Go lint
+and the spec/documentation gate pass without generated drift. Implementation
+and recovery contracts are recorded in
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md).
+Native/provider deployment qualification remains separate.
+
+## Event substrate benchmark (V12) — 2026-10-22
+
 ## Managed PostgreSQL GA — 2026-10-31 (not released)
 
 [ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
@@ -28,8 +411,16 @@ Open evidence:
   [GA rollout](managed-postgres.md#ga-rollout)).
 - The compute and storage cap qualifications, the deletion hold check and the
   enforcement switches are operator steps in the same rollout.
-- Free and Hobby cannot restore: a restore is a second database and those
-  plans allow one.
+- Free and Hobby restore into the restore slot
+  ([ADR-20261031123259](adr/20261031123259-managed-postgres-restore-slot.md)):
+  one copy past the database limit until the slot ends. A rollback that
+  restores the database must fit inside the limit, so it needs room for a
+  second database.
+- A source with restore copies can be deleted, and work on existing
+  databases no longer stops when the production approval lapses or a
+  capacity setting changes
+  ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md),
+  not released).
 
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 
@@ -130,6 +521,17 @@ ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
   (`gregale cron run --wait`).
 - Deployment cron staging applies the cron API's path and timezone rules.
 - The dashboard refuses a disabled cron's manual run and names each refusal.
+
+Audit round 5, 2026-11-03 (branch `fix/crons-audit-round5`,
+ADR-20261026201726 amendment 2026-11-03 (2)):
+
+- A cron's schedule policy and failure rules can be removed
+  (`clear_schedule_policy`, `clear_failure_rules`, the matching CLI flags, and
+  Terraform when the configuration drops them).
+- On a preview app a compute budget holds, `gregale cron status` reports
+  `budget_held` and a manual run is refused (`402`) instead of waiting.
+- A disabled cron's manual run is refused (`409`); the scheduler no longer
+  lists disabled crons from PostgreSQL.
 
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
@@ -460,6 +862,21 @@ refuses one without it, and the public edge refuses these paths unless the
 local scheduler sent them (ADR-20261103090000). The same record has
 `validate` check bodies sent with `Connection: Upgrade`, and keeps requests
 with `X-API-Key` or `Proxy-Authorization` out of the shared cache.
+
+2026-11-03: a sixth review found that basic-auth passwords could be guessed
+at the edge's request rate, that the control plane's Caddy admitted every
+Cloudflare customer's zone (the origin-pull check was off and pointed at
+Cloudflare's shared CA), and that a platform site with no Cloudflare in front
+took the client's `CF-Connecting-IP`. Basic auth allows 10 wrong
+passwords per client prefix and app a minute and new passwords are 12+ bytes
+(H76, #6498); the
+public_edge role refuses to deploy a Cloudflare-admitting site without the
+zone's own origin-pull certificate (manifest `dns.origin_pull: required`,
+or knowingly `any_zone`); and a site with no Cloudflare
+in front uses the peer address (ADR-20261103172551). The next control-plane
+deploy needs `dns.origin_pull` set in the manifest, and for `required` the
+origin-pull CA installed first (docs/runbooks/EdgeDirectEntry.md, "The
+control plane's Caddy").
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

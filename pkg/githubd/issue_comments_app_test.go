@@ -11,7 +11,7 @@ import (
 )
 
 // TestUpsertIssueCommentIgnoresAnotherAppsBotComment covers
-// ADR-20261103180000: a pull request's workflow comments as
+// ADR-20261105090226: a pull request's workflow comments as
 // github-actions[bot], so a bot comment carrying the marker is adopted only
 // when GitHub attributes it to this App.
 func TestUpsertIssueCommentIgnoresAnotherAppsBotComment(t *testing.T) {

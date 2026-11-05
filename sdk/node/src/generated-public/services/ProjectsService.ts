@@ -9,6 +9,10 @@ import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectDeploymentCheckRequest } from '../models/ProjectDeploymentCheckRequest.js';
 import type { ProjectDeploymentReadiness } from '../models/ProjectDeploymentReadiness.js';
+import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
+import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
+import type { ProjectEnvironmentSharedSecretResponse } from '../models/ProjectEnvironmentSharedSecretResponse.js';
+import type { ProjectEnvironmentSharedSecretsResponse } from '../models/ProjectEnvironmentSharedSecretsResponse.js';
 import type { ProjectMigrationRecoveryRequest } from '../models/ProjectMigrationRecoveryRequest.js';
 import type { ProjectReleaseControlRequest } from '../models/ProjectReleaseControlRequest.js';
 import type { ProjectReleaseSecretStageRequest } from '../models/ProjectReleaseSecretStageRequest.js';
@@ -18,6 +22,8 @@ import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { ProjectSubmissionReceipt } from '../models/ProjectSubmissionReceipt.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
+import type { SetProjectEnvironmentSharedSecretRequest } from '../models/SetProjectEnvironmentSharedSecretRequest.js';
+import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
@@ -594,6 +600,316 @@ export class ProjectsService {
         'slug': slug,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the latest non-secret environment configuration.
+   * @returns ProjectEnvironmentConfigResponse Latest immutable configuration version, or the implicit empty configuration.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentConfig({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug owning the environment configuration.
+     */
+    slug: string,
+    /**
+     * Environment slug whose configuration is addressed.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentConfigResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/config',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Append a non-secret environment configuration version.
+   * Secret-shaped keys are rejected; sensitive values belong in the secrets surface.
+   * @returns ProjectEnvironmentConfigResponse Stored immutable configuration version.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentConfig({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the environment configuration.
+     */
+    slug: string,
+    /**
+     * Environment slug whose configuration is addressed.
+     */
+    environment: string,
+    requestBody: UpdateProjectEnvironmentConfigRequest,
+  }): CancelablePromise<ProjectEnvironmentConfigResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/config',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the secrets shared by every service of a project environment.
+   * Metadata only: key, version, sealing key id and value
+   * fingerprint. Values are write-only and never returned.
+   *
+   * @returns ProjectEnvironmentSharedSecretsResponse The environment's shared secrets and the plan's limit.
+   * @throws ApiError
+   */
+  public static listProjectEnvironmentSecrets({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug whose environment shares the listed secrets.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secrets are addressed.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentSharedSecretsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set a secret shared by every service of a project environment.
+   * Seals the value for the fleet and stores it once for the environment. Each service receives it at its next boot unless it sets
+   * the same key itself; services' snapshots in the environment are
+   * invalidated. Platform identity keys are rejected.
+   *
+   * @returns ProjectEnvironmentSharedSecretResponse The stored secret's metadata.
+   * @throws ApiError
+   */
+  public static setProjectEnvironmentSecret({
+    slug,
+    environment,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Project slug whose environment shares the secret.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secret is addressed.
+     */
+    environment: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+    requestBody: SetProjectEnvironmentSharedSecretRequest,
+  }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_project_secrets`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: secret_value_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a secret shared by a project environment.
+   * Services stop receiving it at their next boot.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProjectEnvironmentSecret({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project slug whose environment shares the secret.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secret is addressed.
+     */
+    environment: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the value of an existing shared secret.
+   * Like PUT, but an unknown key is 404 instead of being created.
+   * @returns ProjectEnvironmentSharedSecretResponse The rotated secret's metadata, with its new version.
+   * @throws ApiError
+   */
+  public static rotateProjectEnvironmentSecret({
+    slug,
+    environment,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Project slug whose environment shares the rotated secret.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secret is rotated.
+     */
+    environment: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+    requestBody: SetProjectEnvironmentSharedSecretRequest,
+  }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: secret_value_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare two environment configuration snapshots.
+   * @returns ProjectEnvironmentConfigDiffResponse Stable key-level configuration diff ordered by key.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentConfigDiff({
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Project slug whose environment configurations are compared.
+     */
+    slug: string,
+    /**
+     * Destination environment for the configuration comparison.
+     */
+    environment: string,
+    /**
+     * Baseline environment for the configuration snapshot comparison.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/config/diff',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

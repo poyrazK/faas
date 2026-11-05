@@ -14,6 +14,7 @@ import (
 // stay in the private destination receipt, never in catalog or HTTP metadata.
 type VerificationProgress struct {
 	Tables                            []string `json:",omitempty"`
+	ManualAttempt                     int64    `json:",omitempty"`
 	Restarts                          int
 	IntentID                          string
 	ID, State, Phase, Table, Reason   string
@@ -37,12 +38,7 @@ func verificationID(p Pipeline, relations []relation) (string, string) {
 	encoded, _ := json.Marshal(relations)
 	sum := sha256.Sum256(encoded)
 	spec := hex.EncodeToString(sum[:])
-	schema := ""
-	attempt := p.Revision
-	if p.SchemaChange != nil && p.SchemaApproval == p.SchemaChange.ID && p.SchemaChange.State != "complete" && p.SchemaChange.State != "withdrawn" {
-		schema = p.SchemaChange.ID
-		attempt = int64(p.SchemaChange.Retry)
-	}
+	schema, attempt := verificationAttempt(p)
 	encoded, _ = json.Marshal(struct {
 		Pipeline, Spec, Schema string
 		Generation, Attempt    int64
@@ -51,9 +47,19 @@ func verificationID(p Pipeline, relations []relation) (string, string) {
 	return hex.EncodeToString(sum[:]), spec
 }
 
+func verificationAttempt(p Pipeline) (string, int64) {
+	if p.SchemaChange != nil && p.SchemaApproval == p.SchemaChange.ID && p.SchemaChange.State != "complete" && p.SchemaChange.State != "withdrawn" {
+		return p.SchemaChange.ID, int64(p.SchemaChange.Retry)
+	}
+	if v := p.VerificationProgress; v != nil && v.ManualAttempt > 0 && v.ManualAttempt <= p.Revision {
+		return "", v.ManualAttempt
+	}
+	return "", p.Revision
+}
+
 func (s *Service) CancelVerification(ctx context.Context, account, id string, revision int64, run string) error {
-	if err := s.admit(ctx, account); err != nil {
-		return err
+	if s == nil || s.Store == nil || s.Allowed == nil || !s.Allowed(ctx, account) {
+		return ErrUnavailable
 	}
 	if !validID(account) || !validID(id) || revision < 1 || len(run) != 64 {
 		return ErrInvalid

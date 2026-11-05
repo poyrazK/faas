@@ -270,6 +270,9 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		return
 	}
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	if prob == nil {
+		prob = protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -508,6 +511,9 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	if prob == nil {
+		prob = protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

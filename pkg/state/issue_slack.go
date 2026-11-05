@@ -62,6 +62,7 @@ type IssueSlackStore interface {
 	RetryIssueSlackDelivery(context.Context, string, string, string) error
 	ClaimIssueSlackDelivery(context.Context) (IssueSlackClaim, bool, error)
 	IssueSlackDeliveryReady(context.Context, IssueSlackClaim) (bool, error)
+	BeginIssueSlackAttempt(context.Context, IssueSlackClaim) error
 	FinishIssueSlackDelivery(context.Context, IssueSlackClaim, IssueSlackResult) error
 	CleanupIssueSlackThreads(context.Context) error
 }

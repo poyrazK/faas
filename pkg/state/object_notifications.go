@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 )
 
 var (
@@ -44,6 +45,15 @@ func notificationTarget(r api.ObjectNotificationRule, b ObjectBucket) (api.Objec
 		return t, ErrObjectNotificationInvalid
 	}
 	return t, nil
+}
+
+// objectNotificationProducer is the producer a bucket's events carry: its
+// app, whose company bounds where they may go (ADR-20261025211616).
+func objectNotificationProducer(b ObjectBucket) string {
+	if b.AppID == "" {
+		return ""
+	}
+	return eventcontract.AppProducer(b.AppID)
 }
 
 func notificationEntitled(plan api.Plan, kind string) bool {

@@ -82,8 +82,12 @@ func (l *loginFailureLimiter) record(key string) bool {
 			l.sweepLocked(now)
 		}
 		if len(l.failures) >= api.LoginFailureEmailsTrackedMax {
-			// Keep counting the tracked addresses rather than forget them.
-			return false
+			// A full table used to stop tracking new addresses, so a
+			// botnet could fill it with random ones and then guess the
+			// victim's password limited only per IP. Make room by
+			// forgetting the address with the fewest failures instead:
+			// a targeted address outlasts the filler.
+			l.evictLocked()
 		}
 		f = &loginFailures{}
 		l.failures[key] = f
@@ -107,6 +111,28 @@ func (l *loginFailureLimiter) reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.failures, key)
+}
+
+// evictLocked forgets the tracked address with the fewest failures (oldest
+// last failure on a tie) among a random sample of the table. Go randomizes
+// map iteration, so the sample costs a bounded amount per new address.
+func (l *loginFailureLimiter) evictLocked() {
+	var victim string
+	var fewest *loginFailures
+	seen := 0
+	for key, f := range l.failures {
+		if fewest == nil || len(f.at) < len(fewest.at) ||
+			len(f.at) == len(fewest.at) && len(f.at) > 0 && f.at[len(f.at)-1].Before(fewest.at[len(fewest.at)-1]) {
+			victim, fewest = key, f
+		}
+		seen++
+		if seen >= api.LoginFailureEvictionSample {
+			break
+		}
+	}
+	if fewest != nil {
+		delete(l.failures, victim)
+	}
 }
 
 func (l *loginFailureLimiter) sweepLocked(now time.Time) {

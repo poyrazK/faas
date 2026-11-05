@@ -36,6 +36,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/clientlimit"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -109,6 +110,9 @@ type edgeMetrics struct {
 	// tlsHandshakeFailures counts connections the public TLS listener
 	// refused during the handshake (ADR-20261102081618).
 	tlsHandshakeFailures prometheus.Counter
+	// refused counts connections and requests the per-client-address
+	// limits turned away, by reason (ADR-20261103163954 §4).
+	refused *prometheus.CounterVec
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -142,6 +146,13 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_tls_handshake_failures_total",
 			Help: "Connections a compute edge's public TLS listener refused during the handshake, such as a peer without the zone's Authenticated Origin Pulls certificate (ADR-20261102081618).",
 		}),
+		refused: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_refused_total",
+			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate and host_request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4).",
+		}, []string{"reason"}),
+	}
+	for _, reason := range clientlimit.Reasons {
+		m.refused.WithLabelValues(reason)
 	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
@@ -151,7 +162,7 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused)
 	return m
 }
 
@@ -512,12 +523,12 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 // next: upload routes and their receipts are forwarded; public bucket reads
 // go to localReads when the edge serves them itself and are forwarded
 // otherwise; everything else goes to next.
-func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, hostLookups *objectstorage.HostLookupBudget, tenantSurfaces func() bool, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
 	publicRead := localReads
 	if publicRead == nil {
 		var err error
 		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-			Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+			Store: store, HostLookups: hostLookups, TenantSurfacesEnabled: tenantSurfaces, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
 		})
 		if err != nil {
 			return nil, err

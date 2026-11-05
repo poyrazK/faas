@@ -1657,6 +1657,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
 | `<daemon>_grpc_client_calls_without_deadline_total{method}` rate | 0 | none — every labelled method is a call site still relying on `FAAS_GRPC_DEFAULT_DEADLINE` (ADR-190 §1); fix the site, not the alert |
 | `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
+| `gateway_route_lookup_unknown_host_total{outcome}` rate | `shed` 0 | none yet (ADR-20261103163954 §4 — host lookups answered without a store read: `remembered_miss` is a 404 from a recent answer that the host routes nowhere, normal for scanners and typos; `shed` is a 503 because the gateway spent its budget of reads for hosts it has never seen route, `GatewayNewHostLookupsPerSecond` in `pkg/api/limits.go`, and means a flood of names that route nowhere. Every app slug and verified non-wildcard custom domain is preloaded (`KnownRouteHosts*`, refreshed each minute) and never spends the budget, so a shed request is for a name no app holds, or a wildcard, environment or preview host.) |
+| `gatewayd_public_object_host_lookups_shed_total` rate | 0 | none yet (ADR-20261103163954 §4 — the public-read matcher, which runs in front of every GET and HEAD on an edge before the gateway, refused a host lookup with 503 because the edge spent its budget of store reads for hostnames it has never seen name an app, `PublicReadNewHostLookupsPerSecond` in `pkg/api/limits.go`; a non-zero rate means a flood of names that name no app. Every app slug and verified non-wildcard custom domain is preloaded (`KnownRouteHosts*`, refreshed each minute) and never spends the budget, so a shed request is for a name no app holds, or a wildcard, environment or preview host.) |
 | `gateway_route_metrics_rejected_total` rate | 0 | > 0 sustained 15 m warn via `GatewayRouteMetricsBudgetExhausted` (ADR-20261024154324 — the gateway holds `gateway_route_metrics_budget_routes` live (app, route) pairs and declines new per-route series; `gateway_route_metrics_routes` and `gateway_route_metrics_evictions_total` are the live count and idle-app evictions) |
 | `apid_route_insights_last_success_timestamp_seconds` gauge | within the 6 h interval | no successful run in 13 h, warn via `FaasRouteInsightsStalled`; `apid_route_insights_runs_total{outcome}` / `apid_route_insights_apps_total{outcome}` failures warn via `FaasRouteInsightsFailing` (ADR-20261024154324) |
 | `apid_route_monitor_lag_seconds` gauge | < 60 s | > 300 s for 10 m warn via `FaasRouteMonitorLagging` (ADR-20261024154324 — production route monitors are overdue, so budget incidents and opt-in rollbacks are late) |
@@ -3117,3 +3119,278 @@ settling historical handoffs, preserve journals and receipts, and qualify native
 migration/process-death/leak behavior before deployment. See
 [ADR-1530](adr/1530-durable-migration-source-retirement.md) and the
 [source retirement guide](ops/migration-source-retirement.md).
+
+## Management MCP action history (ADR-20261022161757)
+
+The management bridge exposes read-only, connection-local listing and inspection
+of reviewed deploy/rollback, service/worker rollout, service abort, route-budget and
+regression-triage attempts and redacted receipts.
+History and replay payloads commit in the same encrypted, fsynced snapshot before
+native mutation and after its receipt. Acceptance is distinct from completion;
+uncertain outcomes remain unknown until an existing guarded retry recovers a
+receipt. Metadata never recreates or extends an expired plan's write authority.
+
+History retains at most 256 records per connection through 24 hours after the
+original plan expiry, prioritizing active supported plans. Pages contain 1–50
+records (default 20) with context-bound keyset continuation; cursor input is at
+most 1024 bytes. Current account/app/environment identities are checked before
+and after reads, with separate diagnostic consent for regression records. OAuth
+refresh preserves a grant's history; revocation removes it. Coverage is bounded
+and connection-local, not a complete account audit trail. See
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
+[MCP recovery](mcp.md#recover-reviewed-actions).
+
+Workload history includes reviewed mode and exact deployment/pair references,
+accepted reverse-handoff request IDs and native handoff generations when supplied.
+Explicit observation arguments select the existing scoped rollout tool; history
+does not observe completion or infer worker queue processing. A companion journal
+namespace preserves N-1 readers, sharing the same atomic commit and combined
+256-record bound. See
+[ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+
+Project/environment action history also covers promotions and rollbacks through
+separate read-only listing/detail tools. Current consent must cover source and
+target identities and every project workload. Recorded human approval pending,
+native outcome unknown and accepted references remain separate; credentials,
+review links and workload payloads are excluded. All replay/history namespaces
+commit atomically and share the 256-record bound. Reads never approve, apply or
+observe native completion. See
+[ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
+
+Route-budget history extends the app/environment listing and detail with reviewed
+overrides and inheritance resets. Redacted metadata binds both policy revisions;
+validated committed receipts expose the resulting revision and source, including
+zero parent revisions. Same-plan retry retains native CAS/idempotency and current
+consent/expiry guards. Exact observation arguments select current policy without
+claiming improved performance or completed windows. An additive budget journal
+shares atomic persistence, retention, the connection bound and OAuth cleanup;
+no native API, schema or catalog count changes. See
+[ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+
+
+## Management MCP named service-abort outcomes (ADR-20261104173000)
+
+Exact reviewed service aborts in named environments use the same opaque attempt
+and immutable audit receipt as default-scope aborts. Named evidence includes the
+original project/environment UUIDs. Fresh intents still require the current full
+release review and unprotected environment admission. Receipt reads require the
+retained app/candidate and current matching project/environment identities; a
+same-slug replacement or project move cannot retarget historical evidence. A
+protection change alone does not erase acceptance. Duplicate-attempt detection
+uses the retained audit acceptance independently of mutable environment identity,
+so unavailable scoped evidence cannot permit reexecution of accepted intent.
+
+The existing MCP action-outcome tool, history, resources and prompt preserve the
+original named selectors through restart/expiry, with writes disabled. Read
+consent and immutable identities are rechecked before release. The rollout
+observation call includes the project/environment; acceptance remains separate
+from gateway ACK, drain and completion. Legacy attempted plans gain no identity.
+No new migration, tool, prompt, template or quota is needed. Service rollback
+outcome recovery remains separate. See
+[ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md).
+
+## Management MCP service-abort outcomes (ADR-20261104144000)
+
+Exact reviewed default-scope service aborts accept a stable opaque
+`Service-Abort-Attempt-ID`. The existing intent audit row atomically records the
+original request fingerprint, exact app/candidate/predecessor and native reverse
+handoff request ID. A concurrent unique audit index and the ordinary route/app
+locks prevent accepted attempts from queuing a second handoff. Accepted and
+conflicting repeats are distinguished before mutable review checks. Fresh intents
+retain all existing admission guards. Owned deployment-read lookup returns only
+retained evidence, independently of current traffic or handoff changes.
+
+The bridge atomically saves the encrypted lookup before POST. The default apply
+outcome verifies acceptance after expiry/restart, including with writes disabled,
+and returns the exact rollout observation call. Compare the recovered request ID
+with current handoff evidence; acceptance does not prove gateway ACK, request drain
+or completion. History/resources/prompts offer passive discovery without renewed
+write authority. Legacy attempted plans are never backfilled. Missing evidence
+remains unresolved. Retention, consent, immutable identities and storage are
+rechecked before release. No MCP tools or quotas are added. Named service aborts are extended by
+ADR-20261104173000 above; service rollback remains separate. See
+[ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
+
+## Management MCP request rollback outcomes (ADR-20261105000513)
+
+An exact default-scope manual request rollback may carry a 32-character lowercase
+hexadecimal `Rollback-Attempt-ID`; its UUID representation identifies the existing
+checked operation. Both stores atomically bind acceptance and readiness work
+under the app lock. Accepted attempts, including terminal ones, cannot execute
+again; changed pairs or reasons conflict. Serving, release, artifact, contract
+and binding gates remain required. Implicit selection, alert attribution, release
+acknowledgement and service/worker attempts do not use this contract.
+
+The bridge persists the original attempt and encrypted bounded lookup before
+POST. The default apply outcome reader validates the original app/scope, exact
+operation/pair, request fingerprint and creation evidence after restart/expiry.
+It returns redacted historical acceptance and an exact rollback progress call.
+Current traffic/health and completion require separate reads. Passive history
+and recipes discover the lookup without fetching receipts. Legacy attempted
+plans receive no new identity; missing evidence stays unresolved. Retention,
+storage, immutable identity and read consent are rechecked before release.
+Recovery never rewrites history, renews expiry or replays a mutation. The existing
+ledger/API are reused; no migration, new tool or quota is added. See
+[ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
+
+## Management MCP request promotion outcomes (ADR-20261105000512)
+
+New guarded request promotions persist a stable opaque identity before PATCH.
+Native Mem/Pg stores commit an immutable receipt and traffic atomically, preserving
+serving/review/admission gates and preventing an accepted attempt from moving
+traffic twice. Owned deployment-read lookup binds the original candidate,
+request hash, serving guard and immutable named target. Receipt absence never
+establishes non-commit. Schema expansion is additive; receipts end with retained
+app/candidate lifetime and require current named environment identity.
+
+The existing MCP outcome reader accepts optional `phase=apply|promotion`, with
+apply as default. A separate encrypted promotion reference survives plan expiry,
+shares bounded history retention and OAuth purge, and is preserved by N-1 readers.
+Legacy attempted plans receive no new identity. History/prompts/resources offer
+separate exact apply/promotion outcome calls without fetching receipts. Final
+read guards recheck consent, immutable ownership/target, retention, references
+and storage. Verified promotion proves historical acceptance only; current
+traffic and health need separate observation. No recovery read mutates history,
+replays writes or renews authority. Recovery helpers follow the selected toolsets
+and current grant; writes retain their existing authorization. No quota changes.
+See [ADR-20261105000512](adr/20261105000512-management-mcp-promotion-outcomes.md).
+
+## Management MCP deployment submission outcomes (ADR-20261024234500)
+
+New MCP deployment and service/worker rollout apply attempts atomically persist
+an opaque native deployment-attempt ID before submitting image or exact-commit
+source writes. A bounded encrypted companion retains only that ID, artifact
+fingerprint and immutable history binding after expiry. Original HTTP keys and
+native guards remain; previously attempted legacy plans are never assigned new
+native identities. The existing outcome tool verifies native acceptance receipts
+and deployment scope/provenance, returns only original apply acceptance plus an
+exact observation call, and keeps completion/health/promotion/queue evidence
+separate. History and recovery recipes expose this read-only path after expiry;
+missing or mismatched evidence remains unresolved. No expiry renewal, replay,
+history upgrade, catalog/SDK/native API/schema/quota/migration changes.
+See [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
+## Management MCP outcome recovery discovery (ADR-20261024223000)
+
+Eligible attempted route-budget history advertises an exact `recovery.outcome`
+call and the existing prompt/resource links after original plan expiry. Live
+recipes retain review/check calls and can add outcome/current-policy observation;
+expired recipes contain only history/outcome/observation. Current consent,
+immutable targets, retained history, storage and lookup bindings are checked
+again before release. Discovery fetches no receipts or fresh baselines, never
+upgrades an initially unavailable hint, and preserves recorded uncertainty and
+original expiry. Verified receipts describe historical intent; current policy
+can differ and missing evidence never proves non-commit. Catalog, native APIs,
+SDKs, encrypted formats, retention, quotas and migrations remain unchanged.
+See [ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
+
+## Management MCP route-budget outcome lookup (ADR-20261024210000)
+
+Read-only `gregale_get_action_outcome` verifies the original native route-budget
+receipt against an encrypted minimal request UUID/fingerprint/history binding.
+It remains available after original plan expiry while action history is retained.
+The native scoped receipt GET returns immutable identities and original revision
+metadata without policy configuration. Receipt absence, unavailability or mismatch
+remains unresolved and cannot prove non-commit. No read replays writes, renews
+expiry or upgrades recorded history; historical intent is separate from current
+configuration and runtime completion. Current consent/ownership and identities
+are rechecked before release. Catalog discovery follows selected toolsets and the
+current grant. No new migration or quota.
+See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
+## Management MCP history recovery discovery (ADR-20261024180000)
+
+Available original app/environment action rows add exact recovery resource,
+prompt and applicability-check links, preserving the existing review call.
+Require complete original plan/target bindings. Final history guards recheck
+storage and availability after identity/consent reads, removing hints if a plan
+expired, disappeared or lost its binding while retaining historical uncertainty,
+receipts, ordering and pagination. Initially unavailable snapshots never gain
+hints during that read. No discovery hint grants authority, extends expiry,
+persists state, polls approval or refreshes a native baseline. Followed calls
+retain their independent guards; checks concern original apply rather than later
+request promotion. Catalog stays 57 read/planning tools, 66 with writes enabled,
+eight prompts and eleven templates. See
+[ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
+## Management MCP saved-plan recovery resources (ADR-20261024160000)
+
+Default/named app and environment-plan resource templates expose the existing
+read-only recovery recipe as bounded JSON. Strict canonical URI/selector checks
+and final saved-plan identity, consent, diagnostic, storage, presence and expiry
+guards remain mandatory. Reuse fixed prompt guidance and structured calls;
+exclude saved prose, native/private configuration/approval material and replay
+keys. Availability does not check freshness or native completion, and reads do
+not plan, mutate, poll approval, persist or renew expiry. Cached recipes grant no
+authority. Completion never enumerates plan IDs; recipes have no subscriptions.
+Catalog: 57 read/planning tools, 66 with writes enabled, eight prompts and eleven
+resource templates. Pinned Codex uses resource-read for recipe retrieval and
+existing tools for subsequent guarded reads. See
+[ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
+## Management MCP saved-plan recovery prompts (ADR-20261105000511)
+
+`gregale_saved_plan_review` and `gregale_environment_plan_review` return fixed
+read-only recovery guidance and JSON history/review/check calls bound to original
+plan IDs and selectors. Verify current read/diagnostic consent, immutable target
+identities, both environments and whole-project access for environment plans,
+storage, original plan presence and expiry before releasing output. Exclude saved
+prose, configuration/preview/approval values and replay material. Preserve ambiguous
+original retries; explain stale unattempted intent before separately requested
+replanning. Retrieval performs no freshness/receipt/native-completion reads,
+mutation, approval action, persistence or expiry renewal. Plan-ID completion does
+not enumerate IDs. Catalog stays 57 read/planning tools, 66 with writes enabled;
+prompts increase to eight, with eight resource templates. Native MCP SDK clients
+qualify retrieval on both protocols; the pinned Codex app-server API lacks a
+prompt-get RPC. See
+[ADR-20261105000511](adr/20261105000511-management-mcp-saved-plan-recovery-prompts.md).
+
+## Management MCP plan drift details (ADR-20261024123000)
+
+Existing plan applicability tools add a fixed-field `drift` projection of changed
+first-attempt baselines. Scoped release IDs, policy revisions and validated
+regression observation versions expose expected/current primitive metadata.
+Configuration, identity mismatch and preview-baseline changes use value-free
+markers; credentials, preview hashes/tokens, configuration values and raw native
+objects are excluded. Promotion eligibility/config-sync and rollback/running
+changes use boolean comparisons. Unverified reads produce no invented
+comparisons. Attempted/receipted plans skip drift and preserve original
+requests. Final consent, identity, storage, presence and expiry guards remain in
+force, with no persistence, renewal, mutation or approval polling. Catalog stays
+57 read/planning tools, 66 with writes enabled. See
+[ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
+## Management MCP plan applicability (ADR-20261024120000)
+
+Read-only `gregale_check_plan` and `gregale_check_environment_plan` observe
+original unexpired plan applicability under current target/diagnostic consent.
+They report advisory coverage, blockers or unknown native state without creating
+plans, modifying expiry/state, resolving source refs, executing mutations or
+starting/polling approvals. First attempts compare pinned release/configuration,
+budget revisions or regression observations; environment rollback coverage remains
+partial and native transaction guards remain authoritative. Ambiguous attempts
+skip baseline comparisons and preserve the original request for guarded retry;
+receipts do not prove native completion. Current write consent/enablement and
+original expiry still apply. Final saved-review guards withhold output on changed
+identity, read consent, storage, plan presence or expiry. Catalog: 57 read/planning
+tools, 66 with writes enabled. See
+[ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
+
+## Management MCP saved-plan review (ADR-20261023184309)
+
+Read-only app and environment plan retrieval reopens an original unexpired
+connection-local proposal after history discovery or encrypted restart. Fixed
+projections expose intended changes and pinned revisions while excluding native
+retry and approval credentials, environment-variable and secret values. Current
+identity/consent checks include both environments and all project workloads for
+environment plans, and diagnostic consent for regression plans. Final guards
+recheck presence, expiry and storage availability before releasing the review.
+
+A saved review explicitly leaves current apply eligibility and native completion
+unobserved. Retrieval never replans, refreshes evidence, polls approval, writes
+state or renews expiry. Expired private payloads remain unavailable; original
+mutation guards retain CAS, consent and human approval. Saved original-proposal
+review uses `gregale_get_saved_plan`; operation receipts retain `gregale_get_plan`.
+Existing storage formats, limits and
+native APIs are unchanged. See
+[ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).

@@ -387,7 +387,7 @@ code and is torn down with its pull request. Give previews test credentials in
 the production app's `pr-preview` scope instead. Teardown deletes the buckets
 and removes the database bindings a preview was given before this rule; the
 databases themselves are kept
-([ADR-20261103180000](adr/20261103180000-previews-without-a-project-stay-in-their-set.md)).
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
 
 Apps bound to a repository without a project are previewed together, one
 preview set per pull request. A preview in such a set calls the other apps of

@@ -24,11 +24,11 @@ covered. Update this table when a journey or a GA row changes.
 | 40 | Firecracker isolation | `TestGuestGuarantees` (egress denylist, RNG and clock after restore) | jailer/cgroup internals (metal tests) |
 | 41 | Function runtimes | `TestTemplateDeploys` (Node 22/24, Python 3.12/3.13, Go, Rust) | alpine Go variant |
 | 42 | Manual park / wake, prewarm | `TestScaleToZero` (park, wake --wait) | prewarm (no CLI command) |
-| 43 | Autoscaling and min instances | `TestScaleToZero/min_instances`, `TestResourcesAndAutoscaling` (target RPS/CPU, max instances) | scheduled scaling; scale-out under load |
+| 43 | Autoscaling and min instances | `TestScaleToZero/min_instances`, `TestResourcesAndAutoscaling` (target RPS/CPU, max instances), `TestRecoverableScaling` (guarded CLI writes, recovery after a later revision, stale refusal, public probe) | scheduled scaling; scale-out under load |
 | 44 | Service wake-ahead | `TestMultiServiceProject/wake_ahead_on_by_default` | that a caller's cold wake restores its dependencies (not observable from outside) |
 | 46 | Instances: list, restart | `TestScaleToZero` (ps, fresh restart) | — |
 | 47 | Health probes and auto-restart | `TestHealthGate`, `TestDeployOverrides` (health path) | liveness restarts, restart policy, stop signal |
-| 49 | Resource sizing | `TestResourcesAndAutoscaling` (RAM, CPU, effective limits) | scratch disk, disk I/O profile, workload classes |
+| 49 | Resource sizing | `TestResourcesAndAutoscaling` (RAM, CPU, effective limits), `TestRecoverableScaling` (durable scaling receipts) | scratch disk, disk I/O profile, workload classes |
 | 60 | Env vars | `TestEnvLifecycle` (push, deliver, pull, diff, history, rollback), `TestSecrets/env_history` | environment clone (preview projects) |
 | 61 | Secrets | `TestSecrets`, `TestDockerfileTarballAndSecretReload` (hot reload without restart, ACK, revocation) | secret references (project environments) |
 | 63 | Custom domains with managed TLS | `TestCustomDomainBinding` (add, pending, records, remove) | DNS verification, TLS issuance, serving (no test DNS zone). On 2026-10-27 production refused `domains add` ("not available on this Gregale installation"), so the step is a known failure |

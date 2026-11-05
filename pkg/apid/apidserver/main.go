@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/background"
 	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
 	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
@@ -31,6 +32,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -261,6 +263,14 @@ func realtimeChannelRoutingEnabledFromEnv(getenv func(string) string) bool {
 // gate. schedd's FAAS_APP_TASK_DISPATCH remains a second required opt-in.
 func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
+}
+
+// releasePhaseEnabledFromEnv reads the switch imaged reads to run release
+// commands, so apid refuses them at submit and stops advertising them while
+// it is off. It parses the value as imaged does; anything else is off.
+func releasePhaseEnabledFromEnv(getenv func(string) string) bool {
+	enabled, err := strconv.ParseBool(strings.TrimSpace(getenv("FAAS_RELEASE_PHASE_ENABLED")))
+	return err == nil && enabled
 }
 
 // appForksEnabledFromEnv is the fail-closed operator gate for production
@@ -545,6 +555,8 @@ type runDeps struct {
 	// is nil (the cfg.NodeName == "" production path AND the
 	// pre-PR-B test paths). nil in production before run() sets it.
 	pool *pgxpool.Pool
+	// backgroundPool carries the background loops' queries; nil in tests.
+	backgroundPool *pgxpool.Pool
 	// PR-B (issue #678 / ADR-056): preLoadedNodeVerifier lets tests
 	// inject a stub wire.NodeVerifier without booting Postgres or
 	// wiring a real PGNodeLoader. nil in production (the
@@ -758,6 +770,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		closePool()
 		return fmt.Errorf("apid: migrate: %w", err)
 	}
+	// Background loops get their own pool (state.WithBackgroundWork), so they
+	// cannot take every connection a request needs (Hunt 31).
+	backgroundPool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid-background")
+	if err != nil {
+		closePool()
+		return fmt.Errorf("apid: open background db: %w", err)
+	}
+	closePrimaryPool := closePool
+	closePool = func() { closePrimaryPool(); backgroundPool.Close() }
 
 	// Issue #249 / spec §11: gate Strict-Transport-Security on
 	// FAAS_HSTS_ENABLED. Default true; dev mode can flip to false.
@@ -777,7 +798,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	deps.store = func() state.Store {
 		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)),
-			state.WithTrafficScopedBindingGuard(scopedBinding))
+			state.WithTrafficScopedBindingGuard(scopedBinding), state.WithBackgroundPool(backgroundPool))
 	}
 	// The first start of a release that knows the object storage timeline
 	// fence accepts the database's current timeline, so every later backup
@@ -814,64 +835,70 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// build runDeps directly without a real pool — the verifier
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
+	deps.backgroundPool = backgroundPool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
-		go srv.runCronActivationWorker(ctx)
-		go srv.runEventSubscriptionActivationWorker(ctx)
-		go srv.runSafeProjectReleaseWorker(ctx)
-		go srv.runPromotionHealthWorker(ctx)
-		go srv.runMailOutbox(ctx)
-		go srv.runHostingReconciler(ctx)
-		go srv.runSafeReleaseEmergencyAbort(ctx)
-		go srv.runServiceRolloutBindingWorker(ctx)
-		go srv.runCheckedRollbackWorker(ctx)
-		go srv.runAlertRollbackWorker(ctx)
-		go srv.runRollbackOn5xxWorker(ctx)
-		go srv.runConfigGuardWorker(ctx)
-		go srv.runPostReleaseWatchWorker(ctx)
-		go srv.runScheduledReleaseWorker(ctx)
-		go srv.runDatabaseSwitchWorker(ctx)
-		go srv.plainRollbacks().Run(ctx)
-		go srv.operation.RunOperationArtifactCleanup(ctx)
-		go srv.operation.RunScheduleFirer(ctx)
-		go srv.operation.RunOperationQueueReleaser(ctx)
-		go srv.operation.RunChildSettlementSignals(ctx)
-		go srv.object.RunObjectStorageRecovery(ctx)
-		go srv.object.RunObjectStorageAccounting(ctx)
-		go srv.object.RunObjectStorageUsageExports(ctx, os.Getenv)
-		go srv.runManagedPostgresReconciler(ctx)
-		go srv.runManagedPostgresBindingReconciler(ctx)
-		go srv.runProjectEnvironmentCleanupReconciler(ctx)
-		go srv.runProjectEnvironmentCloneCoordinator(ctx)
-		go srv.runManagedPostgresUsageCollector(ctx)
-		go srv.runManagedPostgresHealthCollector(ctx)
-		go srv.runManagedPostgresSQLProber(ctx)
-		go srv.runAppHealthCollector(ctx)
-		go srv.runEdgeCrawlerRangesRefresher(ctx)
-		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
+		// Everything started here is background work and runs on its own
+		// pool; the loops below start staggered so they do not tick together.
+		ctx = state.WithBackgroundWork(ctx)
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runCronActivationWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEventSubscriptionActivationWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runSafeProjectReleaseWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runPromotionHealthWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runMailOutbox(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runHostingReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runSafeReleaseEmergencyAbort(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runServiceRolloutBindingWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runCheckedRollbackWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runAlertRollbackWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runRollbackOn5xxWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runConfigGuardWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runPostReleaseWatchWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runScheduledReleaseWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runDatabaseSwitchWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.plainRollbacks().Run(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunOperationArtifactCleanup(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunScheduleFirer(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunOperationQueueReleaser(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunChildSettlementSignals(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageRecovery(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageAccounting(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageUsageExports(ctx, os.Getenv) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresBindingReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCleanupReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCloneCoordinator(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEdgeCrawlerRangesRefresher(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() {
+			mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
+		})
 		readinessMonitor := &mcpreadiness.MonitorRunner{Handler: mcpreadiness.New(srv.store, srv.mcpReadinessPreview, nil), Identities: hostIdentitiesForUnseal, Log: log}
-		go readinessMonitor.Run(ctx)
-		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
-		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
-		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)
-		go srv.realtime.RunManagedRealtimeHistoryReaper(ctx)
-		go srv.realtime.RunManagedRealtimeEntityExpirations(ctx)
-		go srv.realtime.RunManagedRealtimeSchedules(ctx)
-		go srv.runAgentRunCallbacks(ctx)
-		go srv.realtime.RunRealtimeConsumerGroupAlerts(ctx)
-		go srv.realtime.RunRealtimeConsumerGroupDeadRetention(ctx)
-		go srv.realtime.RunRealtimeReplayJobs(ctx)
-		go srv.realtime.RunRealtimeConsumerGroupWorkerHealth(ctx)
+		go background.Staggered(ctx, background.StartSpread, func() { readinessMonitor.Run(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeEndpointReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeOwnerReaper(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeHistoryReaper(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeEntityExpirations(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeSchedules(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runAgentRunCallbacks(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunRealtimeConsumerGroupAlerts(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunRealtimeConsumerGroupDeadRetention(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunRealtimeReplayJobs(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunRealtimeConsumerGroupWorkerHealth(ctx) })
 
-		go srv.realtime.RunManagedRealtimeFallbacks(ctx)
-		go srv.realtime.RunManagedRealtimePush(ctx)
-		go srv.realtime.RunManagedRealtimeDrainWorker(ctx)
-		go srv.runManagedExecutionWorkflowWorker(ctx)
-		go srv.durable.RunAlarms(ctx)
-		go srv.durable.RunDurableEntityRegistryCleanup(ctx)
-		go srv.durable.RunOutbox(ctx)
-		go srv.durable.RunMaintenance(ctx)
-		go srv.durable.RunHealth(ctx)
-		go srv.durable.RunBackups(ctx)
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeFallbacks(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimePush(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeDrainWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedExecutionWorkflowWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunAlarms(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunDurableEntityRegistryCleanup(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunOutbox(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunMaintenance(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunHealth(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunBackups(ctx) })
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -1568,6 +1595,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
 		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
@@ -1893,6 +1921,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(ops, deps.pool)
+	wire.RegisterNamedPoolMetrics(ops, "background", deps.backgroundPool)
 	// Issue #1182 §P1 PR-1: wire the 5 apid_upload_session_*
 	// counters from (*OpsMetrics) into the package-level state the
 	// upload handlers read via uploadSessionCreatedTotal() etc.
@@ -2568,7 +2597,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed)
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -2653,7 +2682,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
-	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
+	// ADR-20261103113952: one analytics rollup aggregator counts the rows of
+	// every request telemetry listener and flushes them together.
+	// A store without rollups (the in-memory dev store) leaves them off.
+	var rollups *receivers.RequestAnalyticsRollups
+	if rollupStore, ok := srv.store.(state.RequestAnalyticsRollupStore); ok {
+		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log)
+		go rollups.Run(ctx, api.RequestAnalyticsRollupFlushInterval)
+	}
+	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups}
 	// ADR-20261101085552: gateways that keep the request-ID journal on their
 	// node hold a lookup stream on whichever listener carries their request
 	// telemetry; one hub serves both and the debug request lookup.
@@ -3266,7 +3303,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3293,7 +3330,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff)
 	return srv, lis, nil
 }
 
@@ -3318,7 +3355,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest telemetryIngest, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3337,7 +3374,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.ServerCredsOrEmpty(tlsCfg),
 		wire.TraceServerOptions()...,
 	)...)
-	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
+	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest.gate)
 	// The private history reader shares this authenticated listener for
 	// compute-only realtimed nodes in split-box deployments. So does
 	// credential lookup: a compute node's gatewayd-internal cannot key a
@@ -3357,7 +3394,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest)
+		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest.gate, ingest.rollups)
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
@@ -3381,13 +3418,13 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest telemetryIngest, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest)
+	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest.gate, ingest.rollups)
 	// Single-box realtimed reaches apid through this DAC-protected socket,
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
@@ -3441,6 +3478,13 @@ func runAuthServer(ctx context.Context, target string, store state.Store, log *s
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterAuthReceiver(srv, store, tracing, sessions)
 	return srv, lis, nil
+}
+
+// telemetryIngest is the request telemetry wiring every listener shares:
+// the database concurrency gate and the analytics rollups.
+type telemetryIngest struct {
+	gate    receivers.IngestGate
+	rollups *receivers.RequestAnalyticsRollups
 }
 
 // spansIngest is the span-ingest wiring every telemetry listener shares:

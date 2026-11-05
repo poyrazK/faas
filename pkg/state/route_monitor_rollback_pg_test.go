@@ -50,8 +50,8 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 	if claim.DeploymentID != stable.ID || claim.TargetDeploymentID != candidate.ID || claim.Route != "POST /checkout" {
 		t.Fatalf("claim = %+v, want %s -> %s for POST /checkout", claim, stable.ID, candidate.ID)
 	}
-	if _, again, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || again {
-		t.Fatalf("second claim = %t, %v; want no claim", again, err)
+	if retry, again, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || !again || retry != claim {
+		t.Fatalf("unlinked claim was not resumable: %+v %t %v", retry, again, err)
 	}
 	operation := uuid.NewString()
 	if err := s.RecordRouteMonitorRollback(t.Context(), a.ID, app.ID, claim.IncidentID, api.RouteMonitorIncidentRollback{Status: "requested", OperationID: operation, DecidedAt: time.Now().UTC()}); err != nil {
@@ -67,6 +67,9 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 	}
 	if err := routemonitor.ValidateIncident(incident, app.Slug); err != nil {
 		t.Fatalf("incident with rollback failed validation: %v", err)
+	}
+	if _, again, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || again {
+		t.Fatalf("linked decision was claimed again: %t %v", again, err)
 	}
 	if err := s.RecordRouteMonitorRollback(t.Context(), a.ID, app.ID, claim.IncidentID, api.RouteMonitorIncidentRollback{Status: "skipped", DecidedAt: time.Now().UTC()}); err == nil {
 		t.Fatal("a recorded decision was overwritten")

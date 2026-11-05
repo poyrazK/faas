@@ -124,6 +124,9 @@ func ProjectEnvironmentCloneCapabilityProgress() ([]CloneSchemaCapabilityProgres
 
 type ProjectEnvironmentCloneCoverageBlocker struct {
 	Table, Column, Code string
+	// Resource names the source's own resource behind the blocker, such as
+	// a bucket, when the table alone does not say which one.
+	Resource string
 }
 
 type ProjectEnvironmentCloneSchemaCoverage struct {

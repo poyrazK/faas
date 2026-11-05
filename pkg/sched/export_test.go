@@ -119,7 +119,6 @@ var DecodeKafkaConfig = decodeKafkaConfig
 var DecodeNATSConfig = decodeNATSConfig
 var DecodeOperationResult = decodeOperationResult
 var DecodeRedisConfig = decodeRedisConfig
-var DecodeSQSConfig = decodeSQSConfig
 var EnableWarmSnapshot = enableWarmSnapshot
 var EnqueueScopedDemand = enqueueScopedDemand
 var EnvironmentGitOpsJobBindingIntentMatches = environmentGitOpsJobBindingIntentMatches
@@ -314,6 +313,7 @@ var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var SeedForkTarget = seedForkTarget
 var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
@@ -334,6 +334,9 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // XRunTriggerTick runs one trigger tick as the loop's trigger work does.
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
+
+// XRunReaper runs one reaper tick.
+func (l *Loop) XRunReaper(ctx context.Context) { l.runReaper(ctx) }
 
 // XBrokerLanesHeld is how many broker trigger lanes the account holds.
 // adr: 20261101093015 — the lanes are shared between accounts.
@@ -603,6 +606,7 @@ func (r *Loop) RunRetention(p0 context.Context)                                 
 func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
 func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
 func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
+func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    { r.dispatchWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
@@ -1082,6 +1086,23 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
+// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
+func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
+
+// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
+// bookings (ADR-20261101160231).
+func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUBookingMillicores(app, limits)
+}
+func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
+	return e.appCPUBookingStamp(app, limits)
+}
+
+// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
+func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUMillicores(app, limits)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
@@ -1108,6 +1129,33 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 		delete(e.restartInFlight, appID)
 		close(call.done)
 	}
+}
+
+// Broker trigger delivery (ADR-20261101093512).
+func (r *Loop) TriggerClaimRenewInterval() *time.Duration { return &r.triggerClaimRenewInterval }
+
+var WriteTriggerClaimOutcome = writeTriggerClaimOutcome
+var NATSConsumerConfig = natsConsumerConfig
+var NATSRecordID = natsRecordID
+
+type NATSConfig = natsConfig
+type NATSMsg = natsMsg
+
+const TriggerReasonPayloadTooLarge = triggerReasonPayloadTooLarge
+const TriggerReasonRateLimited = triggerReasonRateLimited
+
+// NewNATSPollerWithMessages is a NATS poller holding msgs in flight, keyed
+// by record ID, without a JetStream consumer.
+func NewNATSPollerWithMessages(msgs map[string]NATSMsg) TriggerSource {
+	return &natsPoller{stream: "events", inFlight: msgs}
+}
+
+// RedeliverNATS puts msg back in flight under id, as a Poll would.
+func RedeliverNATS(src TriggerSource, id string, msg NATSMsg) {
+	p := src.(*natsPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inFlight[id] = msg
 }
 
 // WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
@@ -1220,3 +1268,36 @@ const (
 func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
 	r.failInterruptedFireNowRequests(ctx)
 }
+
+func ProjectPrivateNetworkForTest(store state.Store, app state.App) AppSpec {
+	p := (&Engine{store: store}).privateNetworkProjection(context.Background(), app)
+	return AppSpec{PrivateNetworkCIDRs: p.CIDRs, PrivateNetworkAllowedCIDRs: p.AllowedCIDRs, PrivateNetworkFirewallRules: p.FirewallRules, PrivateNetworkID: p.NetworkID, PrivateNetworkAddress: p.Address}
+}
+
+func StaticEgressWirePolicyForTest(spec AppSpec) (string, bool) {
+	p := spec.toProto()
+	return p.GetStaticEgressIp(), p.GetStaticEgressExcluded()
+}
+
+// RealtimeIdleDelays observes claims of the given sizes on a fresh realtime
+// poller and returns the idle delay after each.
+func RealtimeIdleDelays(sizes []int) []time.Duration {
+	p := &realtimePoller{}
+	now := time.Unix(1_000, 0)
+	out := make([]time.Duration, 0, len(sizes))
+	for _, n := range sizes {
+		batch := state.RealtimeConsumerGroupBatch{Claims: make([]state.RealtimeConsumerGroupClaim, n)}
+		p.observeClaim(batch, now)
+		if p.idle(now) != (p.idleDelay > 0) || p.idle(now.Add(p.idleDelay)) {
+			panic("idle window does not match the delay")
+		}
+		out = append(out, p.idleDelay)
+	}
+	return out
+}
+
+// KeyedLocks exposes keyedLocks to sched_test (ADR 20261104143005).
+type KeyedLocks = keyedLocks
+
+func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
+func (k *keyedLocks) Size() int              { return k.size() }

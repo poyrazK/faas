@@ -67,7 +67,7 @@ func (s *PgStore) ClaimRouteMonitorRollback(ctx context.Context, accountID, appI
 	}
 	claim, claimed, changed := decideRouteMonitorRollback(c, &incident, d, promotedAt, clock.Time)
 	if !changed {
-		return RouteMonitorRollbackClaim{}, false, nil
+		return claim, claimed, nil
 	}
 	if err := pgWriteRouteMonitorIncident(ctx, tx, accountID, incident); err != nil {
 		return RouteMonitorRollbackClaim{}, false, err

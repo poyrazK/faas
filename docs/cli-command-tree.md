@@ -165,6 +165,8 @@ touch them. The tables below map each earlier name.
 | `gregale ai content-policy` | `gregale ai content-policy get` |
 | `gregale ai content-policy` | `gregale ai content-policy set` |
 | `gregale ai quality-alerts` | `gregale ai quality-alert list` |
+| `gregale ai request-policy` | `gregale ai request-policy get` |
+| `gregale ai request-policy` | `gregale ai request-policy set` |
 | `gregale ai tag-limits` | `gregale ai tag-limit get` |
 | `gregale ai tag-limits` | `gregale ai tag-limit set` |
 | `gregale alerts rotate-secret` | `gregale alert secret rotate` |
@@ -468,6 +470,7 @@ touch them. The tables below map each earlier name.
 | `gregale operations policy list` | `gregale job lock-policy list` |
 | `gregale operations policy retire` | `gregale job lock-policy delete` |
 | `gregale operations policy upsert` | `gregale job lock-policy set` |
+| `gregale orgs agent-policy` | `gregale org agent policy` |
 | `gregale orgs invitations list-all` | `gregale org invitation list --all` |
 | `gregale orgs invitations` | `gregale org invitation` |
 | `gregale orgs members change-role` | `gregale org members update` |

@@ -540,6 +540,30 @@ type Host struct {
 	// edge under direct entry (ADR-20261102081618): its own on bare metal,
 	// an inbound-only forwarding rule on GCP. Unused elsewhere.
 	PublicIPv4 string `yaml:"public_ipv4,omitempty"`
+	// PublicIPv4Forwarded says public_ipv4 is an inbound-only forwarding
+	// rule to the host that carries TCP 443 alone
+	// (deploy/scripts/gcp-compute-edge-address.sh), not an address anyone
+	// manages the host on. Under public_edge.front: none it is then the
+	// host's entry address unless entry_ipv4 names another
+	// (ADR-20261103163954 §2: on GCP the forwarding-rule address already
+	// carries only 443).
+	PublicIPv4Forwarded bool `yaml:"public_ipv4_forwarded,omitempty"`
+	// EntryIPv4 is a compute host's public entry address under
+	// public_edge.front: none (ADR-20261103163954 §2): on bare metal an
+	// additional IP, not the address operators manage the host on, because
+	// the firewall admits 443 to it from everyone and drops everything else
+	// sent to it, including SSH. The DNS-only records point at it. Unused
+	// elsewhere.
+	EntryIPv4 string `yaml:"entry_ipv4,omitempty"`
+}
+
+// EntryAddress is the host's public entry address under public_edge.front:
+// none: entry_ipv4, or a forwarded public_ipv4. "" when it has neither.
+func (h Host) EntryAddress() string {
+	if h.EntryIPv4 == "" && h.PublicIPv4Forwarded {
+		return h.PublicIPv4
+	}
+	return h.EntryIPv4
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -746,6 +770,15 @@ type DNS struct {
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
+	// OriginPull is how the control plane's Caddy treats Cloudflare's
+	// connections when Mode is "cloudflare" (ADR-20261103172551):
+	// "required" demands the zone's own origin-pull client certificate
+	// (install its CA and turn on zone-level Authenticated Origin Pulls
+	// first, docs/runbooks/EdgeDirectEntry.md); "any_zone" admits every
+	// Cloudflare zone, knowingly, while the certificate is rolled out. Empty
+	// renders neither, and the public_edge role refuses to deploy a site
+	// that admits Cloudflare.
+	OriginPull string `yaml:"origin_pull,omitempty"`
 }
 
 // PublicEdge is the public HTTPS edge contract beyond the platform zone.
@@ -779,6 +812,13 @@ type PublicEdge struct {
 	// DNS turns on edgednsd (ADR-20261102081618 §3), which points the names
 	// at the compute hosts whose edges are ready. Needs entry both.
 	DNS *PublicEdgeDNS `yaml:"dns,omitempty"`
+	// Front is what stands in front of the compute edges' direct entry
+	// (ADR-20261103163954 §6): "cloudflare", the default, is
+	// ADR-20261102081618 as written; "none" turns on DNS-only records, the
+	// edges' public listener for clients that bring no Cloudflare
+	// certificate, the peer address as client, port 443 open on each compute
+	// host's entry_ipv4 and the client limits, together. Needs entry both.
+	Front string `yaml:"front,omitempty"`
 }
 
 // PublicEdgeDNS is the Cloudflare zone and the names edgednsd manages.
@@ -788,6 +828,69 @@ type PublicEdgeDNS struct {
 	// Live makes edgednsd write records; until then it only logs and
 	// counts the changes it would make.
 	Live bool `yaml:"live,omitempty"`
+	// Proxied are names that keep proxied records under front: none, managed
+	// beside Names: the way one host goes back behind Cloudflare
+	// (ADR-20261103163954 §4). A record for the exact name wins over the
+	// wildcard.
+	Proxied []string `yaml:"proxied,omitempty"`
+	// Certificate is the apps domains' publicly trusted certificate, which
+	// edgednsd orders with the DNS-01 challenge in ZoneID and the compute
+	// edges serve (ADR-20261103163954 §3).
+	Certificate *PublicEdgeCertificate `yaml:"certificate,omitempty"`
+}
+
+// PublicEdgeCertificate is the certificate edgednsd keeps for the apps
+// domains (ADR-20261103163954 §3). Each cell's edge-tls seal domain must be
+// staged first: edgednsd seals the key to its recipient, and the edges open
+// it with its identity.
+type PublicEdgeCertificate struct {
+	// Names are the certificate's names, e.g. "*.gregale.dev".
+	Names []string `yaml:"names"`
+	// CA is letsencrypt-staging, the default, until the path is proven,
+	// then letsencrypt.
+	CA string `yaml:"ca,omitempty"`
+	// Serve is the CA whose stored certificate the compute edges serve in
+	// place of their certificate files: empty (the default) serves none.
+	// It moves separately from CA, after edgednsd has stored a certificate
+	// from it: an edge without one is not ready, so switching both at once
+	// would take every edge out of DNS until the new order lands.
+	Serve string `yaml:"serve,omitempty"`
+	// Transparency turns on edgednsd's Certificate Transparency watch,
+	// which pages on publicly trusted certificates it did not issue.
+	Transparency *PublicEdgeTransparency `yaml:"transparency,omitempty"`
+}
+
+// PublicEdgeTransparency is edgednsd's Certificate Transparency watch
+// (ADR-20261103163954 §3).
+type PublicEdgeTransparency struct {
+	// Domain is the domain whose certificates, and those of every name
+	// under it, the watch reads, e.g. gregale.dev.
+	Domain string `yaml:"domain"`
+	// AllowNames are the names a certificate edgednsd did not issue may
+	// carry without a page: a certificate whose every name is listed is
+	// someone else's by design, such as the CDN's own certificate for the
+	// zone ("gregale.dev", "*.gregale.dev") or a hosted site's.
+	AllowNames []string `yaml:"allow_names,omitempty"`
+}
+
+// The CAs a public_edge.dns.certificate comes from.
+const (
+	EdgeCertificateCAStaging    = "letsencrypt-staging"
+	EdgeCertificateCAProduction = "letsencrypt"
+	// edgeTransparencyAllowNamesMax is
+	// api.EdgeCertificateTransparencyAllowNamesMax.
+	edgeTransparencyAllowNamesMax = 32
+	// edgeCertificateNamesMax is api.EdgeCertificateNamesMax, which the
+	// edgednsd unit refuses past.
+	edgeCertificateNamesMax = 10
+)
+
+// CAOrDefault is the certificate's CA, staging when unset.
+func (c PublicEdgeCertificate) CAOrDefault() string {
+	if c.CA == "" {
+		return EdgeCertificateCAStaging
+	}
+	return c.CA
 }
 
 // Public edge entries (ADR-20261102081618).
@@ -796,10 +899,22 @@ const (
 	PublicEdgeEntryBoth   = "both"
 )
 
+// Public edge fronts (ADR-20261103163954 §6).
+const (
+	PublicEdgeFrontCloudflare = "cloudflare"
+	PublicEdgeFrontNone       = "none"
+)
+
 // DirectEntry reports whether the compute edges take Cloudflare's direct
 // connections on port 443.
 func (e PublicEdge) DirectEntry() bool {
 	return e.ComputeNodes && e.Entry == PublicEdgeEntryBoth
+}
+
+// NoFront reports whether clients connect to the compute edges' entry
+// addresses with nothing in front (ADR-20261103163954).
+func (e PublicEdge) NoFront() bool {
+	return e.DirectEntry() && e.Front == PublicEdgeFrontNone
 }
 
 // validate checks the compute-node edge against the fleet: it needs a control
@@ -811,6 +926,15 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
 	default:
 		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+	}
+	switch e.Front {
+	case "", PublicEdgeFrontCloudflare:
+	case PublicEdgeFrontNone:
+		if !e.DirectEntry() {
+			return Errors{{"public_edge.front", "none needs public_edge.compute_nodes and entry: both, whose listeners clients reach"}}
+		}
+	default:
+		return Errors{{"public_edge.front", fmt.Sprintf("%q is not cloudflare or none", e.Front)}}
 	}
 	if e.PlacementNodeSet && !e.PlacementRouting {
 		return Errors{{"public_edge.placement_node_set", "needs public_edge.placement_routing: it spreads the routed requests"}}
@@ -825,7 +949,7 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		if e.Entry == PublicEdgeEntryBoth {
 			return Errors{{"public_edge.entry", "needs public_edge.compute_nodes: it opens the compute edges' TLS listener"}}
 		}
-		return nil
+		return e.validateEntryAddrs(hosts)
 	}
 	var controlPlanes, computeNodes int
 	for _, h := range hosts {
@@ -843,7 +967,41 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 	if computeNodes == 0 {
 		errs = append(errs, Error{"public_edge.compute_nodes", "needs at least one compute-only host to run the edge"})
 	}
+	errs = append(errs, e.validateEntryAddrs(hosts)...)
 	return append(errs, e.validateDNS(hosts)...)
+}
+
+// validateEntryAddrs checks the compute hosts' entry addresses: each needs
+// one under front: none, apart from the addresses it is managed on, and no
+// host takes one otherwise.
+func (e PublicEdge) validateEntryAddrs(hosts []Host) Errors {
+	var errs Errors
+	for i, h := range hosts {
+		field := fmt.Sprintf("fleet.hosts[%d].entry_ipv4", i)
+		if h.PublicIPv4Forwarded && h.PublicIPv4 == "" {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].public_ipv4_forwarded", i), "needs public_ipv4, the forwarding rule's address"})
+		}
+		entry := h.EntryAddress()
+		switch {
+		case !e.NoFront() || h.Role != "compute-only":
+			if h.EntryIPv4 != "" {
+				errs = append(errs, Error{field, "is for a compute-only host under public_edge.front: none"})
+			}
+		case entry == "":
+			errs = append(errs, Error{field, "is required under public_edge.front: none (or public_ipv4_forwarded): the address clients reach, apart from the one the host is managed on"})
+		default:
+			addr, err := netip.ParseAddr(entry)
+			if err != nil || !addr.Is4() || addr.String() != entry {
+				errs = append(errs, Error{field, fmt.Sprintf("%q is not an IPv4 address in canonical form", entry)})
+				continue
+			}
+			managed, _, _ := ParseHostPort(h.Address)
+			if entry == managed || (entry == h.PublicIPv4 && !h.PublicIPv4Forwarded) {
+				errs = append(errs, Error{field, "must not be the host's address, or its public_ipv4 unless that is an inbound-only forwarding rule (public_ipv4_forwarded): the firewall drops SSH and every port but 443 on it"})
+			}
+		}
+	}
+	return errs
 }
 
 // validateDNS checks public_edge.dns: edgednsd sends Cloudflare to the TLS
@@ -862,6 +1020,17 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 	if len(e.DNS.Names) == 0 {
 		errs = append(errs, Error{"public_edge.dns.names", "needs at least one host name"})
 	}
+	if len(e.DNS.Proxied) > 0 && !e.NoFront() {
+		errs = append(errs, Error{"public_edge.dns.proxied", "is for public_edge.front: none; under Cloudflare every name is proxied"})
+	}
+	seen := map[string]bool{}
+	for i, name := range e.DNS.Proxied {
+		if strings.TrimSpace(name) == "" || seen[name] {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.proxied[%d]", i), fmt.Sprintf("%q is empty or listed twice", name)})
+		}
+		seen[name] = true
+	}
+	errs = append(errs, e.DNS.Certificate.validate()...)
 	addressed := 0
 	for i, h := range hosts {
 		if h.PublicIPv4 == "" {
@@ -873,8 +1042,59 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 			addressed++
 		}
 	}
-	if addressed == 0 {
+	// Under front: none the records point at the entry addresses
+	// validateEntryAddrs requires instead.
+	if addressed == 0 && !e.NoFront() {
 		errs = append(errs, Error{"public_edge.dns", "needs a compute-only host with public_ipv4"})
+	}
+	return errs
+}
+
+// validate checks public_edge.dns.certificate; nil is valid.
+func (c *PublicEdgeCertificate) validate() Errors {
+	if c == nil {
+		return nil
+	}
+	var errs Errors
+	if len(c.Names) == 0 || len(c.Names) > edgeCertificateNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.names", fmt.Sprintf("needs 1 to %d names", edgeCertificateNamesMax)})
+	}
+	seen := map[string]bool{}
+	for i, name := range c.Names {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.CA) {
+		errs = append(errs, Error{"public_edge.dns.certificate.ca", fmt.Sprintf("unsupported %q (allowed: %s|%s)", c.CA, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.Serve) {
+		errs = append(errs, Error{"public_edge.dns.certificate.serve", fmt.Sprintf("unsupported %q (allowed: empty, %s or %s)", c.Serve, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	return append(errs, c.Transparency.validate()...)
+}
+
+func (t *PublicEdgeTransparency) validate() Errors {
+	if t == nil {
+		return nil
+	}
+	var errs Errors
+	domain := strings.ToLower(strings.TrimSpace(t.Domain))
+	if domain == "" || strings.Contains(domain, "*") || !strings.Contains(domain, ".") {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.domain", fmt.Sprintf("%q is not a domain name", t.Domain)})
+	}
+	if len(t.AllowNames) > edgeTransparencyAllowNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.allow_names", fmt.Sprintf("at most %d names, not %d", edgeTransparencyAllowNamesMax, len(t.AllowNames))})
+	}
+	seen := map[string]bool{}
+	for i, name := range t.AllowNames {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.transparency.allow_names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
 	}
 	return errs
 }
@@ -1730,8 +1950,22 @@ func (d *DNS) validate() Errors {
 		errs = append(errs, Error{"dns.mode",
 			fmt.Sprintf("unsupported %q (allowed: cloudflare|manual|nip_io)", d.Mode)})
 	}
+	switch {
+	case d.OriginPull == "":
+	case !contains([]string{DNSOriginPullRequired, DNSOriginPullAnyZone}, d.OriginPull):
+		errs = append(errs, Error{"dns.origin_pull",
+			fmt.Sprintf("unsupported %q (allowed: %s|%s)", d.OriginPull, DNSOriginPullRequired, DNSOriginPullAnyZone)})
+	case d.Mode != "cloudflare":
+		errs = append(errs, Error{"dns.origin_pull", "applies only with dns.mode cloudflare"})
+	}
 	return errs
 }
+
+// dns.origin_pull values (ADR-20261103172551).
+const (
+	DNSOriginPullRequired = "required"
+	DNSOriginPullAnyZone  = "any_zone"
+)
 
 func (d *PrivateDNS) validate() Errors {
 	var errs Errors

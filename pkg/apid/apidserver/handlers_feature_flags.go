@@ -70,6 +70,30 @@ func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct s
 	}
 	return state.FeatureFlagScope{AccountID: acct.ID, ProjectID: project.ID, EnvironmentID: env.ID}, store, ok
 }
+
+// featureFlagWriteScope is featureFlagScope for a change. Flags change what
+// the environment's code does, so a protected environment other than
+// production takes them from an approved project plan or promotion, like its
+// variables, secrets, routes and policies (ADR-20261019071733 amendment 12).
+// Production keeps direct edits (ADR-233).
+func (s *server) featureFlagWriteScope(w http.ResponseWriter, r *http.Request, acct state.Account) (state.FeatureFlagScope, state.FeatureFlagStore, bool) {
+	scope, store, ok := s.featureFlagScope(w, r, acct)
+	if !ok {
+		return scope, store, false
+	}
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, scope.ProjectID, r.PathValue("environment"))
+	if err != nil {
+		writeFeatureFlagError(w, err)
+		return state.FeatureFlagScope{}, nil, false
+	}
+	if env.Protected && !state.IsProductionScope(env.Slug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment",
+			"apply flag changes through an approved project plan or environment promotion"))
+		return state.FeatureFlagScope{}, nil, false
+	}
+	return scope, store, true
+}
+
 func writeFeatureFlagError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
@@ -129,7 +153,7 @@ func (s *server) listFeatureFlagVersions(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, rows)
 }
 func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	scope, store, ok := s.featureFlagScope(w, r, acct)
+	scope, store, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {
 		return
 	}
@@ -146,7 +170,7 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
 func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	scope, store, ok := s.featureFlagScope(w, r, acct)
+	scope, store, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {
 		return
 	}

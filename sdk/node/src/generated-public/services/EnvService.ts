@@ -8,6 +8,8 @@ import type { ConfigGuard } from '../models/ConfigGuard.js';
 import type { ConfigRevisionDetail } from '../models/ConfigRevisionDetail.js';
 import type { ConfigRollbackRequest } from '../models/ConfigRollbackRequest.js';
 import type { ConfigRollbackResponse } from '../models/ConfigRollbackResponse.js';
+import type { EnvBatchRequest } from '../models/EnvBatchRequest.js';
+import type { EnvBatchResponse } from '../models/EnvBatchResponse.js';
 import type { EnvDiffResponse } from '../models/EnvDiffResponse.js';
 import type { ListConfigRevisionsResponse } from '../models/ListConfigRevisionsResponse.js';
 import type { PutAppEnvRequest } from '../models/PutAppEnvRequest.js';
@@ -108,6 +110,78 @@ export class EnvService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Atomically set and delete non-secret variables in one scope.
+   * Requires env:write. Compares expected_revision against configuration
+   * history and live values, then commits all variables, one history revision,
+   * snapshot invalidation and a value-free replay receipt in one transaction.
+   * Use revision 0 only for an empty scope with no history. Reuse request_id with the exact
+   * original body after an uncertain response; the original receipt is
+   * returned even if later changes advanced the revision. Receipts are kept
+   * for at least 24 hours. Reusing an ID with a changed body conflicts.
+   * Revision conflicts require another review and a new request ID.
+   * Running instances receive values on their next cold wake or fresh restart.
+   *
+   * @returns EnvBatchResponse Durable transaction receipt; variable values are omitted.
+   * @throws ApiError
+   */
+  public static applyEnvBatch({
+    slug,
+    requestBody,
+    scope,
+    guard,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: EnvBatchRequest,
+    /**
+     * Env-var scope. A domain-valid slug (1..40 chars,
+     * lowercase alnum + dash, no leading/trailing dash) — e.g.
+     * `default`, `staging`, `prod-eu`. Or the reserved sentinel
+     * `__all__` on GET only, which returns the nested
+     * `env_by_scope` response shape (every scope on the app).
+     * Omitted = `scope=default` (legacy behaviour).
+     *
+     */
+    scope?: string,
+    /**
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
+     * closes as superseded. Omitted or `true` guards the change when the
+     * scope has a live deployment.
+     *
+     */
+    guard?: boolean,
+  }): CancelablePromise<EnvBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/env/batch',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'guard': guard,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_env_vars`,
+        404: `code: not_found`,
+        409: `Configuration changed, request ID reused, or a field is managed by environment GitOps.`,
+        413: `code: env_value_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Transaction unavailable; retry the original request ID and body.`,
       },
     });
   }

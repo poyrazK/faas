@@ -21,9 +21,10 @@ import (
 	"time"
 )
 
-// DefaultMaxBytes is the byte cap vmmd allocates per live instance when
-// constructing a new ring (10 MiB; small enough to fit thousands of instances
-// in the §6.2.2 tenant RAM budget, large enough to hold ~5k-50k lines).
+// DefaultMaxBytes is the most one ring retains (10 MiB, ~5k-50k lines). The
+// rings live in vmmd's own memory, not the tenants' (§6.2.2), so vmmd also
+// gives them a node-wide Budget that splits a total across live instances
+// (bug hunt H47).
 const DefaultMaxBytes = 10 << 20
 
 // MaxPartialLineBytes caps the partial-line tail Write buffers
@@ -78,6 +79,9 @@ type Line struct {
 // block on a dead consumer.
 type Ring struct {
 	maxBytes int
+	// budget, when set, bounds this ring to its share of the node-wide
+	// total (SetBudget).
+	budget *Budget
 
 	mu         sync.Mutex
 	lines      []Line // ring slot array, oldest at head
@@ -87,6 +91,16 @@ type Ring struct {
 	nextSeq    int64  // monotonic per-ring; the Seq assigned to the next Write that completes a line
 	tail       []byte // partial-line buffer for Write's bytes without a '\n'
 	subs       []chan Line
+
+	// hourlyAllowance bounds the line bytes the ring accepts per UTC hour
+	// (ADR-20261104085150); 0 is unbounded. Past it, lines are dropped
+	// until the hour ends and one notice line says so, so the live view,
+	// the archive and every drain see the same bounded stream.
+	hourlyAllowance int64
+	allowanceHour   time.Time
+	allowanceUsed   int64
+	allowanceNoted  bool
+	allowanceDrops  int64
 
 	// onSlowSubscriber (issue #309 / tier-2 DX) is invoked once
 	// per dropped LINE (i.e. once per commitLocked call where
@@ -295,7 +309,58 @@ func (r *Ring) Write(stream string, p []byte) (int, error) {
 // "tenant-controlled output bypasses the per-instance memory bound" hole
 // the peer review of PR #728 surfaced (the size > 0 evict loop in the
 // original commit could not compensate for a single line > maxBytes).
+// AllowanceNotice is the line a ring commits, once per hour, when its hourly
+// byte allowance drops output.
+const AllowanceNotice = "[gregale] this instance reached its plan's hourly log allowance; further output is dropped until the next UTC hour"
+
+// SetHourlyByteAllowance bounds the line bytes the ring accepts per UTC hour
+// (ADR-20261104085150). Zero or less removes the bound.
+func (r *Ring) SetHourlyByteAllowance(n int64) {
+	r.mu.Lock()
+	r.hourlyAllowance = max(n, 0)
+	r.mu.Unlock()
+}
+
+// AllowanceDrops reports how many lines the hourly allowance dropped.
+func (r *Ring) AllowanceDrops() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.allowanceDrops
+}
+
+// overAllowanceLocked charges line to the hour's allowance and reports
+// whether it must be dropped. The first drop of an hour commits the notice.
+func (r *Ring) overAllowanceLocked(stream, line string, now time.Time) bool {
+	if r.hourlyAllowance <= 0 {
+		return false
+	}
+	if hour := now.UTC().Truncate(time.Hour); !hour.Equal(r.allowanceHour) {
+		r.allowanceHour, r.allowanceUsed, r.allowanceNoted = hour, 0, false
+	}
+	if r.allowanceUsed+int64(len(line)) <= r.hourlyAllowance {
+		r.allowanceUsed += int64(len(line))
+		return false
+	}
+	r.allowanceDrops++
+	if !r.allowanceNoted {
+		r.allowanceNoted = true
+		r.acceptLocked(stream, AllowanceNotice, now)
+	}
+	return true
+}
+
 func (r *Ring) commitLocked(stream, line string, now time.Time) {
+	if len(line) > r.maxBytes {
+		return
+	}
+	if r.overAllowanceLocked(stream, line, now) {
+		return
+	}
+	r.acceptLocked(stream, line, now)
+}
+
+// acceptLocked appends a line that passed the size and allowance checks.
+func (r *Ring) acceptLocked(stream, line string, now time.Time) {
 	if len(line) > r.maxBytes {
 		// Pathological: a single line larger than the entire ring
 		// budget. Don't accept it; the call site (vmmd) logs at
@@ -332,7 +397,12 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 	// to swap the field; reading the field here under the same lock
 	// gives us a stable handoff).
 	evictCb := r.onEvict
-	for r.totalBytes+len(line) > r.maxBytes && r.size > 0 {
+	limit := r.maxBytes
+	if r.budget != nil {
+		limit = int(min(int64(limit), r.budget.share()))
+	}
+	before := r.totalBytes
+	for r.totalBytes+len(line) > limit && r.size > 0 {
 		evicted := r.lines[r.head]
 		r.totalBytes -= len(evicted.Line)
 		r.head = (r.head + 1) % cap(r.lines)
@@ -364,6 +434,9 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 	r.lines[idx] = ln
 	r.size++
 	r.totalBytes += len(line)
+	if r.budget != nil {
+		r.budget.charge(r.totalBytes - before)
+	}
 	// Publish to every active subscriber. We snapshot subs under the lock
 	// to release it before sending so a slow subscriber cannot stall a
 	// producer that's still consuming firecracker stdout.
@@ -638,6 +711,10 @@ func (r *Ring) Close() error {
 		return nil
 	}
 	r.closed = true
+	if r.budget != nil {
+		r.budget.leave(r.totalBytes)
+		r.budget = nil
+	}
 	subs := r.subs
 	r.subs = nil
 	r.mu.Unlock()
@@ -645,6 +722,22 @@ func (r *Ring) Close() error {
 		close(ch)
 	}
 	return nil
+}
+
+// SetBudget makes the ring keep at most its share of b, evicting its oldest
+// lines first; call it once, before the first Write. A nil b is no budget.
+func (r *Ring) SetBudget(b *Budget) {
+	if b == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.budget != nil || r.closed {
+		return
+	}
+	r.budget = b
+	b.join()
+	b.charge(r.totalBytes)
 }
 
 // ErrClosed is returned by Write after the ring has been Close()'d.

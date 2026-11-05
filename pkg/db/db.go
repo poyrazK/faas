@@ -56,8 +56,13 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // The precondition is recorded in docs/runbooks/FaasDBPoolStarved.md: a
 // flat-zero <daemon>_db_pool_canceled_acquires_total on a busy daemon.
 var DaemonMaxConnections = map[string]int32{
-	"bridged":           2,
-	"apid":              12,
+	"bridged": 2,
+	"apid":    12,
+	// apid's periodic loops, reconcilers and sweeps (state.WithBackgroundWork).
+	// On the shared 12 they made ~29 acquires/s on an idle control plane and
+	// emptied the pool ~4,500 times an hour; requests queued behind them
+	// (Hunt 31). No LISTEN: session-scoped work stays on apid's pool.
+	"apid-background":   6,
 	"apid-clone-worker": 4,
 	"schedd":            16,
 	"gatewayd-internal": 8,

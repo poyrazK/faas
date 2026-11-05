@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,12 +36,13 @@ func (b *environmentGitOpsBackend) gitOpsReleaseHold(ctx context.Context, lease 
 	if !freeze.IsProductionScope(scope) {
 		return "", nil
 	}
+	apps, err := b.gitOpsReleaseApps(ctx, lease, graph)
+	if err != nil {
+		return "", err
+	}
 	now := time.Now().UTC()
-	for _, member := range graph.Members {
-		if member.CandidateDeploymentID == "" {
-			continue
-		}
-		app, err := b.server.store.AppByID(ctx, member.AppID)
+	for _, appID := range apps {
+		app, err := b.server.store.AppByID(ctx, appID)
 		if err != nil {
 			return "", err
 		}
@@ -65,6 +67,30 @@ func (b *environmentGitOpsBackend) gitOpsReleaseHold(ctx context.Context, lease 
 		}
 	}
 	return "", nil
+}
+
+// A release can remove members as well as activate candidates. Only planned
+// retirements of this approval need a release hold; committed cleanup continues.
+func (b *environmentGitOpsBackend) gitOpsReleaseApps(ctx context.Context, lease state.EnvironmentGitOpsLease, graph state.EnvironmentWorkloadGraph) ([]string, error) {
+	apps := []string{}
+	for _, member := range graph.Members {
+		if member.CandidateDeploymentID != "" {
+			apps = append(apps, member.AppID)
+		}
+	}
+	if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+		rows, err := retirement.ListEnvironmentGitOpsWorkloadRetirements(ctx, lease.Source.AccountID, lease.Source.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.Phase == "planned" && row.Generation == lease.Source.Generation && row.RevisionID == lease.Revision.ID {
+				apps = append(apps, row.AppID)
+			}
+		}
+	}
+	slices.Sort(apps)
+	return slices.Compact(apps), nil
 }
 
 // manualRevisionApprovalHold names why the person who approved a revision in

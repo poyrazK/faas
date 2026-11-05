@@ -72,7 +72,7 @@ func newServiceProxyResolver(store servicePolicyApps) gateway.ServiceProxyResolv
 				// other apps of its preview set by their production slugs; the
 				// call reaches their previews. Any other name falls through,
 				// and the authorizer refuses a production target
-				// (ADR-20261103180000).
+				// (ADR-20261105090226).
 				if servicebinding.StandalonePRPreview(caller) {
 					if peers, ok := store.(servicebinding.PreviewSetPeerStore); ok {
 						peer, found, peerErr := servicebinding.PreviewSetPeer(ctx, peers, caller, service)
@@ -127,7 +127,7 @@ func serviceTargetFromApp(app state.App, isPreview bool) gateway.ServiceTarget {
 func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.ServiceProxyEnvironmentBindingResolver {
 	return func(ctx context.Context, callerAppID, callerDeploymentID, service string) (gateway.ServiceProxyEnvironmentBinding, bool, bool, error) {
 		route, managed, found, err := resolveFrozenProjectBinding(ctx, store, callerAppID, callerDeploymentID, service)
-		frozen := managed
+		projectPolicy := managed
 		if err == nil && !managed {
 			if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
 				route, managed, found, err = bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, callerAppID, callerDeploymentID, service)
@@ -150,11 +150,11 @@ func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.Servic
 			return gateway.ServiceProxyEnvironmentBinding{}, true, false, gateway.ErrServiceProxyBindingDenied
 		}
 		resolvedTarget := serviceTargetFromApp(target, false)
-		if frozen {
+		if projectPolicy {
 			resolvedTarget.AppProtocol, resolvedTarget.WebSocketEnabled = route.AppProtocol, route.WebSocketEnabled
 		}
 		return gateway.ServiceProxyEnvironmentBinding{
-			FrozenPolicy:       frozen,
+			FrozenPolicy:       true,
 			Target:             resolvedTarget,
 			TargetDeploymentID: route.TargetDeploymentID,
 			ReleaseSetID:       route.ReleaseSetID,

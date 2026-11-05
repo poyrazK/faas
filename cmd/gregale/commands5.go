@@ -1186,15 +1186,18 @@ func cmdAppDispatch(args []string) int {
 		return code
 	}
 	if len(args) >= 2 {
+		commandArgs := args[2:]
 		switch args[1] {
 		case subHealth:
-			return cmdAppHealth(slug, args[2:])
+			return cmdAppHealth(slug, commandArgs)
 		case subChanges:
-			return cmdAppChanges(slug, args[2:])
+			return cmdAppChanges(slug, commandArgs)
 		case subScale:
-			return cmdAppScale(slug, args[2:])
+			return cmdAppScale(slug, commandArgs)
+		case "scaling":
+			return cmdAppScaling(slug, commandArgs)
 		case "costs":
-			return cmdAppCosts(slug, args[2:])
+			return cmdAppCosts(slug, commandArgs)
 		case subRename:
 			if len(args) != 3 {
 				PrintUsage(os.Stderr, "usage: gregale app <slug> rename <new-slug>", "apps")
@@ -1202,33 +1205,33 @@ func cmdAppDispatch(args []string) int {
 			}
 			return cmdAppRename(slug, args[2])
 		case subRestart:
-			return cmdAppRestart(slug, args[2:])
+			return cmdAppRestart(slug, commandArgs)
 		case subExec:
-			return cmdAppExec(slug, args[2:])
+			return cmdAppExec(slug, commandArgs)
 		case "cp":
-			return cmdAppCopy(slug, args[2:])
+			return cmdAppCopy(slug, commandArgs)
 		case "port-forward":
-			return cmdAppPortForward(slug, args[2:])
+			return cmdAppPortForward(slug, commandArgs)
 		case subSecurity:
-			return cmdAppSecurity(slug, args[2:])
+			return cmdAppSecurity(slug, commandArgs)
 		case subEgressAllowlist:
-			return cmdAppEgressAllowlist(slug, args[2:])
+			return cmdAppEgressAllowlist(slug, commandArgs)
 		case subEgressPorts:
-			return cmdAppEgressPorts(slug, args[2:])
+			return cmdAppEgressPorts(slug, commandArgs)
 		case subNetwork:
-			return cmdAppNetwork(slug, args[2:])
+			return cmdAppNetwork(slug, commandArgs)
 		case "traffic-status":
-			return cmdAppTrafficStatus(slug, args[2:])
+			return cmdAppTrafficStatus(slug, commandArgs)
 		case subRoutes:
-			return cmdAppsRoutes(slug, args[2:])
+			return cmdAppsRoutes(slug, commandArgs)
 		case subTCPListeners:
-			return cmdAppsTCP(slug, args[2:])
+			return cmdAppsTCP(slug, commandArgs)
 		case subUDPListeners:
-			return cmdAppsUDP(slug, args[2:])
+			return cmdAppsUDP(slug, commandArgs)
 		case subStreamingCap:
-			return cmdAppsStreamingCap(slug, args[2:])
+			return cmdAppsStreamingCap(slug, commandArgs)
 		case subStaticEgressIP:
-			return cmdAppStaticEgressIP(slug, args[2:])
+			return cmdAppStaticEgressIP(slug, commandArgs)
 		}
 	}
 	// Backwards-compat: legacy flag-form dispatch is the existing cmdApp.
@@ -1291,7 +1294,18 @@ func cmdPlan(args []string) int {
 			(ae.Problem.CheckoutURL != "" || ae.Problem.BillingPortalURL != "") {
 			return renderPlanCheckoutHandoff(ae, target)
 		}
+		if errors.As(err, &ae) && ae.Problem.Code == api.CodeBillingSubscriptionEnding && !jsonOutput && acct.Plan != "" {
+			PrintWarn(osStderr, "Keep the subscription first: gregale billing plan %s", acct.Plan)
+		}
 		return printErr("Plan change failed", err)
+	}
+	if updated.PlanChangeStatus == "scheduled_change_undone" {
+		PrintOK(osStdout, "Kept the %s subscription: its scheduled cancellation or plan change was undone", updated.Plan)
+		return 0
+	}
+	if string(target) == acct.Plan && updated.Plan == acct.Plan {
+		PrintOK(osStdout, "Already on %s; nothing was scheduled to change", target)
+		return 0
 	}
 	if updated.PlanChangeStatus == "pending_provider_confirmation" {
 		if updated.EffectiveAt != nil {

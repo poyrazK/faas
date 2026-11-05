@@ -480,6 +480,11 @@ func boot() error {
 	if qualificationReceiptToken != "" {
 		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
 		clear(qualificationReceiptMACKey)
+		// A native qualification restore of this guest re-attests the same
+		// configuration under a fresh token (ADR 20261023093000).
+		if err := rememberQualificationRestoreBasis(apiEnv, secrets); err != nil {
+			slog.Default().Warn("qualification restore receipt basis unavailable", "err", err)
+		}
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a
@@ -1448,6 +1453,11 @@ func runBuildOnce(m api.BuildManifest) error {
 		err = context.DeadlineExceeded
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
+	// A failure to reach the registry for a platform-owned image is the
+	// platform's, not the customer's (H105).
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && platformPullFailure(buf.Bytes(), m.RuntimeBaseRef) {
+		err = builderNetworkError{fmt.Errorf("pull platform image: %w", err)}
+	}
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.

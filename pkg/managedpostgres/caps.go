@@ -64,6 +64,14 @@ type ComputeCapProvider interface {
 	SetComputeCap(ctx context.Context, providerResourceID string, quotaUnitSeconds int64) error
 }
 
+// ComputeCapLagger is implemented by a provider whose consumption counters,
+// and so its quota enforcement, trail use. CounterLagUnitSeconds is the most
+// a database of spec can use, at its largest size, before the provider's
+// counter shows it (ADR-20261025094915 amendment 2026-11-04).
+type ComputeCapLagger interface {
+	CounterLagUnitSeconds(spec Spec) int64
+}
+
 // ComputeCapObservation is one provider object's quota state for the
 // provider's current consumption period.
 type ComputeCapObservation struct {
@@ -89,6 +97,8 @@ type computeCapScope struct {
 	databaseIDs []string
 	used        int64
 	quota       int64
+	// lag is what the scope's databases can use before its counter shows it.
+	lag int64
 }
 
 type computeCapDecision struct {
@@ -101,29 +111,34 @@ type computeCapDecision struct {
 }
 
 type computeCapPlan struct {
-	ceiling, used, remaining int64
-	decisions                []computeCapDecision
+	ceiling, used, lag, remaining int64
+	decisions                     []computeCapDecision
 }
 
 func (p computeCapPlan) suspended() bool { return p.remaining == 0 }
 
 // planComputeCaps gives each scope the quota u_i + R, where R is what the
 // account has left of its ceiling. The account's use is the larger of the
-// ledger (which still counts databases deleted this month) and the live
-// provider counters (which have no ledger lag).
+// ledger (which still counts databases deleted this month) and the provider
+// counters (which have no ledger lag). The counters still trail use, and the
+// provider enforces a quota only when they move, so R also keeps back what
+// every scope can use before its counter shows it.
 func planComputeCaps(ceiling, ledgerUsed int64, scopes []computeCapScope) (computeCapPlan, error) {
 	if ceiling <= 0 || ledgerUsed < 0 {
 		return computeCapPlan{}, ErrInvalid
 	}
-	var live int64
+	var live, lag int64
 	for _, scope := range scopes {
 		var err error
 		if live, err = addUsage(live, scope.used); err != nil {
 			return computeCapPlan{}, err
 		}
+		if lag, err = addUsage(lag, scope.lag); err != nil {
+			return computeCapPlan{}, err
+		}
 	}
-	plan := computeCapPlan{ceiling: ceiling, used: max(ledgerUsed, live)}
-	plan.remaining = max(0, ceiling-plan.used)
+	plan := computeCapPlan{ceiling: ceiling, used: max(ledgerUsed, live), lag: lag}
+	plan.remaining = max(0, ceiling-min(lag, ceiling)-plan.used)
 	for _, scope := range scopes {
 		target, err := addUsage(scope.used, plan.remaining)
 		if err != nil {
@@ -173,6 +188,13 @@ type CapLimits struct {
 	// are suspended (ADR-20261102125208). A zero database limit means the
 	// plan is unknown, and nothing is suspended for it.
 	Entitlement api.ManagedPostgresPlanLimits
+
+	// Inactive marks a subject that may not run workloads: suspended,
+	// abuse-held or pending deletion (ADR-20261025094915 amendment
+	// 2026-11-03). Its computes are suspended whatever its ceiling, as its
+	// apps are parked; data is kept, and the next sweep after reactivation
+	// lifts the suspension. No cap threshold is recorded or mailed for it.
+	Inactive bool
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -218,7 +240,7 @@ const capMailWindow = 24 * time.Hour
 
 // capThresholds lists the thresholds used reaches: 80% of the allowance, the
 // allowance, 80% of the ceiling when overage raises it, and the ceiling.
-func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
+func capThresholds(used int64, limits CapLimits, ceiling int64, suspended bool) []string {
 	var reached []string
 	if limits.Allowance > 0 && used >= limits.Allowance-limits.Allowance/5 {
 		reached = append(reached, CapThresholdWarning)
@@ -229,7 +251,9 @@ func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
 	if limits.Overage && ceiling > limits.Allowance && used >= ceiling-ceiling/5 {
 		reached = append(reached, CapThresholdCeilingWarning)
 	}
-	if used >= ceiling {
+	// The quotas keep back the provider's counter lag, so the databases can
+	// be suspended before use reaches the ceiling.
+	if used >= ceiling || suspended {
 		reached = append(reached, CapThresholdSuspended)
 	}
 	return reached
@@ -497,7 +521,12 @@ func capEnforceable(database Database) bool {
 
 func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
 	ceiling := limits.Ceiling
-	if ceiling <= 0 {
+	switch {
+	case limits.Inactive:
+		// One compute-unit second: nothing remains once any is used, and a
+		// quiet database is held to a single second.
+		ceiling = 1
+	case ceiling <= 0:
 		summary.Uncapped++
 		return nil
 	}
@@ -522,8 +551,8 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	suspended := e.suspendPlanExcess(accountID, databases, limits, &plan, summary)
 	var failures []error
-	if e.mode == CapEnforcementOn {
-		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, plan.ceiling, summary); err != nil {
+	if e.mode == CapEnforcementOn && !limits.Inactive {
+		if err := e.recordCapEvents(ctx, accountID, now, plan, limits, summary); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -548,7 +577,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
-	if e.mode == CapEnforcementOn && len(failures) == 0 {
+	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)
 	}
 	if e.planExcessEnforced() && len(failures) == 0 {
@@ -581,12 +610,13 @@ func (e *CapEnforcer) notifyCapEvent(ctx context.Context, subjectID string, now 
 // recordCapEvents records each threshold the subject reached this month the
 // first time a sweep sees it. Shadow mode records nothing: no customer is
 // told about a suspension that is not happening.
-func (e *CapEnforcer) recordCapEvents(ctx context.Context, subjectID string, now time.Time, used int64, limits CapLimits, ceiling int64, summary *CapSweepSummary) error {
+func (e *CapEnforcer) recordCapEvents(ctx context.Context, subjectID string, now time.Time, plan computeCapPlan, limits CapLimits, summary *CapSweepSummary) error {
 	store, ok := e.store.(CapEventStore)
 	if !ok {
 		return nil
 	}
-	for _, threshold := range capThresholds(used, limits, ceiling) {
+	used, ceiling := plan.used, plan.ceiling
+	for _, threshold := range capThresholds(used, limits, ceiling, plan.suspended()) {
 		recorded, err := store.RecordCapEvent(ctx, CapEvent{
 			SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: threshold, ReachedAt: now,
 			Used: used, Allowance: max(limits.Allowance, 1), Ceiling: max(ceiling, limits.Allowance, 1), Overage: limits.Overage,
@@ -637,6 +667,11 @@ func (e *CapEnforcer) observeScopes(ctx context.Context, databases []Database, n
 			order = append(order, observed.Scope)
 		}
 		scope.databaseIDs = append(scope.databaseIDs, database.ID)
+		if lagger, ok := provider.(ComputeCapLagger); ok {
+			if scope.lag, err = addUsage(scope.lag, lagger.CounterLagUnitSeconds(database.Spec)); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	scopes := make([]computeCapScope, 0, len(order))
 	for _, key := range order {

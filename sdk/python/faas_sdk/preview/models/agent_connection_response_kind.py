@@ -1,9 +1,10 @@
 from typing import Literal
 
-AgentConnectionResponseKind = Literal["agent_key", "hosted_mcp"]
+AgentConnectionResponseKind = Literal["agent_key", "app_agent", "hosted_mcp"]
 
 AGENT_CONNECTION_RESPONSE_KIND_VALUES: set[AgentConnectionResponseKind] = {
     "agent_key",
+    "app_agent",
     "hosted_mcp",
 }
 

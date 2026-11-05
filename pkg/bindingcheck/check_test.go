@@ -201,6 +201,32 @@ func TestEvaluateInactiveRuntimeDoesNotClaimAdoption(t *testing.T) {
 	}
 }
 
+func TestEvaluatePreparedRollbackRequiresAnInternalPolicyAndNoResidents(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		allow, resident, passed bool
+	}{
+		{"public policy", false, false, false},
+		{"prepared cold target", true, false, true},
+		{"prepared resident target", true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inventory, policy, now := fixture()
+			policy.AllowPreparedRollback = tc.allow
+			d := &inventory.RuntimeFreshness.Deployments[0]
+			d.DeploymentStatus, d.Status = "snapshotting", "inactive"
+			d.Serving, d.Resident = api.BindingRuntimeInstanceCounts{}, api.BindingRuntimeInstanceCounts{}
+			if tc.resident {
+				d.Resident.Current, d.Status = 1, "current"
+			}
+			report, err := Evaluate(inventory, policy, now)
+			if err != nil || report.Passed != tc.passed {
+				t.Fatalf("prepared rollback report=%+v err=%v", report, err)
+			}
+		})
+	}
+}
+
 func TestEvaluateRotationRequiresRetirementAndHandoff(t *testing.T) {
 	for _, tc := range []struct{ status, code string }{
 		{"completed", "rotation_pending"}, {"failed", "refresh_failed"}, {"queued", "refresh_incomplete"}, {"running", "refresh_incomplete"},

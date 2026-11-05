@@ -407,6 +407,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
+	"POST /v1/auth/verify-email":   true, // the landing page's confirmation form post (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 
@@ -553,6 +554,7 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"PUT /v1/orgs/{slug}/billing/email":                                                                                "SetOrgBillingEmail",   // ADR-20261103131742
 	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
 	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
 	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
@@ -684,8 +686,16 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
 	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
+	"GET /v1/apps/{slug}/resource-inventory":                                         "GetAppResourceInventory",
+	"GET /v1/apps/{slug}/operation-preview":                                          "GetAppOperationPreview",
+	"GET /v1/apps/{slug}/costs":                                                      "GetAppCosts",
+	"GET /v1/apps/{slug}/scaling":                                                    "GetAppScaling",
+	"POST /v1/apps/{slug}/scaling":                                                   "ApplyAppScaling",
+	"GET /v1/apps/{slug}/scaling/requests/{request_id}":                              "GetAppScalingReceipt",
+	"POST /v1/apps/{slug}/env/batch":                                                 "ApplyEnvBatch",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
+	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}":                        "GetEnvironmentRouteBudgetReceipt",
 	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
@@ -902,6 +912,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}":                                 "DeleteIssue",
 	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
 	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",
@@ -1230,6 +1241,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
 	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
+	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
+	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",
+	"POST /v1/orgs/{slug}/agent-connections/revoke_all":                                          "RevokeAllOrgAgentConnections",
+	"GET /v1/orgs/{slug}/agent-policy":                                                           "GetOrgAgentPolicy",
+	"PUT /v1/orgs/{slug}/agent-policy":                                                           "SetOrgAgentPolicy",
 	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
 	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",
@@ -2394,6 +2410,8 @@ var methodRouteMap = map[string]string{
 	// names derived from hyphenated route segments.
 	"GET /v1/apps/{slug}/deployment-cron-staging":                                                  "GetDeploymentCronStagingSnapshot",
 	"GET /v1/apps/{slug}/deployment-staging":                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":                                              "GetServiceAbortReceipt",
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}":                                       "GetDeploymentPromotionReceipt",
 	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                      "GetDeploymentSubmission",
 	"GET /v1/project-submissions/{attempt_id}":                                                     "GetProjectSubmission",
 	"POST /v1/apps/{slug}/deployment-cron-staging":                                                 "ApplyDeploymentCronStaging",

@@ -12,7 +12,7 @@ import (
 
 // PRPreviewSetPeerReader lists the apps that share a PR preview set with an
 // app. A PR preview of an app bound without a project calls only these
-// (ADR-20261103180000): it has no project to scope its service names.
+// (ADR-20261105090226): it has no project to scope its service names.
 type PRPreviewSetPeerReader interface {
 	PRPreviewSetPeerIDs(ctx context.Context, appID string) ([]string, error)
 }

@@ -61,6 +61,8 @@ func setupView(s datapipeline.Setup) dashboard.DataPipelineSetupItem {
 			v.Remediation = "The saved mirror configuration is unavailable for the current account or placement. Review its plan and region."
 		case "data_api_deployment_failed":
 			v.Remediation = "Review deployment logs and fix the reported issue, then retry. Your live mirror, app and read-only binding are retained."
+		case "data_api_source_changed":
+			v.Remediation = "The saved API source changed before deployment was accepted. Retry to use the current template. Your live mirror, app and read-only binding are retained."
 		case "pipeline_needs_attention":
 			v.Remediation = "Review sync health below. Resume or recover the pipeline, then retry this setup."
 		default:

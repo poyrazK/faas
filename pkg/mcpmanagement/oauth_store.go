@@ -52,6 +52,7 @@ func (r *remoteServer) holdClientLocked(g *oauthGrant) {
 }
 
 type authorizationRequest struct {
+	Toolsets   []string
 	ID         string
 	ClientID   string
 	Redirect   string
@@ -106,6 +107,13 @@ type oauthGrant struct {
 	environments          *EnvironmentConsent
 	availableEnvironments []EnvironmentGrant
 	capabilities          []string
+	toolsets              []string
+	// org and orgName name the shared organization the grant's key acts in
+	// (ADR-20261101225122); empty for the personal one.
+	org, orgName string
+	// projects are the slugs of the projects the grant's key is limited to
+	// (ADR-20261104085712); empty when it reaches every project.
+	projects []string
 }
 
 func randomToken(prefix string) (string, error) {

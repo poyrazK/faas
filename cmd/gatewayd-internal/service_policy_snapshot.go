@@ -111,7 +111,7 @@ func (s *servicePolicyEvidenceReader) MarshalJSON() ([]byte, error) {
 }
 
 // PRPreviewSetPeerIDs records the preview set a standalone PR preview's call
-// was resolved and authorized against (ADR-20261103180000).
+// was resolved and authorized against (ADR-20261105090226).
 func (s *servicePolicyEvidenceReader) PRPreviewSetPeerIDs(ctx context.Context, appID string) ([]string, error) {
 	ids, err := s.ServicePolicyReader.PRPreviewSetPeerIDs(ctx, appID)
 	if err == nil {

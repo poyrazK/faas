@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"math/rand/v2"
-	"strings"
 	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TargetSource provides authoritative app, intent and live-instance projections.
 // The public edge cannot mutate lifecycle state through this interface.
 type TargetSource interface {
+	state.AppOwnerReader
 	AppByID(context.Context, string) (state.App, error)
 	UDPListenerByAppAndName(context.Context, string, string) (state.UDPListener, error)
 	LiveDeployments(context.Context, string) ([]state.Deployment, error)
@@ -62,6 +62,9 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 		}
 	}
 	if len(running) > 0 {
+		if err := r.validateIntent(ctx, route); err != nil {
+			return gateway.Target{}, err
+		}
 		instance := running[(r.cursor.Add(1)-1)%uint64(len(running))]
 		return gateway.Target{AppID: route.AppID, InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: instance.DeploymentID, WakeID: instance.WakeID, Port: route.GuestPort}, nil
 	}
@@ -93,8 +96,14 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	if app.Status == state.AppDeleted || app.AccountID != route.AccountID {
 		return errors.New("UDP app ownership no longer matches listener")
 	}
+	if err := ingressroute.RequireActiveOwner(ctx, r.Store, app); err != nil {
+		return err
+	}
 	if app.MaintenanceMode {
 		return errors.New("UDP app is in maintenance mode")
+	}
+	if app.Visibility == api.AppVisibilityInternal {
+		return errors.New("UDP app is internal")
 	}
 	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {
@@ -103,18 +112,7 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	if intent.ID != route.ListenerID || intent.PublicPort != route.PublicPort || intent.AppID != route.AppID || intent.ListenerName != route.ListenerName || !intent.Enabled || intent.Protocol != "udp" || intent.AccountID != route.AccountID || intent.GuestPort != route.GuestPort {
 		return errors.New("UDP listener is disabled or changed")
 	}
-	declared := false
-	for _, port := range app.Manifest.Ports {
-		name := strings.ToLower(strings.TrimSpace(port.Name))
-		if name == "" {
-			name = fmt.Sprintf("udp-%d", port.Port)
-		}
-		if port.EffectiveProtocol() == api.WorkloadPortUDP && port.Port == route.GuestPort && name == route.ListenerName {
-			declared = true
-			break
-		}
-	}
-	if !declared {
+	if !api.DeclaresPublicWorkloadPort(app.Manifest.Ports, route.ListenerName, api.WorkloadPortUDP, route.GuestPort) {
 		return errors.New("UDP listener is not declared by current app manifest")
 	}
 	return ctx.Err()

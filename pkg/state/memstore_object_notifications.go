@@ -82,6 +82,9 @@ func (m *MemStore) changeObjectBucketNotifications(ctx context.Context, account,
 		if !ok || !notificationSameIdentity(a.AccountID, account) || a.Status == AppDeleted || !notificationEntitled(m.accounts[account].Plan, t.Kind) {
 			return p, ErrObjectNotificationInvalid
 		}
+		if kept, e := m.recipientsInProducerReachLocked(account, objectNotificationProducer(b), []PublishedEventRecipient{{AppID: t.AppID}}); e != nil || len(kept) == 0 {
+			return p, ErrObjectNotificationInvalid
+		}
 		if t.Kind == "queue" {
 			if _, _, e = m.notificationQueueLocked(t); e != nil {
 				return p, ErrObjectNotificationInvalid

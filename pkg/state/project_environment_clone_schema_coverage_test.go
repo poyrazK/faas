@@ -136,6 +136,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"workflow_automation_live_verifications":        state.CloneSchemaOperational,
 
 		"app_issue_frequency_alert_policies":       state.CloneSchemaConfiguration,
+		"issue_event_usage":                        state.CloneSchemaOperational,
+		"issue_events":                             state.CloneSchemaOperational,
 		"issue_application_escalation_policies":    state.CloneSchemaConfiguration,
 		"issue_application_reminder_policies":      state.CloneSchemaConfiguration,
 		"issue_application_reminders":              state.CloneSchemaOperational,

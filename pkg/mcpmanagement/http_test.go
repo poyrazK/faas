@@ -56,6 +56,9 @@ func newRemoteFixture(t *testing.T, writes bool) *remoteFixture {
 }
 
 func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions) *remoteFixture {
+	if options.Toolsets == nil {
+		options.Toolsets = []string{ToolsetAll}
+	}
 	t.Helper()
 	f := &remoteFixture{t: t, accounts: map[string]string{"fp_test_alice_remote_key": "alice", "fp_test_bob_remote_key": "bob"}, agentClients: map[string]api.AgentClientRequest{}, disconnects: map[string]int{}}
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -154,6 +157,25 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app"})
 		case "/v1/apps/alpha/release-review":
 			_ = json.NewEncoder(w).Encode(api.AppReleaseReview{AppID: account + "-app", ConfigurationHash: strings.Repeat("a", 64), LatestDeploymentID: "release-base", ServingDeploymentIDs: []string{"release-base"}})
+		case "/v1/apps/alpha/operation-preview":
+			operation := req.URL.Query().Get("operation")
+			if req.Method != http.MethodGet || !api.ValidAppOperation(operation) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			preview := nativePreviewFixture(operation)
+			preview.AppID = account + "-app"
+			preview.Checks["account"] = api.AppOperationCheck{Status: "allowed", Reason: "active_account"}
+			preview.Checks["capability"] = api.AppOperationCheck{Status: "allowed", Reason: "fixture_capability_available"}
+			preview.Checks["environment"] = api.AppOperationCheck{Status: "allowed", Reason: "direct_writes_allowed"}
+			if scope := req.URL.Query().Get("environment"); scope != "" {
+				preview.Scope, preview.ProjectID, preview.EnvironmentID = scope, account+"-project", account+"-"+scope
+				if scope == "production" {
+					preview.Admission = "blocked"
+					preview.Checks["environment"] = api.AppOperationCheck{Status: "blocked", Reason: "protected_environment_requires_promotion"}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(preview)
 		case "/v1/apps/alpha/health":
 			_ = json.NewEncoder(w).Encode(api.AppHealthResponse{AppID: account + "-app", Scope: "default", ServingDeploymentIDs: []string{"release-base"}, LatestDeploymentID: "release-base"})
 		default:
@@ -279,7 +301,7 @@ func (f *remoteFixture) beginAt(ctx context.Context, authorizationURL string) br
 
 func (f *remoteFixture) consent(flow browserFlow, decision, key, origin, csrf string, writes bool, selected ...string) *http.Response {
 	f.t.Helper()
-	form := url.Values{"app_access": {"all"}, "request_id": {flow.requestID}, "csrf": {csrf}, "decision": {decision}}
+	form := url.Values{"app_access": {"all"}, "request_id": {flow.requestID}, "csrf": {csrf}, "decision": {decision}, "toolsets": {"all"}}
 	if len(selected) > 0 {
 		form.Set("app_access", "selected")
 		form["apps"] = selected
@@ -295,6 +317,11 @@ func (f *remoteFixture) consent(flow browserFlow, decision, key, origin, csrf st
 }
 
 func (f *remoteFixture) submitConsent(flow browserFlow, form url.Values, origin string) *http.Response {
+	// Legacy workflows exercise the full catalog. Default-consent evaluations
+	// send an explicit empty selection to exercise the focused default.
+	if _, ok := form["toolsets"]; !ok {
+		form.Set("toolsets", "all")
+	}
 	f.t.Helper()
 	req, err := http.NewRequest(http.MethodPost, f.server.URL+f.prefix+"/oauth/consent", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -380,14 +407,12 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			// A remote grant lists the secret request pair only with consented
-			// secrets:request (ADR-20261026195952).
-			if err != nil || len(aliceCatalog.Tools) != 58 {
+			if err != nil || len(aliceCatalog.Tools) != 83 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) != 49 {
-				t.Fatalf("bob tools=%+v error=%v", bobCatalog, err)
+			if err != nil || len(bobCatalog.Tools) != 73 {
+				t.Fatalf("bob count=%d tools=%+v error=%v", len(bobCatalog.Tools), bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)
 			bobContext := callTool(t, ctx, bobSession, "gregale_context", map[string]any{}, false)

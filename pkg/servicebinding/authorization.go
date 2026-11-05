@@ -102,7 +102,7 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 			}
 		}
 		// A PR preview of an app bound without a project has no project
-		// policy: it calls only its own preview set (ADR-20261103180000).
+		// policy: it calls only its own preview set (ADR-20261105090226).
 		standalonePreview := false
 		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber > 0 && !callerIsTest {
 			projectID, err := previewCallerProjectID(ctx, store, caller)
@@ -294,7 +294,7 @@ func slugNamesCaller(ctx context.Context, store AuthorizationStore, caller, targ
 // before githubd copied project_id onto them. New previews take the zero-read
 // fast path; legacy rows pay one parent lookup only while they remain alive.
 // A PR preview of an app without a project answers "": it has no project
-// policy and calls only its own preview set (ADR-20261103180000).
+// policy and calls only its own preview set (ADR-20261105090226).
 func previewCallerProjectID(ctx context.Context, store AuthorizationStore, caller state.App) (string, error) {
 	if caller.ProjectID != "" || caller.PreviewOfSlug == "" {
 		return caller.ProjectID, nil

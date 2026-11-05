@@ -57,7 +57,7 @@ func (s *Service) pushServicesWaitingForDatabase(ctx context.Context, project st
 	if len(postgres) == 0 {
 		return nil, nil
 	}
-	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(project.AccountID))
+	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(project.AccountID), scan.Workloads)
 	if err != nil {
 		return nil, fmt.Errorf("githubd: read compose environment: %w", err)
 	}
@@ -93,4 +93,58 @@ func (s *Service) pushServicesWaitingForDatabase(ctx context.Context, project st
 		}
 	}
 	return waiting, nil
+}
+
+// pushServicesWithHeldSlugs moves out of scan.Workloads every new service
+// whose app slug another app still holds, and returns the held services'
+// check reasons by slug. apps.slug is unique and a deleted app keeps its slug
+// through the restore window, so creating the service's app failed the whole
+// push reconcile (apps_slug_key) and no other service deployed. The held
+// services stay in scan.DependencyReferences, so their siblings' dependency
+// declarations still validate; the reviewed plan explains the same conflict
+// (reconcile.SlugHolderReasons).
+func (s *Service) pushServicesWithHeldSlugs(ctx context.Context, project state.Project, scan *reposcan.Result) (map[string]string, error) {
+	accountApps, err := s.Reconcile.Store.ListApps(ctx, project.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: list account apps for slugs: %w", err)
+	}
+	if project.OrgID != "" {
+		visible := accountApps[:0]
+		for _, app := range accountApps {
+			if app.OrgID == project.OrgID {
+				visible = append(visible, app)
+			}
+		}
+		accountApps = visible
+	}
+	lookup := s.Reconcile.Store.AppBySlugIncludingDeleted
+	allocated, err := reconcile.AllocateAppSlugs(ctx, lookup, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: allocate app slugs: %w", err)
+	}
+	holders, err := reconcile.SlugHolders(ctx, lookup, allocated, accountApps)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: look up held slugs: %w", err)
+	}
+	if len(holders) == 0 {
+		return nil, nil
+	}
+	reasons := map[string]string{}
+	var kept []reposcan.Workload
+	for i, workload := range allocated {
+		slug := reconcile.AppSlug(workload)
+		holder, held := holders[slug]
+		if !held {
+			kept = append(kept, scan.Workloads[i])
+			continue
+		}
+		scan.DependencyReferences = append(scan.DependencyReferences, scan.Workloads[i])
+		if holder.AccountID == project.AccountID && holder.Status == state.AppDeleted {
+			reasons[slug] = fmt.Sprintf("Not deployed: %s would create app %s, but a deleted app keeps that name during its restore window. Restore it with `gregale app restore %s`, or give the service another app name.", workload.Name, slug, slug)
+		} else {
+			reasons[slug] = fmt.Sprintf("Not deployed: %s would create app %s, but another app already uses that name. Give the service another app name.", workload.Name, slug)
+		}
+	}
+	scan.Workloads = kept
+	return reasons, nil
 }

@@ -3147,6 +3147,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if len(queueCanaryBindings) > 0 {
 				return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single workload"))
 			}
+			// --plan/--preview stays local: the fan-out reserved each app
+			// before its child plan refused --runtime (rc.318 field report).
+			if *simplePlan {
+				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, out: osStdout}.printPlan()
+			}
 			return deployFunctionSet(ctx, functionSetDeploy{
 				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
@@ -5745,6 +5750,8 @@ func cmdCronsUpdate(args []string) int {
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
+	clearSchedulePolicy := fs.Bool("clear-schedule-policy", false, "remove the schedule policy")
+	clearFailureRules := fs.Bool("clear-failure-rules", false, "remove the failure rules")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -5787,12 +5794,16 @@ func cmdCronsUpdate(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale cron update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
 		return 1
 	}
+	if *clearSchedulePolicy && *schedulePolicyJSON != "" || *clearFailureRules && *failureRulesJSON != "" {
+		PrintUsage(os.Stderr, "usage: gregale cron update --schedule-policy JSON | --clear-schedule-policy, --failure-rules JSON | --clear-failure-rules (mutually exclusive)", "crons")
+		return 1
+	}
 	// Reject no-fields-set early; the server otherwise no-ops and
 	// emits a cron-changed notification — a footgun we'd rather
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] && !*clearSchedulePolicy && !*clearFailureRules {
 		PrintUsage(os.Stderr, "usage: gregale cron update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
@@ -5866,6 +5877,7 @@ func cmdCronsUpdate(args []string) int {
 		}
 		req.FailureRules = rules
 	}
+	req.ClearSchedulePolicy, req.ClearFailureRules = *clearSchedulePolicy, *clearFailureRules
 	return updateCronAndRender(context.Background(), client, id, req)
 }
 
@@ -5910,18 +5922,23 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...]", "keys")
+			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...]", "keys")
 			return 0
 		}
 		flags, positional := splitArgsForFlags(args[1:])
 		fs := newFlagSet("keys add", flag.ContinueOnError)
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
 		if err := fs.Parse(flags); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...]", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...]", "keys")
 			return 1
+		}
+		projects := splitList(*projectsCSV)
+		if flagWasSet(fs, "projects") && len(projects) == 0 {
+			return printErr("Invalid projects", errors.New("--projects must name at least one project"))
 		}
 		var scopes []string
 		if flagWasSet(fs, "scopes") {
@@ -5945,7 +5962,7 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), positional[0], scopes)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes, projects...)
 		if err != nil {
 			return printErr("Could not create API key", err)
 		}

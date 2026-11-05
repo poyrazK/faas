@@ -46,11 +46,20 @@ faas_public_edge_tls_dir: /etc/caddy/tls
 # Authenticated Origin Pulls (bug hunt 2026-10-27 H28). The source-IP check
 # admits every Cloudflare customer's zone, so anyone could put this origin
 # behind their own zone or Worker and skip the platform zone's WAF, bot and
-# rate-limit rules. With this on, the platform sites require Cloudflare's
-# origin-pull client certificate. Turn on Authenticated Origin Pulls for the
-# zone in Cloudflare and install the CA first; the IP allowlist stays.
+# rate-limit rules. With this on, the platform sites require the zone's
+# origin-pull client certificate. The CA must be our own (origin-pull-ca.pem
+# from deploy/scripts/cloudflare-origin-pull.sh, docs/runbooks/EdgeDirectEntry.md),
+# never Cloudflare's shared origin-pull CA: Cloudflare presents that
+# certificate for every customer's zone, so trusting it admits them all. Turn
+# on zone-level Authenticated Origin Pulls in Cloudflare and install the CA
+# first; the IP allowlist stays.
 faas_public_edge_authenticated_origin_pulls: false
 faas_public_edge_origin_pull_ca: /etc/caddy/tls/cloudflare-origin-pull-ca.pem
+# ADR-20261103172551: a platform site that admits Cloudflare's address ranges
+# (faas_public_edge_cloudflare_only, or custom-domain TLS) must also require the
+# zone's origin-pull certificate. Set this true only to deploy knowingly
+# without it, for example while the zone's certificate is being rolled out.
+faas_public_edge_allow_any_cloudflare_zone: false
 faas_public_edge_extra_domains: "{{ ([gatewayd_apps_domain | default('gregale.dev'), faas_deploy_domain | default('')] + (faas_apps_domain_aliases | default([]))) | select | map('lower') | reject('equalto', faas_public_edge_domain | lower) | unique | list }}"
 faas_public_edge_extra_tls_files: "{{ faas_public_edge_extra_domains | product(['pem', 'key']) | map('join', '.') | map('regex_replace', '^', faas_public_edge_tls_dir ~ '/cloudflare-origin-') | list }}"
 

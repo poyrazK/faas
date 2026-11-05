@@ -18,21 +18,28 @@ var routeActions = map[string]authz.OrgAction{
 	// authorize its app (ADR-20261030125501 §3). A callback URL keeps working
 	// after the member who asked for it leaves, so issuing and revoking take
 	// the permission of the app's other credentials.
-	"POST /v1/uploads":                      authz.OrgActionDeployApp,
-	"GET /v1/uploads/{id}":                  authz.OrgActionDeployApp,
-	"PATCH /v1/uploads/{id}":                authz.OrgActionDeployApp,
-	"POST /v1/uploads/{id}/commit":          authz.OrgActionDeployApp,
-	"DELETE /v1/uploads/{id}":               authz.OrgActionDeployApp,
-	"POST /v1/agent-callbacks":              authz.OrgActionManageAppSecurity,
-	"POST /v1/agent-callbacks/revocations":  authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}":                   authz.OrgActionReadApp,
-	"PATCH /v1/apps/{slug}":                 authz.OrgActionConfigureApp,
-	"PATCH /v1/apps/{slug}/labels":          authz.OrgActionConfigureApp,
-	"DELETE /v1/apps/{slug}":                authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/restore":          authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/park":             authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/park/conditional": authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/wake":             authz.OrgActionDeployApp,
+	"POST /v1/uploads":                                  authz.OrgActionDeployApp,
+	"GET /v1/uploads/{id}":                              authz.OrgActionDeployApp,
+	"PATCH /v1/uploads/{id}":                            authz.OrgActionDeployApp,
+	"POST /v1/uploads/{id}/commit":                      authz.OrgActionDeployApp,
+	"DELETE /v1/uploads/{id}":                           authz.OrgActionDeployApp,
+	"POST /v1/agent-callbacks":                          authz.OrgActionManageAppSecurity,
+	"POST /v1/agent-callbacks/revocations":              authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}":                               authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/resource-inventory":            authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/operation-preview":             authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/costs":                         authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/env/batch":                    authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/scaling":                       authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/scaling":                      authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/scaling/requests/{request_id}": authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}":                             authz.OrgActionConfigureApp,
+	"PATCH /v1/apps/{slug}/labels":                      authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}":                            authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/restore":                      authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/park":                         authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/park/conditional":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/wake":                         authz.OrgActionDeployApp,
 	// A restart parks and wakes the app, so it takes their permission
 	// (bug hunt 2026-10-28 B36).
 	"POST /v1/apps/{slug}/restart":                    authz.OrgActionDeployApp,
@@ -70,6 +77,10 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/builds/{id}/provenance":                  authz.OrgActionReadApp,
 	"GET /v1/builds/{id}/sbom":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/logs":                        authz.OrgActionReadAppLogs,
+
+	// Historical receipts require the same app-read permission as deployments.
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":        authz.OrgActionReadApp,
 
 	// Release approvals (ADR-20261020085706): only owners and admins may
 	// change the policy, so a developer cannot switch approvals off.
@@ -193,6 +204,9 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry":   authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/outbound-bindings":                       authz.OrgActionReadApp,
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":      authz.OrgActionManageAppSecurity,
+
+	// Standalone issue deletion complements the Issues feature route inventory.
+	"DELETE /v1/apps/{slug}/issues/{issue_id}": authz.OrgActionDeployApp,
 
 	// Metrics and request analytics are aggregates the app page already
 	// shows every member who can read the app. Unreviewed, they answered
@@ -365,6 +379,18 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/edge-rule-lists":               authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update": authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete": authz.OrgActionManageAppSecurity,
+	// With ?app=<slug>, the list and preset APIs manage a company app's own
+	// lists and presets (ADR-091 amendment 2026-11-03, review round 9).
+	"GET /v1/edge-rule-lists":           authz.OrgActionReadApp,
+	"GET /v1/edge-rule-lists/{name}":    authz.OrgActionReadApp,
+	"POST /v1/edge-rule-lists":          authz.OrgActionManageAppSecurity,
+	"PATCH /v1/edge-rule-lists/{name}":  authz.OrgActionManageAppSecurity,
+	"DELETE /v1/edge-rule-lists/{name}": authz.OrgActionManageAppSecurity,
+	"GET /v1/cors-presets":              authz.OrgActionReadApp,
+	"GET /v1/cors-presets/{id}":         authz.OrgActionReadApp,
+	"POST /v1/cors-presets":             authz.OrgActionManageAppSecurity,
+	"PATCH /v1/cors-presets/{id}":       authz.OrgActionManageAppSecurity,
+	"DELETE /v1/cors-presets/{id}":      authz.OrgActionManageAppSecurity,
 }
 
 // dashboardRead reports a read of a session-only dashboard app page, which
