@@ -15530,6 +15530,31 @@ WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uu
         'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
 RETURNING d.*;
 
+-- name: ClaimManagedPostgresComputeHold :one
+WITH locked AS MATERIALIZED (
+    SELECT * FROM managed_postgres_databases
+    WHERE id=sqlc.arg(database_id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=sqlc.arg(lease_token)::text,
+    lease_until=clock_timestamp()+sqlc.arg(lease_milliseconds)::bigint*interval '1 millisecond'
+FROM locked l WHERE d.id=l.id
+    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed')
+    AND l.desired_generation=sqlc.arg(generation)::bigint
+    AND l.backend_id=sqlc.arg(backend_id)::text AND l.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
+    AND l.provider_resource_id=sqlc.arg(provider_resource_id)::text
+    AND COALESCE(l.data_resource_id,l.provider_resource_id)=sqlc.arg(data_resource_id)::text
+    AND (l.lease_until IS NULL OR l.lease_until<=clock_timestamp())
+RETURNING d.*;
+
+-- name: ReleaseManagedPostgresComputeHold :execrows
+WITH locked AS MATERIALIZED (
+    SELECT id,state,lease_token,lease_until FROM managed_postgres_databases
+    WHERE id=sqlc.arg(database_id)::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
+FROM locked l WHERE d.id=l.id AND l.lease_token=sqlc.arg(lease_token)::text
+    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp();
+
 -- name: ReleaseManagedPostgresLifecycleLease :execrows
 UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),
     lease_token=NULL,lease_until=NULL,retry_at=sqlc.arg(retry_at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz

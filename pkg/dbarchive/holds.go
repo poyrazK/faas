@@ -71,7 +71,9 @@ func (s *TieredStore) PutHold(ctx context.Context, databaseID, name string, poin
 		if !existing.PointInTime.Equal(point) {
 			return Hold{}, ErrConflict
 		}
-		return existing, nil
+		// Repair mirror work even when an older worker lost the original
+		// copy intent before the primary hold became visible.
+		return existing, s.journalOffsite(offsiteOp{Op: offsiteCopy, Database: databaseID, Path: "holds/" + name, Hold: &existing})
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Hold{}, err
@@ -90,8 +92,9 @@ func (s *TieredStore) PutHold(ctx context.Context, databaseID, name string, poin
 		return Hold{}, err
 	}
 	if s.Remote != nil {
-		// The mirror copies the hold from the bucket once it is there.
-		if err := s.journalOffsite(offsiteOp{Op: offsiteCopy, Database: databaseID, Path: "holds/" + name}); err != nil {
+		// Publish the complete pin durably before the primary PUT. A replay
+		// never mistakes an in-flight publication for a deleted object.
+		if err := s.journalOffsite(offsiteOp{Op: offsiteCopy, Database: databaseID, Path: "holds/" + name, Hold: &hold}); err != nil {
 			return Hold{}, err
 		}
 		return hold, s.Remote.Put(ctx, HoldKey(s.Prefix, databaseID, name), bytes.NewReader(body), int64(len(body)))

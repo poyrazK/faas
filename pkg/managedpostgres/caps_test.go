@@ -140,8 +140,22 @@ func (p *capTestProvider) SetComputeCap(_ context.Context, id string, quota int6
 // capTestStore serves only the two reads the enforcer makes.
 type capTestStore struct {
 	UsageStore
-	databases []Database
-	ledger    map[string]int64
+	databases  []Database
+	ledger     map[string]int64
+	holdClaims *MemoryStore
+}
+
+func (s *capTestStore) ClaimComputeHold(ctx context.Context, database Database, token string, now, until time.Time) (Database, error) {
+	if s.holdClaims == nil {
+		s.holdClaims = NewMemoryStore()
+		for _, row := range s.databases {
+			s.holdClaims.databases[row.ID] = cloneDatabase(row)
+		}
+	}
+	return s.holdClaims.ClaimComputeHold(ctx, database, token, now, until)
+}
+func (s *capTestStore) ReleaseComputeHold(ctx context.Context, id, token string, now time.Time) error {
+	return s.holdClaims.ReleaseComputeHold(ctx, id, token, now)
 }
 
 func (s *capTestStore) ListUsageDatabases(_ context.Context, after UsageDatabaseCursor, limit int) ([]Database, error) {
