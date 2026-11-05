@@ -5463,7 +5463,7 @@ INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *;
 
 -- name: ObjectBucketReserveLockAccount :one
-SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE;
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR NO KEY UPDATE;
 
 -- name: ObjectBucketList :many
 SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.state <> 'deleted'
@@ -5629,7 +5629,11 @@ WHERE snapshot_id = $1::uuid AND state = 'ready'
 ORDER BY node_id, is_origin DESC;
 
 -- name: ObjectUsageLockAccount :one
-SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
+-- Object writers of one account serialize here. NO KEY UPDATE excludes the
+-- other writers and the fences but not the KEY SHARE that foreign-key inserts
+-- naming the namespace take (request journal, invocations): FOR UPDATE stalled
+-- them for the whole account while an object job ran (2026-11-05).
+SELECT id FROM resource_namespaces WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: ObjectUsageAccountPlan :one
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
