@@ -14,8 +14,9 @@ import time
 import uuid
 
 from task_keys import check_task_payload_keys
+from task_rewrap import rewrap_candidates, rewrap_payload
 from task_owners import OWNER_SCHEMA, associate_owners, cleanup_expired_tasks
-from task_execution import RetryableTaskError, TaskExecutionPolicy
+from task_execution import RetryableTaskError, TaskExecutionPolicy, TaskLeaseDeadline, TASK_LEASE_SECONDS
 
 TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 TASK_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
@@ -288,6 +289,8 @@ class DurableTaskRuntime:
 
         self.namespace = namespace
         self.payload_encryption_version = payload_encryption_version
+        self._rewrap_lock = threading.Lock()
+        self._rewrap_after = self._rewrap_through = None
         self.notification_channel = "gregale_mcp_task_" + hashlib.md5(namespace.encode("utf-8")).hexdigest()
         if self.role != "observer":
             key_specs = [{"id": owner_key_id, "key": owner_key}, *previous_owner_keys]
@@ -914,15 +917,17 @@ class DurableTaskRuntime:
         with self.pool.connection() as connection:
             with connection.transaction():
                 self._lock_execution(connection)
-                # Lowering the budget settles retries, but resumes continue an
-                # existing attempt even when it started under a higher budget.
+                # Cancellation settles expired leases without executing again.
+                # Input and drain resumes otherwise retain their attempt budget.
                 connection.execute(
                     "UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'failed' END,"
                     "updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,next_attempt_at=NULL,resume_pending=false "
-                    "WHERE namespace=%s AND attempt_count>=%s AND ((status='running' AND lease_expires_at<=clock_timestamp()) "
-                    "OR (status='queued' AND NOT resume_pending))",
+                    "WHERE namespace=%s AND (cancel_requested_at IS NOT NULL OR attempt_count>=%s) "
+                    "AND ((status='running' AND lease_expires_at<=clock_timestamp()) "
+                    "OR (status='queued' AND (cancel_requested_at IS NOT NULL OR NOT resume_pending)))",
                     (self.namespace, self.execution.max_attempts),
                 )
+                lease_started_at = time.monotonic()
                 row = connection.execute(f"""
                     WITH policy AS MATERIALIZED (
                         SELECT %s::text AS namespace,%s::int AS max_attempts,
@@ -930,6 +935,7 @@ class DurableTaskRuntime:
                     ), candidate AS (
                         SELECT queued.namespace,queued.task_id FROM gregale_mcp_tasks AS queued CROSS JOIN policy
                         WHERE queued.namespace=policy.namespace AND queued.expires_at>clock_timestamp()
+                        AND queued.cancel_requested_at IS NULL
                         AND (queued.attempt_count<policy.max_attempts OR
                              (queued.status='queued' AND queued.resume_pending))
                         AND ({handler_filter})
@@ -947,12 +953,14 @@ class DurableTaskRuntime:
                         resume_pending=false,next_attempt_at=NULL,lease_token=gen_random_uuid(),
                         lease_expires_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
                     FROM candidate WHERE task.namespace=candidate.namespace AND task.task_id=candidate.task_id
+                        AND task.cancel_requested_at IS NULL
                     RETURNING task.task_id::text AS task_id,task.tool_name,task.handler_version,task.attempt_count,
                               task.lease_token::text AS lease_token,task.arguments_encrypted,task.input_methods,
                               task.result_encrypted,task.error_encrypted,task.input_state_encrypted
                     """, (self.namespace, self.execution.max_attempts, self.execution.max_running,
                           self.execution.max_running_per_owner, *handler_params)).fetchone()
                 if row is not None:
+                    row["_lease_started_at"] = lease_started_at
                     row["arguments"] = self._decrypt(row.pop("arguments_encrypted"), row["task_id"], "arguments")
                     for field, column in (("result", "result_encrypted"), ("error", "error_encrypted"), ("input-state", "input_state_encrypted")):
                         payload = row.pop(column)
@@ -1014,15 +1022,16 @@ class DurableTaskRuntime:
                 return responses, ready
 
     def _heartbeat(self, task_id, lease_token):
+        lease_args = (self.namespace, task_id, lease_token)
         with self.pool.connection() as connection:
             with connection.transaction():
                 self._lock_execution(connection)
                 return connection.execute(
-                    "UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()+interval '30 seconds' "
+                    TASK_LEASE_INSTANT_SQL + "UPDATE gregale_mcp_tasks SET lease_expires_at=instant.now+interval '30 seconds' FROM instant "
                     "WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' "
-                    "AND lease_expires_at>clock_timestamp() AND expires_at>clock_timestamp() "
+                    "AND lease_expires_at>instant.now AND expires_at>instant.now "
                     "RETURNING cancel_requested_at IS NOT NULL AS cancelled",
-                    (self.namespace, task_id, lease_token),
+                    lease_args + lease_args,
                 ).fetchone()
 
     def _finish(self, task, status, value=None, retryable=False):
@@ -1061,22 +1070,29 @@ class DurableTaskRuntime:
         stop_heartbeat = threading.Event()
         lease_lost = threading.Event()
 
+        def lose_lease():
+            lease_lost.set()
+            cancelled.set()
+
         handler = self._task_executors.get((task["tool_name"], task["handler_version"]))
         if handler is None:
             self._finish(task, "failed")
             return
 
+        lease = TaskLeaseDeadline(lose_lease, task.get("_lease_started_at"))
+
         def heartbeat_loop():
             while not stop_heartbeat.wait(5) and not self._drain_expired.is_set():
                 try:
+                    started_at = time.monotonic()
                     state = self._heartbeat(task["task_id"], task["lease_token"])
                     if state is None:
-                        lease_lost.set()
-                        cancelled.set()
+                        lose_lease()
                         return
                     if state["cancelled"]:
                         cancelled.set()
                         return
+                    lease.renew(started_at)
                 except Exception:
                     continue
 
@@ -1090,7 +1106,10 @@ class DurableTaskRuntime:
             return responses
 
         try:
+            if lease_lost.is_set():
+                return
             result = handler(task["arguments"], TaskExecutionContext(task["task_id"], cancelled, request_inputs))
+            lease.close()
             if lease_lost.is_set() or self._drain_expired.is_set():
                 return
             if cancelled.is_set():
@@ -1115,56 +1134,48 @@ class DurableTaskRuntime:
             except Exception:
                 pass
         finally:
+            lease.close()
             stop_heartbeat.set()
             heartbeat.join(timeout=1)
 
     def _rewrap_batch(self, limit=64):
-        if self.payload_encryption_version != 2:
+        if self.payload_encryption_version != 2 or limit < 1:
             return 0
-        active_key_id = self.active_owner_key_id.encode("ascii")
-        columns = ("arguments_encrypted", "result_encrypted", "error_encrypted", "input_state_encrypted")
-        checks = []
-        for column in columns:
-            checks.append(
-                f"({column} IS NOT NULL AND CASE "
-                f"WHEN octet_length({column}) < 2 THEN TRUE "
-                f"WHEN get_byte({column},0) <> 2 THEN TRUE "
-                f"WHEN get_byte({column},1) = 0 OR get_byte({column},1) > 64 THEN TRUE "
-                f"WHEN octet_length({column}) < 2 + get_byte({column},1) + 28 THEN TRUE "
-                f"ELSE substring({column} FROM 3 FOR get_byte({column},1)) <> %s::bytea END)"
-            )
-        query = (
-            "SELECT task_id::text AS task_id,arguments_encrypted,result_encrypted,error_encrypted,input_state_encrypted "
-            "FROM gregale_mcp_tasks WHERE namespace=%s AND expires_at>clock_timestamp() AND ("
-            + " OR ".join(checks)
-            + ") ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED"
-        )
+        if self.active_owner_key_id in self._main_payload_keys and self.active_owner_key_id in getattr(self, "_legacy_payload_keys", {}):
+            limit = min(limit, 8)
+        with self._rewrap_lock:
+            return self._rewrap_batch_locked(limit)
+
+    def _rewrap_batch_locked(self, limit):
+        changed = 0
         with self.pool.connection() as connection:
             with connection.transaction():
                 connection.execute("SELECT set_config('gregale.mcp_task_rewrap','on',true)")
-                rows = connection.execute(query, (self.namespace, active_key_id, active_key_id, active_key_id, active_key_id, limit)).fetchall()
+                rows, through, scanning = rewrap_candidates(self, connection, limit)
                 for row in rows:
                     task_id = row["task_id"]
-
-                    def rotate(value, field, max_bytes):
-                        if value is None:
-                            return None
-                        plain = self._decrypt_payload(value, task_id, field)
-                        if len(plain) > max_bytes:
-                            raise ValueError("MCP task payload exceeds its configured size limit")
-                        return self._encrypt_payload(plain, task_id, field)
-
-                    encrypted = (
-                        rotate(row["arguments_encrypted"], "arguments", 256 * 1024),
-                        rotate(row["result_encrypted"], "result", 1024 * 1024),
-                        rotate(row["error_encrypted"], "error", 1024 * 1024),
-                        rotate(row["input_state_encrypted"], "input-state", MAX_INPUT_STATE_BYTES),
-                    )
+                    encrypted, needs_update = [], False
+                    for field, column, maximum in (
+                        ("arguments", "arguments_encrypted", 256 * 1024),
+                        ("result", "result_encrypted", 1024 * 1024),
+                        ("error", "error_encrypted", 1024 * 1024),
+                        ("input-state", "input_state_encrypted", MAX_INPUT_STATE_BYTES),
+                    ):
+                        payload, updated = rewrap_payload(self, row[column], task_id, field, maximum)
+                        encrypted.append(payload)
+                        needs_update = needs_update or updated
+                    if not needs_update:
+                        continue
                     connection.execute(
                         "UPDATE gregale_mcp_tasks SET arguments_encrypted=%s,result_encrypted=%s,error_encrypted=%s,input_state_encrypted=%s WHERE namespace=%s AND task_id=%s",
                         (*encrypted, self.namespace, task_id),
                     )
-        return len(rows)
+                    changed += 1
+        if scanning:
+            self._rewrap_after = self._rewrap_through = None
+            if len(rows) == limit:
+                self._rewrap_after, self._rewrap_through = rows[-1]["task_id"], through
+        return changed
 
     def _rewrap_loop(self):
         last_error_log = 0
@@ -1255,7 +1266,8 @@ class DurableTaskRuntime:
                         break
                     cancelled = threading.Event()
                     with self._drain_lock:
-                        stopping = self._stopping.is_set()
+                        stopping = (self._stopping.is_set() or
+                                    time.monotonic() - task.get("_lease_started_at", time.monotonic()) >= TASK_LEASE_SECONDS)
                         if not stopping:
                             self._active_tasks[task["task_id"]] = (task, cancelled)
                     if stopping:

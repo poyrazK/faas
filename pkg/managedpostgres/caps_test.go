@@ -47,6 +47,21 @@ func TestPlanComputeCaps(t *testing.T) {
 		{name: "a held suspension is not rewritten", ceiling: 25 * hour, ledger: 25 * hour,
 			scopes:   []computeCapScope{{used: 25 * hour, quota: 25 * hour}},
 			wantUsed: 25 * hour, wantRemaining: 0, wantTargets: []int64{25 * hour}, wantApply: []bool{false}},
+		// ADR-20261025094915 amendment 2026-11-05: a provider that reports
+		// use counts it as the ledger plus each scope's use since the
+		// ledger's coverage; the quotas stay on the provider's counters.
+		{name: "reported use adds to the ledger", ceiling: 5 * hour, ledger: 2 * hour,
+			scopes:   []computeCapScope{{used: hour, quota: 5 * hour, reported: true, unreported: 1800}},
+			wantUsed: 2*hour + 1800, wantRemaining: 3*hour - 1800, wantTargets: []int64{4*hour - 1800}, wantApply: []bool{true}},
+		{name: "a stale counter does not hide reported use", ceiling: 5 * hour, ledger: 4 * hour,
+			scopes:   []computeCapScope{{used: 600, quota: 5 * hour, reported: true, unreported: hour}},
+			wantUsed: 5 * hour, wantRemaining: 0, wantTargets: []int64{600}, wantApply: []bool{true}},
+		{name: "every scope's reported use counts", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: hour, reported: true, unreported: 600}, {used: 0, reported: true, unreported: 1200}},
+			wantUsed: hour + 1800, wantRemaining: 24*hour - 1800, wantTargets: []int64{25*hour - 1800, 24*hour - 1800}, wantApply: []bool{true, true}},
+		{name: "one unreported scope keeps the counters", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: 3 * hour, reported: true, unreported: 600}, {used: hour}},
+			wantUsed: 4 * hour, wantRemaining: 21 * hour, wantTargets: []int64{24 * hour, 22 * hour}, wantApply: []bool{true, true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,6 +101,24 @@ type capTestProvider struct {
 	observed map[string]ComputeCapObservation
 	setErr   map[string]error
 	set      map[string]int64
+	holds    map[string]bool
+}
+
+func (p *capTestProvider) ComputeHeld(_ context.Context, id string) (bool, error) {
+	return p.holds[id], nil
+}
+
+func (p *capTestProvider) HoldForDeletion(_ context.Context, id string) error {
+	if p.holds == nil {
+		p.holds = map[string]bool{}
+	}
+	p.holds[id] = true
+	return nil
+}
+
+func (p *capTestProvider) ReleaseDeletionHold(_ context.Context, id string) error {
+	delete(p.holds, id)
+	return nil
 }
 
 func (p *capTestProvider) ObserveComputeCap(_ context.Context, id string) (ComputeCapObservation, error) {

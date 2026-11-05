@@ -280,8 +280,8 @@ func (s *Served) listen(ctx context.Context, pool *pgxpool.Pool, notices chan<- 
 }
 
 func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) error {
-	// Share the daemon's notification connection rather than parking another
-	// ordinary query slot for certificate reloads. Resync covers lost notices.
+	// The shared hub uses the direct session pool for LISTEN, leaving ordinary
+	// query slots free for requests. Resync covers lost notices.
 	changes, err := db.SubscribeWithResync(ctx, pool, []string{NotifyChannel}, s.log)
 	if err != nil {
 		return err

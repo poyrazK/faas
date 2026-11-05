@@ -169,9 +169,18 @@ type operationFixture struct {
 	batchBodies             []string
 	failBatchAfterCommit    bool
 	denyRestart             bool
+	scalingRevision         int64
+	scalingReceipts         map[string]api.AppScalingReceipt
+	failScalingAfterCommit  bool
+	failScalingBeforeCommit bool
+	denyScalingReads        bool
+	concurrentScalingRAM    *int
 }
 
 func (f *operationFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if f.serveScaling(w, r) {
+		return
+	}
 	switch {
 	case r.URL.Path == "/v1/apps/alpha/env/batch" && r.Method == http.MethodPost:
 		var req api.EnvBatchRequest

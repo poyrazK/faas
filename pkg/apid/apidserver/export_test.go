@@ -284,6 +284,7 @@ var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
+var ErrCDNCert = &errCDNCert
 var ErrCertFailure = &errCertFailure
 var ErrClassifierHostHashFailed = &errClassifierHostHashFailed
 var ErrClassifierInsert = &errClassifierInsert
@@ -474,6 +475,8 @@ var DebugRegressionObservationToItem = debugRegressionObservationToItem
 var DebugRegressionParams = debugRegressionParams
 var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
+var DebugRouteMatches = debugRouteMatches
+var RegressionAppsAfter = regressionAppsAfter
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename
 var DecodeBindingInventory = decodeBindingInventory
@@ -2121,9 +2124,27 @@ func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account,
 // ResolveSourceReleaseCommand exposes the release command precedence of a
 // source deployment (ADR-20261102192943).
 func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
-	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, false)
 	return resolved.command, resolved.shell, problem
 }
+
+// ResolveSourceReleaseCommandWithPhase resolves a source deployment's release
+// command with the release phase on or off (FAAS_RELEASE_PHASE_ENABLED).
+func ResolveSourceReleaseCommandWithPhase(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, enabled bool) ([]string, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, !enabled)
+	return resolved.command, problem
+}
+
+// CapabilitiesWithReleasePhase answers GET /v1/capabilities for a Pro
+// account with the release phase on or off.
+func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithReleasePhaseEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
+// ReleasePhaseEnabledFromEnv exposes how apid reads FAAS_RELEASE_PHASE_ENABLED.
+var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
@@ -2152,3 +2173,7 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
+// enforcement.
+var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady

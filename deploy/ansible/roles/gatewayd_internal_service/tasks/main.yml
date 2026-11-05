@@ -27,6 +27,23 @@
     mode: "0644"
   register: realtimed_unit
 
+- name: gatewayd_internal_service — create custom-domain TLS drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_internal_service — align custom-domain certificate ownership with the public edge
+  ansible.builtin.template:
+    src: 99-faas-custom-domain-tls.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-custom-domain-tls.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
 # Durable listeners (ADR-1736), off unless faas_compute_durable_listeners.
 # The socket units are inert until a service drop-in Wants= them. Nothing
 # here starts a socket: a daemon that bound the address itself unlinks the

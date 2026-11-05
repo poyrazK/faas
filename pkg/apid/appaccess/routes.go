@@ -18,25 +18,28 @@ var routeActions = map[string]authz.OrgAction{
 	// authorize its app (ADR-20261030125501 §3). A callback URL keeps working
 	// after the member who asked for it leaves, so issuing and revoking take
 	// the permission of the app's other credentials.
-	"POST /v1/uploads":                       authz.OrgActionDeployApp,
-	"GET /v1/uploads/{id}":                   authz.OrgActionDeployApp,
-	"PATCH /v1/uploads/{id}":                 authz.OrgActionDeployApp,
-	"POST /v1/uploads/{id}/commit":           authz.OrgActionDeployApp,
-	"DELETE /v1/uploads/{id}":                authz.OrgActionDeployApp,
-	"POST /v1/agent-callbacks":               authz.OrgActionManageAppSecurity,
-	"POST /v1/agent-callbacks/revocations":   authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}":                    authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/resource-inventory": authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/operation-preview":  authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/costs":              authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/env/batch":         authz.OrgActionConfigureApp,
-	"PATCH /v1/apps/{slug}":                  authz.OrgActionConfigureApp,
-	"PATCH /v1/apps/{slug}/labels":           authz.OrgActionConfigureApp,
-	"DELETE /v1/apps/{slug}":                 authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/restore":           authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/park":              authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/park/conditional":  authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/wake":              authz.OrgActionDeployApp,
+	"POST /v1/uploads":                                  authz.OrgActionDeployApp,
+	"GET /v1/uploads/{id}":                              authz.OrgActionDeployApp,
+	"PATCH /v1/uploads/{id}":                            authz.OrgActionDeployApp,
+	"POST /v1/uploads/{id}/commit":                      authz.OrgActionDeployApp,
+	"DELETE /v1/uploads/{id}":                           authz.OrgActionDeployApp,
+	"POST /v1/agent-callbacks":                          authz.OrgActionManageAppSecurity,
+	"POST /v1/agent-callbacks/revocations":              authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}":                               authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/resource-inventory":            authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/operation-preview":             authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/costs":                         authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/env/batch":                    authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/scaling":                       authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/scaling":                      authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/scaling/requests/{request_id}": authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}":                             authz.OrgActionConfigureApp,
+	"PATCH /v1/apps/{slug}/labels":                      authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}":                            authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/restore":                      authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/park":                         authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/park/conditional":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/wake":                         authz.OrgActionDeployApp,
 	// A restart parks and wakes the app, so it takes their permission
 	// (bug hunt 2026-10-28 B36).
 	"POST /v1/apps/{slug}/restart":                    authz.OrgActionDeployApp,
@@ -74,6 +77,10 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/builds/{id}/provenance":                  authz.OrgActionReadApp,
 	"GET /v1/builds/{id}/sbom":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/logs":                        authz.OrgActionReadAppLogs,
+
+	// Historical receipts require the same app-read permission as deployments.
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/service-aborts/{attempt_id}":        authz.OrgActionReadApp,
 
 	// Release approvals (ADR-20261020085706): only owners and admins may
 	// change the policy, so a developer cannot switch approvals off.

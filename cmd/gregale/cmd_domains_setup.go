@@ -6,6 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -93,7 +96,11 @@ func cmdDomainsSetup(args []string) int {
 	if profile := currentProfile(); profile != "default" {
 		command += " --profile '" + strings.ReplaceAll(profile, "'", "'\"'\"'") + "'"
 	}
-	resume := fmt.Sprintf("%s domains setup %s --app %s", command, domain, *slug)
+	resumeDomain := domain
+	if strings.HasPrefix(domain, "*.") {
+		resumeDomain = "'" + domain + "'"
+	}
+	resume := fmt.Sprintf("%s domains setup %s --app %s", command, resumeDomain, *slug)
 	if *environment != "" {
 		resume += " --environment " + *environment
 	}
@@ -113,32 +120,37 @@ func cmdDomainsSetup(args []string) int {
 	for {
 		binding, err = client.VerifyDomain(waitCtx, domain)
 		if err != nil {
-			_, _ = fmt.Fprintln(osStdout, "Continue checking: "+resume)
 			if ctx.Err() != nil {
 				return 130
 			}
-			return printErr("Domain verification did not finish", err)
-		}
-		if binding.Domain != domain || binding.AppID != app.ID || binding.Environment != *environment {
-			return printErr("Domain binding changed", errors.New("the domain now points to a different app or environment; inspect domains show"))
-		}
-		if binding.VerificationExpiredAt(time.Now()) {
-			return printErr("Verification claim expired", errors.New("run "+resume+" to obtain a new TXT proof"))
-		}
-		if domainSetupReady(binding) {
-			break
-		}
-		certStatus := binding.CertStatus
-		if certStatus == "" {
-			certStatus = "pending"
-		}
-		state := fmt.Sprintf("ownership verified=%t; certificate=%s; %s", binding.Verified, certStatus, binding.CertLastError)
-		if state != lastState {
-			PrintProgress(osStdout, "%s", state)
-			if report, doctorErr := client.DomainDoctor(waitCtx, domain); doctorErr == nil && report.Domain == domain && report.AppID == app.ID {
-				printDoctorReport(osStdout, report)
+			if waitCtx.Err() == nil && !domainSetupRetryable(err) {
+				_, _ = fmt.Fprintln(osStdout, "Continue checking: "+resume)
+				return printErr("Domain verification did not finish", err)
 			}
-			lastState = state
+			state := "Verification pending: " + err.Error()
+			if state != lastState && waitCtx.Err() == nil {
+				PrintProgress(osStdout, "%s", state)
+				lastState = state
+			}
+		} else if binding.Domain != domain || binding.AppID != app.ID || binding.Environment != *environment {
+			return printErr("Domain binding changed", errors.New("the domain now points to a different app or environment; inspect domains show"))
+		} else if binding.VerificationExpiredAt(time.Now()) {
+			return printErr("Verification claim expired", errors.New("run "+resume+" to obtain a new TXT proof"))
+		} else if domainSetupReady(binding) {
+			break
+		} else {
+			certStatus := binding.CertStatus
+			if certStatus == "" {
+				certStatus = "pending"
+			}
+			state := fmt.Sprintf("ownership verified=%t; certificate=%s; %s", binding.Verified, certStatus, binding.CertLastError)
+			if state != lastState {
+				PrintProgress(osStdout, "%s", state)
+				if report, doctorErr := client.DomainDoctor(waitCtx, domain); doctorErr == nil && report.Domain == domain && report.AppID == app.ID {
+					printDoctorReport(osStdout, report)
+				}
+				lastState = state
+			}
 		}
 		timer := time.NewTimer(*interval)
 		select {
@@ -155,6 +167,10 @@ func cmdDomainsSetup(args []string) int {
 	PrintOK(osStdout, "%s is verified and its TLS certificate is ready.", domain)
 	if *environment != "" {
 		PrintProgress(osStdout, "Domain setup is complete for environment %s.", *environment)
+		return 0
+	}
+	if strings.HasPrefix(domain, "*.") {
+		PrintProgress(osStdout, "Wildcard domain setup is complete.")
 		return 0
 	}
 	if binding.Default {
@@ -180,6 +196,15 @@ func cmdDomainsSetup(args []string) int {
 	return 0
 }
 
+func domainSetupRetryable(err error) bool {
+	var problem *api.APIError
+	if errors.As(err, &problem) {
+		return problem.Problem.Code == api.CodeDomainVerificationFailed || problem.Problem.Code == api.CodeDomainCertNotIssued || problem.Problem.Status == http.StatusTooManyRequests || problem.Problem.Status >= 500
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError) || errors.Is(err, io.EOF)
+}
+
 func domainSetupReady(d api.CustomDomainResponse) bool {
 	if !d.Verified {
 		return false
@@ -199,6 +224,12 @@ func domainSetupReady(d api.CustomDomainResponse) bool {
 func validSetupDomain(domain string) bool {
 	if len(domain) > 253 || !strings.Contains(domain, ".") {
 		return false
+	}
+	if strings.HasPrefix(domain, "*.") {
+		domain = strings.TrimPrefix(domain, "*.")
+		if !strings.Contains(domain, ".") {
+			return false
+		}
 	}
 	labelPattern := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 	for _, label := range strings.Split(domain, ".") {

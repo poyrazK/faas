@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/datapipeline/alertdelivery"
+	"github.com/onebox-faas/faas/pkg/datapipeline/alertwire"
 	"github.com/onebox-faas/faas/pkg/datapipeline/sqlc"
 )
 
@@ -123,5 +125,73 @@ SELECT gen_random_uuid(),$1,$2,1,gen_random_uuid(),'incident','sync_blocked',clo
 	}
 	if terminal != api.DataPipelineAlertHistoryMax || pending != 1 || len(alertHistory(t, t.Context(), store, p)) != api.DataPipelineAlertHistoryMax {
 		t.Fatal("unbounded history or pending event pruned", terminal, pending)
+	}
+}
+
+func TestPipelineAlertSlowReceiverDoesNotBlockOtherPipelines(t *testing.T) {
+	service, store, slow, worker := alertFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	fastID := uuid.NewString()
+	_, err := store.pool.Exec(ctx, `INSERT INTO data_pipelines(id, account_id, name, source_connection_id, database_id, tables, read_subjects)
+ SELECT $1, account_id, 'other-pipeline', source_connection_id, $2, tables, read_subjects FROM data_pipelines WHERE id=$3`, fastID, uuid.NewString(), slow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigureHealthAlerts(ctx, slow.AccountID, fastID, 0, true, "https://other.example/hook", strings.Repeat("x", 32)); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []struct{ pipeline, kind string }{{slow.ID, "incident"}, {slow.ID, "recovery"}, {fastID, "incident"}} {
+		if err := store.q.PipelineAlertEnqueue(ctx, store.pool, sqlc.PipelineAlertEnqueueParams{
+			ID: uuid.NewString(), PipelineID: event.pipeline, AccountID: slow.AccountID, ConfigRevision: 1,
+			IncidentID: uuid.NewString(), Kind: event.kind, Code: "sync_blocked", OccurredAt: alertTime(time.Now()),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	slowStarted, fastStarted, recoveryStarted := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	releaseSlow := make(chan struct{})
+	worker.Sender = func(ctx context.Context, attempt alertwire.Attempt) alertwire.Result {
+		switch {
+		case attempt.PipelineID == fastID:
+			close(fastStarted)
+		case attempt.Kind == "recovery":
+			close(recoveryStarted)
+		default:
+			close(slowStarted)
+			select {
+			case <-releaseSlow:
+			case <-ctx.Done():
+			}
+		}
+		return alertwire.Result{Accepted: true, StatusCode: http.StatusNoContent}
+	}
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("alert worker did not stop")
+		}
+	}()
+	for name, started := range map[string]<-chan struct{}{"slow delivery": slowStarted, "other pipeline": fastStarted} {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s was blocked", name)
+		}
+	}
+	select {
+	case <-recoveryStarted:
+		t.Fatal("recovery overtook its pipeline's incident")
+	default:
+	}
+	close(releaseSlow)
+	select {
+	case <-recoveryStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery did not run after its incident")
 	}
 }

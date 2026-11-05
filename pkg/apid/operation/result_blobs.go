@@ -67,7 +67,7 @@ func (s *Service) RunOperationArtifactCleanup(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if err := s.CleanupOperationArtifacts(ctx, time.Now()); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("operation artifact cleanup deferred", "error_code", "storage_or_ledger_unavailable")
+			s.Host.Logger().Warn("operation maintenance deferred", "error_code", "storage_or_ledger_unavailable")
 		}
 		select {
 		case <-ctx.Done():
@@ -78,6 +78,16 @@ func (s *Service) RunOperationArtifactCleanup(ctx context.Context) {
 }
 
 func (s *Service) CleanupOperationArtifacts(ctx context.Context, now time.Time) error {
+	// Settle abandoned repair drafts on the existing minute-based maintenance
+	// loop, including installations with no artifact storage configured.
+	if drafts, ok := s.Host.Store().(state.DataRepairDraftExpiryStore); ok {
+		callCtx, cancel := context.WithTimeout(ctx, api.OperationArtifactTransferTimeout)
+		err := drafts.ExpireDataRepairDrafts(callCtx, now, api.OperationRetentionPageMax)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 	store, ok := s.Host.Store().(state.OperationResultBlobStore)
 	if !ok || s.ArtifactStorage == nil {
 		return nil

@@ -138,7 +138,7 @@ func (m *MemStore) migrationInstanceCostLocked(i Instance) capacityResources {
 		vcpus = 1
 	}
 	captured := m.capacityInstanceResources[i.ID]
-	cost := capacityResources{RAM: max(captured.RAM, int64(i.RAMMB+api.PerVMOverheadMB)+ram), CPU: max(captured.CPU, int64(max(a.CPUMillicores, api.DefaultAppCPUMillicores))+cpu), VCPU: max(captured.VCPU, vcpus)}
+	cost := capacityResources{RAM: max(captured.RAM, int64(i.RAMMB+api.PerVMOverheadMB)+ram), CPU: max(captured.CPU, int64(m.instanceCapacityCPULocked(i, a))+cpu), VCPU: max(captured.VCPU, vcpus)}
 	return m.migrationResourceFloorLocked(i, cost)
 }
 

@@ -161,7 +161,8 @@ func alertCondition(p Pipeline, now time.Time) (code string, recovered bool) {
 	}
 	observed, err := time.Parse(time.RFC3339Nano, p.ObservedAt)
 	fresh := err == nil && !observed.After(now) && now.Sub(observed) < api.DataPipelineObservationMaxAge
-	if p.DesiredState == "running" && !fresh {
+	pausePending := p.DesiredState == "paused" && (p.State != "paused" || p.ObservedRevision != p.Revision)
+	if (p.DesiredState == "running" || pausePending) && !fresh {
 		created, _ := time.Parse(time.RFC3339Nano, p.CreatedAt)
 		if err != nil && now.Sub(created) < api.DataPipelineObservationMaxAge {
 			return "", false
@@ -174,11 +175,14 @@ func alertCondition(p Pipeline, now time.Time) (code string, recovered bool) {
 	if p.RetainedWALBytes != nil && *p.RetainedWALBytes >= api.DataPipelineRetentionWarningBytes {
 		return "retention_pressure", false
 	}
-	if p.DesiredState != "running" || p.ObservedRevision != p.Revision {
+	if p.ObservedRevision != p.Revision {
 		return "", false
 	}
-	if p.State == "blocked" || p.State == "resync_required" {
+	if (p.DesiredState == "running" || pausePending) && (p.State == "blocked" || p.State == "resync_required") {
 		return "sync_blocked", false
+	}
+	if p.DesiredState != "running" {
+		return "", false
 	}
 	if (p.State == "live" || p.State == "catching_up") && p.RetainedWALBytes != nil && *p.RetainedWALBytes >= api.DataPipelineLiveLagMaxBytes {
 		applied, err := time.Parse(time.RFC3339Nano, p.AppliedThroughAt)

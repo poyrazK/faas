@@ -1,6 +1,6 @@
 WITH entry AS MATERIALIZED (
  SELECT e.*,c.oid AS live_oid,c.relnamespace,c.relname,n.nspname,
-  coalesce(e.fingerprint_datestyle IS NOT NULL AND e.fingerprint_intervalstyle IS NOT NULL AND e.fingerprint_timezone IS NOT NULL AND c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
+  coalesce(e.fingerprint_datestyle IS NOT NULL AND e.fingerprint_intervalstyle IS NOT NULL AND e.fingerprint_monetary IS NOT NULL AND e.fingerprint_timezone IS NOT NULL AND c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
    format('%I.%I',n.nspname,c.relname)=e.qualified_name AND
    NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid) AND
    NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attnum>0 AND NOT attisdropped AND attgenerated<>'') AND

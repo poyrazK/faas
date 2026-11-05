@@ -371,7 +371,7 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 }
 
 const issueTrackerEscalationApp = `-- name: IssueTrackerEscalationApp :one
-SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT a.id,a.account_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT (GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -384,7 +384,7 @@ JOIN LATERAL (SELECT (GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_unti
  AND tr.acknowledged_by IS NULL
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
-WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL))
 AND owner.plan=ANY($1::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
 `
 
@@ -401,7 +401,7 @@ func (q *Queries) IssueTrackerEscalationApp(ctx context.Context, db DBTX, entitl
 }
 
 const issueTrackerEscalationDue = `-- name: IssueTrackerEscalationDue :one
-SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -415,7 +415,7 @@ JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, 
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute',c.link_id LIMIT 1) c ON true
 WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($3::text[])
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($3::text[])
 `
 
 type IssueTrackerEscalationDueParams struct {
@@ -450,9 +450,9 @@ const issueTrackerEscalationHistory = `-- name: IssueTrackerEscalationHistory :m
 SELECT n.team_id,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
 JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
 WHERE n.incident_id=$1 AND n.kind='escalation' AND a.id=$2 AND a.account_id=$3
-AND (a.account_id=$4::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,$4::uuid) OR (a.account_id=$4::uuid AND issue_actor_current_member(a.id,$4::uuid))) OR (
  $4::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,$4::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
 ORDER BY n.created_at DESC LIMIT 1
 `
@@ -785,11 +785,11 @@ func (q *Queries) IssueTrackerIncidentPut(ctx context.Context, db DBTX, arg Issu
 
 const issueTrackerNotificationCanRead = `-- name: IssueTrackerNotificationCanRead :one
 SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=$1 AND a.account_id=$2
-AND a.deleted_at IS NULL AND a.status<>'deleted' AND (a.account_id=$3::uuid OR EXISTS(
+AND a.deleted_at IS NULL AND a.status<>'deleted' AND ((issue_actor_can_manage_tracker(a.id,$3::uuid) OR (a.account_id=$3::uuid AND issue_actor_current_member(a.id,$3::uuid))) OR EXISTS(
  SELECT 1 FROM issue_tracker_sync_notifications n WHERE n.app_id=a.id AND n.account_id=a.account_id
  AND ($4::uuid IS NULL OR n.link_id=$4)
  AND $3::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$3 AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,$3::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$3)))))
 `
 
@@ -873,9 +873,9 @@ LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by
 LEFT JOIN accounts claim ON claim.id=tr.claimed_by
 WHERE a.id=$5 AND a.account_id=$6 AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND ($7::uuid IS NULL OR n.team_id=$7)
-AND (a.account_id=$8::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,$8::uuid) OR (a.account_id=$8::uuid AND issue_actor_current_member(a.id,$8::uuid))) OR (
  $8::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$8 AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,$8::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$8))))
 ), inbox AS (SELECT notices.id, notices.link_id, notices.kind, notices.reminder_sequence, notices.outcome, notices.reason, notices.created_at, notices.team_id, notices.team_name, notices.issue_id, notices.issue_title, notices.triage_revision, notices.acknowledged_by, notices.claimed_by, notices.acknowledged_name, notices.claimed_name, notices.snoozed_until, notices.snoozed_by, notices.snooze_reason, notices.snoozed_name, notices.active,
  COALESCE(active AND snoozed_until>statement_timestamp(),false)::boolean AS snoozed,
@@ -1052,7 +1052,7 @@ func (q *Queries) IssueTrackerNotificationPrune(ctx context.Context, db DBTX, ar
 
 const issueTrackerNotificationRecipients = `-- name: IssueTrackerNotificationRecipients :many
 SELECT c.id FROM accounts c JOIN apps a ON a.id=$1
-WHERE (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+WHERE issue_actor_current_member(a.id,c.id)
 AND (c.id=$2::uuid OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=$3::uuid AND tm.account_id=c.id))
 ORDER BY c.id
 `
@@ -1086,7 +1086,7 @@ func (q *Queries) IssueTrackerNotificationRecipients(ctx context.Context, db DBT
 const issueTrackerNotificationRecoveryRecipients = `-- name: IssueTrackerNotificationRecoveryRecipients :many
 SELECT c.id FROM accounts c JOIN apps a ON a.id=$1
 WHERE c.id=ANY($2::uuid[])
-AND (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+AND issue_actor_current_member(a.id,c.id)
 AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm JOIN app_issue_teams t ON t.id=tm.team_id AND t.app_id=a.id WHERE tm.team_id=$3 AND tm.account_id=c.id)) ORDER BY c.id
 `
 
@@ -1148,7 +1148,7 @@ func (q *Queries) IssueTrackerNotificationTarget(ctx context.Context, db DBTX, a
 }
 
 const issueTrackerReminderApp = `-- name: IssueTrackerReminderApp :one
-SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT a.id,a.account_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT (GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -1160,7 +1160,7 @@ JOIN LATERAL (SELECT (GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.s
  AND tr.acknowledged_by IS NULL
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
-WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL))
 AND owner.plan=ANY($2::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
 `
 
@@ -1182,7 +1182,7 @@ func (q *Queries) IssueTrackerReminderApp(ctx context.Context, db DBTX, arg Issu
 }
 
 const issueTrackerReminderDue = `-- name: IssueTrackerReminderDue :one
-SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
@@ -1195,7 +1195,7 @@ JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, 
  AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
  AND GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until),c.link_id LIMIT 1) c ON true
 WHERE a.id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($4::text[])
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY($4::text[])
 `
 
 type IssueTrackerReminderDueParams struct {
@@ -1236,9 +1236,9 @@ const issueTrackerReminderHistory = `-- name: IssueTrackerReminderHistory :many
 SELECT n.reminder_sequence,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
 JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
 WHERE n.incident_id=$1 AND n.kind='reminder' AND a.id=$2 AND a.account_id=$3
-AND (a.account_id=$4::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,$4::uuid) OR (a.account_id=$4::uuid AND issue_actor_current_member(a.id,$4::uuid))) OR (
  $4::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,$4::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
 ORDER BY n.reminder_sequence DESC LIMIT $5
 `
@@ -1804,26 +1804,27 @@ const issueTrackerTriageScope = `-- name: IssueTrackerTriageScope :one
 SELECT n.incident_id,n.link_id,statement_timestamp()::timestamptz AS checked_at,
  COALESCE(c.incident_id=n.incident_id AND c.escalated_at IS NOT NULL,false)::boolean AS escalated,
  (SELECT t.id FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
- SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL))))::uuid AS responsible_team_id,
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND issue_actor_current_member(a.id,tm.account_id)))::uuid AS responsible_team_id,
  COALESCE((SELECT t.name FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
- SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))), '')::text AS responsible_team_name,
- COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND issue_actor_current_member(a.id,tm.account_id))), '')::text AS responsible_team_name,
+ COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active,
+ issue_actor_can_manage_tracker(a.id,$1::uuid)::boolean AS can_manage
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
 LEFT JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id
-WHERE n.id=$1 AND a.id=$2 AND a.account_id=$3
+WHERE n.id=$2 AND a.id=$3 AND a.account_id=$4
 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND (a.account_id=$4::uuid OR (
- $4::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
- AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
+AND ((issue_actor_can_manage_tracker(a.id,$1::uuid) OR (a.account_id=$1::uuid AND issue_actor_current_member(a.id,$1::uuid))) OR (
+ $1::uuid=ANY(n.recipient_account_ids)
+ AND issue_actor_current_member(a.id,$1::uuid)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$1))))
 `
 
 type IssueTrackerTriageScopeParams struct {
+	ActorAccountID pgtype.UUID
 	NotificationID pgtype.UUID
 	AppID          pgtype.UUID
 	OwnerAccountID pgtype.UUID
-	ActorAccountID pgtype.UUID
 }
 
 type IssueTrackerTriageScopeRow struct {
@@ -1834,14 +1835,15 @@ type IssueTrackerTriageScopeRow struct {
 	ResponsibleTeamID   pgtype.UUID
 	ResponsibleTeamName string
 	Active              bool
+	CanManage           bool
 }
 
 func (q *Queries) IssueTrackerTriageScope(ctx context.Context, db DBTX, arg IssueTrackerTriageScopeParams) (IssueTrackerTriageScopeRow, error) {
 	row := db.QueryRow(ctx, issueTrackerTriageScope,
+		arg.ActorAccountID,
 		arg.NotificationID,
 		arg.AppID,
 		arg.OwnerAccountID,
-		arg.ActorAccountID,
 	)
 	var i IssueTrackerTriageScopeRow
 	err := row.Scan(
@@ -1852,6 +1854,7 @@ func (q *Queries) IssueTrackerTriageScope(ctx context.Context, db DBTX, arg Issu
 		&i.ResponsibleTeamID,
 		&i.ResponsibleTeamName,
 		&i.Active,
+		&i.CanManage,
 	)
 	return i, err
 }

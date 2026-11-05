@@ -1354,13 +1354,13 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
 		case <-cronTicks:
-			l.runCronTick(ctx)
+			l.submitWork(workCronSweep, "sweep", func() { l.runCronTick(ctx) })
 		case <-l.cronResume:
-			l.runCronSweep(ctx)
+			l.submitWork(workCronSweep, "sweep", func() { l.runCronSweep(ctx) })
 		case <-watchdogTick(watchdogT):
 			l.dispatchWatchdog(ctx)
 		case <-heartbeatTick(heartbeatT):
-			l.runHeartbeat(ctx)
+			l.submitWork(workHeartbeat, "tick", func() { l.runHeartbeat(ctx) })
 		case <-diskDriftTick(diskDriftT):
 			l.runDiskDrift(ctx)
 		case <-instStatsTick(instStatsT):
@@ -1376,7 +1376,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-prewarmTick(prewarmT):
 			l.submitWork(workPrewarm, "tick", func() { l.runPrewarm(ctx) })
 		case <-recentLoadTick(recentLoadT):
-			l.runRecentLoad(ctx)
+			l.submitWork(workRecentLoad, "tick", func() { l.runRecentLoad(ctx) })
 		case <-migratingWatchdogTick(migratingWatchdogT):
 			l.runMigratingReconcile(ctx)
 		case <-deadNodeTick(deadNodeReconcilerT):
@@ -1427,8 +1427,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// the notify arm — drainPendingOperatorIntents is the
 			// single owner of the claim + dispatch loop. 30s
 			// cadence (vs fire-now's 60s) matches the operator-
-			// action SLA.
-			l.drainPendingOperatorIntents(ctx)
+			// action SLA. The drain runs off the loop (ADR 20261104091530).
+			l.dispatchOperatorIntents(ctx)
 		case <-profileCaptureT.C:
 			// ADR-1155 safety sweep: expiry plus queued rows whose
 			// NotifyProfileCapture was lost.
@@ -2370,6 +2370,9 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	var p struct {
 		AppID  string `json:"app_id"`
 		WakeID string `json:"wake_id"`
+		// InstanceID names the frozen VM apid expects this wake to resume
+		// (#6639). It is a thaw preference only, like a session hint.
+		InstanceID string `json:"instance_id"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 		return fmt.Errorf("sched: decode app_wake payload: %w", err)
@@ -2378,6 +2381,7 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 		return errors.New("sched: app_wake payload requires app_id and wake_id")
 	}
 	wakeCtx := withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID)
+	wakeCtx = WithPreferredInstance(wakeCtx, p.InstanceID)
 	if handled, err := l.engine.WakeWorkerApp(wakeCtx, p.AppID); handled {
 		if err != nil {
 			return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
@@ -2391,6 +2395,7 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	}
 	if out.Instance != nil {
 		l.log.Info("sched: explicit app wake completed", "app", p.AppID, "wake_id", out.Instance.WakeID, "instance", out.Instance.InstanceID)
+		l.engine.noteWakeServedByInstance(wakeCtx, p.AppID, p.WakeID, out.Instance)
 	}
 	return nil
 }
@@ -2619,7 +2624,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// dispatch regardless of which intent_id the notify
 		// carried. Same defense-in-depth pattern as
 		// NotifyCronRunNow's handler arm above.
-		l.drainPendingOperatorIntents(ctx)
+		l.dispatchOperatorIntents(ctx)
 	case db.NotifyProfileCapture:
 		l.drainProfileCaptures(ctx)
 	case db.NotifyEventPublished:
@@ -4578,6 +4583,19 @@ func (l *Loop) stopPriorScheduledRuns(ctx context.Context, job state.Job) error 
 	return nil
 }
 
+// dispatchOperatorIntents drains operator intents on the work pool: a force
+// park waits up to 90 s on vmmd and a restart up to 20 s, which held the
+// select loop (ADR 20261104091530).
+func (l *Loop) dispatchOperatorIntents(ctx context.Context) {
+	l.submitWork(workOperatorIntents, "drain", func() { l.drainPendingOperatorIntents(ctx) })
+}
+
+// EnforcementDispatch runs one of the stats tick's per-instance actions on
+// the work pool (ADR 20261104143005). Wire it to the instance-stats poller.
+func (l *Loop) EnforcementDispatch(key string, fn func()) {
+	l.submitWork(workInstanceEnforcement, key, fn)
+}
+
 // runJobsReaperTick is one iteration of the stuck-job reaper.
 // Same gate + warn-and-continue contract as runJobsDispatchTick.
 func (l *Loop) runJobsReaperTick(ctx context.Context) {
@@ -4708,11 +4726,11 @@ func (l *Loop) runWorkflowRetention(ctx context.Context) bool {
 	return more
 }
 
-// cronSweepSlice bounds one pass of the cron sweep, which runs on schedd's
-// main loop. A minute with more due crons than one pass dispatches continues
-// in further passes, so heartbeats, notifications and the reaper run in
-// between: one long sweep held them all, and past the 90 s heartbeat
-// staleness the node would be taken for dead.
+// cronSweepSlice bounds one pass of the cron sweep. A minute with more due
+// crons than one pass dispatches continues in further passes. The passes
+// once ran on schedd's main loop and the slice was what let heartbeats,
+// notifications and the reaper in between; they now run on the work pool
+// (cron_sweep, ADR 20261104091530), so a pass no longer holds the loop.
 const cronSweepSlice = 10 * time.Second
 
 // runCronTick starts the minute's cron sweep.

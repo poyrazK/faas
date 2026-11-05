@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	promotionapi "github.com/onebox-faas/faas/pkg/apid/promotion"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -423,12 +424,12 @@ func projectEnvironmentSecretRevisionHashes(ctx context.Context, store state.Sto
 		hashes[app.Slug] = hash
 	}
 	// ADR-1139: qualifications record the environment's shared secrets too.
-	if secrets, ok := store.(state.ProjectEnvironmentSecretStore); ok {
-		shared, err := secrets.ListProjectEnvironmentSecrets(ctx, accountID, release.ProjectID, environment)
+	if secrets, ok := store.(state.ProjectSharedSecretRevisionReader); ok {
+		shared, err := secrets.ProjectEnvironmentSharedSecretRevision(ctx, accountID, release.ProjectID, environment)
 		if err != nil {
 			return nil, err
 		}
-		return state.WithProjectSecretRevision(hashes, shared)
+		return shared.WithWorkloads(hashes), nil
 	}
 	return hashes, nil
 }
@@ -926,6 +927,19 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 			api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
 			return
 		}
+		var contractErr *openapidiff.GateError
+		if errors.As(err, &contractErr) {
+			api.WriteProblem(w, contractGateProblem(contractErr.Diff))
+			return
+		}
+		if errors.Is(err, state.ErrRollbackCrossesRelease) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRollbackCrossesRelease, "Rollback crosses release commands", "Review migration history and use an explicit app rollback with acknowledgement before retrying this project rollback."))
+			return
+		}
+		if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRollbackTargetDatabaseRestored, "Rollback target's migration was undone", "Choose a deployment whose release command was not undone by a database restore."))
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			s.log.WarnContext(r.Context(), "project environment rollback stopped because target changed", "promotion_id", promotion.ID, "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
@@ -1084,6 +1098,13 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
 			fmt.Errorf("%w: active target release graph changed after promotion", state.ErrConflict))
 	}
+	restoring := fallbackMembers
+	if previousGraph != nil {
+		restoring = previousGraph.Members
+	}
+	if err := promotionapi.CheckRollbackContracts(ctx, s.store, promotion.ToEnvironment, active.Members, restoring); err != nil {
+		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, err)
+	}
 	if previousGraph != nil {
 		if err := s.durable.CheckProjectValidatorMembers(ctx, previousGraph.Members); err != nil {
 			return err
@@ -1105,7 +1126,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		}
 		if err != nil {
 			return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
-				fmt.Errorf("%w: could not atomically restore previous release graph", state.ErrConflict))
+				fmt.Errorf("could not atomically restore previous release graph: %w", err))
 		}
 		promotion, err = s.store.UpdateProjectEnvironmentPromotionReleaseSets(ctx, acct.ID, promotion.ID, "", restored.ID)
 		if err != nil {
@@ -1115,7 +1136,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		if err := publisher.DeactivateProjectReleaseSetIfActive(ctx, acct.ID, promotion.ProjectID,
 			promotion.ToEnvironment, promotion.TargetReleaseSetID, fallbackMembers); err != nil {
 			return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
-				fmt.Errorf("%w: target route changed; refusing to remove the promoted graph", state.ErrConflict))
+				fmt.Errorf("could not remove the promoted graph: %w", err))
 		}
 	}
 	return s.completeProjectEnvironmentPromotionGraphRollback(ctx, acct, promotion, workloads)
@@ -1169,6 +1190,16 @@ func (s *server) recordProjectEnvironmentPromotionRollbackFailure(ctx context.Co
 }
 
 func projectEnvironmentRollbackFailureMessage(err error) string {
+	var contractErr *openapidiff.GateError
+	if errors.As(err, &contractErr) {
+		return "Restoring this deployment would break its published API contract. Deploy a compatible release before retrying."
+	}
+	if errors.Is(err, state.ErrRollbackCrossesRelease) {
+		return "A release command ran after this deployment last served. Review migrations and use an explicit app rollback with acknowledgement."
+	}
+	if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+		return "This deployment's release command was undone by a database restore. Choose a compatible deployment."
+	}
 	if errors.Is(err, state.ErrConflict) {
 		return "A target deployment changed after promotion; review its current state before retrying rollback."
 	}

@@ -109,8 +109,10 @@ has room can use more:
 gregale data-api configure shop-data --pool 6
 ```
 
-The pool takes 1 to 8 connections, and `--pool default` returns to two.
-Requests in flight per instance follow it, and so do per-user concurrency
+The pool takes 1 to 8 connections, and `--pool default` returns to two. A
+pool above two needs an app with at least 512 MB of RAM: the runtime peaks
+near 150 MB with the default pool, which fits a 256 MB app, and near 200 MB
+with eight connections, which does not. Requests in flight per instance follow it, and so do per-user concurrency
 limits and the pool metrics in `data-api health`. The queue stays at eight
 waiters. Data API bindings connect through the provider's connection pooler,
 so a larger pool adds pooled client sessions rather than PostgreSQL server
@@ -980,11 +982,19 @@ runs your migrations against the upgraded runtime.
 gregale data-api delete notes-data --yes
 ```
 
-This revokes the app's managed PostgreSQL bindings, which closes their database
-credentials, and then deletes the app. `gregale app delete` refuses an app that
-still has a live database binding (`app_has_postgres_bindings`), because the
-credential would outlive the app. The database and its data are kept. Delete
-the database separately with `gregale postgres delete`.
+This revokes the app's managed PostgreSQL bindings, on every database the app
+is bound to, which closes their database credentials, and then deletes the
+app. `gregale app delete` refuses an app that still has a live database binding
+(`app_has_postgres_bindings`), because the credential would outlive the app.
+The database and its data are kept. Delete the database separately with
+`gregale postgres delete`.
+
+An API with [file storage](#file-storage) owns a bucket, and an app with
+buckets cannot be deleted, so `data-api delete` refuses it before revoking
+anything. Delete the bucket first with `gregale bucket delete notes-data
+BUCKET_ID`; a bucket that still holds files must be emptied first. A binding
+on a project environment's database copy is removed when that environment is
+torn down.
 
 ## Define your application schema and authorization
 
@@ -1387,7 +1397,10 @@ keys keep working. Caps turn usage reporting on.
 
 Caps are enforced from totals the runtime learns every 15 seconds while it
 serves traffic, so several instances can each go slightly past a cap before
-they hear about it. `data-api diagnostics` counts requests refused by caps.
+they hear about it. Those totals come from usage reports, so on a Gregale
+installation that does not accept runtime reports yet `--monthly-caps` is
+refused: a cap there could never be reached. `data-api diagnostics` counts
+requests refused by caps.
 Cap values are stored as app secrets and are not shown again; set them again
 to change them.
 
@@ -1583,6 +1596,26 @@ An event's `data` holds the change:
   stable: deduplicate side effects by them. Changes are published promptly
   after writes through the API; changes made elsewhere publish while the
   Data API is running, within 30 seconds.
+- **While the API is parked.** A parked Data API publishes nothing, so changes
+  that other apps, migrations or SQL jobs record while it is parked wait for
+  the next request to wake it. To bound that wait, add a drain schedule: a
+  platform cron that wakes the API and publishes what is waiting.
+
+  ```sh
+  gregale data-api hooks enable shop-data --drain-every 5m
+  ```
+
+  Intervals are minutes that divide an hour, hours that divide a day, or
+  `24h`. The cron counts against your plan's cron limits (the Free plan has
+  none) and each run is app time. `--drain-every off` removes it.
+- **Status.** `gregale data-api hooks status shop-data` shows the drain
+  schedule and the delivery the Data API last reported, without waking it:
+  waiting changes and when the oldest was recorded, rejected changes and the
+  latest code, whether publications keep failing, and when changes last
+  published. The API reports while it is awake, at most once a minute.
+- **Platform requirement.** Publishing uses the Data API's workload identity.
+  On a Gregale installation that does not accept runtime reports yet,
+  `hooks enable` warns and changes wait in the table until it does.
 - **Backfills.** `SET LOCAL gregale_hooks.skip = 'on';` in a migration's
   transaction records nothing for it.
 - **Failures.** An event the platform refuses, such as one that does not match
@@ -1599,8 +1632,8 @@ An event's `data` holds the change:
   runtime is refused and its recorded changes stay in the table; a cloned
   environment that copied the setting publishes nothing.
 - **Turning it off.** `gregale_hooks.disable('api.orders')` stops recording a
-  table. `gregale data-api hooks disable shop-data` stops publishing; recorded
-  changes wait in the table.
+  table. `gregale data-api hooks disable shop-data` stops publishing and
+  removes the drain schedule; recorded changes wait in the table.
 - **Cost.** Each hooked write adds one row insert in its transaction. Events
   count toward your account's event limits like any publication. See
   [ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md).

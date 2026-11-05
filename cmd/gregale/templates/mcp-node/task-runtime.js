@@ -137,6 +137,7 @@ export async function startMcpTaskRuntime(config, {
   let closing;
   return {
     taskRuntime,
+    shutdownTimeoutMs: settings.shutdownTimeoutMs,
     async close() {
       if (closing) return closing;
       closing = (async () => {

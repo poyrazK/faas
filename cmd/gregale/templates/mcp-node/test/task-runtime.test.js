@@ -51,6 +51,21 @@ test('zero-default handling preserves invalid retry settings and explicit drain 
   assert.equal(settings.shutdownTimeoutMs, 45_000);
 });
 
+test('worker service exposes the effective startup drain budget', async () => {
+  for (const [override, expected] of [[undefined, 10_000], ['120', 120_000], ['1.5', 1500]]) {
+    let runtimeOptions;
+    const service = await startMcpTaskRuntime(config, {
+      role: 'worker', env: { ...baseEnv, MCP_TASK_NAMESPACE: 'shared', ...(override === undefined ? {} : { MCP_DRAIN_TIMEOUT_SECONDS: override }) },
+      createPool: () => ({ async end() {} }), createStore: () => ({}),
+      createRuntime: options => { runtimeOptions = options; return { async start() {}, async stop() {} }; },
+    });
+    try {
+      assert.equal(service.shutdownTimeoutMs, expected);
+      assert.equal(service.shutdownTimeoutMs, runtimeOptions.shutdownTimeoutMs);
+    } finally { await service.close(); }
+  }
+});
+
 test('a dedicated worker requires and uses the shared logical namespace override', () => {
   assert.throws(() => resolveMcpTaskSettings(config, { env: baseEnv, role: 'worker' }), /MCP_TASK_NAMESPACE/);
   const settings = resolveMcpTaskSettings(config, {

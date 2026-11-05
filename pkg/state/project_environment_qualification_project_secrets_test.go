@@ -3,6 +3,7 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -13,10 +14,8 @@ func TestMemQualificationRecordsProjectSecrets(t *testing.T) {
 	testQualificationRecordsProjectSecrets(t, state.NewMemStore())
 }
 
-// A qualification records the environment's shared secrets server-side, under
-// a key no workload slug can take, and only when there are any: clients keep
-// sending per-workload hashes, and qualifications recorded before ADR-1139
-// stay comparable.
+// Legacy clients work for environments that never had shared secrets. Once
+// the set changes, clients must return the revision read before their probes.
 func testQualificationRecordsProjectSecrets(t *testing.T, store contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
@@ -48,14 +47,19 @@ func testQualificationRecordsProjectSecrets(t *testing.T, store contractTestStor
 		Kid: "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq", ValueHash: "ab"}, 10); err != nil {
 		t.Fatal(err)
 	}
-	after, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, client, checks, nil)
-	if err != nil {
-		t.Fatalf("a client that sends only workload hashes was refused: %v", err)
+	if _, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, client, checks, nil); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("legacy client silently qualified shared secrets: %v", err)
 	}
-	want, err := api.ProjectEnvironmentSecretRevisionHash([]api.ProjectEnvironmentSecretRevision{{Key: "DATABASE_PASSWORD", Version: 1}})
+	shared, err := any(store).(state.ProjectSharedSecretRevisionReader).ProjectEnvironmentSharedSecretRevision(ctx, account.ID, project.ID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
+	client[api.ProjectSecretsRevisionKey] = shared.Hash
+	after, err := store.CreateProjectEnvironmentQualification(ctx, account.ID, project.ID, "production", active.ID, 0, configHash, client, checks, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := shared.Hash
 	if after.SecretRevisionHashes[api.ProjectSecretsRevisionKey] != want || after.SecretRevisionHashes["release-read-api"] != workloadHash {
 		t.Fatalf("hashes with a shared secret = %v, want the workload's and %s=%s", after.SecretRevisionHashes, api.ProjectSecretsRevisionKey, want)
 	}

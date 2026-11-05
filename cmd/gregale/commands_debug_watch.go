@@ -44,7 +44,7 @@ type debugWatchEvent struct {
 func cmdDebugRequestsWatch(args []string) int {
 	fs := newFlagSet("debug requests watch", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
 	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
 	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")

@@ -1,4 +1,4 @@
-// adr: 20261105133000 — outbound pools remain bounded and recover after saturation.
+// adr: 20261105181403 — outbound pools remain bounded and recover after saturation.
 package gateway
 
 import (

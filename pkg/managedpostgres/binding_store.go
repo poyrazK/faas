@@ -92,7 +92,10 @@ func (s *MemoryStore) DueBindings(_ context.Context, includeProvisioning bool, l
 		provisioning := binding.State == BindingStateProvisioning || binding.State == BindingStateFailed
 		rotationCleanup := binding.RotationCleanupReady &&
 			(binding.State == BindingStateReady || binding.State == BindingStateRetiring)
-		if binding.State != BindingStateDeleting && !rotationCleanup && (!includeProvisioning || !provisioning) {
+		refresh, refreshQueued := s.rotationRefreshes[binding.ID]
+		refreshQueued = refreshQueued && refresh.WakeID == binding.RotationWakeID
+		rotationRefresh := bindingRotationNeedsRefresh(binding) && !refreshQueued
+		if binding.State != BindingStateDeleting && !rotationCleanup && !rotationRefresh && (!includeProvisioning || !provisioning) {
 			continue
 		}
 		if binding.RetryAt.After(now) || binding.LeaseUntil.After(now) {
@@ -238,6 +241,7 @@ func (s *MemoryStore) FinishBindingProvision(ctx context.Context, bindingID, lea
 	binding.RetryAt = now
 	binding.UpdatedAt = now
 	s.bindings[bindingID] = binding
+	s.queueBindingRotationRefreshLocked(binding)
 	return cloneBinding(binding), nil
 }
 
