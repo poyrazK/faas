@@ -125,3 +125,38 @@ func TestListedAppsBookThePlansBaseline(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261101215228 — the runtime-config shape moves a listed app's ceiling,
+// vCPUs and booking; an unlisted app is unaffected.
+func TestCPUShapeMovesListedApps(t *testing.T) {
+	engine, err := sched.NewEngine(context.Background(), state.NewMemStore(), sched.NewNodeLedger(), nil, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	app := state.App{ID: "0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11", CPUMillicores: api.DefaultAppCPUMillicores}
+	other := state.App{ID: "7e0d4a52-91b3-4f7e-8a3c-5d2e9b1f6c44", CPUMillicores: api.DefaultAppCPUMillicores}
+	if err := engine.SetGuestVCPUFromCPUApps([]string{app.ID}); err != nil {
+		t.Fatal(err)
+	}
+	engine.SetCPUShape(api.CPUShape{BaselineMillicoresPerGB: 500, CeilingFloorMillicores: 500})
+	free, scale := api.MustLimitsFor(api.PlanFree), api.MustLimitsFor(api.PlanScale)
+	for _, tc := range []struct {
+		name                string
+		app                 state.App
+		limits              api.Limits
+		cpu, vcpus, booking int
+	}{
+		{"listed Free", app, free, 500, 1, 125},
+		{"listed Scale", app, scale, 1000, 1, 1000},
+		{"unlisted Scale", other, scale, 1000, scale.VCPU, 1000},
+	} {
+		cpu, vcpus, booking := engine.AppCPUMillicores(tc.app, tc.limits), engine.GuestVCPUs(tc.app, tc.limits), engine.AppCPUBookingMillicores(tc.app, tc.limits)
+		if cpu != tc.cpu || vcpus != tc.vcpus || booking != tc.booking {
+			t.Errorf("%s: CPU/vCPUs/booking = %d/%d/%d, want %d/%d/%d", tc.name, cpu, vcpus, booking, tc.cpu, tc.vcpus, tc.booking)
+		}
+	}
+	engine.SetCPUShape(api.CPUShape{})
+	if got := engine.AppCPUMillicores(app, scale); got != 2000 {
+		t.Errorf("compiled shape again: listed Scale CPU = %d, want 2000", got)
+	}
+}
