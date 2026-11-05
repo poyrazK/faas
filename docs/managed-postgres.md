@@ -980,7 +980,7 @@ enabling provisioning.
 ## Compute caps on running databases
 
 Admission only stops new work. A running database is held to its account's
-monthly compute ceiling by the provider itself
+monthly compute ceiling by apid's cap sweep
 ([ADR-20261025094915](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
 
 After each usage sweep, apid runs one enforcement sweep. Only one apid at a
@@ -991,20 +991,23 @@ whole quota. A replica that cannot take the lock skips that tick.
 
 - The ceiling is the plan's monthly compute allowance (`pkg/api/managed_postgres.go`),
   capped by `usage.max_monthly_compute_unit_seconds`.
-- The account's use is the larger of the ledger, which still counts databases
-  deleted this month, and the live provider counters.
-- Each Neon project gets `settings.quota.compute_time_seconds` set to its own
-  use plus what the account has left. A restore is a branch inside its source's
-  project, so the two share one quota.
-- Neon checks a quota only when its counters move, about every 25 minutes, so
-  what the account has left first keeps back each database's largest size for
-  30 minutes (1,800 CU-s for development, 3,600 for burstable, 7,200 for
-  production). A busy database is therefore suspended up to that much before
-  the ceiling, not that much after it (ADR-20261025094915 amendment
-  2026-11-04).
-- When nothing is left, every quota equals its project's use, and Neon suspends
-  the computes until the quota is raised or the counters reset on the 1st. A
-  cap never deletes a database.
+- The account's use is the ledger, which still counts databases deleted this
+  month, plus each Neon project's compute in Neon's consumption report since
+  the ledger last collected it, the open hour included. The report is current
+  to about a minute.
+- Each Neon project gets `settings.quota.compute_time_seconds` set to its
+  `compute_time_seconds` counter plus what the account has left. A restore is
+  a branch inside its source's project, so the two share one quota.
+- Neon checks a quota only when that counter moves. In production it moved
+  once in more than 80 minutes of continuous use, so the quota is only a
+  backstop. ADR-20261025094915 amendment 2026-11-05 has the sweep stop the
+  databases itself by holding their computes, as the delete grace period
+  does; that step and qualification version 2 come next, and `on` waits for
+  both. With the hold, a busy account can overshoot
+  its ceiling by its databases' largest sizes for one sweep, about five
+  minutes.
+- When nothing is left, every quota equals its project's counter. A cap never
+  deletes a database.
 
 `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` selects the mode:
 
