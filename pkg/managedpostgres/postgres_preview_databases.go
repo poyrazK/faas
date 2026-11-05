@@ -49,9 +49,11 @@ func (s *PostgresStore) FindPreviewDatabase(ctx context.Context, owner PreviewOw
 // ReservePreview implements PreviewDatabaseStore.
 func (s *PostgresStore) ReservePreview(ctx context.Context, database Database, limit int) (Database, bool, error) {
 	owner := database.Preview
+	// The owner and a copy's restore are checked apart: a copy restores its
+	// own source.
 	plain := database
-	plain.Preview = PreviewOwner{}
-	if err := validateReservation(plain, 1); err != nil || limit < 0 || database.RestoreSourceDatabaseID != "" {
+	plain.Preview, plain.RestoreSourceDatabaseID, plain.RestoreSourceResourceID, plain.RestorePointInTime = PreviewOwner{}, "", "", time.Time{}
+	if err := validateReservation(plain, 1); err != nil || limit < 0 || !previewRestoreValid(database) {
 		return Database{}, false, ErrInvalid
 	}
 	params, err := previewOwnerParams(owner)
@@ -102,7 +104,7 @@ func (s *PostgresStore) ReservePreview(ctx context.Context, database Database, l
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	if err := previewSourceAllows(databaseFromSQL(sourceRow), database.AccountID); err != nil {
+	if err := previewSourceAllows(databaseFromSQL(sourceRow), database); err != nil {
 		return Database{}, false, err
 	}
 	held, err := s.countPreviewOwner(ctx, tx, database)
@@ -193,10 +195,10 @@ func previewOwnerParams(owner PreviewOwner) (sqlc.FindManagedPostgresPreviewData
 
 // previewSourceAllows is the reservation's check of the source, read under
 // the owner's reservation lock: the account's own database, not a preview
-// database, not being deleted, with previews on.
-func previewSourceAllows(source Database, accountID string) error {
+// database, not being deleted, with previews on, and set to copy for a copy.
+func previewSourceAllows(source, preview Database) error {
 	switch {
-	case source.AccountID != accountID:
+	case source.AccountID != preview.AccountID:
 		return ErrNotFound
 	case !source.Preview.IsZero():
 		return ErrPreviewDatabase
@@ -204,6 +206,17 @@ func previewSourceAllows(source Database, accountID string) error {
 		return ErrConflict
 	case source.Previews == "" || source.Previews == PreviewsOff:
 		return ErrPreviewsOff
+	case preview.RestoreSourceDatabaseID != "" && source.Previews != PreviewsCopy:
+		return fmt.Errorf("%w: the database's previews setting changed from copy", ErrConflict)
 	}
 	return nil
+}
+
+// previewRestoreValid accepts an empty preview database, with no restore,
+// and a copy, restored from its own source at a point in time.
+func previewRestoreValid(preview Database) bool {
+	if preview.RestoreSourceDatabaseID == "" && preview.RestoreSourceResourceID == "" && preview.RestorePointInTime.IsZero() {
+		return true
+	}
+	return preview.RestoreSourceDatabaseID == preview.Preview.SourceDatabaseID && preview.RestoreSourceResourceID != "" && !preview.RestorePointInTime.IsZero()
 }

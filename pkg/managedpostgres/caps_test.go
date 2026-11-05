@@ -394,3 +394,73 @@ func TestCapEnforcerHoldsPreviewDatabasesAtEightyPercent(t *testing.T) {
 		t.Fatalf("quotas with overage = %v", set)
 	}
 }
+
+// holdingCapProvider records the deletion holds a sweep writes.
+type holdingCapProvider struct {
+	*capTestProvider
+	held  map[string]bool
+	calls int
+}
+
+func (p *holdingCapProvider) HoldForDeletion(_ context.Context, id string) error {
+	p.calls++
+	p.held[id] = true
+	return nil
+}
+
+func (p *holdingCapProvider) ReleaseDeletionHold(_ context.Context, id string) error {
+	p.calls++
+	p.held[id] = false
+	return nil
+}
+
+// adr: 20261102123523 — a PR preview copy shares its source's project and
+// quota, so the sweep holds it with the deletion hold at 80% of the ceiling.
+func TestCapEnforcerHoldsPreviewCopiesAtEightyPercent(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	month := monthStart(now)
+	provider := &holdingCapProvider{held: map[string]bool{}, capTestProvider: &capTestProvider{
+		fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
+		observed: map[string]ComputeCapObservation{
+			"proj-live":         {Scope: "live", PeriodStart: month, UsedUnitSeconds: 15000},
+			"proj-live/br-copy": {Scope: "live", PeriodStart: month, UsedUnitSeconds: 15000},
+		}}}
+	registry := testRegistry(t, provider, func(config *Config) {
+		config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
+			MaxMonthlyComputeUnitSeconds: 1 << 40, MaxMonthlyStorageByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40}
+	})
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := Database{ID: "db-live", AccountID: "acct", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: "proj-live", State: StateReady}
+	copied := live
+	copied.ID, copied.ProviderResourceID, copied.RestoreSourceDatabaseID, copied.RestoreSourceResourceID = "db-copy", "proj-live/br-copy", live.ID, "proj-live"
+	copied.Preview = PreviewOwner{SourceDatabaseID: live.ID, EnvironmentID: "project-1", PRNumber: 7}
+	limits := CapLimits{Allowance: 18000, Ceiling: 18000}
+	enforcer, err := NewCapEnforcer(registry, &capTestStore{databases: []Database{live, copied}, ledger: map[string]int64{"acct": 15000}}, CapEnforcerOptions{
+		Mode: CapEnforcementOn, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
+		Ceiling: func(context.Context, string) (CapLimits, error) { return limits, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 15000 of 18000 is past 80%: the copy is held, and the project it
+	// shares with production keeps production's quota.
+	if _, err := enforcer.Enforce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !provider.held["proj-live/br-copy"] || provider.held["proj-live"] || provider.set["proj-live"] != 18000 {
+		t.Fatalf("holds %v, quotas %v; want the copy held and production's project at the ceiling", provider.held, provider.set)
+	}
+	// A confirmed hold is not written again.
+	if _, err := enforcer.Enforce(context.Background()); err != nil || provider.calls != 1 {
+		t.Fatalf("second sweep: %v, %d hold calls", err, provider.calls)
+	}
+	// Overage raises the ceiling past the previews' 80%: the hold lifts.
+	limits = CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}
+	if _, err := enforcer.Enforce(context.Background()); err != nil || provider.held["proj-live/br-copy"] || provider.calls != 2 {
+		t.Fatalf("after overage: %v, holds %v, %d calls", err, provider.held, provider.calls)
+	}
+}

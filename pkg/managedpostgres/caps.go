@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -305,6 +306,9 @@ type CapEnforcer struct {
 	observe     func(CapSweepSummary)
 	notify      func(context.Context, CapEvent) error
 	batchSize   int
+	// copyHolds caches, by database ID, whether a PR preview copy was last
+	// confirmed held, so a sweep writes only a change.
+	copyHolds sync.Map
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -525,8 +529,58 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
+	if err := e.holdPreviewCopies(ctx, accountID, databases, plan); err != nil {
+		failures = append(failures, err)
+	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 {
 		e.notifyCapEvent(ctx, accountID, now, summary)
+	}
+	return errors.Join(failures...)
+}
+
+// holdPreviewCopies holds an account's PR preview copies once it reaches 80%
+// of its ceiling, and releases them below it (ADR-20261102123523 decision 6).
+// A copy shares its source's provider object, and so its quota, which cannot
+// hold it alone; the deletion hold stops its compute and refuses its
+// connections instead. A preview database is never scheduled for deletion,
+// so the hold has no other owner.
+func (e *CapEnforcer) holdPreviewCopies(ctx context.Context, accountID string, databases []Database, plan computeCapPlan) error {
+	held := plan.used >= previewComputeCeiling(plan.ceiling)
+	var failures []error
+	for _, database := range databases {
+		if database.Preview.IsZero() || database.RestoreSourceResourceID == "" {
+			continue
+		}
+		if known, ok := e.copyHolds.Load(database.ID); ok && known == held {
+			continue
+		}
+		backend, err := e.registry.Resolve(database.BackendID, database.BackendFingerprint)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		provider, ok := backend.Provider.(DeletionHoldProvider)
+		if !ok {
+			continue
+		}
+		attrs := []any{"account_id", accountID, "database_id", database.ID, "hold", held,
+			"ceiling_unit_seconds", plan.ceiling, "account_used_unit_seconds", plan.used}
+		if e.mode == CapEnforcementShadow {
+			e.copyHolds.Store(database.ID, held)
+			e.logger.Info("managed postgres preview copy hold (shadow)", attrs...)
+			continue
+		}
+		if held {
+			err = provider.HoldForDeletion(ctx, database.ProviderResourceID)
+		} else {
+			err = provider.ReleaseDeletionHold(ctx, database.ProviderResourceID)
+		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("database %s: preview copy hold: %w", database.ID, err))
+			continue
+		}
+		e.copyHolds.Store(database.ID, held)
+		e.logger.Info("managed postgres preview copy hold confirmed", attrs...)
 	}
 	return errors.Join(failures...)
 }

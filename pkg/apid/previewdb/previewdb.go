@@ -293,6 +293,26 @@ func openEnvironments(ctx context.Context, previews Previews, accountID string) 
 	return environments, nil
 }
 
+// PurgeCopies purges the preview databases copied from source, before source
+// is deleted: on Neon a copy is a branch of its source's project and goes
+// with it. Empty preview databases do not depend on their source and stay
+// with their PR.
+func (m Manager) PurgeCopies(ctx context.Context, accountID, sourceID string) error {
+	databases, err := m.Databases.List(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("previewdb: list databases: %w", err)
+	}
+	for _, database := range databases {
+		if database.Preview.SourceDatabaseID != sourceID || database.RestoreSourceDatabaseID != sourceID || database.State == managedpostgres.StateDeleted {
+			continue
+		}
+		if _, err := m.Purge(ctx, accountID, database.ID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+			return fmt.Errorf("previewdb: purge preview copy: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m Manager) release(ctx context.Context, preview state.App, database managedpostgres.Database) error {
 	bindings, err := m.Bindings.List(ctx, preview.AccountID, database.ID)
 	if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
@@ -367,6 +387,8 @@ func refusal(err error) error {
 		return &RefusedError{Reason: "the plan's PR preview databases are all in use; close a pull request or tear a preview down", Err: err}
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 		return &RefusedError{Reason: "the plan does not include a PR preview database", Err: err}
+	case errors.Is(err, managedpostgres.ErrPreviewCopyUnsupported):
+		return &RefusedError{Reason: "its production database cannot be copied: it has no restore window", Err: err}
 	case errors.Is(err, managedpostgres.ErrConflict):
 		return &RefusedError{Reason: "its PR preview database conflicts with an existing database or binding", Err: err}
 	default:

@@ -48,9 +48,10 @@
        - It has the source's region and major, and a storage limit of 1 GiB or the plan's pool, whichever is smaller.
        - The customer's release command creates its schema; seed data comes from the same command, for example behind a `pr-preview` value.
      - **`copy`:**
-       - A point-in-time restore of the source at the moment of setup, as an isolated environment clone does it.
-       - It needs the source's restore window, which every plan has.
-       - It is development class and scale-to-zero.
+       - A point-in-time restore of the source as of a second before setup, as an isolated environment clone does it, on the source's backend: on Neon a branch of the source's project.
+       - It needs the source's restore window, which every plan has, and a backend that restores to a point in time. `PUT .../previews` refuses `copy` without them (`400`), and setup refuses it if they went away since.
+       - It keeps the source's storage limit and restore window, which a Neon branch shares with its project, and is development class, single-zone and scale-to-zero.
+       - Its row records the restore (`restore_source_database_id`, `restore_point_in_time`) beside its preview owner. It does not take the restore slot, and the plan's database limit does not count it.
        - It is taken once, when the environment first needs it. Later pushes keep the copy and whatever was written to it, so the PR's migrations run against it the way they will run against production.
   3. **The build waits for its database; a refusal fails the preview.**
      - The GitHub bridge enqueues a preview build only once every preview binding it needs is ready. Until then it answers `Unavailable`, which githubd retries like any retryable failure.
@@ -64,7 +65,7 @@
      - A preview database with no open member left in its environment is deleted and purged at once, with no 7-day undo. It is disposable, and a copy holds production data that should not outlive the review.
      - A sweep in apid purges preview databases whose environment has no undeleted preview left, for teardowns that stopped midway. It runs every 10 minutes on each replica (a purge is idempotent) and leaves a database set up in the last 10 minutes alone, so a preview the listing does not show yet keeps its database.
      - A customer may delete a preview database like any other; the next preview build sets it up again.
-     - Deleting a source database deletes its preview copies first: Neon cannot delete a branch that has children. Empty preview databases do not depend on their source.
+     - A customer's delete of a source database purges its preview copies first: on Neon a copy is a branch of the source's project and would go with it. Empty preview databases do not depend on their source and stay with their PR. An internal delete of a source (plan excess, account erasure) does not purge copies first; the copy's teardown or the sweep removes its row and bindings later.
   5. **Limits.**
      - Preview databases are outside the plan's `DatabasesMax`, like the restore slot (ADR-20261031123259). They are bounded by the preview allowance instead: one per open preview environment and source database. That is at most `PreviewApps × DatabasesMax` per account (Free 1, Hobby 2, Pro 15, Scale 200), counted under the owner's reservation lock.
      - Setup also needs a plan that may create a development database (`DevelopmentAllowed`, and not Free while caps are not enforced, as for developer sessions).
@@ -79,7 +80,8 @@
        - The hold is the compute cap's own quota (ADR-20261025094915): a provider object holding only preview databases gets what the account has left of 80% of the ceiling instead of what it has left of the whole ceiling. The provider suspends its compute at that quota between sweeps, and connections are refused.
        - The hold lifts with the provider's next monthly counters, or when an upgrade or overage raises the ceiling.
        - It follows the compute cap's mode: shadow logs it, on applies it. A backend without compute quotas (the native backend today) caps nothing, previews included.
-       - Production databases keep today's caps. A provider object a preview database shares with production (a `copy` branched in its source's Neon project) keeps production's quota; step 5 decides how a copy is held.
+       - Production databases keep today's caps. A provider object a preview database shares with production (a `copy` branched in its source's Neon project) keeps production's quota.
+       - A copy is held with the delete grace's provider hold instead (ADR-20261029174950): at 80% the sweep disables the copy's endpoint, so its compute stops and its connections are refused, and below 80% it enables it again. A preview database is never scheduled for deletion, so the hold has no other owner. The sweep caches each confirmed hold, so it writes only a change.
   7. **Visibility.**
      - Preview databases are listed with the account's databases. The view marks them (`preview`: source database ID, PR number), omitted for every other database.
      - Customers can read, connect to and delete them. Binding them to another app, restoring from them and setting their `previews` are refused with `409 managed_postgres_preview_database`.
@@ -104,7 +106,7 @@
      Organization-owned databases are not set up in this step: setup and the setting route use the account's personal ownership, as developer-session databases do.
   3b. **The sweep** (`previewdb.RunSweep`) for preview databases whose environment closed while a teardown stopped midway, or while an older apid tore it down. It pages through the undeleted preview databases across accounts and checks each against its account's undeleted previews (`ListPreviewsForAccount`); an account whose previews cannot be listed keeps its databases. It is not behind the flag: it only removes preview databases.
   4. **Guards:** the storage pool leaves preview databases out of its sum, and the compute cap gives preview-only provider objects 80% of the ceiling (decision 6), both in `CapEnforcer`.
-  5. **`copy`.**
+  5. **`copy`:** the setting accepts it; setup restores the source (`Service.EnsurePreviewDatabase`, `ReservePreview` taking a copy's restore); the compute cap holds copies at 80% (`CapEnforcer.holdPreviewCopies`); a customer's delete of a source purges its copies (`previewdb.PurgeCopies`); the CLI takes `copy`.
   6. **Launch:** customer docs, the dashboard, a `tests/journeys` journey (preview with an empty database migrated by its release command, torn down with the PR), then `beta`.
 - **Release skew:**
   - An older apid ignores the new columns. It sets up no preview database and does not remove one. The newer apid's reconciler sweep removes preview databases whose environment closed while an older replica tore it down.
@@ -115,7 +117,7 @@
   - On Neon, an empty preview database is a new project (a few seconds to create), and a copy is a branch (shared pages until written).
   - On the native backend (ADR-1027), both are a database VM. A copy is a full restore with no shared pages, so its storage costs what its source does.
   - A held preview database fails its preview's queries for the rest of the month. That is the point of the hold: production keeps the last fifth of the ceiling.
-  - The source database cannot be deleted at Neon while a copy exists. Deleting it through Gregale removes the copies first.
+  - On Neon a copy is a branch of its source's project and would go with it. Deleting the source through Gregale purges the copies first.
 - **Rejected alternatives:**
   - **The setting in the repository** (`.gregale/project.yaml` or Compose). A PR could turn on `copy` and read production data.
   - **One database shared by every PR** (a `pr-preview` binding). One PR's migration breaks the others, and data written in one review shows up in another.

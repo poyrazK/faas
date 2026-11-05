@@ -102,7 +102,7 @@ func TestPreviewDatabasesFollowTheirPreview(t *testing.T) {
 
 	rec := e.Do(t, http.MethodPut, "/v1/postgres/databases/"+orders.ID+"/previews", api.SetManagedPostgresPreviewsRequest{Previews: "copy"}, nil)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("copy before it is delivered: %d %s", rec.Code, rec.Body)
+		t.Fatalf("copy of a database without a restore window: %d %s", rec.Code, rec.Body)
 	}
 	rec = e.Do(t, http.MethodPut, "/v1/postgres/databases/"+orders.ID+"/previews", api.SetManagedPostgresPreviewsRequest{Previews: "empty"}, nil)
 	var view api.ManagedPostgresDatabase

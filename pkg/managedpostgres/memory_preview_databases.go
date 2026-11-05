@@ -53,9 +53,11 @@ func (s *MemoryStore) previewDatabase(owner PreviewOwner) (Database, error) {
 
 // ReservePreview implements PreviewDatabaseStore.
 func (s *MemoryStore) ReservePreview(ctx context.Context, database Database, limit int) (Database, bool, error) {
+	// The owner and a copy's restore are checked apart: a copy restores its
+	// own source.
 	plain := database
-	plain.Preview = PreviewOwner{}
-	if validateReservation(plain, 1) != nil || limit < 0 || database.RestoreSourceDatabaseID != "" || !database.Preview.valid() {
+	plain.Preview, plain.RestoreSourceDatabaseID, plain.RestoreSourceResourceID, plain.RestorePointInTime = PreviewOwner{}, "", "", time.Time{}
+	if validateReservation(plain, 1) != nil || limit < 0 || !previewRestoreValid(database) || !database.Preview.valid() {
 		return Database{}, false, ErrInvalid
 	}
 	s.mu.Lock()
@@ -79,7 +81,7 @@ func (s *MemoryStore) ReservePreview(ctx context.Context, database Database, lim
 	if !ok || source.EnvironmentCloneOperationID != "" {
 		return Database{}, false, ErrNotFound
 	}
-	if err := previewSourceAllows(source, database.AccountID); err != nil {
+	if err := previewSourceAllows(source, database); err != nil {
 		return Database{}, false, err
 	}
 	held := 0

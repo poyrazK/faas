@@ -21,6 +21,7 @@ type previewFixture struct {
 	store    *MemoryStore
 	provider *fakeProvider
 	limit    *int
+	clock    *time.Time
 }
 
 func newPreviewFixture(t *testing.T) previewFixture {
@@ -41,7 +42,7 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return previewFixture{service: service, store: store, provider: provider, limit: &limit}
+	return previewFixture{service: service, store: store, provider: provider, limit: &limit, clock: &clock}
 }
 
 // source creates a ready database with empty previews.
@@ -86,7 +87,7 @@ func TestPreviewsSetting(t *testing.T) {
 	if got, err := f.service.Get(ctx, "account-a", source.ID); err != nil || got.Previews != PreviewsEmpty {
 		t.Fatalf("Get = %+v, %v", got, err)
 	}
-	for _, mode := range []PreviewMode{PreviewsCopy, "", "branch"} {
+	for _, mode := range []PreviewMode{"", "branch"} {
 		if _, err := f.service.SetPreviews(ctx, "account-a", source.ID, mode); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("SetPreviews(%q) = %v, want ErrInvalid", mode, err)
 		}
@@ -97,6 +98,62 @@ func TestPreviewsSetting(t *testing.T) {
 	}
 	if _, err := f.service.SetPreviews(ctx, "account-b", source.ID, PreviewsEmpty); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("another account's database = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCopyPreviewRestoresTheSourceAsOfSetup(t *testing.T) {
+	f := newPreviewFixture(t)
+	ctx := context.Background()
+	source := f.source(t, "orders")
+	source, err := f.service.SetPreviews(ctx, "account-a", source.ID, PreviewsCopy)
+	if err != nil || source.Previews != PreviewsCopy {
+		t.Fatalf("SetPreviews(copy) = %+v, %v", source, err)
+	}
+	// No database has history from before it existed: a copy set up in the
+	// source's first second waits for the next attempt.
+	if _, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 7)); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("copy of a database created this second = %v, want ErrUnavailable", err)
+	}
+	*f.clock = f.clock.Add(time.Minute)
+
+	copied, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 7))
+	if err != nil || copied.State != StateReady {
+		t.Fatalf("EnsurePreviewDatabase = %+v, %v", copied, err)
+	}
+	want := source.Spec
+	want.Class, want.Availability, want.ScaleToZero = ClassDevelopment, AvailabilitySingleZone, true
+	at := f.clock.Add(-time.Second)
+	if copied.Spec != want || copied.BackendID != source.BackendID || copied.RestoreSourceDatabaseID != source.ID ||
+		!copied.RestorePointInTime.Equal(at) || copied.Preview.SourceDatabaseID != source.ID || !copied.RestoreSlotUntil.IsZero() {
+		t.Fatalf("copy = %+v; want a development restore of the source as of a second before setup", copied)
+	}
+	if f.provider.restoreCalls != 1 || f.provider.lastRestore.SourceResourceID != source.ProviderResourceID || !f.provider.lastRestore.PointInTime.Equal(at) {
+		t.Fatalf("provider restore = %+v (%d calls)", f.provider.lastRestore, f.provider.restoreCalls)
+	}
+	// Later pushes keep the copy and what was written to it.
+	again, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 7))
+	if err != nil || again.ID != copied.ID || f.provider.restoreCalls != 1 {
+		t.Fatalf("second EnsurePreviewDatabase = %+v, %v; restores %d", again, err, f.provider.restoreCalls)
+	}
+	// Turning copy off applies to the next environment.
+	if _, err := f.service.SetPreviews(ctx, "account-a", source.ID, PreviewsEmpty); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 8))
+	if err != nil || empty.RestoreSourceDatabaseID != "" || f.provider.restoreCalls != 1 {
+		t.Fatalf("after copy is turned off = %+v, %v", empty, err)
+	}
+
+	// A database without a restore window cannot be copied.
+	*f.limit = 2
+	spec := testSpec()
+	spec.RestoreWindowSeconds = 0
+	ledger, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "ledger", Spec: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.SetPreviews(ctx, "account-a", ledger.ID, PreviewsCopy); !errors.Is(err, ErrPreviewCopyUnsupported) || !errors.Is(err, ErrInvalid) {
+		t.Fatalf("SetPreviews(copy) without a restore window = %v, want ErrPreviewCopyUnsupported", err)
 	}
 }
 

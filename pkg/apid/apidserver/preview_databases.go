@@ -25,6 +25,17 @@ func (s *server) previewDatabaseManager() *previewdb.Manager {
 	return &previewdb.Manager{Databases: s.managedPostgres, Bindings: s.managedPostgresBindings}
 }
 
+// purgePreviewCopies purges the PR preview copies of a database about to be
+// deleted (ADR-20261102123523 decision 4). It is not behind the capability:
+// it only removes preview databases.
+func (s *server) purgePreviewCopies(ctx context.Context, acct state.Account, sourceID string) error {
+	manager := s.previewDatabaseManager()
+	if manager == nil {
+		return nil
+	}
+	return manager.PurgeCopies(ctx, acct.ID, sourceID)
+}
+
 // runPreviewDatabaseSweep purges preview databases whose PR environment
 // closed while a teardown stopped midway, or while an older apid tore it
 // down. It is not behind the capability: it only removes preview databases.

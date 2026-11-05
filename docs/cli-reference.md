@@ -7941,15 +7941,18 @@ Read compute resize progress
 
 Give each PR preview environment its own database (preview)
 
-`gregale postgres previews <set> <database> empty|off`
+`gregale postgres previews <set> <database> empty|copy|off`
 
 Examples:
 
 ```sh
 gregale postgres previews set orders empty
+gregale postgres previews set orders copy
 ```
 
 empty: every PR preview of an app bound to the database gets its own empty database, bound with the same environment keys and access and removed with the preview. The PR&#39;s release command migrates it.
+
+copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database&#39;s restore window.
 
 off: previews get no database; existing preview databases go with their pull requests.
 
@@ -7957,15 +7960,18 @@ off: previews get no database; existing preview databases go with their pull req
 
 Give each PR preview environment its own database (preview)
 
-`gregale postgres previews set <database> empty|off`
+`gregale postgres previews set <database> empty|copy|off`
 
 Examples:
 
 ```sh
 gregale postgres previews set orders empty
+gregale postgres previews set orders copy
 ```
 
 empty: every PR preview of an app bound to the database gets its own empty database, bound with the same environment keys and access and removed with the preview. The PR&#39;s release command migrates it.
+
+copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database&#39;s restore window.
 
 off: previews get no database; existing preview databases go with their pull requests.
 

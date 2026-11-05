@@ -64,9 +64,10 @@ func (previewDatabaseLimitError) Error() string {
 
 func (previewDatabaseLimitError) Unwrap() error { return ErrQuotaExceeded }
 
-// errPreviewCopyUnavailable refuses copy until it is delivered
-// (ADR-20261102123523 delivery 5).
-var errPreviewCopyUnavailable = fmt.Errorf("%w: copy previews are not available yet; use empty", ErrInvalid)
+// ErrPreviewCopyUnsupported refuses copy previews of a database that cannot
+// be restored to a point in time: one without a restore window, or on a
+// backend that cannot restore. It is an ErrInvalid.
+var ErrPreviewCopyUnsupported = fmt.Errorf("%w: copy previews need the database's restore window and a backend that restores to a point in time", ErrInvalid)
 
 // PreviewDatabaseStore is an optional Store capability. ReservePreview
 // reserves the database database.Preview names, or returns the undeleted one
@@ -116,9 +117,7 @@ func (s *Service) SetPreviews(ctx context.Context, accountID, databaseID string,
 		return Database{}, ErrUnavailable
 	}
 	switch mode {
-	case PreviewsOff, PreviewsEmpty:
-	case PreviewsCopy:
-		return Database{}, errPreviewCopyUnavailable
+	case PreviewsOff, PreviewsEmpty, PreviewsCopy:
 	default:
 		return Database{}, fmt.Errorf("%w: previews must be off, empty or copy", ErrInvalid)
 	}
@@ -131,6 +130,11 @@ func (s *Service) SetPreviews(ctx context.Context, accountID, databaseID string,
 	}
 	if database.State == StateDeleting || database.State == StateDeleted {
 		return Database{}, ErrConflict
+	}
+	if mode == PreviewsCopy {
+		if err := s.previewCopyAllowed(database); err != nil {
+			return Database{}, err
+		}
 	}
 	return store.SetPreviews(ctx, database.AccountID, database.ID, mode, s.now())
 }
@@ -167,23 +171,17 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 	if source.State == StateDeleting || source.State == StateDeleted {
 		return Database{}, ErrConflict
 	}
+	now := s.now()
+	var reservation Database
 	switch source.Previews {
 	case PreviewsEmpty:
+		reservation, err = s.emptyPreview(source, request.StorageLimitBytes)
 	case PreviewsCopy:
-		return Database{}, errPreviewCopyUnavailable
+		reservation, err = s.copyPreview(source, now)
 	default:
 		return Database{}, ErrPreviewsOff
 	}
-	spec := Spec{Region: source.Spec.Region, PostgresMajor: source.Spec.PostgresMajor, Class: ClassDevelopment,
-		Availability: AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: request.StorageLimitBytes}
-	if err := spec.Validate(); err != nil {
-		return Database{}, err
-	}
-	backend, err := s.registry.Default(spec.Region)
 	if err != nil {
-		return Database{}, err
-	}
-	if err := backend.Capabilities.SupportsNewDatabase(spec); err != nil {
 		return Database{}, err
 	}
 	if s.admit != nil {
@@ -194,25 +192,80 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 	if err := s.admitFleet(ctx, PolicySubject(ctx, request.AccountID), true); err != nil {
 		return Database{}, err
 	}
-	now := s.now()
-	database, _, err := store.ReservePreview(ctx, Database{
-		ID:                 s.newID(),
-		AccountID:          request.AccountID,
-		OrgID:              Organization(ctx),
-		Name:               PreviewDatabaseName(source.Name, request.Owner),
-		Spec:               spec,
-		BackendID:          backend.ID,
-		BackendFingerprint: backend.Fingerprint,
-		State:              StateProvisioning,
-		DesiredGeneration:  1,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-		Preview:            request.Owner,
-	}, request.Limit)
+	reservation.ID, reservation.AccountID, reservation.OrgID = s.newID(), request.AccountID, Organization(ctx)
+	reservation.Name, reservation.Preview = PreviewDatabaseName(source.Name, request.Owner), request.Owner
+	reservation.State, reservation.DesiredGeneration, reservation.CreatedAt, reservation.UpdatedAt = StateProvisioning, 1, now, now
+	database, _, err := store.ReservePreview(ctx, reservation, request.Limit)
 	if err != nil {
 		return Database{}, err
 	}
 	return s.previewDatabaseProgress(ctx, database)
+}
+
+// emptyPreview is an empty preview database's spec and backend: the
+// developer session's, in the source's region and major.
+func (s *Service) emptyPreview(source Database, storageLimitBytes int64) (Database, error) {
+	spec := Spec{Region: source.Spec.Region, PostgresMajor: source.Spec.PostgresMajor, Class: ClassDevelopment,
+		Availability: AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: storageLimitBytes}
+	if err := spec.Validate(); err != nil {
+		return Database{}, err
+	}
+	backend, err := s.registry.Default(spec.Region)
+	if err != nil {
+		return Database{}, err
+	}
+	if err := backend.Capabilities.SupportsNewDatabase(spec); err != nil {
+		return Database{}, err
+	}
+	return Database{Spec: spec, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint}, nil
+}
+
+// copyPreview is a copy's restore of source as of a second ago, on the
+// source's backend, so a Neon copy is a branch of its source's project. It
+// keeps the source's storage limit and restore window, which a Neon branch
+// shares with its project, and runs development class, scale-to-zero.
+func (s *Service) copyPreview(source Database, now time.Time) (Database, error) {
+	if source.State != StateReady || source.ProviderResourceID == "" {
+		// The source is changing; the next attempt copies it.
+		return Database{}, ErrUnavailable
+	}
+	if err := s.previewCopyAllowed(source); err != nil {
+		return Database{}, err
+	}
+	// PostgreSQL keeps microseconds; reservations compare the point as stored.
+	point := now.Add(-time.Second).UTC().Truncate(time.Microsecond)
+	if point.Before(source.CreatedAt) {
+		return Database{}, ErrUnavailable
+	}
+	spec := source.Spec
+	spec.Class, spec.Availability, spec.ScaleToZero = ClassDevelopment, AvailabilitySingleZone, true
+	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
+	if err != nil {
+		return Database{}, err
+	}
+	if err := backend.Capabilities.Supports(spec); err != nil {
+		return Database{}, err
+	}
+	return Database{Spec: spec, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+		RestoreSourceDatabaseID: source.ID, RestoreSourceResourceID: databaseDataResource(source), RestorePointInTime: point}, nil
+}
+
+// previewCopyAllowed reports whether source can be copied for previews: it
+// has a restore window, on a backend that restores to a point in time and
+// meters a restore apart from, or with, its source.
+func (s *Service) previewCopyAllowed(source Database) error {
+	if source.Spec.RestoreWindowSeconds <= 0 {
+		return ErrPreviewCopyUnsupported
+	}
+	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
+	if err != nil {
+		return err
+	}
+	if !backend.Capabilities.PointInTimeRestore ||
+		s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
+		return ErrPreviewCopyUnsupported
+	}
+	return nil
 }
 
 // previewDatabaseProgress moves a preview database's provisioning along; a

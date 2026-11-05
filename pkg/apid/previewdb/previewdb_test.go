@@ -22,21 +22,26 @@ const account = "account-a"
 // provider provisions ready databases, or provisioning ones while pending,
 // and reports each database's spec back as it was asked for.
 type provider struct {
-	mu      sync.Mutex
-	pending bool
-	specs   map[string]managedpostgres.Spec
-	deleted []string
+	mu       sync.Mutex
+	pending  bool
+	specs    map[string]managedpostgres.Spec
+	lineage  map[string]managedpostgres.RestoreLineage
+	deleted  []string
+	restores []managedpostgres.RestoreRequest
 }
 
 func (*provider) Capabilities() managedpostgres.Capabilities {
 	return managedpostgres.Capabilities{
-		PostgresMajors:    []int{17},
-		ServiceClasses:    []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment},
-		Availability:      []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:  []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialMigration},
-		ScaleToZero:       true,
-		PooledConnections: true,
-		MaxStorageBytes:   10 << 30,
+		PostgresMajors:          []int{17},
+		ServiceClasses:          []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment},
+		Availability:            []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
+		CredentialAccess:        []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialMigration},
+		ScaleToZero:             true,
+		PooledConnections:       true,
+		MaxStorageBytes:         10 << 30,
+		PointInTimeRestore:      true,
+		RestoreUsageIsolated:    true,
+		MaxRestoreWindowSeconds: 7 * 24 * 60 * 60,
 	}
 }
 
@@ -45,7 +50,11 @@ func (p *provider) observed(id string) managedpostgres.ObservedDatabase {
 	if p.pending {
 		status = managedpostgres.ProviderStatusPending
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: id, Status: status, ComputeState: managedpostgres.ComputeStateActive, Spec: p.specs[id]}
+	observed := managedpostgres.ObservedDatabase{ProviderResourceID: id, Status: status, ComputeState: managedpostgres.ComputeStateActive, Spec: p.specs[id]}
+	if lineage, ok := p.lineage[id]; ok {
+		observed.RestoreLineage = &lineage
+	}
+	return observed
 }
 
 func (p *provider) Provision(_ context.Context, request managedpostgres.ProvisionRequest) (managedpostgres.ObservedDatabase, error) {
@@ -56,8 +65,14 @@ func (p *provider) Provision(_ context.Context, request managedpostgres.Provisio
 	return p.observed(id), nil
 }
 
-func (*provider) Restore(context.Context, managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
-	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+func (p *provider) Restore(_ context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	id := "restore-" + request.ResourceID
+	p.specs[id] = request.Spec
+	p.lineage[id] = managedpostgres.RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}
+	p.restores = append(p.restores, request)
+	return p.observed(id), nil
 }
 
 func (p *provider) Inspect(_ context.Context, id string) (managedpostgres.ObservedDatabase, error) {
@@ -130,7 +145,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	p := &provider{specs: map[string]managedpostgres.Spec{}}
+	p := &provider{specs: map[string]managedpostgres.Spec{}, lineage: map[string]managedpostgres.RestoreLineage{}}
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{
 		DefaultRegion: "eu", Defaults: map[string]string{"eu": "test"}, MaxDatabasesPerAccount: 3, ProvisioningEnabled: true,
 		Backends: []managedpostgres.BackendConfig{{ID: "test", Driver: "test", Region: "eu", Namespace: "previewdb"}},
@@ -409,5 +424,55 @@ func TestSweepPurgesTheDatabasesOfClosedEnvironments(t *testing.T) {
 	// more at the provider.
 	if _, err := f.manager.Sweep(ctx, stillOpen, page, f.clock.Now().Add(time.Minute)); err != nil || len(f.provider.deleted) != 2 {
 		t.Fatalf("second Sweep = %v; provider deletes %v", err, f.provider.deleted)
+	}
+}
+
+func TestPrepareCopiesASourceWithCopyPreviews(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	source, err := f.service.Create(ctx, managedpostgres.CreateRequest{AccountID: account, Name: "orders", Spec: managedpostgres.Spec{
+		Region: "eu", PostgresMajor: 17, Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone,
+		ScaleToZero: true, StorageLimitBytes: 5 << 30, RestoreWindowSeconds: 24 * 60 * 60}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source, err = f.service.SetPreviews(ctx, account, source.ID, managedpostgres.PreviewsCopy); err != nil {
+		t.Fatalf("SetPreviews(copy) = %v", err)
+	}
+	if _, err := f.bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: account, DatabaseID: source.ID, AppID: f.parent.ID,
+		Scope: api.DefaultEnvScope, EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite}); err != nil {
+		t.Fatal(err)
+	}
+	f.database(t, "ledger", managedpostgres.PreviewsEmpty,
+		managedpostgres.CreateBindingRequest{Scope: api.DefaultEnvScope, EnvironmentKey: "LEDGER_URL", Access: managedpostgres.CredentialReadWrite})
+	f.clock.advance(time.Minute)
+	pr := preview("app-pr-7", 7, "project-1")
+
+	if err := f.manager.Prepare(ctx, api.PlanPro, f.parent, pr); err != nil {
+		t.Fatalf("Prepare = %v", err)
+	}
+	databases, _ := f.service.PreviewDatabases(ctx, account, "project-1", 7)
+	var copied managedpostgres.Database
+	for _, database := range databases {
+		if database.Preview.SourceDatabaseID == source.ID {
+			copied = database
+		}
+	}
+	if len(databases) != 2 || copied.RestoreSourceDatabaseID != source.ID || copied.State != managedpostgres.StateReady ||
+		len(f.provider.restores) != 1 || f.provider.restores[0].SourceResourceID != source.ProviderResourceID {
+		t.Fatalf("preview databases = %+v; restores %+v", databases, f.provider.restores)
+	}
+	if bound := f.previewBindings(t, copied, pr.ID); bound["DATABASE_URL"].State != managedpostgres.BindingStateReady {
+		t.Fatalf("copy bindings = %+v", bound)
+	}
+
+	// Deleting the source purges its copies; the other source's empty
+	// preview database stays with the PR.
+	if err := f.manager.PurgeCopies(ctx, account, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := f.service.PreviewDatabases(ctx, account, "project-1", 7)
+	if len(left) != 1 || left[0].Preview.SourceDatabaseID == source.ID || len(f.previewBindings(t, copied, pr.ID)) != 0 {
+		t.Fatalf("after PurgeCopies: %+v", left)
 	}
 }

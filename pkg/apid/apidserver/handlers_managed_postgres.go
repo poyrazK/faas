@@ -488,10 +488,8 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		// (ADR-20261102123523); the next preview build sets it up again.
 		purge = true
 		database, err = s.previewDatabaseManager().Purge(r.Context(), acct.ID, previewDatabase.ID)
-	} else if purge {
-		database, err = s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
 	} else {
-		database, err = s.managedPostgres.ScheduleDelete(r.Context(), acct.ID, r.PathValue("id"))
+		database, err = s.deleteCustomerManagedPostgresDatabase(r.Context(), acct, r.PathValue("id"), purge)
 	}
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -507,6 +505,18 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		})
 	}
 	writeJSON(w, http.StatusOK, managedPostgresView(database))
+}
+
+// deleteCustomerManagedPostgresDatabase deletes a customer's database, its
+// PR preview copies first (ADR-20261102123523 decision 4).
+func (s *server) deleteCustomerManagedPostgresDatabase(ctx context.Context, acct state.Account, id string, purge bool) (managedpostgres.Database, error) {
+	if err := s.purgePreviewCopies(ctx, acct, id); err != nil {
+		return managedpostgres.Database{}, err
+	}
+	if purge {
+		return s.managedPostgres.Delete(ctx, acct.ID, id)
+	}
+	return s.managedPostgres.ScheduleDelete(ctx, acct.ID, id)
 }
 
 func managedPostgresPurgeParam(r *http.Request) (bool, error) {

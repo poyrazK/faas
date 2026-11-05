@@ -101,4 +101,29 @@ func TestPostgresStorePreviewDatabases(t *testing.T) {
 	if again, created, err := store.ReservePreview(ctx, previewOf(7), 10); err != nil || created || again.ID != first.ID {
 		t.Fatalf("an existing preview database outlives previews off: %+v, created %v, %v", again, created, err)
 	}
+
+	// A copy restores its own source, and only while its previews are copy.
+	copyOf := previewOf(12)
+	copyOf.RestoreSourceDatabaseID, copyOf.RestoreSourceResourceID, copyOf.RestorePointInTime = source.ID, "source-resource", at
+	if _, _, err := store.ReservePreview(ctx, copyOf, 10); !errors.Is(err, ErrPreviewsOff) {
+		t.Fatalf("copy with previews off = %v, want ErrPreviewsOff", err)
+	}
+	if _, err := store.SetPreviews(ctx, accountID, source.ID, PreviewsEmpty, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ReservePreview(ctx, copyOf, 10); !errors.Is(err, ErrConflict) || errors.Is(err, ErrPreviewsOff) {
+		t.Fatalf("copy with empty previews = %v, want ErrConflict", err)
+	}
+	if _, err := store.SetPreviews(ctx, accountID, source.ID, PreviewsCopy, at); err != nil {
+		t.Fatal(err)
+	}
+	copied, created, err := store.ReservePreview(ctx, copyOf, 10)
+	if err != nil || !created || copied.RestoreSourceDatabaseID != source.ID || !copied.RestorePointInTime.Equal(at) || copied.Preview != copyOf.Preview {
+		t.Fatalf("copy reservation = %+v, created %v, %v", copied, created, err)
+	}
+	stranger := previewOf(13)
+	stranger.RestoreSourceDatabaseID, stranger.RestoreSourceResourceID, stranger.RestorePointInTime = first.ID, "other-resource", at
+	if _, _, err := store.ReservePreview(ctx, stranger, 10); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a copy of another database = %v, want ErrInvalid", err)
+	}
 }
