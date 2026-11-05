@@ -1,7 +1,14 @@
 # Architecture Decision Records
 
 - [ADR-20261105150000: A release keeps the previous guest-init while its code is the same, so bases and snapshots survive it](20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md) — proposed; amends ADR-510's consequences: every refusal traced to a release whose guest-init digest differed (26 digests in 12 days); the release ships the previous signed release's guest-init while its code digest (ADR-1650) is the same, guest-init builds with `grpcnotrace`, and a nightly check keeps unreferenced pkg/api changes out of its code; releases that change what the guest runs still retire snapshots (1 of 5 pairs was reusable)
+
 - [ADR-20261105133000: Fence app rollback routing and preserve migration evidence](20261105133000-rollback-routing-ownership-and-evidence-budgets.md)
+
+- [ADR-20261105130932: Preserve PostgreSQL state on rejected work](20261105130932-managed-postgres-admission-and-batch-recovery.md) — roll back skipped named statements, admit resizes before retiring standbys, and reserve archive bytes across concurrent streams
+
+- [ADR-20261105123632: Isolate pooled statements and archive upload failures](20261105123632-managed-postgres-pooling-and-upload-isolation.md) — preserve each client's unnamed SQL, stream multipart backups, keep unrelated databases uploading, and close archive sockets on shutdown
+
+- [ADR-20261105120854: Mirror holds protect PostgreSQL recovery data](20261105120854-managed-postgres-mirror-retention-safety.md) — verify both hold inventories before pruning, protect queued mirror deletions, and discover recovery backups despite incomplete primary listings
 
 - [ADR-20261105120000: Repair catalog references and retained outcome resolution](20261105120000-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
 

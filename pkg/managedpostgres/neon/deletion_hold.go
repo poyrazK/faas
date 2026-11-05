@@ -53,12 +53,18 @@ func (p *Provider) setPrimaryEndpointDisabled(ctx context.Context, providerResou
 	if err != nil {
 		return err
 	}
+	// A project-only selector follows its mutable default branch. Only a
+	// persisted dataset identity authorizes changing an endpoint's hold.
+	if ref.branchID == "" {
+		return managedpostgres.ErrConflict
+	}
 	metadata, err := p.readDatabaseMetadata(ctx, ref, false)
 	if err != nil {
 		return err
 	}
-	_, primary, _ := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
-	if !validProviderID.MatchString(primary.ID) {
+	selected, primary, _ := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	if selected.ID != ref.branchID || primary.BranchID != ref.branchID || !validProviderID.MatchString(primary.ID) ||
+		selected.ProjectID != "" && selected.ProjectID != ref.projectID || primary.ProjectID != "" && primary.ProjectID != ref.projectID {
 		return managedpostgres.ErrUnavailable
 	}
 	if endpointDisabled(primary) == disabled {
@@ -80,7 +86,8 @@ func (p *Provider) setPrimaryEndpointDisabled(ctx context.Context, providerResou
 	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &confirmed, http.StatusOK); err != nil {
 		return err
 	}
-	if confirmed.Endpoint.ID != primary.ID || endpointDisabled(confirmed.Endpoint) != disabled {
+	if confirmed.Endpoint.ID != primary.ID || confirmed.Endpoint.BranchID != ref.branchID ||
+		confirmed.Endpoint.ProjectID != "" && confirmed.Endpoint.ProjectID != ref.projectID || endpointDisabled(confirmed.Endpoint) != disabled {
 		return managedpostgres.ErrUnavailable
 	}
 	return nil

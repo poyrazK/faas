@@ -313,6 +313,12 @@ period stays active).
 - No cap threshold is recorded or mailed: the account's suspension notice is
   the customer's explanation.
 
+
+Amendment 2026-11-05: storage observations address each catalog row's pinned
+dataset, retaining the legacy selector only when no pin exists. A root's
+lifecycle project still names its quota scope for writes; changing that
+project's default branch must not replace the root's measured size with a
+smaller copy and invent headroom elsewhere in the subject's pool.
 ## Amendment 2026-11-04: the quotas keep back Neon's counter lag
 
 Status: accepted (owner, 2026-11-04: "Neon quota + margin").

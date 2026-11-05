@@ -57,7 +57,8 @@ func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, datab
 			reason = "plan_excess"
 		}
 		hold := reason != capHoldNone
-		held, err := provider.ComputeHeld(ctx, database.ProviderResourceID)
+		resourceID := databaseDataResource(database)
+		held, err := provider.ComputeHeld(ctx, resourceID)
 		if err != nil {
 			failures = append(failures, err)
 			continue
@@ -75,9 +76,9 @@ func (e *CapEnforcer) holdDatabases(ctx context.Context, subjectID string, datab
 			continue
 		}
 		if hold {
-			err = provider.HoldForDeletion(ctx, database.ProviderResourceID)
+			err = provider.HoldForDeletion(ctx, resourceID)
 		} else {
-			err = provider.ReleaseDeletionHold(ctx, database.ProviderResourceID)
+			err = provider.ReleaseDeletionHold(ctx, resourceID)
 		}
 		if err != nil {
 			failures = append(failures, err)

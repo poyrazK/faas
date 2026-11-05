@@ -22,6 +22,9 @@ func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.Dat
 			AccountID: sw.AccountID, SourceDatabaseID: sw.SourceDatabaseID, Name: sw.TargetName, PointInTime: sw.RestorePoint, WithinLimit: true})
 		switch {
 		case err == nil:
+			if !target.RestoreSlotUntil.IsZero() {
+				return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then retry the rollback.")
+			}
 			sw.TargetDatabaseID = target.ID
 		case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 			return w.beginAbort(sw, codeDatabaseLimit, "The restored copy does not fit inside the plan's database limit, and a switch's copy cannot use the restore slot because it becomes the app's database. "+
@@ -43,6 +46,9 @@ func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.Dat
 	target, err := w.Databases.Get(ctx, sw.AccountID, sw.TargetDatabaseID)
 	if err != nil {
 		return w.retry(sw, errorCode(err))
+	}
+	if !target.RestoreSlotUntil.IsZero() {
+		return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then retry the rollback.")
 	}
 	switch target.State {
 	case managedpostgres.StateReady:

@@ -10303,11 +10303,21 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_live_login_attempts",
+    "columns": [
+      "attempted_at",
+      "database_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_live_logins",
     "columns": [
       "account_id",
+      "authorized_identity_id",
       "awake",
       "created_at",
+      "data_resource_id",
       "database_id",
       "provider_identity_id",
       "recipient",

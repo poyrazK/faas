@@ -16,6 +16,13 @@ type updateComputeRequest struct {
 	} `json:"endpoint"`
 }
 
+var _ managedpostgres.UpdateObserver = (*Provider)(nil)
+
+func (p *Provider) ObserveUpdate(ctx context.Context, request managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
+	observed, _, err := p.resizeObservation(ctx, request)
+	return observed, err
+}
+
 // Update converges one pinned primary compute field family at a time. An uncertain PATCH is
 // recovered by reading the configuration; it is never blindly replayed.
 func (p *Provider) Update(ctx context.Context, request managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {

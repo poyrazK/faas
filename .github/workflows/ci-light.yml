@@ -421,7 +421,7 @@ jobs:
         run: |
           set -euo pipefail
           ZIP="$RUNNER_TEMP/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-          curl --fail --silent --show-error --location --output "$ZIP" \
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --retry-delay 2 --output "$ZIP" \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
           echo "${PROTOC_SHA256_LINUX_AMD64}  $ZIP" | sha256sum --check --strict

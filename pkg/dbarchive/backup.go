@@ -126,7 +126,11 @@ func (s *LocalStore) baseDir(databaseID string) (string, error) {
 // PutBackup stores a pg_basebackup tar stream compressed, with its
 // manifest, and returns the backup id. Nothing is visible until both are
 // durable.
-func (s *LocalStore) PutBackup(_ context.Context, databaseID string, r io.Reader, now time.Time) (BackupManifest, error) {
+func (s *LocalStore) PutBackup(ctx context.Context, databaseID string, r io.Reader, now time.Time) (BackupManifest, error) {
+	return s.putBackup(ctx, databaseID, r, now, nil)
+}
+
+func (s *LocalStore) putBackup(_ context.Context, databaseID string, r io.Reader, now time.Time, quota *archiveQuota) (BackupManifest, error) {
 	dir, err := s.baseDir(databaseID)
 	if err != nil {
 		return BackupManifest{}, err
@@ -144,7 +148,11 @@ func (s *LocalStore) PutBackup(_ context.Context, databaseID string, r io.Reader
 		return BackupManifest{}, err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	enc, err := zstd.NewWriter(tmp)
+	var output io.Writer = tmp
+	if quota != nil {
+		output = quotaWriter{Writer: tmp, quota: quota}
+	}
+	enc, err := zstd.NewWriter(output)
 	if err != nil {
 		_ = tmp.Close()
 		return BackupManifest{}, err
@@ -179,6 +187,9 @@ func (s *LocalStore) PutBackup(_ context.Context, databaseID string, r io.Reader
 	manifest.ID, manifest.Bytes = id, n
 	raw, err := json.Marshal(manifest)
 	if err != nil {
+		return BackupManifest{}, err
+	}
+	if err := quota.reserve(int64(len(raw))); err != nil {
 		return BackupManifest{}, err
 	}
 	if err := writeFileSync(filepath.Join(dir, id+".json"), raw); err != nil {
@@ -308,7 +319,7 @@ func (d *decodeCloser) Close() error               { d.dec.Close(); return d.f.C
 // backupStopTime reads the stop time from the backup history file the
 // archive received at pg_backup_stop: recovery is consistent only past it.
 // wal reads the history file (a TieredStore falls back to the remote).
-func backupStopTime(ctx context.Context, wal Store, databaseID string, m BackupManifest) (time.Time, error) {
+func backupStopTime(ctx context.Context, wal walReader, databaseID string, m BackupManifest) (time.Time, error) {
 	parts := strings.SplitN(m.StartLSN, "/", 2)
 	if len(parts) != 2 {
 		return time.Time{}, errors.New("dbarchive: bad start lsn")
@@ -347,7 +358,7 @@ func (s *LocalStore) SelectBackup(ctx context.Context, wal Store, databaseID str
 }
 
 // selectBackup picks from backups (oldest first).
-func selectBackup(ctx context.Context, wal Store, databaseID string, target time.Time, backups []BackupManifest) (BackupManifest, error) {
+func selectBackup(ctx context.Context, wal walReader, databaseID string, target time.Time, backups []BackupManifest) (BackupManifest, error) {
 	for i := len(backups) - 1; i >= 0; i-- {
 		stop, err := backupStopTime(ctx, wal, databaseID, backups[i])
 		if err == nil && !stop.After(target) {
@@ -355,6 +366,10 @@ func selectBackup(ctx context.Context, wal Store, databaseID string, target time
 		}
 	}
 	return BackupManifest{}, ErrNotFound
+}
+
+type walReader interface {
+	OpenWAL(context.Context, string, string) (io.ReadCloser, int64, error)
 }
 
 func writeFileSync(path string, body []byte) error {

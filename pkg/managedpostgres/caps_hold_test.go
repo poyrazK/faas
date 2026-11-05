@@ -5,6 +5,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"testing"
 	"time"
@@ -31,6 +32,36 @@ func (p *capHoldTestProvider) HoldForDeletion(_ context.Context, id string) erro
 func (p *capHoldTestProvider) ReleaseDeletionHold(_ context.Context, id string) error {
 	p.held[id], p.changes[id] = false, false
 	return nil
+}
+
+// adr: 20261025094915 — cap holds act on the pinned dataset, like deletion holds.
+func TestComputeHoldUsesPinnedDataset(t *testing.T) {
+	provider := &capHoldTestProvider{
+		capReportTestProvider: &capReportTestProvider{capTestProvider: &capTestProvider{
+			fakeProvider: &fakeProvider{capabilities: testCapabilities()},
+		}},
+		held: map[string]bool{"project": true}, changes: map[string]bool{},
+	}
+	registry := testRegistry(t, provider, nil)
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := Database{ID: "database", State: StateReady, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+		ProviderResourceID: "project", DataResourceID: "project/pinned"}
+	enforcer := &CapEnforcer{registry: registry, mode: CapEnforcementOn, logger: slog.Default()}
+	for _, hold := range []bool{true, false} {
+		reason := capHoldNone
+		if hold {
+			reason = capHoldCeiling
+		}
+		if err := enforcer.holdDatabases(t.Context(), "account", []Database{database}, reason, nil, &CapSweepSummary{}); err != nil {
+			t.Fatal(err)
+		}
+		if changed, ok := provider.changes[database.DataResourceID]; !ok || changed != hold || !provider.held["project"] || len(provider.changes) != 1 {
+			t.Fatalf("hold=%v changed an alias instead of the dataset: changes=%v held=%v", hold, provider.changes, provider.held)
+		}
+	}
 }
 
 func TestCapEnforcerHoldsAndReleases(t *testing.T) {

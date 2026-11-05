@@ -451,8 +451,9 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		limits, err := e.ceiling(ctx, accountID)
+		limits, limitsErr := e.ceiling(ctx, accountID)
 		if e.mode != CapEnforcementOff {
+			err := limitsErr
 			summary.Accounts++
 			if err == nil {
 				err = e.enforceAccount(ctx, accountID, accounts[accountID], limits, &summary)
@@ -463,6 +464,9 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 			}
 		}
 		if e.storageMode != CapEnforcementOff {
+			// The two guards share entitlements, but a failed compute read or
+			// write must not prevent an independent storage limit update.
+			err := limitsErr
 			summary.StorageAccounts++
 			if err == nil {
 				err = e.enforceStoragePool(ctx, accountID, accounts[accountID], limits, &summary)
@@ -477,9 +481,9 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 	return summary, errors.Join(failures...)
 }
 
-// liveDatabasesBySubject groups running databases by the subject the ledger
-// pools their usage by: an organization that owns resources pools every
-// namespace's databases under its own ID.
+// liveDatabasesBySubject groups running databases and retained source storage
+// by the ledger's usage subject. Organization ownership pools every namespace's
+// databases under its own ID.
 func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]Database, error) {
 	var live []Database
 	seen := make(map[string]bool)
@@ -490,10 +494,17 @@ func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]
 			return nil, err
 		}
 		for _, database := range databases {
-			if seen[database.ID] || !capEnforceable(database) {
+			if seen[database.ID] {
 				continue
 			}
 			seen[database.ID] = true
+			included, err := e.includeCapDatabase(ctx, database)
+			if err != nil {
+				return nil, err
+			}
+			if !included {
+				continue
+			}
 			live = append(live, database)
 		}
 		if len(databases) < e.batchSize {
@@ -522,6 +533,22 @@ func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]
 		grouped[subject] = append(grouped[subject], database)
 	}
 	return grouped, nil
+}
+
+// A deleted source kept for its copies still holds storage. Include it in
+// storage planning even though its endpoint must stay out of compute work.
+func (e *CapEnforcer) includeCapDatabase(ctx context.Context, database Database) (bool, error) {
+	if capEnforceable(database) {
+		return true, nil
+	}
+	if database.State != StateDeleting || database.ProviderResourceID == "" || database.DeletedAt != nil {
+		return false, nil
+	}
+	store, ok := e.store.(RestoreCopiesStore)
+	if !ok {
+		return false, nil
+	}
+	return store.HasRestoreCopies(ctx, database.ID)
 }
 
 // capEnforceable keeps databases whose provider resource can be running.
@@ -677,6 +704,9 @@ func (e *CapEnforcer) observeScopes(ctx context.Context, databases []Database, n
 	var order []string
 	month := monthStart(now)
 	for _, database := range databases {
+		if !capEnforceable(database) {
+			continue
+		}
 		backend, err := e.registry.Resolve(database.BackendID, database.BackendFingerprint)
 		if err != nil {
 			return nil, nil, err

@@ -17599,6 +17599,29 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_permanent_cutover_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_permanent_cutover_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE deadline timestamptz;
+BEGIN
+ IF (TG_OP='INSERT' AND NEW.state NOT IN ('cancelling','cancelled'))
+  OR (TG_OP='UPDATE' AND NEW.state='activated' AND OLD.state IS DISTINCT FROM NEW.state) THEN
+  SELECT restore_slot_until INTO deadline FROM managed_postgres_databases
+   WHERE id=NEW.target_database_id FOR SHARE;
+  IF deadline IS NOT NULL THEN
+   RAISE EXCEPTION 'a temporary restore cannot be a cutover target'
+    USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_resize_database(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -44671,6 +44694,24 @@ COMMENT ON TABLE public.managed_postgres_live_keys IS 'ADR-20261016151947 live-q
 
 
 --
+-- Name: managed_postgres_live_login_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_live_login_attempts (
+    database_id uuid NOT NULL,
+    attempted_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_live_login_attempts_attempted_at_check CHECK (isfinite(attempted_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_live_login_attempts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_live_login_attempts IS 'Last durable recovery attempt; untried and oldest attempts run first, independently of provider success.';
+
+
+--
 -- Name: managed_postgres_live_logins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -44684,7 +44725,12 @@ CREATE TABLE public.managed_postgres_live_logins (
     awake text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     sealed_login_sig bytea,
+    data_resource_id text,
+    authorized_identity_id text,
+    CONSTRAINT managed_postgres_live_logins_authorized_identity_id_check CHECK (((authorized_identity_id IS NULL) OR (authorized_identity_id ~ '^[a-z0-9_]{1,63}$'::text))),
     CONSTRAINT managed_postgres_live_logins_awake_check CHECK ((awake ~ '^(neon:[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64})?$'::text)),
+    CONSTRAINT managed_postgres_live_logins_data_resource_id_check CHECK (((data_resource_id IS NULL) OR ((length(data_resource_id) >= 1) AND (length(data_resource_id) <= 255)))),
+    CONSTRAINT managed_postgres_live_logins_dataset_pair_check CHECK (((data_resource_id IS NULL) = (authorized_identity_id IS NULL))),
     CONSTRAINT managed_postgres_live_logins_provider_identity_id_check CHECK ((provider_identity_id ~ '^[a-z0-9_]{1,63}$'::text)),
     CONSTRAINT managed_postgres_live_logins_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]{58}$'::text)),
     CONSTRAINT managed_postgres_live_logins_sealed_login_check CHECK (((octet_length(sealed_login) >= 1) AND (octet_length(sealed_login) <= 8192))),
@@ -44815,7 +44861,7 @@ CREATE TABLE public.managed_postgres_resizes (
     error_code text,
     CONSTRAINT managed_postgres_compute_policy_target_check CHECK (((target_scale_to_zero IS NULL) OR ((NOT (target_class IS DISTINCT FROM (source_spec ->> 'Class'::text))) AND (NOT (jsonb_typeof((source_spec -> 'ScaleToZero'::text)) IS DISTINCT FROM 'boolean'::text))))),
     CONSTRAINT managed_postgres_major_upgrade_target_check CHECK (((target_postgres_major IS NULL) OR ((target_scale_to_zero IS NULL) AND (target_storage_limit_bytes IS NULL) AND (target_class = (source_spec ->> 'Class'::text)) AND (jsonb_typeof((source_spec -> 'PostgresMajor'::text)) = 'number'::text) AND ((target_postgres_major)::numeric > ((source_spec ->> 'PostgresMajor'::text))::numeric) AND (target_postgres_major <= 99)))),
-    CONSTRAINT managed_postgres_resize_outcome_check CHECK ((((state = 'failed'::text) = (error_code IS NOT NULL)) AND ((error_code IS NULL) OR (error_code ~ '^[a-z_]{1,64}$'::text)) AND ((state <> 'failed'::text) OR (target_postgres_major IS NOT NULL)))),
+    CONSTRAINT managed_postgres_resize_outcome_check CHECK ((((state = 'failed'::text) = (error_code IS NOT NULL)) AND ((error_code IS NULL) OR (error_code ~ '^[a-z_]{1,64}$'::text)))),
     CONSTRAINT managed_postgres_resizes_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_resizes_backend_id_check CHECK ((length(backend_id) > 0)),
     CONSTRAINT managed_postgres_resizes_check CHECK ((((state = 'pending'::text) AND (completed_at IS NULL)) OR ((state = ANY (ARRAY['succeeded'::text, 'failed'::text])) AND (completed_at IS NOT NULL) AND (completed_at >= created_at)))),
@@ -65187,6 +65233,14 @@ ALTER TABLE ONLY public.managed_postgres_live_keys
 
 
 --
+-- Name: managed_postgres_live_login_attempts managed_postgres_live_login_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_login_attempts
+    ADD CONSTRAINT managed_postgres_live_login_attempts_pkey PRIMARY KEY (database_id);
+
+
+--
 -- Name: managed_postgres_live_logins managed_postgres_live_logins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76956,6 +77010,13 @@ CREATE INDEX managed_postgres_bindings_reconcile_idx ON public.managed_postgres_
 
 
 --
+-- Name: managed_postgres_bindings_refresh_reconcile_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_bindings_refresh_reconcile_idx ON public.managed_postgres_bindings USING btree (retry_at, id) WHERE ((state = 'ready'::text) AND (access <> 'migration'::text) AND (rotation_previous_generation IS NOT NULL) AND (NOT rotation_cleanup_ready));
+
+
+--
 -- Name: managed_postgres_bindings_rotation_reconcile_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77107,6 +77168,13 @@ CREATE UNIQUE INDEX managed_postgres_live_keys_active_idx ON public.managed_post
 --
 
 CREATE INDEX managed_postgres_live_keys_database_idx ON public.managed_postgres_live_keys USING btree (database_id, created_at);
+
+
+--
+-- Name: managed_postgres_overage_pending_recovery_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_overage_pending_recovery_idx ON public.managed_postgres_overage_pending USING btree (provider, period_start, subject_id);
 
 
 --
@@ -86116,6 +86184,13 @@ CREATE TRIGGER managed_postgres_drain_plan_truncate_guard BEFORE TRUNCATE ON pub
 --
 
 CREATE TRIGGER managed_postgres_instance_admission_guard BEFORE INSERT OR UPDATE OF app_id, state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_instance_admission();
+
+
+--
+-- Name: managed_postgres_cutovers managed_postgres_permanent_cutover_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_permanent_cutover_target BEFORE INSERT OR UPDATE OF state, target_database_id ON public.managed_postgres_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_permanent_cutover_target();
 
 
 --
@@ -97484,6 +97559,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_live_keys
     ADD CONSTRAINT managed_postgres_live_keys_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_live_login_attempts managed_postgres_live_login_attempts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_login_attempts
+    ADD CONSTRAINT managed_postgres_live_login_attempts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

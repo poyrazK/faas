@@ -127,7 +127,8 @@ The fleet ceilings apply across every account:
   minus the reserve, and its refusal suggests upgrading. Unset, the reserve is
   20% of `max_databases`; 0 reserves none.
 - Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
-  cost-raising resizes pause as well, until the next month.
+  cost-raising resizes pause as well, until the next month. Storage growth is
+  cost-raising even when the same request reduces the compute class.
 
 Size `max_databases` to the Neon organization behind the backend. Every
 database is its own Neon project; restores are branches inside their source's
@@ -518,6 +519,14 @@ read only the configuration. A live run also needs
 database where pgproxyd reads role verifiers. The database nodes'
 monitoring and recovery are in the runbook
 `docs/runbooks/FaasDatabaseNodes.md`.
+
+With an off-site archive mirror configured, retention honors snapshot holds
+in both buckets. If either hold inventory cannot be verified, destructive
+pruning waits while primary uploads continue. A snapshot release can retain
+archive data until the mirror applies the release. Recovery also checks the
+mirror when the primary returns an empty catalog or lacks a backup consistent
+at the requested time. See
+[ADR-20261105120854](adr/20261105120854-managed-postgres-mirror-retention-safety.md).
 
 ## Safety boundary
 
@@ -1086,8 +1095,13 @@ apid delivers the charge after each compute cap sweep
 - For seven days after a month ends
   (`api.ManagedPostgresOverageCloseWindow`), late provider usage windows still
   add to that month.
-- The allowance used is the larger of the plan's and the one recorded when
-  the subject reached it, so an upgrade never raises the charge.
+- Compute and storage allowances follow the largest plan recorded for the
+  billed month. The current plan also counts during the month in progress;
+  a later downgrade cannot turn a closed month's included usage into overage.
+  Compute also preserves any larger allowance recorded by a cap event.
+- A closed month with usage but no recorded plan history is deferred and
+  reported as a billing failure, rather than priced using today's plan.
+  An already reserved charge step is still retried unchanged.
 
 Delivery is off until an operator sets `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE`
 to `shadow` (record each step, send nothing) or `live`, with

@@ -148,6 +148,10 @@ To rotate a credential, run `gregale postgres bindings list orders`, then
 the new credential is active. `--wait` polls until `rotation_pending` clears,
 for up to five minutes (`--wait-timeout`).
 
+Rotation recovery queues the runtime refresh even if the original request
+fails or the worker restarts. The previous serving credential stays valid
+until that refresh is confirmed; retrying rotation reuses its generation.
+
 The `rest-api-postgres` and `rest-api-postgres-python` starters
 (`gregale init --template rest-api-postgres`) already use this layout. They
 adopt rotated credentials and reconnect after a restore. See the
@@ -184,7 +188,8 @@ every plan:
   7-day undo. Its bindings are removed first. The source is never touched.
 - The account that ran the restore gets an email 48 hours before
   `restore_slot_until` while there is still no room, and another when the
-  delete is scheduled.
+  delete is scheduled. Recording the expiry email and scheduling deletion
+  happen together, so a worker restart cannot lose the notice.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
 - A copy can replace its source on a one-database plan: detach the source's
@@ -207,6 +212,9 @@ gregale postgres resize status orders "$REQUEST_ID"
 
 - Keep the request ID, a lowercase UUID: repeating it returns the same
   resize's progress.
+- A confirmed rejection reports `failed` and `last_error_code`, keeps the
+  original configuration and permits deletion or a corrected request with a
+  new ID. An uncertain outcome stays `pending` until it can be confirmed.
 - Clients may be disconnected during the change. They reconnect with the same
   credentials.
 - Region, version, storage and the restore window stay as they are.
@@ -243,6 +251,11 @@ gregale postgres delete orders --purge
   returns it to `ready` with its data and restore history.
 - After that, it is deleted for good.
 - A database that never became ready is deleted at once.
+
+If a delete request fails while the provider is confirming that compute has
+stopped, check the database with `gregale postgres get`. Its delete may already
+be scheduled. Retrying delete finishes that step without extending the 7 days;
+`recover` can still undo it.
 
 `--purge` (API: `DELETE /v1/postgres/databases/{id}?purge=true`) deletes the
 database and its restore history at once, even during the 7 days. It cannot be
