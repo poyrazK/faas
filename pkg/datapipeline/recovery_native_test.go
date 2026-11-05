@@ -182,7 +182,8 @@ func (f *nativeRecoveryFixture) await(t *testing.T, state string) {
 		if f.pipeline.State == state {
 			return
 		}
-		if f.pipeline.State == "blocked" || f.pipeline.State == "resync_required" || time.Now().After(until) {
+		qualifying := f.pipeline.Verification == "pending" && (f.pipeline.Reason == "source_storage_verification" || f.pipeline.Reason == "replication_continuity_verification")
+		if f.pipeline.State == "blocked" && !qualifying || f.pipeline.State == "resync_required" || time.Now().After(until) {
 			t.Fatalf("pipeline did not reach %s: %+v", state, f.pipeline.DataPipeline)
 		}
 		time.Sleep(50 * time.Millisecond)

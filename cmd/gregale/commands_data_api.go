@@ -143,6 +143,10 @@ func cmdDataAPIRefresh(args []string) int {
 }
 
 func cmdDataAPICreate(args []string) int {
+	return cmdDataAPICreateContext(context.Background(), args)
+}
+
+func cmdDataAPICreateContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("data-api create", flag.ContinueOnError)
 	database := fs.String("database", "", "managed PostgreSQL name or ID")
 	schema := fs.String("schema", "api", "exposed schema (api, or public with --read-only)")
@@ -199,7 +203,6 @@ func cmdDataAPICreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
 	if *authApp != "" {
 		resolved, err := resolveAuthIssuer(ctx, client, *authApp)
 		if err != nil {

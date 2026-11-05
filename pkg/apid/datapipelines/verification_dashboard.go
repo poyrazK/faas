@@ -53,7 +53,8 @@ func verificationView(p datapipeline.Pipeline) dashboard.DataPipelineVerificatio
 		}
 	}
 	view.CanCancel = p.DesiredState == "running" && p.ObservationFresh && (v.State == "running" || v.State == "waiting")
-	view.CanRetry = p.DesiredState == "running" && p.State == "live" && !p.VerifyRequested && (v.State == "cancelled" || v.State == "limited")
+	qualification := p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification"
+	view.CanRetry = p.DesiredState == "running" && (p.State == "live" || p.State == "blocked" && qualification && p.ObservationFresh) && !p.VerifyRequested && (v.State == "cancelled" || v.State == "limited")
 	if p.DesiredState == "paused" && v.State == "running" {
 		view.State = "paused"
 	}
