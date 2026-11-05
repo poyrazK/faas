@@ -24,7 +24,7 @@ T = TypeVar("T", bound="CreateProjectEnvironmentQualificationRequest")
 @_attrs_define
 class CreateProjectEnvironmentQualificationRequest:
     """Closed-schema health and smoke probe results for one exact active source release set, non-secret source
-    configuration version, and per-workload secret revision fingerprints.
+    configuration version, and workload and shared-secret revision fingerprints observed before probes.
 
     """
 
@@ -32,6 +32,9 @@ class CreateProjectEnvironmentQualificationRequest:
     configuration_version: int
     configuration_hash: str
     secret_revision_hashes: CreateProjectEnvironmentQualificationRequestSecretRevisionHashes
+    """Per-workload secret fingerprints plus the reserved project:secrets identity from the pre-probe environment
+    state. The shared identity is required once the environment has held shared secrets, including after the final
+    key is deleted."""
     checks: list[ProjectEnvironmentQualificationCheck]
     workload_config_hashes: CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes | Unset = UNSET
     """Configuration fingerprints observed before probes; environment-owned settings require an exact match to

@@ -314,6 +314,9 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 		return true, nil
 	}
 	_, err = s.Store.RequestCheck(ctx, job.AccountID, connection.ID, connection.Revision, database)
+	if errors.Is(err, ErrCheckBusy) {
+		return false, nil
+	}
 	return false, err
 }
 

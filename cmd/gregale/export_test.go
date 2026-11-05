@@ -2098,11 +2098,13 @@ var VerifyTestServiceHot = verifyTestServiceHot
 var VerifyTestServiceTCPHot = verifyTestServiceTCPHot
 var VerifyTestServiceWake = verifyTestServiceWake
 var VisibleCliCommands = visibleCliCommands
+var PublicReferenceCommands = publicReferenceCommands
 var WaitAlertRollback = waitAlertRollback
 var WaitCommitEvent = waitCommitEvent
 var WaitDataAPIRefresh = waitDataAPIRefresh
 var WaitDataAPIRestart = waitDataAPIRestart
 var WaitDataPipeline = waitDataPipeline
+var WaitPipelineConnectionCheck = waitConnectionCheck
 var WaitForAppWake = waitForAppWake
 var WaitForDeploymentReceiptUntil = waitForDeploymentReceiptUntil
 var WaitForDeploymentRollout = waitForDeploymentRollout
@@ -2536,6 +2538,8 @@ const UsageSynopsisLimit = usageSynopsisLimit
 var InvokedCommandPath = &invokedCommandPath
 
 var AppArgumentEnabled = &appArgumentEnabled
+var AppArgumentAsFlag = appArgumentAsFlag
+var AppFlagAsArgument = appFlagAsArgument
 
 // AppArgumentPaths lists every visible command path whose leaf takes the
 // app as its first argument.
@@ -2543,7 +2547,7 @@ func AppArgumentPaths() [][]string {
 	var paths [][]string
 	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
 	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
-		if takesAppArgument(flags, positionals, children) {
+		if takesAppArgument(flags, positionals, children, "app") {
 			paths = append(paths, append([]string{}, path...))
 		}
 		for _, child := range children {

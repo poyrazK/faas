@@ -533,6 +533,7 @@ touch them. The tables below map each earlier name.
 | `gregale projects environments release-sets stage` | `gregale environment release-sets stage create` |
 | `gregale projects environments release-sets verification-runs` | `gregale environment release-sets verification` |
 | `gregale projects environments` | `gregale environment` |
+| `gregale projects preview-secrets` | `gregale project preview secret` |
 | `gregale queue dead-letter` | `gregale queue dlq list` |
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |

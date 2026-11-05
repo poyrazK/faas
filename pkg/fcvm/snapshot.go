@@ -257,6 +257,9 @@ type WakePrepareTimings struct {
 	EnvPrepareMs   int64
 	PreNetworkMs   int64
 	SetupNetworkMs int64
+	// Backing is the ADR-510 snapshot backing check bringUp runs after the
+	// network and before the restore. Zero when no check ran.
+	Backing BackingCheckTimings
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).

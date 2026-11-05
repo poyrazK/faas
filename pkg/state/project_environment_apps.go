@@ -64,7 +64,7 @@ func (m *MemStore) projectEnvironmentAppIDsLocked(accountID, projectID, environm
 			}
 		}
 		for _, d := range m.deployments {
-			if d.Scope == environment {
+			if d.Scope == environment && d.DeletedAt == nil {
 				included[d.AppID] = true
 			}
 		}

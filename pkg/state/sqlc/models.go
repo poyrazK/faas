@@ -12259,6 +12259,12 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectAppStageAdmission struct {
+	AppID     pgtype.UUID
+	ProjectID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type ProjectBindingVerificationRun struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -12271,13 +12277,14 @@ type ProjectBindingVerificationRun struct {
 }
 
 type ProjectEnvironment struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	ProjectID pgtype.UUID
-	Slug      string
-	Protected bool
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	Slug                   string
+	Protected              bool
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SharedSecretGeneration int64
 }
 
 type ProjectEnvironmentApproval struct {
