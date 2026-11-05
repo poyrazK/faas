@@ -15,7 +15,32 @@ ID after lost replies, restart and plan expiry, with explicit separate progress
 and workload health reads. Legacy retries retain their guards; unknown recipes
 do not guess native IDs or grant write authority. Catalog counts are unchanged.
 
-Implementation and acceptance validation are in progress. Provider deployment
+Focused API/domain/MCP checks and native MemStore/PostgreSQL race checks pass,
+including concurrent admission, stale intent, terminal retries, replaced scopes,
+legacy non-adoption and atomic receipt-storage failures. HTTP race checks pass
+in 56.115s, including a protected promotion with a lost accepted reply and
+personal/company PostgreSQL ownership checks.
+
+The full MCP race suite passed in 330.218s. All three pinned Codex profiles pass
+promotion acceptance recovery through restart and expiry, refresh and revocation,
+with zero model requests and zero native writes. Recorded uncertainty remains
+unchanged; expired history retains only the exact read-only outcome lookup.
+Local full discovery remains 77 read tools; remote fixtures retain 74 read tools
+(84 with writes), and core remains 18. Node generation/build and four transport
+tests pass; Python generation and four transport tests pass. Go SDK full tests
+and vet pass. Node/Python regeneration is clean.
+
+Fresh canonical schema/SQLC generation, full migration apply/walk, populated
+legacy history and receipt-preserving replay, and standard replay safety pass;
+the migration suite completed in 284.019s. Serial lint passes for all nine changed
+packages. Spec/docs parity, typed SDK coverage, SDK spec generation, SQLC,
+migration expand/contract lint, scope guards, shared runner sync, capability
+coverage, problem-detail, text-encoding, store-test and test-citation gates pass.
+Version-skew checks pass against base `377a11809`; no release tag is an ancestor
+of that base. The ADR-number gate still fails on `20261104143000` and
+`20261104170000`, with the duplicate set verified identical to that base; this
+slice adds no collision. Initial HTTP and APID lint attempts exhausted build
+space; unchanged reruns pass after recovering headroom. Provider deployment
 qualification remains separate from portable fixtures.
 See [ADR-20261105153007](adr/20261105153007-management-mcp-environment-promotion-outcomes.md).
 
