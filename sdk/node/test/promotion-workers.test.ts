@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ProjectsService, type ProjectPromotionHealth, type ProjectReleaseWorker, type ProjectWorkerHealth } from '../src/index.js';
+import { FaaSClient, ProjectsService, type ProjectPromotionHealth, type ProjectReleaseWorker, type ProjectWorkerHealth } from '../src/preview.js';
 
 test('promotion status preserves independent worker evidence and the complete policy', async (t) => {
   const policy: ProjectReleaseWorker[] = ['billing', 'mail', 'webhooks'].map(slug => ({

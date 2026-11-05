@@ -27,7 +27,6 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	v.cancelNativeSnapshot(lease.Instance)
 	v.cancelStartupCPUBoostTail(lease.Instance)
 	v.closeGuestVsockListeners(lease.Instance)
-	v.unregisterRing(lease.Instance)
 	v.mu.Lock()
 	cmd, rec := v.proc[lease.Instance], v.recs[lease.Instance]
 	if rec != nil {
@@ -76,6 +75,13 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Retire the ring once exit is confirmed and its console has drained,
+	// archiving what it holds like Kill does. This path used to close it
+	// first, before the guest stopped, and without archiving, so a parked
+	// native instance lost its retained lines (logs/traces audit 2026-10-31
+	// A11). Builder output belongs to builderd, not the app's archive.
+	v.awaitConsoleDrain(lease.Instance, rec)
+	v.retireRing(lease.Instance, !lease.IsBuilder && (rec == nil || !rec.isBuilder))
 	roots, err := v.nativeInstanceRoots(lease.Instance)
 	if err != nil {
 		return err

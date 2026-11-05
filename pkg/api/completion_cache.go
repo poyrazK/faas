@@ -47,6 +47,8 @@
 //	  "builds": [{"id":"..."}],
 //	  "deployments": [{"id":"..."}],
 //	  "project_environments": [{"project_slug":"shop","slug":"staging"}],
+//	  "hidden_capabilities": ["realtime"],
+//	  "capabilities_saved_at": "2026-08-08T12:34:56Z",
 //	  "saved_at": "2026-08-08T12:34:56Z"
 //	}
 //
@@ -97,7 +99,13 @@ type CompletionCacheEntry struct {
 	Builds              []CompletionCacheRecord             `json:"builds,omitempty"`
 	Deployments         []CompletionCacheRecord             `json:"deployments,omitempty"`
 	ProjectEnvironments []CompletionCacheProjectEnvironment `json:"project_environments,omitempty"`
-	SavedAt             time.Time                           `json:"saved_at"`
+	// HiddenCapabilities mirror GET /v1/capabilities (ADR-20261023115741):
+	// the capabilities whose flag is off for the account. The CLI hides
+	// their commands from help, completion and suggestions.
+	// CapabilitiesSavedAt is when they were read; nil means never.
+	HiddenCapabilities  []string   `json:"hidden_capabilities,omitempty"`
+	CapabilitiesSavedAt *time.Time `json:"capabilities_saved_at,omitempty"`
+	SavedAt             time.Time  `json:"saved_at"`
 }
 
 // CompletionCacheRecord carries a slug-bearing value or an ID-only value.
@@ -284,6 +292,16 @@ func (c *CompletionCache) readLocked() (CompletionCacheEntry, time.Time, error) 
 	return e, st.ModTime(), nil
 }
 
+// HiddenCapabilities returns the capabilities last read as hidden for the
+// account and when they were read; ok is false when they never were.
+func (c *CompletionCache) HiddenCapabilities() (hidden []string, savedAt time.Time, ok bool) {
+	entry, _, err := c.Read()
+	if err != nil || entry.CapabilitiesSavedAt == nil {
+		return nil, time.Time{}, false
+	}
+	return entry.HiddenCapabilities, *entry.CapabilitiesSavedAt, true
+}
+
 // IsFresh returns true if the cache file is younger than the TTL.
 // A zero mtime (missing cache) is not fresh. Stale caches are
 // still readable; the freshness check is advisory — completion
@@ -386,6 +404,20 @@ func (c *CompletionCache) MaybeRefresh(path string, body []byte) {
 		return
 	}
 	switch path {
+	case "/v1/capabilities":
+		var capabilities struct {
+			Hidden []string `json:"hidden_capabilities"`
+		}
+		if err := json.Unmarshal(body, &capabilities); err != nil {
+			return
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		existing, _, _ := c.readLocked()
+		now := c.now().UTC()
+		existing.HiddenCapabilities = capabilities.Hidden
+		existing.CapabilitiesSavedAt = &now
+		_ = c.writeEntryLocked(existing)
 	case "/v1/builds", "/v1/deployments":
 		var page struct {
 			Items []struct {

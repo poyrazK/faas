@@ -4,6 +4,16 @@
 -- +goose NO TRANSACTION
 -- +goose Up
 SET lock_timeout = '5s';
+SET statement_timeout = 0;
+-- A cancelled concurrent build leaves an invalid index. Remove only that
+-- incomplete index before retrying; IF NOT EXISTS alone would retain it.
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS (SELECT 1 FROM pg_index WHERE indexrelid=to_regclass('deployment_audit_service_abort_attempt_idx') AND NOT indisvalid) THEN
+  DROP INDEX deployment_audit_service_abort_attempt_idx;
+ END IF;
+END $$;
+-- +goose StatementEnd
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS deployment_audit_service_abort_attempt_idx
 ON deployment_audit ((data->'service_abort_receipt'->>'app_id'), (data->'service_abort_receipt'->>'attempt_id'))
 WHERE data ? 'service_abort_receipt';
@@ -16,8 +26,11 @@ DO $$ BEGIN
 END $$;
 -- +goose StatementEnd
 RESET lock_timeout;
+RESET statement_timeout;
 
 -- +goose Down
 SET lock_timeout = '5s';
+SET statement_timeout = 0;
 DROP INDEX CONCURRENTLY IF EXISTS deployment_audit_service_abort_attempt_idx;
 RESET lock_timeout;
+RESET statement_timeout;

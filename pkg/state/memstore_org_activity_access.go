@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"strings"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ OrgActivityAccessMutationStore = (*MemStore)(nil)
@@ -34,6 +32,7 @@ func (m *MemStore) CreateOrgInvitationWithActivity(ctx context.Context, invitati
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return OrgInvitation{}, 0, err
 	}
+	invitation.TokenHash = storedCredential(credTagOrgInvitation, invitation.TokenHash)
 	hashKey := hex.EncodeToString(invitation.TokenHash)
 	if _, exists := m.invitations[hashKey]; exists {
 		return OrgInvitation{}, 0, ErrConflict
@@ -46,8 +45,7 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	hashKey := hex.EncodeToString(hash)
-	invitation, ok := m.invitations[hashKey]
+	invitation, hashKey, ok := credentialEntry(m.invitations, credTagOrgInvitation, hash)
 	if !ok || invitation.ConsumedAt != nil || invitation.RevokedAt != nil {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgInvitationInvalid
 	}
@@ -61,20 +59,21 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	if !ok {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrNotFound
 	}
-	limits, _ := api.LimitsFor(org.Plan)
-	if limit := limits.OrgMembersMax; limit > 0 {
-		active := 0
-		for _, existing := range m.memberships {
-			if existing.OrgID == invitation.OrgID && existing.RemovedAt == nil {
-				active++
-			}
-		}
-		if active >= limit {
-			return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgMemberCapExceeded
+	limit, err := orgInvitationLimit(org.Plan, org.Status, org.DeletedPending, org.AbuseHoldAt != nil)
+	if err != nil {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, err
+	}
+	active := 0
+	for _, existing := range m.memberships {
+		if existing.OrgID == invitation.OrgID && existing.RemovedAt == nil {
+			active++
 		}
 	}
+	if active >= limit {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgMemberCapExceeded
+	}
 	key := orgAccountKey{OrgID: invitation.OrgID, AccountID: accepting.ID}
-	if _, exists := m.memberships[key]; exists {
+	if existing, exists := m.memberships[key]; exists && existing.RemovedAt == nil {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgAlreadyMember
 	}
 
@@ -87,7 +86,7 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	invitation.ConsumedAt = &now
 	invitation.AcceptingAccountID = &acceptingID
 
-	acceptedActivity, err := withOrgActivityData(acceptedActivity, map[string]any{
+	acceptedActivity, err = withOrgActivityData(acceptedActivity, map[string]any{
 		"role": string(invitation.Role), "invitation_id": invitation.ID,
 	})
 	if err != nil {
@@ -206,7 +205,9 @@ func (m *MemStore) RemoveOrgMemberWithActivity(ctx context.Context, orgID, accou
 	now := time.Now().UTC()
 	removed := current
 	removed.RemovedAt = &now
-	activity, err := withOrgActivityData(activity, map[string]any{"role": string(removed.Role)})
+	data := m.pauseDepartedMemberIntegrationsLocked(orgID, accountID).activityData()
+	data["role"] = string(removed.Role)
+	activity, err := withOrgActivityData(activity, data)
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}

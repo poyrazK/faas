@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
-import type { CreateQueueBindingCanaryRequest } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
+import type { CreateQueueBindingCanaryRequest } from '../src/preview.js';
 test('queue canary preserves exact deployment and explicit publication consent', async () => {
   const oldFetch=globalThis.fetch, oldBase=OpenAPI.BASE;
   OpenAPI.BASE='https://api.invalid';

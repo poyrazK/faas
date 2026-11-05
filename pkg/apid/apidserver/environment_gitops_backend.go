@@ -14,8 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // This backend is owned by apid. It retains the existing policy barrier and
@@ -30,52 +30,24 @@ type environmentGitOpsBackend struct {
 var _ environmentgitops.Backend = (*environmentGitOpsBackend)(nil)
 var _ environmentgitops.EffectRecoverer = (*environmentGitOpsBackend)(nil)
 
-type edgeRuleBatchMutationLocker interface {
-	AcquireEdgeRuleMutationLocks(context.Context, []string) (func(context.Context), error)
-}
-
 func (b *environmentGitOpsBackend) Observe(ctx context.Context, lease state.EnvironmentGitOpsLease, desired environmentsync.DesiredState) (environmentgitops.Observation, error) {
 	return b.intent.ObserveEnvironmentGitOps(ctx, lease, desired)
 }
 
 func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(context.Context), error) {
-	apps = slices.Clone(apps)
-	slices.Sort(apps)
-	apps = slices.Compact(apps)
-	edgerules.EdgeRuleMutationMu.Lock()
-	releases := []func(context.Context){}
-	var once sync.Once
-	unlock := func(ctx context.Context) {
-		once.Do(func() {
-			for i := len(releases) - 1; i >= 0; i-- {
-				releases[i](ctx)
-			}
-			edgerules.EdgeRuleMutationMu.Unlock()
-		})
-	}
-	if locker, ok := s.store.(edgeRuleBatchMutationLocker); ok {
-		release, err := locker.AcquireEdgeRuleMutationLocks(ctx, apps)
-		if err != nil {
-			unlock(ctx)
-			return nil, err
-		}
-		releases = append(releases, release)
-	} else if locker, ok := s.store.(edgerules.EdgeRuleMutationLocker); ok {
-		for _, app := range apps {
-			release, err := locker.AcquireEdgeRuleMutationLock(ctx, app)
-			if err != nil {
-				unlock(ctx)
-				return nil, err
-			}
-			releases = append(releases, release)
-		}
-	}
-	return unlock, nil
+	return s.edgeRules.LockEdgeRuleMutations(ctx, apps)
 }
 
 func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) ([]environmentgitops.Step, error) {
 	if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
 		steps, err := retirement.BeginEnvironmentGitOpsWorkloadRetirements(ctx, lease, plan)
+		if err != nil || len(steps) > 0 {
+			return steps, err
+		}
+	}
+
+	if jobs, ok := b.intent.(state.EnvironmentGitOpsJobUpdateStore); ok {
+		steps, err := jobs.PrepareEnvironmentGitOpsJobUpdates(ctx, lease, plan)
 		if err != nil || len(steps) > 0 {
 			return steps, err
 		}
@@ -185,7 +157,7 @@ func (b *environmentGitOpsBackend) preparePolicies(ctx context.Context, lease st
 	convergences := []*edgerules.EdgeRuleConvergence{}
 	specs := []state.EnvironmentGitOpsEffectSpec{}
 	for _, app := range apps {
-		host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, lease.Source.EnvironmentID, app)
+		host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), lease.Source.EnvironmentID, app)
 		if host == "" {
 			for _, convergence := range convergences {
 				convergence.Abort(ctx)
@@ -260,7 +232,7 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 		if err != nil {
 			return err
 		}
-		convergence, err := b.recoveryConvergence(recoverCtx, effect)
+		convergence, err := b.recoveryConvergence(recoverCtx, lease, effect, nodes)
 		if err != nil {
 			return err
 		}
@@ -271,12 +243,17 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 	return nil
 }
 
-func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, effect state.EnvironmentGitOpsEffect) (*edgerules.EdgeRuleConvergence, error) {
+func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, lease state.EnvironmentGitOpsLease, effect state.EnvironmentGitOpsEffect, nodes []string) (*edgerules.EdgeRuleConvergence, error) {
 	convergence := &edgerules.EdgeRuleConvergence{Notif: b.server.notif, Generation: effect.GatewayGeneration,
-		AppID: effect.AppID, Operation: "environment_gitops", Hosts: effect.MatchHosts, Expected: map[string]struct{}{},
-		Cancel: func() {}, Unlock: func(context.Context) {}}
+		AppID: effect.AppID, AccountID: lease.Source.AccountID, Operation: "environment_gitops", Hosts: effect.MatchHosts, Expected: map[string]struct{}{},
+		Cancel: func() {}, Unlock: func(context.Context) {}, Metrics: b.server.edgeRules.Metrics}
 	for _, node := range effect.ExpectedNodes {
-		convergence.Expected[node] = struct{}{}
+		// Live gateways must acknowledge the replay. A departed gateway's
+		// persisted receipt still counts; one that never acknowledged stays
+		// required. The durable effect retains its complete minimum roster.
+		if slices.Contains(nodes, node) || !slices.Contains(effect.AcknowledgedNodes, node) {
+			convergence.Expected[node] = struct{}{}
+		}
 	}
 	if len(convergence.Expected) > 0 {
 		var err error

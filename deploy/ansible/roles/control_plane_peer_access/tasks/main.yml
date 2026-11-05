@@ -50,6 +50,14 @@
   register: control_plane_postgres_listen
   notify: restart control-plane postgresql
 
+# ADR-20261023104734 step 2: the postgres role leaves this marker when only
+# root may log in as the owner; a node join must not hand compute nodes the
+# owner's password lines back.
+- name: control-plane peer access — read the owner contract marker
+  ansible.builtin.stat:
+    path: "{{ control_plane_postgres_config_dir }}/faas-owner-contracted"
+  register: control_plane_postgres_owner_contracted
+
 - name: control-plane peer access — render manifest-derived pg_hba entries
   ansible.builtin.copy:
     dest: "{{ control_plane_postgres_config_dir }}/pg_hba.conf"
@@ -61,10 +69,19 @@
       local   all             postgres                                peer
       local   replication     postgres                                peer
       local   all             faas                                    peer map=faas_map
+      {% if not control_plane_postgres_owner_contracted.stat.exists %}
       host    faas            faas                                    127.0.0.1/32            scram-sha-256
       host    faas            faas                                    ::1/128                  scram-sha-256
       {% for cidr in faas_postgres_allowed_cidrs %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
+      {% endfor %}
+      {% endif %}
+      # ADR-20261023104734: daemons on their own faas_runtime member role.
+      local   faas            +faas_runtime                           peer map=faas_map
+      host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256
+      host    faas            +faas_runtime                           ::1/128                  scram-sha-256
+      {% for cidr in faas_postgres_allowed_cidrs %}
+      host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
       {% endfor %}
       {% if faas_postgres_standby_address | default('') %}
       # ADR-1344 §8: the warm standby streams WAL from this address only, over

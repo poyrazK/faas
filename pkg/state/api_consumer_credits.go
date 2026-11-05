@@ -34,11 +34,38 @@ func (g APIConsumerCreditGrant) Usable(t time.Time) bool {
 }
 
 // APIConsumerCreditPosition is a consumer's credit in one currency for a
-// spend cap check: Available can pay future statements, and AppliedInMonth
-// already paid statements whose period starts in the checked month.
+// spend cap check: Available can pay future statements, and
+// AppliedToUsageInMonth already paid the usage of statements whose period
+// starts in the checked month. Credit pays a statement's fees first, so
+// credit that paid fees is not counted against usage (ADR-20261020211500).
 type APIConsumerCreditPosition struct {
-	AvailableMillicents      int64
-	AppliedInMonthMillicents int64
+	AvailableMillicents             int64
+	AppliedToUsageInMonthMillicents int64
+}
+
+// creditAppliedToUsage is the part of a statement's credit left after its
+// fees. A revision whose minimum top-up fell has negative fees, which free
+// no credit for usage.
+func creditAppliedToUsage(credit int64, fees []APIConsumerStatementFee) int64 {
+	var total int64
+	for _, f := range fees {
+		total += f.AmountMillicents
+	}
+	return max(0, credit-max(0, total))
+}
+
+// creditAppliedToUsageSQL mirrors creditAppliedToUsage for a statement row
+// st.
+const creditAppliedToUsageSQL = `greatest(st.credit_applied_millicents
+	- greatest(coalesce((select sum((f->>'amount_millicents')::bigint) from jsonb_array_elements(st.fees) f), 0), 0), 0)`
+
+// SpendCapUsageChangeStore tells a spend cap check whether usage was
+// recorded since its last pricing (ADR-20261020211500). Request, route and
+// meter units are recorded together, so the usage minutes show any change.
+// Only minutes starting at or after windowFrom are looked at.
+type SpendCapUsageChangeStore interface {
+	APIConsumerUsageChangedSince(ctx context.Context, accountID, appID, consumerID string, windowFrom, since time.Time) (bool, error)
+	PlatformTenantUsageChangedSince(ctx context.Context, accountID, tenantID string, windowFrom, since time.Time) (bool, error)
 }
 
 // APIConsumerSpendCap is a consumer's monthly spend cap and its last check
@@ -204,6 +231,18 @@ func (m *MemStore) VoidAPIConsumerCreditGrant(_ context.Context, accountID, appI
 	return g, nil
 }
 
+func (m *MemStore) APIConsumerUsageChangedSince(_ context.Context, accountID, appID, consumerID string, _, since time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.apiConsumerUsageRecordedAt[accountID+"\x00"+appID+"\x00"+consumerID].After(since), nil
+}
+
+func (m *MemStore) PlatformTenantUsageChangedSince(_ context.Context, accountID, tenantID string, _, since time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.platformTenantUsageRecordedAt[accountID+"\x00"+tenantID].After(since), nil
+}
+
 func (m *MemStore) APIConsumerCreditPosition(_ context.Context, accountID, appID, consumerID, currency string, at time.Time) (APIConsumerCreditPosition, error) {
 	monthStart, monthEnd := creditMonth(at)
 	m.mu.Lock()
@@ -214,11 +253,10 @@ func (m *MemStore) APIConsumerCreditPosition(_ context.Context, accountID, appID
 			pos.AvailableMillicents += g.RemainingMillicents
 		}
 	}
-	for _, a := range m.apiConsumerCreditApplications {
-		g := m.apiConsumerCreditGrants[a.GrantID]
-		st, ok := m.apiConsumerUsageStatements[a.StatementID]
-		if ok && g.ConsumerID == consumerID && g.Currency == currency && !st.PeriodStart.Before(monthStart) && st.PeriodStart.Before(monthEnd) {
-			pos.AppliedInMonthMillicents += a.AmountMillicents
+	for _, st := range m.apiConsumerUsageStatements {
+		if st.AccountID == accountID && st.AppID == appID && st.ConsumerID == consumerID && st.Currency == currency &&
+			!st.PeriodStart.Before(monthStart) && st.PeriodStart.Before(monthEnd) {
+			pos.AppliedToUsageInMonthMillicents += creditAppliedToUsage(st.CreditAppliedMillicents, st.Fees)
 		}
 	}
 	return pos, nil

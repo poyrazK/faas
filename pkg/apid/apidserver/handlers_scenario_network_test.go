@@ -4,6 +4,7 @@ package apidserver_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,7 +24,7 @@ func TestRehearsalNetworkEnrollmentRequiresOperatorGate(t *testing.T) {
 	}
 	req := api.RegisterScenarioTestRequest{WebhookMode: "capture", NetworkMode: "contained", Members: []api.ScenarioTestWorkload{{Workload: "primary", AppSlug: session.App.Slug}}}
 	r = e.Do(t, "PUT", "/v1/dev/test-runs/"+run, req, nil)
-	if r.Code != http.StatusServiceUnavailable {
+	if r.Code != http.StatusNotImplemented || !strings.Contains(r.Body.String(), api.CodeRehearsalNotEnabled) {
 		t.Fatalf("unqualified fleet accepted containment: %d %s", r.Code, r.Body.String())
 	}
 	s := *e.S()

@@ -28,6 +28,10 @@ import (
 // from secret managers, rejects megabyte uploads.
 const AppWebhookSecretMaxBytes = 256
 
+// AppWebhookSecretNamespace is the secretbox namespace an app webhook's
+// signing secret is sealed under; schedd's dispatcher accepts no other.
+const AppWebhookSecretNamespace = "APP_WEBHOOK"
+
 // AppWebhookSecretMasked is the literal returned in every response
 // shape that carries the webhook_secret field. Never echo the
 // plaintext back to the customer — same posture as
@@ -101,6 +105,7 @@ var AllowedAppWebhookEvents = []string{
 	"realtime.message.read",
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"profile.route_regressed", "profile.route_recovered",
+	"profile.capture_ready", "profile.capture_oom_linked",
 	"operation.effect",
 	"app.parked", "app.woken",
 	"app.health.changed",
@@ -110,7 +115,11 @@ var AllowedAppWebhookEvents = []string{
 	"operation.finished",
 	"usage_statement.finalized",
 	"consumer.usage_threshold",
+	"consumer.signed_up",
+	"consumer.plan_changed",
+	"consumer.closed",
 	"outbound.ai_budget.threshold",
+	"outbound.ai_quality.drift",
 	"debug.regression.detected", "debug.regression.resolved",
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",
@@ -133,6 +142,15 @@ var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
 	"environment.gitops.changed",
 }
+
+// AgentRunFinishedWebhookEvent reaches account receivers when an agent run
+// ends in any terminal state (ADR-20261027090010 §8). Only accounts in the agent_runs
+// rollout may subscribe; it stays out of the CLI and the public spec until
+// launch.
+const AgentRunFinishedWebhookEvent = "agent_run.finished"
+
+// AllowedAccountAgentWebhookEvents are the account events agent runs add.
+var AllowedAccountAgentWebhookEvents = []string{AgentRunFinishedWebhookEvent}
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
 // delivery. The delivery id in the webhook envelope is stable across retries.

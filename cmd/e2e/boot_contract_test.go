@@ -98,6 +98,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	mainAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
 	advisorySocket := filepath.Join(socketDir, "advisory.sock")
+	githubdBridgeSocket := filepath.Join(socketDir, "githubd-bridge.sock")
 	appErrorsSocket := filepath.Join(socketDir, "app-errors.sock")
 	requestTelemetrySocket := filepath.Join(socketDir, "requests.sock")
 	authSocket := filepath.Join(socketDir, "auth.sock")
@@ -129,7 +130,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		"FAAS_PADDLE_API_KEY=pdl_test_boot_contract",
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_boot_contract",
 	}
-	env = append(env, renderedUnitEnvironment(t, unit, sessionKeyPath, hostAgePath, hostAgeRecipientPath, fleetAgePath, fleetAgeRecipientPath, hostHMACPath, advisorySocket, renderRoot)...)
+	env = append(env, renderedUnitEnvironment(t, unit, sessionKeyPath, hostAgePath, hostAgeRecipientPath, fleetAgePath, fleetAgeRecipientPath, hostHMACPath, advisorySocket, githubdBridgeSocket, renderRoot)...)
 
 	proc := exec.Command(apidBinary, "--config", configPath)
 	proc.Env = env
@@ -164,6 +165,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	waitTCP(t, mainAddr, 2*time.Second)
 	for name, path := range map[string]string{
 		"advisory":          advisorySocket,
+		"githubd-bridge":    githubdBridgeSocket,
 		"app-errors":        appErrorsSocket,
 		"request-telemetry": requestTelemetrySocket,
 		"auth":              authSocket,
@@ -451,7 +453,7 @@ func relocateRenderedMetricsAddr(t *testing.T, configPath, addr string) {
 
 func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath, fleetAgePath string) []string {
 	t.Helper()
-	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env"
+	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/profiling.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
 		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
 	}
@@ -549,7 +551,7 @@ func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
 	}
 }
 
-func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostAgeRecipientPath, fleetAgePath, fleetAgeRecipientPath, hostHMACPath, advisorySocket, root string) []string {
+func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostAgeRecipientPath, fleetAgePath, fleetAgeRecipientPath, hostHMACPath, advisorySocket, githubdBridgeSocket, root string) []string {
 	t.Helper()
 	const wantEnvironmentFiles = "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
@@ -568,6 +570,9 @@ func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath,
 		"FAAS_HOST_HMAC_KEY_PATH":       hostHMACPath,
 		"FAAS_LOG_ARCHIVE_CREDS_PATH":   filepath.Join(root, "optional-archive-creds.json"),
 		"FAAS_APID_ADVISORY_SOCK":       advisorySocket,
+		// githubd's build-enqueue bridge: apid must bind it at boot, or
+		// GitHub pushes and previews never build (bug hunt #8 H8-10).
+		"FAAS_APID_GITHUBD_BRIDGE_SOCK": githubdBridgeSocket,
 		"FAAS_STATUSPAGE_PATH":          filepath.Join(bootContractRepoRoot(t), "deploy", "statuspage", "index.html"),
 	}
 	seen := make(map[string]bool, len(want))

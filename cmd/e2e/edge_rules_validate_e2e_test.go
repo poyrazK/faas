@@ -76,7 +76,7 @@ func TestEdgeRulesValidate_CLIContractLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
-	host := "edgectl-validate-cli.apps.test.example"
+	host := "edgectl-validate-cli.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, host, slug)
 
 	schema := `{"type":"object","properties":{"name":{"type":"string","minLength":2},"email":{"type":"string"}},"required":["name","email"],"additionalProperties":false}`
@@ -242,7 +242,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate.apps.test.example"
+	synthHost := "edgectl-validate.edge-e2e.example"
 
 	// Precondition: kind=route substitute (synthetic host → real test app).
 	seedRouteSubstitute(t, context.Background(), pool,
@@ -308,10 +308,9 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 
 // TestEdgeRulesValidate_StreamingSkipped asserts the per-rule
 // apply_while_streaming opt-in. With the field set to false (the
-// default) AND an Upgrade request carrying a body that would
-// otherwise reject, applyEdgeRuleValidate returns false (the rule
-// is skipped for upgrade requests per handler.go:1576) and the
-// request reaches Backend.Pick.
+// default), a body-less upgrade request (a WebSocket handshake) skips
+// the schema and reaches Backend.Pick, while an upgrade request that
+// carries a body has it validated like any other (ADR-20261103090000).
 func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -333,7 +332,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate-stream.apps.test.example"
+	synthHost := "edgectl-validate-stream.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -354,36 +353,50 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 
 	resetEdgeRuleCache(t, h)
 
-	// An "upgrade" request: Connection: Upgrade + Upgrade: websocket
-	// both set so isUpgradeRequest() returns true (handler.go:1576).
-	// Body deliberately violates the schema. The rule should NOT
-	// fire (return false from applyEdgeRuleValidate because of the
-	// upgrade), so Backend.Pick miss → 404, NOT 422.
+	// Connection: Upgrade + Upgrade: websocket make isUpgradeRequest()
+	// true. The schema requires a string name, so a body of {"name":123}
+	// rejects when it is checked.
+	upgrade := func(body []byte) (int, []byte) {
+		t.Helper()
+		var reader io.Reader
+		if body != nil {
+			reader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(context.Background(),
+			http.MethodPost, h.GatewayURL+"/users", reader)
+		if err != nil {
+			t.Fatalf("new req: %v", err)
+		}
+		req.Host = synthHost
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		resp, err := h.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatalf("upgrade req: %v", err)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read upgrade response: %v", readErr)
+		}
+		return resp.StatusCode, respBody
+	}
+
+	// A handshake has no body: the rule skips it and the request reaches
+	// Backend.Pick (404 for this synth route).
+	status, respBody := upgrade(nil)
+	if status == http.StatusUnprocessableEntity {
+		t.Errorf("streaming-skipped: rule fired on a body-less upgrade request; status=%d (want non-422)", status)
+	}
+	assertBackendFallthrough(t, status, respBody)
+
+	// Upgrade headers do not exempt a body: any client can add them.
 	badBody, _ := json.Marshal(map[string]any{"name": 123})
-	req, err := http.NewRequestWithContext(context.Background(),
-		http.MethodPost, h.GatewayURL+"/users", bytes.NewReader(badBody))
-	if err != nil {
-		t.Fatalf("new req: %v", err)
+	status, respBody = upgrade(badBody)
+	if status != http.StatusUnprocessableEntity || problemCode(respBody) != api.CodeRequestValidationFailed {
+		t.Errorf("upgrade request with a body: status=%d body=%s, want 422 %s", status, respBody, api.CodeRequestValidationFailed)
 	}
-	req.Host = synthHost
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "websocket")
-
-	resp, err := h.HTTPClient().Do(req)
-	if err != nil {
-		t.Fatalf("upgrade req: %v", err)
-	}
-	respBody, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if readErr != nil {
-		t.Fatalf("read upgrade response: %v", readErr)
-	}
-
-	if resp.StatusCode == http.StatusUnprocessableEntity {
-		t.Errorf("streaming-skipped: rule fired on upgrade request; status=%d (want non-422)", resp.StatusCode)
-	}
-	assertBackendFallthrough(t, resp.StatusCode, respBody)
 }
 
 // TestEdgeRulesValidate_ExternalRefRejected pins the gateway-side
@@ -392,13 +405,12 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 // can land a rule with a `$ref: "https://..."` body in the row.
 // pkg/edgevalidate.Compile rejects it while the gateway loads the host,
 // so the runtime never sees the external reference and the malformed rule
-// is dropped with an operator-visible compile-error metric.
+// is rejected with an operator-visible compile-error metric. ADR-570 refuses
+// the request while an owned rule cannot compile, then permits ordinary routing
+// after the invalid rule is removed through the customer API.
 //
-// We send a body that the inline schema would otherwise accept; the
-// request reaches the backend only if compile-time rejection worked. To
-// reach the compile path we simply
-// POST anything that matches the inline shape (`name`, `email`,
-// `age`) so the rule doesn't 422 on the runtime branch first.
+// We send a body that an inline schema would accept, require policy refusal,
+// then repair the policy and retain the original backend-fallthrough check.
 func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -420,7 +432,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate-xref.apps.test.example"
+	synthHost := "edgectl-validate-xref.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -428,12 +440,8 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	// Build a schema with an external `$ref`. seedEdgeRuleDirect
 	// bypasses apid-Validate so this lands in the row.
 	//
-	// Note: pkg/edgevalidate.Compile re-strips external `$ref` /
-	// `$id` URLs at compile time per the gateway hot path. With
-	// the strip firing on compile, the rule never reaches the
-	// runtime branch — the runtime emits 502 (handler.go:1649).
-	// The exact literal returned (502 vs an apid-side 422) is a
-	// product of which layer fires first.
+	// The compiler records the failure; the pinned owner-policy guard refuses
+	// dispatch instead of silently omitting this enabled validation rule.
 	xrefSchema := `{
 		"type": "object",
 		"properties": {
@@ -441,7 +449,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 		},
 		"$ref": "https://internal.example.com/secrets.json"
 	}`
-	seedEdgeRuleDirect(t, context.Background(), pool,
+	invalidRuleID := seedEdgeRuleDirect(t, context.Background(), pool,
 		accountID, app.ID, synthHost,
 		state.EdgeRuleKindValidate,
 		map[string]any{
@@ -456,13 +464,15 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	resetEdgeRuleCache(t, h)
 
 	body := map[string]any{"name": "Ada"}
-	_, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
+	headers, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
 		"/users", body)
 
-	// Compile rejects and drops a malformed stored rule before the hot
-	// path, so the request continues through the valid route rule. Pin both
-	// the fallthrough and the operator-visible compile-error signal.
-	assertBackendFallthrough(t, status, respBody)
+	// A rule the gateway cannot enforce is the owner's to fix, not an outage:
+	// the refusal names the rule and asks for no retry (ADR-091 amendment
+	// 2026-11-03).
+	if status != http.StatusServiceUnavailable || problemCode(respBody) != api.CodeTrafficPolicyUnavailable || headers.Get("Retry-After") != "" || !bytes.Contains(respBody, []byte(invalidRuleID)) {
+		t.Fatalf("uncompiled owned policy did not refuse dispatch: status=%d body=%s headers=%v", status, respBody, headers)
+	}
 	metricsReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		h.GatewayControlURL+"/metrics", nil)
 	if err != nil {
@@ -484,4 +494,11 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	if match == nil || string(match[1]) == "0" {
 		t.Fatalf("external-$ref compile rejection metric missing; metrics=%s", metricsBody)
 	}
+	repairBody, repairStatus := doReq(t, h, key, http.MethodDelete, "/v1/edge-rules/"+invalidRuleID, nil)
+	if repairStatus != http.StatusNoContent {
+		t.Fatalf("remove invalid policy: status=%d body=%s", repairStatus, repairBody)
+	}
+	resetEdgeRuleCache(t, h)
+	_, resumedBody, resumedStatus := doReqHeaders(t, h, synthHost, http.MethodPost, "/users", body)
+	assertBackendFallthrough(t, resumedStatus, resumedBody)
 }

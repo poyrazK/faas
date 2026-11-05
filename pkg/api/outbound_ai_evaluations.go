@@ -2,9 +2,10 @@ package api
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Evaluation states, verdicts and sample verdicts (ADR-1431).
@@ -24,7 +25,7 @@ const (
 	OutboundAIEvaluationItemJudgeError     = "judge_error"
 )
 
-var outboundAIEvaluationModel = regexp.MustCompile(`^[ -~]{1,128}$`)
+var outboundAIEvaluationModel = lazyregexp.New(`^[ -~]{1,128}$`)
 
 // CreateOutboundAIEvaluationRequest evaluates a route target against the
 // route's first target. Target is the 1-based position after the first.
@@ -128,5 +129,5 @@ func ErrOutboundAIEvaluationLimit(observed int64) *Problem {
 	return NewProblem(http.StatusTooManyRequests, "outbound_ai_evaluation_limit", "AI evaluation limit reached",
 		"A route can run at most 20 evaluations per UTC day.").
 		WithLimit(OutboundAIEvaluationsPerDay, observed).
-		WithDocs(docsBase + "/outbound-integrations#ai-evaluations")
+		WithDocs(docsBase + "/cli#outbound")
 }

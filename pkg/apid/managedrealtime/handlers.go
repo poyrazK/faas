@@ -87,11 +87,11 @@ func (s *Service) sealRealtimeToken(plaintext, label string) ([]byte, *api.Probl
 	if plaintext == "" {
 		return []byte{}, nil
 	}
-	recipient := s.Host.SecretRecipient()
-	if recipient == nil {
+	recipients, err := s.Host.SecretRecipients()
+	if err != nil {
 		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal realtime credential")
 	}
-	sealed, err := secretbox.SealBytes(recipient, label, []byte(plaintext), api.RealtimeCallbackAuthTokenMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, label, []byte(plaintext), api.RealtimeCallbackAuthTokenMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return nil, prob
@@ -117,6 +117,8 @@ func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealti
 	if len(e.AuthTokenSealed) == 0 {
 		out.AuthTokenMasked = ""
 	}
+	out.Slug = e.Slug
+	out.ChannelRules = e.ChannelRules
 	return out
 }
 
@@ -209,6 +211,13 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 			return fmt.Errorf("live routes for endpoint %s: %w", row.ID, err)
 		}
 	}
+	// ADR-20261023115741: realtimed has no flag source, so apid withdraws an
+	// endpoint whose account has realtime off; its connections end and new
+	// ones find no endpoint. Live routes keep it registered, since live
+	// queries are their own capability.
+	if len(liveRoutes) == 0 && s.RealtimeReleased != nil && !s.RealtimeReleased(ctx, row.AccountID, row.AppID) {
+		return s.Registrar.RemoveEndpoint(ctx, row.ID)
+	}
 	var previews *realtime.EndpointPreviews
 	if s.EndpointPreviews != nil {
 		if previews, err = s.EndpointPreviews(ctx, row.AccountID, row.AppID); err != nil {
@@ -244,6 +253,12 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		Previews:         previews,
 
 		AccountMaxConnections: accountMaxConnections,
+		// Channel rules are a preview field (ADR-20261019102657): an
+		// account that leaves the rollout falls back to the callback.
+		ChannelRules: previewChannelRules(s.PreviewVisible(row.AccountID), row.ChannelRules),
+		// Live queries ride the v2 protocol, so an endpoint with live routes
+		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
+		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
 	})
 }
 
@@ -263,7 +278,7 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 	if !s.FairUseEnabled {
 		return 0, nil
 	}
-	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	acct, err := s.realtimeAccount(ctx, accountID)
 	if err != nil {
 		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
 	}
@@ -275,7 +290,8 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 }
 
 // SyncAppEndpoints registers an app's endpoints again, so a change to its
-// live routes reaches realtimed without waiting for reconciliation.
+// live routes reaches realtimed without waiting for reconciliation. It
+// withdraws an endpoint whose owner no longer serves, as reconciliation does.
 func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 	store, ok := realtimeEndpointStore(s)
 	if !ok || s.Registrar == nil {
@@ -286,8 +302,9 @@ func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
 	}
 	var errs []error
+	ctx = withEndpointPass(ctx)
 	for _, row := range rows {
-		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+		if err := s.reconcileManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -298,6 +315,9 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if len(sealed) == 0 {
 		return nil, nil
 	}
+	if plaintext, ok := s.unsealed.get(sealed); ok {
+		return plaintext, nil
+	}
 	identities := s.Host.HostIdentitiesForUnseal(ctx)
 	if len(identities) == 0 {
 		return nil, errors.New("realtime credential identity unavailable")
@@ -306,6 +326,7 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if err != nil {
 		return nil, fmt.Errorf("realtime credential unseal: %w", err)
 	}
+	s.unsealed.put(sealed, plaintext)
 	return plaintext, nil
 }
 
@@ -352,9 +373,22 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
 		return
 	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != "", req.ChannelRules != nil) {
+		return
+	}
 	limits, allowed := s.realtimePlanLimits(acct)
 	if !allowed {
 		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+		return
+	}
+	if req.Slug != "" {
+		if err := api.ValidateRealtimeEndpointSlug(req.Slug); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+	}
+	if err := api.ValidateRealtimeChannelRules(req.ChannelRules); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
 		return
 	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
@@ -405,7 +439,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, prob)
 		return
 	}
-	callbackSealed, prob := s.sealRealtimeToken(req.CallbackAuthToken, "REALTIME_CALLBACK_AUTH")
+	callbackSealed, prob := s.sealRealtimeToken(req.CallbackAuthToken, api.RealtimeCallbackAuthNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -414,7 +448,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	if authMode != api.RealtimeAuthModeStaticBearer {
 		authToken = ""
 	}
-	authSealed, prob := s.sealRealtimeToken(authToken, "REALTIME_AUTH")
+	authSealed, prob := s.sealRealtimeToken(authToken, api.RealtimeAuthTokenNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -438,7 +472,8 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		AuthRequiredClaims: cloneRealtimeClaims(req.AuthRequiredClaims),
 		AllowedOrigins:     append([]string(nil), req.AllowedOrigins...),
 		MaxConnections:     req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
-		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled,
+		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled, Slug: req.Slug,
+		ChannelRules: append([]api.RealtimeChannelRule(nil), req.ChannelRules...),
 	}, limits.EndpointsPerApp, limits.EndpointsPerAccount)
 	if err != nil {
 		var quotaErr *state.ManagedRealtimeEndpointQuotaError
@@ -447,6 +482,10 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
+			if req.Slug != "" {
+				api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("the app already has an endpoint with slug %q", req.Slug)))
+				return
+			}
 			api.WriteProblem(w, api.ErrRealtimeInvalid("managed realtime endpoint already exists"))
 			return
 		}
@@ -476,6 +515,9 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	var req api.UpdateManagedRealtimeEndpointRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != nil, req.ChannelRules != nil) {
 		return
 	}
 	if _, ok := s.realtimePlanLimits(acct); !ok {
@@ -515,6 +557,14 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
+		// The callback token tells the customer's app that Gregale is
+		// calling; it never follows the callback to another host (bug hunt
+		// 2026-10-28 H107).
+		if req.CallbackAuthToken == nil && len(existing.CallbackAuthTokenSealed) > 0 && !api.SameURLOrigin(existing.CallbackURL, *req.CallbackURL) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required",
+				"supply callback_auth_token again to send callbacks to a different host"))
+			return
+		}
 		params.CallbackURL = req.CallbackURL
 	}
 	if req.ConnectPath != nil {
@@ -546,7 +596,7 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
-		sealed, prob := s.sealRealtimeToken(*req.CallbackAuthToken, "REALTIME_CALLBACK_AUTH")
+		sealed, prob := s.sealRealtimeToken(*req.CallbackAuthToken, api.RealtimeCallbackAuthNamespace)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -558,7 +608,7 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
-		sealed, prob := s.sealRealtimeToken(*req.AuthToken, "REALTIME_AUTH")
+		sealed, prob := s.sealRealtimeToken(*req.AuthToken, api.RealtimeAuthTokenNamespace)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -650,10 +700,28 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		params.MaxConnectionAgeSeconds = req.MaxConnectionAgeSeconds
 	}
 	params.Enabled = req.Enabled
+	if req.Slug != nil && *req.Slug != "" {
+		if err := api.ValidateRealtimeEndpointSlug(*req.Slug); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+	}
+	params.Slug = req.Slug
+	if req.ChannelRules != nil {
+		if err := api.ValidateRealtimeChannelRules(*req.ChannelRules); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+		params.ChannelRules = req.ChannelRules
+	}
 	row, err := store.UpdateManagedRealtimeEndpoint(r.Context(), existing.ID, params)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			httpkit.NotFound(w, "managed realtime endpoint not found")
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("the app already has an endpoint with slug %q", *req.Slug)))
 			return
 		}
 		s.Host.Logger().WarnContext(r.Context(), "update managed realtime endpoint", "err", err)
@@ -699,7 +767,7 @@ func (s *Service) RotateManagedRealtimeAuth(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("grace_period_seconds must be between 0 and %d", api.RealtimeAuthRotationMaxGraceSeconds)))
 		return
 	}
-	sealed, prob := s.sealRealtimeToken(req.NewAuthToken, "REALTIME_AUTH")
+	sealed, prob := s.sealRealtimeToken(req.NewAuthToken, api.RealtimeAuthTokenNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

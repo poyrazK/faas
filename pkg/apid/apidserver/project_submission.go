@@ -18,7 +18,7 @@ import (
 func (s *server) projectApplySubmission(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	attempt := r.Header.Get(api.DeploymentAttemptHeader)
 	if attempt == "" {
-		s.idempotent(s.applyProject)(w, r, acct)
+		s.idempotentIntent(s.applyProject)(w, r, acct)
 		return
 	}
 	if !api.ValidDeploymentAttemptID(attempt) {

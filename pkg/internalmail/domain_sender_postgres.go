@@ -119,6 +119,33 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	capGate, capBound := ctx.Value(managedPostgresCapSubmissionGateKey{}).(func() bool)
+	if capBound {
+		if capGate == nil || !capGate() {
+			return ErrDisabled
+		}
+		if err := s.shareManagedPostgresCapAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
+	slotGate, slotBound := ctx.Value(managedPostgresRestoreSlotSubmissionGateKey{}).(func() bool)
+	if slotBound {
+		if slotGate == nil || !slotGate() {
+			return ErrDisabled
+		}
+		if err := s.shareManagedPostgresRestoreSlotAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
+	planGate, planBound := ctx.Value(managedPostgresPlanExcessSubmissionGateKey{}).(func() bool)
+	if planBound {
+		if planGate == nil || !planGate() {
+			return ErrDisabled
+		}
+		if err := s.shareManagedPostgresPlanExcessAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	restoredGate, restoredBound := ctx.Value(accountRestoredSubmissionGateKey{}).(func() bool)
 	if restoredBound {
 		if restoredGate == nil || !restoredGate() {

@@ -59,7 +59,9 @@ func (c *MagicLinkCredentials) Redeem(ctx context.Context, hash []byte) (MagicLi
 	}
 	defer rollback(ctx, tx)
 	queries := q.New()
-	account, err := queries.LockMagicLinkCredentialAccount(ctx, tx, hash)
+	account, hash, err := lockByTokenHash(tagMagicLink, hash, func(value []byte) (q.LockMagicLinkCredentialAccountRow, error) {
+		return queries.LockMagicLinkCredentialAccount(ctx, tx, value)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrMagicLinkUnknown
 	}

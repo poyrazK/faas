@@ -63,7 +63,7 @@ func serviceAbortOutcomeFixture(t *testing.T) (*management, string, *api.Service
 		f.serveHTTP(w, req)
 	}))
 	t.Cleanup(backend.Close)
-	_, m, err := newManagementServer(api.NewClient(backend.URL, testToken).SetCompletionCache(nil), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "abort"})
+	_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken).SetCompletionCache(nil), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "abort"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestServiceAbortOutcomeLostReplyExpiry(t *testing.T) {
 	for _, protocol := range []string{"2026-07-28", "2025-11-25"} {
 		t.Run(protocol, func(t *testing.T) {
 			m, id, receipt := serviceAbortOutcomeFixture(t)
-			path := m.opts.planStore.path
+			path := m.opts.planStore.persist.(*fileState).path
 			key := filepath.Join(filepath.Dir(path), "key")
 			ref := m.serviceAbortOutcomes[id]
 			m.plans[id].ExpiresAt = time.Now().Add(-time.Minute)
@@ -234,7 +234,7 @@ func TestServiceAbortOutcomeSnapshotCompatibility(t *testing.T) {
 			if err := store.updateMany(map[string]any{serviceAbortOutcomeNamespace + "abort": snapshot, "future/opaque": map[string]int{"version": 9}}); err != nil {
 				t.Fatal(err)
 			}
-			_, restored, err := newManagementServer(m.client, m.opts)
+			_, restored, err := newHistoryTestManagementServer(m.client, m.opts)
 			valid := change == "preserve" || change == "n_minus_one" || change == "orphan"
 			if valid != (err == nil) {
 				t.Fatalf("restore %s: %v", change, err)

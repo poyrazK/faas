@@ -8,6 +8,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/instancebridge"
 	"github.com/onebox-faas/faas/pkg/udpwire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,7 +34,8 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if init == nil || init.Instance == "" || init.Port == 0 || init.Port > 65535 || init.MaxBytes < 0 {
 		return status.Error(codes.InvalidArgument, "UDP init requires instance, guest port 1..65535 and nonnegative caps")
 	}
-	if _, ok := s.vmm.NetnsFor(init.Instance); !ok {
+	netnsName, ok := s.vmm.NetnsFor(init.Instance)
+	if !ok {
 		return status.Error(codes.NotFound, "UDP instance not live")
 	}
 	pid, ok := s.vmm.InstancePID(init.Instance)
@@ -51,15 +53,19 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err != nil {
 		return err
 	}
-	cmd, input, output, ready, _, err := namespaceBridgeSpawn(ctx, pid, init.Port, "FAAS_VMMD_UDP_BRIDGE_PATH", "/opt/faas/current/bin/vmmd-udp-bridge")
+	bridgeID, err := s.forwardBridgeIdentity(ctx, init.Instance)
 	if err != nil {
 		return err
 	}
-	defer func() { cancel(); closeFiles(input, output, ready); _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	conn, err := s.openBridgeConn(ctx, instancebridge.KindUDP, init.Instance, netnsName, bridgeID, pid, init.Port)
+	if err != nil {
+		return err
+	}
+	defer func() { cancel(); conn.close(); conn.kill(); _ = conn.run.Wait() }()
 	if err := stream.Send(&vmmdpb.ForwardUDPResponse{Frame: &vmmdpb.ForwardUDPResponse_Init{Init: &vmmdpb.ForwardUDPResponseInit{}}}); err != nil {
 		return err
 	}
-	return udpBridgeFrames(stream, input, output, init)
+	return udpBridgeFrames(stream, conn.input, conn.output, init)
 }
 
 // Either direction must be able to end the handler even if the other is

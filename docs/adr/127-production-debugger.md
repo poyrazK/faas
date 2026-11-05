@@ -189,6 +189,9 @@ debugger.
 | apid | `POST /v1/apps/{slug}/debug/requests/{req_id}/replay` | §6 |
 | apid | `POST /v1/apps/{slug}/mirrors/{id}/replay` | Explicit customer-sanitized batch replay (§6.1) |
 | apid | `GET /v1/apps/{slug}/debug/requests/{req_id}/evidence` | Bounded root-cause synthesis from redacted evidence |
+| apid | `GET /v1/apps/{slug}/debug/rollout` | Why a canary rollout was rolled back or is held, with its request evidence ([ADR-1447](1447-explained-rollout-decisions.md) amendment) |
+| apid | `GET /v1/apps/{slug}/debug/status` | One summary: verdict, health, release, regressions, recent failures (ADR-1447 amendment) |
+| CLI | `gregale debug status <slug>`, `gregale debug rollout <slug>` | `cmd/gregale/commands_debug_status.go` |
 | apid | `POST /v1/otel/v1/traces` | §5 |
 | CLI | `gregale debug requests {list,get,evidence,explain,replay}` | `cmd/gregale/commands_debug.go` |
 | CLI | `gregale debug regressions <slug>` | |
@@ -258,11 +261,15 @@ App errors return the public `x-faas-request-id` as a dashed UUID while the
 gateway issues it as 32 hex characters; both spellings resolve, so each
 app-error request links straight to its evidence.
 
-**Request logs are not attached to evidence.** `log_events` holds only the
-HTTP access projection of request telemetry; runtime output is not projected
-with trace IDs. Trace-matched lines would repeat the request itself (and its
-5xx access line would read as an application error), so log lines are left
-out of evidence until runtime logs carry trace IDs.
+**Request logs in evidence (2026-10-14).** Request evidence carries up to 20
+of the app's own log lines for the request: `log_events` rows with source
+`runtime` and the request's trace ID, produced by the ADR-213 runtime adapter
+from OTel log records the app exports through the in-guest bridge (ADR-958).
+HTTP access rows are deliberately excluded, since they only repeat the request
+and their 5xx level would read as an application error. Lines are the
+request's last ones when it logged more, redacted with the ADR-096 redactor
+and bounded to 512 bytes. §7.1 still holds: the synthesis layer receives log
+levels only and reports `error_logs` when the app logged error-level lines.
 
 ## Why now
 
@@ -332,3 +339,62 @@ Issue #517 closed the wake timeline. Issue #477 closed consumer_keys. The mirror
 - **PR-C**: LLM synthesis layer that takes a regression row + spans_summary and produces prose ("primary change is your DB query: 82→191ms; 31% affected; [Compare v80] [Replay] [Rollback]").
 - **Per-account OTel ingest auth**: currently validated against apid's `api_keys`; may need a separate `otel_ingest_keys` table if customer-side token rotation churn becomes a problem.
 - **Cross-app debugger view**: operator-only, surfaces regressions across the fleet (mirror the `gregale compute_nodes show` pattern from PR #1044).
+
+## Amendment (2026-10-31): exact samples, request resolution and the debugger's edges
+
+### Context
+
+A code review of the debugger on main found that the gateway's collapse
+(PR-B) kept only the first trace ID of each bucket: every later request in
+the same route, status, minute and latency bucket lost its trace. Its guest
+spans (ADR-958) found no row and were dropped after the flush retries, `debug
+requests get` with its public request ID answered `request_id_only`, and its
+evidence answered 404. A public request ID was resolved to its trace and then
+to the trace's newest row, so two requests sharing a trace (a propagated
+`traceparent`, retries) could answer with each other's route and status.
+Replay ignored the request-ID journal and could replay a route template
+literally; the dashboard's debugger page was not hidden with the production
+debugger preview; and `--route /checkout` matched nothing because route
+labels carry their method.
+
+### Decision
+
+1. **Exact samples.** A request the debugger is likely to be asked about, a
+   server error (5xx) or a request to an app with `tracing.enabled`, keeps its
+   own row: the gateway's collapse ships the first five such requests per
+   bucket per drained batch (at most 60 a minute per bucket with the 5 s
+   flush) with their own trace ID, time and exact latency; later ones fold
+   into the bucket as before. With minute collapse on (ADR-20261101085552)
+   the bound is five per bucket per minute, and the samples ship at once
+   rather than when the minute closes. Count totals are unchanged, and the receiver's
+   per-account row budget (`DebugTelemetryRequestsPerMinute`) still bounds the
+   total. The gateway learns `tracing.enabled` from the app row it already
+   loads.
+2. **Request resolution.** A public request ID is resolved through the
+   request-ID journal first, and among the rows of its trace the request is
+   the one whose start (received_at minus latency) is nearest the journaled
+   start (`GetRequestTelemetryByAppTraceNearest`). Otherwise the identifier is
+   a row ID or a trace ID, as before; the gateways' node-local journals
+   (ADR-20261101085552) are asked only when both miss, since that fan-out can
+   take a second. Get, evidence, replay and the dashboard
+   share this resolver, and all accept one minute of gateway clock skew.
+3. **Replay** accepts the public request ID and refuses a route label that is
+   a template (`{param}`, `:param`, `*`): the request's own path is not
+   retained, so the template would be requested literally.
+4. **Dashboard.** `/dashboard/apps/{slug}/debug` belongs to the
+   `production-debugger` capability, and the links to it are hidden with it,
+   like the API and CLI.
+5. **Route filter.** A filter that is a bare path matches the path under
+   every method; `METHOD /path` still matches one.
+6. **Regression cron.** When more apps have telemetry than one pass walks
+   (1000), each pass starts after the previous pass's last app and wraps.
+
+### Consequences
+
+- Traced apps and failing requests are drillable by request ID, and their
+  guest spans land; spans of folded requests beyond the sample are still
+  dropped, by design.
+- Rows of one trace still share the trace's spans summary: it is trace-level
+  evidence.
+- Low-traffic apps still need 100 affected requests in 30 minutes for a
+  latency regression; that threshold is unchanged.

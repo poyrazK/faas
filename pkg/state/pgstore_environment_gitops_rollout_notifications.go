@@ -62,7 +62,7 @@ func pgEnvironmentGitRolloutNotification(ctx context.Context, tx pgx.Tx, sourceI
 	}
 	for _, event := range events {
 		if err := q.EnqueueEnvironmentGitNotification(ctx, tx, sqlc.EnqueueEnvironmentGitNotificationParams{
-			AccountID: row.AccountID, EventID: mustPgUUID(event.id), Payload: event.body, NowAt: gitOpsTime(now)}); err != nil {
+			AccountID: row.AccountID, SourceID: row.ID, EventID: mustPgUUID(event.id), Payload: event.body, NowAt: gitOpsTime(now)}); err != nil {
 			return mapErr(err)
 		}
 	}

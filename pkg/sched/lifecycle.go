@@ -6,7 +6,6 @@ import (
 	"errors"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -51,7 +50,8 @@ func desiredServiceReplicas(manifest state.AppManifest) int {
 //   - ready replicas are RUNNING after the boot readiness gate;
 //   - starting replicas are still in WAKING/COLD_BOOTING;
 //   - draining replicas are leaving service (SNAPSHOTTING/MIGRATING); and
-//   - unavailable replicas are terminal or parked.
+//   - unavailable replicas are paused (WARM/FROZEN); parked and terminal
+//     rows are not listed (listServiceReplicas).
 //
 // The in-flight buckets are deliberately separate from ready. This prevents a
 // scale-down from parking the last healthy replica just because a replacement
@@ -92,12 +92,14 @@ func instanceModeMatchesApp(app state.App, ins state.Instance) bool {
 	return normalizedInstanceMode(ins.Mode) == instanceModeForApp(app)
 }
 
-// listServiceReplicas returns every service-mode row for a deployment,
-// including terminal and parked history. The reconciler needs those states to
-// distinguish an unavailable replica from a boot already in flight; filtering
-// to CountsForConcurrency would collapse that distinction.
+// listServiceReplicas returns the live service-mode rows of a deployment. Live,
+// not CountsForConcurrency: a replica leaving service (snapshotting, migrating)
+// must stay distinct from a boot already in flight. Parked and terminal rows
+// are left out: they never serve again (a wake creates a new row), every
+// caller acts only on live states, and they are the bulk of an app's
+// retained history.
 func listServiceReplicas(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
-	instances, err := store.ListInstancesForApp(ctx, appID)
+	instances, err := liveInstancesOf(ctx, store, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +150,7 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 			desired += target
 		}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		e.log.Warn("sched: observe service replica status", "app", app.ID, "err", err)
 		return
@@ -182,7 +184,7 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 }
 
 func listLiveDeploymentInstances(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
-	instances, err := store.ListInstancesForApp(ctx, appID)
+	instances, err := liveInstancesOf(ctx, store, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,32 +224,16 @@ func (e *Engine) scheduleServiceReconcile(ctx context.Context, deploymentID stri
 	go e.ReconcileServiceDeployment(detachedServiceContext(ctx), deploymentID)
 }
 
-func (e *Engine) serviceMutex(deploymentID string) *sync.Mutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.serviceMu == nil {
-		e.serviceMu = make(map[string]*sync.Mutex)
-	}
-	mu, ok := e.serviceMu[deploymentID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.serviceMu[deploymentID] = mu
-	}
-	return mu
+// lockServiceDeployment takes deploymentID's replica reconciliation lock
+// and returns its unlock.
+func (e *Engine) lockServiceDeployment(deploymentID string) func() {
+	return e.serviceMu.lock(deploymentID)
 }
 
-func (e *Engine) serviceAppMutex(appID string) *sync.Mutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.serviceAppMu == nil {
-		e.serviceAppMu = make(map[string]*sync.Mutex)
-	}
-	mu, ok := e.serviceAppMu[appID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.serviceAppMu[appID] = mu
-	}
-	return mu
+// lockServiceApp takes appID's service convergence lock and returns its
+// unlock.
+func (e *Engine) lockServiceApp(appID string) func() {
+	return e.serviceAppMu.lock(appID)
 }
 
 // allocateServiceReplicaTargets distributes one scope's app-level service
@@ -1299,9 +1285,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	if desired < 0 {
 		desired = 0
 	}
-	reconcileMu := e.serviceMutex(deploymentID)
-	reconcileMu.Lock()
-	defer reconcileMu.Unlock()
+	defer e.lockServiceDeployment(deploymentID)()
 
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
@@ -1624,8 +1608,10 @@ func (e *Engine) isMirrorDeployment(ctx context.Context, appID, deploymentID str
 func (e *Engine) drainIncompatibleServiceReplicas(ctx context.Context, instances []state.Instance) int {
 	removed := 0
 	for _, ins := range instances {
+		// ADR-732: a fork is not a replica of any mode; the fork
+		// coordinator owns its lifetime.
 		if normalizedInstanceMode(ins.Mode) == string(state.InstanceModeService) ||
-			ins.Mode == string(state.InstanceModeMirror) {
+			ins.Mode == string(state.InstanceModeMirror) || state.IsFork(ins.Mode) {
 			continue
 		}
 		fresh, err := e.store.InstanceByID(ctx, ins.ID)

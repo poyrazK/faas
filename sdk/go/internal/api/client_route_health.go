@@ -23,21 +23,21 @@ func (o RouteHealthReportOptions) Validate() error {
 	return nil
 }
 
-func (c *Client) GetRouteHealthGate(ctx context.Context, slug string) (RouteHealthGate, error) {
+func (c *PreviewClient) GetRouteHealthGate(ctx context.Context, slug string) (RouteHealthGate, error) {
 	var out RouteHealthGate
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/route-health/gate", nil, &out)
 	return out, err
 }
-func (c *Client) SetRouteHealthGate(ctx context.Context, slug string, request SetRouteHealthGateRequest) (RouteHealthGate, error) {
+func (c *PreviewClient) SetRouteHealthGate(ctx context.Context, slug string, request SetRouteHealthGateRequest) (RouteHealthGate, error) {
 	var out RouteHealthGate
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(slug)+"/route-health/gate", request, &out)
 	return out, err
 }
-func (c *Client) GetRouteHealthReport(ctx context.Context, slug, deploymentID string) (RouteHealthReport, error) {
+func (c *PreviewClient) GetRouteHealthReport(ctx context.Context, slug, deploymentID string) (RouteHealthReport, error) {
 	return c.GetRouteHealthReportWithOptions(ctx, slug, deploymentID, RouteHealthReportOptions{})
 }
 
-func (c *Client) GetRouteHealthReportWithOptions(ctx context.Context, slug, deploymentID string, opts RouteHealthReportOptions) (RouteHealthReport, error) {
+func (c *PreviewClient) GetRouteHealthReportWithOptions(ctx context.Context, slug, deploymentID string, opts RouteHealthReportOptions) (RouteHealthReport, error) {
 	var out RouteHealthReport
 	if err := opts.Validate(); err != nil {
 		return out, err

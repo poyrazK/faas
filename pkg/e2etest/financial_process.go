@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"time"
 )
 
@@ -16,11 +15,11 @@ func (h *Harness) KillVMMD() error {
 		return fmt.Errorf("e2etest: nil harness")
 	}
 	for _, p := range h.procs {
-		if p == nil || p.Process == nil || filepath.Base(p.Path) != "vmmd" {
+		if p == nil || p.Process == nil || !isVMMDProc(p) {
 			continue
 		}
 		if p.ProcessState == nil {
-			if err := p.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			if err := killVMMD(p); err != nil && !errors.Is(err, os.ErrProcessDone) {
 				return fmt.Errorf("kill vmmd: %w", err)
 			}
 			var exit *exec.ExitError
@@ -44,7 +43,7 @@ func (h *Harness) RestartVMMD() error {
 	}
 	procs := h.procs[:0]
 	for _, p := range h.procs {
-		if p != nil && filepath.Base(p.Path) == "vmmd" && p.ProcessState != nil {
+		if p != nil && isVMMDProc(p) && p.ProcessState != nil {
 			continue
 		}
 		procs = append(procs, p)

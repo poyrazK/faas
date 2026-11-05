@@ -46,6 +46,10 @@ type Profile struct {
 	// prefers it to the app's current options so a queued build keeps its
 	// plan's options.
 	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildProcess is a built service's Compose user, working_dir and stop
+	// contract (ADR-20261022160000), frozen at enqueue; imaged applies it to
+	// the built image. Its entrypoint, if any, is already in the command.
+	BuildProcess *api.ComposeProcess `json:"build_process,omitempty"`
 	// PackageManager records the lockfile/package-manager choice used by
 	// static inference. It is advisory metadata; the builder remains the
 	// authority for dependency installation.
@@ -57,8 +61,17 @@ type Profile struct {
 	// ConfigFile identifies the optional source manifest that supplied an
 	// explicit hosting override. It is metadata only; the values above remain
 	// the effective contract used by the builder and runtime.
-	ConfigFile string    `json:"config_file,omitempty"`
-	Warnings   []Warning `json:"warnings,omitempty"`
+	ConfigFile string `json:"config_file,omitempty"`
+	// StartFromConfig reports that StartCommand is gregale.yaml's explicit
+	// hosting.start. It replaces the built image's command, which a Railpack
+	// build with no detected start inherits from the runtime base (python3 on
+	// the Python runner) (Hunt 12 H12-29).
+	StartFromConfig bool `json:"start_from_config,omitempty"`
+	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
+	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
+	// port (ADR-20261027090000).
+	HealthFromConfig bool      `json:"health_from_config,omitempty"`
+	Warnings         []Warning `json:"warnings,omitempty"`
 	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
 	// image semantics even when Cmd is nil (inherit) or the app changes class.
 	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
@@ -140,6 +153,16 @@ func Analyze(fsys fs.FS) (Profile, error) {
 	if framework != markers.FrameworkUnknown {
 		profile.FrameworkVer = markers.VersionFromFS(fsys, framework)
 	}
+	if framework != markers.FrameworkDocker && framework != markers.FrameworkUnknown {
+		// Railpack starts a source build with the Procfile's web process
+		// when there is one, so that is the command the guest runs. The
+		// inferred framework default was reported instead: hello-python
+		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
+		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
+		if web := procfileWebCommand(fsys); web != "" {
+			profile.StartCommand = web
+		}
+	}
 	if framework != markers.FrameworkDocker {
 		if health := inferHealthPath(fsys); health != "" {
 			profile.HealthPath = health
@@ -163,12 +186,14 @@ func Analyze(fsys fs.FS) (Profile, error) {
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
+		profile.StartFromConfig = true
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port
 	}
 	if health := strings.TrimSpace(cfg.Health); health != "" {
 		profile.HealthPath = health
+		profile.HealthFromConfig = true
 	}
 }
 
@@ -570,6 +595,18 @@ func firstPort(body string) int {
 		return 0
 	}
 	return port
+}
+
+// procfileWebCommand returns the Procfile's web process command, or "".
+// Lines are Heroku-format `name: command`, split at the first colon.
+func procfileWebCommand(fsys fs.FS) string {
+	for _, line := range strings.Split(readFile(fsys, "Procfile"), "\n") {
+		name, command, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if ok && strings.TrimSpace(name) == "web" {
+			return strings.TrimSpace(command)
+		}
+	}
+	return ""
 }
 
 func fileExists(fsys fs.FS, path string) bool {

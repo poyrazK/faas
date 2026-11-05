@@ -72,6 +72,37 @@ func TestStampRestoreReseedEnv(t *testing.T) {
 	}
 }
 
+// ADR-20261024105607: a guest booted with the thread boot argument stamps
+// the mode the preload reads; one booted without it leaves the mode unset,
+// and an opted-out workload gets nothing.
+func TestStampRestoreReseedEnvThreadMode(t *testing.T) {
+	restoreReseedEnabled.Store(true)
+	t.Cleanup(func() {
+		restoreReseedEnabled.Store(false)
+		restoreReseedThread.Store(false)
+	})
+	for _, tc := range []struct {
+		name   string
+		thread bool
+		env    []string
+		want   string
+	}{
+		{name: "switch off", want: ""},
+		{name: "switch off keeps a workload value", env: []string{"GREGALE_RESEED_MODE=thread"}, want: "thread"},
+		{name: "switch on", thread: true, want: "thread"},
+		{name: "switch on replaces a workload value", thread: true, env: []string{"GREGALE_RESEED_MODE=loop"}, want: "thread"},
+		{name: "opt out", thread: true, env: []string{"GREGALE_RESTORE_RESEED=off"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			restoreReseedThread.Store(tc.thread)
+			got := StampRestoreReseedEnv(append([]string(nil), tc.env...))
+			if v := envValue(got, restoreReseedModeEnv); v != tc.want {
+				t.Fatalf("%s = %q, want %q (env %q)", restoreReseedModeEnv, v, tc.want, got)
+			}
+		})
+	}
+}
+
 // StampRestoreReseedEnv must not point Node at a preload that was never
 // written: a --require of a missing file stops every Node process starting.
 func TestStampRestoreReseedEnvNeedsTheServer(t *testing.T) {

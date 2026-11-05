@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -103,6 +104,10 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
 		return
 	}
+	if problem := s.eventsPausedProblem(acct, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var req api.PublishEventRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
@@ -117,6 +122,14 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrValidation("gregale.* sources are reserved for platform events"))
 		return
 	}
+	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		api.WriteProblem(w, appevents.AppSourceReservedProblem())
+		return
+	}
+	if problem := s.appEvents.PublishRateProblem(acct, 1); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if !s.appEvents.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
@@ -129,6 +142,10 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "marshal tenant event failed", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
+		return
+	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
 		return
 	}
 	store, ok := s.store.(state.TenantPublishedEventStore)

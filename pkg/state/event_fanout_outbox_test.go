@@ -51,7 +51,7 @@ func TestPublishedEventWorkRecoversAndRetainsIdentity(t *testing.T) {
 	if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, []byte(`{"id":"evt-1","source":"orders","type":"created","data":{"amount":2}}`)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("changed identity = %v", err)
 	}
-	pruned, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(state.PublishedEventIdentityRetention+time.Second), 10)
+	pruned, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Second), 10)
 	if err != nil || pruned != 1 {
 		t.Fatalf("pruned = %d, %v", pruned, err)
 	}

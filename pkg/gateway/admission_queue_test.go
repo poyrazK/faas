@@ -101,7 +101,7 @@ func TestWakeAdmissionQueueIsFairAcrossPlans(t *testing.T) {
 	var firstErr error
 	go func() {
 		defer close(firstDone)
-		_, _, firstErr = q.Do(context.Background(), "app-hobby", "hobby", WakeAdmissionPolicyForPlan(api.PlanHobby), func(context.Context) error {
+		_, _, firstErr = q.Do(context.Background(), "app-hobby", "", "hobby", WakeAdmissionPolicyForPlan(api.PlanHobby), func(context.Context) error {
 			close(started)
 			<-block
 			return nil
@@ -115,7 +115,7 @@ func TestWakeAdmissionQueueIsFairAcrossPlans(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, _ = q.Do(context.Background(), appID, plan, WakeAdmissionPolicyForPlan(api.Plan(plan)), func(context.Context) error {
+			_, _, _ = q.Do(context.Background(), appID, "", plan, WakeAdmissionPolicyForPlan(api.Plan(plan)), func(context.Context) error {
 				order <- plan
 				return nil
 			})
@@ -146,7 +146,7 @@ func TestWakeAdmissionQueueReportsPriorityPreemption(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 	go func() {
-		_, _, _ = q.Do(context.Background(), "app-running", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error {
+		_, _, _ = q.Do(context.Background(), "app-running", "", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error {
 			close(started)
 			<-release
 			return nil
@@ -154,11 +154,24 @@ func TestWakeAdmissionQueueReportsPriorityPreemption(t *testing.T) {
 	}()
 	<-started
 	go func() {
-		_, _, _ = q.Do(context.Background(), "app-free", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error { return nil })
+		_, _, _ = q.Do(context.Background(), "app-free", "", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error { return nil })
 	}()
 	waitForAdmissionQueueDepth(t, q, 1)
-	_, _, _ = q.Do(context.Background(), "app-scale", "scale", WakeAdmissionPolicyForPlan(api.PlanScale), func(context.Context) error { return nil })
+	scaleDone := make(chan error, 1)
+	go func() {
+		_, _, err := q.Do(context.Background(), "app-scale", "", "scale", WakeAdmissionPolicyForPlan(api.PlanScale), func(context.Context) error { return nil })
+		scaleDone <- err
+	}()
+	waitForAdmissionQueueDepth(t, q, 2)
 	close(release)
+	select {
+	case err := <-scaleDone:
+		if err != nil {
+			t.Fatalf("scale admission returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scale admission")
+	}
 	select {
 	case got := <-preempted:
 		if got.fromApp != "app-free" || got.toApp != "app-scale" {
@@ -174,7 +187,7 @@ func TestWakeAdmissionQueueWaitTimeoutDoesNotRunWork(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 	go func() {
-		_, _, _ = q.Do(context.Background(), "app-1", "hobby", WakeAdmissionPolicyForPlan(api.PlanHobby), func(context.Context) error {
+		_, _, _ = q.Do(context.Background(), "app-1", "", "hobby", WakeAdmissionPolicyForPlan(api.PlanHobby), func(context.Context) error {
 			close(started)
 			<-release
 			return nil
@@ -184,7 +197,7 @@ func TestWakeAdmissionQueueWaitTimeoutDoesNotRunWork(t *testing.T) {
 
 	called := false
 	policy := WakeAdmissionPolicy{MaxWaiters: 1, MaxWait: 15 * time.Millisecond, Priority: 1}
-	queued, wait, err := q.Do(context.Background(), "app-2", "free", policy, func(context.Context) error {
+	queued, wait, err := q.Do(context.Background(), "app-2", "", "free", policy, func(context.Context) error {
 		called = true
 		return nil
 	})

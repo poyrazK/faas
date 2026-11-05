@@ -93,7 +93,8 @@ func (p *Provider) resizeObservation(ctx context.Context, request managedpostgre
 			return managedpostgres.ObservedDatabase{}, endpoint{}, managedpostgres.ErrConflict
 		}
 	}
-	actual := p.observedSpec(metadata.project.Project, primary)
+	// A resize never changes the storage limit, so both specs carry the same one.
+	actual := managedpostgres.SpecForObservation(request.Spec, p.observedSpec(metadata.project.Project, primary))
 	if actual != request.Spec && actual != request.PreviousSpec {
 		return managedpostgres.ObservedDatabase{}, endpoint{}, managedpostgres.ErrConflict
 	}

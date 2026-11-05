@@ -44,6 +44,17 @@ var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
 		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
 }
 
+// ManagedPostgresPlanDatabasesMax is the most databases any plan allows. A
+// production registry must allow at least this many per account, or a plan
+// would get fewer than it sells (ADR-20261031091607).
+func ManagedPostgresPlanDatabasesMax() int {
+	most := 0
+	for _, limits := range managedPostgresPlanLimits {
+		most = max(most, limits.DatabasesMax)
+	}
+	return most
+}
+
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.
 func ManagedPostgresLimitsFor(p Plan) (ManagedPostgresPlanLimits, bool) {
 	limits, ok := managedPostgresPlanLimits[p]
@@ -68,6 +79,34 @@ type ManagedPostgresDatabase struct {
 	CreatedAt               string                 `json:"created_at"`
 	UpdatedAt               string                 `json:"updated_at"`
 	DeletedAt               string                 `json:"deleted_at,omitempty"`
+	// RestorableUntil is set while a customer's delete is scheduled: until
+	// then the database can be undeleted, and after it the database is purged.
+	RestorableUntil string `json:"restorable_until,omitempty"`
+	// RestoreSlotUntil is set while a restored database is one past the
+	// plan's database limit (ADR-20261031123259). It becomes an ordinary
+	// database once the account has room; otherwise its delete is scheduled
+	// at this time.
+	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// PlanExcess is set while the plan no longer includes the database and
+	// it is suspended (ADR-20261102125208): database_limit when it ranks
+	// past the plan's database limit, oldest first, or service_class when
+	// the plan does not include its class. Upgrading, deleting a database
+	// or resizing to an included class resumes it.
+	PlanExcess string `json:"plan_excess,omitempty"`
+	// RestoreRange is the span a point-in-time restore from this database
+	// can target now; absent while it cannot be restored from.
+	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
+	// Labels are the database's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ManagedPostgresRestoreRange bounds a restore's point_in_time: from
+// Earliest up to Latest, the time the response was made (exclusive).
+type ManagedPostgresRestoreRange struct {
+	Earliest string `json:"earliest"`
+	Latest   string `json:"latest"`
 }
 
 // ManagedPostgresHealth reports cached provider metadata. Healthy does not
@@ -108,7 +147,43 @@ type ManagedPostgresUsageResponse struct {
 	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
 	EgressBytes                 int64      `json:"egress_bytes"`
+	// Compute caps on running databases (ADR-20261025094915). The allowance is
+	// the plan's monthly compute; the ceiling is where running databases are
+	// suspended. ComputeCapState is healthy, warning (at 80% of the allowance),
+	// overage (past the allowance while the account allows overage) or
+	// suspended, and reports suspended only while caps are enforced.
+	ComputeAllowanceUnitSeconds int64  `json:"compute_allowance_unit_seconds,omitempty"`
+	ComputeCeilingUnitSeconds   int64  `json:"compute_ceiling_unit_seconds,omitempty"`
+	ComputeCapState             string `json:"compute_cap_state,omitempty"`
+	// OverageEnabled is true while the account runs its databases past the
+	// allowance, up to the ceiling (ADR-20261025094915 decision 2).
+	OverageEnabled bool `json:"overage_enabled,omitempty"`
+	// ComputeSuspendedAt is when the cap suspended the databases this month,
+	// present while compute_cap_state is suspended.
+	ComputeSuspendedAt *time.Time `json:"compute_suspended_at,omitempty"`
 }
+
+// ManagedPostgresOverage is GET and PUT /v1/postgres/overage. With overage on,
+// a paid account's databases keep running past the monthly compute allowance
+// until the ceiling, twice the allowance, and are then suspended; with it
+// off (the default) they are suspended at the allowance.
+type ManagedPostgresOverage struct {
+	Enabled                     bool  `json:"enabled"`
+	ComputeAllowanceUnitSeconds int64 `json:"compute_allowance_unit_seconds"`
+	ComputeCeilingUnitSeconds   int64 `json:"compute_ceiling_unit_seconds"`
+}
+
+// ManagedPostgresOverageRequest is the PUT /v1/postgres/overage body.
+type ManagedPostgresOverageRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
+const (
+	ManagedPostgresComputeCapHealthy   = "healthy"
+	ManagedPostgresComputeCapWarning   = "warning"
+	ManagedPostgresComputeCapOverage   = "overage"
+	ManagedPostgresComputeCapSuspended = "suspended"
+)
 
 // ManagedPostgresUsageLineItem is an operator-only normalized ledger line.
 // Costs are internal COGS/invoice inputs, never customer charges.
@@ -149,6 +224,9 @@ type ManagedPostgresUsageOperatorResponse struct {
 }
 
 type CreateManagedPostgresDatabaseRequest struct {
+	// RequestID reserves the database identity for a durable workflow. Reusing
+	// it with another name or configuration is a conflict.
+	RequestID            string `json:"request_id,omitempty"`
 	Name                 string `json:"name"`
 	Region               string `json:"region"`
 	PostgresMajor        int    `json:"postgres_major,omitempty"`

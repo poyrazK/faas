@@ -15,7 +15,7 @@ import (
 // inline mail on missing configuration, a late gate withdrawal or a failed save.
 func (s *server) handlePaymentFailedOutbox(w http.ResponseWriter, r *http.Request, provider string, ev billing.Event, acct state.Account) bool {
 	if ev.Type != billing.EventPaymentFailed && ev.Type != billing.EventSubscriptionPastDue ||
-		s.paymentFailedOutboxRequested == nil || !s.paymentFailedOutboxRequested() {
+		s.paymentFailedOutboxRequested == nil || !s.paymentFailedOutboxRequested() || orgBillingSubject(acct) {
 		return false
 	}
 	err := internalmail.ErrDisabled
@@ -32,7 +32,7 @@ func (s *server) handlePaymentFailedOutbox(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) restoreBillingPayment(ctx context.Context, ev billing.Event, acct state.Account) (bool, error) {
-	if s.paymentFailedOutboxRequested != nil && s.paymentFailedOutboxRequested() {
+	if s.paymentFailedOutboxRequested != nil && s.paymentFailedOutboxRequested() && !orgBillingSubject(acct) {
 		if s.deletionMailOutbox == nil {
 			return false, internalmail.ErrDisabled
 		}

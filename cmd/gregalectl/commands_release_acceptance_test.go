@@ -142,3 +142,119 @@ func TestReleaseAcceptanceVerifyPlacementRequiresEveryNodeAndBothFleetShapes(t *
 		t.Fatalf("report = %+v", report)
 	}
 }
+
+// verify-node is the per-node canary's check: the just-activated node must
+// serve an acceptance app AND have built one. rc.301's fsn-2 served every app
+// while its builderd failed every build; placement alone would have passed it.
+func TestReleaseAcceptanceVerifyNodeRequiresAnInstanceAndABuildOnTheNode(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	account, err := ensureReleaseAcceptanceAccount(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The registry names a compute-only node fsn-2.faas; the workflow passes
+	// the manifest name fsn-2.
+	target, err := store.UpsertComputeNode(ctx, state.ComputeNode{ID: "node-fsn-2", Name: "fsn-2.faas", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploy := func(slug string) (state.App, state.Deployment, state.Build) {
+		t.Helper()
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug, Type: state.AppTypeApp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball})
+		if err != nil {
+			t.Fatal(err)
+		}
+		build, err := store.CreateBuild(ctx, deployment.ID, state.DeploymentKindTarball, 1024, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateBuildStatus(ctx, build.ID, state.BuildRunning, "", true, false); err != nil {
+			t.Fatal(err)
+		}
+		return app, deployment, build
+	}
+	succeeded := func(build state.Build, builder string) {
+		t.Helper()
+		if err := store.UpdateBuildStatus(ctx, build.ID, state.BuildSucceeded, "", false, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateBuildProvenance(ctx, state.BuildProvenance{BuildID: build.ID, SourceSHA256: "sha256:src", BuilderNodeID: builder}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldOpener := releaseAcceptanceStoreOpener
+	oldOut, oldErr := osStdout, osStderr
+	t.Cleanup(func() {
+		releaseAcceptanceStoreOpener = oldOpener
+		osStdout, osStderr = oldOut, oldErr
+	})
+	releaseAcceptanceStoreOpener = func() (state.Store, func(), error) { return store, func() {}, nil }
+	var out, stderr bytes.Buffer
+	osStdout, osStderr = &out, &stderr
+	verify := func(slugs ...string) (int, releaseAcceptanceNodeReport) {
+		t.Helper()
+		out.Reset()
+		stderr.Reset()
+		code := cmdReleaseAcceptanceVerifyNode([]string{"--node", "fsn-2", "--slugs", strings.Join(slugs, ",")})
+		var report releaseAcceptanceNodeReport
+		if code == 0 || code == 3 {
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("code=%d output=%q: %v", code, out.String(), err)
+			}
+		}
+		return code, report
+	}
+
+	// Served on the target, built elsewhere: not proven.
+	appA, depA, buildA := deploy("canary-a")
+	succeeded(buildA, other.Name)
+	if _, err := store.CreateInstance(ctx, appA.ID, depA.ID, string(state.StateRunning), 128, target.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if code, report := verify("canary-a"); code != 3 || !report.Instance || report.Build || report.Ready {
+		t.Fatalf("instance-only node accepted: code=%d report=%+v stderr=%s", code, report, stderr.String())
+	}
+
+	// A failed build on the target proves nothing either.
+	appB, depB, buildB := deploy("canary-b")
+	if err := store.UpdateBuildStatus(ctx, buildB.ID, state.BuildFailed, state.FailureInfra, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, appB.ID, depB.ID, string(state.StateRunning), 128, other.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if code, report := verify("canary-a", "canary-b"); code != 3 || report.Build {
+		t.Fatalf("failed build counted: code=%d report=%+v", code, report)
+	}
+
+	// Built on the target (served elsewhere) completes the proof.
+	appC, depC, buildC := deploy("canary-c")
+	succeeded(buildC, target.Name)
+	if _, err := store.CreateInstance(ctx, appC.ID, depC.ID, string(state.StateParked), 128, other.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	code, report := verify("canary-a", "canary-c")
+	if code != 0 || !report.Ready || report.Node != "fsn-2.faas" || report.NodeID != target.ID {
+		t.Fatalf("proven node rejected: code=%d report=%+v stderr=%s", code, report, stderr.String())
+	}
+
+	if code, _ := verify("canary-a", "canary-a"); code != 1 {
+		t.Fatalf("duplicate slug code=%d, want 1", code)
+	}
+	if code := cmdReleaseAcceptanceVerifyNode([]string{"--slugs", "canary-a"}); code != 2 {
+		t.Fatalf("missing --node code=%d, want 2", code)
+	}
+}

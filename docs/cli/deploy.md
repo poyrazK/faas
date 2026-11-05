@@ -481,6 +481,8 @@ lifecycle:
 ```
 
 The equivalent one-off override is `gregale deploy --execution-mode worker`.
+For a worker that consumes a queue, the `worker:` block declares the mode and
+its queue scaling together; see [Workers](../workers.md).
 
 Queue-driven pools scale out on the tick that observes the backlog. Scale-in
 waits for demand to stay low for 60 seconds: a pool shrinks only to the highest
@@ -974,10 +976,12 @@ not needed to resume.
 
 The first milestone supports one command and refuses conflicting pending atomic
 migrations. It does not coordinate migration commands in other projects or
-ordinary deployments. Enable `FAAS_RELEASE_PHASE_ENABLED=1` on imaged and
+ordinary deployments. Enable `FAAS_RELEASE_PHASE_ENABLED=1` on apid and imaged and
 `FAAS_APP_TASK_DISPATCH=1` on schedd, update APID/CLI/SDKs and complete native-host
 acceptance before production enablement. Commands fail closed when execution is
-unavailable. Destructive schema changes and automatic schema rollback are outside
+unavailable: while the switch is off on apid, a deployment that declares a release
+command is refused with `release_phase_unavailable` before it builds, and the
+`release-commands` capability reports unavailable. Destructive schema changes and automatic schema rollback are outside
 this contract.
 
 ### Verified push-worker handoff

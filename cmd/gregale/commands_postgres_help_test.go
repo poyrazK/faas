@@ -21,7 +21,10 @@ func TestPostgresHelpShowsArgumentsAndParsedFlags(t *testing.T) {
 			parsed[fn] = append(parsed[fn], flags...)
 		}
 	}
-	aliases := map[string]bool{"environment-key": true} // attach keeps the bindings-create spelling as a hidden alias
+	// Flags help leaves out on purpose: attach keeps the bindings-create
+	// spelling as a hidden alias, and storage growth is a preview kept out of
+	// help until launch (ADR-1027).
+	hidden := map[string]bool{"environment-key": true, "storage-bytes": true}
 	cases := []struct {
 		args        []string
 		fn          string
@@ -63,7 +66,7 @@ func TestPostgresHelpShowsArgumentsAndParsedFlags(t *testing.T) {
 				t.Fatalf("found no flags registered in %s", tc.fn)
 			}
 			for _, flag := range parsed[tc.fn] {
-				if aliases[flag] {
+				if hidden[flag] {
 					continue
 				}
 				if !strings.Contains(help, "--"+flag+" ") && !strings.Contains(help, "--"+flag+"[") {

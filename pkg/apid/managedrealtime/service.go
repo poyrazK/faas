@@ -14,7 +14,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"log/slog"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,9 +35,12 @@ type Host interface {
 	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	// Ops is nil when apid runs without operational metrics.
 	Ops() *wire.OpsMetrics
-	// SecretRecipient seals push targets and provider configs; nil when the
-	// host secrets are not installed.
-	SecretRecipient() *age.X25519Recipient
+	// SecretRecipients seal endpoint credentials, push targets and provider
+	// configs, account seal-domain values (ADR 20261022111812): the domain
+	// and the fleet recipient while the domain rolls out; an error when no
+	// recipient is installed. HostIdentitiesForUnseal opens them, the domain
+	// first.
+	SecretRecipients() ([]*age.X25519Recipient, error)
 	HostIdentitiesForUnseal(ctx context.Context) []*age.X25519Identity
 	// ResolveAndCheckEgress applies the tenant egress policy to a callback URL.
 	ResolveAndCheckEgress(ctx context.Context, rawURL string) *api.Problem
@@ -50,10 +52,11 @@ type Host interface {
 type Service struct {
 	AccessPreviewEnabled  bool
 	TicketsPreviewEnabled bool
-	ClaimWaitOnce         sync.Once
-	ClaimWaitSlots        chan struct{}
-	AuthLimiter           *middleware.Limiter
-	Host                  Host
+	claimWaiters          claimWaiters
+	// unsealed caches endpoint credentials for the endpoint reconcile.
+	unsealed    unsealedCredentials
+	AuthLimiter *middleware.Limiter
+	Host        Host
 
 	// Owner routes customer-facing connection operations to the node that
 	// owns a live socket; the local Unix client is the same-box fast path.
@@ -69,6 +72,10 @@ type Service struct {
 	// channel grants and the versioned reconnect protocol are ready.
 	HistoryPreviewEnabled bool
 	HistoryMetrics        *ManagedRealtimeHistoryMetrics
+	// Preview decides which accounts see realtime preview features
+	// (ADR-20261019102657); nil shows them to nobody. The *Enabled flags only
+	// say the daemon is ready for a feature.
+	Preview PreviewGate
 	// OccupancyPreviewEnabled serves channel occupancy (ADR-1324).
 	OccupancyPreviewEnabled bool
 	// UsageEnabled serves the account's realtime usage (ADR-1323), recorded
@@ -88,8 +95,15 @@ type Service struct {
 	// endpoint's registration. A nil result sends none, so realtimed's own
 	// switches decide.
 	EndpointPreviews func(ctx context.Context, accountID, appID string) (*realtime.EndpointPreviews, error)
+	// RealtimeReleased decides the realtime capability flag for an
+	// endpoint's account (ADR-20261023115741). An endpoint without it, and
+	// without live routes, is withdrawn from realtimed. Nil releases it.
+	RealtimeReleased func(ctx context.Context, accountID, appID string) bool
 
 	publishIdempotencySweep atomic.Uint64
+	// writeBudget is each account's realtime write rate on control-plane
+	// Postgres (RealtimeLimits.RetainedWritesPerSecond).
+	writeBudget writeBudget
 }
 
 // Registry is the registry the metrics were registered on, so apid can tell
@@ -109,6 +123,9 @@ type publishCaptureWriter struct {
 	http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	// unwritten marks a refusal that wrote nothing, such as the account's
+	// realtime write rate: its key is released so a retry runs again.
+	unwritten bool
 }
 
 func (c *publishCaptureWriter) WriteHeader(status int) {

@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -27,6 +30,9 @@ type LocalVerifier struct {
 	stor     storage.StorageBackend
 	verified sync.Map
 	inflight singleflight.Group
+	// records remembers verifications across restarts; nil keeps them in
+	// memory only (RememberVerifications).
+	records *attestationRecords
 }
 
 // NewLocalVerifier parses the SPKI PEM at path (mode ≤ 0o444
@@ -42,6 +48,24 @@ func NewLocalVerifier(path string, stor storage.StorageBackend) (*LocalVerifier,
 		return nil, errors.New("cosign: NewLocalVerifier: nil storage backend")
 	}
 	return &LocalVerifier{pub: pub, stor: stor}, nil
+}
+
+// RememberVerifications keeps successful verifications in path, so a
+// restarted daemon does not re-hash layers whose node-cache file has not
+// changed since it verified them (ADR-038 amendment, 2026-10-24). A record
+// is trusted for maxAge. It returns an error, and keeps verifications in
+// memory only, when path is not a file private to this process.
+func (v *LocalVerifier) RememberVerifications(path string, maxAge time.Duration) error {
+	keyID, err := publicKeyID(v.pub)
+	if err != nil {
+		return err
+	}
+	records, err := openAttestationRecords(path, keyID, maxAge, time.Now)
+	if err != nil {
+		return err
+	}
+	v.records = records
+	return nil
 }
 
 // CheckPresent is the request-path precheck for an artifact that a later
@@ -116,13 +140,20 @@ func (v *LocalVerifier) Verify(ctx context.Context, layerKey, sigKey string) err
 }
 
 func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey string) error {
-	// Hash the layer (streamed — ext4s can be 1-2 GB).
-	h := sha256.New()
-	layerRC, err := v.stor.Get(ctx, layerKey)
+	layerRC, identity, local, err := v.openLayer(ctx, layerKey)
 	if err != nil {
 		return fmt.Errorf("cosign: read layer %q: %w", layerKey, err)
 	}
-	if _, err := io.Copy(h, layerRC); err != nil {
+	// The node-cache file this host verified before a restart: the same
+	// file holds the same bytes, so the signature still covers them.
+	if local && v.records != nil && v.records.matches(layerKey, sigKey, identity) {
+		_ = layerRC.Close()
+		v.verified.Store(cacheKey, struct{}{})
+		return nil
+	}
+	// Hash the layer (streamed — ext4s can be 1-2 GB).
+	h := sha256.New()
+	if _, err := newCtxCopy(h, layerRC, ctx).Do(); err != nil {
 		_ = layerRC.Close()
 		return fmt.Errorf("cosign: hash layer %q: %w", layerKey, err)
 	}
@@ -165,6 +196,34 @@ func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey s
 			fmt.Sprintf("signature does not match ext4: ECDSA P-256 verification failed for layer %q against sig %q; refusing to boot tampered ext4",
 				layerKey, sigKey))
 	}
+	if local && v.records != nil {
+		// Best effort: a record that cannot be written only means the next
+		// restart hashes this layer again.
+		_ = v.records.remember(layerKey, sigKey, identity)
+	}
 	v.verified.Store(cacheKey, struct{}{})
 	return nil
+}
+
+// openLayer opens the layer's local node-cache file when the backend has one,
+// reporting the file it opened, so the bytes hashed and the identity recorded
+// belong to the same file even if the cache replaces it meanwhile. Otherwise
+// it streams the layer from the backend.
+func (v *LocalVerifier) openLayer(ctx context.Context, layerKey string) (io.ReadCloser, fileIdentity, bool, error) {
+	if resolver, ok := v.stor.(storage.LocalPathResolver); ok {
+		if path, local, err := resolver.LocalPath(layerKey); err == nil && local {
+			// O_NOFOLLOW plus identityOf's regular-file check: only a
+			// plain cache file is hashed or has its identity recorded.
+			if f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0); err == nil {
+				if fi, err := f.Stat(); err == nil {
+					if id, ok := identityOf(fi); ok {
+						return f, id, true, nil
+					}
+				}
+				_ = f.Close()
+			}
+		}
+	}
+	rc, err := v.stor.Get(ctx, layerKey)
+	return rc, fileIdentity{}, false, err
 }

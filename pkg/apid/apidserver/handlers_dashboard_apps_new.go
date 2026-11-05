@@ -4,19 +4,16 @@
 // `gregale connect repo <owner>/<name>` CLI verb (PR-1) and the
 // /oauth/callback redirect target (PR-B / slice 8). Three states:
 //
-//	env.GithubLogin empty                    → render Connect GitHub CTA
-//	env.GithubLogin set, githubd unreachable → render retry banner
-//	env.GithubLogin set, githubd reachable    → render install/repo/template form
+//	no connected installation                → render Connect GitHub CTA
+//	installation connected, githubd down     → render retry banner
+//	installation connected, githubd reachable → render install/repo form
 //
 // The form POSTs to the dashboard-only create adapter, which validates the
-// selected installation and repository, creates the app, and then delegates
-// the durable binding to githubd. The §11 trust root remains the dashboard
-// cookie session.
-//
-// §11 ownership proof (sessionGithubLogin) is the load-bearing gate:
-// no install_id / repo / template is shown to a session that hasn't
-// completed /v1/auth/github. The Connect GitHub CTA is the only
-// affordance a first-time visitor sees.
+// selected installation and repository, creates the app (or takes the
+// existing one named by ?app=), and then delegates the durable binding to
+// githubd. The §11 trust root remains the dashboard cookie session; the
+// account's durable connection authorizes the installation whatever provider
+// the session signed in with (ADR-1345, ADR-20261101160300).
 package apidserver
 
 import (
@@ -27,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -44,8 +40,9 @@ import (
 //	?repo=owner/name      — pre-fill the repo <select> (CLI deep-link)
 //	?install=<id>         — pre-fill the installation picker
 //	?default_branch=<b>   — pre-fill the production_branch input
+//	?app=<slug>           — bind this existing app instead of creating one
 //
-// All three are advisory; bad input is silently dropped so a stale
+// All are advisory; bad input is silently dropped so a stale
 // bookmark can't 500 the page.
 func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
@@ -71,33 +68,19 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	// the dashboard catalog endpoint; starter projects are currently created
 	// locally with `gregale init`, not written into a GitHub repository by this
 	// server-side flow.
-	view.Templates = projectAppsNewTemplates(fetchTemplatesForWizard(log))
+	view.Templates = projectAppsNewTemplates(s.templateRows(flagSubject(r, acct)))
 
-	// §11 ownership proof. Empty env.GithubLogin → render the
-	// "Connect GitHub first" CTA only; the install/repo/template
-	// dropdowns would 403 anyway when the customer submitted.
-	//
-	// We do NOT call sessionGithubLogin here — that helper writes
-	// a JSON 403 problem, which would defeat the dashboard's
-	// server-rendered Connect CTA. Instead we peek the cookie
-	// directly so the wizard can render the right state.
-	if _, hasLogin := peekSessionGithubLogin(s, r); !hasLogin {
-		view.NeedsGithubConnect = true
-		tok, err := issueConnectGithubToken(s, w, acct.ID)
-		if err != nil {
-			log.Error("renderAppNew: csrf issue connect_github", "account_id", acct.ID, "err", err)
-			renderProblem(w, log, err)
-			return
-		}
-		view.ConnectGithubConfirmToken = tok
-		renderAppsNewPage(w, log, r, view, acct)
-		return
+	// ?app=<slug> binds an existing app instead of creating one; the POST
+	// re-checks that the app belongs to the account.
+	if existing := q.Get("app"); validSlug(existing) {
+		view.ExistingApp = existing
+		view.PreFilledSlug = existing
 	}
 
 	// Create-app CSRF envelope — minted at GET time so the browser form
 	// carries a fresh sealed token. Use a dedicated sidecar cookie because
 	// this page may also render the Connect GitHub form.
-	createTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
+	createTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubWizardCreateAction, actorAccount(r, acct).ID, githubWizardCreateCSRFCookie)
 	if err != nil {
 		log.Error("renderAppNew: csrf issue create app", "account_id", acct.ID, "err", err)
 		renderProblem(w, log, err)
@@ -126,7 +109,10 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 			renderAppsNewPage(w, log, r, view, acct)
 			return
 		}
-		view.NeedsGithubInstall = true
+		// Connect GitHub authorizes the GitHub user and installs the App
+		// when it is not installed yet; the session's sign-in provider does
+		// not matter (ADR-20261101160300).
+		view.NeedsGithubConnect = true
 		view.ConnectGithubConfirmToken, err = issueConnectGithubToken(s, w, acct.ID)
 		if err != nil {
 			log.Error("renderAppNew: csrf issue connect github", "account_id", acct.ID, "err", err)
@@ -189,16 +175,8 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 		return repoViews[i].RepoFullName < repoViews[j].RepoFullName
 	})
 	view.Repos = repoViews
-	if view.PreFilledBranch == "" && len(repoViews) > 0 {
-		branch := repoViews[0].DefaultBranch
-		for _, repo := range repoViews {
-			if repo.RepoFullName == view.PreFilledRepo {
-				branch = repo.DefaultBranch
-				break
-			}
-		}
-		view.PreFilledBranch = branch
-	}
+	// An empty production branch binds the chosen repository's default
+	// branch; pre-filling the first repository's would bind it to another.
 	for i := range view.Installations {
 		if view.Installations[i].ID == selectedInstallationID {
 			view.Installations[i].RepoCount = len(repoViews)
@@ -224,60 +202,6 @@ func renderAppsNewPage(w http.ResponseWriter, log *slog.Logger, r *http.Request,
 	}
 }
 
-// fetchTemplatesForWizard is a tiny adapter that calls the in-process
-// listTemplates logic without going through the HTTP wire. Same sort
-// + filter logic, no JSON marshal round-trip.
-//
-// Re-derives from templates.Names; this avoids a second HTTP
-// round-trip through /v1/templates. The handler is the
-// canonical sort/filter path; a future refactor that hoists
-// listTemplates into a service method will let both surfaces
-// share one implementation.
-func fetchTemplatesForWizard(log *slog.Logger) []templateView {
-	_ = log
-	rows := make([]templateView, 0, len(templates.Names))
-	for _, name := range templates.ListedNames() {
-		cat := templates.CategoryFor(name)
-		desc := templateDescription(name)
-		if cat == "" || desc == "" {
-			continue
-		}
-		rows = append(rows, templateView{Name: name, Category: cat, Description: desc})
-	}
-	catOrder := map[string]int{}
-	for i, c := range templates.CategoryOrder {
-		catOrder[c] = i
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		oi, oj := catOrder[rows[i].Category], catOrder[rows[j].Category]
-		if oi != oj {
-			return oi < oj
-		}
-		return rows[i].Name < rows[j].Name
-	})
-	return rows
-}
-
 // Compile-time check: githubdgrpc.Repo is the wire type referenced
 // from the wizard's repo projection.
 var _ = githubdgrpc.Repo{}
-
-// peekSessionGithubLogin is the side-effect-free sibling of
-// sessionGithubLogin: returns (login, true) when the cookie carries
-// a non-empty env.GithubLogin; ("", false) otherwise. Used by the
-// dashboard's renderAppNew so the wizard can render the Connect
-// GitHub CTA instead of the 403 problem sessionGithubLogin emits.
-// The §11 proof is still enforced at bind time (bindAppToRepo
-// re-runs sessionGithubLogin), so the wizard's "peek" path is
-// read-only by design.
-func peekSessionGithubLogin(s *server, r *http.Request) (string, bool) {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil || c.Value == "" {
-		return "", false
-	}
-	env, err := s.sessions.Verify(c.Value)
-	if err != nil || env.GithubLogin == "" {
-		return "", false
-	}
-	return env.GithubLogin, true
-}

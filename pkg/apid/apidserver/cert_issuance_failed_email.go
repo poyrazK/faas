@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,7 +23,7 @@ func (s *server) sendCertIssuanceFailedEmail(parent context.Context, log *slog.L
 	if s == nil || s.store == nil || s.mailer == nil {
 		return nil
 	}
-	cooldown, ok := s.store.(state.CustomDomainCertFailureEmailCooldownStore)
+	cooldown, ok := s.store.(state.CustomDomainCertFailureEmailAttemptStore)
 	if !ok {
 		return fmt.Errorf("store does not implement custom-domain cert-failure email cooldown")
 	}
@@ -30,18 +31,18 @@ func (s *server) sendCertIssuanceFailedEmail(parent context.Context, log *slog.L
 	if err != nil {
 		return err
 	}
+	if expected, bound := state.CustomDomainProbe(parent); bound && !state.SameCustomDomainClaim(expected, d) {
+		return state.ErrStaleCustomDomainProbe
+	}
 	if d.CertStatus != state.CustomDomainCertFailed {
 		return nil
 	}
+	parent = state.WithCustomDomainProbe(parent, d)
 	app, err := s.store.AppByID(parent, d.AppID)
 	if err != nil {
 		return err
 	}
-	acct, err := state.AppResourceAccount(parent, s.store, app)
-	if err != nil {
-		return err
-	}
-	recipients := certFailureRecipients(parent, s.store, acct, log)
+	recipients := certFailureRecipients(parent, s.store, app, log)
 	if len(recipients) == 0 {
 		return nil
 	}
@@ -57,68 +58,71 @@ func (s *server) sendCertIssuanceFailedEmail(parent context.Context, log *slog.L
 		DashboardURL: certFailureDashboardURL(s.cliAuthURLBase, app.Slug, d.Domain),
 		FailedAt:     d.CertFailedAt,
 	})
-	mailCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	mailTimeout := time.Duration(api.MailRetryMaxWallClockMS) * time.Millisecond
+	mailCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), mailTimeout)
 	defer cancel()
-	return s.mailer.Send(mailCtx, Message{
+	err = s.mailer.Send(mailCtx, Message{
 		To:       recipients,
 		Subject:  subject,
 		TextBody: body,
 		// Provider idempotency is useful across a retry, while the durable
 		// claim remains the cross-replica duplicate guard.
-		MessageID: "cert_issuance_failed:" + d.Domain + ":" + now.Format("20060102"),
+		MessageID: mail.CertificateIssuanceFailedKey(d.AppID, d.ChallengeToken, recipients, subject, body),
 	})
+	if err != nil {
+		receiptCtx, stop := context.WithTimeout(context.WithoutCancel(parent), mailTimeout)
+		defer stop()
+		return errors.Join(err, cooldown.ReleaseCustomDomainCertFailureEmail(receiptCtx, d, now))
+	}
+	return nil
 }
 
-// certFailureRecipients includes the app account owner and active owner/admin
-// members of organizations that account belongs to. The account owner is
-// always included even when an older domain row has no org_id association.
-func certFailureRecipients(ctx context.Context, store state.Store, owner state.Account, log *slog.Logger) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	add := func(email string) {
-		email = strings.TrimSpace(email)
-		if email == "" {
-			return
+// certFailureRecipients follows the app's tenant, independently of its creator
+// and billing namespace. A company notice reaches only its current owners and
+// admins; a personal notice reaches only its owner.
+func certFailureRecipients(ctx context.Context, store state.Store, app state.App, log *slog.Logger) []string {
+	accounts := []string{app.AccountID}
+	if app.OrgID != "" {
+		org, err := store.OrgByID(ctx, app.OrgID)
+		if err != nil || org.DeletedPending || org.Status == state.OrgStatusDeletedPending {
+			return nil
 		}
-		key := strings.ToLower(email)
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		out = append(out, email)
-	}
-	add(owner.Email)
-	orgs, err := store.ListOrgsForAccount(ctx, owner.ID)
-	if err != nil {
-		if log != nil {
-			log.Warn("cert_issuance_failed: list owner orgs", "account_id", owner.ID, "err", err)
-		}
-	} else {
-		for _, org := range orgs {
-			members, memberErr := store.ListOrgMembers(ctx, org.ID)
-			if memberErr != nil {
-				if log != nil {
-					log.Warn("cert_issuance_failed: list org members", "org_id", org.ID, "err", memberErr)
-				}
-				continue
+		if org.Personal {
+			if org.PersonalOwnerAccountID == nil || *org.PersonalOwnerAccountID != app.AccountID {
+				return nil
 			}
+		} else {
+			members, err := store.ListOrgMembers(ctx, org.ID)
+			if err != nil {
+				log.Warn("cert_issuance_failed: list app organization members", "org_id", org.ID, "err", err)
+				return nil
+			}
+			accounts = nil
 			for _, member := range members {
-				if member.RemovedAt != nil || (member.Role != state.OrgRoleOwner && member.Role != state.OrgRoleAdmin) {
-					continue
+				if member.RemovedAt == nil && (member.Role == state.OrgRoleOwner || member.Role == state.OrgRoleAdmin) {
+					accounts = append(accounts, member.AccountID)
 				}
-				memberAcct, accountErr := store.AccountByID(ctx, member.AccountID)
-				if accountErr != nil && !errors.Is(accountErr, state.ErrNotFound) {
-					if log != nil {
-						log.Warn("cert_issuance_failed: load org recipient", "account_id", member.AccountID, "err", accountErr)
-					}
-					continue
-				}
-				add(memberAcct.Email)
 			}
 		}
 	}
-	sort.Strings(out)
-	return out
+	seen := make(map[string]bool)
+	var recipients []string
+	for _, id := range accounts {
+		account, err := store.AccountByID(ctx, id)
+		if err != nil {
+			if !errors.Is(err, state.ErrNotFound) {
+				log.Warn("cert_issuance_failed: load recipient", "account_id", id, "err", err)
+			}
+			continue
+		}
+		email := strings.TrimSpace(account.Email)
+		if email != "" && !seen[strings.ToLower(email)] {
+			seen[strings.ToLower(email)] = true
+			recipients = append(recipients, email)
+		}
+	}
+	sort.Strings(recipients)
+	return recipients
 }
 
 func certFailureDashboardURL(base, slug, domain string) string {

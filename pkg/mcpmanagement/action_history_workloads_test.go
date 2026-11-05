@@ -76,7 +76,7 @@ func TestWorkloadActionHistoryServiceAbortRestartAndExpiry(t *testing.T) {
 			store, path, key := testStateStore(t)
 			opts := Options{APIBase: backend.URL, AllowWrites: true, planStore: store, planNamespace: "abort-history"}
 			client := api.NewClient(backend.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +116,7 @@ func TestWorkloadActionHistoryServiceAbortRestartAndExpiry(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = next.Close() })
 			opts.planStore = next
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestWorkloadActionHistoryServiceAbortRestartAndExpiry(t *testing.T) {
 				}
 			}
 			opts.planNamespace = "another-grant"
-			_, other, err := newManagementServer(client, opts)
+			_, other, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,7 +171,7 @@ func TestWorkloadActionHistoryNamedConsentAndExpiry(t *testing.T) {
 			store, path, key := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "named-workload-history"
 			client := api.NewClient(backend.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -207,7 +207,7 @@ func TestWorkloadActionHistoryNamedConsentAndExpiry(t *testing.T) {
 			grant := opts.Environments.Named["shop/staging"]
 			grant.Write = false
 			opts.Environments.Named["shop/staging"] = grant
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +225,7 @@ func TestWorkloadActionHistoryNamedConsentAndExpiry(t *testing.T) {
 			if !expire {
 				grant.Write = true
 				opts.Environments.Named["shop/staging"] = grant
-				_, restored, err = newManagementServer(client, opts)
+				_, restored, err = newHistoryTestManagementServer(client, opts)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -264,7 +264,7 @@ func TestWorkloadActionHistoryCompatibilityAndCombinedBound(t *testing.T) {
 	store, _, _ := testStateStore(t)
 	opts := Options{APIBase: backend.URL, AllowWrites: true, planStore: store, planNamespace: "compat-history"}
 	client := api.NewClient(backend.URL, testToken)
-	_, m, err := newManagementServer(client, opts)
+	_, m, err := newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestWorkloadActionHistoryCompatibilityAndCombinedBound(t *testing.T) {
 	if err := store.update("actions/"+opts.planNamespace, legacy); err != nil {
 		t.Fatal(err)
 	}
-	_, m, err = newManagementServer(client, opts)
+	_, m, err = newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestWorkloadActionHistoryCompatibilityAndCombinedBound(t *testing.T) {
 	if err := store.update(workloadActionsNamespace+opts.planNamespace, before); err != nil {
 		t.Fatal(err)
 	}
-	_, upgraded, err := newManagementServer(client, opts)
+	_, upgraded, err := newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

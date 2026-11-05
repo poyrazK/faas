@@ -61,14 +61,14 @@ type EventSubscriptionCapacityCommandReceipt struct {
 	RetainUntil                   time.Time                       `json:"retain_until"`
 }
 
-func (c *Client) SetEventSubscriptionCapacity(ctx context.Context, app, id string, req EventSubscriptionCapacityRequest) (EventSubscriptionDeliveryControl, error) {
+func (c *PreviewClient) SetEventSubscriptionCapacity(ctx context.Context, app, id string, req EventSubscriptionCapacityRequest) (EventSubscriptionDeliveryControl, error) {
 	var out EventSubscriptionDeliveryControl
 	err := c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/delivery-control"+"/capacity", req, &out)
 	return out, err
 }
 
 // GetEventSubscriptionCapacityCommand returns retained original evidence without applying a command.
-func (c *Client) GetEventSubscriptionCapacityCommand(ctx context.Context, app, id, command string) (EventSubscriptionCapacityCommandReceipt, error) {
+func (c *PreviewClient) GetEventSubscriptionCapacityCommand(ctx context.Context, app, id, command string) (EventSubscriptionCapacityCommandReceipt, error) {
 	var out EventSubscriptionCapacityCommandReceipt
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/delivery-control/capacity/commands/"+url.PathEscape(command), nil, &out)
 	return out, err
@@ -91,7 +91,7 @@ type EventSubscriptionCapacityCommandsQuery struct {
 	Limit   int
 }
 
-func (c *Client) ListEventSubscriptionCapacityCommands(ctx context.Context, app, id string, query EventSubscriptionCapacityCommandsQuery) (EventSubscriptionCapacityCommands, error) {
+func (c *PreviewClient) ListEventSubscriptionCapacityCommands(ctx context.Context, app, id string, query EventSubscriptionCapacityCommandsQuery) (EventSubscriptionCapacityCommands, error) {
 	var out EventSubscriptionCapacityCommands
 	values := url.Values{}
 	if query.Outcome != "" {

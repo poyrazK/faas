@@ -112,6 +112,16 @@ func mergeComposeMap(base, override map[string]any, field string) map[string]any
 			out[key] = value
 			continue
 		}
+		// Compose's map and list spellings describe the same environment.
+		// Normalize before merging so switching spelling cannot drop keys.
+		if key == "environment" {
+			baseEnv, baseOK := composeEnvironmentMap(baseValue)
+			overrideEnv, overrideOK := composeEnvironmentMap(value)
+			if baseOK && overrideOK {
+				out[key] = mergeComposeMap(baseEnv, overrideEnv, key)
+				continue
+			}
+		}
 		baseMap, baseOK := baseValue.(map[string]any)
 		overrideMap, overrideOK := value.(map[string]any)
 		if baseOK && overrideOK && key != "command" && key != "entrypoint" {
@@ -127,6 +137,30 @@ func mergeComposeMap(base, override map[string]any, field string) map[string]any
 		out[key] = value
 	}
 	return out
+}
+
+func composeEnvironmentMap(value any) (map[string]any, bool) {
+	if mapping, ok := value.(map[string]any); ok {
+		return mapping, true
+	}
+	list, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make(map[string]any, len(list))
+	for _, item := range list {
+		entry, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		key, text, set := strings.Cut(entry, "=")
+		if set {
+			out[key] = text
+		} else {
+			out[key] = nil
+		}
+	}
+	return out, true
 }
 
 func composeListMerges(parent, field string) bool {
@@ -155,12 +189,27 @@ func appendComposeUnique(base, override []any) []any {
 }
 
 func readComposeEnv(fsys fs.FS) (map[string]string, error) {
-	body, err := readValidFile(fsys, ".env")
+	return readComposeEnvFile(fsys, ".env", false)
+}
+
+// readComposeEnvFile reads one Compose .env file. A file that is absent is
+// empty unless required, as an include's explicit env_file is.
+func readComposeEnvFile(fsys fs.FS, name string, required bool) (map[string]string, error) {
+	if fsys == nil {
+		if required {
+			return nil, fmt.Errorf("reposcan: env file %s does not exist in the source", name)
+		}
+		return map[string]string{}, nil
+	}
+	body, err := readValidFile(fsys, name)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrInvalid) {
+		if required {
+			return nil, fmt.Errorf("reposcan: env file %s does not exist in the source", name)
+		}
 		return map[string]string{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reposcan: read .env: %w", err)
+		return nil, fmt.Errorf("reposcan: read %s: %w", name, err)
 	}
 	values := make(map[string]string)
 	for lineNumber, raw := range strings.Split(string(body), "\n") {
@@ -172,7 +221,7 @@ func readComposeEnv(fsys fs.FS) (map[string]string, error) {
 		key, value, ok := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
 		if !ok || composeVariableName.FindString(key) != key {
-			return nil, fmt.Errorf("reposcan: .env line %d has an invalid variable declaration", lineNumber+1)
+			return nil, fmt.Errorf("reposcan: %s line %d has an invalid variable declaration", name, lineNumber+1)
 		}
 		value = strings.TrimSpace(value)
 		if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
@@ -196,6 +245,11 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		{name: "user", value: &candidate.User},
 		{name: "stop_grace_period", value: &candidate.StopGracePeriod},
 		{name: "env_file", value: &candidate.EnvFile},
+		{name: "secrets", value: &candidate.Secrets},
+		{name: "deploy", value: &candidate.Deploy},
+		{name: "scale", value: &candidate.Scale},
+		{name: "mem_limit", value: &candidate.MemLimit},
+		{name: "cpus", value: &candidate.CPUs},
 	}
 	for _, field := range fields {
 		resolved, err := interpolateComposeValue(*field.value, values, source, service, field.name)

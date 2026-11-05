@@ -1,4 +1,4 @@
-from faas_sdk.models.workflow_recovery_automatic_queue_entry import WorkflowRecoveryAutomaticQueueEntry
+from faas_sdk.preview.models.workflow_recovery_automatic_queue_entry import WorkflowRecoveryAutomaticQueueEntry
 
 
 def test_initial_queue_evidence_round_trip():

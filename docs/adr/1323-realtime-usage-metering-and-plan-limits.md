@@ -84,3 +84,305 @@ end to end; with every flag off, realtimed and apid behave as before this ADR.
   only the per-connection queue limits apply.
 - `FAAS_REALTIME_USAGE_ENABLED` (apid and realtimed): usage recording, and
   `GET /v1/usage/realtime`, which answers 404 while off.
+
+## Amendment (2026-10-24): the per-node account share is a floor
+
+A security review found that with `FAAS_REALTIME_FAIR_USE_ENABLED` off, which
+is how realtime is deployed, one endpoint could hold every connection slot on
+a node. Endpoint caps equal the node cap, and an `auth_mode=none` endpoint
+admits any client, so a single account (or an anonymous client against any
+open endpoint) left every other tenant on the node with 429s. Likewise the
+node-wide callback outbox (64 MiB) had no per-tenant share: one endpoint with
+a slow callback filled it and every other tenant's message and disconnect
+callbacks on the node failed.
+
+- The per-node account share (`RealtimeAccountNodeSharePercent`, 50 %) now
+  applies with or without the flag. The flag still controls the plan
+  allowances, the fleet-wide count and the 6,000 node default.
+- The callback outbox gives each endpoint at most an eighth of its capacity
+  (`CallbackOutboxConfig.MaxEndpointBytes`); the offending endpoint gets
+  `ErrCallbackOutboxFull`, the others keep their callbacks.
+
+With the flag off, realtimed therefore refuses an account at half of a node,
+not only at the node and endpoint caps.
+
+## Amendment (2026-10-26): fair use and the outbound budget are on in deploy
+
+The rollout kept both flags off until realtime had been tested end to end, so
+a release would not change realtime's behaviour. Off is not the safe state:
+the node default stays 10,000 connections, about 520 MB of idle connections
+at the measured ~52 KB each, while realtimed runs with `MemoryMax=512M`. A
+node near its own cap would be OOM-killed and drop every tenant's sockets.
+These flags are protections, not features.
+
+- The generated apid and realtimed units set `FAAS_REALTIME_FAIR_USE_ENABLED=1`,
+  and the realtimed unit sets `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`.
+- Endpoint caps per plan were already enforced without the flag, so the change
+  adds the per-account connection allowance, the fleet-wide count and the
+  6,000 node default.
+- Production on 2026-10-26 had two realtime endpoints, both on one Scale test
+  account, and no open connections, so no account is over its allowance.
+- Mixed versions during a release stay safe: an apid with the flag sends an
+  allowance that a realtimed without it ignores, and a realtimed with the flag
+  and no allowance from apid applies only the node and endpoint caps.
+- Usage recording (`FAAS_REALTIME_USAGE_ENABLED`) stays off.
+
+
+## Amendment (2026-10-27): an account's share of the outbound budget
+
+The node outbound budget is one pool, and the shedder disconnects only
+connections whose backlog reaches 1/16 of their own queue limit (256 KiB by
+default). A security audit found that one tenant could open a few hundred
+slow-reading connections, keep each just under that floor, and fill the
+budget with backlogs nothing sheds; every frame on the node, for every
+tenant, was then refused.
+
+- An account's connections on a node hold at most
+  `api.RealtimeAccountNodeSharePercent` (50%) of the node outbound budget,
+  as they hold at most that share of its connections. A frame past the share
+  is refused like a full queue and counted as a node budget drop.
+- The bytes are counted per account (`accountConnections.outbound`) at the
+  same points the node total is reserved and released.
+
+## Amendment (2026-10-27): resume subscriptions per plan
+
+Resume, inbox and SSE subscriptions each read their channel's history from the
+control plane at least every 5 seconds. A node holds at most 256 of them
+(`RealtimeResumeSubscriptionsPerNode`) and one account at most half of those
+(amendment of 2026-10-24). With fair use on, an account now holds at most its
+plan's share of one node: Hobby 16, Pro 64, Scale 128
+(`RealtimeLimits.ResumeSubscriptionsPerNode`). The node and per-connection
+bounds stay; the plan share only divides the node's history-read budget.
+
+realtimed learns the plan from the account connection allowance apid already
+sends with every endpoint (`RealtimeResumeSubscriptionsPerNodeFor`), so no new
+registration field is needed: realtime nodes refuse unknown fields, and a
+release upgrades apid before them. Plans' connection allowances must stay
+distinct; a test pins it. Without fair use only the node share applies.
+
+## Amendment (2026-10-27): retained channels per account
+
+Retained history was bounded per endpoint (32 channels, 1,024 messages of
+4 KiB each, 24 hours), but the 32 counted every channel head ever created.
+Heads outlive their messages so a channel's sequences never restart, so an
+endpoint could retain on only 32 distinct channels in its lifetime, and an
+account's retained storage was bounded only through its endpoint count (up to
+about 32 GiB for Scale).
+
+- The limits now count channels that hold something now: retained messages
+  (`oldest_sequence < next_sequence`), reducer state or a snapshot.
+  `PruneExpiredManagedRealtimeChannelMessages` already deletes expired
+  messages and advances `oldest_sequence`, which frees the channel.
+- An endpoint holds at most 32 such channels at a time, as before, and an
+  account its plan's `RealtimeLimits.RetainedChannelsPerAccount`: Hobby 32,
+  Pro 256, Scale 1,024. At 4 MiB a channel that bounds an account's retained
+  control-plane storage to about 128 MiB, 1 GiB and 4 GiB.
+- The check runs only when a publish, batch or reducer starts holding a
+  channel, inside the transaction that holds the endpoint's row lock. The
+  account count is not serialized across the account's endpoints, so racing
+  publishes can run it over by a few channels.
+- A partial index, `managed_realtime_channel_heads_held_idx`, keeps both
+  counts proportional to the held channels, not to every head ever created.
+- Dormant heads are kept. Removing them safely needs the durable cursor,
+  read-progress and schedule rows that name a channel considered first; that
+  is a follow-up, not a limit.
+
+
+## Amendment (2026-10-31): per-user state counts live rows
+
+Three per-user stores capped each endpoint by counting every row it had ever
+created, and nothing deleted those rows, so each cap was used up for good: an
+endpoint could send inbox messages to 256 distinct users in its lifetime, keep
+notification preferences for 256 users and read markers for 1,024
+user-stream pairs. Event schemas allowed 64 immutable versions per endpoint
+across all its channels and event types, with no way to delete one.
+
+- **Inbox:** an inbox counts while it holds unexpired messages
+  (`oldest_sequence < next_sequence`, which
+  `PruneExpiredManagedRealtimeInboxMessages` advances), as retained channels
+  do since 2026-10-27. An endpoint holds at most 256 such inboxes at a time
+  (`api.RealtimeInboxesHeldPerEndpoint`). Inbox heads stay so sequences never
+  restart; `managed_realtime_inbox_heads_held_idx` keeps the count
+  proportional to held inboxes.
+- **Read markers:** a marker counts for 30 days after its last update and the
+  history reaper deletes it after that, like a named cursor. Messages are
+  retained for at most 24 hours, so an older marker sits below every retained
+  message and deleting it leaves the unread count unchanged. An endpoint keeps
+  at most 1,024 live markers (`api.RealtimeReadMarkersPerEndpoint`).
+- **Notification preferences:** settings with no expiry, so they are capped
+  per account by plan (`RealtimeLimits.NotificationPreferencesPerAccount`):
+  Hobby 1,000, Pro 10,000, Scale 50,000 users. A document is at most 32
+  categories and 16 devices, a few KB, so Scale stays near 100 MB. Writing the
+  defaults deletes the user's row and frees the slot, since the defaults need
+  none.
+- **Event schemas:** 64 versions per channel and event type
+  (`api.RealtimeEventSchemaVersionsPerEventType`) and 1,024 per endpoint
+  (`api.RealtimeEventSchemasPerEndpoint`). At 16 KiB a schema that bounds an
+  endpoint's schemas to 16 MiB. Versions stay immutable and undeletable.
+- The constants moved from `pkg/state` to `pkg/api/limits.go`.
+
+## Amendment (2026-11-02): an account's realtime write rate
+
+Retained writes reach control-plane Postgres through apid on paths the account
+API budget (600–6,000 requests a minute by plan) does not cover: a publisher
+credential publishes up to 600 times a minute and an endpoint holds 64 of
+them, and an endpoint keeps up to 256 recurring schedules firing every
+5 seconds with no end. One account could write without bound, and its
+schedules could fill the schedule runner's due list ahead of every other
+account's.
+
+- Every apid path that writes realtime rows takes from one per-account token
+  bucket (`RealtimeLimits.RetainedWritesPerSecond`, `RetainedWriteBurst`):
+  Hobby 10/s burst 32, Pro 50/s burst 100, Scale 200/s burst 400. It counts
+  retained publishes and each message of a batch, publisher-credential
+  publishes, inbox messages, message edits and deletes, snapshot writes and
+  scheduled publishes. Live publishes write no rows and are not counted.
+- A request past the rate gets `429 realtime_write_rate_limited` with the
+  limit, the writes it needed and `Retry-After`; it writes nothing. The burst
+  is at least `ManagedRealtimeBatchMaxMessages` (32), so a full batch fits.
+- A due schedule of an account past the rate is postponed, without counting
+  an attempt, until the bucket has room for it and for that account's
+  schedules postponed before it in the same pass
+  (`DeferManagedRealtimeSchedule` sets `next_attempt_at`). Recurrence is
+  fixed-delay, so the next occurrence follows the publish.
+- The bucket is per apid, like the account API budget. A publisher credential
+  or schedule reads the account's plan at most once a minute.
+
+## Amendment (2026-11-02): endpoint changes close sockets they no longer admit
+
+An endpoint update used to apply only to new connections. A socket admitted
+with a finalized or expired static token, under a changed auth mode or OIDC
+policy, or from an origin removed from `allowed_origins` stayed open until its
+maximum age, up to 7 days, although finalizing a rotation is how a customer
+revokes an exposed token. realtimed now records what admitted each connection
+and, on every endpoint registration, closes with 1008 the connections the new
+configuration would refuse. apid re-registers endpoints every 30 seconds,
+which also closes previous-token sockets once their grace deadline passes.
+Channel-rule changes, including the claims rules extract, keep connections;
+ticket connections keep their own per-second recheck.
+
+## Amendment (2026-11-02): client message rate and repeated acks
+
+- A client frame on the original protocol is written to the node's callback
+  spool (two fsyncs) and delivered to the message callback, with no bound: a
+  failing callback let one client spool at wire speed, on the disk snapshot
+  restores use. A connection now sends `api.RealtimeClientMessagesPerSecond`
+  (20, bursts of 40) and a node spools `RealtimeNodeClientMessagesPerSecond`
+  (2,000, bursts of 4,000). Past either the node stops reading the socket until
+  the rate allows, so TCP slows the client and nothing is dropped; a frame that
+  would wait over five seconds closes the connection with 1013. Counters:
+  `realtimed_client_messages_paced_total`, `..._throttled_total`.
+- Acks were exempt from the per-connection command budget
+  (`api.RealtimeResumeCommandsPerSecond`) because each must advance a cursor,
+  but an ack of the already-acknowledged sequence
+  was accepted and, for durable subscriptions and the inbox, rewrote the
+  cursor row each time. Such an ack is now answered without a write and spends
+  a command token.
+
+## Amendment (2026-11-03): relay, read-marker, live-frame and worker bounds
+
+- **Ephemeral relays.** Every signal, presence update and read receipt went
+  from realtimed to apid (`RelayEphemeral`), which read the endpoint and the
+  node from Postgres each time, with only per-connection and per-channel
+  rates. A node now relays at most `api.RealtimeNodeEphemeralRelaysPerSecond`
+  (500, bursts of 1,000) and one endpoint at most
+  `RealtimeEndpointEphemeralRelaysPerSecond` (200, bursts of 400) on a node.
+  Past either, the frame is refused with its existing code
+  (`signal_rate_limited`, `presence_rate_limited`, `read_rate_limited`)
+  before anything is delivered, so every node sees the same frames. apid
+  caches the relay's endpoint and node lookups for 5 seconds; a disabled
+  endpoint or deactivated node stops relaying within that time. Counter:
+  `realtimed_ephemeral_relays_throttled_total`.
+- **Read markers.** Each advance locked the endpoint row and counted its
+  markers, even for a repeated sequence. A repeated or older sequence is now
+  answered without a lock or write, and a marker already counted toward the
+  cap advances under its own row lock. Only a new marker takes the endpoint
+  lock that keeps the cap exact.
+- **Live query frames.** `live.subscribe` and `live.renew` start or change a
+  hub subscription and had no rate. A connection sends
+  `api.RealtimeLiveFramesPerSecond` (10, bursts of 40) and a node
+  `RealtimeNodeLiveFramesPerSecond` (1,000, bursts of 2,000); past either the
+  frame gets `live.error` `live_query_limit` (closed for a subscribe).
+  Counter: `realtimed_live_frames_throttled_total`.
+- **Inbox read receipts** reach their reader's connections through an index
+  by endpoint and principal instead of a scan of every connection on the node.
+- **Push delivery** claimed 8 deliveries every 5 seconds per apid (about
+  1.6/s for the platform). It now runs up to 32 sends at once and claims again
+  as soon as a sender is free. Endpoints take turns within the 2,048
+  longest-due deliveries, so one endpoint's backlog does not hold the others'
+  behind it. Retention deletes left the claim transaction for a batched prune
+  once a minute, and a claim cancels or fails at most the due head.
+- **Scheduled messages** were published one at a time, at most 128 every
+  5 seconds (about 25/s, below one Scale account's 200/s write rate). A pass
+  now publishes 8 channels at once, each channel's schedules in due order,
+  and a full list is followed at once by the next, up to 20 lists per tick.
+
+## Amendment (2026-11-03): spool, push token, presence and reconnect costs
+
+- **Callback spool.** Writing a v1 message's callback file (two fsyncs) and
+  rewriting a failed one happened under the spool's node-wide lock, so every
+  enqueue, claim, ack and metrics read on the node waited behind one disk
+  flush at a time. The bytes are now reserved under the lock and the file is
+  written and fsynced without it; the event joins its connection's queue once
+  it is on disk. Retries and dead letters are rewritten the same way while
+  the event stays claimed.
+- **Callback replay share.** Replay workers took the oldest ready event
+  node-wide, so an endpoint whose callback hangs for the 30-second timeout
+  could hold all eight. While another endpoint has an event ready, one
+  endpoint holds at most a quarter of the workers (two of eight); with nothing
+  else ready it may use more, but a quarter always stays free for events that
+  arrive later. Idle workers wait for work instead of ending the pass, so one
+  held worker does not stop the others.
+- **Push provider tokens.** APNs provider tokens were signed for every send
+  (APNs throttles keys whose token changes more often than every 20 minutes)
+  and FCM access tokens fetched from Google for every send. apid now reuses an
+  APNs token for 30 minutes and an FCM token until a minute before it
+  expires, and drops a token the provider refuses with 401 or 403.
+- **Presence renewals.** Every 15 seconds each present connection renewed its
+  lease with a full upsert: a per-channel lock, a member count and the whole
+  member list (up to 512 rows) read back. A renewal is now one row update
+  through apid's cached endpoint and node lookups; a lease apid no longer
+  holds falls back to the upsert, and so does an apid without renewals.
+- **Cursor loads.** Loading a durable or inbox cursor (every reconnect) locked
+  the endpoint row and deleted the endpoint's expired cursors. A live cursor
+  now loads under its own row; only creating one takes the endpoint lock that
+  keeps the cap exact. Direct-message receipts keep the endpoint lock: each
+  send creates a receipt, and API rate limits already bound sends.
+- **Reconnects after a restart.** A restarting realtimed closed every socket
+  at once and clients returned within 100 ms. It now closes with 1012
+  (service restart); the Node SDK spreads reconnects after 1001 or 1012 over
+  up to 5 seconds. A node accepts at most
+  `api.RealtimeNodeHandshakesPerSecond` (1,000, bursts of 5,000) new
+  connections; past that a handshake gets 503 with a `Retry-After` of 1-5
+  seconds. Counter: `realtimed_handshakes_throttled_total`.
+
+## Amendment (2026-11-03): restarts keep endpoints; reconcile and route costs
+
+- **Endpoints survive a restart.** realtimed started with no endpoints and
+  learned them only from apid's endpoint reconcile (every 30 s) or a later
+  change, so after every deploy or hand-off reconnects were refused with 404
+  until apid's pass reached their endpoint. realtimed now saves its
+  registrations after each change to `/run/faas/realtimed/endpoints.json`
+  (`FAAS_REALTIME_ENDPOINT_SNAPSHOT`; tmpfs, mode 0600, so endpoint
+  credentials never reach disk and a reboot clears it) and restores them
+  before it serves. apid's reconcile still corrects whatever changed while no
+  process ran.
+- **Endpoint reconcile.** The pass synced endpoints one at a time, each with
+  an app read, two account reads, an active-node list, three credential
+  decryptions and a registration per node, and outgrew its 30 seconds at a
+  few thousand endpoints. It now syncs eight endpoints at a time, reads each
+  account once per pass, reuses the node list for 5 s and decrypted
+  credentials by their sealed bytes, and skips a node that already holds the
+  same registration: the node listed the endpoint in this pass's inventory and
+  apid sent it the same fingerprint (`realtime.EndpointFingerprint`) in the
+  last 10 minutes. The fingerprint changes when a previous token's grace ends,
+  so that re-registration, which closes the token's sockets, still happens.
+- **Channel routes.** A node reported a channel's first subscriber or last
+  unsubscribe under one node-wide lock held across the apid call, and apid
+  recorded it, like each 30-second node snapshot, under the endpoint row's
+  lock. Reports now serialize per channel only, and route bookkeeping takes a
+  per-endpoint advisory lock instead of the endpoint row. The endpoint locks
+  realtime cap checks take (cursors, read markers, history, receipts, tickets,
+  groups and the rest) are now `FOR NO KEY UPDATE`: they still serialize with
+  each other, but a row inserted under the endpoint's foreign key, such as a
+  route, no longer waits for them.

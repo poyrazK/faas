@@ -36,6 +36,8 @@ type discovery struct {
 	backends     []string
 	every        time.Duration
 	releaseAfter time.Duration
+	// verify checks apid's signature on each login; nil checks none.
+	verify *livekeys.Verifier
 }
 
 func discoveryConfig() (discovery, error) {
@@ -56,6 +58,7 @@ func discoveryConfig() (discovery, error) {
 // database.
 func discover(ctx context.Context, f *fleet, keys *keySource, d discovery, log *slog.Logger) {
 	store := livekeys.New(keys.pool)
+	d.verify = keys.verify
 	tick := time.NewTicker(d.every)
 	defer tick.Stop()
 	for {
@@ -90,15 +93,22 @@ func discovered(rows []livekeys.LiveDatabase, identities []*age.X25519Identity, 
 }
 
 func discoveredDatabase(row livekeys.LiveDatabase, identities []*age.X25519Identity, d discovery) (database, error) {
+	if !databaseIDPattern.MatchString(row.DatabaseID) {
+		return database{}, fmt.Errorf("database ID %q", row.DatabaseID)
+	}
+	// A login a database writer stored would point this database's ID at a
+	// connection of their choosing (ADR 20261028161502).
+	if err := d.verify.Check(livekeys.SignatureKindLogin, row.DatabaseID, "", row.Recipient, row.Sealed, row.Signature); err != nil {
+		return database{}, err
+	}
 	namespace, plain, err := secretbox.OpenBytesMulti(identities, row.Sealed)
 	if err != nil {
 		return database{}, err
 	}
-	if namespace != livekeys.LoginSealNamespace {
-		return database{}, fmt.Errorf("sealed for %q, not a live login", namespace)
-	}
-	if !databaseIDPattern.MatchString(row.DatabaseID) {
-		return database{}, fmt.Errorf("database ID %q", row.DatabaseID)
+	// A login sealed to another database's namespace is refused: its
+	// connection string must never be served under this row's ID.
+	if !livekeys.LoginNamespaceOpens(namespace, row.DatabaseID) {
+		return database{}, fmt.Errorf("sealed for %q, not this database's live login", namespace)
 	}
 	// apid prepared the database: the login neither installs nor creates.
 	db := database{ID: row.DatabaseID, DSN: string(plain), Slot: row.Slot, Publication: schemalog.Publication,

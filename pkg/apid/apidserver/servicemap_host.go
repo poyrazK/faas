@@ -18,8 +18,14 @@ type serviceMapHost struct{ s *server }
 
 var _ servicemap.Host = serviceMapHost{}
 
+// Apps lists the account's apps the request may see: a company app stays
+// off the map once its creator has left the company.
 func (h serviceMapHost) Apps(ctx context.Context, accountID string) ([]state.App, error) {
-	return h.s.store.ListApps(ctx, accountID)
+	apps, err := h.s.store.ListApps(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return accountViewApps(ctx, h.s.store, state.Account{ID: accountID}, apps)
 }
 
 func (h serviceMapHost) PromQL() *promql.Client { return h.s.promqlClient }

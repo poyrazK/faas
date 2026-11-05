@@ -69,7 +69,7 @@ func applyHistoryEnvironment(t *testing.T, m *management, id string, rollback bo
 
 func newHistoryEnvironment(t *testing.T, b *httptest.Server, opts Options) *management {
 	t.Helper()
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

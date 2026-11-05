@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -121,13 +122,14 @@ func TestMagicLinkOutboxPublicWiringUniformResponseAndRollback(t *testing.T) {
 				t.Fatal(err)
 			}
 			verify := httptest.NewRecorder()
-			handler.ServeHTTP(verify, httptest.NewRequest(http.MethodGet, "https://dashboard.example.test/auth/verify?token="+token, nil))
+			handler.ServeHTTP(verify, browserOpenedLink("https://dashboard.example.test/auth/verify?token="+token))
 			if verify.Code != http.StatusFound || verify.Header().Get("Location") != "/dashboard/" {
 				t.Fatal("issued sign-in link failed after flag rollback", verify.Code)
 			}
 			var cookie *http.Cookie
 			for _, c := range verify.Result().Cookies() {
-				if c.Name == "faas_sid" {
+				// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+				if sessioncookie.IsName(c.Name) && c.Value != "" {
 					cookie = c
 				}
 			}
@@ -142,7 +144,7 @@ func TestMagicLinkOutboxPublicWiringUniformResponseAndRollback(t *testing.T) {
 				t.Fatal("magic-link sign-in lost its server-side session", err)
 			}
 			replay := httptest.NewRecorder()
-			handler.ServeHTTP(replay, httptest.NewRequest(http.MethodGet, "https://dashboard.example.test/auth/verify?token="+token, nil))
+			handler.ServeHTTP(replay, browserOpenedLink("https://dashboard.example.test/auth/verify?token="+token))
 			if replay.Code != http.StatusGone || len(replay.Result().Cookies()) != 0 {
 				t.Fatal("single-use sign-in link replay authenticated", replay.Code)
 			}
@@ -188,6 +190,9 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 	if _, err := store.CreateAPIKey(t.Context(), account.ID, api.HashToken([]byte("pre-verification-api-key")), "unproved key", []string{"admin"}); err != nil {
 		t.Fatal(err)
 	}
+	// The owner asks after the per-account sign-in mail interval; a second
+	// link within it is not sent (bug hunt 2026-10-27 H14).
+	server.AdvanceSecurityMailClockForTest(api.SecurityMailPerAccountInterval)
 	if response := resetFormPost(handler, "/v1/auth/signup/magic-link", url.Values{"email": {account.Email}}); response.Code != http.StatusOK {
 		t.Fatal(response.Code)
 	}
@@ -206,7 +211,7 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 		t.Fatal(err)
 	}
 	failed := httptest.NewRecorder()
-	handler.ServeHTTP(failed, httptest.NewRequest(http.MethodGet, link, nil))
+	handler.ServeHTTP(failed, browserOpenedLink(link))
 	if failed.Code != http.StatusInternalServerError || len(failed.Result().Cookies()) != 0 {
 		t.Fatal("failed ownership transaction authenticated", failed.Code)
 	}
@@ -217,7 +222,7 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 		t.Fatal(err)
 	}
 	verified := httptest.NewRecorder()
-	handler.ServeHTTP(verified, httptest.NewRequest(http.MethodGet, link, nil))
+	handler.ServeHTTP(verified, browserOpenedLink(link))
 	if verified.Code != http.StatusFound || len(verified.Result().Cookies()) == 0 {
 		t.Fatal("new account did not sign in after ownership proof", verified.Code)
 	}
@@ -236,4 +241,12 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 	if err != nil || len(keys) != 0 {
 		t.Fatal("ownership proof retained pre-verification API keys", err)
 	}
+}
+
+// browserOpenedLink is a sign-in link opened from a mail app: the browser's
+// own top-level navigation, which signs in without a confirm page.
+func browserOpenedLink(target string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r.Header.Set("Sec-Fetch-Site", "none")
+	return r
 }

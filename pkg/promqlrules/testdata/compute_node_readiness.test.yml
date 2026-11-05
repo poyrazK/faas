@@ -1,0 +1,60 @@
+# ADR-20261022184531: node readiness alerts. One degraded node of two warns
+# after 5 minutes; every node not ready pages after 2.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "a degraded node warns after 5 minutes and nothing pages while another is ready"
+    input_series:
+      - series: 'schedd_compute_node_readiness{node="fsn-2",state="ready"}'
+        values: "1x20"
+      - series: 'schedd_compute_node_readiness{node="fsn-3",state="ready"}'
+        values: "0x20"
+      - series: 'schedd_compute_node_readiness{node="fsn-3",state="degraded"}'
+        values: "1x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasComputeNodeDegraded
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: FaasComputeNodeDegraded
+        exp_alerts:
+          - exp_labels:
+              node: fsn-3
+              severity: warn
+              component: schedd
+              family: node_readiness
+            exp_annotations:
+              summary: "compute node fsn-3 is degraded"
+              description: "Node fsn-3 answers its heartbeat but cannot serve wakes. compute_nodes.readiness_reason and wake_breaker_reason say why. Placement sends it wakes only when no ready node has capacity."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeDegraded.md"
+      - eval_time: 6m
+        alertname: FaasNoComputeNodeReady
+        exp_alerts: []
+
+  - interval: 30s
+    name: "no ready node pages after 2 minutes"
+    input_series:
+      - series: 'schedd_compute_node_readiness{node="fsn-2",state="ready"}'
+        values: "0x10"
+      - series: 'schedd_compute_node_readiness{node="fsn-3",state="ready"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasNoComputeNodeReady
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FaasNoComputeNodeReady
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: schedd
+              family: node_readiness
+            exp_annotations:
+              summary: "no compute node is ready"
+              description: "Every heartbeated compute node is degraded, draining or unavailable. Wakes are refused or placed on nodes that refuse them."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeDegraded.md"

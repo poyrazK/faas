@@ -41,7 +41,7 @@ import (
 // unconditionally would surface here.
 func TestObsSecurity_NoPIIOnDefaultTenantsList(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants: got status %d, want 200", rec.Code)
 	}
@@ -69,7 +69,7 @@ func TestObsSecurity_NoPIIOnDefaultTenantsList(t *testing.T) {
 // have an empty email field on the default include_pii=0 path.
 func TestObsSecurity_NoPIIOnDefaultTenantDetail(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants/"+e.acct.ID, nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants/"+e.acct.ID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants detail: got status %d, want 200", rec.Code)
 	}
@@ -94,7 +94,7 @@ func TestObsSecurity_NoPIIOnDefaultTenantDetail(t *testing.T) {
 // field name + a non-null value.
 func TestObsSecurity_NoSealedBlobsOnTenantsList(t *testing.T) {
 	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/tenants?include_pii=1", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/tenants?include_pii=1", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenants include_pii: got status %d, want 200", rec.Code)
 	}

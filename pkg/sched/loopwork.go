@@ -55,23 +55,86 @@ const (
 	workPrimeRecovery        workKind = "prime_recovery"
 	workWorkflowDispatch     workKind = "workflow_dispatch"
 	workWorkflowSchedules    workKind = "workflow_schedules"
+	workWorkflowAgentRuns    workKind = "workflow_agent_runs"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
-	workEventFanout          workKind = "event_fanout"
-	workReaper               workKind = "reaper"
-	workRehearsalFault       workKind = "rehearsal_worker_fault"
-	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
-	workRehearsalSweep       workKind = "rehearsal_sweep"
-	workWorkerRecovery       workKind = "worker_recovery"
-	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
+	// workBrokerTriggerDispatch runs one external broker trigger's batch;
+	// its key is the trigger, so a trigger has one batch in flight.
+	workBrokerTriggerDispatch workKind = "broker_trigger_dispatch"
+	workEventFanout           workKind = "event_fanout"
+	workReaper                workKind = "reaper"
+	workRehearsalFault        workKind = "rehearsal_worker_fault"
+	workRehearsalSuspend      workKind = "rehearsal_suspend_resume"
+	workRehearsalSweep        workKind = "rehearsal_sweep"
+	workWorkerRecovery        workKind = "worker_recovery"
+	workWorkerRecoverySweep   workKind = "worker_recovery_sweep"
+	// workAdoptionReport applies restarted vmmds' adoption reports.
+	workAdoptionReport workKind = "adoption_report"
+	// workAppWake and workRuntimeConfigRestart deliver the durable app_wake
+	// and runtime_config_restart handoffs, which boot VMs (ADR-191
+	// amendment 2026-10-26).
+	workAppWake              workKind = "app_wake"
+	workRuntimeConfigRestart workKind = "runtime_config_restart"
+	// workWatchdog is the §6.1 stuck-row sweep. Each KillStuck can wait 5 s
+	// on a destroy, so it runs off the loop (ADR-20261028200212).
+	workWatchdog workKind = "watchdog"
+	// workInvocationsRetention is the minute's invocation retention pass. It
+	// repeats full batches, so it runs off the loop (ADR-20261029012000).
+	workInvocationsRetention workKind = "invocations_retention"
+	// workTargets, workFloor and workPrewarm are the one-second scaling
+	// triggers. Their admissions wait on vmmd's restore or boot, which held
+	// the loop (the stats tick, cron, the other triggers) for that long
+	// (ADR 20261103131546). Scale-up already ran off the loop.
+	workTargets workKind = "targets"
+	workFloor   workKind = "floor"
+	workPrewarm workKind = "prewarm"
+	// workRetention is the hourly instance, dead-letter and cron-history
+	// retention; workWorkflowRetention and workTriggersRetention are their
+	// siblings (ADR 20261103131546).
+	workRetention         workKind = "retention"
+	workWorkflowRetention workKind = "workflow_retention"
+	workTriggersRetention workKind = "triggers_retention"
+	// workAppPark parks a whole app (an evicted app, a suspended or
+	// abuse-held account, a spend cap) and workAppDelete destroys a deleted
+	// app's VMs. Both snapshot or destroy every live instance, so they run
+	// off the loop and off the reaper (ADR 20261103164725).
+	workAppPark   workKind = "app_park"
+	workAppDelete workKind = "app_delete"
+	// workInstanceFailure destroys an instance a peer schedd relayed a
+	// terminal failure for; workJobsReaper is the stuck-job reaper tick and
+	// workCronFireNow drains manual cron runs. The first two wait on VM
+	// destroys and the app lock, the third on many enqueues, so they run off
+	// the loop (ADR 20261103195512).
+	workInstanceFailure workKind = "instance_failure"
+	workJobsReaper      workKind = "jobs_reaper"
+	workCronFireNow     workKind = "cron_fire_now"
+	// workCronSweep is the minute's cron sweep and its resumed passes,
+	// workRecentLoad the one-second gateway scrape behind scale-in,
+	// workOperatorIntents the operator-intent drain (a force park can wait
+	// 90 s on vmmd) and workHeartbeat the node probe (5 s per unanswered
+	// ping). Each held the select loop (ADR 20261104091530).
+	workCronSweep       workKind = "cron_sweep"
+	workRecentLoad      workKind = "recent_load"
+	workOperatorIntents workKind = "operator_intents"
+	workHeartbeat       workKind = "heartbeat"
+	// workInstanceEnforcement runs the stats tick's per-instance actions:
+	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
+	// CPU saturation captures (ADR 20261104143005).
+	workInstanceEnforcement workKind = "instance_enforcement"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
-	workReaper, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
+	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
+	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
+	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
+	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
+	workAppPark, workAppDelete,
+	workInstanceFailure, workJobsReaper, workCronFireNow,
+	workCronSweep, workRecentLoad, workOperatorIntents, workHeartbeat,
+	workInstanceEnforcement,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -87,9 +150,16 @@ const (
 )
 
 // workSpec is one kind's budget and overflow behaviour.
+//
+// rerunCoalesced makes a submit that coalesces into an in-flight task ask
+// for one more pass when that task finishes, instead of being dropped. Use
+// it where a wake carries news the running pass may already have read past:
+// event fanout's event_published arrives while a sweep runs, and without the
+// extra pass the new event waits for the safety ticker.
 type workSpec struct {
-	slots    int
-	overflow overflowPolicy
+	slots          int
+	overflow       overflowPolicy
+	rerunCoalesced bool
 }
 
 // workSpecs is the per-kind policy table.
@@ -107,7 +177,8 @@ type workSpec struct {
 // coalesces ticks, and a dropped tick is retried the next minute. Workflow
 // dispatch gets four slots for independent runs; trigger polling and event
 // fanout get one slot each because their tick work is already bounded and
-// durable state makes the next tick a safe retry.
+// durable state makes the next tick a safe retry. Event fanout reruns once
+// after a pass during which an event_published wake arrived.
 var workSpecs = map[workKind]workSpec{
 	workServiceRecovery:      {slots: api.ServiceRecoveryConcurrentApps, overflow: overflowDrop},
 	workServiceRecoverySweep: {slots: 1, overflow: overflowDrop},
@@ -122,11 +193,15 @@ var workSpecs = map[workKind]workSpec{
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
 	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
+	workWorkflowAgentRuns:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
 	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},
-	workEventFanout:       {slots: 1, overflow: overflowDrop},
+	// Broker trigger lanes (ADR-20261027162741): a dropped or coalesced
+	// lane is resubmitted by the next trigger tick.
+	workBrokerTriggerDispatch: {slots: api.BrokerTriggerDispatchSlotsPerNode, overflow: overflowDrop},
+	workEventFanout:           {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.
@@ -136,6 +211,65 @@ var workSpecs = map[workKind]workSpec{
 	// The rehearsal listing sweep runs off the loop goroutine (ADR-20261019120000);
 	// its durable rows make the next trigger tick a safe retry.
 	workRehearsalSweep: {slots: 1, overflow: overflowDrop},
+	// One pass at a time; a tick during a pass coalesces, and an
+	// unapplied report is fetched again on the next tick.
+	workAdoptionReport: {slots: 1, overflow: overflowDrop},
+	// Explicit wakes and runtime-config restarts each hold a slot for a
+	// whole boot. The wake coordinator merges wakes of one app, so the
+	// slots bound cross-app fan-out. A dropped delivery stays pending in
+	// the notification outbox and its replay worker delivers it after the
+	// wakeup grace period.
+	workAppWake:              {slots: 8, overflow: overflowDrop},
+	workRuntimeConfigRestart: {slots: 4, overflow: overflowDrop},
+	// One sweep at a time. A tick that fires while a sweep still waits on
+	// destroys coalesces into it; the rows stay stuck, so the next tick
+	// finds them again.
+	workWatchdog: {slots: 1, overflow: overflowDrop},
+	// One retention pass at a time; a tick while one runs coalesces, and
+	// the next minute's tick carries on where it stopped.
+	workInvocationsRetention: {slots: 1, overflow: overflowDrop},
+	// One tick of each scaling trigger at a time; a tick while one runs
+	// coalesces, and the next second's tick reads the ledger again. Their
+	// admissions go through the engine's per-app locks and caps, as
+	// scale-up's off-loop ticks already do.
+	workTargets: {slots: 1, overflow: overflowDrop},
+	workFloor:   {slots: 1, overflow: overflowDrop},
+	workPrewarm: {slots: 1, overflow: overflowDrop},
+	// One pass of each retention at a time; a tick while one runs
+	// coalesces, and the next pass carries on where it stopped.
+	workRetention:         {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	workTriggersRetention: {slots: 1, overflow: overflowDrop},
+	// Whole-app parks and deleted-app cleanups, one per app (the key) and
+	// four apps at once. A dropped park is retried by the next reaper tick; a
+	// dropped cleanup by the reaper's lifecycle reconciliation, which lists
+	// deleted apps' live instances every tick.
+	workAppPark:   {slots: 4, overflow: overflowDrop},
+	workAppDelete: {slots: 4, overflow: overflowDrop},
+	// A relayed failure is consumed with its notification and nothing
+	// replays it, so a full pool runs it inline as before rather than drop
+	// it. The key is the report, so a duplicate delivery coalesces.
+	workInstanceFailure: {slots: 8, overflow: overflowInline},
+	// One stuck-job pass at a time; the next 5 s tick finds what is left.
+	workJobsReaper: {slots: 1, overflow: overflowDrop},
+	// One fire-now drain at a time. A run-now that arrives during a drain
+	// asks for one more pass; the minute safety tick covers anything else.
+	workCronFireNow: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// One cron pass at a time, so the minute's tried set has one writer. A
+	// tick or a resume that arrives during a pass runs once after it.
+	workCronSweep: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// One scrape at a time; a second that fires during a slow scrape is
+	// dropped and the next second reads the cumulative counters again.
+	workRecentLoad: {slots: 1, overflow: overflowDrop},
+	// Intents run one after another, as before. One that arrives during a
+	// drain asks for one more; the 30 s safety tick covers anything else.
+	workOperatorIntents: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// One probe pass at a time; the next 30 s tick probes again.
+	workHeartbeat: {slots: 1, overflow: overflowDrop},
+	// Keyed by action and instance. An action is recorded as taken only when
+	// it succeeds, so a dropped one is submitted again by the next 200 ms
+	// tick that still sees the condition.
+	workInstanceEnforcement: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.
@@ -149,7 +283,10 @@ type workPool struct {
 
 	mu       sync.Mutex
 	inFlight map[workKind]map[string]struct{}
-	closing  bool
+	// rerun holds the latest coalesced submit per in-flight key of a
+	// rerunCoalesced kind; the running task takes it when its pass ends.
+	rerun   map[workKind]map[string]func()
+	closing bool
 
 	// wg tracks dispatched workers so drain can wait for them. Tests
 	// need this because submit moves work off the caller's goroutine.
@@ -162,10 +299,12 @@ func newWorkPool(log *slog.Logger, ops *wire.OpsMetrics) *workPool {
 		ops:      ops,
 		slots:    make(map[workKind]chan struct{}, len(workSpecs)),
 		inFlight: make(map[workKind]map[string]struct{}, len(workSpecs)),
+		rerun:    make(map[workKind]map[string]func(), len(workSpecs)),
 	}
 	for kind, spec := range workSpecs {
 		p.slots[kind] = make(chan struct{}, spec.slots)
 		p.inFlight[kind] = make(map[string]struct{})
+		p.rerun[kind] = make(map[string]func())
 	}
 	return p
 }
@@ -173,8 +312,9 @@ func newWorkPool(log *slog.Logger, ops *wire.OpsMetrics) *workPool {
 // submit runs fn off the caller's goroutine.
 //
 // key coalesces: while a task with the same (kind, key) is in flight, a
-// second submit is a no-op counted as "coalesced". An empty key disables
-// coalescing for that call.
+// second submit is a no-op counted as "coalesced", or for a rerunCoalesced
+// kind a request for one more pass once the running one ends. An empty key
+// disables coalescing for that call.
 //
 // Returns the outcome it recorded, so callers and tests can assert on it
 // without scraping Prometheus.
@@ -193,6 +333,9 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 	}
 	if key != "" {
 		if _, exists := p.inFlight[kind][key]; exists {
+			if workSpecs[kind].rerunCoalesced {
+				p.rerun[kind][key] = fn
+			}
 			p.mu.Unlock()
 			p.observe(kind, "coalesced")
 			if p.log != nil {
@@ -218,12 +361,31 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 		return true
 	}
 
-	run := func() {
+	// run executes fn, then any pass a coalesced submit asked for. release
+	// frees the task's slot (nil when it runs inline without one). Ending
+	// the task drops its key and frees its slot under mu, so a submit sees
+	// either a running task to coalesce into or a free slot, never the
+	// moment between, where it used to be dropped as saturated. Each pass,
+	// reruns included, records its own duration: a busy rerunCoalesced kind
+	// can rerun for minutes, and its sweep alerts count passes
+	// (ADR-20261029012000).
+	run := func(release func()) {
 		started := time.Now()
-		defer func() {
+		finished := false
+		finish := func() { // caller holds p.mu
 			if key != "" {
-				p.mu.Lock()
 				delete(p.inFlight[kind], key)
+				delete(p.rerun[kind], key)
+			}
+			if release != nil {
+				release()
+			}
+			finished = true
+		}
+		defer func() {
+			if !finished {
+				p.mu.Lock()
+				finish()
 				p.mu.Unlock()
 			}
 			// A panicking task must not take the daemon down or leak
@@ -238,7 +400,22 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 			p.observeDuration(kind, time.Since(started))
 			p.wg.Done()
 		}()
-		fn()
+		for {
+			fn()
+			p.mu.Lock()
+			next := p.rerun[kind][key]
+			if next == nil || p.closing {
+				finish()
+				p.mu.Unlock()
+				return
+			}
+			delete(p.rerun[kind], key)
+			p.mu.Unlock()
+			p.observeDuration(kind, time.Since(started))
+			started = time.Now()
+			p.observe(kind, "rerun")
+			fn = next
+		}
 	}
 
 	slots := p.slots[kind]
@@ -249,10 +426,7 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 			p.observe(kind, "dropped")
 			return "dropped"
 		}
-		go func() {
-			defer func() { <-slots }()
-			run()
-		}()
+		go run(func() { <-slots })
 		p.observe(kind, "queued")
 		return "queued"
 	default:
@@ -268,7 +442,7 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 				"kind", string(kind), "key", key, "slots", workSpecs[kind].slots)
 		}
 		p.observe(kind, "inline")
-		run()
+		run(nil)
 		return "inline"
 	}
 	if p.log != nil {

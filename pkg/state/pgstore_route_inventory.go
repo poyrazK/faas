@@ -108,13 +108,18 @@ func appendDiscoveredRouteEventTx(ctx context.Context, tx pgx.Tx, accountID, app
 	// the CloudEvent's time still records when the route was first seen. A
 	// rehearsal-enrolled app's candidate routes stay in its own inventory but
 	// never fan out to the account's other apps (ADR-20261019180000).
-	tag, err := tx.Exec(ctx, `insert into events (actor, kind, subject, data)
-		select 'apid', 'event.published', $1::uuid, $2::jsonb
-		 where not exists(select 1 from scenario_test_action_policies p where p.app_id = $3::uuid)`, accountID, eventPayload, appID)
-	if err != nil {
-		return fmt.Errorf("api discovery: persist route event: %w", err)
+	// ADR-20261030170000: the fanout trigger writes the receipt and skips
+	// the events row, so the insert reports no rows; whether the app is
+	// rehearsal-enrolled decides the notify instead.
+	var enrolled bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from scenario_test_action_policies p where p.app_id = $1::uuid)`, appID).Scan(&enrolled); err != nil {
+		return fmt.Errorf("api discovery: read rehearsal enrollment: %w", err)
 	}
-	if tag.RowsAffected() > 0 {
+	if !enrolled {
+		if _, err := tx.Exec(ctx, `insert into events (actor, kind, subject, data) values ('apid', 'event.published', $1::uuid, $2::jsonb)`,
+			accountID, eventPayload); err != nil {
+			return fmt.Errorf("api discovery: persist route event: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyEventPublished, "1"); err != nil {
 			return fmt.Errorf("api discovery: notify event fanout: %w", err)
 		}

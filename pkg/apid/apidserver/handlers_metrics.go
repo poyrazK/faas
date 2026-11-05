@@ -22,6 +22,7 @@ package apidserver
 // ADR-045 PR 2 so the meterd evaluator in PR 4 can share the same fetch path).
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -92,6 +93,10 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
+	// The wake count needs only the app: read it beside the Prometheus
+	// queries instead of after them.
+	wakes24h := make(chan int64, 1)
+	go func(ctx context.Context) { wakes24h <- s.wakes24h(ctx, app) }(r.Context())
 	resp, src := appmetrics.Fetch(r.Context(), s.promqlClient, s.log, app.ID, rng)
 	resp.AppID = app.ID
 	resp.Range = rng
@@ -101,30 +106,7 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	// table. Cache-hit and error-budget availability is represented by the
 	// optional pointers populated by appmetrics.Fetch; emitting zero for an
 	// unavailable signal would make it look observed.
-
-	// Wakes24h: count of wake.boot_started events in the trailing
-	// 24 hours, sourced from the events table. The (data->>'app_id')
-	// predicate is NOT covered by events_wake_id_idx (migration 00114
-	// indexes data->>'wake_id'); on a Scale-tier app with a large
-	// fleet this can seq-scan per row. A follow-up
-	// migration adds a covering index — see the Store interface
-	// comment for CountWakeBootStarted24h. 0 on a degraded store
-	// call, an empty app, or pre-ADR-123 fleet (pre-PR-A
-	// boot_started rows carry no app_id field, so the text predicate
-	// simply does not match). A partially populated legacy app row
-	// must not turn into a SQL `''::uuid` cast error; skip enrichment
-	// and keep the successful zero-valued response in that case.
-	if strings.TrimSpace(app.ID) == "" {
-		if s.log != nil {
-			s.log.Warn("wakes_24h fetch skipped: app id missing", "slug", app.Slug)
-		}
-	} else if n, err := s.store.CountWakeBootStarted24h(r.Context(), app.ID); err == nil {
-		resp.Wakes24h = n
-	} else if s.log != nil {
-		s.log.Warn("wakes_24h fetch failed",
-			"app_id", app.ID,
-			"err", err.Error())
-	}
+	resp.Wakes24h = <-wakes24h
 
 	if resp.AsOf == "" {
 		resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
@@ -149,6 +131,9 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 // (pkg/appmetrics.Fetch) so the dashboard's two cards share the
 // same PromQL transport and the same degraded-fallback shape.
 func (s *server) getAppThrottleSuggestions(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug")) //nolint:contextcheck // loadApp takes r and uses r.Context() for its own DB calls; the helper is shared across every per-app handler.
 	if !ok {
 		return
@@ -226,4 +211,35 @@ func (s *server) getAppThrottleSuggestions(w http.ResponseWriter, r *http.Reques
 	resp.Source = src
 	resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// wakes24h counts the app's wake.boot_started events in the trailing
+// 24 hours, sourced from the events table. The (data->>'app_id')
+// predicate is NOT covered by events_wake_id_idx (migration 00114
+// indexes data->>'wake_id'); on a Scale-tier app with a large
+// fleet this can seq-scan per row. A follow-up
+// migration adds a covering index — see the Store interface
+// comment for CountWakeBootStarted24h. 0 on a degraded store
+// call, an empty app, or pre-ADR-123 fleet (pre-PR-A
+// boot_started rows carry no app_id field, so the text predicate
+// simply does not match). A partially populated legacy app row
+// must not turn into a SQL `”::uuid` cast error; skip enrichment
+// and keep the successful zero-valued response in that case.
+func (s *server) wakes24h(ctx context.Context, app state.App) int64 {
+	if strings.TrimSpace(app.ID) == "" {
+		if s.log != nil {
+			s.log.Warn("wakes_24h fetch skipped: app id missing", "slug", app.Slug)
+		}
+		return 0
+	}
+	n, err := s.store.CountWakeBootStarted24h(ctx, app.ID)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("wakes_24h fetch failed",
+				"app_id", app.ID,
+				"err", err.Error())
+		}
+		return 0
+	}
+	return n
 }

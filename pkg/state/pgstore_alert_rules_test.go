@@ -231,11 +231,11 @@ func TestPgStore_CreateAlertRuleIfUnderQuota_PerAccountCap(t *testing.T) {
 	}
 }
 
-// TestPgStore_AlertRule_DuplicateNameRejected pins the
-// (account_id, name) UNIQUE constraint — a second rule with the
-// same name on the same account returns ErrConflict. MetStore unit
-// test (TestMemStoreAlertRule_DuplicateNameRejected) covers the
-// in-process path; this is the byte-for-byte Postgres equivalent.
+// TestPgStore_AlertRule_DuplicateNameRejected pins the name indexes
+// (ADR-20261029203000): a second rule with the same name on the same app
+// returns ErrConflict, while another app of the account may use the name.
+// MemStore unit test (TestMemStoreAlertRule_DuplicateNameRejected) covers
+// the in-process path; this is the byte-for-byte Postgres equivalent.
 func TestPgStore_AlertRule_DuplicateNameRejected(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, app, _ := seedLiveDeploy(t, s, ctx)
@@ -247,6 +247,17 @@ func TestPgStore_AlertRule_DuplicateNameRejected(t *testing.T) {
 	}
 	if _, err := s.CreateAlertRule(ctx, r); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("duplicate: expected ErrConflict, got %v", err)
+	}
+	other, err := s.CreateApp(ctx, state.App{
+		AccountID: acct, Slug: "alert-dup-other", Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	r.AppID = other.ID
+	if _, err := s.CreateAlertRule(ctx, r); err != nil {
+		t.Errorf("same name on another app of the account: %v, want it accepted", err)
 	}
 }
 
@@ -309,6 +320,18 @@ func TestPgStore_AlertRule_ListAndFilter(t *testing.T) {
 	}
 	if len(listAll) != 2 { // alpha (this acct) + gamma (other acct), excluding disabled beta
 		t.Errorf("enabled list = %d entries (%+v), want 2", len(listAll), listAll)
+	}
+	// adr: 20261029203000 — a deleted app's rules wait out its restore
+	// grace without evaluating.
+	if err := s.DeleteApp(ctx, otherApp.ID); err != nil {
+		t.Fatalf("DeleteApp: %v", err)
+	}
+	listAll, err = s.ListEnabledAlertRules(ctx)
+	if err != nil {
+		t.Fatalf("ListEnabledAlertRules: %v", err)
+	}
+	if len(listAll) != 1 || listAll[0].Name != "alpha" {
+		t.Errorf("after deleting gamma's app, enabled list = %+v, want alpha only", listAll)
 	}
 }
 

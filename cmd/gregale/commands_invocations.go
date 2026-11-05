@@ -39,9 +39,9 @@ import (
 // `gregale invocations get` errors. Mirrors PrintUsage's docs URL
 // convention (output.go:144) so the line carries the stable docs
 // site pointer.
-const invocationGetCmdUsage = "usage: gregale invocations get [--json] [--replay|--replay-keyed] <id>"
+const invocationGetCmdUsage = "usage: gregale invocation get [--json] [--replay|--replay-keyed] <id>"
 
-const invocationWaitCmdUsage = "usage: gregale invocations wait [--json] [--timeout D] [--interval D] <id>"
+const invocationWaitCmdUsage = "usage: gregale invocation wait [--json] [--timeout D] [--interval D] <id>"
 
 // invocationCmdDocsTopic is the docs topic slug appended to
 // PrintUsage when it emits the trailing "Docs:" row. Kept
@@ -66,7 +66,7 @@ func cmdInvocations(args []string) int {
 		return cmdInvocationsWait(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "invocations", nestedCliCommand("invocations"), args[0])
 }
 
 // cmdInvocationsWait polls the durable status endpoint until the invocation
@@ -120,7 +120,7 @@ func cmdInvocationsWait(args []string) int {
 				Code:    "invocation_wait_timeout",
 				Title:   "Invocation wait timed out",
 				Detail:  fmt.Sprintf("timed out waiting for invocation %s; it may still be running", id),
-				Hint:    fmt.Sprintf("Inspect it with 'gregale invocations get %s'.", id),
+				Hint:    fmt.Sprintf("Inspect it with 'gregale invocation get %s'.", id),
 				DocsURL: cliDocsURL,
 			}
 			// The CLI wait deadline keeps its conventional exit status; it
@@ -199,6 +199,19 @@ func renderInvocationWaitResult(inv api.Invocation) int {
 // as cmdAuditEventsList but the server emits invocation rows, not
 // audit-event rows, so the renderer shape is different.
 func cmdInvocationsList(args []string) int {
+	// The ledger is account-wide; `invocations list --app h14-py` answered
+	// only "unknown flag --app" on production-us rc.294 (Hunt 14 H14-64).
+	if argsPassAppFlag(args) {
+		// Name `debug requests` only where it is offered: it belongs to the
+		// production-debugger preview, hidden on production-us rc.297
+		// (Hunt 14 H14-89).
+		perApp := "`gregale debug requests list <slug>` or `gregale logs <slug> --source http`"
+		if discoveryCapabilityView().hidesPath("debug requests") {
+			perApp = "`gregale logs <slug> --source http`"
+		}
+		PrintUsage(os.Stderr, "gregale invocation list lists every invocation in the account and names each row's app; it has no --app filter. For one app's requests use "+perApp+".\nusage: gregale invocation list [--cursor C] [--limit N] [--all]", "invocations")
+		return 1
+	}
 	fs := newFlagSet("invocations list", flag.ContinueOnError)
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
@@ -208,16 +221,22 @@ func cmdInvocationsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		printCommandValidation(os.Stderr, "usage: gregale invocations list [--cursor C] [--limit N] [--all]\n")
+		printCommandValidation(os.Stderr, "usage: gregale invocation list [--cursor C] [--limit N] [--all]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale invocations list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
+		PrintUsage(os.Stderr, "usage: gregale invocation list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	// The ledger is account-wide, so a row needs its app: "POST /healthz
+	// failed" named no app (Hunt 12 H12-33).
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
 	}
 	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
 		page, err := client.ListInvocations(ctx, cursor, *limit)
@@ -241,7 +260,7 @@ func cmdInvocationsList(args []string) int {
 		return 0
 	}
 	for _, inv := range resp.Invocations {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), inv.Source)
 	}
 	if resp.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", resp.NextBefore)
@@ -369,7 +388,7 @@ func renderInvocation(w io.Writer, inv api.Invocation) {
 func renderReplayResponse(w io.Writer, r api.AsyncInvokeResponse) {
 	_, _ = fmt.Fprintf(w, "Replay id:        %s\n", r.ID)
 	_, _ = fmt.Fprintf(w, "Replay status:    %s\n", r.StatusURL)
-	_, _ = fmt.Fprintln(w, "Poll with:        gregale invocations get", r.ID)
+	_, _ = fmt.Fprintln(w, "Poll with:        gregale invocation get", r.ID)
 }
 
 // oneLine collapses a multi-line string into a single line for the

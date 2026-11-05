@@ -113,6 +113,7 @@ const (
 	triggerReasonRateLimited                = "rate_limited"
 	triggerReasonPayloadTooLarge            = "payload_too_large"
 	triggerReasonExclusiveOperationRejected = "exclusive_operation_rejected"
+	triggerReasonCustomerDisabled           = "customer_disabled"
 )
 
 // triggerDispatchRecord is one broker-delivered record the
@@ -132,6 +133,7 @@ type triggerDispatchRecord struct {
 type triggerDispatchRequest struct {
 	InvocationID string                  `json:"invocation_id"`
 	AppID        string                  `json:"app_id"`
+	AccountID    string                  `json:"account_id,omitempty"`
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
@@ -147,6 +149,63 @@ type triggerDispatchResponse struct {
 }
 
 // triggerDispatchResult mirrors one batch record's outcome.
+// queueRetryGroup is a set of retried queue items that share a last_error.
+type queueRetryGroup struct {
+	reason string
+	items  []string
+}
+
+// queueRetryMaxLastErrorBytes bounds the gateway text a retried invocation
+// keeps as its last_error.
+const queueRetryMaxLastErrorBytes = 512
+
+// queueRetryGroups groups retried queue items by what failed. The queue
+// poller stores the Nack reason as the invocation's last_error, and every
+// retry said broker_error, even when the customer's handler threw
+// (Hunt 12 H12-34).
+func queueRetryGroups(items []string, statusByID map[string]triggerDispatchResult) []queueRetryGroup {
+	var groups []queueRetryGroup
+	index := map[string]int{}
+	for _, item := range items {
+		result, found := statusByID[item]
+		reason := queueRetryLastError(result, found)
+		i, ok := index[reason]
+		if !ok {
+			i = len(groups)
+			index[reason] = i
+			groups = append(groups, queueRetryGroup{reason: reason})
+		}
+		groups[i].items = append(groups[i].items, item)
+	}
+	return groups
+}
+
+// queueRetryLastError is the gateway's code and error for one retried item.
+// It never equals a terminal reason, which would dead-letter the item.
+func queueRetryLastError(result triggerDispatchResult, found bool) string {
+	if !found {
+		return "missing dispatch result"
+	}
+	code, msg := strings.TrimSpace(result.Code), strings.TrimSpace(result.Error)
+	out := code
+	switch {
+	case code != "" && msg != "":
+		out = code + ": " + msg
+	case msg != "":
+		out = msg
+	case code == "":
+		return triggerReasonBrokerError
+	}
+	switch out {
+	case triggerReasonPoisonRecord, triggerReasonMaxAttempts, triggerReasonPayloadTooLarge, triggerReasonRateLimited:
+		return triggerReasonBrokerError
+	}
+	if len(out) > queueRetryMaxLastErrorBytes {
+		out = strings.ToValidUTF8(out[:queueRetryMaxLastErrorBytes], "")
+	}
+	return out
+}
+
 type triggerDispatchResult struct {
 	ItemIdentifier string `json:"item_identifier"`
 	Status         string `json:"status"`
@@ -230,10 +289,6 @@ type triggerConsumerHealthWriter interface {
 	RecordTriggerConsumerHealth(context.Context, string, state.TriggerConsumerHealthObservation) error
 }
 
-type terminalNacker interface {
-	NackTerminal(context.Context, sqlc.Trigger, []string, string) error
-}
-
 type queueDispatchAcknowledgement struct {
 	ItemIdentifier string
 	DeploymentID   string
@@ -299,19 +354,40 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 		return
 	}
 	if len(triggers) == 0 {
+		l.evictTriggerPollers(nil)
 		return
 	}
 	resolvePlan := l.triggerPlanResolver(ctx)
+	// polled are the triggers this schedd keeps pollers for: an external
+	// broker trigger is polled only by the schedd that owns its app
+	// (ADR-20261027162741), so a poller left behind by an ownership move is
+	// closed and a Kafka reader leaves its consumer group.
+	polled := make([]sqlc.Trigger, 0, len(triggers))
+	defer func() { l.evictTriggerPollers(polled) }()
+	// Broker triggers share the node's lanes between accounts, so they are
+	// submitted together once the walk has found them (ADR-20261101093015).
+	var brokerTriggers []sqlc.Trigger
 	for i := range triggers {
 		t := triggers[i]
 		if queuePushLaneEligible(t) {
+			polled = append(polled, t)
 			l.scheduleQueuePushLanes(ctx, t, store)
 			continue
 		}
 		if t.Kind == string(api.TriggerKindRealtime) {
+			polled = append(polled, t)
 			l.scheduleRealtimeLanes(ctx, t, store)
 			continue
 		}
+		if brokerTriggerLaneEligible(t) {
+			if !l.triggerAppOwned(ctx, t) {
+				continue
+			}
+			polled = append(polled, t)
+			brokerTriggers = append(brokerTriggers, t)
+			continue
+		}
+		polled = append(polled, t)
 		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
 			if errors.Is(err, errTriggerGatewayDispatch) {
 				continue
@@ -322,6 +398,7 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 				"err", err)
 		}
 	}
+	l.scheduleBrokerTriggerLanes(ctx, brokerTriggers, store)
 }
 
 // triggerPlanResolver caches per-app plan lookups so the per-record
@@ -358,6 +435,18 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 // apps get their per-plan WakeBurstPerApp + TriggerRecordsPerSecondPerApp
 // caps rather than collapsing to Free.
 func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store storeLike, planFor func(string) api.Plan) error {
+	// ADR-20261023115741: a trigger whose capability is off for the account
+	// is not polled; its records stay in the broker until the flag is on.
+	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
+		return nil
+	}
+	// An agent-target trigger is not polled on a scheduler that cannot
+	// admit agent runs, or while the agents capability is off for the
+	// account, so its records stay with the broker (ADR-20261027090010 §9).
+	agentTarget := t.Agent.Valid
+	if agentTarget && (l.triggerAgents == nil || !l.agentsCapabilityAllowed(ctx, t.AppID.String())) {
+		return nil
+	}
 	var exclusiveBinding *state.ExclusiveTriggerBinding
 	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())
@@ -372,18 +461,30 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			return fmt.Errorf("load exclusive broker binding: %w", bindingErr)
 		}
 	}
-	// 1. Poller lookup. Cached on the Loop.
+	// 1. Poller lookup. Cached on the Loop. A poller that cannot be built
+	// (unreachable broker, credentials that do not open) is the trigger's
+	// health error too, so the customer sees it, not only the scheduler log.
 	poller, _, err := l.pollerForTrigger(t)
 	if err != nil {
+		l.recordTriggerConsumerHealth(ctx, store, t, PollResult{Error: err})
 		return err
 	}
 	if poller == nil {
 		return nil
 	}
-	if exclusiveBinding == nil && l.gatewayHTTPClient == nil {
+	if exclusiveBinding == nil && !agentTarget && l.gatewayHTTPClient == nil {
 		return nil
 	}
 	t = l.longTimeoutTriggerBatch(ctx, t)
+	// 1.5. Per-plan record rate (ADR-20261101093015): poll at most the app's
+	// budget; records over it stay on the broker for a later poll.
+	settleRate := func(int) {}
+	if exclusiveBinding == nil && !agentTarget {
+		var budget bool
+		if t, settleRate, budget = l.reserveTriggerRecordRate(t, planFor); !budget {
+			return nil
+		}
+	}
 
 	// 2. Poll. The broker may carry a W3C context in each record, but
 	// it is not available until Poll returns. Keep the poll span rooted
@@ -392,6 +493,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	pollCtx, pollSpan := startTriggerSpan(ctx, "gregale.trigger.poll", oteltrace.SpanKindConsumer, nil,
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
+	settleRate(len(res.Records))
 	l.recordTriggerConsumerHealth(ctx, store, t, res)
 	pollSpan.SetAttributes(attribute.Int("gregale.trigger.records", len(res.Records)))
 	if res.Error != nil {
@@ -431,9 +533,18 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		poller = queue.deliveryPoller(res.Records)
 		defer poller.(*queuePoller).forgetClaims(batchItemIDs(res.Records))
 	}
+	// ADR-1322 amendment: a realtime trigger's group claims are renewed while
+	// the batch is delivered, so its invocations run for the app's timeout.
+	if realtime, ok := poller.(*realtimePoller); ok {
+		defer realtime.keepLeases(ctx, batchItemIDs(res.Records))()
+	}
 
-	// 3. Batch close: size / 6MB.
-	batch := closeBatch(res.Records, int(t.BatchSizeMax), int(t.PayloadMaxBytes))
+	// 3. Batch close: batch_size_max / payload_max_bytes. A broker record
+	// left out goes back for the next batch; one larger than the payload cap
+	// is dead-lettered as payload_too_large (ADR-20261101093512).
+	split := closeBatch(res.Records, int(t.BatchSizeMax), int(t.PayloadMaxBytes))
+	l.settleUnbatchedTriggerRecords(ctx, store, t, poller, split)
+	batch := split.batch
 	if len(batch) == 0 {
 		return nil
 	}
@@ -545,6 +656,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		if lagMessages, ok := consumerLagFor(rec, t.Kind); ok {
 			l.observeESMConsumerLag(t.Kind, shard, lagMessages, ageSeconds)
 		}
+	}
+
+	// Records an earlier release stored under its own item identifier keep
+	// that row while it is still in use (ADR-20261101093512).
+	var legacyErr error
+	batch, poller, legacyErr = resolveLegacyTriggerItems(ctx, store, t, poller, batch)
+	if legacyErr != nil {
+		return legacyErr
 	}
 
 	// A broker policy uses the message's durable identity in trigger_records,
@@ -683,9 +802,12 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// A prior dispatch may have committed its terminal receipt and then lost
 	// the broker Ack. A redelivery must acknowledge that receipt without
 	// invoking the app again. This also handles policy-terminal broker work
-	// once those records are admitted into the shared work ledger.
+	// once those records are admitted into the shared work ledger, and an
+	// external broker's dead-lettered records. due holds when the cooling
+	// retries among the rest are due, for the broker to hold them.
 	var terminalErr error
-	batch, terminalErr = ackTerminalTriggerRedeliveries(ctx, store, poller, t, batch)
+	var due map[string]time.Time
+	batch, due, terminalErr = ackTerminalTriggerRedeliveries(ctx, store, poller, t, batch)
 	if terminalErr != nil {
 		return terminalErr
 	}
@@ -693,36 +815,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		return nil
 	}
 
-	// 5. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
-	// review finding #4: the plan argument was hardcoded to api.PlanFree,
-	// which collapsed Hobby/Pro/Scale customers to the Free bucket's
-	// 1-wake-per-minute ceiling. Resolve the actual account plan via
-	// the per-tick plan cache (constructed in runTriggerTick).
-	appPlan := api.PlanFree
-	if planFor != nil {
-		appPlan = planFor(t.AppID.String())
-	}
-	if exclusiveBinding == nil && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
-		l.handleRateLimitedBatch(ctx, poller, t, batch, store)
-		return nil
-	}
-	// Review finding #8: also consult the per-account bucket so a
-	// runaway broker fan-out across many apps under one account
-	// is rejected even when each app stays within its per-app
-	// cap. The lookup walks app → account inline because the
-	// per-tick plan cache above only stores AccountPlan, not the
-	// account_id; an extra round-trip per trigger (one per tick)
-	// is acceptable because the deny path is the hot path we
-	// want to keep fast.
-	if exclusiveBinding == nil && l.rateLimiter != nil {
-		app, appErr := l.engine.Store().AppByID(ctx, t.AppID.String())
-		if appErr == nil {
-			if !l.rateLimiter.AllowWakeAccount(app.AccountID, appPlan) {
-				l.handleRateLimitedBatch(ctx, poller, t, batch, store)
-				return nil
-			}
-		}
-	}
+	// 5. The per-plan record rate was taken before the poll (step 1.5), so
+	// no record here is over it: a rate-limited record is never
+	// dead-lettered or committed past (ADR-20261101093015).
 
 	// 6. Claim trigger_records rows.
 	var claimed []sqlc.TriggerRecord
@@ -750,11 +845,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		// The poller has already claimed these records. A zero-row
 		// trigger claim can happen after an insert conflict or while a
 		// prior trigger-record retry is still cooling down; do not leave
-		// the underlying queue rows leased indefinitely.
-		if err := poller.Nack(ctx, t, batchItemIDs(batch), triggerReasonBrokerError); err != nil {
-			l.log.Warn("sched trigger tick: poller nack after empty claim",
-				"trigger_id", t.ID.String(), "err", err)
-		}
+		// the underlying queue rows leased indefinitely. A broker that can
+		// hold a cooling retry until it is due does so.
+		l.releaseTriggerItems(ctx, t, poller, batchItemIDs(batch), due)
 		return nil
 	}
 	// InsertTriggerRecord is intentionally best-effort per record, so a
@@ -762,10 +855,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// corresponding claimed trigger row; the claimed subset continues
 	// through the gateway path below.
 	if unclaimed := unclaimedItemIDs(batch, claimed); len(unclaimed) > 0 {
-		if err := poller.Nack(ctx, t, unclaimed, triggerReasonBrokerError); err != nil {
-			l.log.Warn("sched trigger tick: poller nack for unclaimed records",
-				"trigger_id", t.ID.String(), "err", err)
-		}
+		l.releaseTriggerItems(ctx, t, poller, unclaimed, due)
 	}
 	claimedBatch := recordsForClaimed(batch, claimed)
 	if len(claimedBatch) == 0 {
@@ -776,6 +866,11 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		return nil
 	}
 
+	// The claims outlive a long-timeout app's batch: renew them until the
+	// dispatch returns (ADR-20261101093512).
+	stopRenewing := l.renewTriggerClaims(ctx, store, t, claimed)
+	defer stopRenewing()
+
 	// 6. Post the batch envelope to the gateway.
 	envelope := buildDispatchEnvelope(t, claimedBatch)
 	dispatchParent, links := triggerDispatchParent(ctx, claimedBatch)
@@ -785,12 +880,15 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	defer dispatchSpan.End()
 	var respBody []byte
 	var postErr error
-	if exclusiveBinding != nil {
+	if agentTarget {
+		respBody, postErr = json.Marshal(l.admitAgentTriggerBatch(dispatchCtx, store, t, claimedBatch, claimed))
+	} else if exclusiveBinding != nil {
 		response := l.admitExclusiveBrokerBatch(dispatchCtx, store, t, *exclusiveBinding, claimedBatch, claimed)
 		respBody, postErr = json.Marshal(response)
 	} else {
 		respBody, postErr = l.postBatch(dispatchCtx, envelope)
 	}
+	stopRenewing()
 	if postErr != nil {
 		dispatchSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "gateway_error"))
 		dispatchSpan.RecordError(postErr)
@@ -802,7 +900,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			l.returnRealtimeBatch(ctx, t, rt, claimed, "dispatch_"+triggerReasonBrokerError)
 			return fmt.Errorf("%w: %w", errTriggerGatewayDispatch, postErr)
 		}
-		retryItems, exhaustedItems := l.markRetryAll(ctx, t, claimed, postErr.Error(), store)
+		retryItems, retryDue, exhaustedItems := l.markRetryAll(ctx, t, claimed, postErr.Error(), store)
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryItems))
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(exhaustedItems))
 		l.observeESMRecordProcessingBatch(t.Kind, claimed)
@@ -813,8 +911,12 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		// saw Ack/Nack on records that had no trigger_records row
 		// to retry, and the poller's in-flight bookkeeping
 		// dropped those entries on the floor.
-		if len(retryItems) > 0 {
-			_ = poller.Nack(ctx, t, retryItems, triggerReasonBrokerError)
+		if _, isQueue := poller.(*queuePoller); isQueue {
+			if len(retryItems) > 0 {
+				_ = poller.Nack(ctx, t, retryItems, triggerReasonBrokerError)
+			}
+		} else {
+			l.releaseTriggerItems(ctx, t, poller, retryItems, retryDue)
 		}
 		if len(exhaustedItems) > 0 {
 			items := claimedItemIDs(exhaustedItems)
@@ -958,11 +1060,18 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			}
 		}
 		brokerAckItems := make([]string, 0, len(succeedIDs))
+		var unrecorded []string
 		for i, id := range succeedIDs {
 			if !isQueuePoller {
-				if err := completeTriggerClaim(ctx, store, claimedByID[id]); err != nil {
+				// A transient store error retries; a success that still
+				// cannot be recorded goes back to the broker unsettled
+				// rather than staying with the poller forever.
+				if err := writeTriggerClaimOutcome(ctx, func() error {
+					return completeTriggerClaim(ctx, store, claimedByID[id])
+				}); err != nil {
 					l.log.Warn("sched trigger tick: mark succeeded",
 						"id", id, "err", err)
+					unrecorded = append(unrecorded, succeedItems[i])
 					continue
 				}
 				brokerAckItems = append(brokerAckItems, succeedItems[i])
@@ -996,6 +1105,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 					"trigger_id", t.ID.String(), "err", err)
 			}
 		}
+		l.releaseTriggerItems(ctx, t, poller, unrecorded, nil)
 	}
 	if len(retryIDs) > 0 {
 		_, retrySpan := startTriggerSpan(dispatchCtx, "gregale.trigger.retry", oteltrace.SpanKindInternal, nil,
@@ -1003,18 +1113,27 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			attribute.Int("gregale.trigger.records", len(retryIDs)))
 		defer retrySpan.End()
 		brokerNackItems := make([]string, 0, len(retryIDs))
+		retryDue := make(map[string]time.Time, len(retryIDs))
 		for i, id := range retryIDs {
 			attempts := retryAttempts[i]
 			// Review finding #9: exponential backoff + ±20%
 			// jitter replaces the prior hardcoded 2s.
 			backoff := l.computeTriggerRetryBackoff(ctx, t, attempts)
 			nextFireAt := time.Now().Add(backoff)
-			if err := retryTriggerClaim(ctx, store, claimedByID[id], "", nextFireAt); err != nil {
+			if err := writeTriggerClaimOutcome(ctx, func() error {
+				return retryTriggerClaim(ctx, store, claimedByID[id], "", nextFireAt)
+			}); err != nil {
 				l.log.Warn("sched trigger tick: mark retry",
 					"id", id, "err", err)
+				if !isQueuePoller {
+					// Hand the delivery back anyway; the claim lapses and
+					// the record runs again.
+					brokerNackItems = append(brokerNackItems, retryItems[i])
+				}
 				continue
 			}
 			brokerNackItems = append(brokerNackItems, retryItems[i])
+			retryDue[retryItems[i]] = nextFireAt
 			// Audit: trigger.retry, dual-emitted as
 			// esm.poll.failed for the operator alias.
 			l.emitAuditDual(
@@ -1036,11 +1155,18 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				t.ID.String(), t.AppID.String(), t.Kind,
 			)
 		}
-		if len(brokerNackItems) > 0 {
-			if err := poller.Nack(ctx, t, brokerNackItems, triggerReasonBrokerError); err != nil {
-				l.log.Warn("sched trigger tick: poller nack",
-					"trigger_id", t.ID.String(), "err", err)
+		if isQueuePoller && len(brokerNackItems) > 0 {
+			for _, nack := range queueRetryGroups(brokerNackItems, statusByID) {
+				if err := poller.Nack(ctx, t, nack.items, nack.reason); err != nil {
+					l.log.Warn("sched trigger tick: poller nack",
+						"trigger_id", t.ID.String(), "err", err)
+				}
 			}
+		} else {
+			// A broker that can hold the record until its retry is due
+			// does so (NATS NakWithDelay, Kafka's in-memory hold), so a
+			// cooling retry spends no deliveries (ADR-20261101093512).
+			l.releaseTriggerItems(ctx, t, poller, brokerNackItems, retryDue)
 		}
 	}
 	if len(dlqIDs) > 0 {
@@ -1048,71 +1174,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			attribute.String("gregale.trigger.kind", t.Kind),
 			attribute.Int("gregale.trigger.records", len(dlqIDs)))
 		defer dlqSpan.End()
-		finalizedItems := make(map[string]bool, len(dlqItems))
-		for i, id := range dlqIDs {
-			reason := dlqReasons[i]
-			lastErr := dlqErrors[i]
-			attempts := dlqAttempts[i]
-			if isQueuePoller {
-				if err := store.InsertTriggerDeadLetter(ctx, id, t.ID.String(), reason, "drop", []byte(lastErr)); err != nil {
-					l.log.Warn("sched trigger tick: insert dlq", "id", id, "err", err)
-					continue
-				}
-			} else if err := routeTriggerClaimToDLQ(ctx, store, claimedByID[id], t.ID.String(), reason, []byte(lastErr)); err != nil {
-				l.log.Warn("sched trigger tick: route claimed dlq", "id", id, "err", err)
-				continue
-			}
-			finalizedItems[dlqItems[i]] = true
-			// Audit: trigger.dlq, dual-emitted as
-			// esm.drain.dlq for the operator alias.
-			l.emitAuditDual(
-				ctx,
-				events.TriggerDLQEvent{
-					TriggerID: t.ID.String(),
-					RecordID:  id,
-					AppID:     t.AppID.String(),
-					Reason:    reason,
-					Attempts:  int(attempts),
-					LastError: lastErr,
-				},
-				events.ESMDrainDLQEvent{
-					TriggerID: t.ID.String(),
-					RecordID:  id,
-					AppID:     t.AppID.String(),
-					Reason:    reason,
-					EmitAt:    time.Now(),
-				},
-				t.ID.String(), t.AppID.String(), t.Kind,
-			)
-		}
-		// Retry exhaustion is terminal but differs from a poison record:
-		// Kafka must commit it even when the trigger's poison strategy is
-		// seek-to-offset. Keep the broker disposition aligned with the
-		// durable DLQ reason, including when one batch contains both.
-		poisonItems := make([]string, 0, len(dlqItems))
-		maxAttemptItems := make([]string, 0, len(dlqItems))
-		for i, item := range dlqItems {
-			if !finalizedItems[item] {
-				continue
-			}
-			if dlqReasons[i] == triggerReasonMaxAttempts {
-				maxAttemptItems = append(maxAttemptItems, item)
-			} else {
-				poisonItems = append(poisonItems, item)
-			}
-		}
-		if len(poisonItems) > 0 {
-			if err := poller.Nack(ctx, t, poisonItems, triggerReasonPoisonRecord); err != nil {
-				l.log.Warn("sched trigger tick: poller nack (dlq)",
-					"trigger_id", t.ID.String(), "err", err)
-			}
-		}
-		if len(maxAttemptItems) > 0 {
-			if err := poller.Nack(ctx, t, maxAttemptItems, triggerReasonMaxAttempts); err != nil {
-				l.log.Warn("sched trigger tick: poller nack (max attempts)",
-					"trigger_id", t.ID.String(), "err", err)
-			}
-		}
+		l.settleTriggerDeadLetters(ctx, t, poller, store, isQueuePoller, claimedByID, terminalTriggerResults{
+			recordIDs: dlqIDs, items: dlqItems, reasons: dlqReasons, errors: dlqErrors, attempts: dlqAttempts,
+		})
 	}
 	// Audit: trigger.fired.batch — aggregated counts. No ESM
 	// alias: the per-batch aggregate is a trigger.*-only
@@ -1157,23 +1221,165 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 // A future PR can batch-encode and short-circuit Invoke() if a
 // target VM is already RUNNING; that change is out of scope
 // here.
-func closeBatch(records []SourceRecord, sizeMax, byteCap int) []SourceRecord {
-	if sizeMax <= 0 {
-		sizeMax = len(records)
+// terminalTriggerResults holds a batch's dead-lettered records as parallel
+// slices: trigger_records ids, item identifiers, DLQ reasons, last errors and
+// attempt numbers.
+type terminalTriggerResults struct {
+	recordIDs, items, reasons, errors []string
+	attempts                          []int32
+}
+
+// settleTriggerDeadLetters writes each terminal record's DLQ row and tells the
+// poller. A broker writes the receipt first and Nacks only what was written:
+// the receipt is its durable record. A queue poller Nacks first, as the batch
+// failure paths do: QueueFinishDeliveryClaims dead-letters the invocation and
+// its receipt together, and only then is the receipt's audit row written. A
+// failed Nack leaves both to the lease reaper, so a receipt never dead-letters
+// without its invocation, the message's one unified DLQ entry
+// (ADR-20261022203653).
+func (l *Loop) settleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike,
+	queue bool, claimedByID map[string]sqlc.TriggerRecord, dead terminalTriggerResults) {
+	var nacked map[string]bool
+	if queue {
+		nacked = l.nackTerminalQueueItems(ctx, t, poller, dead)
 	}
-	out := make([]SourceRecord, 0, len(records))
-	total := 0
-	for _, r := range records {
-		if len(out) >= sizeMax {
-			break
+	written := make(map[string]bool, len(dead.items))
+	var unwritten []string
+	for i, id := range dead.recordIDs {
+		reason, lastErr := dead.reasons[i], dead.errors[i]
+		if queue {
+			if !nacked[dead.items[i]] {
+				continue
+			}
+			if err := writeTriggerClaimOutcome(ctx, func() error {
+				return store.InsertTriggerDeadLetter(ctx, id, t.ID.String(), reason, "drop", []byte(lastErr))
+			}); err != nil {
+				l.log.Warn("sched trigger tick: insert dlq", "id", id, "err", err)
+				continue
+			}
+		} else if err := writeTriggerClaimOutcome(ctx, func() error {
+			return routeTriggerClaimToDLQ(ctx, store, claimedByID[id], t.ID.String(), reason, []byte(lastErr))
+		}); err != nil {
+			// The broker delivery goes back unsettled; the claim lapses
+			// and the record is dispatched again (ADR-20261101093512).
+			l.log.Warn("sched trigger tick: route claimed dlq", "id", id, "err", err)
+			unwritten = append(unwritten, dead.items[i])
+			continue
 		}
-		if total+len(r.Payload) > byteCap {
-			break
-		}
-		total += len(r.Payload)
-		out = append(out, r)
+		written[dead.items[i]] = true
+		// Audit: trigger.dlq, dual-emitted as esm.drain.dlq for the
+		// operator alias.
+		l.emitAuditDual(ctx,
+			events.TriggerDLQEvent{TriggerID: t.ID.String(), RecordID: id, AppID: t.AppID.String(),
+				Reason: reason, Attempts: int(dead.attempts[i]), LastError: lastErr},
+			events.ESMDrainDLQEvent{TriggerID: t.ID.String(), RecordID: id, AppID: t.AppID.String(),
+				Reason: reason, EmitAt: time.Now()},
+			t.ID.String(), t.AppID.String(), t.Kind,
+		)
+	}
+	if !queue {
+		l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, written)
+		l.releaseTriggerItems(ctx, t, poller, unwritten, nil)
+	}
+}
+
+// queueDeadLetterError is the last_error a dead-lettered queue invocation
+// keeps: its terminal reason and, when known, what the last attempt failed
+// with. The reason alone ("max_attempts") hid the handler's error from the
+// DLQ entry (Hunt 14 H14-6).
+func queueDeadLetterError(reason, lastError string) string {
+	lastError = strings.TrimSpace(lastError)
+	if lastError == "" || lastError == reason {
+		return reason
+	}
+	out := reason + ": " + lastError
+	if len(out) > queueRetryMaxLastErrorBytes {
+		out = strings.ToValidUTF8(out[:queueRetryMaxLastErrorBytes], "")
 	}
 	return out
+}
+
+// terminalErrorNacker dead-letters queue items with their last error; the
+// queue poller implements it.
+type terminalErrorNacker interface {
+	NackTerminalWithError(ctx context.Context, t sqlc.Trigger, ids []string, reason, lastError string) error
+}
+
+// nackTerminalQueueItems is nackTerminalItems for a queue poller: it groups
+// the items by reason and last error so each dead-lettered invocation keeps
+// what its last attempt failed with.
+func (l *Loop) nackTerminalQueueItems(ctx context.Context, t sqlc.Trigger, poller triggerSource, dead terminalTriggerResults) map[string]bool {
+	nacker, ok := poller.(terminalErrorNacker)
+	if !ok {
+		return l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, nil)
+	}
+	type group struct {
+		reason, lastError string
+		items             []string
+	}
+	var groups []*group
+	index := map[[2]string]*group{}
+	for i, item := range dead.items {
+		key := [2]string{dead.reasons[i], dead.errors[i]}
+		g, found := index[key]
+		if !found {
+			g = &group{reason: key[0], lastError: key[1]}
+			index[key] = g
+			groups = append(groups, g)
+		}
+		g.items = append(g.items, item)
+	}
+	nacked := make(map[string]bool, len(dead.items))
+	for _, g := range groups {
+		if err := nacker.NackTerminalWithError(ctx, t, g.items, g.reason, g.lastError); err != nil {
+			l.log.Warn("sched trigger tick: poller nack (dlq)", "trigger_id", t.ID.String(), "reason", g.reason, "err", err)
+			continue
+		}
+		for _, item := range g.items {
+			nacked[item] = true
+		}
+	}
+	return nacked
+}
+
+// nackTerminalItems Nacks terminal items and returns those whose Nack
+// succeeded; a non-nil only limits it to those items. Retry exhaustion is
+// terminal but differs from a poison record: Kafka must commit it even when the
+// trigger's poison strategy is seek-to-offset. Keep the broker disposition
+// aligned with the durable DLQ reason, including when one batch contains both.
+func (l *Loop) nackTerminalItems(ctx context.Context, t sqlc.Trigger, poller triggerSource, items, reasons []string, only map[string]bool) map[string]bool {
+	poisonItems := make([]string, 0, len(items))
+	maxAttemptItems := make([]string, 0, len(items))
+	for i, item := range items {
+		if only != nil && !only[item] {
+			continue
+		}
+		if reasons[i] == triggerReasonMaxAttempts {
+			maxAttemptItems = append(maxAttemptItems, item)
+		} else {
+			poisonItems = append(poisonItems, item)
+		}
+	}
+	nacked := make(map[string]bool, len(items))
+	for _, group := range []struct {
+		items       []string
+		reason, msg string
+	}{
+		{poisonItems, triggerReasonPoisonRecord, "sched trigger tick: poller nack (dlq)"},
+		{maxAttemptItems, triggerReasonMaxAttempts, "sched trigger tick: poller nack (max attempts)"},
+	} {
+		if len(group.items) == 0 {
+			continue
+		}
+		if err := poller.Nack(ctx, t, group.items, group.reason); err != nil {
+			l.log.Warn(group.msg, "trigger_id", t.ID.String(), "err", err)
+			continue
+		}
+		for _, item := range group.items {
+			nacked[item] = true
+		}
+	}
+	return nacked
 }
 
 // buildDispatchEnvelope packages the records into the JSON shape
@@ -1193,6 +1399,7 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 	env := triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
+		AccountID:    t.AccountID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,
@@ -1360,6 +1567,17 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.ContentLength = int64(len(body))
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if l.mintInternalSvcToken != nil {
+		tok, mErr := l.mintInternalSvcToken(env.AppID)
+		if mErr != nil {
+			return nil, fmt.Errorf("sched: batch mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — attach an Authorization: Bearer JWT when the
 	// target app is in 'internal_only' mode. The trigger batch
 	// envelope carries ONE appID across all records, so the
@@ -1433,70 +1651,7 @@ func readGatewayDispatchResponse(body io.Reader) ([]byte, error) {
 //
 // Claimed broker records pass their item identifiers and claim generations
 // directly; the generation guards the row transition and its DLQ receipt.
-// handleRateLimitedBatch is the CRIT-1 (PR #993 / issue #757
-// closure) seam for the rate-limit-deny branches. Pre-CRIT-1 each
-// deny branch returned immediately after deadLetterAll WITHOUT
-// ack'ing the broker, which pinned the broker offset at the front
-// of the rate-limited batch and re-delivered the same records on
-// every subsequent tick. The new semantic is:
 //
-//  1. deadLetterAll inserts the trigger_dead_letter audit row
-//     (the disposition is preserved).
-//  2. poller.Ack advances only handles with committed terminal receipts.
-//     Handles without receipts are retried, including the whole Kafka batch
-//     when an offset commit could skip unfinished lower offsets.
-//
-// Extracted so the test surface (TestRateLimitDeny_AcksBrokerOffset)
-// can pin the dual-call sequence without driving the full dispatch
-// tick.
-func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource, t sqlc.Trigger, batch []SourceRecord, store storeLike) {
-	items := batchItemIDs(batch)
-	l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(batch))
-	for _, record := range batch {
-		if !record.ReceivedAt.IsZero() {
-			l.observeESMRecordProcessing(t.Kind, time.Since(record.ReceivedAt).Seconds())
-		}
-	}
-	if rt, ok := poller.(*realtimePoller); ok {
-		// The handler never ran: return the attempt to the group.
-		if err := rt.Nack(ctx, t, items, triggerReasonRateLimited); err != nil {
-			l.log.Warn("sched trigger tick: return rate-limited realtime batch", "trigger_id", t.ID.String(), "err", err)
-		}
-		return
-	}
-	if queue, ok := poller.(*queuePoller); ok {
-		if err := queue.finishInvocations(ctx, t, items, "dead_letter", "dead_letter", "rate_limited", triggerReasonRateLimited, `{"trigger_dispatch":"rate_limited"}`); err != nil {
-			l.log.Warn("sched trigger tick: finalize rate-limited queue invocations",
-				"trigger_id", t.ID.String(),
-				"err", err)
-			return
-		}
-		l.deadLetterAllWithMark(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store, false)
-		return
-	}
-	finalized := l.deadLetterAllForApp(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonRateLimited, "wake rate limit exceeded", store)
-	unfinalized := missingItemIDs(items, finalized)
-	if terminal, ok := poller.(terminalNacker); ok {
-		// Queue rows have not yet produced trigger_records, so Ack would
-		// incorrectly mark the invocation successful. Move them directly
-		// to the queue's terminal state; external brokers keep the legacy
-		// Ack-after-DLQ offset advance.
-		_ = terminal.NackTerminal(ctx, t, finalized, triggerReasonRateLimited)
-		if len(unfinalized) > 0 {
-			_ = poller.Nack(ctx, t, unfinalized, triggerReasonBrokerError)
-		}
-		return
-	}
-	if poller.Kind() == "kafka" && len(unfinalized) > 0 {
-		_ = poller.Nack(ctx, t, items, triggerReasonBrokerError)
-		return
-	}
-	_ = poller.Ack(ctx, t, finalized)
-	if len(unfinalized) > 0 {
-		_ = poller.Nack(ctx, t, unfinalized, triggerReasonBrokerError)
-	}
-}
-
 // deadLetterAll retains the narrow test seam used by the trigger unit tests.
 // Production call sites use deadLetterAllForApp so observability carries the
 // authoritative app/account identity into the audit and metric payload.
@@ -1597,10 +1752,15 @@ func (l *Loop) deadLetterAllWithMark(ctx context.Context, appID, accountID, trig
 // returns records that must move directly to the DLQ. Keeping the cap check
 // here is important for transport failures: there is no gateway response to
 // classify, but a queue item must still stop redelivering at max_attempts.
-func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.TriggerRecord, errMsg string, store storeLike) (retryItems []string, exhausted []sqlc.TriggerRecord) {
+//
+// A record whose retry could not be written is still handed back to the
+// broker (without a due time), so its delivery is not left unsettled; its
+// claim lapses and the record runs again.
+func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.TriggerRecord, errMsg string, store storeLike) (retryItems []string, due map[string]time.Time, exhausted []sqlc.TriggerRecord) {
 	if store == nil || len(claimed) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
+	due = make(map[string]time.Time, len(claimed))
 	for _, c := range claimed {
 		if retryExhausted(c.Attempts+1, t.MaxAttempts) {
 			exhausted = append(exhausted, c)
@@ -1611,13 +1771,16 @@ func (l *Loop) markRetryAll(ctx context.Context, t sqlc.Trigger, claimed []sqlc.
 		// gateway/network failure follows the same curve as a per-record
 		// retry result instead of the old fixed two-second delay.
 		nextFireAt := time.Now().Add(l.computeTransportRetryBackoff(ctx, t, c.Attempts+1))
-		if err := retryTriggerClaim(ctx, store, c, errMsg, nextFireAt); err != nil {
+		retryItems = append(retryItems, c.ItemIdentifier)
+		if err := writeTriggerClaimOutcome(ctx, func() error {
+			return retryTriggerClaim(ctx, store, c, errMsg, nextFireAt)
+		}); err != nil {
 			l.log.Warn("sched trigger tick: mark retry", "id", c.ID.String(), "err", err)
 			continue
 		}
-		retryItems = append(retryItems, c.ItemIdentifier)
+		due[c.ItemIdentifier] = nextFireAt
 	}
-	return retryItems, exhausted
+	return retryItems, due, exhausted
 }
 
 // computeTransportRetryBackoff keeps the legacy two-second transport retry
@@ -1658,46 +1821,75 @@ func retryExhausted(nextAttempt, maxAttempts int32) bool {
 }
 
 // ackTerminalTriggerRedeliveries removes durable terminal receipts from the
-// batch before rate limiting and claim. Ack follows the committed DB state.
-func ackTerminalTriggerRedeliveries(ctx context.Context, store storeLike, poller triggerSource, t sqlc.Trigger, batch []SourceRecord) ([]SourceRecord, error) {
-	reader, ok := store.(state.TriggerTerminalRecordReader)
+// batch before rate limiting and claim, and settles their deliveries: Ack
+// follows the committed DB state. An external broker's dead-lettered record
+// settles as its dead letter did (settleDeadLetterRedeliveries); before
+// ADR-20261101093512 it was neither terminal nor claimable and went back to
+// the broker forever, so a Kafka partition whose dead letter had waited for
+// lower offsets stopped committing after a restart. Kafka acknowledges a
+// terminal record right away: its poller commits only below the lowest
+// offset still open. due holds when each cooling retry among the remaining
+// records is due.
+func ackTerminalTriggerRedeliveries(ctx context.Context, store storeLike, poller triggerSource, t sqlc.Trigger, batch []SourceRecord) ([]SourceRecord, map[string]time.Time, error) {
+	reader, ok := store.(state.TriggerRecordStateReader)
 	if !ok || len(batch) == 0 {
-		return batch, nil
+		return batch, nil, nil
 	}
-	terminal, err := reader.ListTerminalTriggerRecordItems(ctx, t.ID.String(), batchItemIDs(batch))
+	states, err := reader.TriggerRecordStatesByItems(ctx, t.ID.String(), batchItemIDs(batch))
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("dispatch trigger terminal receipt lookup: %w", err),
+		return nil, nil, errors.Join(fmt.Errorf("dispatch trigger terminal receipt lookup: %w", err),
 			poller.Nack(ctx, t, batchItemIDs(batch), triggerReasonBrokerError))
 	}
-	if len(terminal) == 0 {
-		return batch, nil
+	external := externalBrokerPoller(poller)
+	now := time.Now()
+	due := map[string]time.Time{}
+	settled := map[string]bool{}
+	var acked, dead, deadReasons []string
+	for _, s := range states {
+		switch s.State {
+		case "succeeded", "superseded", "cancelled", "expired":
+			acked = append(acked, s.Item)
+			settled[s.Item] = true
+		case "dead_letter":
+			if external {
+				dead, deadReasons = append(dead, s.Item), append(deadReasons, s.DeadLetterReason)
+				settled[s.Item] = true
+			}
+		case "pending", "retry":
+			if s.NextFireAt.After(now) {
+				due[s.Item] = s.NextFireAt
+			}
+		case "claimed":
+			// Another dispatch holds it; it can run once that claim lapses.
+			if s.ClaimExpiresAt.After(now) {
+				due[s.Item] = s.ClaimExpiresAt
+			}
+		}
 	}
-	terminalSet := make(map[string]bool, len(terminal))
-	for _, id := range terminal {
-		terminalSet[id] = true
+	if len(settled) == 0 {
+		return batch, due, nil
 	}
-	remaining := make([]SourceRecord, 0, len(batch)-len(terminal))
+	remaining := make([]SourceRecord, 0, len(batch)-len(settled))
 	for _, record := range batch {
-		if !terminalSet[record.ItemIdentifier] {
+		if !settled[record.ItemIdentifier] {
 			remaining = append(remaining, record)
 		}
 	}
-	// Kafka commits the highest offset per partition. A terminal item later
-	// in this batch must not commit past an earlier item that still needs its
-	// application result. Rewind the terminal handles and process the live
-	// subset first; the next poll can Ack terminal redeliveries on their own.
-	if poller.Kind() == "kafka" && len(remaining) > 0 {
-		if err := poller.Nack(ctx, t, terminal, triggerReasonBrokerError); err != nil {
-			return nil, errors.Join(fmt.Errorf("dispatch trigger defer terminal Kafka receipt: %w", err),
-				poller.Nack(ctx, t, batchItemIDs(remaining), triggerReasonBrokerError))
+	var errs []error
+	if len(acked) > 0 {
+		if err := poller.Ack(ctx, t, acked); err != nil {
+			errs = append(errs, fmt.Errorf("dispatch trigger terminal receipt acknowledgement: %w", err))
 		}
-		return remaining, nil
 	}
-	if err := poller.Ack(ctx, t, terminal); err != nil {
-		return nil, errors.Join(fmt.Errorf("dispatch trigger terminal receipt acknowledgement: %w", err),
-			poller.Nack(ctx, t, batchItemIDs(remaining), triggerReasonBrokerError))
+	if len(dead) > 0 {
+		if err := settleDeadLetterRedeliveries(ctx, t, poller, dead, deadReasons); err != nil {
+			errs = append(errs, fmt.Errorf("dispatch trigger dead-letter redelivery: %w", err))
+		}
 	}
-	return remaining, nil
+	if len(errs) > 0 {
+		return nil, nil, errors.Join(append(errs, poller.Nack(ctx, t, batchItemIDs(remaining), triggerReasonBrokerError))...)
+	}
+	return remaining, due, nil
 }
 
 // batchItemIDs walks the batch and returns the item identifiers
@@ -1728,20 +1920,6 @@ func claimedItemIDs(claimed []sqlc.TriggerRecord) []string {
 		out = append(out, c.ItemIdentifier)
 	}
 	return out
-}
-
-func missingItemIDs(all, completed []string) []string {
-	set := make(map[string]struct{}, len(completed))
-	for _, id := range completed {
-		set[id] = struct{}{}
-	}
-	var missing []string
-	for _, id := range all {
-		if _, ok := set[id]; !ok {
-			missing = append(missing, id)
-		}
-	}
-	return missing
 }
 
 // unclaimedItemIDs returns the broker identifiers from batch that are not
@@ -2170,6 +2348,10 @@ func classifyDLQReason(code, gatewayErr string) string {
 		switch code {
 		case triggerReasonExclusiveOperationRejected:
 			return triggerReasonExclusiveOperationRejected
+		case triggerCodeAgentRefused:
+			return triggerReasonCustomerDisabled
+		case triggerCodePayloadTooLarge:
+			return triggerReasonPayloadTooLarge
 		case "function_failed":
 			return triggerReasonMaxAttempts
 		case "function_state_timeout",
@@ -2364,14 +2546,75 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if l == nil {
 		return nil, false, nil
 	}
+	id, fingerprint := t.ID.String(), triggerPollerFingerprint(t)
 	l.triggerPollersMu.Lock()
-	defer l.triggerPollersMu.Unlock()
+	p, ok := l.triggerPollers[id]
+	built, tracked := l.triggerPollerConfigs[id]
+	if ok && (!tracked || built == fingerprint) && !triggerSourceClosed(p) {
+		l.triggerPollersMu.Unlock()
+		return p, true, nil
+	}
+	var stale triggerSource
+	if ok {
+		// The trigger changed since its poller was built: a rotated
+		// credential, a new topic or URL. Kafka joins its consumer group
+		// when the reader is built, so the old reader must leave. A poller
+		// whose broker connection closed for good is rebuilt on a new one.
+		stale = l.forgetTriggerPollerLocked(id)
+	}
+	l.triggerPollersMu.Unlock()
+	// Close and build without the shared lock (ADR-20261027162741,
+	// ADR-20261101104512): a broker connect, or a Kafka reader leaving its
+	// group, can take seconds while other lanes look up their pollers.
+	l.closeTriggerPoller(id, stale)
+	src, registered, err := l.buildTriggerPoller(t)
+	if err != nil || !registered {
+		return nil, registered, err
+	}
+	l.triggerPollersMu.Lock()
+	if existing, ok := l.triggerPollers[id]; ok {
+		// Another caller built this trigger's poller meanwhile; keep it.
+		l.triggerPollersMu.Unlock()
+		l.closeTriggerPoller(id, src)
+		return existing, true, nil
+	}
 	if l.triggerPollers == nil {
 		l.triggerPollers = map[string]triggerSource{}
 	}
-	if p, ok := l.triggerPollers[t.ID.String()]; ok {
-		return p, true, nil
+	l.triggerPollers[id] = src
+	if l.triggerPollerConfigs == nil {
+		l.triggerPollerConfigs = map[string]string{}
 	}
+	l.triggerPollerConfigs[id] = fingerprint
+	l.triggerPollersMu.Unlock()
+	return src, true, nil
+}
+
+// triggerSourceClosed reports whether a poller's broker connection closed
+// for good (a NATS connection nats.go gave up on), so it must be rebuilt.
+func triggerSourceClosed(p triggerSource) bool {
+	closer, ok := p.(interface{ Closed() bool })
+	return ok && closer.Closed()
+}
+
+// cachedTriggerPoller returns t's poller only if one is cached for its
+// current config; it never builds one.
+func (l *Loop) cachedTriggerPoller(t sqlc.Trigger) triggerSource {
+	id := t.ID.String()
+	l.triggerPollersMu.Lock()
+	defer l.triggerPollersMu.Unlock()
+	p, ok := l.triggerPollers[id]
+	if !ok || p == nil || triggerSourceClosed(p) {
+		return nil
+	}
+	if built, tracked := l.triggerPollerConfigs[id]; tracked && built != triggerPollerFingerprint(t) {
+		return nil
+	}
+	return p
+}
+
+// buildTriggerPoller opens a trigger's credentials and builds its poller.
+func (l *Loop) buildTriggerPoller(t sqlc.Trigger) (triggerSource, bool, error) {
 	pollerTrigger := t
 	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
 	if err != nil {
@@ -2390,12 +2633,70 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
 	}
-	l.triggerPollers[t.ID.String()] = src
 	return src, true, nil
+}
+
+// triggerPollerFingerprint identifies the trigger config a poller is
+// built from (kind plus the stored, possibly sealed, config).
+func triggerPollerFingerprint(t sqlc.Trigger) string {
+	sum := sha256.Sum256(append([]byte(t.Kind+"\x00"), t.Config...))
+	return hex.EncodeToString(sum[:])
+}
+
+// forgetTriggerPollerLocked drops a cached poller and returns it for the
+// caller to close once it has released triggerPollersMu: closing a Kafka
+// reader waits for it to leave its consumer group. Caller holds
+// triggerPollersMu.
+func (l *Loop) forgetTriggerPollerLocked(id string) triggerSource {
+	p := l.triggerPollers[id]
+	delete(l.triggerPollers, id)
+	delete(l.triggerPollerConfigs, id)
+	return p
+}
+
+// closeTriggerPoller closes a poller forgetTriggerPollerLocked returned.
+func (l *Loop) closeTriggerPoller(id string, p triggerSource) {
+	if p == nil {
+		return
+	}
+	if err := p.Close(); err != nil && l.log != nil {
+		l.log.Warn("sched trigger tick: close poller", "trigger_id", id, "err", err)
+	}
+}
+
+// evictTriggerPollers closes the pollers of triggers that are no longer
+// enabled (deleted, disabled, paused), so a Kafka reader leaves its
+// consumer group instead of holding partitions for the process lifetime.
+// Only pollers this loop built are evicted.
+func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
+	l.triggerPollersMu.Lock()
+	if len(l.triggerPollerConfigs) == 0 {
+		l.triggerPollersMu.Unlock()
+		return
+	}
+	live := make(map[string]bool, len(enabled))
+	for i := range enabled {
+		live[enabled[i].ID.String()] = true
+	}
+	evicted := map[string]triggerSource{}
+	for id := range l.triggerPollerConfigs {
+		// A lane still delivering keeps its poller until a later tick.
+		if !live[id] && !l.brokerLaneActive(id) {
+			evicted[id] = l.forgetTriggerPollerLocked(id)
+		}
+	}
+	l.triggerPollersMu.Unlock()
+	for id, p := range evicted {
+		l.closeTriggerPoller(id, p)
+	}
 }
 
 // BrokerLag implements BrokerLagReader on Loop. It queries active broker
 // pollers for queue lag / backlog stats across all enabled triggers for the app.
+// It reads only the pollers the trigger tick keeps: building one here, for
+// a trigger the tick skips (another node's, a suspended account's, one whose
+// capability is off), made a Kafka reader join its group only for the tick
+// to evict it again (ADR-20261101104512).
 func (l *Loop) BrokerLag(ctx context.Context, appID string) (int64, bool, error) {
 	if l == nil || l.engine == nil {
 		return 0, false, nil
@@ -2417,11 +2718,7 @@ func (l *Loop) BrokerLag(ctx context.Context, appID string) (int64, bool, error)
 		if !t.Enabled {
 			continue
 		}
-		poller, registered, err := l.pollerForTrigger(t)
-		if err != nil || !registered || poller == nil {
-			continue
-		}
-		if ss, ok := poller.(triggerStatsSource); ok {
+		if ss, ok := l.cachedTriggerPoller(t).(triggerStatsSource); ok {
 			stats := ss.BrokerStats(ctx, t)
 			if stats.Available {
 				haveStats = true

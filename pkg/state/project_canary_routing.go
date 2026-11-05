@@ -11,6 +11,12 @@ import (
 )
 
 func selectOwnedCanary(p ProjectCanaryPolicyState, active, key string) (string, error) {
+	return selectOwnedCanaryAt(p, active, key, time.Now())
+}
+
+// selectOwnedCanaryAt is selectOwnedCanary at a given instant, so a public
+// routing view (ADR-20261027085556) splits each request at its own time.
+func selectOwnedCanaryAt(p ProjectCanaryPolicyState, active, key string, now time.Time) (string, error) {
 	if err := p.validate(); err != nil {
 		return "", err
 	}
@@ -20,13 +26,13 @@ func selectOwnedCanary(p ProjectCanaryPolicyState, active, key string) (string, 
 		}
 		return "", ErrConflict
 	}
-	if p.Control != nil && p.Control.Status == "pending" || p.Status == "needs_operator" || !time.Now().Before(p.Deadline) {
+	if p.Control != nil && p.Control.Status == "pending" || p.Status == "needs_operator" || !now.Before(p.Deadline) {
 		if p.Percent < 100 {
 			return p.BaselineReleaseID, nil
 		}
 		return "", ErrConflict
 	}
-	return SelectProjectCanaryRelease(p, key, time.Now().UTC())
+	return SelectProjectCanaryRelease(p, key, now.UTC())
 }
 func selectProjectCanaryDB(ctx context.Context, db sqlc.DBTX, appID, key string) (string, error) {
 	row, err := sqlc.New().ReadProjectCanaryRouting(ctx, db, mustPgUUID(appID))
@@ -86,6 +92,43 @@ func (m *MemStore) ResolveProjectCanary(_ context.Context, appID, scope, key str
 		}
 	}
 	return m.resolveProjectReleaseLocked(appID, scope, requested)
+}
+
+// ADR-570: the invocation version snapshot selects a canary in its own
+// committed view; both reads are lock-free.
+func (s invocationVersionPolicyReader) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	requested := ""
+	if normalizedDeploymentScope(scope) == "production" {
+		var err error
+		if requested, err = selectProjectCanaryDB(ctx, s.tx, appID, key); err != nil {
+			return "", "", err
+		}
+	}
+	return s.ResolveProjectRelease(ctx, appID, scope, requested)
+}
+
+// The public routing snapshot applies the same canary to unpinned traffic.
+func (s publicRoutingPolicyReader) ResolvePublicProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	requested := ""
+	if normalizedDeploymentScope(scope) == "production" {
+		var err error
+		if requested, err = selectProjectCanaryDB(ctx, s.tx, appID, key); err != nil {
+			return "", "", err
+		}
+	}
+	return s.ResolvePublicProjectRelease(ctx, appID, scope, requested)
+}
+
+// The snapshot already holds the store lock.
+func (s memInvocationVersionReader) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	requested := ""
+	if normalizedDeploymentScope(scope) == "production" {
+		var err error
+		if requested, err = s.store.selectProjectCanaryLocked(appID, key); err != nil {
+			return "", "", err
+		}
+	}
+	return s.ResolveProjectRelease(ctx, appID, scope, requested)
 }
 func (m *MemStore) canaryGraphCapturedLocked(accountID, projectID, graphID string) bool {
 	for _, c := range m.projectCanaries {

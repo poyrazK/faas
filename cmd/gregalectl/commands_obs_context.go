@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +22,7 @@ func cmdObsContext(args []string) int {
 	historyLimit := fs.Int("history-limit", api.ObsIncidentEvidenceLimitDefault, "maximum related timeline entries")
 	cursor := fs.String("cursor", "", "opaque next_cursor from this incident")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
-	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -33,19 +32,15 @@ func cmdObsContext(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs context: a valid --incident, resource/history limits, and positive --timeout are required")
 		return 2
 	}
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs context: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs context", *adminToken)
+	if !ok {
 		return 2
 	}
 	query := url.Values{"limit": {strconv.Itoa(*limit)}, "history_limit": {strconv.Itoa(*historyLimit)}}
 	if *cursor != "" {
 		query.Set("cursor", *cursor)
 	}
-	body, code := fetchObsSnapshot(subObsContext, "/v1/admin/obs/incidents/"+kind+"/"+id+"/context?"+query.Encode(), token, *timeout)
+	body, code := fetchObsSnapshot(subObsContext, "/v1/admin/obs/incidents/"+kind+"/"+id+"/context?"+query.Encode(), cred, *timeout)
 	if code != 0 {
 		return code
 	}

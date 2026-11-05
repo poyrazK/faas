@@ -48,6 +48,9 @@ func (m *MemStore) assignProductCustomerLocked(account, app string, customer api
 	// A customer keeps any trial they had, and without one starts the
 	// plan's trial (ADR-20261021195901).
 	customer.TrialStartsAt, customer.TrialEndsAt = prior.TrialStartsAt, prior.TrialEndsAt
+	// The store records the payment method and trial resolution; an
+	// assignment never sets them (ADR-20261022180921).
+	customer.PaymentMethodAt, customer.TrialResolvedAt = prior.PaymentMethodAt, prior.TrialResolvedAt
 	if days := d.revisions[app+"/"+customer.Revision].Spec.Plans[customer.Plan].TrialDays; customer.TrialStartsAt == nil && days > 0 {
 		end := now.AddDate(0, 0, int(days))
 		customer.TrialStartsAt, customer.TrialEndsAt = &now, &end
@@ -307,6 +310,9 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 	}
 	if hold, held := m.productOverdueHoldLocked(op.AccountID, op.AppID, op.PlatformTenantID); held {
 		return productOverdueRefusal(hold)
+	}
+	if customer.AwaitsPaymentMethod(catalog.Spec.Plans[customer.Plan], now) {
+		return ErrProductPaymentMethodRequired
 	}
 	feature := catalog.Spec.Features[admission.ProductFeature]
 	if feature.Operation != nil {

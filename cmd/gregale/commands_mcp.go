@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +91,8 @@ func cmdMCP(args []string) int {
 	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
-		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
+		printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
 	}
 }
 
@@ -683,7 +685,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.accessAudit, "access-audit", "", "optional stored-policy promotion gate: gateway or guest-only")
 	fs.StringVar(&o.accessAuditAlgorithms, "access-audit-algorithms", "", "reviewed gateway algorithms (default RS256,ES256; requires --access-audit)")
 	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
-	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
+	fs.IntVar(&o.timeout, "timeout", 1200, "deployment and verification wait timeout in seconds")
 	// A failed submission's recovery hint tells the user to retry with this
 	// flag; without it the documented retry was an unknown-flag error
 	// (hunt #9 H9-63).
@@ -772,7 +774,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if pinnedDigest != "" {
 		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
 	}
-	return finishMCPDeployWithSmoke(ctx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
+	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
+	defer cancel()
+	return finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 }
 
 func validateMCPDeploySecretsFile(path string) error {
@@ -810,6 +814,19 @@ func mcpDeployArgs(o mcpDeployOptions, dir string, secretsRequested ...bool) []s
 }
 
 func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions, dir string, cfg mcphosting.Config, candidate api.DeploymentResponse) (api.DeploymentResponse, string, error) {
+	return pinMCPCandidateRevisionWithSubmit(ctx, c, o, dir, cfg, candidate, func(args []string, env map[string]string) (api.DeploymentResponse, error) {
+		var pinned api.DeploymentResponse
+		code := quietMCPDeploy(ctx, args, deployExecution{
+			onQueued: func(dep api.DeploymentResponse) { pinned = dep }, overrideEnv: env,
+		})
+		if code != 0 {
+			return pinned, fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)
+		}
+		return pinned, nil
+	})
+}
+
+func pinMCPCandidateRevisionWithSubmit(ctx context.Context, c *Client, o mcpDeployOptions, dir string, cfg mcphosting.Config, candidate api.DeploymentResponse, submit func([]string, map[string]string) (api.DeploymentResponse, error)) (api.DeploymentResponse, string, error) {
 	preview, err := mcpCandidatePreview(ctx, c, candidate.ID, cfg)
 	if err != nil {
 		return api.DeploymentResponse{}, "", err
@@ -823,16 +840,24 @@ func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions,
 		return candidate, "", nil
 	}
 
-	var pinned api.DeploymentResponse
-	code := quietMCPDeploy(ctx, mcpDeployArgs(o, dir, false), deployExecution{
-		onQueued:    func(dep api.DeploymentResponse) { pinned = dep },
-		overrideEnv: map[string]string{"MCP_CATALOG_EXPECTED_SHA256": digest},
-	})
-	if code != 0 {
-		return api.DeploymentResponse{}, "", fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)
+	pinnedOptions := o
+	pinnedOptions.idempotencyKey = deployOperationIdempotencyKey(o.idempotencyKey, "mcp-catalog-pin")
+	pinned, err := submit(mcpDeployArgs(pinnedOptions, dir, false), map[string]string{"MCP_CATALOG_EXPECTED_SHA256": digest})
+	if err != nil {
+		return api.DeploymentResponse{}, "", err
 	}
 	if pinned.ID == "" {
 		return api.DeploymentResponse{}, "", errors.New("catalog-pinned deployment completed without a deployment id")
+	}
+	if pinned.ID == candidate.ID {
+		return api.DeploymentResponse{}, "", errors.New("catalog-pinned deployment replayed the unpinned discovery revision")
+	}
+	confirmed, err := c.GetDeployment(ctx, pinned.ID)
+	if err != nil {
+		return api.DeploymentResponse{}, "", fmt.Errorf("confirm candidate catalog pin: %w", err)
+	}
+	if !slices.Contains(confirmed.OverrideEnvKeys, "MCP_CATALOG_EXPECTED_SHA256") {
+		return api.DeploymentResponse{}, "", errors.New("candidate deployment is missing its catalog pin override")
 	}
 	return pinned, digest, nil
 }

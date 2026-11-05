@@ -158,6 +158,17 @@ func TestNormalizeCreateKeyScopes(t *testing.T) {
 			want:    []string{ScopeAdmin},
 		},
 		{
+			// ADR-20261029085359: an agent key can always inspect.
+			name:    "agent_gains_apps_read",
+			request: []string{ScopeAgent, ScopeDeployWrite},
+			want:    []string{ScopeAgent, ScopeDeployWrite, ScopeAppsRead},
+		},
+		{
+			name:    "agent_is_never_admin",
+			request: []string{ScopeAgent, ScopeAdmin},
+			wantErr: true,
+		},
+		{
 			name:    "known_single_scope",
 			request: []string{ScopeAppsRead},
 			want:    []string{ScopeAppsRead},
@@ -277,6 +288,7 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	mustContain("ScopesAdminOnly", ScopesAdminOnly, ScopeAdmin)
 	mustContain("ScopesReadSurface", ScopesReadSurface, ScopeAdmin, ScopeAppsRead)
 	mustContain("ScopesDeploymentReadSurface", ScopesDeploymentReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite)
+	mustContain("ScopesDeployTargetReadSurface", ScopesDeployTargetReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite)
 	mustContain("ScopesUsageReadSurface", ScopesUsageReadSurface, ScopeAdmin, ScopeUsageRead)
 	mustContain("ScopesSecretsWriteSurface", ScopesSecretsWriteSurface, ScopeAdmin, ScopeSecretsWrite)
 	mustContain("ScopesDeployWriteSurface", ScopesDeployWriteSurface, ScopeAdmin, ScopeDeployWrite)

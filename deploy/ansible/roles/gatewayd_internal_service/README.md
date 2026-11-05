@@ -50,13 +50,26 @@ under `/var/lib/faas/log-drains` before delivery.
   gate is unenforced.
 - `99-faas-retry-budget.conf` — when `gatewayd_retry_budget_redis_url` is
   supplied from a common Ansible Vault variable, projects the root-only
-  Redis URL through `LoadCredential` and enables the fleet-wide retry cap.
+  Redis URL through `LoadCredential` and selects the shared Redis retry backend.
+  With no Redis override, central mode uses the shared Postgres retry backend
+  (ADR-570); explicit local mode has no fleet-wide cap.
   Set `gatewayd_retry_budget_required=true` on every gateway for the
   activation pass; the role fails if any gateway lacks the URL. The URL is
   never written into the drop-in or logged by Ansible. The optional URL
   requires an operator-provisioned Redis service; this role does not
   install Redis. Follow `docs/runbooks/FaasSharedRetryBudget.md` for the
   rollout check and rollback procedure.
+- `99-faas-edge-challenge-key.conf` — projects the gateway fleet key through
+  `LoadCredential` as `FAAS_GATEWAY_FLEET_KEY_FILE` (and, for one release,
+  `FAAS_EDGE_CHALLENGE_KEY_FILE`), so every gateway signs browser-challenge
+  tokens, passes and managed deadlines with one key (ADR-831 amendment 17,
+  ADR-20261102191500). gatewayd-internal refuses to start without it. The key
+  is `gatewayd_edge_challenge_key` (64 hex digits), which CD stages from the
+  `GATEWAYD_EDGE_CHALLENGE_KEY` secret; a host given none gets a key of its
+  own, made once, which serves a single gateway only. The play
+  fails if its gateways hold different keys, or, with
+  `gatewayd_edge_challenge_key_required=true`, if any gateway lacks one.
+  `FaasEdgeChallengeKeyMismatch` checks the running fleet.
 
 ## Restart handler
 

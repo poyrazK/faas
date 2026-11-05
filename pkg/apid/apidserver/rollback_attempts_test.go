@@ -1,4 +1,4 @@
-// adr: 20261026090000
+// adr: 20261105000513
 package apidserver_test
 
 import (
@@ -30,6 +30,11 @@ func TestCheckedRollbackAttemptHTTP(t *testing.T) {
 	acknowledged.AcknowledgeReleases = true
 	if got := e.Do(t, "POST", path, acknowledged, headers); got.Code != 400 {
 		t.Fatal("acknowledged request accepted")
+	}
+	databaseRestore := req
+	databaseRestore.RestoreDatabases = true
+	if got := e.Do(t, "POST", path, databaseRestore, headers); got.Code != 400 {
+		t.Fatalf("database restore used a request-rollback attempt: %d %s", got.Code, got.Body)
 	}
 	handler := *e.H()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

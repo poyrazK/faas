@@ -1,5 +1,5 @@
 import {fileURLToPath} from 'node:url';
-import {runJobOperation} from '@gregale/sdk-node/job-operations-runtime';
+import {runJobOperation} from '@gregale/sdk-node/preview/job-operations-runtime';
 import {generateExport} from './export.mjs';
 
 export function runExportJob({apiURL, env = process.env, fetchImpl = fetch}) {

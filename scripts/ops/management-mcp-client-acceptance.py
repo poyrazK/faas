@@ -98,7 +98,16 @@ def preflight_call(rpc, thread_id):
     if not isinstance(value, dict):
         value = json.loads(next(item["text"] for item in result["content"] if item["type"]=="text"))
     checks = value.get("checks", {})
-    if value.get("scope") != "default" or checks.get("api_write_authorization", {}).get("status") != "unknown" or checks.get("write_consent", {}).get("status") != "blocked":
+    authorization, admission = "unknown", "unknown"
+    preview = value.get("authorization_preview")
+    if preview is not None:
+        if not isinstance(preview, dict) or preview.get("schema_version") != 1 or preview.get("app_id") != value.get("app_id") or preview.get("scope") != "default" or preview.get("operation") != "deploy":
+            raise RuntimeError("Codex preflight lost the native authorization identity")
+        authorization = {"allowed": "passed", "blocked": "blocked", "unknown": "unknown"}.get(preview.get("authorization"))
+        admission = {"unknown": "unknown", "blocked": "blocked"}.get(preview.get("admission"))
+        if authorization is None or admission is None or preview.get("checks", {}).get("quota", {}).get("status") != "unknown":
+            raise RuntimeError("Codex preflight inferred request admission from native authorization")
+    if value.get("scope") != "default" or checks.get("api_write_authorization", {}).get("status") != authorization or checks.get("native_admission", {}).get("status") != admission or checks.get("write_consent", {}).get("status") != "blocked":
         raise RuntimeError("Codex preflight confused read access with write admission")
 
 
@@ -170,7 +179,8 @@ class CodexRPC:
                 self.notifications.append(message)
                 continue
             if "error" in message:
-                raise RuntimeError(f"Codex rejected {method}; inspect the client locally")
+                detail = str(message["error"].get("message", ""))[:300] if isinstance(message["error"], dict) else ""
+                raise RuntimeError(f"Codex rejected {method}: {detail}; inspect the client locally")
             return message["result"]
         raise RuntimeError(f"Codex timed out during {method}")
 
@@ -324,7 +334,7 @@ def remote_fixture_acceptance(args):
             recipe = json.loads(contents[0]["text"])
             if recipe.get("review_kind") != "saved_plan_recovery_recipe" or recipe.get("freshness") != "not_checked" or recipe.get("native_completion") != "not_observed":
                 raise RuntimeError("Codex recovery recipe overstated current eligibility or completion")
-            tools = ["gregale_get_action", "gregale_get_plan", "gregale_check_plan"]
+            tools = ["gregale_get_action", "gregale_get_saved_plan", "gregale_check_plan"]
             if environment:
                 tools = ["gregale_get_environment_action", "gregale_get_environment_plan", "gregale_check_environment_plan"]
             workflow = recipe.get("workflow", {})
@@ -617,11 +627,11 @@ def remote_fixture_acceptance(args):
             rollback_outcome_discovery(rpc, thread_id)
             service_abort_outcome_discovery(rpc, thread_id)
             service_abort_outcome_discovery(rpc, thread_id, named=True)
-            if not {"gregale_get_plan", "gregale_get_environment_plan"}.issubset(names):
+            if not {"gregale_get_saved_plan", "gregale_get_environment_plan"}.issubset(names):
                 raise RuntimeError("Codex saved review tools are missing")
             for plan_id in (history_plan_id, workload_history_plan_id):
-                saved_review_call(rpc, thread_id, "gregale_get_plan", {"app": "alpha", "plan_id": plan_id})
-            saved_review_call(rpc, thread_id, "gregale_get_plan", {"app": "budget-history", "plan_id": budget_history_plan_id})
+                saved_review_call(rpc, thread_id, "gregale_get_saved_plan", {"app": "alpha", "plan_id": plan_id})
+            saved_review_call(rpc, thread_id, "gregale_get_saved_plan", {"app": "budget-history", "plan_id": budget_history_plan_id})
             saved_review_call(rpc, thread_id, "gregale_get_environment_plan", {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id})
             if not {"gregale_check_plan", "gregale_check_environment_plan"}.issubset(names):
                 raise RuntimeError("Codex applicability tools are missing")
@@ -642,7 +652,7 @@ def remote_fixture_acceptance(args):
                     raise RuntimeError("Codex drift explanation changed original expiry")
             finally:
                 fixture_control("plan-drift-off")
-            saved_review_call(rpc, thread_id, "gregale_get_plan", {"app": "alpha", "plan_id": history_plan_id})
+            saved_review_call(rpc, thread_id, "gregale_get_saved_plan", {"app": "alpha", "plan_id": history_plan_id})
             scoped_telemetry_calls(rpc, thread_id)
             rollout_watch_call(rpc, thread_id)
             for links, selector, environment in discoveries:
@@ -1508,7 +1518,7 @@ def main():
         command_args = ["--non-interactive"]
         if args.profile:
             command_args += ["--profile", args.profile]
-        command_args += ["mcp", "serve", "--transport", "stdio"]
+        command_args += ["mcp", "serve", "--transport", "stdio", "--tools", "all"]
         fields += ["command=" + toml_string(binary), "args=" + json.dumps(command_args)]
         fields.append('env_vars=["FAAS_TOKEN","FAAS_API","XDG_CONFIG_HOME"]')
         env_fields = []

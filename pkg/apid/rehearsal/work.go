@@ -7,7 +7,7 @@ func ValidateManagedWork(req api.RegisterScenarioTestRequest, enabled bool) *api
 		return nil
 	}
 	if !enabled {
-		return api.ErrCapacity("managed-worker rehearsals are disabled pending native qualification")
+		return api.ErrRehearsalNotEnabled("Managed-worker rehearsal")
 	}
 	if _, _, e := api.ScenarioManagedWorkEnrollment(req); e != nil {
 		return api.ErrValidation(e.Error())
@@ -17,14 +17,14 @@ func ValidateManagedWork(req api.RegisterScenarioTestRequest, enabled bool) *api
 
 func ValidateWorkerTermination(req api.RegisterScenarioTestRequest, enabled bool) *api.Problem {
 	if req.ManagedWork != nil && req.ManagedWork.WorkerTermination != nil && !enabled {
-		return api.ErrCapacity("worker termination rehearsals are disabled pending native qualification")
+		return api.ErrRehearsalNotEnabled("Worker termination rehearsal")
 	}
 	return nil
 }
 
 func ValidatePostgresFault(req api.RegisterScenarioTestRequest, enabled bool) *api.Problem {
 	if req.ManagedWork != nil && req.ManagedWork.PostgresFault != nil && !enabled {
-		return api.ErrCapacity("PostgreSQL fault rehearsals are disabled pending native qualification")
+		return api.ErrRehearsalNotEnabled("PostgreSQL fault rehearsal")
 	}
 	return nil
 }

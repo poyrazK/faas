@@ -132,6 +132,15 @@ func RenderText(w io.Writer, d Diff) {
 		_, _ = fmt.Fprintln(w)
 	}
 
+	// 4b. Companions, with the public hostname each port opens.
+	if rows := filterChanges(d.Changes, "companion."); len(rows) > 0 {
+		_, _ = fmt.Fprintln(w, "Companions:")
+		for _, c := range rows {
+			printCompanion(w, c)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+
 	// 5. Other app-config scalars (the long tail that didn't make
 	// the headline).
 	otherRows := otherScalars(d.Changes)
@@ -237,7 +246,8 @@ func otherScalars(changes []Change) []Change {
 		}
 		if strings.HasPrefix(c.Field, "environment.") ||
 			strings.HasPrefix(c.Field, "cron[") ||
-			strings.HasPrefix(c.Field, "edge_rule[") {
+			strings.HasPrefix(c.Field, "edge_rule[") ||
+			strings.HasPrefix(c.Field, "companion.") {
 			continue
 		}
 		out = append(out, c)

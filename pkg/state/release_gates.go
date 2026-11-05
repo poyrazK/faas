@@ -14,6 +14,10 @@ const (
 	ReleaseGateSLO          = "slo"
 	ReleaseGateNewErrors    = "new_errors"
 	ReleaseGateCustomMetric = "custom_metric"
+	ReleaseGateAI           = "ai"
+	// Synthetic and metric_change gates (ADR-20261022082305).
+	ReleaseGateSynthetic    = "synthetic"
+	ReleaseGateMetricChange = "metric_change"
 )
 
 // ErrReleaseGateLimit means the app already has the maximum number of gates.
@@ -36,6 +40,11 @@ type ReleaseGate struct {
 	MinSamples   int
 	CreatedBy    string
 	CreatedAt    time.Time
+	// SyntheticCheckID and MaxFailurePercent configure a synthetic gate;
+	// MaxChangePercent a metric_change gate (ADR-20261022082305).
+	SyntheticCheckID  string
+	MaxFailurePercent int
+	MaxChangePercent  int
 }
 
 // ReleaseGateSLOTarget is the part of an SLO a gate judges by.
@@ -59,6 +68,17 @@ type ReleaseGateErrorGroup struct {
 	Events     int64
 }
 
+// ReleaseGateAIWindow is a deployment's AI calls over a window (ADR
+// 20261022153155).
+type ReleaseGateAIWindow struct {
+	Calls          int64
+	ErrorCalls     int64
+	FlaggedCalls   int64
+	CostMillicents int64
+	TTFBCalls      int64
+	TTFBMSTotal    int64
+}
+
 // ReleaseGateStore persists release gates (ADR-20261019071734).
 type ReleaseGateStore interface {
 	// CreateReleaseGate stores a gate unless the app already has maxGates
@@ -75,6 +95,7 @@ type ReleaseGateEvidenceStore interface {
 	ReleaseGateDeploymentSLI(ctx context.Context, appID, deploymentID string, since, until time.Time, latencyThresholdMS int) (ReleaseGateSLISample, error)
 	ReleaseGateNewErrorGroups(ctx context.Context, appID, deploymentID string, minEvents int) ([]ReleaseGateErrorGroup, error)
 	ReleaseGateCustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (samples int64, average float64, err error)
+	ReleaseGateDeploymentAI(ctx context.Context, appID, deploymentID string, since, until time.Time) (ReleaseGateAIWindow, error)
 }
 
 var _ ReleaseGateStore = (*MemStore)(nil)

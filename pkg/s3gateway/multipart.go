@@ -89,7 +89,7 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 	key := req.signatureKey(r)
-	if !objectstorage.ValidKey(key) {
+	if !objectstorage.ValidRequestKey(key) {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidRequest")
 		return
 	}
@@ -161,14 +161,12 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	select {
-	case h.putSlots <- struct{}{}:
-		defer func() { <-h.putSlots }()
-	default:
+	if !h.acquirePutSlot(r.Context(), req.bucket.AccountID) {
 		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return
 	}
+	defer h.releasePutSlot(req.bucket.AccountID)
 	h.forwardMultipartPart(w, r, req, upload, int32(part64), integrity, transfers)
 }
 
@@ -321,7 +319,9 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 		h.writeMultipartError(w, r, req, err, "InvalidArgument")
 		return
 	}
-	if !h.recordProviderRequest(w, r, req) {
+	// Admitted, counted and paced like the other listings: it skipped the
+	// monthly limits, the organization fence and egress (bug hunt 33).
+	if !h.admit(w, r, req, "__list__", 0, false) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
 	page, err := req.provider.ListMultipartParts(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartListPartsRequest{Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumberMarker: marker, Limit: limit})
@@ -333,7 +333,7 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 	for _, part := range page.Items {
 		items = append(items, listedMultipartPart{checksumXML: checksumXMLFor(part.Checksum), PartNumber: part.PartNumber, ETag: part.ETag, Size: part.SizeBytes, LastModified: part.LastModified.UTC().Format(time.RFC3339Nano)})
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{ChecksumAlgorithm: upload.Checksum.Algorithm, ChecksumType: upload.Checksum.Type, XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
+	h.writeListingXML(w, r, req, listMultipartPartsResult{ChecksumAlgorithm: upload.Checksum.Algorithm, ChecksumType: upload.Checksum.Type, XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
 }
 
 func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {

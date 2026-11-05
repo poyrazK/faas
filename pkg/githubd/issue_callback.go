@@ -15,7 +15,7 @@ func (s *Service) handleIssueCallback(ctx context.Context, body []byte) error {
 		return nil
 	}
 	if err != nil {
-		return err
+		return unprocessableWebhook(err)
 	}
 	if s.IssueCallbacks == nil {
 		return errors.New("tracker callback storage unavailable")

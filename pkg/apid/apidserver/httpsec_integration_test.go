@@ -121,8 +121,10 @@ func TestHttpsec_CSPOnAllPaths(t *testing.T) {
 	if !strings.Contains(csp, "script-src 'self' 'nonce-") {
 		t.Errorf("CSP missing nonce-bearing script-src: %s", csp)
 	}
-	if !strings.Contains(csp, "https://unpkg.com") {
-		t.Errorf("CSP missing unpkg.com allow: %s", csp)
+	// htmx and Swagger UI are served by apid; no package CDN may load
+	// scripts or styles on the API host.
+	if strings.Contains(csp, "unpkg.com") {
+		t.Errorf("CSP still allows unpkg.com: %s", csp)
 	}
 	styleStart := strings.Index(csp, "style-src ")
 	styleEnd := -1
@@ -133,8 +135,8 @@ func TestHttpsec_CSPOnAllPaths(t *testing.T) {
 		t.Errorf("CSP missing style-src directive: %s", csp)
 	} else {
 		style := csp[styleStart : styleStart+styleEnd]
-		if !strings.Contains(style, "'nonce-") || !strings.Contains(style, "https://unpkg.com") {
-			t.Errorf("CSP missing nonce or unpkg.com style allow: %s", csp)
+		if !strings.Contains(style, "'nonce-") {
+			t.Errorf("CSP missing nonce style allow: %s", csp)
 		}
 	}
 	if !strings.Contains(csp, "frame-ancestors 'none'") {

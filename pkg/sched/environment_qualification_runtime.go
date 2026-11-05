@@ -83,8 +83,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if graphNodePinned && graphNodeID != "" {
 		preferredNodeID = graphNodeID
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID})
+	req := Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
+		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}
+	placement, err := e.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -95,7 +96,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("preflight qualification service listener: %w", err)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(e.nodePlacementContext(ctx, placement, req), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
 	if err != nil {
 		return fmt.Errorf("admit qualification instance: %w", err)
@@ -263,17 +264,16 @@ func (e *Engine) recordQualificationInstanceTransition(ctx context.Context, ins 
 // Contention must respect the execution/cleanup deadline without leaving a
 // waiter goroutine that could acquire the mutex after its caller has returned.
 func (e *Engine) lockQualificationApp(ctx context.Context, appID string) (func(), error) {
-	mu := e.appMutex(appID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, context.Cause(ctx))
 		}
-		if mu.TryLock() {
+		if unlock, ok := e.tryLockApp(appID); ok {
 			if err := ctx.Err(); err != nil {
-				mu.Unlock()
+				unlock()
 				return nil, errors.Join(err, context.Cause(ctx))
 			}
-			return mu.Unlock, nil
+			return unlock, nil
 		}
 		timer := time.NewTimer(api.EnvironmentGitOpsQualificationRuntimeCheckInterval)
 		select {

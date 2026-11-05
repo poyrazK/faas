@@ -20,7 +20,7 @@ bytes and use trusted owner configuration:
 ```js
 import {
   eventConsumerRequestFromHeaders, claimEventConsumerProcessing,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const input = eventConsumerRequestFromHeaders(headers, originalBody, accountId, appId);
 const lease = await claimEventConsumerProcessing(pool, input, 30000, { signal });

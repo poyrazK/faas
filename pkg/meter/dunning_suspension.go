@@ -19,7 +19,7 @@ type SuspensionCommands interface {
 }
 
 func (d *Dunning) suspendWithNotice(ctx context.Context, acct state.Account) (bool, error) {
-	if d.p.SuspensionRequested == nil || !d.p.SuspensionRequested() {
+	if d.p.SuspensionRequested == nil || !d.p.SuspensionRequested() || orgDunningSubject(acct) {
 		return false, nil
 	}
 	if d.p.SuspensionCommands == nil || acct.PastDueAt == nil {
@@ -34,6 +34,15 @@ func (d *Dunning) suspendWithNotice(ctx context.Context, acct state.Account) (bo
 	}
 	d.suspensionFollowup(ctx, acct, result.SuspendedAt)
 	return true, d.p.SuspensionCommands.Complete(ctx, acct.ID, result.IntentID, result.LeaseID)
+}
+
+// orgDunningSubject reports whether a dunning row is a company organization's
+// billing subject. apid's suspension and non-payment deletion commands lock,
+// transition and mail account rows only, so an organization never left
+// past_due or suspended there (Hunt 17 H17-3). Organizations take the direct
+// MarkDunningStep transition, which resolves organization subjects.
+func orgDunningSubject(acct state.Account) bool {
+	return acct.ResourceOrgID != ""
 }
 
 func (d *Dunning) suspensionFollowup(ctx context.Context, acct state.Account, at time.Time) {

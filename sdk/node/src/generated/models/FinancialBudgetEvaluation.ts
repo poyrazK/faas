@@ -16,7 +16,7 @@ export type FinancialBudgetEvaluation = {
   fresh: boolean;
   reasons: Array<string>;
   /**
-   * Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.
+   * Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.
    */
   projected_millicents?: number;
   /**

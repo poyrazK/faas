@@ -94,11 +94,19 @@ func (s *PgStore) CreateCheckedRollback(ctx context.Context, acct, app, target, 
 	if err := validateCheckedRollbackArguments(acct, app, target, current, reason); err != nil {
 		return api.RollbackOperation{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (api.RollbackOperation, error) {
+		return s.createCheckedRollbackOnce(ctx, acct, app, target, current, reason)
+	})
+}
+
+// Preparing the target re-publishes its revision URL; the binding guard
+// (ADR-570) validates that before commit.
+func (s *PgStore) createCheckedRollbackOnce(ctx context.Context, acct, app, target, current, reason string) (api.RollbackOperation, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, app)
 	if err != nil {
 		return api.RollbackOperation{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	id, err := checkedRollbackAttemptID(ctx)
 	if err != nil {
 		return api.RollbackOperation{}, err
@@ -127,7 +135,12 @@ func (s *PgStore) CreateCheckedRollback(ctx context.Context, acct, app, target, 
 			return api.RollbackOperation{}, ErrInvalidArgument
 		}
 	}
-	r, err := s.createCheckedRollbackTx(ctx, tx, acct, app, target, current, reason, id)
+	var r api.RollbackOperation
+	if claim, ok := routeMonitorRollbackClaim(ctx); ok {
+		r, err = s.createMonitorRollbackTx(ctx, tx, acct, app, target, current, reason, claim)
+	} else {
+		r, err = s.createCheckedRollbackTx(ctx, tx, acct, app, target, current, reason, id)
+	}
 	if err != nil {
 		return r, err
 	}
@@ -144,6 +157,10 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	}
 	if d.EnvironmentWorkloadHeld() || d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
 		return api.RollbackOperation{}, ErrNoRollbackTarget
+	}
+	// A target whose layers were reclaimed cannot cold boot (Hunt 21 H21-1).
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target); err != nil {
+		return api.RollbackOperation{}, err
 	}
 	a, err := appByIDDB(ctx, tx, app)
 	if err != nil {

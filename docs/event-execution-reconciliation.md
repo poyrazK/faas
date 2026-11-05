@@ -322,7 +322,7 @@ does not extend retention, reserve jobs or provide historical audit completeness
 
 Go exposes `ListEventExecutionLineageRetryJobs`; Node exposes
 `EventsService.listEventExecutionLineageRetryJobs`; Python exposes
-`faas_sdk.api.events.list_event_execution_lineage_retry_jobs` with sync and async
+`faas_sdk.preview.api.events.list_event_execution_lineage_retry_jobs` with sync and async
 operations. Apply the listing-index migration before enabling this API at scale.
 
 ## Watch a bulk retry job

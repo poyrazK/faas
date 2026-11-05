@@ -2,10 +2,41 @@ package reposcan
 
 import (
 	"maps"
+	"slices"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// foldCoveredRoots renames a workspace or convention seed to the one
+// explicit workload that builds the same root from source, so mergeByKey
+// folds the two into one workload. Without it a Compose service `api`
+// building ./services/backend and the workspace package `backend` there
+// became two workloads deploying one source (rc.318 field report). A root
+// that several explicit workloads build (a Compose web and worker from one
+// context) is already covered, so the inferred seed is dropped. A Go module
+// command is its own program at that root and stays as it is.
+func foldCoveredRoots(seeds []workloadSeed) []workloadSeed {
+	builders := map[string][]string{}
+	for _, s := range seeds {
+		if s.tier == TierCompose && s.image == "" && !slices.Contains(builders[s.rootDir], s.name) {
+			builders[s.rootDir] = append(builders[s.rootDir], s.name)
+		}
+	}
+	out := seeds[:0]
+	for _, s := range seeds {
+		names := builders[s.rootDir]
+		if s.tier == TierCompose || s.goCommand != "" || len(names) == 0 || slices.Contains(names, s.name) {
+			out = append(out, s)
+			continue
+		}
+		if len(names) == 1 {
+			s.name = names[0]
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 // mergeByKey collapses workloadSeeds with the same (RootDir, Name)
 // into a single Workload. Merge semantics, verbatim from impl
@@ -53,9 +84,15 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		source              string // highest-tier seed's source
 		dockerfile          string // highest-tier seed's dockerfile
 		dockerfileBuild     *api.DockerfileBuildOptions
+		goCommand           string
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
+		readinessCheck      *api.DeploymentHealthcheck
+		ingressSettings     []IngressSetting
+		labels              map[string]string
 		imageProcess        *api.ComposeProcess
+		secretFiles         []api.SecretFile
+		resources           *api.ComposeResources
 		class               Class
 		command             []string
 		commandShell        bool
@@ -69,10 +106,12 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
+		renamedFrom               string
 
-		schedules []CronSchedule
-		ports     []int
-		envKeys   []string
+		schedules     []CronSchedule
+		ports         []int
+		portsLoopback bool
+		envKeys       []string
 		// internalPorts follows the same first-declaration-wins rule.
 		internalPorts    []api.WorkloadPort
 		internalPortsSet bool
@@ -145,9 +184,25 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if b.dockerfileBuild == nil && s.dockerfileBuild != nil {
 			b.dockerfileBuild = s.dockerfileBuild.Clone()
 		}
+		if b.goCommand == "" {
+			b.goCommand = s.goCommand
+		}
+		if b.secretFiles == nil && s.secretFiles != nil {
+			b.secretFiles = api.CloneSecretFiles(s.secretFiles)
+		}
+		if b.resources == nil && s.resources != nil {
+			b.resources = s.resources.Clone()
+		}
+		if b.ingressSettings == nil && s.ingressSettings != nil {
+			b.ingressSettings = slices.Clone(s.ingressSettings)
+		}
+		if b.labels == nil && s.labels != nil {
+			b.labels = maps.Clone(s.labels)
+		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
 			b.healthcheck = s.healthcheck.Clone()
+			b.readinessCheck = s.readinessCheck.Clone()
 			b.imageProcess = s.imageProcess.Clone()
 			b.imageSet = true
 		}
@@ -200,6 +255,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			value := *s.platformTenantRequired
 			b.platformTenantRequired = &value
 		}
+		if b.renamedFrom == "" {
+			b.renamedFrom = s.renamedFrom
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -210,6 +268,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if !b.portsSet && len(s.ports) > 0 {
 			b.ports = append([]int(nil), s.ports...)
+			b.portsLoopback = s.portsLoopback
 			b.portsSet = true
 		}
 		if !b.internalPortsSet && s.internalPorts != nil {
@@ -226,15 +285,19 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 	for _, k := range ordered {
 		b := buckets[k]
 		cls := b.class
+		composeDefaultWorker := false
 		if cls == "" && b.det == detCompose {
 			// Compose has no explicit workload-class field. A published
 			// port is an unambiguous HTTP service signal; without one the
-			// service is a background worker. Run this after all detector
-			// fields merge so an explicit Procfile or platform hint wins.
+			// service is a background worker until Scan finds another
+			// service calling it (ADR-20261029120000). Run this after all
+			// detector fields merge so an explicit Procfile or platform
+			// hint wins.
 			if len(b.ports) > 0 {
 				cls = ClassHTTP
 			} else {
 				cls = ClassWorker
+				composeDefaultWorker = true
 			}
 		}
 		if cls == "" {
@@ -249,11 +312,17 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			RootDir:             b.rootDir,
 			Dockerfile:          b.dockerfile,
 			DockerfileBuild:     b.dockerfileBuild.Clone(),
+			GoCommand:           goCommandForBuild(b.goCommand, b.dockerfile, b.image),
 			Image:               b.image,
 			Command:             b.command,
 			CommandShell:        b.commandShell,
 			ImageHealthcheck:    b.healthcheck.Clone(),
+			ReadinessCheck:      b.readinessCheck.Clone(),
+			IngressSettings:     slices.Clone(b.ingressSettings),
+			Labels:              maps.Clone(b.labels),
 			ImageProcess:        b.imageProcess.Clone(),
+			SecretFiles:         api.CloneSecretFiles(b.secretFiles),
+			Resources:           b.resources.Clone(),
 			DependsOn:           b.dependsOn,
 			DependsOnConditions: maps.Clone(b.dependsOnConditions),
 
@@ -264,16 +333,18 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
-			Unpublished:               b.det == detCompose && len(b.ports) == 0,
+			RenamedFrom:               b.renamedFrom,
+			Unpublished:               b.det == detCompose && (len(b.ports) == 0 || b.portsLoopback),
 			InternalPorts:             b.internalPorts,
 
-			Class:     cls,
-			Schedule:  primarySchedule,
-			Schedules: append([]CronSchedule(nil), b.schedules...),
-			Ports:     b.ports,
-			EnvKeys:   b.envKeys,
-			Source:    b.source,
-			Tier:      b.tier,
+			Class:                cls,
+			composeDefaultWorker: composeDefaultWorker,
+			Schedule:             primarySchedule,
+			Schedules:            append([]CronSchedule(nil), b.schedules...),
+			Ports:                b.ports,
+			EnvKeys:              b.envKeys,
+			Source:               b.source,
+			Tier:                 b.tier,
 			DetectedBy: Detection{
 				Detector:         b.det.String(),
 				Priority:         b.det.priority(),

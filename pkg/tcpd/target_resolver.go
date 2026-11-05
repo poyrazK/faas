@@ -53,48 +53,62 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if route.ListenerID == "" {
 		return gateway.Target{}, errors.New("TCP durable route requires a listener identity")
 	}
+	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
+	}
+	return r.resolveInstance(ctx, route)
+}
+
+func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) error {
 	app, err := r.Instances.AppByID(ctx, route.AppID)
 	if err != nil {
-		return gateway.Target{}, fmt.Errorf("read TCP app: %w", err)
+		return fmt.Errorf("read TCP app: %w", err)
 	}
 	if app.Status == state.AppDeleted || (route.AccountID != "" && app.AccountID != route.AccountID) {
-		return gateway.Target{}, errors.New("TCP app ownership no longer matches listener")
+		return errors.New("TCP app ownership no longer matches listener")
 	}
 	if app.MaintenanceMode {
-		return gateway.Target{}, errors.New("TCP app is in maintenance mode")
+		return errors.New("TCP app is in maintenance mode")
+	}
+	if app.Visibility == api.AppVisibilityInternal || api.IsInternalWorkloadPort(app.Manifest.Ports, api.WorkloadPortTCP, route.GuestPort) {
+		return errors.New("TCP listener is internal")
 	}
 	intent, err := r.Instances.TCPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {
-		return gateway.Target{}, fmt.Errorf("read TCP listener intent: %w", err)
+		return fmt.Errorf("read TCP listener intent: %w", err)
 	}
 	if intent.ID != route.ListenerID || !intent.Enabled || intent.AppID != route.AppID || intent.AccountID != app.AccountID ||
 		intent.PublicPort != route.PublicPort || intent.GuestPort != route.GuestPort || intent.Protocol != "tcp" {
-		return gateway.Target{}, errors.New("TCP listener is disabled or changed")
+		return errors.New("TCP listener is disabled or changed")
 	}
 	policy, err := (api.TCPListenerTLSConfig{Mode: intent.TLSMode, Hostname: intent.TLSHostname}).Normalize()
 	if err != nil || policy.Hostname != route.TLSHostname {
-		return gateway.Target{}, errors.New("TCP listener TLS intent is invalid or changed")
+		return errors.New("TCP listener TLS intent is invalid or changed")
 	}
 	if policy.Mode == api.TCPListenerTLSTerminate {
 		domain, err := r.Instances.DomainByName(ctx, policy.Hostname)
 		if err != nil {
-			return gateway.Target{}, errors.New("TCP TLS domain unavailable")
+			return errors.New("TCP TLS domain unavailable")
 		}
 		if err := state.ValidateTCPListenerTLSDomain(route.AppID, policy.Hostname, domain); err != nil {
-			return gateway.Target{}, err
+			return err
 		}
 	}
+	return nil
+}
+
+func (r *StoreTargetResolver) resolveInstance(ctx context.Context, route Route) (gateway.Target, error) {
 	deploymentID, err := ingressroute.Deployment(ctx, r.Instances, route.AppID, rand.Uint64())
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("select raw ingress deployment: %w", err)
 	}
-	instances, err := r.Instances.ListInstancesForApp(ctx, route.AppID)
+	instances, err := state.ListLiveInstancesForApp(ctx, r.Instances, route.AppID)
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("list instances for app %q: %w", route.AppID, err)
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.IsFork(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
@@ -121,6 +135,10 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	if atCapacity || instanceID == "" || nodeID == "" || deploymentID != selectedDeploymentID {
 		return gateway.Target{}, fmt.Errorf("app %q has no routable instance after TCP admission", route.AppID)
+	}
+	// A cold wake can outlast a visibility or listener-policy change.
+	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
 	}
 	return gateway.Target{
 		AppID:        route.AppID,

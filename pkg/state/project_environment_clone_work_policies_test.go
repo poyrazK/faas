@@ -101,27 +101,54 @@ func TestCloneWorkPolicyCatalogueCanonicalizesAndRejectsBrokenGraph(t *testing.T
 	}
 }
 
-func TestCloneWorkPoliciesRequireIsolationEvenForEqualOrEmptyCatalogue(t *testing.T) {
-	for _, empty := range []bool{false, true} {
-		work := cloneWorkPolicyFixture()
-		if empty {
-			work.Policies, work.EventBindings, work.TriggerBindings = nil, nil, nil
+// A captured policy or producer binding needs isolated runtime admission, which
+// matching definitions cannot prove. An explicitly empty catalogue publishes
+// once the target matches the capture (ADR-20261024123122).
+func TestCloneWorkPoliciesRequireIsolationUnlessCatalogueIsEmpty(t *testing.T) {
+	work := cloneWorkPolicyFixture()
+	source := projectCloneScopedPolicies{Work: &work}
+	record := projectCloneWorkloadRecord{ProjectEnvironmentCloneWorkload: ProjectEnvironmentCloneWorkload{WorkloadSlug: "api"}, snapshot: projectCloneWorkloadSnapshot{Policies: &source}}
+	record.SourcePoliciesHash, _ = cloneScopedPoliciesHash(source)
+	for _, actual := range []projectCloneScopedPolicies{{}, source} {
+		if err := validateCloneScopedPolicyPublication(record, actual, true); !errors.Is(err, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable) {
+			t.Fatalf("matching definitions proved isolated runtime admission: %v", err)
 		}
-		source := projectCloneScopedPolicies{Work: &work}
-		record := projectCloneWorkloadRecord{ProjectEnvironmentCloneWorkload: ProjectEnvironmentCloneWorkload{WorkloadSlug: "api"}, snapshot: projectCloneWorkloadSnapshot{Policies: &source}}
-		record.SourcePoliciesHash, _ = cloneScopedPoliciesHash(source)
-		for _, actual := range []projectCloneScopedPolicies{{}, source} {
-			if err := validateCloneScopedPolicyPublication(record, actual, true); !errors.Is(err, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable) {
-				t.Fatalf("matching/empty definitions proved isolated runtime admission: %v", err)
-			}
+	}
+	for _, binding := range []func(*ProjectEnvironmentCloneWorkPolicyDefinitions){
+		func(w *ProjectEnvironmentCloneWorkPolicyDefinitions) { w.Policies, w.TriggerBindings = nil, nil },
+		func(w *ProjectEnvironmentCloneWorkPolicyDefinitions) { w.Policies, w.EventBindings = nil, nil },
+	} {
+		producer := cloneWorkPolicyFixture()
+		binding(&producer)
+		record.snapshot.Policies = &projectCloneScopedPolicies{Work: &producer}
+		if err := validateCloneScopedPolicyPublication(record, *record.snapshot.Policies, true); !errors.Is(err, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable) {
+			t.Fatalf("a producer binding alone proved isolated runtime admission: %v", err)
 		}
+	}
+	empty := cloneWorkPolicyFixture()
+	empty.Policies, empty.EventBindings, empty.TriggerBindings = nil, nil, nil
+	source = projectCloneScopedPolicies{Work: &empty}
+	record.snapshot.Policies = &source
+	record.SourcePoliciesHash, _ = cloneScopedPoliciesHash(source)
+	if err := validateCloneScopedPolicyPublication(record, source, true); err != nil {
+		t.Fatalf("an empty catalogue must publish: %v", err)
+	}
+	if err := validateCloneScopedPolicyPublication(record, projectCloneScopedPolicies{}, true); err != nil {
+		t.Fatalf("an empty catalogue leaves nothing on the target to compare: %v", err)
+	}
+	if err := validateCloneScopedPolicyPublication(record, projectCloneScopedPolicies{EdgePresent: true}, true); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a target whose edge policy differs from the capture must not publish: %v", err)
+	}
+	record.snapshot.Settings.WorkPolicies = &ProjectEnvironmentWorkPolicySettings{Revision: 1, Policies: work.Policies}
+	if err := validateCloneScopedPolicyPublication(record, source, true); !errors.Is(err, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable) {
+		t.Fatalf("environment work policies need isolated admission: %v", err)
 	}
 	legacy := projectCloneScopedPolicies{}
 	raw, err := json.Marshal(legacy)
 	if err != nil || strings.Contains(string(raw), "work") {
 		t.Fatalf("legacy policy bytes changed: %s %v", raw, err)
 	}
-	record := projectCloneWorkloadRecord{snapshot: projectCloneWorkloadSnapshot{Policies: &legacy}}
+	record = projectCloneWorkloadRecord{snapshot: projectCloneWorkloadSnapshot{Policies: &legacy}}
 	record.SourcePoliciesHash, _ = cloneScopedPoliciesHash(legacy)
 	if err := validateCloneScopedPolicyPublication(record, legacy, true); err != nil {
 		t.Fatalf("legacy policy publication contract changed: %v", err)

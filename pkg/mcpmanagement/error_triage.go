@@ -10,11 +10,11 @@ import (
 )
 
 type errorGroupsArgs struct {
-	App    string `json:"app" jsonschema:"Existing app slug with app-wide diagnostic consent"`
-	Since  string `json:"since,omitempty" jsonschema:"Inclusive RFC3339 group last-seen start, at most 64 bytes. Normalized to UTC/native microsecond precision. Default until minus 24h. Native maximum window/retention caps apply; counts are group-history counters."`
-	Until  string `json:"until,omitempty" jsonschema:"Inclusive RFC3339 group last-seen end at or before now, at most 64 bytes. Normalized to UTC/native microsecond precision; default now. Repeat explicit timestamps from next_arguments when paging."`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Native page size from 1 to 50; default 20. Repeat unchanged with a continuation."`
-	Cursor string `json:"cursor,omitempty" jsonschema:"Opaque MCP next_cursor, at most 8192 bytes; copy next_arguments unchanged. Bound to app identity, requested/effective windows and page size."`
+	App    string `json:"app" jsonschema:"App slug; requires diagnostic consent"`
+	Since  string `json:"since,omitempty" jsonschema:"RFC3339 start of the last-seen window; default 24h before until"`
+	Until  string `json:"until,omitempty" jsonschema:"RFC3339 end of the last-seen window; default now"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Page size from 1 to 50; default 20"`
+	Cursor string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page; copy next_arguments unchanged"`
 }
 
 type errorRequestsArgs struct {

@@ -32,6 +32,7 @@ func TestWebhookSecretFromRow(t *testing.T) {
 	}{
 		{"sealed copy wins over the plaintext column", state.GithubWebhookSecret{Value: []byte("stale-plaintext-value"), Sealed: sealed}, []*age.X25519Identity{fleet}, string(secret), false},
 		{"row written before the sealed copy", state.GithubWebhookSecret{Value: secret}, []*age.X25519Identity{fleet}, string(secret), false},
+		{"row written without plaintext", state.GithubWebhookSecret{Sealed: sealed}, []*age.X25519Identity{fleet}, string(secret), false},
 		{"sealed copy that does not open fails closed", state.GithubWebhookSecret{Value: secret, Sealed: sealed}, []*age.X25519Identity{other}, "", true},
 		{"sealed copy without an identity fails closed", state.GithubWebhookSecret{Value: secret, Sealed: sealed}, nil, "", true},
 		{"empty row is not found", state.GithubWebhookSecret{}, []*age.X25519Identity{fleet}, "", true},

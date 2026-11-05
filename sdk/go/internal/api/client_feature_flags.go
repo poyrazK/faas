@@ -63,7 +63,7 @@ func (c *Client) PromoteProjectFlagRollout(ctx context.Context, project, environ
 
 // RuntimeFlags requires a Client constructed with a workload JWT for gregale:flags.
 // Account API keys cannot read this endpoint.
-func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {
+func (c *PreviewClient) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {
 	var out json.RawMessage
 	err := c.do(ctx, http.MethodGet, "/v1/runtime/flags", nil, &out)
 	return out, err

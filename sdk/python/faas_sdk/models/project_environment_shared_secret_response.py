@@ -20,7 +20,7 @@ class ProjectEnvironmentSharedSecretResponse:
     project_slug: str
     environment: str
     secret: ProjectEnvironmentSharedSecret
-    """Metadata of one secret shared by every service of a project environment (ADR-1139). The value is write-only."""
+    """Metadata of one secret shared by every service of a project environment. The value is write-only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

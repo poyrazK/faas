@@ -33,3 +33,70 @@
   arbitrary labels. Routing wildcard rows before exact routes would let a
   broad suffix shadow a deliberate tenant surface. Proving the literal
   `_faas-verify.*.<suffix>` owner is not a valid DNS-01 challenge name.
+
+## Amendment (2026-10-20): unproved claims cannot take a verified wildcard's names
+
+Creating a custom domain needs no DNS proof, and an expired, unverified row
+was never deleted. Routing and the on-demand TLS check let any such row
+shadow a verified wildcard above it. So one request from any account could
+leave `api.example.com` dark for the account that had proved
+`*.example.com`.
+
+- A row that is unverified and past `verification_expires_at` reserves
+  nothing (`CustomDomain.ClaimLive`). Exact lookups in routing and on-demand
+  TLS ignore it, and `WildcardDomainForHost` skips it. The tenant-hostname
+  overlap check therefore ignores it too.
+- `POST /v1/domains` refuses, with `409`, an exact or wildcard name below a
+  verified wildcard owned by another account (`state.ForeignVerifiedWildcard`).
+  This is the same rule as the tenant-hostname conflict above. The wildcard's
+  own account may still add exact names below it, which take precedence once
+  verified.
+- A live pending row still shadows the broader wildcard, as before. A claim
+  made by another account before the wildcard verified can therefore darken
+  that name until its 7-day deadline. After that it cannot be renewed.
+
+## Amendment 2 (2026-10-31): a company's wildcard covers every company app
+
+Bug hunt 32 (M5). `ForeignVerifiedWildcard` compared the account that created
+the wildcard's app with the account that created the app asking for a name.
+A company app keeps its creator's account as `account_id`
+(ADR-202610171904), so a member could not attach a name below the company's
+own verified wildcard to a company app they created: `409`, "belongs to
+another account". Once the wildcard's creator left the company, the only apps
+that could take new names under it were the ones that creator had made.
+
+- Names below a verified wildcard belong to its tenant (`state.AppTenantID`):
+  the app's shared organization, else the account that created it (an app
+  with no organization, or one in its creator's personal organization). Any
+  company app may take a name below a company wildcard. The creator's
+  personal apps no longer can; they are another tenant.
+- Managing a company app's domains already follows the organization's roles
+  (ADR-20261026151103 amendment 4). This makes adding names under the
+  company's zone follow them too.
+- The claim takeover by DNS proof is unchanged. It still lets a member move
+  another account's unverified claim, including a colleague's, onto their own
+  app by publishing the takeover record.
+
+## Amendment 3 (2026-11-03): check ownership at publication
+
+Public creates and DNS-proof takeovers repeat the foreign verified-wildcard
+check inside the domain publication transaction, after acquiring its locks.
+The early HTTP check alone leaves a gap in which another tenant's wildcard
+can verify before an unproved child claim is published. Storage now returns
+the same `409` conflict for that case, comparing shared organizations rather
+than app creators.
+
+This guard applies to public requests. ADR-570's internal repair operations
+retain their ability to publish shadow claims. Pending claims published before
+the parent verifies keep the deadline behavior described in the first amendment.
+
+## Amendment 4 (2026-11-03): serialize wildcard and tenant-hostname reservations
+
+Public wildcard claims repeat the tenant-hostname exclusion inside their
+publication transaction. Public tenant-hostname creates and DNS-proof takeovers
+repeat the inverse exclusion under the same traffic binding locks. This includes
+pending reservations and names on other accounts, and excludes deleted surfaces
+and expired, unverified wildcard claims. The existing hierarchical name locks
+serialize overlapping writes with either the fleet-wide or scoped binding guard.
+A conflict returns the existing wildcard/tenant-surface overlap problem. Internal
+repair writes retain their existing ability to represent overlapping claims.

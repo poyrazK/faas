@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -42,9 +43,22 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrValidation("gregale.* sources are reserved for platform events"))
 		return
 	}
+	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		api.WriteProblem(w, AppSourceReservedProblem())
+		return
+	}
 	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
+	producer, problem := s.accountProducer(r.Context(), acct)
+	if problem == nil {
+		problem = s.PublishRateProblem(acct, 1)
+	}
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	envelope.Producer = producer
 	traceHeaders := pkgtrace.InjectHeaders(r.Context())
 	envelope.Traceparent = traceHeaders["traceparent"]
 	envelope.Tracestate = traceHeaders["tracestate"]
@@ -68,6 +82,24 @@ func (s *Service) persistPublishedEvent(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		s.Host.Logger().Error("marshal published event failed", "event_id", logsanitize.Field(envelope.ID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
+		return
+	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
+		// Retained identities accepted before the envelope limit remain
+		// retryable with their original content.
+		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+			_, lookupErr := lookup.LookupPublishedEventAcceptance(r.Context(), acct.ID, payload)
+			if lookupErr == nil {
+				s.writePublishedEventReceipt(w, r, acct, envelope)
+				return
+			}
+			if errors.Is(lookupErr, state.ErrConflict) {
+				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
+				return
+			}
+		}
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
 		return
 	}
 	if err := s.Host.Store().AppendEvent(r.Context(), "apid", "event.published", &acct.ID, payload); err != nil {

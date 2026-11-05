@@ -17,6 +17,9 @@ type RouteMonitorConfig struct {
 	Revision        int64               `json:"revision"`
 	Routes          []RouteMonitorRoute `json:"routes"`
 	UpdatedAt       *time.Time          `json:"updated_at,omitempty"`
+	// Warnings, on a save only, name selectors no request matched within
+	// the plan's telemetry lookback (ADR-20261028110044).
+	Warnings []string `json:"warnings,omitempty"`
 }
 type SetRouteMonitorRequest struct {
 	CustomerGroupBy  string              `json:"customer_group_by,omitempty"`

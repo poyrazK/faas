@@ -1,6 +1,6 @@
 import httpx
 
-from faas_sdk.api.storage import (
+from faas_sdk.preview.api.storage import (
     list_org_object_buckets,
     list_org_object_storage_compute_bindings,
     revoke_org_object_s3_credential,

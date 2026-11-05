@@ -16,18 +16,24 @@ func (s *PgStore) ApplyPlatformTenant(ctx context.Context, in ApplyPlatformTenan
 	if err := validatePlatformTenantApply(in); err != nil {
 		return ApplyPlatformTenantResult{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficTenantBinding(ctx, in.AccountID, trafficTenantApplyHosts(in))
 	if err != nil {
 		return ApplyPlatformTenantResult{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var accountID string
 	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, in.AccountID).Scan(&accountID); err != nil {
 		return ApplyPlatformTenantResult{}, applyNoRows(err)
 	}
 	result, err := planPlatformTenantApply(ctx, tx, in)
-	if err != nil || in.DryRun {
-		return result, err
+	if err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
+	if err := tx.ValidateProposal(ctx, trafficTenantApplyProposal(in, result)); err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
+	if in.DryRun {
+		return result, nil
 	}
 	if err := commitPlatformTenantApply(ctx, tx, in, &result); err != nil {
 		return ApplyPlatformTenantResult{}, err
@@ -117,6 +123,15 @@ func planPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTen
 	}
 	if err := planPlatformTenantSurfaces(ctx, tx, in, &result); err != nil {
 		return ApplyPlatformTenantResult{}, err
+	}
+	for _, item := range result.Surfaces {
+		for _, host := range item.Hostnames {
+			if host.Action == "create" {
+				if err := checkPublicTenantHostnameClaim(ctx, tx, host.Hostname.Hostname, item.Surface.AppID); err != nil {
+					return ApplyPlatformTenantResult{}, err
+				}
+			}
+		}
 	}
 	return result, nil
 }

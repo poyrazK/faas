@@ -460,7 +460,7 @@ func TestCmdAutomationsRestoreRequiresVersionAndRevision(t *testing.T) {
 		{"--app", "billing", "--name", "paid-invoice", "--revision", "42", "--expected-version", "-1"},
 	} {
 		code, output := runWithStderr(t, func() int { return cmdAutomationsRestore(args) })
-		if code != 1 || !strings.Contains(output, "usage: gregale automations restore") || f.sawMethod != "" {
+		if code != 1 || !strings.Contains(output, "usage: gregale automation restore") || f.sawMethod != "" {
 			t.Fatalf("args=%v exit=%d stderr=%q request=%s %s", args, code, output, f.sawMethod, f.sawPath)
 		}
 	}

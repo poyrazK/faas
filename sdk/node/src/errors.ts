@@ -90,7 +90,9 @@ class FaasErrorImpl extends Error implements FaasError {
     // log lines carry the canonical code (mirrors Go's
     // `APIError.Error()` which returns `problem.detail`).
     super(`[${status}] ${problem.code ?? 'unknown'}: ${problem.detail ?? problem.title ?? ''}`.trim());
-    this.name = new.target.name;
+    // An uncategorized problem is the base error; it reads as FaasError,
+    // not the internal class name.
+    this.name = new.target === FaasErrorImpl ? 'FaasError' : new.target.name;
     this.problem = problem;
     this.status = status;
     this.txId = problem.tx_id;
@@ -150,9 +152,12 @@ export class ErrCapacity extends FaasErrorImpl {
  * Returns `null` for codes outside the canonical four — the wrapper
  * raises the closest-by-status sentinel (404→ErrNotFound,
  * 401→ErrUnauthorized, 429→ErrRateLimited, 503→ErrCapacity) when the
- * code is unknown so customers still get a typed error. Codes we have
- * no contract for fall through to `ErrUnauthorized` as the safest
- * default.
+ * code is unknown so customers still get a typed error. Any other
+ * problem (400 validation_failed, 409, 422, 500, …) is the base
+ * FaasError: read `err.problem.code`. It used to be ErrUnauthorized,
+ * so a client that re-authenticates on that error did so for a
+ * validation failure; the Go SDK matches no sentinel for these codes
+ * either (Hunt 14 H14-91).
  */
 export function problemToError(problem: Problem, status: number): FaasError {
   switch (problem.code) {
@@ -171,7 +176,7 @@ export function problemToError(problem: Problem, status: number): FaasError {
       if (status === 401) return new ErrUnauthorized(problem, status);
       if (status === 429) return new ErrRateLimited(problem, status);
       if (status === 503) return new ErrCapacity(problem, status);
-      return new ErrUnauthorized(problem, status);
+      return new FaasErrorImpl(problem, status);
   }
 }
 

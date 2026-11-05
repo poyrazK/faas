@@ -25,7 +25,7 @@ func TestServiceAbortNamedNamespaceCompatibility(t *testing.T) {
 	}
 	opts := m.opts
 	opts.AllowWrites = false
-	_, restored, err := newManagementServer(m.client, opts)
+	_, restored, err := newHistoryTestManagementServer(m.client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestServiceAbortNamedNamespaceValidation(t *testing.T) {
 			if err := store.update(namedServiceAbortOutcomeNamespace+"named-abort", saved); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := newManagementServer(m.client, m.opts); err == nil {
+			if _, _, err := newHistoryTestManagementServer(m.client, m.opts); err == nil {
 				t.Fatalf("accepted invalid named namespace: %s", kind)
 			}
 		})

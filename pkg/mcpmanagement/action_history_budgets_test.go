@@ -97,7 +97,7 @@ func TestBudgetActionHistoryRestartExpiryAndConsent(t *testing.T) {
 			store, path, key := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "budget-history"
 			client := api.NewClient(backend.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,7 +124,7 @@ func TestBudgetActionHistoryRestartExpiryAndConsent(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = next.Close() })
 			opts.planStore, opts.AllowWrites = next, mode != "read_only"
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -169,7 +169,7 @@ func TestBudgetActionHistoryRestartExpiryAndConsent(t *testing.T) {
 				t.Fatal("recreated environment inherited history")
 			}
 			opts.planNamespace = "other-grant"
-			_, other, err := newManagementServer(client, opts)
+			_, other, err := newHistoryTestManagementServer(client, opts)
 			if err != nil || len(other.actions) != 0 {
 				t.Fatal("another grant inherited budget history")
 			}
@@ -187,7 +187,7 @@ func TestBudgetActionHistoryRevisionConflicts(t *testing.T) {
 	for _, policy := range []string{"environment", "app"} {
 		t.Run(policy, func(t *testing.T) {
 			f, backend, opts := newBudgetFixture(t)
-			_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -218,7 +218,7 @@ func TestBudgetActionHistoryCompatibilityCapacityAndRevocation(t *testing.T) {
 	store, _, _ := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "compat-budget"
 	client := api.NewClient(backend.URL, testToken)
-	_, m, err := newManagementServer(client, opts)
+	_, m, err := newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestBudgetActionHistoryCompatibilityCapacityAndRevocation(t *testing.T) {
 	if err := store.update("actions/"+opts.planNamespace, legacy); err != nil {
 		t.Fatal(err)
 	}
-	_, m, err = newManagementServer(client, opts)
+	_, m, err = newHistoryTestManagementServer(client, opts)
 	if err != nil || len(m.actions) != api.ManagementMCPActionHistoryMax || m.actions[id].PlanID != id {
 		t.Fatal("combined bound lost the live budget plan")
 	}
@@ -250,7 +250,7 @@ func TestBudgetActionHistoryCompatibilityCapacityAndRevocation(t *testing.T) {
 	if err := store.update(budgetActionsNamespace+opts.planNamespace, before); err != nil {
 		t.Fatal(err)
 	}
-	_, upgraded, err := newManagementServer(client, opts)
+	_, upgraded, err := newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

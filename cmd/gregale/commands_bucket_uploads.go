@@ -69,7 +69,7 @@ func parseBucketUploads(args []string) (bucketUploadsOptions, error) {
 func cmdBucketUploads(args []string) int {
 	o, err := parseBucketUploads(args)
 	if err != nil {
-		PrintUsage(osStderr, "usage: gregale bucket uploads list <app> <bucket-id> [--limit N] [--cursor ID] | gregale bucket uploads <status|parts> <app> <bucket-id> <upload-id>", "bucket")
+		PrintUsage(osStderr, "usage: gregale bucket multipart list <app> <bucket-id> [--limit N] [--cursor ID] | gregale bucket multipart <status|parts> <app> <bucket-id> <upload-id>", "bucket")
 		return 1
 	}
 	c, err := authedClient()

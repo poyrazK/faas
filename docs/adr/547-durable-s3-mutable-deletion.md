@@ -1,6 +1,7 @@
 # ADR-547: Durable ordinary and mutable null S3 deletion
 
 Status: Accepted (2026-10-03)
+Amended by: [ADR-20261025115958](20261025115958-object-storage-per-key-deletion.md) (one active intent per key, not per bucket)
 
 ADR-548 extends this journal to immutable deletion and permits bounded paginated baselines.
 

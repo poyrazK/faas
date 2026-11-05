@@ -308,6 +308,8 @@ func (p *preparedNetworkPool) fill() {
 		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = policy.egressDestConnRate, policy.egressDestConnBurst
 		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
+		nc.DatabaseEgress = true        // and may bind a managed database (ADR 20261026150000)
+		nc.EgressCircuitEnabled = p.m.egressCircuitEnabled
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		if j := p.m.resourceJournal; j != nil {
@@ -469,6 +471,9 @@ func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
 func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan, extra []uint16) {
 	nc.EgressPorts = tenantEgressPorts(plan, extra)
 	nc.DNSGated = true
+	// Bound managed databases open their own port on every plan (ADR
+	// 20261026150000); the set stays empty for apps without one.
+	nc.DatabaseEgress = true
 	if lim, ok := api.LimitsFor(plan); ok {
 		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst

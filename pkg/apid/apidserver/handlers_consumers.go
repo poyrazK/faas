@@ -85,7 +85,7 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
 		return
 	}
-	if req.TrialDays != 0 && !s.apiMonetizationEnabled() {
+	if req.TrialDays != 0 && !s.apiMonetizationFor(acct.ID) {
 		// Trials are API monetization: until it is released the field is
 		// answered like any unknown one (ADR-20261018090210).
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
@@ -185,46 +185,12 @@ func (s *server) listConsumerKeys(w http.ResponseWriter, r *http.Request, acct s
 	writeJSON(w, http.StatusOK, api.ConsumerKeyListResponse{Keys: out})
 }
 
-func (s *server) countConsumerKeys(ctx context.Context, acctID, appID string) (int, error) {
-	rows, err := s.store.ListConsumerKeysForApp(ctx, acctID, appID)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, row := range rows {
-		if row.RevokedAt == nil {
-			count++
-		}
-	}
-	return count, nil
-}
-
-func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (int, error) {
-	apps, err := s.store.ListApps(ctx, acctID)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, app := range apps {
-		rows, err := s.store.ListConsumerKeysForApp(ctx, acctID, app.ID)
-		if err != nil {
-			return 0, err
-		}
-		for _, row := range rows {
-			if row.RevokedAt == nil {
-				count++
-			}
-		}
-	}
-	return count, nil
-}
-
 // consumerKeyScopesProblem trims scopes in place and rejects unknown or
 // repeated ones. The billing scope only reaches API monetization's
 // self-service routes, so it is not offered until monetization is released
 // (ADR-20261018090210).
-func (s *server) consumerKeyScopesProblem(scopes []string) *api.Problem {
-	billing, allowed := s.apiMonetizationEnabled(), "scopes must contain only read, write, or admin"
+func (s *server) consumerKeyScopesProblem(accountID string, scopes []string) *api.Problem {
+	billing, allowed := s.apiMonetizationFor(accountID), "scopes must contain only read, write, or admin"
 	if billing {
 		allowed = "scopes must contain only read, write, admin, or billing"
 	}
@@ -271,7 +237,7 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
 		return
 	}
-	if problem := s.consumerKeyScopesProblem(req.Scopes); problem != nil {
+	if problem := s.consumerKeyScopesProblem(acct.ID, req.Scopes); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -280,45 +246,44 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid expiry", "expires_at must be in the future"))
 		return
 	}
-	appCount, err := s.countConsumerKeys(r.Context(), acct.ID, app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not count consumer keys"))
+	k, plaintext, problem := s.issueConsumerKey(r.Context(), acct, c, strings.TrimSpace(req.Name), req.Scopes, req.ExpiresAt)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	if appCount >= acct.Plan.ConsumerKeysPerApp() {
-		api.WriteProblem(w, api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeApp, acct.Plan.ConsumerKeysPerApp(), appCount))
-		return
-	}
-	accountCount, err := s.countAccountConsumerKeys(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not count account consumer keys"))
-		return
-	}
-	if accountCount >= acct.Plan.ConsumerKeysPerAccount() {
-		api.WriteProblem(w, api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeAccount, acct.Plan.ConsumerKeysPerAccount(), accountCount))
-		return
-	}
-	plaintext, prefix, hash, err := api.GenerateConsumerKey()
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not generate consumer key"))
-		return
-	}
-	k, err := s.store.CreateConsumerKeyForConsumer(r.Context(), acct.ID, c.ID, strings.TrimSpace(req.Name), prefix, hash, req.Scopes, req.ExpiresAt)
-	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Consumer key already exists", "a key with this name or generated prefix already exists for the app"))
-			return
-		}
-		api.WriteProblem(w, api.ErrInternal("could not create consumer key"))
-		return
-	}
-	s.audit.Emit(r.Context(), "consumer_key.created", &acct.ID, map[string]any{
-		"app_id": app.ID, "consumer_id": c.ID, "key_id": k.ID, "name": k.Name,
-		"scopes": k.Scopes,
-	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, consumerKeyResponse(k, plaintext))
+}
+
+// issueConsumerKey creates a key for an active consumer within the plan's
+// per-app and per-account key quotas and returns its plaintext once. The
+// owner's key route and consumer sign-up (ADR-20261021143000) share it. The
+// store counts the quotas and inserts the key in one step: the per-account
+// allowance belongs to the app's billing subject (ADR-202610171904), and
+// concurrent issues must not each see the last free slot.
+func (s *server) issueConsumerKey(ctx context.Context, acct state.Account, c state.APIConsumer, name string, scopes []string,
+	expiresAt *time.Time) (state.ConsumerKey, string, *api.Problem) {
+	plaintext, prefix, hash, err := api.GenerateConsumerKey()
+	if err != nil {
+		return state.ConsumerKey{}, "", api.ErrInternal("could not generate consumer key")
+	}
+	quota := state.ConsumerKeyQuota{PerApp: acct.Plan.ConsumerKeysPerApp(), PerAccount: acct.Plan.ConsumerKeysPerAccount()}
+	k, err := s.store.CreateConsumerKeyForConsumerIfUnderQuota(ctx, acct.ID, c.ID, name, prefix, hash, scopes, expiresAt, quota)
+	var exceeded *state.ConsumerKeyQuotaError
+	switch {
+	case errors.As(err, &exceeded):
+		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, exceeded.Scope, exceeded.Limit, exceeded.Observed)
+	case errors.Is(err, state.ErrConflict):
+		return state.ConsumerKey{}, "", api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Consumer key already exists", "a key with this name or generated prefix already exists for the app")
+	case err != nil:
+		return state.ConsumerKey{}, "", api.ErrInternal("could not create consumer key")
+	}
+	s.audit.Emit(ctx, "consumer_key.created", &acct.ID, map[string]any{
+		"app_id": c.AppID, "consumer_id": c.ID, "key_id": k.ID, "name": k.Name,
+		"scopes": k.Scopes,
+	})
+	return k, plaintext, nil
 }
 
 func (s *server) revokeConsumerKey(w http.ResponseWriter, r *http.Request, acct state.Account) {

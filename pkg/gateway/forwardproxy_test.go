@@ -475,6 +475,67 @@ func (f *fakeVmmdClient) ForwardTCPStream(context.Context, ...grpc.CallOption) (
 	panic("ForwardTCPStream: not stubbed (HTTP gateway tests do not use the L4 bridge)")
 }
 
+// Database VM RPCs (ADR-1027) run on database nodes, never behind the gateway.
+func (f *fakeVmmdClient) CreateDatabaseVolume(context.Context, *vmmdpb.CreateDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.CreateDatabaseVolumeResponse, error) {
+	panic("CreateDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) DeleteDatabaseVolume(context.Context, *vmmdpb.DeleteDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteDatabaseVolumeResponse, error) {
+	panic("DeleteDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) ListDatabaseVolumes(context.Context, *vmmdpb.ListDatabaseVolumesRequest, ...grpc.CallOption) (*vmmdpb.ListDatabaseVolumesResponse, error) {
+	panic("ListDatabaseVolumes: not stubbed")
+}
+
+func (f *fakeVmmdClient) PruneDatabaseArchive(context.Context, *vmmdpb.PruneDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.PruneDatabaseArchiveResponse, error) {
+	panic("PruneDatabaseArchive: not stubbed")
+}
+
+func (f *fakeVmmdClient) ExportDatabaseVolume(context.Context, *vmmdpb.ExportDatabaseVolumeRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.DatabaseVolumeChunk], error) {
+	panic("ExportDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) ImportDatabaseVolume(context.Context, ...grpc.CallOption) (grpc.ClientStreamingClient[vmmdpb.DatabaseVolumeChunk, vmmdpb.ImportDatabaseVolumeResponse], error) {
+	panic("ImportDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) SyncDatabaseArchive(context.Context, *vmmdpb.SyncDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.SyncDatabaseArchiveResponse, error) {
+	panic("SyncDatabaseArchive: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseArchiveHold(context.Context, *vmmdpb.DatabaseArchiveHoldRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveHoldResponse, error) {
+	panic("DatabaseArchiveHold: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseArchiveBytes(context.Context, *vmmdpb.DatabaseArchiveBytesRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveBytesResponse, error) {
+	panic("DatabaseArchiveBytes: not stubbed")
+}
+
+func (f *fakeVmmdClient) GrowDatabaseVolume(context.Context, *vmmdpb.GrowDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.GrowDatabaseVolumeResponse, error) {
+	panic("GrowDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
+	panic("StartDatabase: not stubbed")
+}
+
+func (f *fakeVmmdClient) StopDatabase(context.Context, *vmmdpb.StopDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StopDatabaseResponse, error) {
+	panic("StopDatabase: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseControl(context.Context, *vmmdpb.DatabaseControlRequest, ...grpc.CallOption) (*vmmdpb.DatabaseControlResponse, error) {
+	panic("DatabaseControl: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseSession(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	panic("DatabaseSession: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseReplication(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	panic("DatabaseReplication: not stubbed")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")
@@ -522,6 +583,12 @@ func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
 }
+func (f *fakeVmmdClient) RunAgent(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.RunAgentRequest, vmmdpb.RunAgentEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by gateway tests")
+}
+func (f *fakeVmmdClient) CaptureAgentSnapshot(context.Context, *vmmdpb.CaptureAgentSnapshotRequest, ...grpc.CallOption) (*vmmdpb.CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by gateway tests")
+}
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
 }
@@ -530,6 +597,9 @@ func (f *fakeVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskR
 }
 func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
 	panic("ExecuteAppTask: not stubbed")
+}
+func (f *fakeVmmdClient) ExecForkCommand(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecForkCommand: not stubbed")
 }
 func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed")
@@ -589,6 +659,9 @@ func (f *fakeVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceReque
 }
 func (f *fakeVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	panic("Stats: not stubbed")
+}
+func (f *fakeVmmdClient) CaptureProfile(context.Context, *vmmdpb.CaptureProfileRequest, ...grpc.CallOption) (*vmmdpb.CaptureProfileResponse, error) {
+	panic("CaptureProfile: not stubbed")
 }
 func (f *fakeVmmdClient) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest, ...grpc.CallOption) (*vmmdpb.HeartbeatResponse, error) {
 	panic("Heartbeat: not stubbed")

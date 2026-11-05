@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from faas_sdk.models.event_recovery_request import EventRecoveryRequest
-from faas_sdk.models.workflow_run_recovery_plan import WorkflowRunRecoveryPlan
-from faas_sdk.models.workflow_run_recovery_target import WorkflowRunRecoveryTarget
+from faas_sdk.preview.models.event_recovery_request import EventRecoveryRequest
+from faas_sdk.preview.models.workflow_run_recovery_plan import WorkflowRunRecoveryPlan
+from faas_sdk.preview.models.workflow_run_recovery_target import WorkflowRunRecoveryTarget
 
 
 def test_durable_run_plan_preserves_reviewed_zero_resume_count():
@@ -23,8 +23,8 @@ def test_durable_run_plan_preserves_reviewed_zero_resume_count():
 
 
 def test_native_recovery_item_and_coverage_are_readable():
-    from faas_sdk.models.event_recovery_item import EventRecoveryItem
-    from faas_sdk.models.event_recovery_job_coverage import check_event_recovery_job_coverage
+    from faas_sdk.preview.models.event_recovery_item import EventRecoveryItem
+    from faas_sdk.preview.models.event_recovery_job_coverage import check_event_recovery_job_coverage
 
     body = {
         "position": 1,
@@ -51,7 +51,7 @@ def test_native_recovery_item_and_coverage_are_readable():
 
 
 def test_retained_native_result_preserves_evidence_after_pruning():
-    from faas_sdk.models.event_recovery_execution import EventRecoveryExecution
+    from faas_sdk.preview.models.event_recovery_execution import EventRecoveryExecution
 
     body = {
         "observed_at": "2026-10-10T00:00:03+00:00",
@@ -66,10 +66,10 @@ def test_retained_native_result_preserves_evidence_after_pruning():
 
 
 def test_native_completion_notification_supports_expired_admission_and_items_link():
-    from faas_sdk.models.event_recovery_execution_finished_webhook_payload import (
+    from faas_sdk.preview.models.event_recovery_execution_finished_webhook_payload import (
         EventRecoveryExecutionFinishedWebhookPayload,
     )
-    from faas_sdk.models.event_recovery_execution_job_health_state import (
+    from faas_sdk.preview.models.event_recovery_execution_job_health_state import (
         check_event_recovery_execution_job_health_state,
     )
 
@@ -138,7 +138,7 @@ def test_reviewed_retry_preserves_parent_position_and_resume_count():
 
 
 def test_retry_preflight_preserves_waits_and_original_reviewed_count():
-    from faas_sdk.models.event_recovery_preflight import EventRecoveryPreflight
+    from faas_sdk.preview.models.event_recovery_preflight import EventRecoveryPreflight
 
     timestamp = "2026-10-11T00:00:00+00:00"
     body = {
@@ -180,8 +180,8 @@ def test_retry_preflight_preserves_waits_and_original_reviewed_count():
 
 
 def test_execution_attention_policy_and_payload_roundtrip():
-    from faas_sdk.models.event_recovery_notification_kind import check_event_recovery_notification_kind
-    from faas_sdk.models.workflow_recovery_execution_attention_webhook_payload import (
+    from faas_sdk.preview.models.event_recovery_notification_kind import check_event_recovery_notification_kind
+    from faas_sdk.preview.models.workflow_recovery_execution_attention_webhook_payload import (
         WorkflowRecoveryExecutionAttentionWebhookPayload,
     )
 
@@ -229,9 +229,9 @@ def test_execution_attention_policy_and_payload_roundtrip():
 
 
 def test_reviewed_cancellation_and_audit_target_roundtrip():
-    from faas_sdk.models.event_recovery_history_entry import EventRecoveryHistoryEntry
-    from faas_sdk.models.workflow_recovery_cancellation_request import WorkflowRecoveryCancellationRequest
-    from faas_sdk.models.workflow_recovery_cancellation_response import WorkflowRecoveryCancellationResponse
+    from faas_sdk.preview.models.event_recovery_history_entry import EventRecoveryHistoryEntry
+    from faas_sdk.preview.models.workflow_recovery_cancellation_request import WorkflowRecoveryCancellationRequest
+    from faas_sdk.preview.models.workflow_recovery_cancellation_response import WorkflowRecoveryCancellationResponse
 
     request = WorkflowRecoveryCancellationRequest(position=2, expected_resume_count=3, reason="provider incident")
     assert request.to_dict() == {"position": 2, "expected_resume_count": 3, "reason": "provider incident"}
@@ -270,7 +270,7 @@ def test_reviewed_cancellation_and_audit_target_roundtrip():
 
 
 def test_saved_response_action_receipt_roundtrip():
-    from faas_sdk.models.workflow_recovery_action_receipt import WorkflowRecoveryActionReceipt
+    from faas_sdk.preview.models.workflow_recovery_action_receipt import WorkflowRecoveryActionReceipt
 
     body = {
         "request": {
@@ -297,7 +297,7 @@ def test_saved_response_action_receipt_roundtrip():
 
 
 def test_preview_policy_and_prepared_review_roundtrip():
-    from faas_sdk.models.workflow_recovery_policy_review import WorkflowRecoveryPolicyReview
+    from faas_sdk.preview.models.workflow_recovery_policy_review import WorkflowRecoveryPolicyReview
 
     body = {
         "id": "11111111-1111-4111-8111-111111111111",
@@ -338,7 +338,7 @@ def test_preview_policy_and_prepared_review_roundtrip():
 
 
 def test_retained_recovery_history_preserves_cursor_and_associations():
-    from faas_sdk.models.workflow_recovery_history import WorkflowRecoveryHistory
+    from faas_sdk.preview.models.workflow_recovery_history import WorkflowRecoveryHistory
 
     timestamp = "2026-10-11T00:00:00+00:00"
     body = {
@@ -364,7 +364,7 @@ def test_retained_recovery_history_preserves_cursor_and_associations():
 
 
 def test_durable_recovery_history_preserves_frozen_policy_and_incident_metadata():
-    from faas_sdk.models.workflow_recovery_history_entry import WorkflowRecoveryHistoryEntry
+    from faas_sdk.preview.models.workflow_recovery_history_entry import WorkflowRecoveryHistoryEntry
 
     timestamp = "2026-10-11T00:00:00+00:00"
     policy = {

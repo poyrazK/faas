@@ -28,7 +28,11 @@ func FinancialBudgetStopsForDeployment(ctx context.Context, store Store, app App
 	if !ok {
 		return nil, nil // Legacy adapters cannot activate stopping policies.
 	}
-	stops, err := reader.ActiveFinancialBudgetStops(ctx, app.AccountID, now)
+	payer, err := FinancialBudgetPayer(ctx, store, app)
+	if err != nil {
+		return nil, fmt.Errorf("read preview budget subject: %w", err)
+	}
+	stops, err := reader.ActiveFinancialBudgetStops(ctx, payer, now)
 	if err != nil {
 		return nil, fmt.Errorf("read preview budget decisions: %w", err)
 	}
@@ -176,7 +180,10 @@ func MatchFinancialBudgetEnvironment(ctx context.Context, store Store, app App, 
 	if err != nil {
 		return false, err
 	}
-	if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID {
+	// The policy's environment was checked against its paying subject when it
+	// was written. An environment is unique within its project; its account
+	// is the member who created it, which an organization's app need not share.
+	if env.ProjectID != app.ProjectID {
 		return false, nil
 	}
 	runtime, ok := store.(RuntimeAppEnvStore)

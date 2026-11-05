@@ -108,11 +108,14 @@ func TestEventStorageAtomicCountAdmission(t *testing.T) {
 		if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, storagePayload(accepted, "orders", `{"changed":true}`)); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("identity conflict=%v", err)
 		}
+		// ADR-20261030170000: the receipt is a published event's only copy, so
+		// the ledger gains no row, and the duplicates and the conflict add no receipt.
 		after, _ := store.ListEvents(ctx, account.ID, int(limit+10))
-		if len(after) != len(before)+1 {
-			t.Fatalf("ledger rows before=%d after=%d", len(before), len(after))
+		retained, err := store.EventStorageUsage(ctx, account.ID)
+		if err != nil || len(after) != len(before) || retained.RetainedEvents != limit {
+			t.Fatalf("ledger rows before=%d after=%d retained=%+v err=%v", len(before), len(after), retained, err)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
 			t.Fatalf("pending receipts pruned=%d %v", n, err)
 		}
 		work, err := store.ClaimDuePublishedEvent(ctx, time.Now())
@@ -126,7 +129,7 @@ func TestEventStorageAtomicCountAdmission(t *testing.T) {
 		if settled.RetainedEvents != limit || settled.PendingEvents != limit-1 || settled.RetainedBytes != usage.RetainedBytes {
 			t.Fatalf("settled=%+v", settled)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(state.PublishedEventIdentityRetention+time.Minute), 1); err != nil || n != 1 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Minute), 1); err != nil || n != 1 {
 			t.Fatalf("prune=%d %v", n, err)
 		}
 		if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, storagePayload("after-prune", "orders", "{}")); err != nil {
@@ -241,9 +244,10 @@ func TestEventStorageConcurrentByteAdmission(t *testing.T) {
 		if err != nil || accepted == 0 || rejected == 0 || usage.RetainedEvents != accepted || usage.RetainedBytes > usage.Limits.RetainedBytes {
 			t.Fatalf("burst accepted=%d rejected=%d usage=%+v err=%v", accepted, rejected, usage, err)
 		}
+		// ADR-20261030170000: the receipts counted above are the events' only copies.
 		ledger, _ := store.ListEvents(ctx, account.ID, 100)
-		if int64(len(ledger)) != accepted {
-			t.Fatalf("partial ledger=%d accepted=%d", len(ledger), accepted)
+		if len(ledger) != 0 {
+			t.Fatalf("published events kept ledger rows=%d accepted=%d", len(ledger), accepted)
 		}
 	})
 }
@@ -266,8 +270,10 @@ func TestPgEventStorageIdentityJSONBEquality(t *testing.T) {
 		t.Fatalf("equivalent jsonb=%v", err)
 	}
 	after, _ := store.EventStorageUsage(ctx, account.ID)
+	// ADR-20261030170000: the receipt is the event's only copy, so even the
+	// direct insert leaves no ledger row.
 	ledger, _ := store.ListEvents(ctx, account.ID, 10)
-	if before.RetainedEvents != 1 || before.RetainedBytes == 0 || after.RetainedBytes != before.RetainedBytes || len(ledger) != 1 {
+	if before.RetainedEvents != 1 || before.RetainedBytes == 0 || after.RetainedBytes != before.RetainedBytes || len(ledger) != 0 {
 		t.Fatalf("before=%+v after=%+v ledger=%d", before, after, len(ledger))
 	}
 }

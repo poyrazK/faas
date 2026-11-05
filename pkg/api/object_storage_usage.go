@@ -11,7 +11,8 @@ import (
 // promise that already-issued capabilities can be revoked.
 type ObjectStoragePolicy struct {
 	// Gateway safety mode is prospective, has no provider-cost ceiling, and
-	// cannot supply billable usage. Empty mode preserves provider reports.
+	// bills stored bytes only, from Gregale's own meter (ADR-20261024132844).
+	// Empty mode preserves provider reports.
 	AccountingMode           string     `json:"accounting_mode,omitempty"`
 	GatewayMeteringSince     *time.Time `json:"gateway_metering_since,omitempty"`
 	MaxAccountBytes          int64      `json:"max_account_bytes"`
@@ -22,6 +23,17 @@ type ObjectStoragePolicy struct {
 	MaxMonthlyEgressBytes    int64      `json:"max_monthly_egress_bytes"`
 	MaxMonthlyAuthorizations int64      `json:"max_monthly_authorizations"`
 	MaxReportAgeSeconds      int64      `json:"max_report_age_seconds"`
+	// AnonymousReads marks a policy evaluated for an anonymous public-mount
+	// read. Plan ceilings then scale the monthly request, egress,
+	// authorization and cost ceilings to PublicObjectReadCeilingPercent, so
+	// strangers can never spend the share private access keeps (H9-S137).
+	AnonymousReads bool `json:"-"`
+}
+
+// AnonymousReadPolicy is p evaluated for anonymous public-mount reads.
+func (p ObjectStoragePolicy) AnonymousReadPolicy() ObjectStoragePolicy {
+	p.AnonymousReads = true
+	return p
 }
 
 func (p ObjectStoragePolicy) Valid() bool {
@@ -37,7 +49,7 @@ func (p ObjectStoragePolicy) Valid() bool {
 			return false
 		}
 	}
-	return p.MaxAccountKeys <= ObjectStorageInventoryMaxPages*1000 && p.MaxBucketBytes <= p.MaxAccountBytes && p.MaxReportAgeSeconds >= 60 && p.MaxReportAgeSeconds <= MaxObjectStorageReportAgeSeconds
+	return p.MaxAccountKeys <= MaxObjectStorageAccountKeys && p.MaxBucketBytes <= p.MaxAccountBytes && p.MaxReportAgeSeconds >= 60 && p.MaxReportAgeSeconds <= MaxObjectStorageReportAgeSeconds
 }
 
 const ObjectStorageGatewaySafetyV1 = "gateway_safety_v1"
@@ -108,6 +120,31 @@ type ObjectStoragePricing struct {
 	StorageMillicentsPerGiBMonth int64  `json:"storage_millicents_per_gib_month"`
 	RequestsMillicentsPerMillion int64  `json:"requests_millicents_per_million"`
 	EgressMillicentsPerGiB       int64  `json:"egress_millicents_per_gib"`
+}
+
+// Chargeable reports usage whose priced meters are all measured. Provider
+// cost is never part of a customer charge, so its absence does not matter;
+// gateway-safety accounting never knows it (ADR-20261024132844).
+func (u ObjectStorageUsage) Chargeable() bool {
+	for _, m := range u.UnavailableMeters {
+		if m != "cost_millicents" {
+			return false
+		}
+	}
+	return true
+}
+
+// StorageOnly reports a rate card that charges stored bytes only, as
+// ADR-1430 prices object storage: requests and egress are free.
+func (p ObjectStoragePricing) StorageOnly() bool {
+	return p.RequestsMillicentsPerMillion == 0 && p.EgressMillicentsPerGiB == 0
+}
+
+// PublishedObjectStoragePricing is the rate card customers are billed:
+// ADR-1430's storage price in the billing currency, with requests and egress
+// free. apid refuses a registry whose pricing differs from it.
+func PublishedObjectStoragePricing() ObjectStoragePricing {
+	return ObjectStoragePricing{Currency: BillingCurrency, StorageMillicentsPerGiBMonth: ObjectStorageMillicentsPerGiBMonth}
 }
 
 func (p ObjectStoragePricing) Valid() bool {

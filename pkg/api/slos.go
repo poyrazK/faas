@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"regexp"
 	"slices"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CodeSLOInvalid and CodeSLOLimit are the stable problem codes for the
@@ -16,7 +18,7 @@ const (
 	CodeSLOLimit   = "slo_limit_reached"
 )
 
-var sloNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+var sloNamePattern = lazyregexp.New(`^[a-z][a-z0-9_-]{0,62}$`)
 
 // CreateSLORequest is the POST /v1/apps/{slug}/slos body. ObjectivePct is a
 // percentage with at most two decimals (99.9, 99.95); LatencyThresholdMS is
@@ -58,6 +60,30 @@ type SLOStatus struct {
 	Source             string   `json:"source"`
 }
 
+// SLOWindowPending describes a window none of whose hours has closed yet.
+// meterd records each hour after it ends, so until the creation hour closes
+// the window totals are zero although the app may be serving traffic and the
+// live burn rates are already set; "no traffic" would misread that (Hunt 12
+// H12-22).
+func SLOWindowPending(st SLOStatus) (string, bool) {
+	if st.HoursRecorded > 0 {
+		return "", false
+	}
+	start, err := time.Parse(time.RFC3339, st.WindowStart)
+	if err != nil {
+		return "", false
+	}
+	closes := start.UTC().Add(time.Hour).Format("15:04")
+	if st.HoursExpected > 0 {
+		// The rollup records a closed hour a few minutes later; until then
+		// "no traffic (0 of 0 requests)" was a false claim about an hour
+		// that served requests (Hunt 14 H14-16). A recorded hour without
+		// requests still reads "no traffic".
+		return "pending: first hour closed " + closes + " UTC, recording it", true
+	}
+	return "pending: first hour closes " + closes + " UTC", true
+}
+
 // SLOObjectivePct renders basis points (9990) as a percentage (99.9).
 func SLOObjectivePct(bp int) float64 { return float64(bp) / 100 }
 
@@ -92,7 +118,7 @@ func ValidateCreateSLO(req CreateSLORequest) (int, *Problem) {
 // ErrSLOInvalid is a 400 for a malformed SLO definition.
 func ErrSLOInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSLOInvalid, "Invalid SLO", reason).
-		WithDocs(docsBase + "/slos")
+		WithDocs(docsBase + "/cli#slos")
 }
 
 // ErrSLOLimitReached is a 422 naming the per-app cap and the observed count.
@@ -100,7 +126,7 @@ func ErrSLOLimitReached(observed int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSLOLimit, "SLO limit reached",
 		fmt.Sprintf("an app can define at most %d SLOs; delete one to add another", MaxSLOsPerApp)).
 		WithLimit(int64(MaxSLOsPerApp), int64(observed)).
-		WithDocs(docsBase + "/slos")
+		WithDocs(docsBase + "/cli#slos")
 }
 
 // ListSLOs returns an app's customer-defined SLOs (ADR-747), name-ordered.

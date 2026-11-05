@@ -11,8 +11,7 @@ import (
 )
 
 func (s *Service) ManagedRealtimeChannelSnapshot(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "channel snapshots preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "channel snapshots preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
@@ -41,6 +40,9 @@ func (s *Service) ManagedRealtimeChannelSnapshot(w http.ResponseWriter, r *http.
 		data, e := base64.StdEncoding.DecodeString(req.DataBase64)
 		if e != nil || len(data) > state.ManagedRealtimeSnapshotMaxBytes {
 			api.WriteProblem(w, api.ErrRealtimeInvalid("snapshot must contain at most 65536 bytes of base64 data"))
+			return
+		}
+		if !s.allowRealtimeWrites(w, acct, 1) {
 			return
 		}
 		j, err = store.PutManagedRealtimeChannelSnapshot(r.Context(), state.ManagedRealtimeChannelSnapshot{EndpointID: ep.ID, Channel: ch, Sequence: req.Sequence, Data: data, Binary: req.Binary})

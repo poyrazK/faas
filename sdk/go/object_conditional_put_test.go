@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -33,7 +35,7 @@ func TestConditionalObjectSignRequest(t *testing.T) {
 				t.Fatal(err)
 			}
 			size := int64(3)
-			_, err = client.SignBucketObject(context.Background(), "demo", "bucket", faas.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, IfMatch: condition["if_match"], IfNoneMatch: condition["if_none_match"]})
+			_, err = preview.Wrap(client).SignBucketObject(context.Background(), "demo", "bucket", preview.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, IfMatch: condition["if_match"], IfNoneMatch: condition["if_none_match"]})
 			if err != nil {
 				t.Fatal(err)
 			}

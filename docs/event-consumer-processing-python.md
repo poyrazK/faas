@@ -21,7 +21,7 @@ After authenticating and authorizing ingress, preserve exact original bytes and
 supply trusted owner configuration:
 
 ```python
-from faas_sdk import aclaim_event_consumer_processing, event_consumer_request_from_headers
+from faas_sdk.preview import aclaim_event_consumer_processing, event_consumer_request_from_headers
 
 request = event_consumer_request_from_headers(headers, original_body, account_id, app_id)
 async with application_pool.connection() as connection:

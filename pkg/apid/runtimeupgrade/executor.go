@@ -17,6 +17,10 @@ import (
 type Executor struct {
 	Store             state.RuntimeUpgradeOperationStore
 	VerificationStore state.RuntimeUpgradeVerificationJournalStore
+	// ReleaseFrozen reports whether a release freeze covers the claimed
+	// upgrade's app; while it does, a ready upgrade keeps waiting instead of
+	// switching traffic. An error fails closed: nothing advances.
+	ReleaseFrozen func(context.Context, state.RuntimeUpgradeOperationClaim) (bool, error)
 	// Observe runs after a bounded iteration, including recoverable errors.
 	// Worker wiring uses this for liveness and sanitized failure telemetry.
 	Observe func(error)
@@ -36,6 +40,13 @@ func (e Executor) RunOnce(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		return false, fmt.Errorf("runtime upgrade executor: claim: %w", err)
+	}
+	if e.ReleaseFrozen != nil {
+		frozen, err := e.ReleaseFrozen(stepCtx, claim)
+		if err != nil {
+			return true, fmt.Errorf("runtime upgrade executor: release freezes: %w", err)
+		}
+		claim.HoldCutover = frozen
 	}
 	if _, err := e.Store.AdvanceRuntimeUpgradeOperation(stepCtx, claim); err != nil {
 		return true, fmt.Errorf("runtime upgrade executor: advance: %w", err)

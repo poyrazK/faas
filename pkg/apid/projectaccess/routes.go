@@ -43,12 +43,49 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/release-sets":                    authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/promote":                         authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback": authz.OrgActionDeployProject,
+	// A member who may start and roll back a promotion may also stop or
+	// recover it (abort/recover), recover its migration, and preview one that
+	// carries release secrets (the handler still requires secrets:write).
+	// They use the same resource-owner account as promote and rollback.
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration": authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":                        authz.OrgActionDeployProject,
 	"PATCH /v1/projects/{slug}":                                                        authz.OrgActionManageProjectSecurity,
 	"PATCH /v1/projects/{slug}/environments/{environment}":                             authz.OrgActionManageProjectSecurity,
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies": authz.OrgActionManageProjectSecurity,
 	"POST /v1/projects/{slug}/environments/{environment}/approvals":                    authz.OrgActionApproveProjectEnvironment,
-	"DELETE /v1/projects/{slug}":                                                       authz.OrgActionDeleteProject,
-	"DELETE /v1/projects/{slug}/environments/{environment}":                            authz.OrgActionDeleteProject,
+	// Reviewed in bug hunt 37: flags, release-set activation, staging and
+	// verification, and release secrets are neither GitOps, data services,
+	// full clones nor browser approvals, and were refused to every member.
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":                                   authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":                             authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":                             authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":                             authz.OrgActionReadProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":                                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote":                     authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                     authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                   authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":             authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics": authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/activate":                           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/deactivate":                         authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare":                            authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation":               authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback":                   authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/rollback":                           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/staging":                            authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review":           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete":   authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume":     authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/release-secrets":                                                            authz.OrgActionManageProjectSecrets,
+	"POST /v1/projects/{slug}/deployment-readiness":                                                       authz.OrgActionReadProject,
+	"DELETE /v1/projects/{slug}":                            authz.OrgActionDeleteProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}": authz.OrgActionDeleteProject,
 }
 
 // preCreationRoutes may name a personal project that its first deploy will

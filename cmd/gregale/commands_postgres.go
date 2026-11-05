@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -31,6 +31,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresCapabilities(args[1:])
 	case "usage":
 		return cmdPostgresUsage(args[1:])
+	case "overage":
+		return cmdPostgresOverage(args[1:])
 	case "diagnostics":
 		return cmdPostgresDiagnostics(args[1:])
 	case "usage-import":
@@ -41,8 +43,18 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresCreate(args[1:])
 	case subGet:
 		return cmdPostgresGet(args[1:])
+	case subStatus:
+		return postgresConditions.status(args[1:])
+	case subWait:
+		return postgresConditions.wait(args[1:])
+	case subLabel:
+		return cmdPostgresLabel(args[1:])
 	case "delete":
 		return cmdPostgresDelete(args[1:])
+	case "recover", "undelete":
+		// `restore` is point-in-time restore into a new database, so bringing
+		// back a deleted one is `recover`; `undelete` is the API's word.
+		return cmdPostgresUndelete(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
@@ -51,6 +63,13 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresResize(args[1:])
 	case "resize-status":
 		return cmdPostgresResizeStatus(args[1:])
+	// ADR-1027 major upgrades: a preview, callable but out of customer
+	// help, completions and the CLI reference until launch (the API hides
+	// it outside FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS).
+	case "upgrade":
+		return cmdPostgresUpgrade(args[1:])
+	case "upgrade-status":
+		return cmdPostgresUpgradeStatus(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
 	case "cutover":
@@ -63,7 +82,7 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresLive(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
 	}
 }
 
@@ -171,6 +190,49 @@ func (a *stringAlias) Set(value string) error {
 	return nil
 }
 
+// cmdPostgresOverage shows or changes the account's compute overage
+// (ADR-20261025094915): with it on, databases keep running past the monthly
+// allowance until twice it; off, the default, suspends them at the allowance.
+func cmdPostgresOverage(args []string) int {
+	fs := newFlagSet("postgres overage", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+		return 1
+	}
+	choice := ""
+	if fs.NArg() != 0 {
+		choice = fs.Arg(0)
+		if fs.NArg() != 1 || (choice != "on" && choice != "off") {
+			PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+			return 1
+		}
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	var result api.ManagedPostgresOverage
+	if choice == "" {
+		result, err = client.GetManagedPostgresOverage(context.Background())
+	} else {
+		result, err = client.SetManagedPostgresOverage(context.Background(), choice == "on")
+	}
+	if err != nil {
+		return printErr("Could not update managed PostgreSQL compute overage", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	state := "off: databases are suspended at the monthly allowance"
+	if result.Enabled {
+		state = "on: databases keep running past the allowance until the ceiling"
+	}
+	_, _ = fmt.Fprintf(osStdout, "compute overage %s\n", state)
+	_, _ = fmt.Fprintf(osStdout, "  compute_allowance:            %s\n", formatComputeUnitHours(result.ComputeAllowanceUnitSeconds))
+	_, _ = fmt.Fprintf(osStdout, "  compute_ceiling:              %s\n", formatComputeUnitHours(result.ComputeCeilingUnitSeconds))
+	return 0
+}
+
 func cmdPostgresUsage(args []string) int {
 	fs := newFlagSet("postgres usage", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
@@ -196,6 +258,13 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
 	_, _ = fmt.Fprintf(osStdout, "  ready_databases:              %d / %d\n", result.ReadyDatabases, result.DatabaseLimit)
 	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d (%s)\n", result.ComputeUnitSeconds, formatComputeUnitHours(result.ComputeUnitSeconds))
+	if result.ComputeAllowanceUnitSeconds > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  compute_allowance:            %s\n", formatComputeUnitHours(result.ComputeAllowanceUnitSeconds))
+		if result.ComputeCeilingUnitSeconds > 0 {
+			_, _ = fmt.Fprintf(osStdout, "  compute_ceiling:              %s\n", formatComputeUnitHours(result.ComputeCeilingUnitSeconds))
+		}
+		_, _ = fmt.Fprintf(osStdout, "  compute_cap_state:            %s\n", result.ComputeCapState)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
@@ -260,20 +329,30 @@ func formatPostgresObservedAt(observedAt *time.Time) string {
 
 func cmdPostgresList(args []string) int {
 	fs := newFlagSet("postgres list", flag.ContinueOnError)
+	selector := addSelectorFlag(fs)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres list", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres list [-l SELECTOR]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListManagedPostgresDatabases(context.Background())
+	var resp api.ManagedPostgresDatabaseList
+	if *selector != "" {
+		resp, err = selectedDatabases(context.Background(), client, *selector)
+	} else {
+		resp, err = client.ListManagedPostgresDatabases(context.Background())
+	}
 	if err != nil {
 		return printErr("Could not list managed PostgreSQL databases", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
+	}
+	if len(resp.Items) == 0 && *selector != "" {
+		_, _ = fmt.Fprintf(osStdout, "No database matches %s\n", *selector)
+		return 0
 	}
 	if len(resp.Items) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No managed PostgreSQL databases.")
@@ -282,6 +361,15 @@ func cmdPostgresList(args []string) int {
 	_, _ = fmt.Fprintln(osStdout, "ID                                      NAME                 REGION           CLASS        STATE         STORAGE")
 	for _, database := range resp.Items {
 		_, _ = fmt.Fprintf(osStdout, "%-39s %-20s %-16s %-12s %-13s %s\n", database.ID, database.Name, database.Region, database.ServiceClass, database.State, formatPostgresStorage(database.StorageLimitBytes))
+	}
+	for _, database := range resp.Items {
+		if database.RestorableUntil != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
+		} else if database.RestoreSlotUntil != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you purge a database or upgrade first\n", database.Name, database.RestoreSlotUntil)
+		} else if note := postgresPlanExcessNote(database); note != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
+		}
 	}
 	return 0
 }
@@ -353,8 +441,90 @@ func cmdPostgresGet(args []string) int {
 	return 0
 }
 
+// cmdPostgresDelete schedules the delete (ADR-20261029174950): the database
+// stops at once and can be undeleted until its restorable_until. --purge
+// deletes it and its restore history at once. Either way the interactive path
+// asks for the database's name, the way `app delete` asks for the slug.
 func cmdPostgresDelete(args []string) int {
-	id, ok := onePostgresID("postgres delete", args)
+	flags, positional := splitArgsForFlags(args, "quiet", "yes", "purge")
+	fs := newFlagSet("postgres delete", flag.ContinueOnError)
+	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
+	purge := fs.Bool("purge", false, "delete at once, without the undo window; this cannot be undone")
+	if err := fs.Parse(append(flags, positional...)); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
+		PrintUsage(os.Stderr, "usage: gregale postgres delete <database> [--purge] [--yes|--quiet]", "postgres")
+		return 1
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
+	}
+	if !*quiet && jsonOutput {
+		return printErr("Confirmation required", errors.New("postgres delete requires --yes or --quiet in JSON mode"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	id, err := postgresDatabaseID(context.Background(), client, fs.Arg(0))
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
+	if !*quiet {
+		database, err := client.GetManagedPostgresDatabase(context.Background(), id)
+		if err != nil {
+			return printErr("Could not load managed PostgreSQL database", err)
+		}
+		_, _ = fmt.Fprintln(osStderr, postgresDeletePrompt(database, *purge))
+		if !requireTyped(database.Name) {
+			return 130
+		}
+	}
+	deleteDatabase := client.DeleteManagedPostgresDatabase
+	if *purge {
+		deleteDatabase = client.PurgeManagedPostgresDatabase
+	}
+	result, err := deleteDatabase(context.Background(), id)
+	if err != nil {
+		return printErr("Could not delete managed PostgreSQL database", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	printPostgresDeleted(osStdout, result)
+	return 0
+}
+
+// postgresDeletePrompt says what the delete will do. Only a ready database
+// gets the undo window; the API deletes any other at once.
+func postgresDeletePrompt(database api.ManagedPostgresDatabase, purge bool) string {
+	if purge || database.State != "ready" {
+		return fmt.Sprintf("Delete managed PostgreSQL database %q (%s) now? Its data and point-in-time restore history are deleted at the provider and cannot be recovered.", database.Name, database.ID)
+	}
+	days := int(api.ManagedPostgresDeleteGracePeriod / (24 * time.Hour))
+	return fmt.Sprintf("Delete managed PostgreSQL database %q (%s)? It stops at once. For %d days `gregale postgres recover %s` brings it back with its data; after that it is deleted for good.", database.Name, database.ID, days, database.Name)
+}
+
+func printPostgresDeleted(w io.Writer, database api.ManagedPostgresDatabase) {
+	if database.RestorableUntil == "" {
+		_, _ = fmt.Fprintf(w, "Managed PostgreSQL database %s is %s.\n", database.ID, database.State)
+		return
+	}
+	name := database.Name
+	if name == "" {
+		name = database.ID
+	}
+	_, _ = fmt.Fprintf(w, "Managed PostgreSQL database %s (%s) is scheduled for deletion.\n", name, database.ID)
+	_, _ = fmt.Fprintf(w, "Undo before %s with: gregale postgres recover %s\n", database.RestorableUntil, name)
+	_, _ = fmt.Fprintf(w, "Until then it counts toward your plan's database limit. To delete it now: gregale postgres delete %s --purge\n", name)
+}
+
+// cmdPostgresUndelete returns a database whose delete is scheduled to ready
+// while its restorable_until is in the future (ADR-20261029174950).
+func cmdPostgresUndelete(args []string) int {
+	reference, ok := onePostgresID("postgres recover", args)
 	if !ok {
 		return 1
 	}
@@ -362,18 +532,18 @@ func cmdPostgresDelete(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	id, err = postgresDatabaseID(context.Background(), client, id)
+	id, err := postgresDatabaseID(context.Background(), client, reference)
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
 	}
-	result, err := client.DeleteManagedPostgresDatabase(context.Background(), id)
+	result, err := client.UndeleteManagedPostgresDatabase(context.Background(), id)
 	if err != nil {
-		return printErr("Could not delete managed PostgreSQL database", err)
+		return printErr("Could not undelete managed PostgreSQL database", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Managed PostgreSQL database %s is %s.\n", result.ID, result.State)
+	renderPostgresDatabase(osStdout, result)
 	return 0
 }
 
@@ -426,7 +596,7 @@ func cmdPostgresBindings(args []string) int {
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres bindings", nestedCliCommand("postgres", "bindings"), args[0])
 	}
 }
 
@@ -474,7 +644,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --env SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -669,6 +839,18 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)
+	if database.RestorableUntil != "" {
+		_, _ = fmt.Fprintf(w, "  restorable_until: %s (gregale postgres recover %s)\n", database.RestorableUntil, database.Name)
+	}
+	if database.RestoreRange != nil {
+		_, _ = fmt.Fprintf(w, "  restore_range:    %s to %s\n", database.RestoreRange.Earliest, database.RestoreRange.Latest)
+	}
+	if database.RestoreSlotUntil != "" {
+		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; purge a database or upgrade to keep it)\n", database.RestoreSlotUntil)
+	}
+	if note := postgresPlanExcessNote(database); note != "" {
+		_, _ = fmt.Fprintf(w, "  plan_excess:      %s (%s)\n", database.PlanExcess, note)
+	}
 	if health := database.Health; health != nil {
 		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)
 		_, _ = fmt.Fprintf(w, "  compute_state:    %s\n", health.ComputeState)
@@ -733,4 +915,17 @@ func adoptRotationAfterUncertainError(ctx context.Context, client interface {
 		return api.ManagedPostgresBinding{}, false
 	}
 	return now, true
+}
+
+// postgresPlanExcessNote explains a database the plan no longer includes
+// (ADR-20261102125208); empty for any other database.
+func postgresPlanExcessNote(database api.ManagedPostgresDatabase) string {
+	switch database.PlanExcess {
+	case "database_limit":
+		return "suspended: your plan allows fewer databases than you have; its data is kept. Upgrade or delete a database to resume it"
+	case "service_class":
+		return fmt.Sprintf("suspended: your plan does not include the %s class; its data is kept. Upgrade, or resize it to a class your plan includes with gregale postgres resize, to resume it", database.ServiceClass)
+	default:
+		return ""
+	}
 }

@@ -150,8 +150,9 @@ func TestCmdDeployments_InvalidLimit(t *testing.T) {
 	}
 }
 
+// One positional is the app slug (Hunt 14 H14-63); a second is extra.
 func TestCmdDeployments_ExtraPositional(t *testing.T) {
-	if code := main.CmdDeployments([]string{"foo"}); code != 1 {
+	if code := main.CmdDeployments([]string{"foo", "bar"}); code != 1 {
 		t.Errorf("cmdDeployments extra positional = %d, want 1", code)
 	}
 }

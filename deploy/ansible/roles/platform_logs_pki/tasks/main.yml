@@ -1,0 +1,129 @@
+---
+# platform_logs_pki (ADR-20261023124955 §2). See defaults/main.yml.
+
+- name: platform_logs_pki — require an issuer and a node name
+  ansible.builtin.assert:
+    that:
+      - (faas_box_role | default('single-box')) == 'single-box' or faas_platform_logs_pki_issuer_host | length > 0
+      - (faas_box_role | default('single-box')) != 'compute-only' or faas_node_name | default('') is match('^[A-Za-z0-9._-]+$')
+    fail_msg: >-
+      Platform-log leaves are issued on the control plane: the inventory needs
+      a control_plane host, and a compute node needs its faas_node_name.
+
+- name: platform_logs_pki — issue this host's leaves from its own CA
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - pki
+      - issue-feature
+      - --feature
+      - platform-logs
+      - --box-role
+      - "{{ 'single-box' if (faas_box_role | default('single-box')) == 'single-box' else 'control-plane' }}"
+      - --ca-dir
+      - "{{ faas_platform_logs_pki_root }}"
+      - --root-dir
+      - "{{ faas_platform_logs_pki_root }}"
+  register: faas_platform_logs_local
+  changed_when: (faas_platform_logs_local.stdout | from_json).issued | length > 0
+  when: (faas_box_role | default('single-box')) != 'compute-only'
+
+- name: platform_logs_pki — issue this compute node's Promtail leaf on the control plane
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - pki
+      - issue-feature
+      - --feature
+      - platform-logs
+      - --box-role
+      - compute-only
+      - --ca-dir
+      - "{{ faas_platform_logs_pki_root }}"
+      - --root-dir
+      - "{{ faas_platform_logs_pki_stage_root }}/{{ faas_node_name }}"
+  delegate_to: "{{ faas_platform_logs_pki_issuer_host }}"
+  register: faas_platform_logs_staged
+  changed_when: (faas_platform_logs_staged.stdout | from_json).issued | length > 0
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: platform_logs_pki — read the staged Promtail leaf
+  ansible.builtin.slurp:
+    src: "{{ faas_platform_logs_pki_stage_root }}/{{ faas_node_name }}/promtail/{{ item }}"
+  delegate_to: "{{ faas_platform_logs_pki_issuer_host }}"
+  register: faas_platform_logs_staged_files
+  loop: [loki-client.crt, loki-client.key]
+  no_log: true
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: platform_logs_pki — create Promtail's TLS directory
+  ansible.builtin.file:
+    path: "{{ faas_platform_logs_pki_root }}/promtail"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: platform_logs_pki — install the staged Promtail leaf
+  ansible.builtin.copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "{{ faas_platform_logs_pki_root }}/promtail/{{ item.item }}"
+    owner: root
+    group: root
+    mode: "{{ '0400' if item.item.endswith('.key') else '0444' }}"
+  loop: "{{ faas_platform_logs_staged_files.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: faas_platform_logs_installed
+  no_log: true
+  when: (faas_box_role | default('single-box')) == 'compute-only'
+
+- name: platform_logs_pki — read the system groups
+  ansible.builtin.getent:
+    database: group
+
+- name: platform_logs_pki — find the keys on this host
+  ansible.builtin.stat:
+    path: "{{ faas_platform_logs_pki_root }}/{{ item.path }}.key"
+  loop: "{{ faas_platform_logs_leaves }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: faas_platform_logs_keys
+
+# pkg/pki writes keys root:root 0400; a reissued key comes back that way, so
+# this pass runs on renewal too.
+- name: platform_logs_pki — let each service's group read its key
+  ansible.builtin.file:
+    path: "{{ item.stat.path }}"
+    state: file
+    owner: root
+    group: "{{ item.item.group }}"
+    mode: "0440"
+  loop: "{{ faas_platform_logs_keys.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  when:
+    - item.stat.exists
+    - item.item.group in ansible_facts.getent_group
+
+- name: platform_logs_pki — collect the leaves this run changed
+  ansible.builtin.set_fact:
+    faas_platform_logs_changed: >-
+      {{ ((faas_platform_logs_local.stdout | default('{"issued": []}') | from_json).issued
+          if (faas_box_role | default('single-box')) != 'compute-only'
+          else (['promtail/loki-client'] if (faas_platform_logs_installed is changed) else [])) }}
+
+# A service reads its certificate at start. try-restart leaves a service that
+# is not running alone, so a first bootstrap starts it later with the leaf. On
+# that first converge the unit is not installed yet (its role runs after this
+# one), and systemctl exits 5, "unit not found": nothing to restart.
+- name: platform_logs_pki — restart the services whose leaf changed
+  ansible.builtin.command:
+    argv: [systemctl, try-restart, "{{ item.unit }}"]
+  loop: "{{ faas_platform_logs_leaves | selectattr('path', 'in', faas_platform_logs_changed) | list }}"
+  loop_control:
+    label: "{{ item.unit }}"
+  register: faas_platform_logs_restart
+  changed_when: faas_platform_logs_restart.rc == 0
+  failed_when: faas_platform_logs_restart.rc not in [0, 5]

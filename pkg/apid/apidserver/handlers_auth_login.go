@@ -33,8 +33,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -105,11 +108,15 @@ const (
 // the only auth artifact; programmatic auth stays on the device-code
 // flow (cmd/apid/handlers_cli_auth.go).
 func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
-	acct, ok := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
+	if err != nil {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if !ok {
 		// Issue #286: emit a failed-login audit row on the
 		// async-batched channel. The discriminator is the same
@@ -146,7 +153,7 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 // handler can "recover" by signing up with the same email + the
 // password they want, and the existing password row is overwritten.
 func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
@@ -154,8 +161,17 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
 		return
 	}
+	// The network sign-up cap is checked before the email lookup so a
+	// capped client gets the same 429 whether or not the address has an
+	// account. Checked only on the unbound branch, the 429 told a capped
+	// client "no account" and the bound branch's 401 "account" (H97).
+	// Existing customers sign in through /login meanwhile.
+	if s.signupNetworkCapped(r) {
+		writeSignupNetworkCap(w)
+		return
+	}
 
-	acct, err := s.store.AccountByEmail(r.Context(), email)
+	_, err := s.store.AccountByEmail(r.Context(), email)
 	if err != nil {
 		// Email is unbound: create the account, set the password,
 		// sign in. CreateAccount on email uniqueness violation is
@@ -163,17 +179,43 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		// email will return state.ErrConflict; we collapse to the
 		// sign-in path so the duplicate caller signs in (idempotent)
 		// rather than learning "this email is taken".
-		res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
+		//
+		// The password is hashed before the account exists, so a
+		// saturated hash queue (H96) refuses the attempt without
+		// leaving an account that has no password row and that a
+		// retried /signup could then never sign in to.
+		phc, err := auth.EncodeContext(r.Context(), password)
+		if passwordNotChecked(err) {
+			writePasswordCheckUnavailable(w)
+			return
+		}
+		if err != nil {
+			// NewPassword already passed Validate; this is a
+			// crypto/rand failure, not a user input bug.
+			s.log.Error("signup.argon2id_encode", "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+				"internal_error", "Internal Error", "failed to hash password"))
+			return
+		}
+		res, createErr := s.createSignupAccount(r, signupMethodPassword, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
 		})
 		created := res.Account
 		if createErr != nil {
+			if errors.Is(createErr, errSignupNetworkCap) {
+				writeSignupNetworkCap(w)
+				return
+			}
 			if errors.Is(createErr, state.ErrConflict) {
 				// Concurrent signup. Re-issue the verify path so
 				// the response shape matches the post-create path.
-				existing, ok := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				if verr != nil {
+					writePasswordCheckUnavailable(w)
+					return
+				}
 				if !ok {
 					// Newcomer would have set this password; the
 					// existing account has a different one. We
@@ -206,15 +248,6 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 				"internal_error", "Internal Error", "failed to create account"))
 			return
 		}
-		phc, err := auth.Encode(password)
-		if err != nil {
-			// NewPassword already passed Validate; this is a
-			// crypto/rand failure, not a user input bug.
-			s.log.Error("signup.argon2id_encode", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to hash password"))
-			return
-		}
 		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
 			s.log.Error("signup.set_password", "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
@@ -230,24 +263,14 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 	// Email is bound. Two sub-cases:
 	//   - Same password: sign in (idempotent retry).
 	//   - Different password: 401 invalid_credentials (NEVER 409).
-	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
+	// Signup is also a password sign-in for a bound address. Share its
+	// verification and failure accounting with /login and /v1/auth/signup.
+	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
 	if err != nil {
-		// Bound account with no password row (OAuth-only): pad.
-		_, _ = auth.Verify(auth.DummyPHC, password)
-		// Issue #286: emit failed-login (OAuth-only branch).
-		// Same payload shape as the postLoginEmail path so the
-		// audit row is indistinguishable from the /login
-		// wrong-password path — the discriminator is the email
-		// hash, not the route.
-		s.audit.EmitFailedLogin(
-			middleware.ClientIP(r),
-			auth.HashEmail(email),
-			r.UserAgent())
-		api.WriteProblem(w, api.ErrInvalidCredentials())
+		writePasswordCheckUnavailable(w)
 		return
 	}
-	ok, err = auth.Verify(hash, password)
-	if err != nil || !ok {
+	if !ok {
 		// Issue #286: emit failed-login (wrong-password branch).
 		// This is the canonical "wrong password" audit row, hit
 		// by the bulk of credential-stuffing attempts. The
@@ -278,24 +301,59 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 // customer. The plaintext never lands in the DB.
 func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(strings.ToLower(extractEmailFromRequest(r)))
-	// Lookup may fail because the email is unbound, the store is
-	// unreachable, or the email is empty. We don't care which — the
-	// response is identical and the mailer only fires on a real
-	// account hit.
+	// The lookup, token and mail run in the background (H86): done on the
+	// request, a bound address took a mail send longer than an unbound
+	// one, so the response time told which addresses have accounts. The
+	// request only reads the link's scheme and host.
 	if email != "" && looksLikeEmail(email) {
-		if acct, err := s.store.AccountByEmail(r.Context(), email); err == nil && acct.EmailVerified() {
-			s.sendPasswordResetEmail(r.Context(), r, acct, email)
+		base := s.passwordResetLinkBase(r)
+		//nolint:contextcheck // The work outlives the request; it keeps the request values and has its own timeout.
+		ctx := context.WithoutCancel(r.Context())
+		if !s.resetMail.try(func() {
+			ctx, cancel := context.WithTimeout(ctx, api.PasswordResetMailTimeout)
+			defer cancel()
+			s.forgotPasswordFor(ctx, base, email)
+		}) {
+			s.log.Warn("forgot_password.busy")
 		}
 	}
 	// Always 200 with the same body. Anti-enumeration.
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
+// forgotPasswordFor mails a reset link when email belongs to a verified
+// account. Lookup may fail because the email is unbound or the store is
+// unreachable; either way nothing is sent and nothing surfaces.
+func (s *server) forgotPasswordFor(ctx context.Context, base, email string) {
+	if acct, err := s.store.AccountByEmail(ctx, email); err == nil && acct.EmailVerified() {
+		s.sendPasswordResetEmail(ctx, base, acct, email)
+	}
+}
+
+// passwordResetLinkBase is the scheme and host a reset link points at: the
+// configured platform host, else the host the request arrived on.
+func (s *server) passwordResetLinkBase(r *http.Request) string {
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		// Use the configured domain verbatim — the email link should
+		// always point at the canonical hostname, not the loopback
+		// the request arrived on.
+		return schemeHTTPS + "://" + platform
+	}
+	scheme := schemeHTTP
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+		scheme = schemeHTTPS
+	}
+	return scheme + "://" + r.Host
+}
+
 // sendPasswordResetEmail mints a 32-byte token, persists SHA-256(token),
 // and emails the base64url-encoded plaintext to the customer. Errors
 // at any step are logged but never surface — the calling public
 // endpoint remains a constant 200.
-func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+func (s *server) sendPasswordResetEmail(ctx context.Context, base string, acct state.Account, email string) {
+	if !s.allowSecurityMail(ctx, acct, "password_reset") {
+		return
+	}
 	if s.queuePasswordReset(ctx, acct, email) {
 		return
 	}
@@ -311,19 +369,7 @@ func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, ac
 		s.log.Error("forgot_password.issue_token", "err", err)
 		return
 	}
-	scheme := schemeHTTP
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-		scheme = schemeHTTPS
-	}
-	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		// Use the configured domain verbatim — the email link should
-		// always point at the canonical hostname, not the loopback
-		// the request arrived on.
-		host = s.domain
-		scheme = schemeHTTPS
-	}
-	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.PasswordResetBodyV1(link)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
@@ -357,6 +403,7 @@ func (s *server) renderResetForm(w http.ResponseWriter, r *http.Request) {
 	page := dashboard.Page{
 		Title: "Reset password",
 		Body:  "password_reset_form",
+		Data:  map[string]any{"Token": tok},
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		s.log.Error("dashboard render reset form", "err", err)
@@ -374,7 +421,11 @@ func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clear(raw)
-	phc, err := auth.Encode(plain)
+	phc, err := auth.EncodeContext(r.Context(), plain)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if err != nil {
 		s.log.Error("reset.argon2id_encode")
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to hash password"))
@@ -413,6 +464,14 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "account lookup failed"))
 		return
 	}
+	s.revokeSignInKeysAfterPasswordChange(r, acct)
+	if !s.passwordChangedAlertRequested() {
+		// The durable path queued its own alert in the reset transaction.
+		s.alertPasswordChangedInline(r.Context(), acct, "password_reset")
+	}
+	// The reset link proved control of the address: lift a failed-sign-in
+	// pause someone else's guessing put on it.
+	s.loginFailures.reset(auth.HashEmail(acct.Email))
 	s.issueSessionCookie(w, r, acct)
 	http.Redirect(w, r, "/dashboard/", http.StatusFound)
 }
@@ -487,7 +546,11 @@ func (s *server) setInlinePassword(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
-	phc, err := auth.Encode(plain)
+	phc, err := auth.EncodeContext(r.Context(), plain)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if err != nil {
 		s.log.Error("set_password.argon2id_encode", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
@@ -500,6 +563,7 @@ func (s *server) setInlinePassword(w http.ResponseWriter, r *http.Request, acct 
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	s.alertPasswordChangedInline(r.Context(), acct, "dashboard")
 	s.finishSetPassword(w, r, acct, proof, replacing)
 }
 
@@ -512,6 +576,7 @@ func (s *server) finishSetPassword(w http.ResponseWriter, r *http.Request, acct 
 			keep = current.ID
 		}
 		s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+		s.revokeSignInKeysAfterPasswordChange(r, acct)
 	}
 	s.audit.Emit(r.Context(), "account.password_set", &acct.ID, map[string]any{
 		"proof":    proof,
@@ -604,7 +669,11 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 
 	if replacing {
 		current := r.FormValue("current_password")
-		matched, verr := auth.Verify(hash, current)
+		matched, verr := auth.VerifyContext(r.Context(), hash, current)
+		if passwordNotChecked(verr) {
+			writePasswordCheckUnavailable(w)
+			return "", true, false
+		}
 		if verr != nil {
 			// A malformed stored hash is a data problem, not a wrong
 			// guess; Verify's contract is that it must be surfaced.
@@ -684,28 +753,65 @@ func extractEmailFromRequest(r *http.Request) string {
 // the function, but the work done is constant — the
 // DummyPHC pad exists specifically to make the no-account /
 // wrong-password / no-password-row paths identical in CPU cost.
-func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string) (state.Account, bool) {
-	return s.verifyPasswordOrPadWith(ctx, email, password, auth.Verify)
+//
+// A non-nil error means the password was not checked at all: the hash queue
+// was full (auth.ErrPasswordHashBusy) or the request ended while waiting for
+// a slot (H96). Nothing is recorded as a failed login then; the caller
+// answers with writePasswordCheckUnavailable. Every branch hashes once, so
+// the busy answer does not depend on whether the account exists.
+func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string) (state.Account, bool, error) {
+	return s.verifyPasswordOrPadWith(ctx, email, password, auth.VerifyContext)
 }
 
-func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password string, verify func(string, string) (bool, error)) (state.Account, bool) {
+func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password string, verify func(context.Context, string, string) (bool, error)) (state.Account, bool, error) {
 	acct, err := s.store.AccountByEmail(ctx, email)
 	if err != nil {
-		// Email unbound. Run the Argon2id pad and return.
-		_, _ = verify(auth.DummyPHC, password)
-		return state.Account{}, false
+		// Email unbound. Run the Argon2id pad and return. Unbound
+		// addresses count toward the per-address budget too, so its 429
+		// does not tell which addresses have accounts.
+		if _, verr := verify(ctx, auth.DummyPHC, password); passwordNotChecked(verr) {
+			return state.Account{}, false, verr
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.recordLoginFailure(ctx, email, nil)
+		}
+		return state.Account{}, false, nil
 	}
 	hash, err := s.store.AccountPasswordByAccountID(ctx, acct.ID)
 	if err != nil {
 		// Bound account, no password row (OAuth-only). Pad.
-		_, _ = verify(auth.DummyPHC, password)
-		return state.Account{}, false
+		if _, verr := verify(ctx, auth.DummyPHC, password); passwordNotChecked(verr) {
+			return state.Account{}, false, verr
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			s.recordLoginFailure(ctx, email, &acct)
+		}
+		return state.Account{}, false, nil
 	}
-	ok, err := verify(hash, password)
+	ok, err := verify(ctx, hash, password)
+	if passwordNotChecked(err) {
+		return state.Account{}, false, err
+	}
 	if err != nil || !ok {
-		return state.Account{}, false
+		s.recordLoginFailure(ctx, email, &acct)
+		// A malformed stored hash refuses the sign-in like a wrong password;
+		// only "not checked" (busy or cancelled) is reported as an error.
+		return state.Account{}, false, nil //nolint:nilerr // see above
 	}
-	return acct, true
+	return acct, true, nil
+}
+
+// passwordNotChecked reports a hash call that never compared the password:
+// the slot queue was full or the request ended while waiting (H96).
+func passwordNotChecked(err error) bool {
+	return errors.Is(err, auth.ErrPasswordHashBusy) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// writePasswordCheckUnavailable answers a password attempt that was not
+// checked because hashing is saturated: 429 with Retry-After, so clients back
+// off instead of queueing behind requests that already gave up.
+func writePasswordCheckUnavailable(w http.ResponseWriter) {
+	api.WriteProblem(w, api.ErrAuthRateLimited(int(api.PasswordHashBusyRetryAfter.Seconds())))
 }
 
 // verifyOAuthAccountEmail records the address proof supplied by an OAuth
@@ -735,9 +841,9 @@ func (s *server) claimAccountByEmailOwnership(ctx context.Context, acct state.Ac
 	if err := s.store.MarkAccountEmailVerified(ctx, acct.ID); err != nil {
 		return state.Account{}, err
 	}
-	verifiedAt := time.Now().UTC()
-	acct.EmailVerifiedAt = &verifiedAt
-	return acct, nil
+	// Revocation can also clear a pre-verification authenticator. Login must
+	// derive its MFA policy from the committed account, not the old snapshot.
+	return s.store.AccountByID(ctx, acct.ID)
 }
 
 func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID string) error {
@@ -757,9 +863,23 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 			return fmt.Errorf("revoke pre-verification api key: %w", err)
 		}
 	}
-	if sessions > 0 || len(keys) > 0 {
+	// A TOTP enrolled before the owner proved the address is the
+	// squatter's: left in place, it faced the real owner with a second
+	// factor they never had. Clearing it leaves an explicit mfa_required
+	// policy in force.
+	acct, err := s.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("read pre-verification account: %w", err)
+	}
+	mfaCleared := acct.MFAEnrolled() || len(acct.MFASecretEncrypted) > 0
+	if mfaCleared {
+		if err := s.store.ClearMFA(ctx, accountID); err != nil {
+			return fmt.Errorf("clear pre-verification mfa: %w", err)
+		}
+	}
+	if sessions > 0 || len(keys) > 0 || mfaCleared {
 		s.audit.Emit(ctx, "auth.pre_verification_credentials_revoked", &accountID, map[string]any{
-			"sessions": sessions, "api_keys": len(keys),
+			"sessions": sessions, "api_keys": len(keys), "mfa_cleared": mfaCleared,
 		})
 	}
 	return nil
@@ -787,15 +907,14 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 // (handlers_auth_login.go), the email+password ladder reserved
 // for issue #2 / PR #2 once IAM-3 lands.
 func (s *server) issueSessionCookie(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, mfaSessionPending(acct), "password")
+	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "password")
 	if err != nil {
 		s.log.Error("auth.session_issue", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 			"internal_error", "Internal Error", "failed to issue session"))
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,
@@ -844,12 +963,17 @@ const magicLinkPath = "/auth/verify"
 // The wire shape is identical to postV1AuthLogin so the CLI can reuse
 // the same ProgrammaticAuthResponse unmarshaler.
 func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
 	if err := auth.Validate(password); err != nil {
 		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
+		return
+	}
+	// Network sign-up cap before the email lookup, as in postSignup (H97).
+	if s.signupNetworkCapped(r) {
+		writeSignupNetworkCap(w)
 		return
 	}
 
@@ -863,15 +987,35 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		// a fresh api_key. Mirrors the postSignup race-closure: a
 		// concurrent signup returns ErrConflict which we collapse to
 		// the idempotent sign-in path so the duplicate caller never
-		// learns "this email is taken".
-		res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
+		// learns "this email is taken". Hashed before the account
+		// exists, as in postSignup (H96).
+		phc, err := auth.EncodeContext(r.Context(), password)
+		if passwordNotChecked(err) {
+			writePasswordCheckUnavailable(w)
+			return
+		}
+		if err != nil {
+			s.log.Error("v1auth_signup.argon2id_encode", "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+				"internal_error", "Internal Error", "failed to hash password"))
+			return
+		}
+		res, createErr := s.createSignupAccount(r, signupMethodPassword, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
 		})
 		if createErr != nil {
+			if errors.Is(createErr, errSignupNetworkCap) {
+				writeSignupNetworkCap(w)
+				return
+			}
 			if errors.Is(createErr, state.ErrConflict) {
-				existing, ok := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				if verr != nil {
+					writePasswordCheckUnavailable(w)
+					return
+				}
 				if !ok {
 					s.audit.EmitFailedLogin(
 						middleware.ClientIP(r),
@@ -894,13 +1038,6 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		created := res.Account
-		phc, err := auth.Encode(password)
-		if err != nil {
-			s.log.Error("v1auth_signup.argon2id_encode", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to hash password"))
-			return
-		}
 		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
 			s.log.Error("v1auth_signup.set_password", "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
@@ -917,7 +1054,11 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 	// (OAuth-only accounts) stay aligned with postV1AuthLogin and
 	// postLoginEmail. Otherwise the duplicate Argon2id-verify here
 	// would drift from the canonical helper.
-	existing, hit := s.verifyPasswordOrPad(r.Context(), email, password)
+	existing, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	if verr != nil {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if !hit {
 		s.audit.EmitFailedLogin(
 			middleware.ClientIP(r),
@@ -937,11 +1078,15 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 // anti-enumeration posture of postLoginEmail: Argon2id pad on the
 // no-row branch, identical 401 on wrong-password vs unbound email.
 func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
-	acct, hit := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	if verr != nil {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if !hit {
 		s.audit.EmitFailedLogin(
 			middleware.ClientIP(r),
@@ -971,7 +1116,7 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 			// the dashboard verify page lands the user on a logged-in
 			// session for a fresh address. Mirrors the same shape as
 			// postForgotPassword (mailer fires only on a real hit).
-			res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
+			res, createErr := s.createSignupAccount(r, signupMethodMagicLink, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 				Email:                    email,
 				Plan:                     api.PlanFree,
 				RequireEmailVerification: true,
@@ -1004,15 +1149,23 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 	_, _ = io.WriteString(w, `{"status":"ok"}`)
 }
 
+// signInKeyLabel marks the keys a JSON password sign-in mints, so a
+// password change can find and revoke them.
+const signInKeyLabel = "signup"
+
 // mintAndWriteV1AuthJSON mints a fresh programmatic api_key for acct
 // and writes the ProgrammaticAuthResponse body. Mirrors the
 // /v1/keys mint pattern (handlers_ext.go:1751): GenerateAPIKey →
 // SHA-256 → CreateAPIKeyWithExpiryAndProvenance with provenance
-// ("cli_signup", ip, ua), label "signup", expiry 0. The audit
-// provenance columns (created_ip, created_ua) are stamped on the
+// ("cli_signup", ip, ua), label "signup", expiry api.SignInAPIKeyTTL.
+// The audit provenance columns (created_ip, created_ua) are stamped on the
 // row so a SOC 2 auditor can answer "who minted this key from which
 // UA" without joining through Loki (R2 risk).
 func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, acct state.Account, requestEmail string) {
+	if s.refusePasswordOnlyKey(w, r, acct) {
+		return
+	}
+	s.retireOldSignInKeys(r, acct)
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		s.log.Error("v1auth_signup.generate_key", "err", err)
@@ -1027,15 +1180,16 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 	// signup/login on Postgres with a 500, while MemStore minted a
 	// scope-less key that could reach nothing.
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
+	expiresAt := time.Now().UTC().Add(api.SignInAPIKeyTTL)
 	var k state.APIKey
 	switch {
 	case perr == nil:
 		// Personal-org modern path. The label "signup" distinguishes
 		// these rows from /v1/keys-add key-mints in the audit query.
-		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, signInKeyLabel, api.ScopesAdminOnly, &expiresAt, bindIP, bindUA, nil)
 	case errors.Is(perr, state.ErrNotFound):
 		// Legacy fallback (pre-00127 fixtures). Same provenance columns.
-		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, signInKeyLabel, api.ScopesAdminOnly, &expiresAt, bindIP, bindUA, nil)
 	default:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 			"internal_error", "Internal Error", "could not resolve personal org"))
@@ -1049,6 +1203,93 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	writeV1AuthJSON(w, acct, requestEmail, plaintext, k)
+}
+
+// refusePasswordOnlyKey refuses to trade a password alone for an API key
+// when the account has a second factor or must have one. Keys skip the
+// session MFA gate, so a key minted here would make TOTP worthless against
+// a stolen password. Operators are refused too (ADR 20261023214253). The
+// CLI's browser device-code flow goes through an MFA-checked session.
+func (s *server) refusePasswordOnlyKey(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	if !s.sessionMFAPending(acct) {
+		return false
+	}
+	s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
+		"path":   r.URL.Path,
+		"method": r.Method,
+	})
+	detail := "this account uses two-factor authentication, so a password alone cannot get an API key; run gregale login to sign in through the browser, or create a key from the dashboard"
+	if s.isOperator(acct) {
+		detail = "operator accounts cannot get an API key with a password; sign in with gregalectl auth login, or create a key from the dashboard"
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "MFA required", detail))
+	return true
+}
+
+// retireOldSignInKeys revokes the oldest live sign-in keys so the key about
+// to be minted leaves at most api.SignInAPIKeysMax. Best-effort: a failure
+// is logged and the sign-in proceeds.
+func (s *server) retireOldSignInKeys(r *http.Request, acct state.Account) {
+	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Warn("v1auth.sign_in_keys_list", "account", acct.ID, "err", err)
+		return
+	}
+	live := liveSignInKeys(keys, time.Now())
+	for i := api.SignInAPIKeysMax - 1; i < len(live); i++ {
+		if _, err := s.revokeAPIKeyWithReason(r, acct, live[i].ID, "sign_in_rotated"); err != nil {
+			s.log.Warn("v1auth.sign_in_key_retire", "account", acct.ID, "key", live[i].ID, "err", err)
+		}
+	}
+}
+
+// liveSignInKeys returns the unrevoked, unexpired keys a password sign-in
+// minted, newest first.
+func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
+	var live []state.APIKey
+	for _, k := range keys {
+		if k.Label != signInKeyLabel || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+			continue
+		}
+		live = append(live, k)
+	}
+	sort.SliceStable(live, func(i, j int) bool { return live[i].CreatedAt.After(live[j].CreatedAt) })
+	return live
+}
+
+// revokeSignInKeysAfterPasswordChange revokes every key an interactive
+// sign-in minted: they were bought with the old password, which may be the one
+// that leaked. Keys the customer created on purpose stay. Best-effort, like the
+// session revocation beside it.
+func (s *server) revokeSignInKeysAfterPasswordChange(r *http.Request, acct state.Account) {
+	s.revokeInteractiveSignInKeys(r, acct, "password_change")
+}
+
+// interactiveSignInKeyLabels name the keys an interactive sign-in mints: a
+// password sign-in, `gregale login` and an MCP client's consent. A rotation
+// keeps the label. They act as sessions, so the steps that end sessions end
+// them too; only "signup" keys used to be revoked, so a 30-day cli-login or
+// mcp-login key minted with a stolen session survived the owner's password
+// reset and "sign out other devices" (bug hunt 2026-10-28 H71).
+var interactiveSignInKeyLabels = map[string]bool{signInKeyLabel: true, cliLoginKeyLabel: true, api.MCPLoginKeyLabel: true}
+
+// revokeInteractiveSignInKeys revokes the account's live interactive sign-in
+// keys. Best-effort: a failure is logged.
+func (s *server) revokeInteractiveSignInKeys(r *http.Request, acct state.Account, reason string) {
+	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Warn("revoke sign-in keys: list keys failed", "account", acct.ID, "reason", reason, "err", err)
+		return
+	}
+	now := time.Now()
+	for _, k := range keys {
+		if !interactiveSignInKeyLabels[k.Label] || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+			continue
+		}
+		if _, err := s.revokeAPIKeyWithReason(r, acct, k.ID, reason); err != nil {
+			s.log.Warn("revoke sign-in keys: revoke key failed", "account", acct.ID, "key", k.ID, "reason", reason, "err", err)
+		}
+	}
 }
 
 // writeV1AuthJSON writes the ProgrammaticAuthResponse with the
@@ -1092,6 +1333,9 @@ func writeV1AuthJSON(w http.ResponseWriter, acct state.Account, requestEmail, pl
 // via the platform mailer. Mailer errors are logged but never
 // surface — the public endpoint remains a constant 200.
 func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+	if !s.allowSecurityMail(ctx, acct, "magic_link") {
+		return
+	}
 	if s.queueMagicLink(ctx, acct, email) {
 		return
 	}
@@ -1112,8 +1356,8 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
@@ -1131,6 +1375,9 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 // token. Delivery errors remain server-side because signup has already
 // committed; a same-credential signup retry mints and sends a fresh link.
 func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acct state.Account) {
+	if !s.allowSecurityMail(ctx, acct, "email_verification") {
+		return
+	}
 	if s.queueEmailVerification(ctx, acct) {
 		return
 	}
@@ -1150,8 +1397,8 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
@@ -1165,11 +1412,56 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 	}
 }
 
-// verifyEmail consumes a verification token without authenticating the
+// verifyEmailConfirm is GET /v1/auth/verify-email. A browser gets a button
+// that posts the token back, and nothing is consumed: the GET used to consume
+// the token, so mail scanners that prefetch links (Safe Links, Proofpoint,
+// Mimecast) verified the address and the person then saw "verification link
+// invalid" (bug hunt round 8). Magic links already confirm the same way. A
+// client that does not ask for HTML keeps the old one-step verification.
+func (s *server) verifyEmailConfirm(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if !api.AcceptsHTML(r) {
+		s.verifyEmailToken(w, r, token)
+		return
+	}
+	if raw, err := base64.RawURLEncoding.DecodeString(token); err != nil || len(raw) != 32 {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	_ = emailVerificationConfirmPage.Execute(w, token)
+}
+
+var emailVerificationConfirmPage = template.Must(template.New("verify-email-confirm").Parse(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify your email</title></head>
+<body>
+<main>
+<h1>Verify your email address</h1>
+<form method="post" action="/v1/auth/verify-email">
+<input type="hidden" name="token" value="{{.}}">
+<button type="submit">Verify email</button>
+</form>
+</main>
+</body>
+</html>
+`))
+
+// verifyEmail is POST /v1/auth/verify-email, the confirmation page's form.
+func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	s.verifyEmailToken(w, r, strings.TrimSpace(r.PostFormValue("token")))
+}
+
+// verifyEmailToken consumes a verification token without authenticating the
 // browser. The success page explicitly sends the customer back through sign
 // in, so possession of the email link never becomes a session credential.
-func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
+func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token string) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != 32 {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())

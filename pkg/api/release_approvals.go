@@ -117,8 +117,10 @@ func (r DecideReleaseApprovalRequest) Validate() error {
 }
 
 // ReleaseApprovalDecision is one person's decision on a release. Counted is
-// false for a decision that does not count toward the policy, such as the
-// deployer's own approval when self-approval is off.
+// false for a decision that does not count toward the policy: a rejection,
+// or the deployer's own approval recorded while the policy allowed
+// self-approval once it no longer does. A new self-approval under a policy
+// that forbids it is refused, not recorded.
 type ReleaseApprovalDecision struct {
 	Approver  string `json:"approver"`
 	Role      string `json:"role"`
@@ -163,7 +165,7 @@ func ErrReleaseApprovalRequired(status ReleaseApprovalStatus) *Problem {
 		detail = fmt.Sprintf("Release %s of %s waited past its approval timeout and is being aborted.", status.DeploymentID, status.App)
 	}
 	p := NewProblem(http.StatusConflict, CodeReleaseApprovalRequired, "Release waiting for approval", detail).
-		WithHint("An eligible teammate approves with `gregale approvals approve " + status.DeploymentID + "`; the rollout then continues on its next tick.").
+		WithHint("An eligible teammate approves it on its approval page in the dashboard; the rollout then continues on its next tick.").
 		WithDocs(docsBase + "/deploys#release-approvals")
 	p.ReleaseApproval = &status
 	return p
@@ -198,11 +200,76 @@ func ErrReleaseApprovalParked(app, release string) *Problem {
 		WithDocs(docsBase + "/deploys#scheduled-releases")
 }
 
+// ErrReleaseApprovalPromotionUnprotected refuses a promotion into an
+// unprotected production environment that would release an app requiring
+// approvals: a promotion has no canary to wait in, so only the protected
+// environment's promotion approval stands in for the app's policy.
+func ErrReleaseApprovalPromotionUnprotected(app, project, environment string) *Problem {
+	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need an approved promotion",
+		fmt.Sprintf("%s requires approvals for production releases, and this promotion would release it into %s without one.", app, environment)).
+		WithHint(fmt.Sprintf("Protect the environment so promotions into it need an approval (`gregale projects environments protect %s %s`), or remove the app's policy with `gregale approvals off --app %s`.", project, environment, app)).
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionInsufficient refuses a protected-environment
+// promotion for an app whose own policy asks more approvals than the
+// environment's one approval gives.
+func ErrReleaseApprovalPromotionInsufficient(app, environment string, required int) *Problem {
+	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
+		fmt.Sprintf("%s requires %d approvals; the single approval of a promotion into %s cannot meet that.", app, required, environment)).
+		WithHint(fmt.Sprintf("Release %s with a canary so its approvers can approve it, or lower its required approvals with `gregale approvals`.", app)).
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionSelf refuses a protected-environment promotion
+// approved by its own promoter for an app whose policy forbids
+// self-approval.
+func ErrReleaseApprovalPromotionSelf(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Approve someone else's promotion",
+		fmt.Sprintf("%s does not allow self-approval, and this promotion into %s was approved by the person promoting it.", app, environment)).
+		WithHint("Ask another approver to approve this promotion, then promote with their approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionSessionRequired refuses a protected production
+// promotion's approval sent with an API key or token while it stands in for
+// app's release approval policy (ADR-20261020085706 amendment 9).
+func ErrReleaseApprovalPromotionSessionRequired(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSessionRequired, "Approve as a person",
+		fmt.Sprintf("%s requires release approvals, so a person signed in to Gregale approves this promotion into %s; an API key or token cannot.", app, environment)).
+		WithHint("Approve the promotion signed in as yourself, not with an API key or token, then promote with that approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionApprover refuses a protected production
+// promotion's approval given by someone app's release approval policy does
+// not let approve its releases (ADR-20261020085706 amendment 9).
+func ErrReleaseApprovalPromotionApprover(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgRoleForbidden, "Approver not allowed",
+		fmt.Sprintf("The person who approved this promotion into %s may not approve releases of %s under its approval policy.", environment, app)).
+		WithHint("Ask a teammate the policy lets approve to approve this promotion, then promote with their approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
 // ErrReleaseApprovalSelf refuses the deployer's own approval.
 func ErrReleaseApprovalSelf() *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Self-approval not allowed",
 		"You deployed this release, and the app's approval policy needs someone else to approve it.").
-		WithHint("Ask an eligible teammate to run `gregale approvals approve`.")
+		WithHint("Ask an eligible teammate to approve it on the release's approval page in the dashboard.")
+}
+
+// ErrReleaseApprovalSessionRequired refuses an approval sent with an API key
+// or token (ADR-20261020085706 amendment 4). A key lets automation, or a
+// teammate's key in a CI job, approve without a person. pageURL is the
+// release's approval page.
+func ErrReleaseApprovalSessionRequired(pageURL string) *Problem {
+	hint := "Approve it on the release's approval page in the dashboard."
+	if pageURL != "" {
+		hint = "Approve it in the dashboard: " + pageURL
+	}
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSessionRequired, "Approve in the dashboard",
+		"A person signed in to Gregale approves a release; an API key or token cannot.").
+		WithHint(hint).WithDocs(docsBase + "/deploys#release-approvals")
 }
 
 // ErrReleaseApprovalDecided refuses a second decision, or a decision on a

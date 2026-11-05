@@ -32,7 +32,7 @@ type ObjectVersionListRequest struct {
 	Limit                                         int32
 }
 
-func (c *Client) ListObjectBucketVersions(ctx context.Context, app, bucket string, req ObjectVersionListRequest) (ObjectVersionList, error) {
+func (c *PreviewClient) ListObjectBucketVersions(ctx context.Context, app, bucket string, req ObjectVersionListRequest) (ObjectVersionList, error) {
 	q := url.Values{}
 	for k, v := range map[string]string{"prefix": req.Prefix, "delimiter": req.Delimiter, "key_marker": req.KeyMarker, "version_id_marker": req.VersionIDMarker} {
 		if v != "" {

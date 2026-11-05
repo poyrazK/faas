@@ -116,7 +116,25 @@ func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
 		topic = fields[0]
 	}
 	printUsage(osStderr, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	// A command with verbs (`dev`, `test`) parses its own flags when the
+	// first word is none of them; that word is a mistyped verb, so name them
+	// (Hunt 14 H14-64).
+	if fields := strings.Fields(name); len(fields) > 0 {
+		if command := nestedCliCommand(fields[0], fields[1:]...); len(command.Subcommands) > 0 {
+			_ = unknownSubcommandChoices(osStderr, name, command, fs.Arg(0))
+		}
+	}
 	return true
+}
+
+// sourceDirPositional reports the lone positional that names an existing
+// directory: `deploy ./my-app` and `dev ./my-app` mean --path.
+func sourceDirPositional(fs *flag.FlagSet) (string, bool) {
+	if fs.NArg() != 1 {
+		return "", false
+	}
+	info, err := os.Stat(fs.Arg(0))
+	return fs.Arg(0), err == nil && info.IsDir()
 }
 
 // flagSetCommandName turns a hyphenated flag-set name such as
@@ -177,6 +195,9 @@ func printFlagSetHelp(w io.Writer, fs *flag.FlagSet) {
 	fs.VisitAll(func(f *flag.Flag) {
 		label := "--" + f.Name
 		value, usage := flag.UnquoteUsage(f)
+		if canonical, ok := cliTreeCanonicalFlag(strings.Fields(path), f.Name); ok {
+			label, usage = "--"+canonical, usage+" (also --"+f.Name+")"
+		}
 		switch value {
 		case "":
 		case "string":
@@ -273,8 +294,15 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 		if guidance := flagValueGuidance(diagnostic, w.flags, path); guidance != "" {
 			diagnostic += "\n  " + guidance
 		}
+		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
+			diagnostic += "\n  " + hint
+		}
+		if hint := appSettingFlagHint(diagnostic, w.name); hint != "" {
+			diagnostic += "\n  " + hint
+		}
+		path = strings.TrimPrefix(spellUsageForTree("gregale "+path), "gregale ")
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
-			diagnostic, path)
+			diagnostic, cliTreeSpellPath(path))
 		return len(p), err
 	}
 	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {
@@ -282,6 +310,38 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 	}
 	_, err := io.WriteString(w.dst, text)
 	return len(p), err
+}
+
+// globalFlagPlacementHint explains a prefix-only global flag given after the
+// command: `gregale deploy --non-interactive` failed with a bare "unknown
+// flag" (Hunt 12 H12-27).
+func globalFlagPlacementHint(diagnostic, path string) string {
+	for _, global := range []struct{ name, example string }{
+		{"non-interactive", "--non-interactive"},
+		{"profile", "--profile NAME"},
+	} {
+		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
+			return fmt.Sprintf("--%s is a global flag: put it before the command, as in 'gregale %s %s'", global.name, global.example, path)
+		}
+	}
+	return ""
+}
+
+// appSettingFlagHint points a setting flag given to `app scale` at the
+// command that takes it: `app scale --websocket-enabled` answered only
+// "unknown flag" (rc.318 field report).
+func appSettingFlagHint(diagnostic, flagSet string) string {
+	name, ok := strings.CutPrefix(diagnostic, "unknown flag --")
+	if !ok || flagSet != "app scale" {
+		return ""
+	}
+	name, _, _ = strings.Cut(name, "=")
+	// `app update` runs the app command's own flags.
+	app, ok := lookupCliCommand("app")
+	if !ok || !slices.ContainsFunc(app.Flags, func(f cliFlag) bool { return f.Name == name }) {
+		return ""
+	}
+	return fmt.Sprintf("--%s is an app setting, not a scale setting: run 'gregale app update <app> --%s'", name, name)
 }
 
 type jsonFlagErrorWriter struct {

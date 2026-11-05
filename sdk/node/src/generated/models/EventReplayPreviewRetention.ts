@@ -7,7 +7,7 @@
  */
 export type EventReplayPreviewRetention = {
   /**
-   * Retention duration after routing settlement (2592000 seconds); unresolved receipts may survive longer.
+   * The plan's retention duration after routing settlement (86400, 259200, 604800 or 1209600 seconds on Free, Hobby, Pro and Scale); unresolved receipts may survive longer.
    */
   settled_retention_seconds: number;
   /**

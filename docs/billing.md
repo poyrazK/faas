@@ -3,27 +3,70 @@
 Gregale bills the account that owns an app. Plan prices and included capacity are generated from the platform limits table in [Plans and pricing](plans.md).
 
 ```bash
-gregale usage --month 2026-09
+gregale billing usage --month 2026-09
 gregale billing status
-gregale billing portal
+gregale billing portal open
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and function instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
+Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items. Where early freeze is enabled, a `between_requests` workload (functions by default) is frozen a few seconds after its last request rather than at its idle timeout, so it is billed for little more than the time it spends serving ([how frozen instances work](cold-wake.md#frozen-instances)).
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
+
+## Changing plan
+
+`gregale billing plan PLAN` (or `PATCH /v1/account/plan`, or Change plan on the dashboard billing page) changes plan. Your first paid plan starts with a hosted checkout. Prices are before tax: the billing provider adds any sales tax or VAT that applies where you live. The billing portal shows invoices and payment methods but does not switch plans.
+
+If a plan ends without a downgrade, for example when a subscription lapses, its limits still bind: see [after a plan ends or shrinks](plans.md#what-each-limit-means).
+
+### Upgrades
+
+On an existing subscription an upgrade happens in place: the billing provider charges the prorated difference for the rest of the billing period, plus tax, to the card on the subscription, and the new plan applies once that charge succeeds. If the charge is declined nothing changes; update the card in the billing portal and try again. If your bank asks to confirm the charge (3-D Secure), the upgrade answers `402 payment_authentication_required` and nothing is charged: add the card again in the billing portal, where your bank can confirm it, then retry the upgrade.
+
+### Downgrades
+
+A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. Downgrading to Free cancels the subscription at the end of the period.
+
+### Cancel and resume
+
+A cancelled subscription (`gregale billing cancel`, a downgrade to Free, or a deletion request) keeps its plan until the end of the billing period and then ends. A scheduled downgrade likewise applies at the end of the period. `GET /v1/billing/status` shows what is scheduled (`subscription_ends_at`, `scheduled_plan`, `scheduled_plan_at`), and so does the dashboard billing page.
+
+To keep the subscription instead, ask for the plan you already have: `gregale billing plan pro` on a Pro account, `PATCH /v1/account/plan` with `{"plan": "pro"}`, or Keep subscription on the dashboard. The scheduled cancellation or downgrade is undone and the subscription renews as before. Organizations use `PATCH /v1/orgs/{slug}/plan` the same way.
+
+A subscription that is ending cannot change plans: an upgrade or downgrade answers `409 billing_subscription_ending` until you keep it. Once the period has ended the account is on Free, and a new paid plan starts with a new checkout.
+
+Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap need an admin credential and MFA, and a dashboard session also needs a recent step-up: the portal link is a signed-in session that can cancel the subscription and replace the card.
+
+## Billing email
+
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+
+```bash
+curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
+  -H "Authorization: Bearer $GREGALE_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"billing_email":"billing@acme.example"}'
+```
+
+Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
 
 ## Spend cap
 
 A spend cap is a hard ceiling on the overage an account is billed in a UTC
 calendar month. The included GB-RAM-hours are not counted against it.
 
+A paid plan starts with a cap of one more allowance of overage: Hobby $2,
+Pro $10, Scale $30. The cap is set when the account moves from Free to a paid
+plan, and a cap still at its plan's default follows plan changes; on Free it
+is removed. A cap you set or clear yourself is kept across plan changes.
+
 ```bash
-gregale overage-cap 500      # cap overage at $5.00 this month
-gregale overage-cap --clear  # remove the cap
+gregale billing spend-cap 500      # cap overage at $5.00 this month
+gregale billing spend-cap --clear  # remove the cap
 ```
 
 `POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
-to clear) does the same. A cap of 0 is a pause switch: it counts as reached
+to clear) does the same. It needs the `admin` scope, like plan and billing
+changes: a deploy-scoped key, such as a CI key or an MCP connection allowed to
+write, cannot raise or remove the cap. A cap of 0 is a pause switch: it counts as reached
 immediately, so the account's workloads stop even within the included
 allowance.
 
@@ -35,14 +78,44 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed;
+- queued job tasks wait in the queue; they are not failed. A task already
+  running finishes within the plan's task timeout;
+- new forks are refused;
+- pending invocations (crons, delayed tasks, webhooks, async invokes and event
+  deliveries) wait too, without spending their retry attempts;
+- crons and recurring jobs stay due instead of queueing a run for every
+  scheduled time: each runs once after the cap lifts, and its `missed_runs`
+  policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
   Object storage keeps serving within its plan limits.
 
+When the cap first stops your workloads in a month, Gregale emails the
+account with the cap and the month's overage.
+
 Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
-a month, the month keeps the largest allowance any of its plans granted.
+a month, each plan's included GB-RAM-hours count for the share of the month
+you held it: a whole month on Pro includes 1,000 GB-h, and half a month on
+Hobby then half on Pro includes 600 GB-h. The daily overage warning starts
+above that allowance too. A move to Free is the exception: Free stops
+workloads at its own allowance. If a paid plan ends during a month, that
+allowance counts usage from the day you return to Free; usage on the paid
+plan was billed on its terms (ADR-20261031090658).
+
+Overage is billed hour by hour against the allowance in force at the time,
+and the spend cap counts exactly that. After a downgrade, usage your larger
+allowance already covered is never billed and does not count toward the cap;
+after an upgrade, overage already billed stays billed and keeps counting.
+Hours you spent on the Free plan are never billed, also when you subscribe
+again later. When an organization is deleted, the usage it ran before the
+deletion is still billed on its subscription (ADR-20261101143527).
+
+An organization that owns its resources is billed apart from its members and
+has its own cap, with the same defaults. Its owner sets it with
+`POST /v1/orgs/{slug}/overage-cap`; any member reads it with
+`GET /v1/orgs/{slug}/overage-cap`. The organization's apps stop at the
+organization's cap, not at the cap of the member who created them.
 
 ## Retained usage costs and forecasts
 
@@ -81,8 +154,10 @@ continues to use its existing source until correction reconciliation is accepted
 
 All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
-the largest recorded grant remains available for that month; its quantities are
-shared proportionally across price versions. Within each version, net cost and
+the compute allowance is what the provider pusher applies hour by hour: each
+hour above the grant in force for it, so the ledger's net compute equals the
+billed overage (ADR-20261031090658); other meters keep the largest recorded
+grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled
 egress contracts are reported as nonbillable quantities. The existing provider
@@ -172,7 +247,10 @@ stop every covered workload.
 Notification-only policies report `enforcement_ready: false`. Monitored
 compute-only preview stopping reports integration readiness separately from
 actual per-target stopping acknowledgements. The strict app compute candidate
-reports conservative commitments and funding separately. Other stopping actions
+reports conservative commitments and funding separately. Commitments fund
+warm, quiet-paused and frozen instances like running ones, while the invoice
+bills only running seconds, so a strict budget can hold before the invoice
+reaches its limit (`commitments_include_paused_time`). Other stopping actions
 and strict scopes remain unavailable. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
@@ -228,6 +306,35 @@ revision conditions, retry headers and readiness fields. Revision history is
 intent history; `runtime.stops` separately retains threshold decisions and
 current scheduler acknowledgements.
 
+A stored draft written before billing moved to USD keeps its EUR currency and
+reports `legacy_currency_draft`. Update it with `"currency": "USD"` to enable
+it, or delete it.
+
+### Organization budgets
+
+A budget covers what its owner pays for
+([ADR 20261031211500](adr/20261031211500-organization-budgets.md)). An
+organization that owns its resources pays for its apps, projects and
+environments, so it holds their costs and budgets, not the members who created
+them. A member's budget cannot name an app the organization pays for, and its
+account scope does not include that usage.
+
+```bash
+gregale billing costs --org acme
+gregale billing budgets list --org acme
+gregale billing budgets create --org acme --file budget.json --key acme-previews
+gregale billing budget-preview --org acme --file budget.json
+```
+
+`/v1/orgs/{slug}/billing/costs`, `/v1/orgs/{slug}/billing/budgets[/{id}]`,
+`.../{id}/revisions` and `.../budgets/preview` take the same bodies as the
+account routes. Every member can read them; the owner or billing role writes,
+with an `admin`-scoped credential, MFA and an `Idempotency-Key`. Organization
+budgets can notify and stop previews. Alerts go to the organization's billing
+contact; notification channels stay with account budgets. Strict budgets are
+not available to organizations, and an organization that does not own its
+resources cannot have budgets: its usage is billed to its members.
+
 ### Budget alerts on Slack, PagerDuty and email channels
 
 A budget's threshold alerts always go to the account email. They can also go to
@@ -236,7 +343,7 @@ and email channels alert rules use;
 [ADR 20261019193500](adr/20261019193500-budget-alert-channels.md)):
 
 ```bash
-gregale channels list                                         # find channel IDs
+gregale alert channel list                                         # find channel IDs
 gregale billing budgets channels --set CHANNEL_ID,CHANNEL_ID POLICY_ID
 gregale billing budgets channels POLICY_ID                    # last delivery per channel
 gregale billing budgets channels --clear POLICY_ID
@@ -279,8 +386,8 @@ Object storage cannot be selected on app, job, project or environment budgets
 
 The amount is the live object-storage estimate: this month's stored
 GiB-months, requests and egress, priced with the same rates and plan
-allowance as `gregale usage object-storage` and month close. Gross is before the
-allowance and net is after. apid refreshes it every five minutes, and an
+allowance as `gregale bucket usage` and month close. Gross is before the
+allowance and net is after. Gregale refreshes it every five minutes, and an
 estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
 shows it as the `object_storage` meter. Threshold and projected-overrun alerts
 count it like compute and egress. The invoice line still comes from month
@@ -316,9 +423,9 @@ scopes and the supported compute/interface-egress meters are accepted by the
 API and CLI. This does not include subscription, tax, managed-resource or other
 missing bill components.
 
-`meterd` evaluates once per sampling interval, independently of provider billing
-and email delivery. The evaluation and its threshold events commit together,
-guarded by the policy revision. Events are unique per policy revision, threshold
+Gregale evaluates budgets once per sampling interval, independently of
+provider billing and email delivery. An evaluation and its threshold events
+are recorded together for the policy revision. Events are unique per policy revision, threshold
 amount and UTC usage month. Usage replay and downward corrections followed by a
 recrossing do not resend an event. Editing or re-enabling creates a new revision
 and evaluates the existing month's spending again; it does not reset spending.
@@ -339,21 +446,10 @@ evaluation means the revision has not yet been evaluated in the current month.
 API reads mark old monitor observations stale even if the worker has stopped.
 `gregale billing budgets get ID` prints this health; `--json` returns the details.
 
-An independent delivery worker claims durable events with fenced leases. Failed
-attempts retry with capped exponential backoff; a process restart recovers expired
-claims. The existing configured mail pipeline, suppression rules and transport
-apply. `delivered` means the pipeline returned success, not confirmed inbox
-receipt. Log transport is for operator-selected development/diagnostic delivery.
-Every attempt uses the same message ID. Resend deduplicates within its provider
-window; Postmark does not support idempotency keys, so delivery is **at least
-once**, including the unavoidable send-success/commit-failure boundary.
-
-The workers are visible separately as `financial_budget_evaluation` and
-`financial_budget_delivery` in meterd health. Email failure cannot block sampling.
-Deploy the additive monitoring migration before activating policies, run matching
-`apid` and `meterd` versions, and verify a threshold and one retry with an isolated
-account before promoting the capability. This release does not add scheduler,
-gateway or VM lifecycle enforcement.
+Alert emails are retried with capped exponential backoff. Delivery is **at
+least once**: a retry can repeat an email an earlier attempt already sent.
+`delivered` means the mail provider accepted the message, not that it reached
+the inbox.
 
 ## FOCUS invoice export
 
@@ -445,7 +541,7 @@ entire download with HTTP 409. No amounts or timestamps are guessed.
 
 ### Refresh invoice facts
 
-Use an ID from `gregale invoices` to refresh a locally stored invoice:
+Use an ID from `gregale billing invoices` to refresh a locally stored invoice:
 
 ```bash
 gregale billing refresh-invoice INVOICE_ID
@@ -513,7 +609,7 @@ fails closed until the plan can be independently established. Refresh imported
 documents with `gregale billing refresh-invoice INVOICE_ID` to retrieve their
 provider line facts for FOCUS exports.
 
-### Remaining gaps
+### Limitations
 
 Only locally persisted invoices are projected; the export does not fetch or
 reconcile the provider's complete invoice history. Refunds and credit notes
@@ -527,18 +623,8 @@ are retained and flagged; exports count both untracked and legacy records and
 declare this historical gap when present. Facts and lifecycle history are
 updated in one transaction so downloads cannot see mismatched snapshots.
 
-The next invoice steps are remaining price classifications and legal issuer
-coverage, correction-document lineage, and conditional FX/PO fields. A
-historical cost ledger with
-service/resource identifiers, quantities, units, and price snapshots is then
-needed for the **Cost and Usage** dataset. Current plan prices
-cannot reliably reconstruct past list, contracted, or effective costs.
-
 The mapping is based on the official
 [FOCUS 1.4 Invoice Detail specification](https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/).
-`make focus-contract-check` checks the pinned upstream columns, exact
-reconciliation, snapshot metadata, ownership, export/refresh bounds, provider
-reads, lifecycle concurrency, and CLI operations.
 
 ## Monitored preview stopping
 
@@ -547,16 +633,15 @@ from 0 to 300 seconds, and an explicit `manual` or `next_period` resume rule.
 Only persisted preview workloads are selected; production names, environment
 names and absence of protection do not establish preview identity.
 
-At a fresh recorded threshold, meterd latches the decision with its evidence and
-notification outbox. New warm/cold requests, mesh HTTP/TCP calls, queued request
+At a fresh recorded threshold, Gregale records the decision with its evidence
+and notifies you. New warm/cold requests, mesh HTTP/TCP calls, queued request
 claims and command dispatch are blocked. Existing previews drain until the
-configured deadline; the owning scheduler then destroys their resident VMs via
-vmmd, retaining deployment snapshots/rootfs for the next allowed cold wake.
-Command VMs carry retained node/lease ownership and preparation deadlines too.
+configured deadline; their VMs are then destroyed, keeping deployment
+snapshots for the next allowed cold wake.
 
 Inspect `runtime.stops[].targets`: `draining` means resident resources remain;
 `enforced` requires confirmed teardown and durable settlement; `failed` requires
-retry/recovery. Stale scheduler observations become `unavailable`. A decision or
+retry/recovery. Stale observations become `unavailable`. A decision or
 email alone is not proof of shutdown. `gregale billing budgets get ID` and the
 console expose these states, including a manual hold from a previous month.
 
@@ -570,73 +655,10 @@ This is a monitored response: usage ingestion, scheduler sweeps, draining and
 teardown can exceed the threshold. Production and uncovered meters can continue
 spending. It does not establish a strict compute or full-invoice ceiling.
 
+## Strict compute budgets
 
-## Strict app compute candidate
-
-This implementation is local; native KVM acceptance and release review remain
-required. Strict budgets are released per account through the `strict_budgets`
-platform flag. Until it includes your account, creating or enabling one returns
-422 `financial_budget_activation_unavailable` ("Strict budgets not released").
-
-A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
-one limit shared by every app in the project, and when it is reached every app
-in the project is held. Jobs are not part of a project, so they need their own
-job caps. Activation needs every app in the project to be idle
-([ADR-1750, amendment 1](adr/1750-strict-app-compute-reservations.md#amendment-1-2026-10-20-strict-project-caps)).
-
-An environment can be capped with `scope={kind:environment,id:ENVIRONMENT_ID}`:
-one limit shared by every deployment that runs in the environment, across the
-project's apps. When it is reached, only that environment's deployments are
-held; the same apps keep serving other environments. A deployment without a
-recorded environment counts toward the project's environment of the same name.
-Capacity floors are app-wide, so an environment cap neither counts nor waives
-them; use an app or project cap to bound them. Activation needs every
-deployment in the environment to be idle
-([ADR-1750, amendment 2](adr/1750-strict-app-compute-reservations.md#amendment-2-2026-10-21-strict-environment-caps)).
-
-Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
-`basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
-`drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
-send spending alerts. Subscription, storage, network egress, taxes, builds and
-independent job resources are outside this app compute limit.
-
-Activation requires a quiet app, settled prior VM ownership, complete retained
-closed-minute accounting from app creation or UTC month start, and matching
-native compute owners on all active nodes. Unsupported dedicated qualification
-restore/job paths fail closed. Live migration cannot duplicate an active funded
-instance identity; drain it before moving that workload.
-
-Every VM reserves startup/execution and teardown funding before allocation.
-Renewal failure preserves a local deadline; no timeout releases the money.
-Shutdown and financial settlement must be confirmed. The API's `runtime.compute`
-and `gregale billing budgets get POLICY_ID` show committed, reserved and remaining
-millicents, unconfirmed VM attempts and durable holds. Commitments use a paid-rate
-upper bound, include startup, and round up per funded minute; they can exceed
-known billed compute. Cost evidence retains its own freshness/coverage status.
-
-Changing/deleting/replacing a policy never resets the app/month book. A new
-limit must cover existing funding. Manual holds cross UTC months until their
-policy changes; next-period holds reset at the next UTC month. Independent
-payment, security and user holds still apply.
-
-Execution funding ends before the UTC reset with thirty seconds for teardown.
-Work may pause at that boundary until earlier attempts settle and the new
-month's accounting and funding are ready.
-
-The meter charges only funded windows, even when instance rows are stale after
-local shutdown. Gregale absorbs unfunded teardown tail. Strict budgets preempt
-capacity floors; the book waives synthetic floor charges for that UTC month,
-including replay after policy deletion. This bounds supported customer compute
-charges, rather than promising a ceiling on host cost or the complete invoice.
-See the [decision](adr/1750-strict-app-compute-reservations.md) and
-[native acceptance procedure](runbooks/financial-strict-compute-acceptance.md).
-
-### Currency and retained funding
-
-New budgets and strict funding use USD, matching ADR-1430. Historical EUR
-invoices, price snapshots and budget revisions are retained without conversion.
-A period containing incompatible historical contracts cannot activate strict
-funding. The forward-only USD funding migration refuses pre-release books or
-enabled non-USD policies; those require explicit operator repair rather than
-reinterpreting retained balances. Apply the complete reviewed migration set
-before enabling the matching daemon graph.
+Strict budgets, which hold an app's compute when it reaches a funded limit,
+are not released yet. Creating or enabling one returns 422
+`financial_budget_activation_unavailable` ("Strict budgets not released").
+Budgets use USD; historical EUR invoices and budget revisions are retained
+without conversion.

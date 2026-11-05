@@ -21,8 +21,11 @@ package oidc
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,6 +35,26 @@ import (
 // TTL). Short enough that a leaked bearer expires before the next
 // operator rotation window.
 const OIDCBearerTTL = 5 * time.Minute
+
+// DefaultAudience is the aud the Gregale deploy action requests. An account
+// without an explicit trust policy exchanges only tokens minted for it, or
+// for an audience listed in FAAS_OIDC_EXCHANGE_AUDIENCES (bug hunt
+// 2026-10-28 H68).
+const DefaultAudience = "gregale"
+
+// PlatformAudience reports whether aud is one Gregale accepts without an
+// explicit trust policy.
+func PlatformAudience(aud string) bool {
+	if aud == DefaultAudience {
+		return true
+	}
+	for _, extra := range strings.Split(os.Getenv("FAAS_OIDC_EXCHANGE_AUDIENCES"), ",") {
+		if extra = strings.TrimSpace(extra); extra != "" && extra == aud {
+			return true
+		}
+	}
+	return false
+}
 
 // OIDCTrustPolicy is a per-(account, issuer) admission rule for
 // OIDC-derived bearer exchanges. The actual struct lives in pkg/state
@@ -70,6 +93,11 @@ type ExchangedToken = state.OIDCExchangedToken
 // inspect secrets, or change environment configuration.
 const CapabilityEnvironmentPreflight = "environment-preflight"
 
+// CapabilityPreviewRead requests a bearer that reads the PR preview status of
+// one app (ADR-20261102203228). It cannot deploy or read anything else, so a
+// pull request workflow may have it.
+const CapabilityPreviewRead = "preview-read"
+
 // OIDCBearerScopes is the default closed scope set for an OIDC-derived
 // bearer. The historical default remains deploy-only.
 func OIDCBearerScopes() []string {
@@ -86,6 +114,8 @@ func OIDCBearerScopesForCapability(capability string) ([]string, error) {
 		return OIDCBearerScopes(), nil
 	case CapabilityEnvironmentPreflight:
 		return []string{"project_environments:read", "project_environments:qualify"}, nil
+	case CapabilityPreviewRead:
+		return []string{api.ScopePreviewsRead}, nil
 	default:
 		return nil, errors.New("unsupported OIDC capability")
 	}

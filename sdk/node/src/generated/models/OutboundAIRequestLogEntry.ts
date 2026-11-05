@@ -3,9 +3,25 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
+ * One settled AI call's metadata. Its bodies are kept only when the integration captures content.
  */
 export type OutboundAIRequestLogEntry = {
+  /**
+   * What went wrong with the answer.
+   */
+  quality_flags?: Array<'truncated' | 'refused' | 'empty' | 'invalid_json' | 'tool_error'>;
+  /**
+   * The call's rating.
+   */
+  feedback?: 'good' | 'bad';
+  /**
+   * The rating's label.
+   */
+  feedback_label?: string;
+  /**
+   * The online evaluation's score.
+   */
+  evaluation_score?: number;
   id: string;
   created_at: string;
   /**
@@ -25,16 +41,24 @@ export type OutboundAIRequestLogEntry = {
   ttfb_ms: number | null;
   attempts: number;
   /**
-   * The call's X-Gregale-AI-User value (ADR-994).
+   * The call's X-Gregale-AI-User value.
    */
   end_user: string | null;
   /**
-   * Whether the call's bodies can be read from its content endpoint (ADR-996).
+   * Whether the call's bodies can be read from its content endpoint.
    */
   content_captured: boolean;
   /**
-   * The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
+   * The call's X-Gregale-AI-Tags as key=value, sorted by key.
    */
   tags: Array<string>;
+  /**
+   * The call's AI trace, when the integration records traces.
+   */
+  trace_id?: string;
+  /**
+   * The names of the tools the call's response requested, in order.
+   */
+  tool_calls?: Array<string>;
 };
 

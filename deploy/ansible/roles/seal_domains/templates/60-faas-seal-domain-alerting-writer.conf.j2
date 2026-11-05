@@ -1,0 +1,8 @@
+# Managed by the seal_domains role (ADR 20261022111812): apid seals alert rule
+# webhook secrets, notification channel destinations and MCP readiness
+# provider keys to the alerting seal domain. It holds the public recipient
+# only and cannot open what it seals; meterd sends the tests apid cannot.
+[Service]
+LoadCredential=faas_seal_domain_alerting_recipient:/etc/faas/secrets/domains/alerting.age.pub
+Environment=FAAS_SEAL_DOMAIN_ALERTING_RECIPIENT_PATH=%d/faas_seal_domain_alerting_recipient
+Environment=FAAS_SEAL_DOMAIN_ALERTING_WRITES={{ faas_seal_domain_alerting_writes }}

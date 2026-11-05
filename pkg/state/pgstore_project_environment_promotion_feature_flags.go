@@ -68,6 +68,26 @@ func (s *PgStore) ProjectEnvironmentPromotionFeatureFlags(ctx context.Context, a
 	return captured.ProjectEnvironmentPromotionFeatureFlags, err
 }
 
+func (s *PgStore) FeatureFlagVersionHeldByPromotion(ctx context.Context, scope FeatureFlagScope, version int64) (bool, error) {
+	p, err := flagPGScope(scope)
+	if err != nil {
+		return false, err
+	}
+	rows, err := sqlc.New().ListPromotionFeatureFlagHolds(ctx, s.pool, sqlc.ListPromotionFeatureFlagHoldsParams{
+		AccountID: p.AccountID, ProjectID: p.ProjectID, EnvironmentID: scope.EnvironmentID, Version: version})
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		promotion := ProjectEnvironmentPromotion{Status: row.Status, RollbackStatus: row.RollbackStatus}
+		receipt := ProjectEnvironmentPromotionFeatureFlags{TargetVersion: row.TargetVersion, RollbackVersion: row.RollbackVersion}
+		if promotionHoldsFeatureFlagVersion(promotion, receipt, version) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func promotionFeatureFlagsActivationTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion, rollback, completed bool) error {
 	if !promotion.SyncConfig {
 		return nil

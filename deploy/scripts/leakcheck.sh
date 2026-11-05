@@ -2,8 +2,9 @@
 # leakcheck.sh — assert the box has zero leaked VM resources after tests
 # (spec §Commands `make leakcheck`, invariant §6.2-4/5).
 #
-# Checks: no leftover fc-* network namespaces, no orphan tap devices, no jailer
-# chroots under /srv/fc/jail, no lingering faas-tenant per-instance cgroup scopes.
+# Checks: no leftover fc-* network namespaces, no orphan tap or private-network
+# devices (gpn-*, gpx-*), no jailer chroots under /srv/fc/jail, no lingering
+# faas-tenant per-instance cgroup scopes.
 # (jailer v1.7 rejects '.' in --id, so the actual scope name is the bare
 # instance id with no 'vm-' prefix and no '.scope' suffix — see
 # pkg/fcvm/cgroup.go and pkg/fcvm/config.go::PerInstanceScope.)
@@ -25,9 +26,12 @@ if command -v ip >/dev/null 2>&1; then
     [[ "$ns" == fc-* ]] && note "netns $ns"
   done < <(ip netns list 2>/dev/null | awk '{print $1}')
 
-  # 2. Orphan tap devices in the root namespace
+  # 2. Orphan tap devices in the root namespace, and private-network devices:
+  # gpn-h/gpn-p per-VM side-links, gpn-* account bridges and gpx-* VXLAN
+  # transport links (pkg/fcvm privateVethNames, pkg/privatenetwork).
   while read -r dev; do
     [[ "$dev" == tap-* || "$dev" == ve-* || "$dev" =~ ^vh[0-9]+(@.*)?$ ]] && note "netdev $dev"
+    [[ "$dev" == gpn-* || "$dev" == gpx-* ]] && note "private-network netdev $dev"
   done < <(ip -o link show 2>/dev/null | awk -F': ' '{print $2}')
 fi
 
@@ -56,6 +60,23 @@ for exe in /proc/[0-9]*/exe; do
   [[ "${target##*/}" == firecracker* ]] && note "process ${exe%/exe}: $target"
 done
 
+# 5b. Instance bridges (connection-survival ADR): no process may still run as
+# a bridge uid, and no per-bridge socket directory may remain.
+for status in /proc/[0-9]*/status; do
+  uid=$(awk '/^Uid:/ {print $2; exit}' "$status" 2>/dev/null || true)
+  [[ -n "$uid" && "$uid" -ge 30000 && "$uid" -le 39999 ]] && note "bridge process ${status%/status} uid $uid"
+done
+for d in /run/faas-ibridge/*/; do
+  [[ -d "$d" ]] && note "bridge socket directory $d"
+done
+# Bridge units (slice 1c, FAAS_INSTANCE_BRIDGE_UNIT=1): systemd owns them, so
+# a bridge vmmd failed to stop survives every process check above.
+if command -v systemctl >/dev/null 2>&1; then
+  while read -r unit _; do
+    [[ -n "$unit" ]] && note "bridge unit $unit"
+  done < <(systemctl list-units --all --plain --no-legend 'faas-ibridge-*.service' 2>/dev/null || true)
+fi
+
 # 6. Per-instance jail and export mounts. The shared jail tmpfs is expected.
 while read -r _ _ _ _ mountpoint _; do
   case "$mountpoint" in
@@ -74,4 +95,4 @@ if [[ "$fail" -ne 0 ]]; then
   echo "leakcheck FAILED"
   exit 1
 fi
-echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts/native-loops"
+echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/bridges/mounts/native-loops"

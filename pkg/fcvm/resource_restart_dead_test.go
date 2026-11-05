@@ -99,6 +99,32 @@ func TestResourceRestartDeadRetiresGoneInstanceAndItsFiles(t *testing.T) {
 	}
 }
 
+// A guest that claimed a prepared network (ADR-149) leaves an instance record
+// carrying the spare's identity. Its dead record retires like any other: before
+// this, every such record stayed for good (production-us fsn-2 kept 11).
+func TestResourceRestartDeadRetiresClaimedPreparedInstance(t *testing.T) {
+	opts := restartFixture(t)
+	r, materialised, clone := deadRecordFixture(t, opts)
+	r.Version = 6
+	r.Prepared = &resourcePreparedNetwork{Source: "prepared-dddddddd-4444-4444-8444-dddddddddddd", Target: r.Lease.Instance, BootID: idLive}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if r.preparedSpare() {
+		t.Fatal("fixture is an unclaimed spare")
+	}
+	_, j, rep := recoverDeadFixture(t, opts, r)
+	if rep.ReclaimedDeadRecords != 1 || rep.JournalRecords != 0 || rep.Slots != 0 {
+		t.Fatalf("report = %+v; want the claimed record retired and its slot free", rep)
+	}
+	if exists(materialised) || exists(clone) {
+		t.Fatal("identity-verified temporary files of the dead instance were left on disk")
+	}
+	if _, err := j.dir.ReadFile(resourceRecordName(r.storageIdentity())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("retired record still published")
+	}
+}
+
 func TestResourceRestartDeadLeavesReusedPathAlone(t *testing.T) {
 	opts := restartFixture(t)
 	r, materialised, _ := deadRecordFixture(t, opts)

@@ -134,7 +134,7 @@ func TestActionRecoveryLinksExpireDuringHistoryRead(t *testing.T) {
 						statePath = path
 						opts.planStore, opts.planNamespace = store, "discovery-race"
 						var err error
-						_, m, err = newManagementServer(api.NewClient(b.URL, testToken), opts)
+						_, m, err = newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -259,7 +259,7 @@ func TestActionRecoveryDiscoveryRestartAndUnavailableSnapshot(t *testing.T) {
 	f, b, opts := newBudgetFixture(t)
 	store, path, key := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "discovery-restart"
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestActionRecoveryDiscoveryRestartAndUnavailableSnapshot(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = next.Close() })
 	opts.planStore, opts.AllowWrites = next, false
-	_, restored, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, restored, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

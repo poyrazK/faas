@@ -87,6 +87,9 @@ type InstanceStat struct {
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
 	Frozen bool
+	// QuietPause is vmmd's quiet pause record, which the pause ledger
+	// keeps for billing (ADR-20261023171905).
+	QuietPause sched.QuietPauseRecord
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller
@@ -222,6 +225,11 @@ type Reader struct {
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
 	quiet  atomic.Pointer[quietPausedSnapshot]
+	// cpu is the latest per-instance measured CPU (measured_cpu.go).
+	cpu atomic.Pointer[measuredCPUSnapshot]
+	// pressure is the latest per-node CPU pressure readings
+	// (cpu_pressure.go).
+	pressure atomic.Pointer[cpuPressureSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from
@@ -230,6 +238,13 @@ type Reader struct {
 	rateMu       sync.Mutex
 	previousRate map[string]requestRateSample
 	requestRates map[string]requestRate
+
+	// departed keeps the last row of each instance that left the snapshot,
+	// for api.MeterFinalNetworkReadingRetention (departed.go).
+	departedMu sync.Mutex
+	departed   map[string]departedStat
+	// now is the departure clock; nil means time.Now.
+	now func() time.Time
 }
 
 type requestRateSample struct {
@@ -268,6 +283,7 @@ func (r *Reader) Replace(next []InstanceStat) {
 	cp := make([]InstanceStat, len(next))
 	copy(cp, next)
 	r.updateRequestRates(cp)
+	r.trackDeparted(r.snap.Load(), cp)
 	r.snap.Store(&cp)
 }
 

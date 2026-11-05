@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,6 +76,11 @@ type cacheWriter struct {
 	// before installing the tee. Only those values may be omitted from the
 	// captured copy; origin cookies still veto storage.
 	managedPlatformCookies map[string]struct{}
+	// platformRateLimitHeaders are the gateway's own X-RateLimit-* values for
+	// this request, present before the tee was installed. They describe this
+	// request's allowance, so the captured copy leaves exactly those values
+	// out; an origin's own rate-limit headers are still stored.
+	platformRateLimitHeaders http.Header
 
 	// ruleAction is the state-typed view of the rule, captured
 	// once at install time so Put on the cache has the
@@ -109,14 +115,21 @@ func (c *cacheWriter) ProblemHTMLRequest() *http.Request {
 // the plan-level response body cap (capWriter) — the cache cap
 // is much smaller to bound resident memory per node.
 func newCacheWriter(w http.ResponseWriter, rec *statusRecorder, rule *EdgeRuleCacheResolved, cap int64) *cacheWriter {
+	platform := http.Header{}
+	for k, vs := range w.Header() {
+		if isGatewayRateLimitHeader(k) {
+			platform[k] = append([]string(nil), vs...)
+		}
+	}
 	return &cacheWriter{
-		ResponseWriter: w,
-		inner:          rec,
-		rule:           rule,
-		cap:            cap,
-		ruleAction:     rule.toStateEdgeRuleCacheAction(),
-		header:         http.Header{},
-		status:         200, // default per http.ResponseWriter contract
+		ResponseWriter:           w,
+		inner:                    rec,
+		rule:                     rule,
+		cap:                      cap,
+		ruleAction:               rule.toStateEdgeRuleCacheAction(),
+		header:                   http.Header{},
+		status:                   200, // default per http.ResponseWriter contract
+		platformRateLimitHeaders: platform,
 	}
 }
 
@@ -193,8 +206,13 @@ func (c *cacheWriter) WriteHeader(code int) {
 		if isPerRequestPlatformHeader(k) {
 			continue
 		}
+		platform := append([]string(nil), c.platformRateLimitHeaders[k]...)
 		for _, v := range vs {
 			if isCachedRouteLifecycleHeader(k, v) {
+				continue
+			}
+			if i := slices.Index(platform, v); i >= 0 {
+				platform = slices.Delete(platform, i, i+1)
 				continue
 			}
 			if strings.EqualFold(k, "Set-Cookie") {

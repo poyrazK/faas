@@ -84,7 +84,7 @@ func TestCmdCronsInfo_HappyPath(t *testing.T) {
 		"  path:     /cleanup",
 		"  enabled:  true",
 		"  app:      0123456789abcdef0123456789abcde0",
-		"  last:     2026-08-10T09:00:00Z",
+		"  last scheduled fire: 2026-08-10T09:00:00Z",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q; got:\n%s", want, body)
@@ -115,7 +115,7 @@ func TestCmdCronsInfo_NeverFired(t *testing.T) {
 	if code := main.CmdCronsInfo([]string{cronsInfoID}); code != 0 {
 		t.Errorf("crons info (never fired) = %d, want 0", code)
 	}
-	if !strings.Contains(stdout.String(), "  last:     —") {
+	if !strings.Contains(stdout.String(), "  last scheduled fire: —") {
 		t.Errorf("never-fired sentinel missing; got:\n%s", stdout.String())
 	}
 }

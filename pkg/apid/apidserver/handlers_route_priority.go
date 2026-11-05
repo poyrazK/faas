@@ -15,6 +15,9 @@ const routePrioritiesRequestMaxBytes = 16 << 10
 // getRoutePriorities serves GET /v1/apps/{slug}/route-priorities (ADR-978):
 // the rules gateways apply when the app's warm capacity is saturated.
 func (s *server) getRoutePriorities(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -24,6 +27,9 @@ func (s *server) getRoutePriorities(w http.ResponseWriter, r *http.Request, acct
 
 // putRoutePriorities replaces the app's saved rules. apid is the only writer.
 func (s *server) putRoutePriorities(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	store, ok := s.store.(state.RoutePriorityStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("route priorities"))
@@ -55,6 +61,9 @@ func (s *server) putRoutePriorities(w http.ResponseWriter, r *http.Request, acct
 
 // deleteRoutePriorities removes saved rules, restoring the route-health default.
 func (s *server) deleteRoutePriorities(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	store, ok := s.store.(state.RoutePriorityStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("route priorities"))
@@ -89,4 +98,15 @@ func (s *server) writeRoutePriorities(w http.ResponseWriter, r *http.Request, ac
 		out.Queue = &queue
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// requireRouteControlsPlan refuses route priorities, throttle suggestions and
+// route lifecycle review on the Free plan, which the catalog leaves them off
+// (ADR-20261026143210); route removal checks stay readable for promotions.
+func requireRouteControlsPlan(w http.ResponseWriter, acct state.Account) bool {
+	if acct.Plan.IsPaid() {
+		return true
+	}
+	api.WriteProblem(w, api.ErrPlanFeatureGated("route_controls", acct.Plan))
+	return false
 }

@@ -54,12 +54,14 @@ const (
 // cmdObsDispatch (commands_obs.go:65).
 func cmdDebugDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl debug: missing subcommand; want otel-smoke")
+		fmt.Fprintln(os.Stderr, "gregalectl debug: missing subcommand; want otel-smoke|pprof")
 		return 2
 	}
 	switch args[0] {
 	case subDebugOtel:
 		return cmdDebugOtelSmoke(args[1:])
+	case subDebugPprof:
+		return cmdDebugPprof(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl debug: unknown subcommand %q\nRun 'gregalectl debug otel-smoke --help' for usage.\n", args[0])
 		return 2

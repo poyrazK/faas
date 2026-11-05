@@ -48,14 +48,17 @@ func OpenMigrated(t *testing.T) *pgxpool.Pool {
 	if os.Getenv(UseTemplateDatabase) == "" {
 		return Open(t)
 	}
+	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
+		t.Skip("FAAS_SKIP_PG_TESTS set; skipping Postgres integration test")
+	}
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
+		t.Skip("pgtest: DATABASE_URL unset; skipping template database integration test")
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		t.Skipf("pgtest: cannot parse DATABASE_URL (%v); skipping", err)
+		t.Fatalf("pgtest: cannot parse configured DATABASE_URL: %v", err)
 	}
 
 	tpl := ensureTemplate(t, dsn, cfg)

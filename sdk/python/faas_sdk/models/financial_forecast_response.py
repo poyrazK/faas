@@ -11,6 +11,7 @@ from ..models.financial_forecast_response_currency import (
     FinancialForecastResponseCurrency,
     check_financial_forecast_response_currency,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.financial_meter_costs import FinancialMeterCosts
@@ -30,6 +31,9 @@ class FinancialForecastResponse:
     meters: list[FinancialMeterCosts]
     bill_estimate_available: bool
     missing_bill_components: list[str]
+    projected_subtotal_millicents: int | Unset = UNSET
+    """Plan fee plus every meter's projected usage charge for the month, in millicents. Present only when every
+    meter has an available forecast; it excludes the components listed in missing_bill_components."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +54,8 @@ class FinancialForecastResponse:
 
         missing_bill_components = self.missing_bill_components
 
+        projected_subtotal_millicents = self.projected_subtotal_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -63,6 +69,8 @@ class FinancialForecastResponse:
                 "missing_bill_components": missing_bill_components,
             }
         )
+        if projected_subtotal_millicents is not UNSET:
+            field_dict["projected_subtotal_millicents"] = projected_subtotal_millicents
 
         return field_dict
 
@@ -90,6 +98,8 @@ class FinancialForecastResponse:
 
         missing_bill_components = cast(list[str], d.pop("missing_bill_components"))
 
+        projected_subtotal_millicents = d.pop("projected_subtotal_millicents", UNSET)
+
         financial_forecast_response = cls(
             period_start=period_start,
             period_end=period_end,
@@ -98,6 +108,7 @@ class FinancialForecastResponse:
             meters=meters,
             bill_estimate_available=bill_estimate_available,
             missing_bill_components=missing_bill_components,
+            projected_subtotal_millicents=projected_subtotal_millicents,
         )
 
         financial_forecast_response.additional_properties = d

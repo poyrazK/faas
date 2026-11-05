@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sign up</title>
+<link rel="stylesheet" href="signup.css">
+<script src="signup.js" defer></script>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <header>
+    <p class="eyebrow">API sign-up</p>
+    <h1 id="title">Loading…</h1>
+    <p id="testmode" class="notice" hidden>Test mode: use a Stripe test card. No real card is saved.</p>
+  </header>
+
+  <section id="form-view" hidden>
+    <form id="signup-form" novalidate>
+      <fieldset id="plans">
+        <legend>Plan</legend>
+      </fieldset>
+      <p id="trial" class="muted" hidden></p>
+      <label for="name">Name or company</label>
+      <input id="name" name="name" autocomplete="name" maxlength="128" required>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" maxlength="254" required>
+      <label id="terms-row" class="check" hidden>
+        <input id="terms" type="checkbox"> <span>I agree to the <a id="terms-link" target="_blank" rel="noopener noreferrer">terms</a></span>
+      </label>
+      <p class="muted">Next, you save a card with Stripe. Nothing is charged now: usage is billed monthly.</p>
+      <button id="submit" type="submit">Continue to card details</button>
+      <p id="form-error" class="error" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <section id="key-view" hidden>
+    <h2>You're signed up</h2>
+    <p>This is your API key. Copy it now: it is shown only once.</p>
+    <div class="key-row">
+      <code id="key"></code>
+      <button id="copy" type="button">Copy</button>
+    </div>
+    <p id="key-trial" class="muted" hidden></p>
+    <p class="muted">Send it as <code>Authorization: Bearer &lt;key&gt;</code>.</p>
+    <p id="return-row" hidden><a id="return-link" rel="noopener noreferrer">Continue</a></p>
+  </section>
+
+  <section id="message-view" hidden>
+    <p id="message"></p>
+    <button id="restart" type="button" hidden>Start again</button>
+  </section>
+</main>
+<footer class="muted">Payments by Stripe · Hosted by Gregale</footer>
+</body>
+</html>

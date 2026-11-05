@@ -17,6 +17,7 @@ import (
 // unfinished addition; live denotes a completed table. Rows are retained privately.
 type TableCancellation struct {
 	Kind                                                      string `json:",omitempty"`
+	RefreshRetry                                              int    `json:",omitempty"`
 	ID, RequestID, Table, State, Stage, Retention             string
 	TableOID, SourceTableOID, SubscriptionOID, PublicationOID uint32
 }
@@ -43,6 +44,7 @@ func CancellableTables(p Pipeline) []string {
 
 func tableCancellationID(p Pipeline, c TableCancellation) string {
 	c.ID, c.State, c.Stage = "", "", ""
+	c.RefreshRetry = 0
 	encoded, _ := json.Marshal(struct {
 		Pipeline, Change string
 		Generation       int64
@@ -90,6 +92,9 @@ func (s *PostgresStore) TableCancellation(ctx context.Context, account, id strin
 	if p.SchemaChange != nil && p.SchemaChange.Cancellation != nil && p.SchemaChange.Cancellation.Kind != "" {
 		return ErrConflict
 	}
+	if approval != "" && CanRetryTableRetirement(p) {
+		return s.retryTableRetirement(ctx, p, approval)
+	}
 	var n int64
 	if approval == "" && table == "" {
 		n, err = s.q.PipelineDiscardTableCancellation(ctx, s.pool, sqlc.PipelineDiscardTableCancellationParams{AccountID: account, ID: id, Revision: revision})
@@ -101,6 +106,29 @@ func (s *PostgresStore) TableCancellation(ctx context.Context, account, id strin
 	} else {
 		n, err = s.q.PipelineApproveTableCancellation(ctx, s.pool, sqlc.PipelineApproveTableCancellationParams{AccountID: account, ID: id, Revision: revision, CancellationID: approval, MaxAgeSeconds: int64(api.DataPipelineObservationMaxAge.Seconds())})
 	}
+	if err != nil {
+		return storeError(err)
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// CanRetryTableRetirement authorizes only a new API refresh attempt for an
+// already archived table. It preserves the original retirement approval.
+func CanRetryTableRetirement(p Pipeline) bool {
+	if p.SchemaChange == nil || p.SchemaChange.Cancellation == nil {
+		return false
+	}
+	c := p.SchemaChange.Cancellation
+	return p.DesiredState == "running" && p.State == "blocked" && p.Reason == "schema_api_refresh_failed" && p.ObservationFresh &&
+		p.SchemaApproval == p.SchemaChange.ID && c.State == "approved" && c.Stage == "archived" && c.RefreshRetry < api.DataPipelineSchemaRetriesMax && c.ID == tableCancellationID(p, *c) &&
+		(p.ReaderChange == nil || p.ReaderChange.State != "approved")
+}
+
+func (s *PostgresStore) retryTableRetirement(ctx context.Context, p Pipeline, approval string) error {
+	n, err := s.q.PipelineRetryTableRetirement(ctx, s.pool, sqlc.PipelineRetryTableRetirementParams{AccountID: p.AccountID, ID: p.ID, Revision: p.Revision, CancellationID: approval, MaxAgeSeconds: int64(api.DataPipelineObservationMaxAge.Seconds()), MaxRetries: int32(api.DataPipelineSchemaRetriesMax)})
 	if err != nil {
 		return storeError(err)
 	}

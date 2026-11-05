@@ -11,11 +11,170 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteOwnedProject = `-- name: DeleteOwnedProject :execrows
+DELETE FROM projects WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteOwnedProjectParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) DeleteOwnedProject(ctx context.Context, db DBTX, arg DeleteOwnedProjectParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteOwnedProject, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deploymentActivationServingMatches = `-- name: DeploymentActivationServingMatches :one
+SELECT (count(*) = 1 AND coalesce(bool_and(
+  d.traffic_percent = 100 AND d.id IN ($1::uuid, $2::uuid)
+), false))::boolean AS matches
+FROM deployments d
+WHERE d.app_id = $3::uuid
+  AND coalesce(nullif(d.scope, ''), 'default') = $4::text
+  AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+`
+
+type DeploymentActivationServingMatchesParams struct {
+	TargetID   pgtype.UUID
+	ExpectedID pgtype.UUID
+	AppID      pgtype.UUID
+	Scope      string
+}
+
+func (q *Queries) DeploymentActivationServingMatches(ctx context.Context, db DBTX, arg DeploymentActivationServingMatchesParams) (bool, error) {
+	row := db.QueryRow(ctx, deploymentActivationServingMatches,
+		arg.TargetID,
+		arg.ExpectedID,
+		arg.AppID,
+		arg.Scope,
+	)
+	var matches bool
+	err := row.Scan(&matches)
+	return matches, err
+}
+
+const environmentOnlyProjectAppIDs = `-- name: EnvironmentOnlyProjectAppIDs :many
+SELECT a.id::text FROM apps a
+WHERE a.account_id = $1 AND a.project_id = $2
+  AND a.preview_of_slug IS NULL AND a.status <> 'deleted'
+  AND coalesce(a.manifest->>'project_source_sha256', '') = ''
+  AND EXISTS (
+    SELECT 1 FROM project_environment_workload_heads h
+    JOIN project_environments e ON e.id = h.environment_id
+    WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug <> 'production'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM project_environment_workload_heads h
+    JOIN project_environments e ON e.id = h.environment_id
+    WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug = 'production'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.scope IN ('', 'default', 'production')
+  )
+ORDER BY a.id
+`
+
+type EnvironmentOnlyProjectAppIDsParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+// A stage-owned head without any production admission is not a production
+// removal candidate. Keep legacy project members under the existing policy.
+func (q *Queries) EnvironmentOnlyProjectAppIDs(ctx context.Context, db DBTX, arg EnvironmentOnlyProjectAppIDsParams) ([]string, error) {
+	rows, err := db.Query(ctx, environmentOnlyProjectAppIDs, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var a_id string
+		if err := rows.Scan(&a_id); err != nil {
+			return nil, err
+		}
+		items = append(items, a_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectEnvironmentAppIDs = `-- name: ProjectEnvironmentAppIDs :many
+SELECT a.id::text FROM apps a
+WHERE a.account_id = $1 AND a.project_id = $2
+  AND a.preview_of_slug IS NULL AND a.status <> 'deleted'
+  AND CASE WHEN $3::text = 'production' THEN NOT (
+    coalesce(a.manifest->>'project_source_sha256', '') = ''
+    AND EXISTS (
+      SELECT 1 FROM project_environment_workload_heads h
+      JOIN project_environments e ON e.id = h.environment_id
+      WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug <> 'production'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM project_environment_workload_heads h
+      JOIN project_environments e ON e.id = h.environment_id
+      WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug = 'production'
+    )
+    AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.scope IN ('', 'default', 'production'))
+  ) ELSE (
+    EXISTS (
+      SELECT 1 FROM project_environment_workload_heads h
+      JOIN project_environments e ON e.id = h.environment_id
+      WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug = $3::text
+    ) OR EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.scope = $3::text)
+  ) END
+ORDER BY a.id
+`
+
+type ProjectEnvironmentAppIDsParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) ProjectEnvironmentAppIDs(ctx context.Context, db DBTX, arg ProjectEnvironmentAppIDsParams) ([]string, error) {
+	rows, err := db.Query(ctx, projectEnvironmentAppIDs, arg.AccountID, arg.ProjectID, arg.Environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var a_id string
+		if err := rows.Scan(&a_id); err != nil {
+			return nil, err
+		}
+		items = append(items, a_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectHasNamedStages = `-- name: ProjectHasNamedStages :one
+SELECT EXISTS (SELECT 1 FROM project_environments
+WHERE project_id = $1::uuid AND slug NOT IN ('', 'default', 'production'))::boolean AS stages
+`
+
+func (q *Queries) ProjectHasNamedStages(ctx context.Context, db DBTX, projectID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, projectHasNamedStages, projectID)
+	var stages bool
+	err := row.Scan(&stages)
+	return stages, err
+}
+
 const projectServiceAppIDs = `-- name: ProjectServiceAppIDs :many
 SELECT id FROM apps
 WHERE account_id = $1 AND project_id = $2
   AND preview_of_slug IS NULL AND status <> 'deleted'
-  AND lower(workload_name) = lower($3::text)
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($3::text), '_.', '--')
 ORDER BY id
 LIMIT 2
 `
@@ -44,4 +203,28 @@ func (q *Queries) ProjectServiceAppIDs(ctx context.Context, db DBTX, arg Project
 		return nil, err
 	}
 	return items, nil
+}
+
+const projectServiceHasDeletedApp = `-- name: ProjectServiceHasDeletedApp :one
+SELECT EXISTS (
+  SELECT 1 FROM apps
+  WHERE account_id = $1 AND project_id = $2
+    AND preview_of_slug IS NULL AND status = 'deleted'
+    AND translate(lower(workload_name), '_.', '--') = translate(lower($3::text), '_.', '--')
+)::boolean AS deleted
+`
+
+type ProjectServiceHasDeletedAppParams struct {
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	WorkloadName string
+}
+
+// A deleted production member keeps its service name until it is purged, so
+// the name does not fall back to an app slug elsewhere (ErrProjectServiceDeleted).
+func (q *Queries) ProjectServiceHasDeletedApp(ctx context.Context, db DBTX, arg ProjectServiceHasDeletedAppParams) (bool, error) {
+	row := db.QueryRow(ctx, projectServiceHasDeletedApp, arg.AccountID, arg.ProjectID, arg.WorkloadName)
+	var deleted bool
+	err := row.Scan(&deleted)
+	return deleted, err
 }

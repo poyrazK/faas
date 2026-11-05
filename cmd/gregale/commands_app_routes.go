@@ -45,7 +45,7 @@ import (
 func cmdAppsRoutes(slug string, args []string) int {
 	_ = args // no flags yet; future flags land here alongside a server DTO bump
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale apps routes <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list routes <slug>", "apps")
 		return 1
 	}
 	client, err := authedClient()
@@ -54,7 +54,7 @@ func cmdAppsRoutes(slug string, args []string) int {
 	}
 	resp, err := client.GetAppRoutes(context.Background(), slug)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list routes", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

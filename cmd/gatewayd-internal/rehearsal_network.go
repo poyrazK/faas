@@ -7,6 +7,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func authorizeRehearsalService(ctx context.Context, store state.Store, caller, target state.App) (string, error) {
+func authorizeRehearsalService(ctx context.Context, store servicebinding.AuthorizationStore, caller, target state.App) (string, error) {
 	return servicebinding.AuthorizeRehearsalService(ctx, store, caller, target)
 }

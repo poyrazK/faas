@@ -1,0 +1,362 @@
+Pager usage is off.
+Timing is on.
+INSERT 0 1
+Time: 7.093 ms
+INSERT 0 200
+Time: 12.174 ms
+INSERT 0 0
+Time: 1.390 ms
+SET
+Time: 0.690 ms
+INSERT 0 1048576
+Time: 80590.767 ms (01:20.591)
+INSERT 0 200000
+Time: 11278.925 ms (00:11.279)
+SET
+Time: 1.180 ms
+INSERT 0 201
+Time: 2188.720 ms (00:02.189)
+VACUUM
+Time: 4642.673 ms (00:04.643)
+VACUUM
+Time: 2.906 ms
+ outbox_size 
+-------------
+ 1077 MB
+(1 row)
+
+Time: 1.267 ms
+=== admission read, main: count every retained receipt (5 runs)
+  count  | coalesce  
+---------+-----------
+ 1048576 | 416097088
+(1 row)
+
+Time: 1007.579 ms (00:01.008)
+  count  | coalesce  
+---------+-----------
+ 1048576 | 416097088
+(1 row)
+
+Time: 1271.322 ms (00:01.271)
+  count  | coalesce  
+---------+-----------
+ 1048576 | 416097088
+(1 row)
+
+Time: 766.111 ms
+  count  | coalesce  
+---------+-----------
+ 1048576 | 416097088
+(1 row)
+
+Time: 713.297 ms
+                                                                                              QUERY PLAN                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=48325.39..48325.40 rows=1 width=16) (actual time=1382.846..1414.919 rows=1 loops=1)
+   Buffers: shared hit=8140
+   ->  Gather  (cost=48325.16..48325.37 rows=2 width=40) (actual time=1379.464..1414.900 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8140
+         ->  Partial Aggregate  (cost=47325.16..47325.17 rows=1 width=40) (actual time=1070.968..1070.968 rows=1 loops=3)
+               Buffers: shared hit=8140
+               ->  Parallel Index Only Scan using event_fanout_customer_storage_idx on event_fanout_outbox  (cost=0.43..45144.44 rows=436143 width=8) (actual time=0.043..873.105 rows=349525 loops=3)
+                     Index Cond: (account_id = '00000000-0000-0000-0000-00000000a000'::uuid)
+                     Heap Fetches: 0
+                     Buffers: shared hit=8140
+ Planning:
+   Buffers: shared hit=5
+ Planning Time: 1.237 ms
+ Execution Time: 1414.968 ms
+(16 rows)
+
+Time: 1416.934 ms (00:01.417)
+=== admission read, branch: the usage counter (5 runs)
+ coalesce | coalesce  
+----------+-----------
+  1048576 | 416097088
+(1 row)
+
+Time: 0.614 ms
+ coalesce | coalesce  
+----------+-----------
+  1048576 | 416097088
+(1 row)
+
+Time: 0.207 ms
+ coalesce | coalesce  
+----------+-----------
+  1048576 | 416097088
+(1 row)
+
+Time: 0.168 ms
+ coalesce | coalesce  
+----------+-----------
+  1048576 | 416097088
+(1 row)
+
+Time: 0.164 ms
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=4.52..4.53 rows=1 width=16) (actual time=0.018..0.018 rows=1 loops=1)
+   Buffers: shared hit=2
+   ->  Seq Scan on event_receipt_usage  (cost=0.00..4.51 rows=1 width=16) (actual time=0.013..0.016 rows=1 loops=1)
+         Filter: (account_id = '00000000-0000-0000-0000-00000000a000'::uuid)
+         Rows Removed by Filter: 200
+         Buffers: shared hit=2
+ Planning Time: 0.056 ms
+ Execution Time: 0.029 ms
+(8 rows)
+
+Time: 0.250 ms
+=== prune owner walk: 201 owners, light receipts span 20 days
+PREPARE
+Time: 0.989 ms
+                                                                                                                      QUERY PLAN                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=174166.03..174166.28 rows=100 width=32) (actual time=245.510..245.528 rows=100 loops=1)
+   Buffers: shared hit=2290 read=280
+   ->  Sort  (cost=174166.03..174166.54 rows=201 width=32) (actual time=37.709..37.718 rows=100 loops=1)
+         Sort Key: o.delivered_at, u.account_id
+         Sort Method: quicksort  Memory: 39kB
+         Buffers: shared hit=2290 read=280
+         ->  Nested Loop  (cost=0.43..174158.35 rows=201 width=32) (actual time=7.729..37.571 rows=200 loops=1)
+               Buffers: shared hit=2290 read=280
+               ->  Nested Loop Left Join  (cost=0.00..579.67 rows=201 width=24) (actual time=0.162..7.216 rows=201 loops=1)
+                     Join Filter: (r.plan = COALESCE(a.plan, g.plan))
+                     Rows Removed by Join Filter: 603
+                     Buffers: shared hit=2 read=4
+                     ->  Nested Loop Left Join  (cost=0.00..567.52 rows=201 width=80) (actual time=0.138..6.969 rows=201 loops=1)
+                           Join Filter: (g.id = u.account_id)
+                           Buffers: shared hit=2 read=4
+                           ->  Nested Loop Left Join  (cost=0.00..435.79 rows=201 width=48) (actual time=0.129..4.217 rows=201 loops=1)
+                                 Join Filter: (a.id = u.account_id)
+                                 Rows Removed by Join Filter: 20100
+                                 Buffers: shared hit=2 read=4
+                                 ->  Seq Scan on event_receipt_usage u  (cost=0.00..4.01 rows=201 width=16) (actual time=0.014..0.045 rows=201 loops=1)
+                                       Buffers: shared hit=2
+                                 ->  Materialize  (cost=0.00..12.10 rows=140 width=48) (actual time=0.000..0.007 rows=101 loops=201)
+                                       Buffers: shared read=4
+                                       ->  Seq Scan on accounts a  (cost=0.00..11.40 rows=140 width=48) (actual time=0.029..0.076 rows=201 loops=1)
+                                             Buffers: shared read=4
+                           ->  Materialize  (cost=0.00..11.80 rows=40 width=48) (actual time=0.000..0.000 rows=0 loops=201)
+                                 ->  Seq Scan on orgs g  (cost=0.00..11.60 rows=40 width=48) (actual time=0.004..0.005 rows=0 loops=1)
+                                       Filter: ((NOT personal_org) AND resource_ownership_enabled)
+                     ->  Materialize  (cost=0.00..0.10 rows=4 width=40) (actual time=0.000..0.000 rows=4 loops=201)
+                           ->  Subquery Scan on r  (cost=0.00..0.08 rows=4 width=40) (actual time=0.014..0.020 rows=4 loops=1)
+                                 ->  ProjectSet  (cost=0.00..0.04 rows=4 width=40) (actual time=0.011..0.016 rows=4 loops=1)
+                                       ->  Result  (cost=0.00..0.01 rows=1 width=0) (actual time=0.002..0.003 rows=1 loops=1)
+               ->  Limit  (cost=0.43..863.55 rows=1 width=16) (actual time=0.150..0.150 rows=1 loops=201)
+                     Buffers: shared hit=2288 read=276
+                     ->  Index Scan using event_fanout_outbox_account_retention_idx on event_fanout_outbox o  (cost=0.43..8631.57 rows=10 width=16) (actual time=0.136..0.136 rows=1 loops=201)
+                           Index Cond: ((account_id = u.account_id) AND (delivered_at < ('2026-10-24 09:07:15.223829+00'::timestamp with time zone - make_interval(0, 0, 0, 0, 0, 0, (COALESCE(r.seconds, '1209600'::bigint))::double precision))))
+                           Filter: (event_receipt_retention_hold(account_id, id, created_at, ('2026-10-24 09:07:15.223829+00'::timestamp with time zone - '30 days'::interval), '2026-10-24 09:07:15.223829+00'::timestamp with time zone) = ''::text)
+                           Buffers: shared hit=2288 read=276
+ Planning:
+   Buffers: shared hit=319 read=49
+ Planning Time: 1.658 ms
+ JIT:
+   Functions: 35
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 9.092 ms, Inlining 0.000 ms, Optimization 76.253 ms, Emission 134.389 ms, Total 219.734 ms
+ Execution Time: 254.779 ms
+(46 rows)
+
+Time: 256.962 ms
+                                                                                                                      QUERY PLAN                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=174166.03..174166.28 rows=100 width=32) (actual time=126.025..126.044 rows=100 loops=1)
+   Buffers: shared hit=1838
+   ->  Sort  (cost=174166.03..174166.54 rows=201 width=32) (actual time=40.143..40.153 rows=100 loops=1)
+         Sort Key: o.delivered_at, u.account_id
+         Sort Method: quicksort  Memory: 39kB
+         Buffers: shared hit=1838
+         ->  Nested Loop  (cost=0.43..174158.35 rows=201 width=32) (actual time=1.133..40.019 rows=200 loops=1)
+               Buffers: shared hit=1838
+               ->  Nested Loop Left Join  (cost=0.00..579.67 rows=201 width=24) (actual time=0.141..27.760 rows=201 loops=1)
+                     Join Filter: (r.plan = COALESCE(a.plan, g.plan))
+                     Rows Removed by Join Filter: 603
+                     Buffers: shared hit=6
+                     ->  Nested Loop Left Join  (cost=0.00..567.52 rows=201 width=80) (actual time=0.118..27.515 rows=201 loops=1)
+                           Join Filter: (g.id = u.account_id)
+                           Buffers: shared hit=6
+                           ->  Nested Loop Left Join  (cost=0.00..435.79 rows=201 width=48) (actual time=0.111..27.448 rows=201 loops=1)
+                                 Join Filter: (a.id = u.account_id)
+                                 Rows Removed by Join Filter: 20100
+                                 Buffers: shared hit=6
+                                 ->  Seq Scan on event_receipt_usage u  (cost=0.00..4.01 rows=201 width=16) (actual time=0.015..0.049 rows=201 loops=1)
+                                       Buffers: shared hit=2
+                                 ->  Materialize  (cost=0.00..12.10 rows=140 width=48) (actual time=0.000..0.116 rows=101 loops=201)
+                                       Buffers: shared hit=4
+                                       ->  Seq Scan on accounts a  (cost=0.00..11.40 rows=140 width=48) (actual time=0.016..0.054 rows=201 loops=1)
+                                             Buffers: shared hit=4
+                           ->  Materialize  (cost=0.00..11.80 rows=40 width=48) (actual time=0.000..0.000 rows=0 loops=201)
+                                 ->  Seq Scan on orgs g  (cost=0.00..11.60 rows=40 width=48) (actual time=0.002..0.002 rows=0 loops=1)
+                                       Filter: ((NOT personal_org) AND resource_ownership_enabled)
+                     ->  Materialize  (cost=0.00..0.10 rows=4 width=40) (actual time=0.000..0.000 rows=4 loops=201)
+                           ->  Subquery Scan on r  (cost=0.00..0.08 rows=4 width=40) (actual time=0.015..0.020 rows=4 loops=1)
+                                 ->  ProjectSet  (cost=0.00..0.04 rows=4 width=40) (actual time=0.012..0.016 rows=4 loops=1)
+                                       ->  Result  (cost=0.00..0.01 rows=1 width=0) (actual time=0.003..0.003 rows=1 loops=1)
+               ->  Limit  (cost=0.43..863.55 rows=1 width=16) (actual time=0.060..0.060 rows=1 loops=201)
+                     Buffers: shared hit=1832
+                     ->  Index Scan using event_fanout_outbox_account_retention_idx on event_fanout_outbox o  (cost=0.43..8631.57 rows=10 width=16) (actual time=0.060..0.060 rows=1 loops=201)
+                           Index Cond: ((account_id = u.account_id) AND (delivered_at < ('2026-10-24 09:07:15.482448+00'::timestamp with time zone - make_interval(0, 0, 0, 0, 0, 0, (COALESCE(r.seconds, '1209600'::bigint))::double precision))))
+                           Filter: (event_receipt_retention_hold(account_id, id, created_at, ('2026-10-24 09:07:15.482448+00'::timestamp with time zone - '30 days'::interval), '2026-10-24 09:07:15.482448+00'::timestamp with time zone) = ''::text)
+                           Buffers: shared hit=1832
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.865 ms
+ JIT:
+   Functions: 35
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 9.186 ms, Inlining 0.000 ms, Optimization 2.219 ms, Emission 83.702 ms, Total 95.107 ms
+ Execution Time: 135.408 ms
+(46 rows)
+
+Time: 138.122 ms
+nothing due anywhere (every receipt inside its window)
+                                                                                                                      QUERY PLAN                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=174166.03..174166.28 rows=100 width=32) (actual time=103.601..103.607 rows=0 loops=1)
+   Buffers: shared hit=609
+   ->  Sort  (cost=174166.03..174166.54 rows=201 width=32) (actual time=8.278..8.282 rows=0 loops=1)
+         Sort Key: o.delivered_at, u.account_id
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=609
+         ->  Nested Loop  (cost=0.43..174158.35 rows=201 width=32) (actual time=8.258..8.262 rows=0 loops=1)
+               Buffers: shared hit=609
+               ->  Nested Loop Left Join  (cost=0.00..579.67 rows=201 width=24) (actual time=0.140..7.394 rows=201 loops=1)
+                     Join Filter: (r.plan = COALESCE(a.plan, g.plan))
+                     Rows Removed by Join Filter: 603
+                     Buffers: shared hit=6
+                     ->  Nested Loop Left Join  (cost=0.00..567.52 rows=201 width=80) (actual time=0.116..7.174 rows=201 loops=1)
+                           Join Filter: (g.id = u.account_id)
+                           Buffers: shared hit=6
+                           ->  Nested Loop Left Join  (cost=0.00..435.79 rows=201 width=48) (actual time=0.110..7.112 rows=201 loops=1)
+                                 Join Filter: (a.id = u.account_id)
+                                 Rows Removed by Join Filter: 20100
+                                 Buffers: shared hit=6
+                                 ->  Seq Scan on event_receipt_usage u  (cost=0.00..4.01 rows=201 width=16) (actual time=0.014..0.038 rows=201 loops=1)
+                                       Buffers: shared hit=2
+                                 ->  Materialize  (cost=0.00..12.10 rows=140 width=48) (actual time=0.000..0.016 rows=101 loops=201)
+                                       Buffers: shared hit=4
+                                       ->  Seq Scan on accounts a  (cost=0.00..11.40 rows=140 width=48) (actual time=0.015..0.050 rows=201 loops=1)
+                                             Buffers: shared hit=4
+                           ->  Materialize  (cost=0.00..11.80 rows=40 width=48) (actual time=0.000..0.000 rows=0 loops=201)
+                                 ->  Seq Scan on orgs g  (cost=0.00..11.60 rows=40 width=48) (actual time=0.002..0.002 rows=0 loops=1)
+                                       Filter: ((NOT personal_org) AND resource_ownership_enabled)
+                     ->  Materialize  (cost=0.00..0.10 rows=4 width=40) (actual time=0.000..0.000 rows=4 loops=201)
+                           ->  Subquery Scan on r  (cost=0.00..0.08 rows=4 width=40) (actual time=0.015..0.019 rows=4 loops=1)
+                                 ->  ProjectSet  (cost=0.00..0.04 rows=4 width=40) (actual time=0.012..0.015 rows=4 loops=1)
+                                       ->  Result  (cost=0.00..0.01 rows=1 width=0) (actual time=0.003..0.003 rows=1 loops=1)
+               ->  Limit  (cost=0.43..863.55 rows=1 width=16) (actual time=0.004..0.004 rows=0 loops=201)
+                     Buffers: shared hit=603
+                     ->  Index Scan using event_fanout_outbox_account_retention_idx on event_fanout_outbox o  (cost=0.43..8631.57 rows=10 width=16) (actual time=0.004..0.004 rows=0 loops=201)
+                           Index Cond: ((account_id = u.account_id) AND (delivered_at < ('2026-09-14 09:07:15.619512+00'::timestamp with time zone - make_interval(0, 0, 0, 0, 0, 0, (COALESCE(r.seconds, '1209600'::bigint))::double precision))))
+                           Filter: (event_receipt_retention_hold(account_id, id, created_at, ('2026-09-14 09:07:15.619512+00'::timestamp with time zone - '30 days'::interval), '2026-09-14 09:07:15.619512+00'::timestamp with time zone) = ''::text)
+                           Buffers: shared hit=603
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 1.692 ms
+ JIT:
+   Functions: 35
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 1.976 ms, Inlining 0.000 ms, Optimization 4.225 ms, Emission 91.121 ms, Total 97.323 ms
+ Execution Time: 105.737 ms
+(46 rows)
+
+Time: 107.999 ms
+=== main prune candidate scan for comparison (fixed 30-day cutoff)
+                                                                                QUERY PLAN                                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=512.52..512.53 rows=1 width=24) (actual time=0.016..0.017 rows=0 loops=1)
+   Sort Key: (min(candidates.delivered_at)), candidates.account_id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=3
+   CTE candidates
+     ->  Limit  (cost=0.43..512.48 rows=1 width=32) (actual time=0.009..0.009 rows=0 loops=1)
+           Buffers: shared hit=3
+           ->  Index Scan using event_fanout_outbox_retention_idx on event_fanout_outbox o  (cost=0.43..512.48 rows=1 width=32) (actual time=0.008..0.008 rows=0 loops=1)
+                 Index Cond: (delivered_at < (now() - '30 days'::interval))
+                 Filter: (event_receipt_retention_hold(account_id, id, created_at, (now() - '30 days'::interval), now()) = ''::text)
+                 Buffers: shared hit=3
+   ->  HashAggregate  (cost=0.02..0.03 rows=1 width=24) (actual time=0.012..0.012 rows=0 loops=1)
+         Group Key: candidates.account_id
+         Batches: 1  Memory Usage: 24kB
+         Buffers: shared hit=3
+         ->  CTE Scan on candidates  (cost=0.00..0.02 rows=1 width=24) (actual time=0.010..0.010 rows=0 loops=1)
+               Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=7 read=1
+ Planning Time: 0.374 ms
+ Execution Time: 0.049 ms
+(21 rows)
+
+Time: 0.863 ms
+=== per-publish trigger cost: 5,000 single-row customer inserts, counters on vs off
+CREATE PROCEDURE
+Time: 4.725 ms
+CALL
+Time: 1866.084 ms (00:01.866)
+CALL
+Time: 7878.465 ms (00:07.878)
+ALTER TABLE
+Time: 1.123 ms
+ALTER TABLE
+Time: 0.758 ms
+CALL
+Time: 8984.497 ms (00:08.984)
+ALTER TABLE
+Time: 2.868 ms
+ALTER TABLE
+Time: 2.982 ms
+CALL
+Time: 8095.748 ms (00:08.096)
+ALTER TABLE
+Time: 0.723 ms
+ALTER TABLE
+Time: 0.731 ms
+CALL
+Time: 7151.702 ms (00:07.152)
+ALTER TABLE
+Time: 1.878 ms
+ALTER TABLE
+Time: 1.960 ms
+=== prune batch cost: one 100-receipt delete, statement trigger on vs off
+BEGIN
+Time: 0.062 ms
+DELETE 100
+Time: 15.466 ms
+ROLLBACK
+Time: 0.196 ms
+BEGIN
+Time: 0.026 ms
+DELETE 100
+Time: 9.690 ms
+ROLLBACK
+Time: 0.075 ms
+ALTER TABLE
+Time: 1.426 ms
+BEGIN
+Time: 0.041 ms
+DELETE 100
+Time: 10.868 ms
+ROLLBACK
+Time: 0.125 ms
+BEGIN
+Time: 0.046 ms
+DELETE 100
+Time: 7.623 ms
+ROLLBACK
+Time: 0.113 ms
+ALTER TABLE
+Time: 1.890 ms
+=== counters after the bench: exactly the 10,000 inserts made with the counters off are uncounted
+ uncounted_events | retained_events | events  
+------------------+-----------------+---------
+            10000 |         1059576 | 1069576
+(1 row)
+
+Time: 2560.990 ms (00:02.561)
+bench exit 0

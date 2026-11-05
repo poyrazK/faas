@@ -41,7 +41,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		// The ordinary admission gate owns the capacity result.
 		return WakeResult{}, false, nil
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: list promotion candidates: %w", err)
 	}
@@ -57,6 +57,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		}
 		if ins.RAMMB != app.RAMMB || !instanceModeMatchesApp(app, ins) {
 			if e.discardWarmPromotion(ctx, ins, "resource_shape_changed") {
+				warmCount--
+			}
+			continue
+		}
+		// A draining node keeps no resident work (ADR-20261024085817).
+		if e.nodeLeavingByID(ins.NodeID) {
+			if e.discardWarmPromotion(ctx, ins, parkReasonNodeDraining) {
 				warmCount--
 			}
 			continue

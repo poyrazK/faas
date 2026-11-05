@@ -95,3 +95,42 @@ func TestAppLogDrainReconcileSkipsForeignDrainsAndKeepsRunningOnLookupError(t *t
 		t.Fatalf("lookup error stopped the running worker (cancelled=%v workers=%d)", cancelled, len(manager.workers))
 	}
 }
+
+// The log-drains kill switch (ADR-20261023115741): apid hides the drain
+// routes, and gatewayd-internal stops delivering an off account's drains,
+// running ones included, while other accounts keep theirs.
+func TestAppLogDrainReconcileStopsDrainsOfAccountsWithLogDrainsOff(t *testing.T) {
+	on := state.AppLogDrain{ID: "drain-on", AppID: "app-on", AccountID: "acct-on"}
+	offRunning := state.AppLogDrain{ID: "drain-off-running", AppID: "app-off", AccountID: "acct-off"}
+	offNew := state.AppLogDrain{ID: "drain-off-new", AppID: "app-off", AccountID: "acct-off"}
+	store := &logDrainOwnerTestStore{
+		logDrainHealthTestStore: logDrainHealthTestStore{drains: map[string]state.AppLogDrain{}},
+		rows:                    []state.AppLogDrain{on, offRunning, offNew},
+	}
+	manager := newAppLogDrainManager(store, nil, nil, nil, nil)
+	var asked []string
+	manager.capabilityAllowed = func(capability, accountID string) bool {
+		asked = append(asked, capability)
+		return accountID != "acct-off"
+	}
+	onCancelled, offCancelled := false, false
+	manager.workers[on.ID] = &appLogDrainWorker{spec: on, cancel: func() { onCancelled = true }}
+	manager.workers[offRunning.ID] = &appLogDrainWorker{spec: offRunning, cancel: func() { offCancelled = true }}
+
+	manager.reconcile(context.Background())
+
+	if onCancelled || manager.workers[on.ID] == nil {
+		t.Fatalf("the released account's drain stopped (cancelled=%v)", onCancelled)
+	}
+	if !offCancelled || manager.workers[offRunning.ID] != nil {
+		t.Fatalf("the off account's running drain kept delivering (cancelled=%v)", offCancelled)
+	}
+	if manager.workers[offNew.ID] != nil {
+		t.Fatal("a drain of an account with log-drains off started")
+	}
+	for _, capability := range asked {
+		if capability != capabilityLogDrains {
+			t.Fatalf("reconcile decided %q, want %q", capability, capabilityLogDrains)
+		}
+	}
+}

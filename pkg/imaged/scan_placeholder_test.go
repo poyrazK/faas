@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // H10-103: every verified staging attempt used to replace the shared scan
@@ -35,6 +36,8 @@ func TestVerifiedBaseFailureBeforeRebuildKeepsScanSidecar(t *testing.T) {
 	if err := os.WriteFile(h.guestInitPath, []byte("NEWER INIT"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The upgraded imaged starts after the old release published the base.
+	h.servingSince = time.Now().UTC()
 	puller.resolveErr = errors.New("registry unreachable")
 	if _, err := h.EnsureBaseExt4(t.Context(), ref, key, digestKey, "", "", ""); err == nil {
 		t.Fatal("stage with an unreachable registry succeeded")

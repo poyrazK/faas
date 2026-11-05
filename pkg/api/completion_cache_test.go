@@ -166,6 +166,28 @@ func TestCompletionCache_MaybeRefresh_PreservesOther(t *testing.T) {
 	}
 }
 
+// adr: 20261023115741 — the capabilities hidden for the account ride the
+// same cache, and an empty answer is recorded as "nothing hidden".
+func TestCompletionCache_MaybeRefresh_Capabilities(t *testing.T) {
+	c := newTestCache(t)
+	if _, _, ok := c.HiddenCapabilities(); ok {
+		t.Fatal("a cache that never read capabilities must say so")
+	}
+	c.MaybeRefresh("/v1/apps", []byte(`[{"id":"id-a","slug":"demo","name":"demo"}]`))
+	c.MaybeRefresh("/v1/capabilities", []byte(`{"registry_version":1,"plan":"pro","capabilities":[],"hidden_capabilities":["realtime","queues"]}`))
+	hidden, savedAt, ok := c.HiddenCapabilities()
+	if !ok || savedAt.IsZero() || len(hidden) != 2 || hidden[0] != "realtime" {
+		t.Fatalf("HiddenCapabilities = %v %v %v", hidden, savedAt, ok)
+	}
+	if out, _, _ := c.Read(); len(out.Apps) != 1 {
+		t.Fatalf("apps lost after a capabilities refresh: %+v", out.Apps)
+	}
+	c.MaybeRefresh("/v1/capabilities", []byte(`{"registry_version":1,"plan":"pro","capabilities":[]}`))
+	if hidden, _, ok := c.HiddenCapabilities(); !ok || len(hidden) != 0 {
+		t.Fatalf("an answer without hidden capabilities = %v %v, want read and empty", hidden, ok)
+	}
+}
+
 func TestCompletionCache_MaybeRefresh_IgnoresUnknownPath(t *testing.T) {
 	c := newTestCache(t)
 	c.MaybeRefresh("/v1/something-else", []byte(`[{"slug":"x"}]`))

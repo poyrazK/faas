@@ -13,7 +13,7 @@ import {
   EventAcknowledgmentIntentRecoveryWorkerMetrics,
   recoverEventAcknowledgmentIntentsWithMetrics,
   formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const worker = new EventAcknowledgmentIntentRecoveryWorkerMetrics(accountId, appId, {
   maxIdleMs: 60000, maxPassDurationMs: 300000,

@@ -32,7 +32,7 @@ jobs:
           # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           # Report the terminal deployment result to this workflow.
           wait: "true"
-          # For a Pro/Scale production app, use the balanced health-gated rollout:
+          # For a production app, use the balanced health-gated rollout:
           # rollout: "safe"
 ```
 
@@ -58,7 +58,7 @@ Manual dispatch is limited to the configured production and mapped branches.
 | Input | Description | Required | Default |
 |---|---|---|---|
 | `api-key` | Optional Gregale bearer. Omit to exchange GitHub OIDC for a five-minute token. | no | — |
-| `oidc-audience` | Audience requested from GitHub and sent to the Gregale exchange. | no | `gregale` |
+| `oidc-audience` | Audience requested from GitHub and sent to the Gregale exchange. Another value needs an account trust policy that names it. | no | `gregale` |
 | `api-base` | Gregale API base URL. | no | `https://api.gregale.dev` |
 | `app` | App slug to deploy. | yes | — |
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
@@ -67,7 +67,7 @@ Manual dispatch is limited to the configured production and mapped branches.
 | `format` | Source format passed to the source-ref endpoint. | no | `tarball` |
 | `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `true` |
 | `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `1200` |
-| `rollout` | Production rollout mode: `standard` or `safe` (balanced health-gated rollout; Pro/Scale only). | no | `standard` |
+| `rollout` | Production rollout mode: `standard` or `safe` (balanced health-gated rollout; available on every plan). | no | `standard` |
 
 ## Outputs
 
@@ -102,17 +102,25 @@ workflow also serializes runs for the same app. A workflow that deliberately
 supplies another `ref` bypasses branch freshness checks, preserving explicit
 rollback and release choices.
 
+A workflow generated with `gregale github setup --wait-for CI` runs on
+`workflow_run` and deploys `github.event.workflow_run.head_sha`. The Action
+treats a successful run for a push to the same repository like that push: it
+skips a commit that is no longer the branch head, carries the branch for the
+same server checks, and reports its Check Run on the tested commit.
+
 Set `rollout: "safe"` for a balanced health-gated canary. The action submits
 the canary, waits for readiness, and then waits for rollout completion when
 `wait: "true"`; long waits renew a short-lived GitHub OIDC identity between
-polling windows. Safe rollout is available on Pro/Scale plans and is reported
-in the step summary and Check Run title.
+polling windows. Safe rollout is available on every plan and is reported in
+the step summary and Check Run title.
 
 ## Pin reproducibility
 
 The action uses `@v0` during public beta by default. The `release.yml` workflow
-force-updates the `vN` moving tag on every `vN.M.P` release, so `@v0` always
-resolves to the latest vendored binary. For full immutability, setup can
+moves the `vN` moving tag on every stable `vN.M.P` release, only forward, so
+`@v0` resolves to the newest stable vendored binary. Prereleases
+(`vN.M.P-rc.K`) and re-runs of older tags leave it in place; pin a
+prerelease's release commit SHA to try one. For full immutability, setup can
 resolve that moving tag and write its commit SHA into the generated workflow:
 
 ```bash

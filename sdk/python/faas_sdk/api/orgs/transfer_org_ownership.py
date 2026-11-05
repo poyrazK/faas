@@ -99,8 +99,7 @@ def sync_detailed(
     demotes the caller to admin via `Store.TransferOrgOwnership`
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
-    partial unique `org_memberships_one_owner_idx`
-    (migration 00099). The new owner must already be an active
+    partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
     member of the org.
 
     Args:
@@ -110,7 +109,7 @@ def sync_detailed(
             must already be an active member of the org; the previous
             owner becomes admin on success. The exactly-one-owner
             invariant is enforced by the partial unique index
-            `org_memberships_one_owner_idx` (migration 00099).
+            `org_memberships_one_owner_idx`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,8 +143,7 @@ def sync(
     demotes the caller to admin via `Store.TransferOrgOwnership`
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
-    partial unique `org_memberships_one_owner_idx`
-    (migration 00099). The new owner must already be an active
+    partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
     member of the org.
 
     Args:
@@ -155,7 +153,7 @@ def sync(
             must already be an active member of the org; the previous
             owner becomes admin on success. The exactly-one-owner
             invariant is enforced by the partial unique index
-            `org_memberships_one_owner_idx` (migration 00099).
+            `org_memberships_one_owner_idx`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,8 +182,7 @@ async def asyncio_detailed(
     demotes the caller to admin via `Store.TransferOrgOwnership`
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
-    partial unique `org_memberships_one_owner_idx`
-    (migration 00099). The new owner must already be an active
+    partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
     member of the org.
 
     Args:
@@ -195,7 +192,7 @@ async def asyncio_detailed(
             must already be an active member of the org; the previous
             owner becomes admin on success. The exactly-one-owner
             invariant is enforced by the partial unique index
-            `org_memberships_one_owner_idx` (migration 00099).
+            `org_memberships_one_owner_idx`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,8 +224,7 @@ async def asyncio(
     demotes the caller to admin via `Store.TransferOrgOwnership`
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
-    partial unique `org_memberships_one_owner_idx`
-    (migration 00099). The new owner must already be an active
+    partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
     member of the org.
 
     Args:
@@ -238,7 +234,7 @@ async def asyncio(
             must already be an active member of the org; the previous
             owner becomes admin on success. The exactly-one-owner
             invariant is enforced by the partial unique index
-            `org_memberships_one_owner_idx` (migration 00099).
+            `org_memberships_one_owner_idx`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

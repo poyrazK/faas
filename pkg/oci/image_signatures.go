@@ -61,7 +61,11 @@ func (c *RegistryClient) PullImageSignatureAttachments(ctx context.Context, ref,
 		return nil, fmt.Errorf("%w: signature subject differs from pinned image", ErrImageManifestInvalid)
 	}
 	r.Tag, r.Digest = "sha256-"+strings.TrimPrefix(digest, "sha256:")+".sig", ""
-	body, ct, err := c.fetchManifestJSONWithAuthLimit(ctx, c.baseURL(r)+"/v2/"+r.Repository+"/manifests/"+r.Tag, auth, api.ImageSignatureMaxManifestBytes)
+	access, err := c.registryAuth(ctx, r, auth)
+	if err != nil {
+		return nil, err
+	}
+	body, ct, err := c.fetchManifestJSONWithAuthLimit(ctx, c.baseURL(r)+"/v2/"+r.Repository+"/manifests/"+r.Tag, access, api.ImageSignatureMaxManifestBytes)
 	if err != nil {
 		if errors.Is(err, ErrImageNotFound) {
 			return nil, ErrImageSignatureMissing
@@ -78,7 +82,7 @@ func (c *RegistryClient) PullImageSignatureAttachments(ctx context.Context, ref,
 		if err != nil {
 			return nil, err
 		}
-		payload, err := c.readImageSignaturePayload(ctx, r, layer.Descriptor, auth)
+		payload, err := c.readImageSignaturePayload(ctx, r, layer.Descriptor, access)
 		if err != nil {
 			return nil, err
 		}

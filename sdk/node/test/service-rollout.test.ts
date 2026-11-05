@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, DeploymentsService, type ServiceRolloutBindingGate, type ServiceRolloutRecoveryReceipt } from '../src/index.js';
+import { FaaSClient, DeploymentsService, type ServiceRolloutBindingGate, type ServiceRolloutRecoveryReceipt } from '../src/preview.js';
 
 test('exact service abort returns acceptance and reads routing status', async (t) => {
  const candidate = 'a2b9cc53-907f-4b5c-88a4-fd0c21214556';

@@ -15,12 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 )
 
-func collectObsBundle(ctx context.Context, base, token, incident string, limit, historyLimit int) (obsIncidentBundle, error) {
+func collectObsBundle(ctx context.Context, base string, cred obsCredential, incident string, limit, historyLimit int) (obsIncidentBundle, error) {
 	bundle := obsIncidentBundle{SchemaVersion: obsIncidentBundleSchema, StartedAt: time.Now().UTC(), RequestedIncidentID: incident}
 	// Refuse redirects, including same-origin redirects: every read must use an
 	// explicit admin route. The same context bounds all section bodies.
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/incidents/"+incident+"/evidence?limit="+strconv.Itoa(historyLimit), token, "evidence", &bundle.Evidence.Data); err != nil {
+	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/incidents/"+incident+"/evidence?limit="+strconv.Itoa(historyLimit), cred, "evidence", &bundle.Evidence.Data); err != nil {
 		return bundle, err
 	}
 	bundle.Evidence.CollectedAt = time.Now().UTC()
@@ -32,7 +32,7 @@ func collectObsBundle(ctx context.Context, base, token, incident string, limit, 
 	// once through evidence, then request context using that canonical episode.
 	bundle.IncidentID = evidence.Incident.ID
 	query := url.Values{"limit": {strconv.Itoa(limit)}, "history_limit": {strconv.Itoa(historyLimit)}}
-	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/incidents/"+bundle.IncidentID+"/context?"+query.Encode(), token, "context", &bundle.Context.Data); err != nil {
+	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/incidents/"+bundle.IncidentID+"/context?"+query.Encode(), cred, "context", &bundle.Context.Data); err != nil {
 		return bundle, err
 	}
 	bundle.Context.CollectedAt = time.Now().UTC()
@@ -40,7 +40,7 @@ func collectObsBundle(ctx context.Context, base, token, incident string, limit, 
 	if related.IncidentID != bundle.IncidentID || related.AsOf.IsZero() || related.Since.IsZero() || related.Until.Before(related.Since) || related.Limit != limit || related.TimelineLimit != historyLimit || len(related.Resources) > limit || len(related.Timeline) > historyLimit || (related.Scope.State != "known" && related.Scope.State != "unknown") || related.TimelineScope != "incident_scope_and_returned_resources" {
 		return bundle, fmt.Errorf("invalid context identity or snapshot metadata")
 	}
-	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/health", token, "health", &bundle.Health.Data); err != nil {
+	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/health", cred, "health", &bundle.Health.Data); err != nil {
 		return bundle, err
 	}
 	bundle.Health.CollectedAt = time.Now().UTC()
@@ -50,7 +50,7 @@ func collectObsBundle(ctx context.Context, base, token, incident string, limit, 
 	if h := bundle.Health.Data.AlertHistory; h != nil && h.DiagnosticsPath == operatorobs.RuleHealthPath {
 		section := &obsBundleSection[api.ObsRuleHealthResponse]{}
 		// An exact known route is a feature marker, never an arbitrary link to follow.
-		if err := fetchObsBundleSection(ctx, client, base+operatorobs.RuleHealthPath, token, subObsRuleHealth, &section.Data); err != nil {
+		if err := fetchObsBundleSection(ctx, client, base+operatorobs.RuleHealthPath, cred, subObsRuleHealth, &section.Data); err != nil {
 			return bundle, err
 		}
 		section.CollectedAt = time.Now().UTC()
@@ -91,12 +91,12 @@ func validObsBundleEvidence(requested string, evidence api.ObsIncidentEvidenceRe
 	return kind == "platform_alert" && requestedKind == kind && evidence.Incident.AlertEpisode != nil && evidence.Incident.AlertEpisode.SeriesID == requestedID
 }
 
-func fetchObsBundleSection(ctx context.Context, client *http.Client, address, token, section string, dst any) error {
+func fetchObsBundleSection(ctx context.Context, client *http.Client, address string, cred obsCredential, section string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return fmt.Errorf("%s: invalid apid URL", section)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	cred.apply(req)
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {

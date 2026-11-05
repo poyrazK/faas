@@ -12,7 +12,7 @@ import {
   customerOperationRequestDigest, withCustomerOperationTransaction, OperationMilestonePublicationError,
   customerOperationReceiptRequestFromHeaders, customerOperationReceiptRequestDigest,
   withCustomerOperationReceiptTransaction,
-} from '../dist/index.js';
+} from '../dist/preview.js';
 
 const dsn = process.env.DATABASE_URL;
 const fixture = JSON.parse(await readFile(new URL('../../operation-tests/request-fixture.json', import.meta.url), 'utf8'));

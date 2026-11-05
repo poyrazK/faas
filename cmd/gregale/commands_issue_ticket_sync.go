@@ -50,7 +50,7 @@ func linkedIssueTicket(ctx context.Context, client *Client, slug, issue, link st
 	}
 }
 func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int {
-	usage := "usage: gregale issues tickets sync --app SLUG --issue UUID --link UUID --direction push|pull [--native --apply --deployment UUID --linear-state UUID --token-env NAME]"
+	usage := "usage: gregale debug issue tickets sync --app SLUG --issue UUID --link UUID --direction push|pull [--native --apply --deployment UUID --linear-state UUID --token-env NAME]"
 	fs := newFlagSet("issues tickets sync", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	issue := fs.String("issue", "", "issue UUID")
@@ -71,7 +71,7 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	issueUUID, e1 := uuid.Parse(*issue)
 	linkUUID, e2 := uuid.Parse(*linkID)
 	if len(pos) != 0 || *app == "" || e1 != nil || e2 != nil || issueUUID == uuid.Nil || linkUUID == uuid.Nil || (*direction != "push" && *direction != "pull") {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	for _, value := range []string{*deployment, *linearState} {

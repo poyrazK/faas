@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -75,5 +76,45 @@ func TestMCPConnectionHealthIncompleteAndTenantIsolation(t *testing.T) {
 			t.Fatal("app filter failed", e)
 		}
 		break
+	}
+}
+
+// healthOnlyStore reads connection health but cannot leave apps out.
+type healthOnlyStore struct{ store *state.MemStore }
+
+func (h healthOnlyStore) MCPConnectionHealth(ctx context.Context, account, app string, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
+	return h.store.MCPConnectionHealth(ctx, account, app, offset, at)
+}
+
+// A hidden app's issues are neither listed nor counted, so the counts and
+// fingerprints describe only what the caller is shown.
+func TestMCPConnectionHealthVisibleLeavesHiddenAppsUncounted(t *testing.T) {
+	m := state.NewMemStore()
+	(*m.McpCatalogMonitors()) = map[string]api.MCPCatalogMonitorSnapshot{}
+	(*m.McpCatalogMonitorOwners()) = map[string]string{}
+	company, own := uuid.NewString(), uuid.NewString()
+	for _, id := range []string{company, own} {
+		(*m.Apps())[id] = state.App{ID: id, AccountID: "account", Slug: id}
+		(*m.McpCatalogMonitorOwners())[id] = "account"
+		(*m.McpCatalogMonitors())[id] = api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Revision: uuid.NewString(), Observer: &api.MCPCatalogObserverConfig{OAuth: &api.MCPCatalogObserverOAuthConfig{}}}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{CredentialState: "reconnect_required"}}
+	}
+	ctx, now := t.Context(), time.Now()
+	hidden := map[string]bool{company: true}
+	all, err := m.MCPConnectionHealth(ctx, "account", "", 0, now)
+	if err != nil || all.TotalIssues != 2 {
+		t.Fatalf("unfiltered health = %d issues, %v", all.TotalIssues, err)
+	}
+	shown, err := state.VisibleMCPConnectionHealth(ctx, m, "account", "", hidden, 0, now)
+	if err != nil || !shown.Complete || shown.TotalIssues != 1 || shown.Counts["reauthorization_required"] != 1 || len(shown.Items) != 1 || shown.Items[0].AppID != own {
+		t.Fatalf("visible health = %+v, %v; want only the own app's issue", shown, err)
+	}
+	if shown.Fingerprints["reauthorization_required"] == all.Fingerprints["reauthorization_required"] {
+		t.Fatal("a hidden app's issue still shapes the incident fingerprint")
+	}
+	if _, err := state.VisibleMCPConnectionHealth(ctx, healthOnlyStore{m}, "account", "", hidden, 0, now); err == nil {
+		t.Fatal("a store that cannot leave hidden apps out answered anyway")
+	}
+	if got, err := state.VisibleMCPConnectionHealth(ctx, healthOnlyStore{m}, "account", "", nil, 0, now); err != nil || got.TotalIssues != 2 {
+		t.Fatalf("nothing hidden = %d issues, %v", got.TotalIssues, err)
 	}
 }

@@ -45,6 +45,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,6 +85,12 @@ type AccountLookup interface {
 // repository binding (state.OIDCRepositoryBindingResolver).
 type RepositoryBindingLookup interface {
 	AccountByOIDCRepositoryBinding(ctx context.Context, issuerURL, subject string) (state.Account, error)
+}
+
+// RepositoryIDLookup returns the immutable GitHub owner and repository IDs
+// an account's binding recorded for a subject's repository (zeros when none).
+type RepositoryIDLookup interface {
+	GitHubRepositoryIDsForOIDCSubject(ctx context.Context, accountID, issuerURL, subject string) (ownerID, repoID int64, err error)
 }
 
 // AuditEmitter is the narrow pkg/oidc-side projection of the cmd/apid
@@ -272,7 +279,10 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		// and replace the row with that pinned policy.
 		policy = defaultPolicyFor(acct.ID, issuerURL, req.Audience, subject)
 		createPolicy = true
-	} else if !subjectPatternMatches(policy.SubjectPattern, subject) && h.repositoryBound(r.Context(), acct.ID, issuerURL, subject) {
+	} else if policy.AuditLogin == autoPolicyLogin && !subjectPatternMatches(policy.SubjectPattern, subject) && h.repositoryBound(r.Context(), acct.ID, issuerURL, subject) {
+		// Only a policy Gregale created widens through the binding. A policy
+		// the customer wrote is authoritative: they narrowed it to keep other
+		// branches and workflows from deploying (bug hunt 2026-10-28 H46).
 		// The stored policy is pinned to the first subject that exchanged
 		// (one repository + ref). Another branch, a pull_request run, or a
 		// second repository of the same account used to fail here. The
@@ -287,7 +297,21 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		transient.RequiredClaims = policy.RequiredClaims
 		policy = transient
 	}
-	claims, err := deps.Verifier.Verify(r.Context(), req.Token, policy)
+	// A policy Gregale created pins whatever audience the first exchange
+	// named, so a GitHub token minted for another relying party (Sigstore,
+	// PyPI, AWS) could create or satisfy it. Those policies take Gregale's
+	// audience only; a customer's explicit policy keeps its own (H68).
+	if (createPolicy || policy.AuditLogin == autoPolicyLogin) && !PlatformAudience(req.Audience) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+			"Invalid audience", "aud must be \""+DefaultAudience+"\" unless the account's trust policy names another"))
+		return
+	}
+	verifyPolicy, err := h.withRepositoryIDs(r.Context(), policy, acct.ID, issuerURL, subject)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("repository binding lookup failed"))
+		return
+	}
+	claims, err := deps.Verifier.Verify(r.Context(), req.Token, verifyPolicy)
 	if err != nil || claims.Subject != subject || !containsAudience(claims.Aud, req.Audience) {
 		detail := "token does not satisfy the account trust policy"
 		if err != nil {
@@ -296,6 +320,30 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Invalid token", detail))
 		return
+	}
+	// A policy Gregale created trusts every workflow of a bound repository;
+	// its deploy bearers are held to the refs and app the GitHub App would
+	// deploy (ADR-20261101100000). A policy the customer wrote is
+	// authoritative and keeps account-wide bearers. Checked before the
+	// policy is written, so a refused first use creates nothing.
+	var boundAppID string
+	if policy.AuditLogin == autoPolicyLogin && grantsDeploy(scopes) {
+		appID, problem := h.deployTarget(r.Context(), acct.ID, issuerURL, subject, req.App, claims)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		boundAppID = appID
+	} else if policy.AuditLogin == autoPolicyLogin && req.Capability == CapabilityPreviewRead {
+		// Reading an app's preview status takes no ref gate: a pull request
+		// run may wait for its preview. The bearer is bound to the app
+		// (ADR-20261102203228).
+		appID, problem := h.boundRepositoryApp(r.Context(), acct.ID, issuerURL, subject, req.App)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		boundAppID = appID
 	}
 	if createPolicy {
 		policy, err = deps.Policies.Upsert(r.Context(), policy)
@@ -335,6 +383,7 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		Audience:  claims.Aud,
 		JTI:       claims.JTI,
 		Scopes:    scopes,
+		AppID:     boundAppID,
 	}
 	// Insert returns the server-minted row id (gen_random_uuid at
 	// the SQL layer; uuid.NewString in memstore). The id is the
@@ -431,6 +480,35 @@ func (h *Handler) repositoryBound(ctx context.Context, accountID, issuerURL, sub
 	return err == nil && bound.ID == accountID
 }
 
+// withRepositoryIDs returns the policy to verify with: p, plus the
+// repository_owner_id and repository_id claims the account's binding
+// recorded for the subject's repository. The account was found by repository
+// name, so without them a repository recreated under a freed owner name
+// (after the customer renames their GitHub owner) exchanged for the account's
+// deploy bearer (bug hunt 2026-10-28 H68). p itself is never changed.
+func (h *Handler) withRepositoryIDs(ctx context.Context, p *OIDCTrustPolicy, accountID, issuerURL, subject string) (*OIDCTrustPolicy, error) {
+	lookup, ok := h.deps.Lookups.(RepositoryIDLookup)
+	if !ok {
+		return p, nil
+	}
+	ownerID, repoID, err := lookup.GitHubRepositoryIDsForOIDCSubject(ctx, accountID, issuerURL, subject)
+	if err != nil || (ownerID == 0 && repoID == 0) {
+		return p, err
+	}
+	verify := *p
+	verify.RequiredClaims = make(map[string]string, len(p.RequiredClaims)+2)
+	for k, v := range p.RequiredClaims {
+		verify.RequiredClaims[k] = v
+	}
+	if ownerID != 0 {
+		verify.RequiredClaims["repository_owner_id"] = strconv.FormatInt(ownerID, 10)
+	}
+	if repoID != 0 {
+		verify.RequiredClaims["repository_id"] = strconv.FormatInt(repoID, 10)
+	}
+	return &verify, nil
+}
+
 func subjectPatternMatches(pattern, subject string) bool {
 	re, err := regexp.Compile(pattern)
 	return err == nil && re.MatchString(subject)
@@ -444,9 +522,13 @@ func defaultPolicyFor(accountID, issuerURL, audience, subject string) *OIDCTrust
 		Audience:       []string{audience},
 		SubjectPattern: "^" + regexp.QuoteMeta(subject) + "$",
 		Algorithms:     defaultAlgorithms,
-		AuditLogin:     "auto",
+		AuditLogin:     autoPolicyLogin,
 	}
 }
+
+// autoPolicyLogin marks a trust policy Gregale created on first use, as
+// opposed to one the customer wrote.
+const autoPolicyLogin = "auto"
 
 func containsAudience(audiences []string, want string) bool {
 	for _, audience := range audiences {

@@ -1,0 +1,443 @@
+// adr: 20261019071733 amendment 1, 20261020085706 amendment 1 — every path
+// that releases into production meets deploy freezes and release approvals.
+package apidserver_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// guardLiveDeployment makes a live, serving release of appID in scope.
+func guardLiveDeployment(t *testing.T, store *state.MemStore, appID, scope string) state.Deployment {
+	t.Helper()
+	ctx := context.Background()
+	d, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Scope: scope, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:guard" + time.Now().Format("150405.000000000"), Status: state.DeploySnapshotting})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []state.DeploymentStatus{state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting} {
+		if err := store.UpdateDeploymentStatus(ctx, d.ID, s, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SetDeploymentRootfs(ctx, d.ID, "/tmp/r.ext4", "apps/"+appID+"/"+d.ID+".ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// guardFailedSourceDeployment makes a failed source release of appID in scope
+// that a retry can rebuild; an empty scope is production.
+func guardFailedSourceDeployment(t *testing.T, store *state.MemStore, appID, scope string) state.Deployment {
+	t.Helper()
+	source := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := os.WriteFile(source, []byte("retained source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: appID, Scope: scope, Kind: state.DeploymentKindTarball, SourcePath: source, SourceBytes: 15, Handler: "index.handler"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailSourceDeployment(t.Context(), dep.ID, "test failure"); err != nil {
+		t.Fatal(err)
+	}
+	return dep
+}
+
+func guardProblemCode(t *testing.T, body []byte) string {
+	t.Helper()
+	var p api.Problem
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("problem body %s: %v", body, err)
+	}
+	return p.Code
+}
+
+func TestRetryMeetsDeployFreezes(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	store := *e.Store()
+	acct := *e.Acct()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "retry-frozen", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := guardFailedSourceDeployment(t, store, app.ID, "")
+	now := time.Now().UTC()
+	frozen, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	if r.Code != http.StatusConflict || guardProblemCode(t, r.Body.Bytes()) != api.CodeReleaseFrozen {
+		t.Fatalf("retry during a freeze = %d %s, want 409 release_frozen", r.Code, r.Body)
+	}
+	if !strings.Contains(r.Body.String(), "--override-freeze") {
+		t.Fatalf("retry refusal does not name the deploy override: %s", r.Body)
+	}
+	if latest, err := store.LatestDeployment(t.Context(), app.ID); err != nil || latest.ID != dep.ID {
+		t.Fatalf("a frozen retry created a deployment: %s %v", latest.ID, err)
+	}
+	if _, err := store.LiftReleaseFreeze(t.Context(), state.ReleaseFreezeOwner{AccountID: acct.ID}, frozen.ID, "ops", now); err != nil {
+		t.Fatal(err)
+	}
+	r = e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	if r.Code != http.StatusAccepted {
+		t.Fatalf("retry after the freeze lifted = %d %s", r.Code, r.Body)
+	}
+}
+
+// A freeze withholds only production releases (ADR-20261019071733): a retry
+// of a release in another scope proceeds while the app is frozen.
+func TestRetryOutsideProductionProceedsDuringAFreeze(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	store := *e.Store()
+	acct := *e.Acct()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "retry-staging-frozen", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := guardFailedSourceDeployment(t, store, app.ID, "staging")
+	now := time.Now().UTC()
+	if _, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now); err != nil {
+		t.Fatal(err)
+	}
+	r := e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	if r.Code != http.StatusAccepted {
+		t.Fatalf("staging retry during a production freeze = %d %s, want 202", r.Code, r.Body)
+	}
+}
+
+func TestRetryMeetsTheApprovalCanaryRequirement(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	store := *e.Store()
+	acct := *e.Acct()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "retry-approvals", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, api.DefaultEnvScope)
+	if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	dep := guardFailedSourceDeployment(t, store, app.ID, "")
+	r := e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	if r.Code != http.StatusConflict || guardProblemCode(t, r.Body.Bytes()) != api.CodeReleaseApprovalCanaryRequired {
+		t.Fatalf("immediate retry under an approval policy = %d %s, want 409 release_approval_canary_required", r.Code, r.Body)
+	}
+}
+
+func TestPromotionIntoProductionNeedsAnApprovalForAppsRequiringOne(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "promoted-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, "production")
+	guardLiveDeployment(t, store, app.ID, "staging")
+	if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	p := srv.PromotionApprovalProblemForTest(t.Context(), []state.App{app}, "shop", "production", false)
+	if p == nil || p.Code != api.CodeReleaseApprovalCanaryRequired || !strings.Contains(p.Hint, "projects environments protect shop production") {
+		t.Fatalf("unprotected promotion into production = %+v, want release_approval_canary_required naming the protect command", p)
+	}
+	if p := srv.PromotionApprovalProblemForTest(t.Context(), []state.App{app}, "shop", "production", true); p != nil {
+		t.Fatalf("a protected environment's promotion approval stands in for the policy: %+v", p)
+	}
+	if p := srv.PromotionApprovalProblemForTest(t.Context(), []state.App{app}, "shop", "staging", false); p != nil {
+		t.Fatalf("promotions into other environments are not production releases: %+v", p)
+	}
+}
+
+func TestGitOpsActivationIntoProductionMeetsTheReleaseGuards(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "gitops-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, "production")
+	graph := state.EnvironmentWorkloadGraph{ID: "graph", Members: []state.EnvironmentWorkloadGraphMember{{AppID: app.ID, CandidateDeploymentID: "candidate"}}}
+	lease := func(environment, approvalPolicy string) state.EnvironmentGitOpsLease {
+		var l state.EnvironmentGitOpsLease
+		l.Source.EnvironmentSlug = environment
+		l.Source.Spec.ApprovalPolicy = approvalPolicy
+		return l
+	}
+	hold := func(l state.EnvironmentGitOpsLease) string {
+		t.Helper()
+		got, err := srv.GitOpsReleaseHoldForTest(t.Context(), l, graph)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := hold(lease("production", "protected_branch")); got != "" {
+		t.Fatalf("nothing holds an unguarded app: %q", got)
+	}
+	if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := hold(lease("production", "protected_branch")); !strings.Contains(got, "release approvals") {
+		t.Fatalf("a protected-branch revision of an app requiring approvals = %q, want an approvals hold", got)
+	}
+	if got := hold(lease("production", "manual")); got != "" {
+		t.Fatalf("a revision approved in Gregale stands in for the policy: %q", got)
+	}
+	// ADR-20261020085706 amendment 8: a key's approval of the revision does
+	// not stand in for the policy, nor does one approval where it asks for two.
+	keyApproved := lease("production", "manual")
+	keyApproved.Revision.ApprovedBy = state.EnvironmentRevisionKeyApproverPrefix + "ci-key"
+	if got := hold(keyApproved); !strings.Contains(got, "an API key approved the revision") {
+		t.Fatalf("a revision a CI key approved = %q, want an approvals hold", got)
+	}
+	setPolicy := func(required int) {
+		t.Helper()
+		if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+			RequiredApprovals: required, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPolicy(2)
+	if got := hold(lease("production", "manual")); !strings.Contains(got, "requires 2 release approvals") {
+		t.Fatalf("a policy asking for two approvals = %q, want a hold naming them", got)
+	}
+	setPolicy(1)
+	now := time.Now().UTC()
+	if _, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := hold(lease("production", "manual")); !strings.Contains(got, "deploy freeze") {
+		t.Fatalf("activation during a freeze = %q, want a freeze hold", got)
+	}
+	if got := hold(lease("staging", "protected_branch")); got != "" {
+		t.Fatalf("other environments are not held: %q", got)
+	}
+}
+
+func TestReleaseSafetyDashboardShowsTheAppsGuards(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "guarded-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := srv.RenderReleaseSafetyForTest(acct, app.Slug); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Not frozen.") ||
+		!strings.Contains(rec.Body.String(), "Releases do not wait for approval.") {
+		t.Fatalf("unguarded app page = %d %s", rec.Code, rec.Body)
+	}
+	now := time.Now().UTC()
+	if _, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "quarter close", CreatedBy: "ops"}, api.ReleaseFreezesMax, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 2, AfterStage: 1, TimeoutMinutes: 90, Approvers: state.ReleaseApproversAdmin}, now); err != nil {
+		t.Fatal(err)
+	}
+	rec := srv.RenderReleaseSafetyForTest(acct, app.Slug)
+	body := rec.Body.String()
+	for _, want := range []string{"Production releases are frozen", "quarter close", "2 approval(s) from admins", "at most 90 minutes"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("guarded app page = %d, missing %q:\n%s", rec.Code, want, body)
+		}
+	}
+	other, err := store.CreateAccount(t.Context(), "other-"+acct.ID+"@example.test", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := srv.RenderReleaseSafetyForTest(other, app.Slug); rec.Code != http.StatusNotFound {
+		t.Fatalf("another account's app page = %d, want 404", rec.Code)
+	}
+}
+
+func TestRollbackRestoreDatabasesIsHiddenWithoutDatabaseRollbacks(t *testing.T) {
+	f := newSwitchFixture(t)
+	if err := f.env.InstallCapabilityGate(); err != nil {
+		t.Fatal(err)
+	}
+	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `unknown field \"restore_databases\"`) {
+		t.Fatalf("restore_databases with database-rollbacks off = %d %s, want the unknown-field answer", w.Code, w.Body)
+	}
+}
+
+// A protected environment's promotion approval stands in for an app's own
+// policy only as one decision by its approver: it cannot meet two required
+// approvals, and when the policy forbids self-approval it must come from
+// someone other than the promoter (amendment 2, security audit 2026-10-27).
+func TestProtectedPromotionApprovalMeetsTheAppsPolicy(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "protected-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, "production")
+	policy := func(required int, self bool) {
+		t.Helper()
+		if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+			RequiredApprovals: required, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin, AllowSelfApproval: self}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const promoter, colleague = "promoter-account", "colleague-account"
+	check := func(approver string) *api.Problem {
+		return srv.ProtectedPromotionApprovalProblemForTest(t.Context(), []state.App{app}, "production", approver, promoter)
+	}
+	policy(1, false)
+	if p := check(promoter); p == nil || p.Code != api.CodeReleaseApprovalSelf {
+		t.Fatalf("self-approved promotion under a no-self-approval policy = %+v, want release_approval_self", p)
+	}
+	if p := check(""); p == nil || p.Code != api.CodeReleaseApprovalSelf {
+		t.Fatalf("an approval with no recorded approver = %+v, want it refused", p)
+	}
+	if p := check(colleague); p != nil {
+		t.Fatalf("a colleague's approval = %+v, want it to stand in", p)
+	}
+	policy(1, true)
+	if p := check(promoter); p != nil {
+		t.Fatalf("self-approval under a policy that allows it = %+v", p)
+	}
+	policy(2, true)
+	if p := check(colleague); p == nil || p.Code != api.CodeReleaseApprovalCanaryRequired {
+		t.Fatalf("one approval for a two-approval policy = %+v, want release_approval_canary_required", p)
+	}
+}
+
+// A superseded release that never served is a forward release: rolling back
+// to it meets the freezes and approvals, and a rejected release never ships
+// by rollback. One that served before is a rollback target (amendment 10).
+func TestRollbackToASupersededReleaseThatNeverServed(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	ctx := t.Context()
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "rollback-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := guardLiveDeployment(t, store, app.ID, "")
+	if err := store.UpdateDeploymentStatus(ctx, served.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatal(err)
+	}
+	served, _ = store.DeploymentByID(ctx, served.ID)
+	supersededUnserved := func() state.Deployment {
+		t.Helper()
+		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateDeploymentStatus(ctx, d.ID, state.DeploySuperseded, ""); err != nil {
+			t.Fatal(err)
+		}
+		d, _ = store.DeploymentByID(ctx, d.ID)
+		return d
+	}
+	never := supersededUnserved()
+	if p := srv.RollbackTargetProblemForTest(ctx, app, never); p != nil {
+		t.Fatalf("an unguarded rollback to a release that never served = %+v", p)
+	}
+
+	now := time.Now().UTC()
+	frozen, err := store.CreateReleaseFreeze(ctx, state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.RollbackTargetProblemForTest(ctx, app, never); p == nil || p.Code != api.CodeReleaseFrozen {
+		t.Fatalf("a rollback to a never-served release during a freeze = %+v, want release_frozen", p)
+	}
+	if p := srv.RollbackTargetProblemForTest(ctx, app, served); p != nil {
+		t.Fatalf("a rollback to a release that served during a freeze = %+v, want it allowed", p)
+	}
+	if _, err := store.LiftReleaseFreeze(ctx, state.ReleaseFreezeOwner{AccountID: acct.ID}, frozen.ID, "ops", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.SetReleaseApprovalPolicy(ctx, state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	pending := supersededUnserved()
+	if p := srv.RollbackTargetProblemForTest(ctx, app, pending); p == nil || p.Code != api.CodeReleaseApprovalRequired {
+		t.Fatalf("a rollback to an unapproved release that never served = %+v, want release_approval_required", p)
+	}
+	rejected := supersededUnserved()
+	if _, err := store.RecordReleaseApproval(ctx, state.ReleaseApproval{AccountID: acct.ID, AppID: app.ID, DeploymentID: rejected.ID,
+		ApproverAccountID: "reviewer", Approver: "reviewer@example.com", Decision: state.ReleaseApprovalReject}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.RollbackTargetProblemForTest(ctx, app, rejected); p == nil || p.Code != api.CodeReleaseApprovalRejected {
+		t.Fatalf("a rollback to a rejected release = %+v, want release_approval_rejected", p)
+	}
+}
+
+// A key or token, as CI holds, does not approve a protected production
+// promotion that stands in for an app's release approval policy; a person
+// does, and a key still approves promotions no policy covers (amendment 9).
+func TestProtectedPromotionApprovalByKeyNeedsAPerson(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "keyed-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, "production")
+	key := &state.APIKey{ID: "ci-key", AccountID: acct.ID}
+	apps := []state.App{app}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, key, apps, "production"); p != nil {
+		t.Fatalf("a key approving a promotion no policy covers = %+v", p)
+	}
+	if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, key, apps, "production"); p == nil || p.Code != api.CodeReleaseApprovalSessionRequired {
+		t.Fatalf("a key approving a policy-covered promotion = %+v, want release_approval_session_required", p)
+	}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, nil, apps, "production"); p != nil {
+		t.Fatalf("a person approving = %+v", p)
+	}
+	if p := srv.PromotionApprovalKeyProblemForTest(acct, key, apps, "staging"); p != nil {
+		t.Fatalf("a key approving a staging promotion = %+v", p)
+	}
+}

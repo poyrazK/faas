@@ -43,7 +43,7 @@ func newApprovalFixture(ctx context.Context, t *testing.T, slug string, stepStar
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.Do(t, http.MethodPut, "/v1/apps/"+slug+"/release-approval-policy", policy, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/"+slug+"/release-approval-policy", withApprovers(ctx, t, e, policy), nil); rec.Code != http.StatusOK {
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	canary, err := store.CreateDeployment(ctx, state.Deployment{
@@ -124,8 +124,11 @@ func TestReleaseApprovalPolicyRoundTripAndValidation(t *testing.T) {
 	} {
 		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, bad, nil), http.StatusBadRequest, api.CodeValidation)
 	}
+	// adr: 20261020085706 amendment 6 — a policy names who hears a release waits.
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}, nil),
+		http.StatusBadRequest, api.CodeValidation)
 	var policy api.ReleaseApprovalPolicy
-	if rec := guardDo(t, e, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}, &policy); rec.Code != http.StatusOK {
+	if rec := guardDo(t, e, http.MethodPut, path, withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}), &policy); rec.Code != http.StatusOK {
 		t.Fatalf("set = %d %s", rec.Code, rec.Body)
 	}
 	// An app outside an organization has one person, whose approval counts.
@@ -137,7 +140,7 @@ func TestReleaseApprovalPolicyRoundTripAndValidation(t *testing.T) {
 	if rec := guardDo(t, e, http.MethodGet, path, nil, &got); rec.Code != http.StatusOK || !reflect.DeepEqual(got, policy) {
 		t.Fatalf("get = %d %+v, want %+v", rec.Code, got, policy)
 	}
-	rec = e.Do(t, http.MethodPut, "/v1/apps/instant-app/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil)
+	rec = e.Do(t, http.MethodPut, "/v1/apps/instant-app/release-approval-policy", withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
 	if rec := e.Do(t, http.MethodDelete, path, nil, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d %s", rec.Code, rec.Body)
@@ -180,8 +183,12 @@ func TestReleaseApprovalHoldsTheCanaryUntilApproved(t *testing.T) {
 		t.Fatalf("rollout_hold = %+v", hold)
 	}
 
+	// adr: 20261020085706 amendment 4 — an API key cannot approve; the
+	// signed-in person can.
+	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, "/v1/deployments/"+id+"/approvals",
+		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, nil), http.StatusForbidden, api.CodeReleaseApprovalSessionRequired)
 	var status api.ReleaseApprovalStatus
-	rec = guardDo(t, f.e, http.MethodPost, "/v1/deployments/"+id+"/approvals",
+	rec = sessionDo(t, f.e, http.MethodPost, "/v1/deployments/"+id+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "canary looks clean"}, &status)
 	if rec.Code != http.StatusOK || status.State != api.ReleaseApprovalStateApproved || status.Approvals != 1 ||
 		len(status.Decisions) != 1 || status.Decisions[0].Role != state.ReleaseApproverRolePersonal || !status.Decisions[0].Counted {
@@ -218,6 +225,50 @@ func TestReleaseApprovalRejectionAbortsTheRollout(t *testing.T) {
 		http.StatusConflict, api.CodeReleaseApprovalRejected)
 }
 
+// A rejection aborts the rejected release even while another environment of
+// the app rolls out, where an app-level abort is ambiguous (amendment 11).
+func TestReleaseApprovalRejectionAbortsWithAnotherEnvironmentRollingOut(t *testing.T) {
+	ctx := context.Background()
+	f := newApprovalFixture(ctx, t, "approval-reject-envs", time.Now().Add(-time.Hour), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2})
+	store := *f.e.Store()
+	stagingPrior, err := store.CreateDeployment(ctx, state.Deployment{AppID: f.app.ID, Scope: "staging", ImageDigest: "sha256:staging-prior"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, stagingPrior.ID); err != nil {
+		t.Fatal(err)
+	}
+	stagingCanary, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: f.app.ID, Scope: "staging", ImageDigest: "sha256:staging-canary", RootfsKey: "rootfs/staging", CanaryPreset: "balanced",
+		CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1, CreatedAt: time.Now().UTC().Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, stagingCanary.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentCanaryState(ctx, stagingCanary.ID, "balanced", 0, 4, time.Now(), "rolling_out"); err != nil {
+		t.Fatal(err)
+	}
+	var status api.ReleaseApprovalStatus
+	rec := guardDo(t, f.e, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject, Comment: "checkout latency is up"}, &status)
+	if rec.Code != http.StatusOK || status.State != api.ReleaseApprovalStateRejected {
+		t.Fatalf("reject = %d %+v", rec.Code, status)
+	}
+	if got := f.deployment(t); got.RolloutState != "aborted" || got.TrafficPercent != 0 {
+		t.Fatalf("rejected production canary state=%q traffic=%d, want aborted at 0%%", got.RolloutState, got.TrafficPercent)
+	}
+	staging, err := store.DeploymentByID(ctx, stagingCanary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.NormalizeRolloutState(staging.RolloutState) != "rolling_out" {
+		t.Fatalf("the staging canary = %q, want it left rolling out", staging.RolloutState)
+	}
+}
+
 func TestReleaseApprovalTimeoutAbortsOnTheWorkersNextTick(t *testing.T) {
 	ctx := context.Background()
 	f := newApprovalFixture(ctx, t, "approval-timeout", time.Now().Add(-2*time.Hour),
@@ -247,7 +298,7 @@ func TestReleaseApprovalRefusesTheDeployersOwnApproval(t *testing.T) {
 	if _, err := approvals.SetReleaseApprovalPolicy(ctx, policy, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	apidserver.AssertProblem(t, f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, nil), http.StatusForbidden, api.CodeReleaseApprovalSelf)
 	// The deployer may still reject their own release.
 	var status api.ReleaseApprovalStatus
@@ -273,7 +324,7 @@ func TestReleaseApprovalsRequireACanaryAtReleaseTime(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-canary/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-canary/release-approval-policy", withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil); rec.Code != http.StatusOK {
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	path := "/v1/apps/approval-canary/deployments"
@@ -281,6 +332,10 @@ func TestReleaseApprovalsRequireACanaryAtReleaseTime(t *testing.T) {
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
 	half := 50
 	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('d'), TrafficPercent: &half}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
+	// The production environment's scope is the same production lane, so
+	// naming it does not step around the policy.
+	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('f'), Scope: "production", Canary: &api.CanaryPresetSpec{Preset: "none"}}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
 	zero := 0
 	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('e'), TrafficPercent: &zero}, nil)
@@ -305,6 +360,21 @@ func approvalChannel(ctx context.Context, t *testing.T, e apidserver.TestEnv, na
 		t.Fatal(err)
 	}
 	return c
+}
+
+// withApprovers names an "approvers" email channel on a policy that names
+// none: a policy must notify someone (ADR-20261020085706 amendment 6).
+func withApprovers(ctx context.Context, t *testing.T, e apidserver.TestEnv, req api.SetReleaseApprovalPolicyRequest) api.SetReleaseApprovalPolicyRequest {
+	t.Helper()
+	if len(req.NotifyChannels) > 0 {
+		return req
+	}
+	in := state.NotificationChannel{AccountID: (*e.Acct()).ID, Name: "approvers", Kind: "email", Email: "approvers@example.com"}
+	if _, err := (*e.Store()).CreateNotificationChannel(ctx, in, api.MaxNotificationChannelsPerAccount); err != nil && !errors.Is(err, state.ErrConflict) {
+		t.Fatal(err)
+	}
+	req.NotifyChannels = []string{"approvers"}
+	return req
 }
 
 // approvalEvents lists the release's recorded notifications by event.
@@ -377,7 +447,7 @@ func TestReleaseApprovalEventsAreRecordedOncePerTransition(t *testing.T) {
 		!strings.HasSuffix(requested.ReviewURL, "/dashboard/releases/"+f.canary.ID+"/approval") {
 		t.Fatalf("events = %+v", events)
 	}
-	if rec := f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	if rec := f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks clean"}, nil); rec.Code != http.StatusOK {
 		t.Fatalf("approve = %d %s", rec.Code, rec.Body)
 	}
@@ -440,5 +510,76 @@ func TestReleaseApprovalPageRendersWithoutReleaseData(t *testing.T) {
 	(*e.S()).RenderReleaseApprovalPage(rec, bad)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bad id = %d", rec.Code)
+	}
+}
+
+// A release deployed dark (live at 0%) after the app started requiring
+// approvals is a forward release: rolling back to it must meet the approvals
+// a traffic increase meets, not ship it to every request (security audit
+// 2026-10-27). A checked rollback is held the same way.
+func TestRollbackToADarkReleaseMeetsItsApprovals(t *testing.T) {
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "approval-dark"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-dark/release-approval-policy", withApprovers(ctx, t, e, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}), nil); rec.Code != http.StatusOK {
+		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
+	}
+	dark, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:dark", Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true, CreatedAt: time.Now().UTC().Add(time.Second),
+		DeployedByUserID: (*e.Acct()).ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dark.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []api.RollbackRequest{
+		{TargetDeploymentID: &dark.ID},
+		{TargetDeploymentID: &dark.ID, ExpectedCurrentDeploymentID: &prior.ID},
+	} {
+		rec := e.Do(t, http.MethodPost, "/v1/apps/approval-dark/rollback", body, nil)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "release_approval") {
+			t.Fatalf("rollback to the dark release (checked=%v) = %d %s, want a release approval refusal",
+				body.ExpectedCurrentDeploymentID != nil, rec.Code, rec.Body)
+		}
+	}
+	got, err := store.DeploymentByID(ctx, dark.ID)
+	if err != nil || got.Status != state.DeployLive || got.TrafficPercent != 0 {
+		t.Fatalf("dark release after the refused rollbacks = %+v, %v; want still live at 0%%", got, err)
+	}
+}
+
+// adr: 20261020085706 amendment 5 — an app that requires approvals stays in
+// request mode: a service, worker or job has no canary stage to wait in, so
+// the policy would stay set and stop gating (release review 2026-11-01).
+func TestApprovalPolicyKeepsTheAppInRequestMode(t *testing.T) {
+	ctx := context.Background()
+	f := newApprovalFixture(ctx, t, "approval-mode", time.Now(), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
+	service, one := api.ExecutionModeService, 1
+	toService := api.UpdateAppRequest{ExecutionMode: &service, MaxConcurrency: &one}
+	rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "release approval disable") {
+		t.Fatalf("refusal = %s, want the way to remove the policy", rec.Body)
+	}
+	if got, err := (*f.e.Store()).AppByID(ctx, f.app.ID); err != nil || got.Manifest.ExecutionMode != "" {
+		t.Fatalf("app mode after the refusal = %q, %v; want request", got.Manifest.ExecutionMode, err)
+	}
+	if rec := f.e.Do(t, http.MethodDelete, "/v1/apps/approval-mode/release-approval-policy", nil, nil); rec.Code >= 300 {
+		t.Fatalf("remove policy = %d %s", rec.Code, rec.Body)
+	}
+	if rec := f.e.Do(t, http.MethodPatch, "/v1/apps/approval-mode", toService, nil); strings.Contains(rec.Body.String(), "requires release approvals") {
+		t.Fatalf("mode change without a policy = %d %s, want no approval refusal", rec.Code, rec.Body)
 	}
 }

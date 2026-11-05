@@ -20,7 +20,7 @@ const subUDPListeners = "udp"
 //	gregale apps udp <slug> rm NAME
 func cmdAppsUDP(slug string, args []string) int {
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale apps udp <slug> [list|add|enable|disable|rm]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list udp <slug> [list|add|enable|disable|rm]", "apps")
 		return 1
 	}
 	verb := "list"
@@ -36,12 +36,12 @@ func cmdAppsUDP(slug string, args []string) int {
 	switch verb {
 	case "list":
 		if len(args) != 0 {
-			PrintUsage(os.Stderr, "usage: gregale apps udp <slug> list", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list udp <slug> list", "apps")
 			return 1
 		}
 		listeners, err := client.ListAppUDPListeners(context.Background(), slug)
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list UDP listeners", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(listeners))
@@ -61,7 +61,7 @@ func cmdAppsUDP(slug string, args []string) int {
 			return 1
 		}
 		if *name == "" || *guestPort == 0 || fs.NArg() != 0 {
-			PrintUsage(os.Stderr, "usage: gregale apps udp <slug> add --name NAME --guest-port PORT [--public-port PORT]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list udp <slug> add --name NAME --guest-port PORT [--public-port PORT]", "apps")
 			return 1
 		}
 		if err := api.ValidateWorkloadPorts([]api.WorkloadPort{{Name: *name, Port: *guestPort, Protocol: api.WorkloadPortUDP}}); err != nil {
@@ -74,23 +74,23 @@ func cmdAppsUDP(slug string, args []string) int {
 			Name: *name, GuestPort: *guestPort, PublicPort: *publicPort,
 		})
 		if err != nil {
-			return printErr("Create failed", err)
+			return printErr("Could not create UDP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
 		}
-		PrintOK(osStdout, "Created disabled UDP listener %s on public port %d; enable it with gregale apps udp %s enable %s", out.Name, out.PublicPort, slug, out.Name)
+		PrintOK(osStdout, "Created disabled UDP listener %s on public port %d; enable it with gregale app list udp %s enable %s", out.Name, out.PublicPort, slug, out.Name)
 		return 0
 
 	case "enable", "disable":
 		if len(args) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps udp <slug> "+verb+" NAME", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list udp <slug> "+verb+" NAME", "apps")
 			return 1
 		}
 		enabled := verb == "enable"
 		out, err := client.UpdateAppUDPListener(context.Background(), slug, args[0], api.UpdateUDPListenerRequest{Enabled: &enabled})
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not update UDP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
@@ -104,11 +104,11 @@ func cmdAppsUDP(slug string, args []string) int {
 
 	case "rm", "delete":
 		if len(args) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps udp <slug> rm NAME", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list udp <slug> rm NAME", "apps")
 			return 1
 		}
 		if err := client.DeleteAppUDPListener(context.Background(), slug, args[0]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not delete UDP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "name": args[0], "deleted": true}))
@@ -116,7 +116,7 @@ func cmdAppsUDP(slug string, args []string) int {
 		PrintOK(osStdout, "Deleted UDP listener %s", args[0])
 		return 0
 	default:
-		PrintUsage(os.Stderr, "usage: gregale apps udp <slug> [list|add|enable|disable|rm]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list udp <slug> [list|add|enable|disable|rm]", "apps")
 		return 1
 	}
 }

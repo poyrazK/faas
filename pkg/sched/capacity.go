@@ -204,6 +204,21 @@ func (t *nodeCapacityTable) Lookup(nodeID string, now time.Time) (CapacityReport
 	return e.report, true
 }
 
+// LastSeen returns when this daemon last received each node's report, for
+// every node that has reported since it started (ADR-20261029085904).
+func (t *nodeCapacityTable) LastSeen() map[string]time.Time {
+	if t == nil {
+		return nil
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	out := make(map[string]time.Time, len(t.resident))
+	for nodeID, e := range t.resident {
+		out[nodeID] = e.lastSeen
+	}
+	return out
+}
+
 // CapacitySink returns a closure the handler can pass as the
 // sink for the SchedAPI.ReportCapacity shape. The closure
 // applies the report to the table; a non-nil error aborts

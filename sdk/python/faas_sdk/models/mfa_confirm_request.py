@@ -13,15 +13,17 @@ T = TypeVar("T", bound="MFAConfirmRequest")
 
 @_attrs_define
 class MFAConfirmRequest:
-    """Body for /confirm — a single 6-digit TOTP code."""
+    """Body for /confirm — a TOTP code and the existing password, if set."""
 
     totp: str
     """6-digit rotating code from the authenticator app."""
+    current_password: str | Unset = UNSET
+    """Required when the account already has a password; authorizes the new factor."""
     csrf_token: str | Unset = UNSET
     """Dashboard CSRF token. The dashboard sets a
     `faas_csrf` cookie on every authenticated response; the
-    same value rides in this JSON-body field so
-    `pkg/middleware.VerifyAuthenticated` can compare them.
+    same value rides in this JSON-body field so the
+    server can compare them.
     The token is opaque to the wire (sealed session
     reference); size matches the cookie value.
     """
@@ -29,6 +31,8 @@ class MFAConfirmRequest:
 
     def to_dict(self) -> dict[str, Any]:
         totp = self.totp
+
+        current_password = self.current_password
 
         csrf_token = self.csrf_token
 
@@ -39,6 +43,8 @@ class MFAConfirmRequest:
                 "totp": totp,
             }
         )
+        if current_password is not UNSET:
+            field_dict["current_password"] = current_password
         if csrf_token is not UNSET:
             field_dict["csrf_token"] = csrf_token
 
@@ -49,10 +55,13 @@ class MFAConfirmRequest:
         d = dict(src_dict)
         totp = d.pop("totp")
 
+        current_password = d.pop("current_password", UNSET)
+
         csrf_token = d.pop("csrf_token", UNSET)
 
         mfa_confirm_request = cls(
             totp=totp,
+            current_password=current_password,
             csrf_token=csrf_token,
         )
 

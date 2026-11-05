@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * Asks browsers on matched routes to prove they run a real browser
- * before the request reaches the app (ADR-831 amendment 7). A request
+ * before the request reaches the app. A request
  * without a valid pass is answered at the edge: a page load gets a page
  * that solves a short proof of work in the browser and sets a signed
  * pass cookie, and any other request gets 403 challenge_required.
@@ -23,5 +23,9 @@ export type EdgeRuleChallengeAction = {
    * How long a solved challenge lets the browser through.
    */
   pass_ttl_seconds?: number;
+  /**
+   * When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases. Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
+   */
+  max_difficulty?: number;
 };
 

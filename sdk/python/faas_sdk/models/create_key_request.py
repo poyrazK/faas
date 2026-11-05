@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,8 +15,7 @@ T = TypeVar("T", bound="CreateKeyRequest")
 @_attrs_define
 class CreateKeyRequest:
     """API key creation payload — label and optional scopes. Plaintext is returned exactly once in the 201 response. Scopes
-    defaults to `["admin"]` when omitted so existing callers preserve the legacy full-access behavior. See IAM-1,
-    ADR-034 rev2.
+    defaults to `["admin"]` when omitted so existing callers preserve the legacy full-access behavior. rev2.
 
     """
 
@@ -25,6 +24,9 @@ class CreateKeyRequest:
     """Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub
     connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the
     key access to a logical bucket."""
+    projects: list[str] | Unset = UNSET
+    """Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only
+    apps in these projects and cannot carry Postgres scopes. Omit for every project."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +39,10 @@ class CreateKeyRequest:
                 scopes_item: str = scopes_item_data
                 scopes.append(scopes_item)
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -44,6 +50,8 @@ class CreateKeyRequest:
             field_dict["label"] = label
         if scopes is not UNSET:
             field_dict["scopes"] = scopes
+        if projects is not UNSET:
+            field_dict["projects"] = projects
 
         return field_dict
 
@@ -61,9 +69,12 @@ class CreateKeyRequest:
 
                 scopes.append(scopes_item)
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
         create_key_request = cls(
             label=label,
             scopes=scopes,
+            projects=projects,
         )
 
         create_key_request.additional_properties = d

@@ -14,11 +14,18 @@ import (
 var _ EnvironmentGitOpsWorkloadCreationStore = (*PgStore)(nil)
 
 func (s *PgStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentGitOpsStep, error) {
-	tx, err := s.gitOpsEffectTx(ctx, lease)
+	return retryTrafficSerialization(ctx, func() ([]EnvironmentGitOpsStep, error) {
+		return s.prepareEnvironmentGitOpsWorkloadsOnce(ctx, lease, reviewed)
+	})
+}
+
+// Each created workload app publishes its primary hostname.
+func (s *PgStore) prepareEnvironmentGitOpsWorkloadsOnce(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentGitOpsStep, error) {
+	tx, err := s.gitOpsBindingEffectTx(ctx, lease)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	if _, err := q.LockEnvironmentGitOpsIntentApps(ctx, tx, mustPgUUID(lease.Source.ID)); err != nil {
 		return nil, mapErr(err)
@@ -43,16 +50,13 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease E
 		return nil, err
 	}
 	limits, _ := api.LimitsFor(snapshot.Plan)
-	org, err := q.OrgByPersonalAccount(ctx, tx, mustPgUUID(source.AccountID))
-	if err != nil {
-		return nil, mapErr(err)
-	}
 	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 		return nil, err
 	}
 	for _, resource := range environmentWorkloadCreationNames(apps) {
 		app := apps[resource]
-		app.OrgID = pgUUIDString(org.ID)
+		// App admission resolves the persisted project owner under lock.
+		// A creator's personal organization need not own this project.
 		app, err = createAppIfUnderQuotaTx(ctx, tx, app, limits)
 		if err != nil {
 			return nil, err
@@ -80,7 +84,7 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease E
 			app := gitOpsIntentApp{ID: appModel.ID, Slug: appModel.Slug, Type: appModel.Type,
 				WorkloadClass: appModel.WorkloadClass, Manifest: appModel.Manifest, StartCommand: appModel.StartCommand}
 			name := strings.TrimPrefix(resource, "workload/")
-			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, desired.Definition.Workloads[name], snapshot.Plan)
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, desired.Definition.Workloads[name], snapshot.Plan, true)
 			if err != nil {
 				return nil, err
 			}

@@ -87,14 +87,25 @@
       - item.stat.isreg
       - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
     fail_msg: >-
-      Promtail TLS {{ item.item.name }} is missing or has an unsupported mode;
-      provision the certificate bundle out-of-band and keep the private key
-      restricted to root:promtail.
+      Promtail TLS {{ item.item.name }} is missing or has an unsupported mode.
+      The platform_logs_pki role issues it from the fleet CA
+      (ADR-20261023124955 §2); converge it before this role.
   loop: "{{ promtail_tls_stats.results | default([]) }}"
   loop_control:
     label: "{{ item.item.name }}"
   when: not (promtail_dev_mode | bool)
   no_log: true
+
+# pkg/pki writes keys root:root 0400; platform_logs_pki repeats this on
+# renewal (ADR-20261023124955 §2).
+- name: promtail — let promtail read its client key
+  ansible.builtin.file:
+    path: "{{ promtail_loki_client_key_file }}"
+    state: file
+    owner: root
+    group: promtail
+    mode: "0440"
+  when: not (promtail_dev_mode | bool)
 
 - name: promtail — download release archive
   ansible.builtin.get_url:

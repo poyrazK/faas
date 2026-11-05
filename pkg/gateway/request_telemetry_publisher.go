@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RequestTelemetryPublisherConfig bundles the knobs the publisher
@@ -60,6 +61,10 @@ type RequestTelemetryPublisherConfig struct {
 	// app_errors_publisher.go default.
 	MaxRetries int
 
+	// ShutdownTimeout is one budget for joining an interrupted RPC and flushing
+	// all remaining evidence. Values above the API ceiling are clamped.
+	ShutdownTimeout time.Duration
+
 	// Now is injectable for tests. nil ⇒ time.Now.
 	Now func() time.Time
 
@@ -71,6 +76,11 @@ type RequestTelemetryPublisherConfig struct {
 
 	// OnCoverage runs even when idle, after every delivery attempt.
 	OnCoverage func(context.Context, RequestTelemetryCoverage) error
+
+	// MinuteCollapse holds each minute's buckets open and ships them once
+	// the minute closes, instead of collapsing every drained batch on its
+	// own (ADR-20261101085552; FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE).
+	MinuteCollapse bool
 }
 
 func (c *RequestTelemetryPublisherConfig) setDefaults() {
@@ -83,6 +93,10 @@ func (c *RequestTelemetryPublisherConfig) setDefaults() {
 	if c.MaxRetries <= 0 {
 		c.MaxRetries = 3
 	}
+	maximumShutdown := time.Duration(api.GatewayRequestTelemetryShutdownTimeoutSeconds) * time.Second
+	if c.ShutdownTimeout <= 0 || c.ShutdownTimeout > maximumShutdown {
+		c.ShutdownTimeout = maximumShutdown
+	}
 	if c.Now == nil {
 		c.Now = time.Now
 	}
@@ -94,7 +108,7 @@ func (c *RequestTelemetryPublisherConfig) setDefaults() {
 // streams the rows. Test implementation: appends the rows to a
 // slice for assertion.
 //
-// Returning a non-nil error tells the publisher to retry with
+// The callback must honor context cancellation. Returning a non-nil error tells the publisher to retry with
 // exponential backoff. After MaxRetries retries, the batch is
 // dropped with a warn log + droppedTotal counter increment.
 type ShipFn func(ctx context.Context, rows []RequestTelemetryRow) error
@@ -125,12 +139,20 @@ type requestTelemetryPublisher struct {
 	// wakes early.
 	wakeCh chan struct{}
 
-	// startOnce / stopOnce / stopCh guard lifecycle. Start must
-	// be called exactly once; Stop must be called exactly once.
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stopCh    chan struct{}
-	doneCh    chan struct{}
+	// Only the actor owns pending, including its final flush. A canceled RPC
+	// retains the exact collapsed payload and event IDs for receiver deduplication.
+	pending []RequestTelemetryRow
+	// minutes is non-nil when MinuteCollapse is on; the actor owns it too.
+	minutes *requestTelemetryMinutes
+
+	lifecycleMu      sync.Mutex
+	started, stopped bool
+	parentCtx        context.Context
+	cancel           context.CancelFunc
+	finalCtx         context.Context
+	finalCancel      context.CancelFunc
+	stopCh           chan struct{}
+	doneCh           chan struct{}
 }
 
 // NewRequestTelemetryPublisher wires a publisher. The recorder +
@@ -141,34 +163,19 @@ func NewRequestTelemetryPublisher(cfg RequestTelemetryPublisherConfig, recorder 
 	if log == nil {
 		log = slog.Default()
 	}
-	return &requestTelemetryPublisher{
+	p := &requestTelemetryPublisher{
 		cfg:      cfg,
 		recorder: recorder,
 		ship:     ship,
 		log:      log,
 		wakeCh:   make(chan struct{}, 1),
 		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}, 1),
+		doneCh:   make(chan struct{}),
 	}
-}
-
-// Start launches the publisher goroutine. Safe to call once;
-// subsequent calls are no-ops.
-func (p *requestTelemetryPublisher) Start(ctx context.Context) {
-	p.startOnce.Do(func() {
-		p.reportCoverage(ctx)
-		go p.run(ctx)
-	})
-}
-
-// Stop signals the publisher goroutine to halt, drains the
-// recorder one final time, and waits for the goroutine to exit.
-// Safe to call once; subsequent calls are no-ops.
-func (p *requestTelemetryPublisher) Stop() {
-	p.stopOnce.Do(func() {
-		close(p.stopCh)
-		<-p.doneCh
-	})
+	if cfg.MinuteCollapse {
+		p.minutes = newRequestTelemetryMinutes()
+	}
+	return p
 }
 
 // Wake nudges the publisher to drain immediately (non-blocking).
@@ -194,16 +201,13 @@ func (p *requestTelemetryPublisher) ShippedTotal() int64 {
 }
 
 // run is the goroutine loop. Drains on FlushInterval (or on Wake)
-// until stopCh closes. Drains one final batch synchronously on
-// the way out so Stop() returns "nothing left to ship".
+// until stopCh closes. Its bounded final flush ships remaining evidence or
+// accounts for loss before every Stop caller returns.
 func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	defer func() {
-		// Final drain on the way out so Stop() blocks until every
-		// pending row has been attempted, not just one batch.
-		for p.recorder.PendingCount() > 0 {
-			p.tick(ctx)
-		}
-		p.doneCh <- struct{}{}
+		p.drainFinal()
+		p.finalCancel()
+		close(p.doneCh)
 	}()
 
 	ticker := time.NewTicker(p.cfg.FlushInterval)
@@ -212,6 +216,11 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	for {
 		select {
 		case <-p.stopCh:
+			return
+		case <-ctx.Done():
+			// HTTP producers can finish after daemon cancellation. Quiesce
+			// ordinary shipping until their owner calls Stop after draining.
+			<-p.stopCh
 			return
 		case <-ticker.C:
 			p.tick(ctx)
@@ -228,55 +237,146 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	defer p.reportCoverage(ctx)
-	rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
-	if len(rows) == 0 {
+	if p.minutes != nil {
+		p.tickMinutes(ctx, false)
 		return
 	}
-	pending := collapseRequestTelemetry(rows)
+	if len(p.pending) == 0 {
+		p.pending = collapseRequestTelemetry(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
+	}
+	if len(p.pending) == 0 {
+		return
+	}
 	if p.ship == nil {
-		p.recordDroppedRows(pending)
+		p.dropPending("request telemetry ship unavailable; dropping batch")
 		return
 	}
+	if p.shipPending(ctx) {
+		p.pending = nil
+	} else if ctx.Err() == nil {
+		p.dropPending("request telemetry ship exhausted retries; dropping batch")
+	}
+}
+
+// tickMinutes drains everything queued into the open minutes, readies the
+// minutes that have closed (every minute when final), and ships the ready
+// rows a batch at a time. A batch that exhausts its retries is dropped and
+// the rest wait for the next tick, as one batch per tick does on the
+// per-batch path.
+func (p *requestTelemetryPublisher) tickMinutes(ctx context.Context, final bool) {
+	// Folding is cheap and the ring overwrites when full, so take all of it.
+	// The bound stops a producer that outpaces the drain from holding the
+	// actor here.
+	for range p.recorder.cfg.RingSize/p.cfg.FlushBatchSize + 1 {
+		rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
+		for _, row := range rows {
+			p.minutes.add(row)
+		}
+		if len(rows) < p.cfg.FlushBatchSize {
+			break
+		}
+	}
+	if final {
+		p.minutes.closeAll()
+	} else {
+		grace := time.Duration(api.GatewayRequestTelemetryMinuteGraceSeconds) * time.Second
+		p.minutes.close(p.cfg.Now(), grace, api.GatewayRequestTelemetryOpenBucketsMax)
+	}
+	if dropped := p.minutes.trimReady(api.GatewayRequestTelemetryOpenBucketsMax); len(dropped) != 0 {
+		p.log.Warn("request telemetry backlog full; dropping oldest rows", slog.Int("rows", len(dropped)))
+		p.recordDroppedRows(dropped)
+	}
+	for {
+		if len(p.pending) == 0 {
+			p.pending = p.minutes.takeReady(p.cfg.FlushBatchSize)
+		}
+		if len(p.pending) == 0 {
+			return
+		}
+		if p.ship == nil {
+			p.dropPending("request telemetry ship unavailable; dropping batch")
+			continue
+		}
+		if p.shipPending(ctx) {
+			p.pending = nil
+			continue
+		}
+		if ctx.Err() == nil {
+			p.dropPending("request telemetry ship exhausted retries; dropping batch")
+		}
+		return
+	}
+}
+
+// shipPending records every acknowledged row as shipped. A partial response
+// keeps only the rejected rows pending, with their original event IDs.
+func (p *requestTelemetryPublisher) shipPending(ctx context.Context) bool {
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				p.recordDroppedRows(pending)
-				return
+				return false
 			case <-time.After(time.Duration(1<<attempt) * 100 * time.Millisecond):
 			}
 		}
-		err := p.ship(ctx, pending)
+		if ctx.Err() != nil {
+			return false
+		}
+		err := p.ship(ctx, p.pending)
 		if err == nil {
-			p.recordShipped(requestTelemetryCount(pending))
-			return
+			p.recordShipped(requestTelemetryCount(p.pending))
+			return true
 		}
 		var partial *RequestTelemetryDeliveryError
 		if errors.As(err, &partial) {
-			remaining := make([]RequestTelemetryRow, 0, len(pending))
-			var shipped int64
-			for _, row := range pending {
-				if partial.Accepted[row.EventID] {
-					shipped += int64(normalizedRequestTelemetryCount(row.Count))
-				} else {
-					remaining = append(remaining, row)
-				}
+			p.acceptPartialDelivery(partial)
+			if len(p.pending) == 0 {
+				return true
 			}
-			p.recordShipped(shipped)
-			pending = remaining
-			if len(pending) == 0 {
-				return
-			}
+		}
+		if ctx.Err() != nil {
+			return false
 		}
 		p.log.Warn("request telemetry delivery incomplete", "attempt", attempt+1, "err", err)
 	}
-	p.recordDroppedRows(pending)
+	return false
+}
+
+// acceptPartialDelivery keeps only the rows worth sending again. Accepted rows
+// are shipped; rejected rows are dropped and journaled as losses now, so a row
+// the receiver will never take (an app over its ingest cap) cannot hold the
+// publisher in retry backoff while every other app's rows wait behind it.
+func (p *requestTelemetryPublisher) acceptPartialDelivery(partial *RequestTelemetryDeliveryError) {
+	remaining := make([]RequestTelemetryRow, 0, len(p.pending))
+	var rejected []RequestTelemetryRow
+	var shipped int64
+	for _, row := range p.pending {
+		switch {
+		case partial.Accepted[row.EventID]:
+			shipped += int64(normalizedRequestTelemetryCount(row.Count))
+		case partial.Rejected[row.EventID]:
+			rejected = append(rejected, row)
+		default:
+			remaining = append(remaining, row)
+		}
+	}
+	p.recordShipped(shipped)
+	if len(rejected) != 0 {
+		p.recordDroppedRows(rejected)
+	}
+	p.pending = remaining
 }
 
 // Partial responses preserve accepted rows when another app is rejected.
+// Rejected rows are final (the receiver must not be asked again); rows in
+// neither map are retried.
 type RequestTelemetryDeliveryError struct {
 	Accepted map[uuid.UUID]bool
+	Rejected map[uuid.UUID]bool
 	Cause    error
 }
 
@@ -330,6 +430,21 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 	}
 }
 
+// requestTelemetryExactPerBucket bounds the exact samples kept per collapse
+// bucket: per drained batch on the per-batch path (at most 60 a minute with
+// the default 5 s flush), per minute with MinuteCollapse. The receiver's
+// per-account row budget (DebugTelemetryRequestsPerMinute) still bounds the
+// total.
+const requestTelemetryExactPerBucket = 5
+
+// exactTelemetryRow is an exact sample as it ships: the request's own trace,
+// time and latency, with the event ID and count bucketed gave it.
+func exactTelemetryRow(original, bucketed RequestTelemetryRow) RequestTelemetryRow {
+	original.EventID = bucketed.EventID
+	original.Count = bucketed.Count
+	return original
+}
+
 // collapseRequestTelemetry collapses burst traffic into one row per
 // (app_id, deployment_id, route, method, status, dimensions,
 // minute_bucket, latency_bucket) with a Count field that aggregates
@@ -373,6 +488,13 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 //     the bucket, so the apid receiver doesn't have to
 //     re-truncate; lets the query plan match the (received_at
 //     DESC) index ordering exactly.
+//   - Exact samples (ADR-127 amendment 2026-10-31): the first
+//     requestTelemetryExactPerBucket rows marked exactSample (server
+//     errors, apps with in-guest tracing) in a bucket are shipped as
+//     their own rows with their own trace ID, exact time and exact
+//     latency, so a request ID resolves to that request and its guest
+//     spans have a row to merge into. Later ones fold into the bucket as
+//     before; Count totals are unchanged.
 //
 // Output ordering: insertion-order of the FIRST row per bucket.
 // Stable so tests can assert against the output slice without
@@ -388,77 +510,104 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	// the output slice. Pre-size the map so the common case
 	// (single bucket dominating) avoids rehash.
 	bucketIdx := make(map[string]int, len(rows)/4+1)
+	var exactKept map[string]int
 	out := make([]RequestTelemetryRow, 0, len(rows)/4+1)
-	for _, row := range rows {
-		if row.EventID == uuid.Nil {
-			row.EventID = uuid.New()
-		}
-		row.Count = normalizedRequestTelemetryCount(row.Count)
-		if row.preserveExact {
+	for _, original := range rows {
+		row, key := requestTelemetryBucketed(original)
+		if key == "" {
 			out = append(out, row)
 			continue
 		}
-		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
-		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
-		row.GuestCPUTimeMS = requestTelemetryCPUTimeBucketUpperBound(row.GuestCPUTimeMS)
-		row.GuestPeakRSSMB = requestTelemetryMemoryBucketUpperBound(row.GuestPeakRSSMB)
-		bucket := row.ReceivedAt.Truncate(time.Minute)
-		key := bucketKey{
-			FlagEvidenceJSON:                     row.FlagEvidenceJSON,
-			AccountID:                            row.AccountID,
-			AppID:                                row.AppID,
-			DeploymentID:                         row.DeploymentID,
-			Route:                                row.Route,
-			Method:                               row.Method,
-			Status:                               row.Status,
-			UAFamily:                             row.UAFamily,
-			ReferrerHost:                         row.ReferrerHost,
-			Country:                              row.Country,
-			WakeID:                               row.WakeID,
-			TraceInferred:                        row.TraceInferred,
-			GuestRuntime:                         row.GuestRuntime,
-			GuestOutcome:                         row.GuestOutcome,
-			GuestErrorClass:                      row.GuestErrorClass,
-			GuestDurationBucket:                  row.GuestDurationMS,
-			GuestCPUBucket:                       row.GuestCPUTimeMS,
-			GuestRSSBucket:                       row.GuestPeakRSSMB,
-			GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
-			ConsumerID:                           row.ConsumerID,
-			PlatformTenantID:                     row.PlatformTenantID,
-			PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
-			PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
-			UsageOutboxed:                        row.UsageOutboxed,
-			NodeID:                               row.NodeID,
-			Region:                               row.Region,
-			CommitSHA:                            row.CommitSHA,
-			DeploymentTag:                        row.DeploymentTag,
-			DeploymentCreatedAt:                  row.DeploymentCreatedAt,
-			ImageDigest:                          row.ImageDigest,
-			ColdBoot:                             row.ColdBoot,
-			LatencyBucket:                        row.LatencyMS,
-			ContentOutcome:                       row.ContentOutcome,
-			bucket:                               bucket,
-		}.String()
+		if original.exactSample && exactKept[key] < requestTelemetryExactPerBucket {
+			if exactKept == nil {
+				exactKept = make(map[string]int)
+			}
+			exactKept[key]++
+			out = append(out, exactTelemetryRow(original, row))
+			continue
+		}
 		idx, ok := bucketIdx[key]
 		if !ok {
-			row.ReceivedAt = bucket
 			out = append(out, row)
 			bucketIdx[key] = len(out) - 1
 			continue
 		}
-		agg := &out[idx]
-		agg.Count += row.Count
-		// First non-empty TraceID wins.
-		if agg.TraceID == "" && row.TraceID != "" {
-			agg.TraceID = row.TraceID
-		}
-		// Warm traffic can span multiple instances while retaining the same
-		// bounded bucket. Keep an instance only when it is unambiguous.
-		if agg.InstanceID != row.InstanceID {
-			agg.InstanceID = ""
-		}
+		mergeRequestTelemetry(&out[idx], row)
 	}
 	return out
+}
+
+// requestTelemetryBucketed gives row an event ID and a count, quantizes it
+// into its collapse bucket and returns the bucket key. An exact row
+// (preserveExact) keeps its values and returns an empty key: it never folds.
+func requestTelemetryBucketed(row RequestTelemetryRow) (RequestTelemetryRow, string) {
+	if row.EventID == uuid.Nil {
+		row.EventID = uuid.New()
+	}
+	row.Count = normalizedRequestTelemetryCount(row.Count)
+	if row.preserveExact {
+		return row, ""
+	}
+	row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
+	row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
+	row.GuestCPUTimeMS = requestTelemetryCPUTimeBucketUpperBound(row.GuestCPUTimeMS)
+	row.GuestPeakRSSMB = requestTelemetryMemoryBucketUpperBound(row.GuestPeakRSSMB)
+	bucket := row.ReceivedAt.Truncate(time.Minute)
+	key := bucketKey{
+		FlagEvidenceJSON:                     row.FlagEvidenceJSON,
+		AccountID:                            row.AccountID,
+		AppID:                                row.AppID,
+		DeploymentID:                         row.DeploymentID,
+		Route:                                row.Route,
+		Method:                               row.Method,
+		Status:                               row.Status,
+		UAFamily:                             row.UAFamily,
+		ReferrerHost:                         row.ReferrerHost,
+		Country:                              row.Country,
+		WakeID:                               row.WakeID,
+		TraceInferred:                        row.TraceInferred,
+		PlatformRefusal:                      row.PlatformRefusal,
+		DeploymentPinned:                     row.DeploymentPinned,
+		LongLived:                            row.LongLived,
+		GuestRuntime:                         row.GuestRuntime,
+		GuestOutcome:                         row.GuestOutcome,
+		GuestErrorClass:                      row.GuestErrorClass,
+		GuestDurationBucket:                  row.GuestDurationMS,
+		GuestCPUBucket:                       row.GuestCPUTimeMS,
+		GuestRSSBucket:                       row.GuestPeakRSSMB,
+		GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
+		ConsumerID:                           row.ConsumerID,
+		PlatformTenantID:                     row.PlatformTenantID,
+		PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
+		PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
+		UsageOutboxed:                        row.UsageOutboxed,
+		NodeID:                               row.NodeID,
+		Region:                               row.Region,
+		CommitSHA:                            row.CommitSHA,
+		DeploymentTag:                        row.DeploymentTag,
+		DeploymentCreatedAt:                  row.DeploymentCreatedAt,
+		ImageDigest:                          row.ImageDigest,
+		ColdBoot:                             row.ColdBoot,
+		LatencyBucket:                        row.LatencyMS,
+		ContentOutcome:                       row.ContentOutcome,
+		bucket:                               bucket,
+	}.String()
+	row.ReceivedAt = bucket
+	return row, key
+}
+
+// mergeRequestTelemetry folds row into agg, a row of the same bucket.
+func mergeRequestTelemetry(agg *RequestTelemetryRow, row RequestTelemetryRow) {
+	agg.Count += row.Count
+	// First non-empty TraceID wins.
+	if agg.TraceID == "" && row.TraceID != "" {
+		agg.TraceID = row.TraceID
+	}
+	// Warm traffic can span multiple instances while retaining the same
+	// bounded bucket. Keep an instance only when it is unambiguous.
+	if agg.InstanceID != row.InstanceID {
+		agg.InstanceID = ""
+	}
 }
 
 // bucketKey is the canonical-bucket hashable composite for the
@@ -478,6 +627,9 @@ type bucketKey struct {
 	Country                              string
 	WakeID                               string
 	TraceInferred                        bool
+	PlatformRefusal                      bool
+	DeploymentPinned                     bool
+	LongLived                            bool
 	GuestRuntime                         string
 	GuestOutcome                         string
 	GuestErrorClass                      string
@@ -623,6 +775,21 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 		gap.AppID = row.AppID
 		gap.PendingCount++
 		gaps[row.AppID] = gap
+	}
+	if p.minutes != nil {
+		// Requests in closed minutes still waiting to ship are pending; an
+		// open minute is read by no window yet (ADR-20261028110044
+		// amendment 4).
+		for app, n := range p.minutes.undeliveredByApp() {
+			coverage.PendingCount += n
+			if app == uuid.Nil {
+				continue
+			}
+			gap := gaps[app]
+			gap.AppID = app
+			gap.PendingCount += n
+			gaps[app] = gap
+		}
 	}
 	for _, gap := range gaps {
 		coverage.AppGaps = append(coverage.AppGaps, gap)

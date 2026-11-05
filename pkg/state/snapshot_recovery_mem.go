@@ -97,7 +97,7 @@ func (m *MemStore) applySnapshotRecoveryLocked(deploymentID string, result Snaps
 	m.deployments[deploymentID] = d
 	for j := range m.snapshots {
 		if snap := &m.snapshots[j]; snap.DeploymentID == deploymentID && !snap.Stale {
-			snap.Stale = true
+			m.markSnapshotStaleLocked(j)
 			m.deleteSnapshotReplicasLocked(snap.ID)
 		}
 	}

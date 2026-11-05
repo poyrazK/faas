@@ -46,6 +46,14 @@ type ManagedRealtimePresenceStore interface {
 	DeleteManagedRealtimePresenceLease(context.Context, string, string, string, string) ([]ManagedRealtimePresenceLease, time.Time, error)
 }
 
+// ManagedRealtimePresenceRenewer extends a live lease's expiry without
+// changing its state or reading the channel (ADR-1323, amendment of
+// 2026-11-03). It reports false when the lease is gone or already expired;
+// the caller then upserts it again.
+type ManagedRealtimePresenceRenewer interface {
+	RenewManagedRealtimePresenceLease(ctx context.Context, endpointID, channel, nodeID, connectionID string, expiresAt time.Time) (bool, error)
+}
+
 type ManagedRealtimePresenceReaper interface {
 	PruneExpiredManagedRealtimePresenceLeases(context.Context, int) (int64, error)
 }

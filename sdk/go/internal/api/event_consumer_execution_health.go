@@ -57,7 +57,7 @@ type EventConsumerExecutionHealth struct {
 	CompletionLatencyP95Seconds    float64                              `json:"completion_latency_p95_seconds"`
 }
 
-func (c *Client) GetEventConsumerExecutionHealth(ctx context.Context, app, id, window string) (EventConsumerExecutionHealth, error) {
+func (c *PreviewClient) GetEventConsumerExecutionHealth(ctx context.Context, app, id, window string) (EventConsumerExecutionHealth, error) {
 	var out EventConsumerExecutionHealth
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/execution-health?window="+url.QueryEscape(window), nil, &out)
 	return out, err
@@ -92,12 +92,12 @@ type EventExecutionReconciliation struct {
 	UnattributedExecutionPresent bool       `json:"unattributed_execution_present"`
 }
 
-func (c *Client) GetEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
+func (c *PreviewClient) GetEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
 	var out EventExecutionReconciliation
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/execution-reconciliation", nil, &out)
 	return out, err
 }
-func (c *Client) RequestEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
+func (c *PreviewClient) RequestEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
 	var out EventExecutionReconciliation
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/execution-reconciliation", nil, &out)
 	return out, err
@@ -128,12 +128,12 @@ type RetryEventExecutionLineageCaseRequest struct {
 	ExpectedRevision     int64  `json:"expected_revision"`
 }
 
-func (c *Client) ListEventExecutionLineageCases(ctx context.Context, app, sub string, after int64, limit int) (EventExecutionLineageCases, error) {
+func (c *PreviewClient) ListEventExecutionLineageCases(ctx context.Context, app, sub string, after int64, limit int) (EventExecutionLineageCases, error) {
 	var out EventExecutionLineageCases
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/cases?after="+strconv.FormatInt(after, 10)+"&limit="+strconv.Itoa(limit), nil, &out)
 	return out, err
 }
-func (c *Client) RetryEventExecutionLineageCase(ctx context.Context, app, sub string, id int64, req RetryEventExecutionLineageCaseRequest) (EventExecutionLineageCase, error) {
+func (c *PreviewClient) RetryEventExecutionLineageCase(ctx context.Context, app, sub string, id int64, req RetryEventExecutionLineageCaseRequest) (EventExecutionLineageCase, error) {
 	var out EventExecutionLineageCase
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/cases/"+strconv.FormatInt(id, 10)+"/retry", req, &out)
 	return out, err
@@ -170,17 +170,17 @@ type EventExecutionLineageRetryJob struct {
 	RetainUntil    time.Time                                    `json:"retain_until"`
 }
 
-func (c *Client) PreviewEventExecutionLineageRetries(ctx context.Context, app, sub, reason string, after int64, limit int) (EventExecutionLineageCases, error) {
+func (c *PreviewClient) PreviewEventExecutionLineageRetries(ctx context.Context, app, sub, reason string, after int64, limit int) (EventExecutionLineageCases, error) {
 	var out EventExecutionLineageCases
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-preview?after="+strconv.FormatInt(after, 10)+"&limit="+strconv.Itoa(limit)+"&reason="+url.QueryEscape(reason), nil, &out)
 	return out, err
 }
-func (c *Client) CreateEventExecutionLineageRetryJob(ctx context.Context, app, sub string, req CreateEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+func (c *PreviewClient) CreateEventExecutionLineageRetryJob(ctx context.Context, app, sub string, req CreateEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	var out EventExecutionLineageRetryJob
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs", req, &out)
 	return out, err
 }
-func (c *Client) GetEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string) (EventExecutionLineageRetryJob, error) {
+func (c *PreviewClient) GetEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string) (EventExecutionLineageRetryJob, error) {
 	var out EventExecutionLineageRetryJob
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(requestID), nil, &out)
 	return out, err
@@ -192,7 +192,7 @@ type CancelEventExecutionLineageRetryJobRequest struct {
 	ExpectedCreatedAt time.Time `json:"expected_created_at"`
 }
 
-func (c *Client) CancelEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string, req CancelEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+func (c *PreviewClient) CancelEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string, req CancelEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	var out EventExecutionLineageRetryJob
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(requestID)+"/cancel", req, &out)
 	return out, err
@@ -204,13 +204,13 @@ type ControlEventExecutionLineageRetryJobRequest struct {
 	ExpectedCreatedAt time.Time `json:"expected_created_at"`
 }
 
-func (c *Client) PauseEventExecutionLineageRetryJob(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+func (c *PreviewClient) PauseEventExecutionLineageRetryJob(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	return c.controlEventExecutionLineageRetryJob(ctx, app, sub, id, "pause", req)
 }
-func (c *Client) ResumeEventExecutionLineageRetryJob(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+func (c *PreviewClient) ResumeEventExecutionLineageRetryJob(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	return c.controlEventExecutionLineageRetryJob(ctx, app, sub, id, "resume", req)
 }
-func (c *Client) controlEventExecutionLineageRetryJob(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+func (c *PreviewClient) controlEventExecutionLineageRetryJob(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	var out EventExecutionLineageRetryJob
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(id)+"/"+action, req, &out)
 	return out, err
@@ -274,7 +274,7 @@ func (f EventExecutionLineageRetryJobControlFilters) Normalize() (EventExecution
 }
 
 // An omitted filter preserves unfiltered history; supply at most one filter object.
-func (c *Client) ListEventExecutionLineageRetryJobControls(ctx context.Context, app, sub, id string, expected time.Time, after int64, limit int, filters ...EventExecutionLineageRetryJobControlFilters) (EventExecutionLineageRetryJobControls, error) {
+func (c *PreviewClient) ListEventExecutionLineageRetryJobControls(ctx context.Context, app, sub, id string, expected time.Time, after int64, limit int, filters ...EventExecutionLineageRetryJobControlFilters) (EventExecutionLineageRetryJobControls, error) {
 	var out EventExecutionLineageRetryJobControls
 	if len(filters) > 1 {
 		return out, fmt.Errorf("supply at most one history filter")
@@ -340,7 +340,7 @@ type EventExecutionLineageRetryJobAttentionPage struct {
 	RetentionWarningSeconds  int64     `json:"retention_warning_seconds"`
 }
 
-func (c *Client) ListEventExecutionLineageRetryJobs(ctx context.Context, app, sub, status, after string, limit int, options ...EventExecutionLineageRetryJobAttentionOptions) (EventExecutionLineageRetryJobs, error) {
+func (c *PreviewClient) ListEventExecutionLineageRetryJobs(ctx context.Context, app, sub, status, after string, limit int, options ...EventExecutionLineageRetryJobAttentionOptions) (EventExecutionLineageRetryJobs, error) {
 	var out EventExecutionLineageRetryJobs
 	if len(options) > 1 {
 		return out, fmt.Errorf("supply at most one attention option")
@@ -387,12 +387,12 @@ type RequestEventExecutionLineageCaseBackfillRequest struct {
 	ExpectedPreviousRequestID string `json:"expected_previous_request_id,omitempty"`
 }
 
-func (c *Client) GetEventExecutionLineageCaseBackfill(ctx context.Context, app, sub string) (EventExecutionLineageCaseBackfill, error) {
+func (c *PreviewClient) GetEventExecutionLineageCaseBackfill(ctx context.Context, app, sub string) (EventExecutionLineageCaseBackfill, error) {
 	var out EventExecutionLineageCaseBackfill
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill", nil, &out)
 	return out, err
 }
-func (c *Client) RequestEventExecutionLineageCaseBackfill(ctx context.Context, app, sub string, req RequestEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+func (c *PreviewClient) RequestEventExecutionLineageCaseBackfill(ctx context.Context, app, sub string, req RequestEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
 	var out EventExecutionLineageCaseBackfill
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill", req, &out)
 	return out, err
@@ -403,18 +403,18 @@ type ControlEventExecutionLineageCaseBackfillRequest struct {
 	ExpectedCreatedAt time.Time `json:"expected_created_at"`
 }
 
-func (c *Client) controlEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+func (c *PreviewClient) controlEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
 	var out EventExecutionLineageCaseBackfill
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill/"+url.PathEscape(id)+"/"+action, req, &out)
 	return out, err
 }
-func (c *Client) PauseEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+func (c *PreviewClient) PauseEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
 	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "pause", req)
 }
-func (c *Client) ResumeEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+func (c *PreviewClient) ResumeEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
 	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "resume", req)
 }
-func (c *Client) CancelEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+func (c *PreviewClient) CancelEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
 	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "cancel", req)
 }
 

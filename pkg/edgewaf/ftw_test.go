@@ -248,7 +248,7 @@ type fullResult struct {
 }
 
 func evaluateAll(waf coraza.WAF, s gateway.WAFSample) (fullResult, error) {
-	tx := waf.NewTransaction()
+	tx := waf.NewTransactionWithID(rxTransactionID(s.AppID, txSeq.Add(1)))
 	defer func() { _ = tx.Close() }()
 	tx.ProcessConnection(s.ClientIP, 0, "", 0)
 	tx.SetServerName(s.Host)

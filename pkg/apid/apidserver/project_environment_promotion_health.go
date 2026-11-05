@@ -91,7 +91,11 @@ func (s *server) runPromotionHealthWorker(ctx context.Context) {
 
 func (s *server) promotionHealthActions() promotionapi.HealthActions {
 	planFor := func(ctx context.Context, p state.ProjectEnvironmentPromotion, w []state.ProjectEnvironmentPromotionWorkload) (state.Account, projectEnvironmentPromotionPlan, error) {
-		acct, err := s.store.AccountByID(ctx, p.AccountID)
+		// Resolve the persisted project's account: in an adopted organization
+		// p.AccountID is the organization, which has no account row, so a
+		// creator lookup failed every round and no company promotion could
+		// complete.
+		acct, err := state.ProjectResourceAccountByID(ctx, s.store, p.ProjectID)
 		if err != nil {
 			return acct, projectEnvironmentPromotionPlan{}, err
 		}

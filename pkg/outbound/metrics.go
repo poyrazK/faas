@@ -39,12 +39,18 @@ type Metrics struct {
 	aiEvaluations          *prometheus.CounterVec
 	aiBatches              *prometheus.CounterVec
 	aiUnmetered            *prometheus.CounterVec
+	aiUnpriced             *prometheus.CounterVec
+	aiAccessTokenLookups   *prometheus.CounterVec
 	aiToolUses             *prometheus.CounterVec
 	aiRouteCalls           *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
 	aiLogExports           *prometheus.CounterVec
+	aiQualityFlags         *prometheus.CounterVec
+	aiFeedback             *prometheus.CounterVec
+	aiOnlineEvaluations    *prometheus.CounterVec
+	aiQualityAlerts        *prometheus.CounterVec
 	aiResponseChecks       *prometheus.CounterVec
 	aiRealtimeSessions     *prometheus.CounterVec
 	aiPromptPrefixShared   *prometheus.CounterVec
@@ -164,6 +170,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_unmetered_calls_total",
 			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1432).",
 		}, []string{"integration_id"}),
+		aiAccessTokenLookups: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_access_token_lookups_total",
+			Help: "Public listener access-token lookups by result: found, unknown, busy or error (ADR 20261027132936).",
+		}, []string{"result"}),
+		aiUnpriced: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_unpriced_calls_total",
+			Help: "Settled AI calls that cost zero because their model has no price, by integration (ADR 20261027132936).",
+		}, []string{"integration_id"}),
 		aiToolUses: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_tool_uses_total",
 			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1433).",
@@ -204,6 +218,22 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_log_exports_total",
 			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
 		}, []string{"integration_id"}),
+		aiQualityFlags: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_quality_flags_total",
+			Help: "Settled AI calls by integration and quality flag: truncated, refused, empty, invalid_json or tool_error (ADR 20261021171712).",
+		}, []string{"integration_id", "flag"}),
+		aiFeedback: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_feedback_total",
+			Help: "Ratings apps stored for their AI calls, by integration and rating (ADR 20261021171712).",
+		}, []string{"integration_id", "rating"}),
+		aiOnlineEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_online_evaluations_total",
+			Help: "Online evaluations by result: scored or judge_error (ADR 20261021171712).",
+		}, []string{"result"}),
+		aiQualityAlerts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_quality_alerts_total",
+			Help: "AI quality drift alerts recorded, by metric (ADR 20261021171712).",
+		}, []string{"metric"}),
 		aiRealtimeSessions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_realtime_sessions_total",
 			Help: "AI realtime sessions by event: opened, unmetered, and closed by the client, the provider, a cap, the duration bound, unreadable usage or an error (ADR 20261019072722).",
@@ -254,12 +284,18 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiEvaluations,
 		m.aiBatches,
 		m.aiUnmetered,
+		m.aiUnpriced,
+		m.aiAccessTokenLookups,
 		m.aiToolUses,
 		m.aiRouteCalls,
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
 		m.aiModeration,
 		m.aiLogExports,
+		m.aiQualityFlags,
+		m.aiFeedback,
+		m.aiOnlineEvaluations,
+		m.aiQualityAlerts,
 		m.aiResponseChecks,
 		m.aiResponseFindings,
 		m.aiPromptCacheMarks,
@@ -420,6 +456,24 @@ func (m *Metrics) ObserveAIEvaluation(result string) {
 	m.aiEvaluations.WithLabelValues(result).Inc()
 }
 
+// ObserveAIAccessTokenLookup counts one public listener token lookup by
+// result (ADR 20261027132936).
+func (m *Metrics) ObserveAIAccessTokenLookup(result string) {
+	if m == nil || m.aiAccessTokenLookups == nil {
+		return
+	}
+	m.aiAccessTokenLookups.WithLabelValues(result).Inc()
+}
+
+// ObserveAIUnpriced counts one settled call that cost zero because its
+// model has no price (ADR 20261027132936).
+func (m *Metrics) ObserveAIUnpriced(integrationID string) {
+	if m == nil || m.aiUnpriced == nil {
+		return
+	}
+	m.aiUnpriced.WithLabelValues(integrationID).Inc()
+}
+
 // ObserveAIUnmetered counts one write let through unmetered.
 func (m *Metrics) ObserveAIUnmetered(integrationID string) {
 	if m == nil || m.aiUnmetered == nil {
@@ -547,6 +601,45 @@ func (m *Metrics) ObserveAILogExport(integrationID string) {
 		return
 	}
 	m.aiLogExports.WithLabelValues(integrationID).Inc()
+}
+
+// ObserveAIQualityFlag counts one settled call's quality flag
+// (ADR 20261021171712).
+func (m *Metrics) ObserveAIQualityFlag(integrationID, flag string) {
+	if m == nil || m.aiQualityFlags == nil {
+		return
+	}
+	m.aiQualityFlags.WithLabelValues(integrationID, flag).Inc()
+}
+
+// ObserveAIFeedback counts one stored rating (ADR 20261021171712).
+func (m *Metrics) ObserveAIFeedback(integrationID, rating string) {
+	if m == nil || m.aiFeedback == nil {
+		return
+	}
+	m.aiFeedback.WithLabelValues(integrationID, rating).Inc()
+}
+
+// ObserveAIOnlineEvaluation counts one finished online evaluation; a zero
+// score is a judge error (ADR 20261021171712).
+func (m *Metrics) ObserveAIOnlineEvaluation(score int) {
+	if m == nil || m.aiOnlineEvaluations == nil {
+		return
+	}
+	result := "scored"
+	if score == 0 {
+		result = "judge_error"
+	}
+	m.aiOnlineEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIQualityAlert counts one recorded drift alert
+// (ADR 20261021171712).
+func (m *Metrics) ObserveAIQualityAlert(metric string) {
+	if m == nil || m.aiQualityAlerts == nil {
+		return
+	}
+	m.aiQualityAlerts.WithLabelValues(metric).Inc()
 }
 
 func (m *Metrics) ObserveAIRouteFallback(reason string) {

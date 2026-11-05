@@ -51,7 +51,7 @@ helper's state schema is version 1; application schema migrations, session expir
 and tombstone reclamation are not provided in this first contract.
 
 ```js
-import {durableSessionFrame} from '@gregale/sdk-node/durable-entities/session';
+import {durableSessionFrame} from '@gregale/sdk-node/preview/durable-entities/session';
 const open = durableSessionFrame({kind:'open',session_id:'11111111-1111-4111-8111-111111111111'});
 const message = durableSessionFrame({kind:'message',session_id:open.payload.session_id,sequence:1,payload:2});
 // Persist JSON.stringify(message) privately before sending it, then send those

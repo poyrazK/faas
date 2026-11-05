@@ -41,17 +41,15 @@ var BuildCSPForTest = buildCSP
 var MintNonceForTest = mintNonce
 
 // cspScriptHosts is the additional script-src host set beyond 'self'
-// and the per-request nonce. The dashboard keeps the small htmx
-// dependency on unpkg.com for now, but every external script tag is
-// pinned with a sha384 SRI digest and crossorigin="anonymous" in
-// pkg/dashboard/templates. The dashboard package test walks every
-// embedded template and rejects an unpinned external script.
-var cspScriptHosts = []string{"https://unpkg.com"}
+// and the per-request nonce. It is empty: htmx and Swagger UI are vendored
+// and served by apid (pkg/dashboard/assets, pkg/apid/docsassets), so an
+// HTML injection cannot load a script from a public package CDN. Those tags
+// still carry their sha384 SRI digest, which the package tests recompute.
+var cspScriptHosts []string
 
-// cspStyleHosts permits the SRI-pinned Swagger UI stylesheet on /docs.
-// Dashboard styles remain nonce-protected; this is only an additional host
-// source for the external documentation stylesheet.
-var cspStyleHosts = []string{"https://unpkg.com"}
+// cspStyleHosts is the additional style-src host set; empty for the same
+// reason (the API reference stylesheet is vendored too).
+var cspStyleHosts []string
 
 // cspFormActionHosts is the form-action host list. Today no client-
 // side Stripe.js is loaded (verified by grep), but the policy
@@ -68,7 +66,7 @@ var cspFormActionHosts = []string{
 // per-page nonce value, which defeats the purpose. CSP3 source-list
 // grammar, https://www.w3.org/TR/CSP3/#match-url-to-source-list.
 //
-// Host sources (https://unpkg.com, https://*.stripe.com) are
+// Host sources (https://*.stripe.com) are
 // unquoted — only keywords like 'self' / 'nonce-…' / 'unsafe-inline'
 // take quotes. The `default-src 'self'` covers anything not
 // enumerated below (frame-src, font-src, media-src, object-src,

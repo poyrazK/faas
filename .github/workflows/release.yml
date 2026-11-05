@@ -6,9 +6,9 @@
 # .github/actions/deploy/bin/gregale.gz (GitHub refuses files over 100 MB;
 # the Action unpacks it, see .github/actions/deploy/src/cli.sh),
 # updates src/version.txt, generates SHA256SUMS, commits everything back
-# to a release branch, force-updates the MAJOR moving tag so customers
-# pinned at @vN always resolve to the latest vendored binary, and
-# creates a GitHub Release via softprops/action-gh-release. Assets are then
+# to a release branch, moves the MAJOR moving tag forward for a stable tag
+# so customers pinned at @vN resolve to the newest stable vendored binary,
+# and creates a GitHub Release via softprops/action-gh-release. Assets are then
 # uploaded one at a time with digest verification so a slow canonical bundle
 # cannot strand concurrent uploads or delete already-verified retry state.
 #
@@ -19,11 +19,13 @@
 # independent builds run concurrently; the final publication job waits for
 # both so a failed CLI build cannot leave a canonical bundle attached alone.
 #
-# Tag strategy: every release commits to a `release/v<tag>` branch AND
-# force-updates the MAJOR moving tag (vN from vN.M.P) so that
+# Tag strategy: every release commits to a `release/v<tag>` branch. A stable
+# tag (no "-") also moves the MAJOR moving tag (vN from vN.M.P), only forward
+# by semver precedence (scripts/ci/advance-action-major-tag.sh), so that
 # `uses: poyrazK/faas/.github/actions/deploy@v0` consumers resolve to the
-# latest vendored binary. CLI-generated workflows use the immutable SHA of
-# the latest published v0 target resolved once for every CLI platform build.
+# newest stable vendored binary; prereleases and re-runs of older tags leave
+# it alone. CLI-generated workflows use the immutable SHA of the published
+# v0 target resolved once for every CLI platform build.
 # Without the moving-tag step, customers pinned at @v0 would resolve to the
 # pre-workflow commit that has no bin/gregale, and `run.sh` would exit 1 with
 # "vendored binary not found" on day one.
@@ -39,6 +41,7 @@ permissions:
   id-token: write
   actions: read
   packages: read
+  attestations: write # SLSA build provenance (issue #295)
 
 jobs:
   # No full-CI gate (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
@@ -52,7 +55,7 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: resolve
         name: Resolve current v0 commit
         run: |
@@ -76,9 +79,9 @@ jobs:
           - goos: darwin
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -86,7 +89,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -100,6 +103,7 @@ jobs:
       - name: Build and archive target
         env:
           VERSION: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}
@@ -109,16 +113,22 @@ jobs:
           archive="/tmp/gregale-build/archives/gregale_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz"
           mkdir -p "$stage" "$(dirname "$archive")"
           action_sha="${ACTION_SHA:?missing resolved deploy Action pin}"
+          # `gregale version --json` reports git_sha and build_time, stamped
+          # like the Makefile stamps GitSHA. The build time is the commit's,
+          # not the runner clock's, so the archives stay reproducible.
+          commit_time="$(git log -1 --format=%ct)"
+          build_time="$(date -u -d "@${commit_time}" +%Y-%m-%dT%H:%M:%SZ)"
+          wire=github.com/onebox-faas/faas/pkg/wire
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION} -X main.githubActionDefaultSHA=${action_sha}" \
+            -ldflags "-s -w -X ${wire}.Version=${VERSION} -X ${wire}.GitSHA=${GIT_SHA} -X ${wire}.BuildTime=${build_time} -X main.githubActionDefaultSHA=${action_sha}" \
             -o "$stage/gregale" ./cmd/gregale
           bash scripts/archive-cli-binary.sh \
             --binary "$stage/gregale" \
             --output "$archive" \
-            --mtime "@$(git log -1 --format=%ct)"
+            --mtime "@${commit_time}"
 
       - name: Upload target
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-cli-target-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.sha }}
           path: /tmp/gregale-build/
@@ -129,7 +139,7 @@ jobs:
     needs: [cli-targets]
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The fan-in job only creates the release branch and moving tag.
           # One commit is enough; target builds already captured the source
@@ -189,11 +199,48 @@ jobs:
           sha256sum gregale gregale-darwin-arm64 gregale_*.tar.gz > CLI-SHA256SUMS
           cat CLI-SHA256SUMS
 
+      # SLSA build provenance (issue #295): a signed statement of the
+      # workflow, commit and inputs that produced each CLI archive, kept in
+      # the repository's attestations; verify with
+      # `gh attestation verify <archive> -R poyrazK/faas`.
+      - name: Attest CLI build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
+
+      # Issue #295: one SPDX SBOM over the binaries of every CLI archive,
+      # attested to each archive; verify with `gh attestation verify <archive>
+      # -R poyrazK/faas --predicate-type https://spdx.dev/Document/v2.3`.
+      - name: Install pinned Syft
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate CLI SBOM
+        run: |
+          set -euo pipefail
+          # One directory per archive, so the SBOM records which archive's
+          # binary each package was found in.
+          for archive in /tmp/gregale-build/gregale_*.tar.gz; do
+            dir="$RUNNER_TEMP/cli-sbom/$(basename "$archive" .tar.gz)"
+            mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+          done
+          "$RUNNER_TEMP/syft" scan "dir:$RUNNER_TEMP/cli-sbom" -q \
+            -o "spdx-json=$RUNNER_TEMP/cli.spdx.json"
+
+      - name: Attest CLI SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
+          sbom-path: ${{ runner.temp }}/cli.spdx.json
+
       # Handed to publish-npm, which stages the five npm packages from
       # these exact archives rather than rebuilding the CLI. One build per
       # release, consumed by every channel.
       - name: Upload CLI archives for the npm channel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-cli-archives-${{ github.sha }}
           path: /tmp/gregale-build/archives/
@@ -282,24 +329,16 @@ jobs:
           git commit -m "release: bundle gregale ${TAG}"
           git push -u origin "$BRANCH"
 
-      - name: Force-update MAJOR moving tag (vN -> vN.M.P)
+      # Customers deploy with `uses: poyrazK/faas/.github/actions/deploy@vN`,
+      # so the moving major tag names the newest STABLE release: a
+      # prerelease (rc tags ship about twice a day) leaves it alone, and a
+      # re-run of an older tag cannot move it backwards. This checkout is the
+      # release branch HEAD containing the vendored binary; the script points
+      # vN at that commit, not at the source tag that triggered this workflow.
+      - name: Move MAJOR moving tag forward for a stable release (vN -> vN.M.P)
         env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          # Extract the MAJOR version (the "vN" from "vN.M.P") so
-          # customers pinned at @vN always resolve to the latest
-          # vendored binary. Local-only: never push the moving tag
-          # to the release branch (it stays on the SHA we just
-          # committed). The `git push --force` updates the moving
-          # tag in refs/tags/vN to point at this commit, so
-          # `uses: .../deploy@vN` resolves to the vendored binary.
-          MAJOR="$(echo "$TAG" | cut -d. -f1)"
-          # This checkout is now the release branch HEAD containing the
-          # vendored binary. Point the moving major tag at that commit, not
-          # at the original source tag that triggered this workflow.
-          git tag -f "$MAJOR" HEAD
-          git push origin "refs/tags/${MAJOR}" --force
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/ci/advance-action-major-tag.sh
 
       - name: Verify generated immutable Action ref through GitHub Contents API
         env:
@@ -321,10 +360,23 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
-          # The pinned ref is the previous release's commit (it may still
-          # vendor the bare bin/gregale); the moving major tag must expose
-          # this release's compressed CLI for direct Action users.
+          # The pinned ref is the commit the moving tag named when this
+          # release started (it may still vendor the bare bin/gregale); the
+          # moving major tag, moved above only for a newer stable release,
+          # must expose a compressed CLI for direct Action users.
           bash scripts/ci/verify-action-ref-contents.sh "$ACTION_SHA" "$MAJOR"
+
+      # Rendered by a shell step: action-gh-release's `body` input is never
+      # shell-expanded, so a `$(cat CLI-SHA256SUMS)` written there reached
+      # the release page as literal text instead of the checksums.
+      - name: Render release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci/render-release-notes.sh "$TAG" /tmp/gregale-build/CLI-SHA256SUMS \
+            > "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -333,62 +385,7 @@ jobs:
           # presented as stable releases. Keep the tag convention and the
           # GitHub release classification in lockstep.
           prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            ## Gregale ${{ github.ref_name }}
-
-            Bundled CLI: **gregale ${{ github.ref_name }}**
-            Compatible server API: see `poyrazK/faas` release notes for ${{ github.ref_name }}.
-
-            ### Install the CLI
-
-            ```sh
-            curl -fsSL https://get.gregale.dev | sh
-            ```
-
-            The npm package is available after the `publish-npm` release job
-            succeeds. See `docs/cli-install.md` for its current status.
-
-            Pin this exact release:
-
-            ```sh
-            curl -fsSL https://get.gregale.dev | sh -s -- --version ${{ github.ref_name }}
-            ```
-
-            macOS and Linux, amd64 and arm64. Windows is not supported yet
-            (ADR-172).
-
-            ### Checksums
-
-            ```
-            $(cat /tmp/gregale-build/CLI-SHA256SUMS)
-            ```
-
-            ### Verify
-
-            ```sh
-            sha256sum -c CLI-SHA256SUMS
-            ```
-
-            ### Pin
-
-            Workflows generated by the Gregale CLI use an immutable Action SHA
-            by default. Pass `--pin-action` to resolve the current `v0` tag at
-            setup time.
-
-            To follow the latest public-beta Action directly, use its moving tag:
-
-            ```yaml
-            - uses: poyrazK/faas/.github/actions/deploy@v0
-              with:
-                app: my-app
-            ```
-
-            For a direct Action reference with hard reproducibility, pin its
-            40-character release commit SHA:
-
-            ```yaml
-            - uses: poyrazK/faas/.github/actions/deploy@<40-character-commit-sha>
-            ```
+          body_path: ${{ runner.temp }}/release-notes.md
 
       # softprops uploads every configured file concurrently. A transient
       # failure while publishing rc.173 left one request hung for twenty
@@ -423,13 +420,37 @@ jobs:
           done < <(printf '%s\n' "$CLI_RELEASE_ASSETS")
           scripts/ci/upload-release-assets.sh "${assets[@]}"
 
+  # ADR-20261025092617: the curl installer's version pointers. Moves
+  # CLI-LATEST (and CLI-STABLE for a stable tag) on the cli-channel release
+  # once this tag's CLI assets are attached, only forward. The installer
+  # reads them through releases/download, which GitHub does not count
+  # against the anonymous API limit. A separate job, so a failure here cannot
+  # hold up publish-npm; the pointers then stay on the previous release,
+  # which still installs and verifies. A stable tag also waits for
+  # publish-npm: when npm fails, neither channel promotes the release, so the
+  # curl installer's stable pointer and npm's `latest` cannot drift apart
+  # (CLI audit 2026-10-31). A prerelease moves CLI-LATEST either way.
+  advance-cli-channel:
+    name: Advance the curl installer channel
+    needs: [build, publish-npm]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (contains(github.ref_name, '-') || needs.publish-npm.result == 'success') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    concurrency:
+      group: gregale-cli-channel
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Move CLI-LATEST, and CLI-STABLE for a stable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/ci/advance-cli-channel.sh
+
   # ADR-172: the npm channel. Consumes the archives built above rather than
   # rebuilding the CLI, so npm and the curl installer can never ship
   # different bytes for the same tag.
-  #
-  # The curl installer has no counterpart job on purpose — it resolves the
-  # release from the GitHub API at run time, so attaching the assets above
-  # is the entire publish step for that channel.
   publish-npm:
     name: Publish the npm channel
     needs: [build]
@@ -439,9 +460,9 @@ jobs:
       group: gregale-npm-publish
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -503,9 +524,9 @@ jobs:
       group: gregale-npm-publish-data-sdk
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -552,11 +573,11 @@ jobs:
     # for that hand-off plus bundle creation and signing.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -564,7 +585,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -836,6 +857,59 @@ jobs:
           echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
           echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
 
+      # Issue #295: every platform image this release pins must carry the
+      # provenance images.yml attests on main (#5835): signed for this
+      # repository by images.yml, from refs/heads/main, on a GitHub-hosted
+      # runner. Both source commits above follow images.yml, so a release cut
+      # after #5835 pins only images built with that attestation. imaged
+      # verifies the same attestation again when it pulls a base.
+      - name: Verify platform image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/crane-config
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          refs=("ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            refs+=("$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          for ref in "${refs[@]}"; do
+            [[ "$ref" =~ ^ghcr\.io/poyrazk/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::pinned image $ref is not a ghcr.io/poyrazk digest reference" >&2
+              exit 1
+            }
+            if ! gh attestation verify "oci://${ref}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/images.yml" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners > /dev/null; then
+              echo "::error::$ref has no valid provenance attestation from images.yml on main" >&2
+              exit 1
+            fi
+            echo "provenance verified: $ref"
+          done
+
+      # ADR-20261029155852: imaged verifies base provenance offline against a
+      # Sigstore root shipped in this signed release. Attestations of this
+      # public repository are signed by public-good Sigstore, so keep only
+      # that root (gh fetches it through Sigstore's TUF repository).
+      - name: Fetch the Sigstore trusted root for imaged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SIGSTORE_TRUSTED_ROOT_FILE")"
+          gh attestation trusted-root > "$RUNNER_TEMP/sigstore/trusted-roots.jsonl"
+          jq -c 'select(any(.certificateAuthorities[]?; .uri == "https://fulcio.sigstore.dev"))' \
+            "$RUNNER_TEMP/sigstore/trusted-roots.jsonl" > "$SIGSTORE_TRUSTED_ROOT_FILE"
+          [[ "$(wc -l < "$SIGSTORE_TRUSTED_ROOT_FILE")" -eq 1 ]] || {
+            echo "::error::gh attestation trusted-root did not return exactly one public-good Sigstore root" >&2
+            exit 1
+          }
+          jq -e '.tlogs | length > 0' "$SIGSTORE_TRUSTED_ROOT_FILE" > /dev/null
+
       - name: Reuse a prior signed Firecracker kernel
         id: reuse_kernel
         env:
@@ -888,6 +962,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
         run: |
           set -euo pipefail
           MANIFEST_FILE="$OUT_DIR/production-manifest.yaml"
@@ -905,6 +980,27 @@ jobs:
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
 
+      # ADR-20261029155852: run the imaged this release ships, with its own
+      # trusted root and the pinned cosign, on every digest the release pins.
+      # A release cannot ship a root, bundle location or policy its own imaged
+      # would reject. No --legacy: every pin must verify.
+      - name: Verify pinned bases with the release's imaged
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/base-provenance"
+          mkdir -p "$work"
+          tar -xzf "$OUT_DIR/release.tar.gz" -C "$work" imaged sigstore-trusted-root.json
+          args=(--ref "ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            args+=(--ref "$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          "$work/imaged" verify-base-provenance \
+            --cosign "$RUNNER_TEMP/release-tools/cosign" \
+            --trusted-root "$work/sigstore-trusted-root.json" \
+            "${args[@]}"
+
       - name: Sign canonical tarball with GitHub OIDC
         env:
           OUT_DIR: ${{ runner.temp }}/gregale-release
@@ -920,8 +1016,47 @@ jobs:
             "$OUT_DIR/release.tar.gz"
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
+      # ADR-20261030140000: cd-controlplane's two controller tools ride the
+      # release, signed like release.tar.gz, as the unit lane's do (ADR-1650).
+      # The deploy job used to compile them on the fleet runner, which on
+      # production-us is the saturated 2-vCPU control plane (8.5-12 min a
+      # release). They stay out of release.tar.gz: older hosts' releaseinstall
+      # refuses a tool_hashes entry it does not know.
+      - name: Build and sign controller tools
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/controller-tools"
+          rm -rf -- "$tools"
+          mkdir -p "$tools"
+          # The flags cd-controlplane built them with, version included.
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+            -o "$tools/" ./cmd/deployctl ./cmd/migrate
+          tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@$(git log -1 --format=%ct)" \
+            --file "$OUT_DIR/controller-tools.tar.gz" -C "$tools" deployctl migrate
+          cosign sign-blob --yes \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            "$OUT_DIR/controller-tools.tar.gz"
+          cosign verify-blob \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            --certificate-identity-regexp '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$OUT_DIR/controller-tools.tar.gz"
+
+      # SLSA build provenance (issue #295) for the daemon bundle, beside the
+      # cosign signature hosts already verify; verify with
+      # `gh attestation verify release.tar.gz -R poyrazK/faas`.
+      - name: Attest daemon bundle build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/gregale-release/release.tar.gz
+
       - name: Upload canonical release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
@@ -935,7 +1070,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out release upload helper
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -957,6 +1092,8 @@ jobs:
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
             ${{ runner.temp }}/gregale-release/runtime-bases.env
             ${{ runner.temp }}/gregale-release/SHA256SUMS
+            ${{ runner.temp }}/gregale-release/controller-tools.tar.gz
+            ${{ runner.temp }}/gregale-release/controller-tools.cosign.bundle
         run: |
           set -euo pipefail
           mapfile -t assets < <(printf '%s\n' "$CANONICAL_RELEASE_ASSETS" | sed '/^[[:space:]]*$/d')

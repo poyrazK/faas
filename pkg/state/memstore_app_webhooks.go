@@ -13,6 +13,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sort"
@@ -50,7 +51,7 @@ func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
 	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
 	now := time.Now().UTC()
 	for _, hook := range m.appWebhooks {
-		if !releaseWebhookMatchesSource(hook, app, event) {
+		if !releaseWebhookMatchesSource(hook, app, event) || hook.Scope == AppWebhookScopeAccount && !m.accountMaySeeOrgLocked(hook.AccountID, app.OrgID) {
 			continue
 		}
 		id := newID()
@@ -115,7 +116,7 @@ func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment)
 	}
 	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
 	for _, hook := range m.appWebhooks {
-		if !releaseWebhookMatchesSource(hook, app, event) {
+		if !releaseWebhookMatchesSource(hook, app, event) || hook.Scope == AppWebhookScopeAccount && !m.accountMaySeeOrgLocked(hook.AccountID, app.OrgID) {
 			continue
 		}
 		id := newID()
@@ -192,6 +193,22 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 	return in, nil
 }
 
+// appWebhookQuotaCountLocked mirrors appWebhookQuotaCountSQL: the webhooks
+// that share subject's per-account allowance.
+func (m *MemStore) appWebhookQuotaCountLocked(subject string) int {
+	count := 0
+	for _, w := range m.appWebhooks {
+		if w.Scope == AppWebhookScopeAccount || w.Scope == AppWebhookScopePlatformTenant {
+			if w.AccountID == subject {
+				count++
+			}
+		} else if w.AppID != "" && m.countsTowardQuotaSubjectLocked(w.AccountID, w.AppID, subject) {
+			count++
+		}
+	}
+	return count
+}
+
 // CreateAppWebhookIfUnderQuota enforces the per-app + per-account
 // caps with the same TOCTOU-defence shape as CreateCronIfUnderQuota:
 // MemStore is single-process so a single critical section (m.mu)
@@ -229,19 +246,7 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 			Observed: appCount,
 		}
 	}
-	accountCount := 0
-	for _, w := range m.appWebhooks {
-		if w.AccountID != in.AccountID {
-			continue
-		}
-		if w.Scope == AppWebhookScopeAccount || w.Scope == AppWebhookScopePlatformTenant {
-			accountCount++
-			continue
-		}
-		if a, ok := m.apps[w.AppID]; ok && a.Status != AppDeleted {
-			accountCount++
-		}
-	}
+	accountCount := m.appWebhookQuotaCountLocked(m.appBillingSubjectLocked(app.AccountID, app.ID))
 	if accountCount >= limits.WebhookPerAccount {
 		return AppWebhook{}, &AppWebhookQuotaError{
 			Scope:    AppWebhookQuotaScopeAccount,
@@ -278,6 +283,22 @@ func (m *MemStore) AppWebhookByID(_ context.Context, id string) (AppWebhook, err
 		return AppWebhook{}, ErrNotFound
 	}
 	return w, nil
+}
+
+type appWebhookPreviousSecret struct {
+	sealed []byte
+	until  time.Time
+}
+
+// PreviousAppWebhookSecret mirrors the PgStore method.
+func (m *MemStore) PreviousAppWebhookSecret(_ context.Context, webhookID string, now time.Time) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prev, ok := m.appWebhookPreviousSecrets[webhookID]
+	if !ok || !prev.until.After(now) || len(prev.sealed) == 0 {
+		return nil, nil
+	}
+	return bytes.Clone(prev.sealed), nil
 }
 
 // UpdateAppWebhook mirrors UpdateAlertRule's nil-skip semantics.
@@ -330,6 +351,9 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	if p.WebhookSecretSealed != nil {
 		cp := make([]byte, len(*p.WebhookSecretSealed))
 		copy(cp, *p.WebhookSecretSealed)
+		if p.PreviousSecretUntil != nil && !bytes.Equal(w.SecretSealed, cp) {
+			m.appWebhookPreviousSecrets[id] = appWebhookPreviousSecret{sealed: w.SecretSealed, until: *p.PreviousSecretUntil}
+		}
 		w.SecretSealed = cp
 	}
 	w.UpdatedAt = time.Now()
@@ -348,6 +372,7 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	delete(m.appWebhookPreviousSecrets, id)
 	delete(m.realtimeChannelWebhookFilters, id)
 	delete(m.appWebhookReceiverCooldowns, id)
 	delete(m.appWebhookRecoveryProbes, id)
@@ -389,6 +414,20 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 	if _, ok := m.appWebhooks[in.WebhookID]; !ok {
 		return AppWebhookDelivery{}, ErrNotFound
 	}
+	if in.AdmissionMaxPending > 0 || in.AdmissionMaxBacklogBytes > 0 {
+		// Mirrors checkAppWebhookOutboxAdmissionTx; m.mu is the lock.
+		var pending, held int64
+		for _, d := range m.appWebhookDeliveries {
+			if d.AccountID == in.AccountID && (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) {
+				pending++
+				held += int64(len(d.Payload))
+			}
+		}
+		if err := appWebhookOutboxAdmission(in, pending, held); err != nil {
+			return AppWebhookDelivery{}, err
+		}
+		in.AdmissionMaxPending, in.AdmissionMaxBacklogBytes = 0, 0
+	}
 	if in.ID == "" {
 		in.ID = newID()
 	}
@@ -407,6 +446,22 @@ func (m *MemStore) RecordAppWebhookDelivery(_ context.Context, in AppWebhookDeli
 	return in, nil
 }
 
+// appWebhookDeliveryDeferredLocked mirrors the claim's gate
+// (ADR-20261101093517): a suspended, deleting or abuse-held account and an
+// app-scoped subscription of a deleted app keep their deliveries pending.
+// An account or app this store never saw is not deferred.
+func (m *MemStore) appWebhookDeliveryDeferredLocked(d AppWebhookDelivery) bool {
+	if acct, ok := m.accounts[d.AccountID]; ok && !acct.Active() {
+		return true
+	}
+	if hook, ok := m.appWebhooks[d.WebhookID]; ok && hook.AppID != "" {
+		if app, ok := m.apps[hook.AppID]; ok && app.Status == AppDeleted {
+			return true
+		}
+	}
+	return false
+}
+
 // ClaimDueAppWebhookDeliveries mirrors the PgStore's fair selection and
 // pending → in_flight transition. Expired in-flight leases are reclaimable.
 func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, now time.Time) ([]AppWebhookDelivery, error) {
@@ -416,6 +471,7 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 		return nil, nil
 	}
 	liveClaims := make(map[string]int)
+	liveAccounts := make(map[string]int)
 	for id, row := range m.appWebhookDeliveries {
 		m.suppressScenarioWebhookLocked(&row)
 		m.appWebhookDeliveries[id] = row
@@ -423,6 +479,7 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 	for _, d := range m.appWebhookDeliveries {
 		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
 			liveClaims[d.WebhookID]++
+			liveAccounts[d.AccountID]++
 		}
 	}
 	byAccount := make(map[string]map[string][]AppWebhookDelivery)
@@ -433,7 +490,9 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 		}
 		if (d.Status == AppWebhookDeliveryPending || d.Status == AppWebhookDeliveryInFlight) &&
 			!d.NextAttemptAt.After(now) && !m.appWebhookReceiverCooldowns[d.WebhookID].After(now) &&
-			liveClaims[d.WebhookID] < capacity {
+			liveClaims[d.WebhookID] < capacity &&
+			liveAccounts[d.AccountID] < api.AppWebhookMaxInFlightPerAccount &&
+			!m.appWebhookDeliveryDeferredLocked(d) {
 			if byAccount[d.AccountID] == nil {
 				byAccount[d.AccountID] = make(map[string][]AppWebhookDelivery)
 			}
@@ -502,6 +561,9 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 		progress := false
 		for _, accountID := range orderedAccounts {
 			queue := queues[accountID]
+			if liveAccounts[accountID] >= api.AppWebhookMaxInFlightPerAccount {
+				continue
+			}
 			for checked := 0; checked < len(queue.hooks); checked++ {
 				hookID := queue.hooks[queue.cursor]
 				queue.cursor = (queue.cursor + 1) % len(queue.hooks)
@@ -516,6 +578,7 @@ func (m *MemStore) ClaimDueAppWebhookDeliveries(_ context.Context, limit int, no
 				candidates = append(candidates, queue.rows[hookID][queue.positions[hookID]])
 				queue.positions[hookID]++
 				liveClaims[hookID]++
+				liveAccounts[accountID]++
 				progress = true
 				break
 			}
@@ -804,9 +867,11 @@ func (m *MemStore) AppWebhookFleetQueueHealth(_ context.Context, now time.Time) 
 	defer m.mu.Unlock()
 	var health AppWebhookFleetQueueHealth
 	liveClaims := make(map[string]int)
+	liveAccounts := make(map[string]int)
 	for _, d := range m.appWebhookDeliveries {
 		if d.Status == AppWebhookDeliveryInFlight && d.NextAttemptAt.After(now) {
 			liveClaims[d.WebhookID]++
+			liveAccounts[d.AccountID]++
 		}
 	}
 	for _, d := range m.appWebhookDeliveries {
@@ -816,11 +881,15 @@ func (m *MemStore) AppWebhookFleetQueueHealth(_ context.Context, now time.Time) 
 		if (d.Status != AppWebhookDeliveryPending && d.Status != AppWebhookDeliveryInFlight) || d.NextAttemptAt.After(now) {
 			continue
 		}
+		if m.appWebhookDeliveryDeferredLocked(d) {
+			continue
+		}
 		capacity := AppWebhookMaxInFlightPerSubscription
 		if _, recovering := m.appWebhookReceiverCooldowns[d.WebhookID]; recovering {
 			capacity = 1
 		}
-		if m.appWebhookReceiverCooldowns[d.WebhookID].After(now) || liveClaims[d.WebhookID] >= capacity {
+		if m.appWebhookReceiverCooldowns[d.WebhookID].After(now) || liveClaims[d.WebhookID] >= capacity ||
+			liveAccounts[d.AccountID] >= api.AppWebhookMaxInFlightPerAccount {
 			health.HeldDueCount++
 			if health.OldestHeldAt == nil || d.NextAttemptAt.Before(*health.OldestHeldAt) {
 				at := d.NextAttemptAt

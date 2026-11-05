@@ -11,8 +11,7 @@ import (
 )
 
 func (s *Service) PublishManagedRealtimeChannelBatch(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "atomic batch publishing preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "atomic batch publishing preview unavailable") {
 		return
 	}
 	ep, owner, ok := s.managedRealtimeEndpointAction(w, r, acct)
@@ -53,6 +52,9 @@ func (s *Service) PublishManagedRealtimeChannelBatch(w http.ResponseWriter, r *h
 			return
 		}
 		items[i] = state.ManagedRealtimeBatchItem{TTLSeconds: ttl, Metadata: msg.Metadata, Data: data, Binary: msg.Binary}
+	}
+	if !s.allowRealtimeWrites(w, acct, len(items)) {
+		return
 	}
 	store, ok := s.Host.Store().(state.ManagedRealtimeBatchStore)
 	if !ok {

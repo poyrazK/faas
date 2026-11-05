@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,11 +24,14 @@ type Scope struct {
 	store     Store
 	accountID string
 	apps      map[string]bool
-	orgs      map[string]state.Org
+	// slugs holds, per app slug, whether every app seen with that slug is
+	// personal. Release governance events name their app by slug.
+	slugs map[string]bool
+	orgs  map[string]state.Org
 }
 
 func WithScope(ctx context.Context, store Store, accountID string) (context.Context, *Scope) {
-	scope := &Scope{store: store, accountID: accountID, apps: make(map[string]bool), orgs: make(map[string]state.Org)}
+	scope := &Scope{store: store, accountID: accountID, apps: make(map[string]bool), slugs: make(map[string]bool), orgs: make(map[string]state.Org)}
 	return context.WithValue(ctx, key{}, scope), scope
 }
 
@@ -53,12 +58,21 @@ func (s *Scope) AppRow(ctx context.Context, app state.App) (bool, error) {
 		allowed = org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == s.accountID
 	}
 	s.apps[app.ID] = allowed
+	personalSlug, seen := s.slugs[app.Slug]
+	s.slugs[app.Slug] = allowed && (personalSlug || !seen)
 	return allowed, nil
 }
 
 func (s *Scope) App(ctx context.Context, id string) (bool, error) {
 	if allowed, ok := s.apps[id]; ok {
 		return allowed, nil
+	}
+	// App IDs are UUIDs. Postgres rejects any other string with a syntax
+	// error rather than "not found", and one such reference failed the whole
+	// export (Hunt 14 H14-120).
+	if !isUUID(id) {
+		s.apps[id] = false
+		return false, nil
 	}
 	app, err := s.store.AppByID(ctx, id)
 	if errors.Is(err, state.ErrNotFound) {
@@ -69,6 +83,10 @@ func (s *Scope) App(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 	return s.AppRow(ctx, app)
+}
+
+func isUUID(id string) bool {
+	return uuid.Validate(id) == nil
 }
 
 func (s *Scope) Audit(ctx context.Context, data json.RawMessage) (bool, error) {
@@ -108,11 +126,21 @@ func (s *Scope) Audit(ctx context.Context, data json.RawMessage) (bool, error) {
 			if err := json.Unmarshal(value, &id); err != nil {
 				return false, nil //nolint:nilerr // Exclude malformed resource references without failing the entire export.
 			}
-			if id != "" {
-				allowed, err := s.App(ctx, id)
-				if err != nil || !allowed {
-					return false, err
+			if id == "" {
+				continue
+			}
+			if name == "app" && !isUUID(id) {
+				// Release freeze and approval events record the app's slug.
+				// Only slugs of apps already scoped for this export resolve;
+				// a deleted or foreign app's slug proves no personal ownership.
+				if !s.slugs[id] {
+					return false, nil
 				}
+				continue
+			}
+			allowed, err := s.App(ctx, id)
+			if err != nil || !allowed {
+				return false, err
 			}
 		}
 	}

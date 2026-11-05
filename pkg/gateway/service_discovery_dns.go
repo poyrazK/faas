@@ -41,7 +41,39 @@ type ServiceDiscoveryDNSHandler struct {
 	onResolved    ResolvedEgressHook
 	serviceAddr   ServiceAddressLookup
 	scenarioChaos *serviceDiscoveryDNSChaos
+	database      databaseRoute
 	privateOnly   bool
+}
+
+// databaseRoute answers <database-id>.<suffix> with the platform database
+// route address (ADR-1027).
+type databaseRoute struct {
+	suffix string
+	addr   netip.Addr
+	ttl    uint32
+}
+
+// WithDatabaseRoute answers every <label>.<suffix> A query with addr, the
+// managed-database route the host DNATs to pgproxyd, and AAAA with nothing.
+// The answer grants nothing by itself: pgproxyd authenticates every session
+// before it wakes a database. Deeper names and the suffix itself are still
+// forwarded upstream.
+func (h *ServiceDiscoveryDNSHandler) WithDatabaseRoute(suffix string, addr netip.Addr, ttl time.Duration) (*ServiceDiscoveryDNSHandler, error) {
+	suffix = strings.Trim(strings.ToLower(strings.TrimSpace(suffix)), ".")
+	if suffix == "" || !addr.Is4() {
+		return nil, fmt.Errorf("service discovery DNS: invalid database route %q -> %s", suffix, addr)
+	}
+	for _, label := range strings.Split(suffix, ".") {
+		if !validServiceDNSLabel(label) {
+			return nil, fmt.Errorf("service discovery DNS: invalid database route suffix %q", suffix)
+		}
+	}
+	h.database = databaseRoute{suffix: suffix, addr: addr, ttl: uint32(ttl / time.Second)}
+	return h, nil
+}
+
+func (h *ServiceDiscoveryDNSHandler) databaseRouteName(name string) bool {
+	return h.database.suffix != "" && privateServiceName(name, h.database.suffix) != ""
 }
 
 // WithPrivateServiceNamesOnly configures the dedicated rehearsal listener.
@@ -104,8 +136,10 @@ func (h *ServiceDiscoveryDNSHandler) refuseBlocked(w dns.ResponseWriter, req *dn
 
 // ResolvedEgressHook is told the addresses an upstream answer gave a guest
 // before the resolver replies (ADR-373 DNS-gated egress). remoteAddr is the
-// query's source; ttl is the answer's smallest record TTL.
-type ResolvedEgressHook func(ctx context.Context, remoteAddr string, addrs []netip.Addr, ttl time.Duration) error
+// query's source; name is the question, lower-cased without the trailing dot
+// (ADR 20261026150000 matches it to bound databases); ttl is the answer's
+// smallest record TTL.
+type ResolvedEgressHook func(ctx context.Context, remoteAddr, name string, addrs []netip.Addr, ttl time.Duration) error
 
 // WithResolvedEgressHook installs the ADR-373 hook. A hook error is logged
 // and the answer is still returned; the guest's connection then fails
@@ -201,7 +235,7 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 			h.writeRcode(w, req, dns.RcodeRefused)
 			return
 		}
-		if serviceDiscoveryName(question.Name) != "" {
+		if serviceDiscoveryName(question.Name) != "" || h.databaseRouteName(question.Name) {
 			private = true
 			continue
 		}
@@ -263,6 +297,13 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	for _, question := range req.Question {
 		switch question.Qtype {
 		case dns.TypeA:
+			if h.databaseRouteName(question.Name) {
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: h.database.ttl},
+					A:   h.database.addr.AsSlice(),
+				})
+				continue
+			}
 			answer := h.bridgeIP
 			if service := serviceDiscoveryName(question.Name); service != "" && h.serviceAddr != nil && !contained {
 				if addr, ok := h.serviceAddr(responseCtx, remote, service); ok && addr.Is4() {
@@ -320,7 +361,11 @@ func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg)
 				if addr := w.RemoteAddr(); addr != nil {
 					remote = addr.String()
 				}
-				if hookErr := h.onResolved(ctx, remote, addrs, ttl); hookErr != nil {
+				name := ""
+				if len(req.Question) > 0 {
+					name = strings.TrimSuffix(strings.ToLower(req.Question[0].Name), ".")
+				}
+				if hookErr := h.onResolved(ctx, remote, name, addrs, ttl); hookErr != nil {
 					h.log.Warn("guest DNS answer not registered for egress", "remote", remote, "addresses", len(addrs), "err", hookErr)
 				}
 			}

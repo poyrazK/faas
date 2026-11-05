@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -24,7 +26,7 @@ func TestControlMultipartClient(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/buckets/bucket/multipart-uploads":
-			var in faas.CreateObjectMultipartUploadRequest
+			var in preview.CreateObjectMultipartUploadRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || in.Encryption == nil || in.Encryption.KeyID != ownedKey {
 				t.Error("owned encryption was not serialized")
 			}
@@ -35,7 +37,7 @@ func TestControlMultipartClient(t *testing.T) {
 			_, _ = io.WriteString(w, `{"items":[{"part_number":1,"etag":"part","size_bytes":3,"last_modified":"2026-10-04T00:00:00Z"}]}`)
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/buckets/bucket/multipart-uploads/session/complete":
-			var in faas.CompleteObjectMultipartUploadRequest
+			var in preview.CompleteObjectMultipartUploadRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || len(in.Parts) != 1 || in.Parts[0].ETag != "part" {
 				t.Error("completion parts were not serialized")
 			}
@@ -53,23 +55,23 @@ func TestControlMultipartClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	u, err := c.CreateObjectMultipartUpload(ctx, "demo", "bucket", faas.CreateObjectMultipartUploadRequest{Key: "file", SizeBytes: 3, Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: ownedKey}})
+	u, err := preview.Wrap(c).CreateObjectMultipartUpload(ctx, "demo", "bucket", preview.CreateObjectMultipartUploadRequest{Key: "file", SizeBytes: 3, Encryption: &preview.ObjectEncryption{Algorithm: "aws:kms", KeyID: ownedKey}})
 	if err != nil || u.Encryption == nil || u.Encryption.KeyID != ownedKey {
 		t.Fatal(u, err)
 	}
-	signed, err := c.SignObjectMultipartPart(ctx, "demo", "bucket", u.ID, 1, faas.ObjectMultipartPartSignRequest{})
+	signed, err := preview.Wrap(c).SignObjectMultipartPart(ctx, "demo", "bucket", u.ID, 1, preview.ObjectMultipartPartSignRequest{})
 	if err != nil || signed.Headers["Content-Length"] != "3" {
 		t.Fatal(signed, err)
 	}
-	parts, err := c.ListObjectMultipartParts(ctx, "demo", "bucket", u.ID, 0, 1)
+	parts, err := preview.Wrap(c).ListObjectMultipartParts(ctx, "demo", "bucket", u.ID, 0, 1)
 	if err != nil || len(parts.Items) != 1 {
 		t.Fatal(parts, err)
 	}
-	_, err = c.CompleteObjectMultipartUpload(ctx, "demo", "bucket", u.ID, faas.CompleteObjectMultipartUploadRequest{Parts: []faas.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: parts.Items[0].ETag}}})
+	_, err = preview.Wrap(c).CompleteObjectMultipartUpload(ctx, "demo", "bucket", u.ID, preview.CompleteObjectMultipartUploadRequest{Parts: []preview.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: parts.Items[0].ETag}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = c.AbortObjectMultipartUpload(ctx, "demo", "bucket", u.ID); err != nil {
+	if err = preview.Wrap(c).AbortObjectMultipartUpload(ctx, "demo", "bucket", u.ID); err != nil {
 		t.Fatal(err)
 	}
 	if requests.Load() != 5 {
@@ -90,7 +92,7 @@ func TestBucketCatalogTransferDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.ListObjectBuckets(context.Background(), "demo app")
+	got, err := preview.Wrap(c).ListObjectBuckets(context.Background(), "demo app")
 	if err != nil || got.MaxUploadBytes != 5<<40 || got.MaxSinglePutBytes != 512<<20 || got.MaxPartBytes != 512<<20 || got.TransferTimeoutSeconds != 7200 || got.UploadProfile != "direct" {
 		t.Fatalf("transfer discovery: %+v %v", got, err)
 	}
@@ -100,7 +102,7 @@ func TestBrandedSignedObjectRequest(t *testing.T) {
 	size := int64(3)
 	key := "arn:gregale:kms:us-east-1:11111111-1111-4111-8111-111111111111:key/22222222-2222-4222-8222-222222222222"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req faas.ObjectSignRequest
+		var req preview.ObjectSignRequest
 		if r.Method != "POST" || r.URL.EscapedPath() != "/v1/apps/demo%20app/buckets/bucket/signed-url" || r.Header.Get("Authorization") != "Bearer token" || json.NewDecoder(r.Body).Decode(&req) != nil || req.Encryption == nil || req.Encryption.KeyID != key || req.SizeBytes == nil || *req.SizeBytes != 3 {
 			t.Error("signed request contract")
 		}
@@ -112,7 +114,7 @@ func TestBrandedSignedObjectRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := c.SignBucketObject(context.Background(), "demo app", "bucket", faas.ObjectSignRequest{Method: "PUT", Key: "file", SizeBytes: &size, Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: key}})
+	out, err := preview.Wrap(c).SignBucketObject(context.Background(), "demo app", "bucket", preview.ObjectSignRequest{Method: "PUT", Key: "file", SizeBytes: &size, Encryption: &preview.ObjectEncryption{Algorithm: "aws:kms", KeyID: key}})
 	if err != nil || out.UploadID == "" || out.Headers["X-Amz-Server-Side-Encryption"] != "aws:kms" {
 		t.Fatal(out, err)
 	}
@@ -126,7 +128,7 @@ func TestSignedObjectIssuanceIsNotAutomaticallyRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.SignBucketObject(context.Background(), "demo", "bucket", faas.ObjectSignRequest{Method: "GET", Key: "file"})
+	_, err = preview.Wrap(c).SignBucketObject(context.Background(), "demo", "bucket", preview.ObjectSignRequest{Method: "GET", Key: "file"})
 	if err == nil || calls.Load() != 1 {
 		t.Fatal("URL issuer was automatically replayed", calls.Load(), err)
 	}

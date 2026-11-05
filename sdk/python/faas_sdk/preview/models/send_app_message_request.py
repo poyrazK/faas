@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from attrs import define as _attrs_define
+
+from ..models.send_app_message_request_data_content_type import (
+    SendAppMessageRequestDataContentType,
+    check_send_app_message_request_data_content_type,
+)
+from ..models.send_app_message_request_datacontenttype import (
+    SendAppMessageRequestDatacontenttype,
+    check_send_app_message_request_datacontenttype,
+)
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.invoke_work import InvokeWork
+    from ..models.retry_policy_dto import RetryPolicyDTO
+
+
+T = TypeVar("T", bound="SendAppMessageRequest")
+
+
+@_attrs_define
+class SendAppMessageRequest:
+    """A CloudEvents-compatible application-inbox message."""
+
+    type_: str
+    data: Any
+    """Any valid JSON value delivered inside the CloudEvents envelope."""
+    environment: str | Unset = UNSET
+    """Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the
+    default environment and legacy shared queues."""
+    id: str | Unset = UNSET
+    """Generated when omitted."""
+    source: str | Unset = "gregale.send"
+    time: datetime.datetime | Unset = UNSET
+    """Server time when omitted."""
+    datacontenttype: SendAppMessageRequestDatacontenttype | Unset = "application/json"
+    data_content_type: SendAppMessageRequestDataContentType | Unset = UNSET
+    flag_context: str | Unset = UNSET
+    """Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active
+    customer, and restores it on the queued request."""
+    queue_name: str | Unset = UNSET
+    retry_policy: RetryPolicyDTO | Unset = UNSET
+    """Wire shape for dispatch.RetryPolicy. max_attempts
+    is a requested total-attempt count; zero inherits the applicable
+    account plan and never means unlimited. Durable invocation
+    producers materialize the effective plan-capped value, and the
+    scheduler re-clamps it at dispatch time to account for later plan
+    downgrades.
+    """
+    work: InvokeWork | Unset = UNSET
+    """Named policy and typed application key for one durable invocation."""
+
+    def to_dict(self) -> dict[str, Any]:
+        type_ = self.type_
+
+        data = self.data
+
+        environment = self.environment
+
+        id = self.id
+
+        source = self.source
+
+        time: str | Unset = UNSET
+        if not isinstance(self.time, Unset):
+            time = self.time.isoformat()
+
+        datacontenttype: str | Unset = UNSET
+        if not isinstance(self.datacontenttype, Unset):
+            datacontenttype = self.datacontenttype
+
+        data_content_type: str | Unset = UNSET
+        if not isinstance(self.data_content_type, Unset):
+            data_content_type = self.data_content_type
+
+        flag_context = self.flag_context
+
+        queue_name = self.queue_name
+
+        retry_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry_policy, Unset):
+            retry_policy = self.retry_policy.to_dict()
+
+        work: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work, Unset):
+            work = self.work.to_dict()
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "type": type_,
+                "data": data,
+            }
+        )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if id is not UNSET:
+            field_dict["id"] = id
+        if source is not UNSET:
+            field_dict["source"] = source
+        if time is not UNSET:
+            field_dict["time"] = time
+        if datacontenttype is not UNSET:
+            field_dict["datacontenttype"] = datacontenttype
+        if data_content_type is not UNSET:
+            field_dict["data_content_type"] = data_content_type
+        if flag_context is not UNSET:
+            field_dict["flag_context"] = flag_context
+        if queue_name is not UNSET:
+            field_dict["queue_name"] = queue_name
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
+        if work is not UNSET:
+            field_dict["work"] = work
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.invoke_work import InvokeWork
+        from ..models.retry_policy_dto import RetryPolicyDTO
+
+        d = dict(src_dict)
+        type_ = d.pop("type")
+
+        data = d.pop("data")
+
+        environment = d.pop("environment", UNSET)
+
+        id = d.pop("id", UNSET)
+
+        source = d.pop("source", UNSET)
+
+        _time = d.pop("time", UNSET)
+        time: datetime.datetime | Unset
+        if isinstance(_time, Unset):
+            time = UNSET
+        else:
+            time = datetime.datetime.fromisoformat(_time)
+
+        _datacontenttype = d.pop("datacontenttype", UNSET)
+        datacontenttype: SendAppMessageRequestDatacontenttype | Unset
+        if isinstance(_datacontenttype, Unset):
+            datacontenttype = UNSET
+        else:
+            datacontenttype = check_send_app_message_request_datacontenttype(_datacontenttype)
+
+        _data_content_type = d.pop("data_content_type", UNSET)
+        data_content_type: SendAppMessageRequestDataContentType | Unset
+        if isinstance(_data_content_type, Unset):
+            data_content_type = UNSET
+        else:
+            data_content_type = check_send_app_message_request_data_content_type(_data_content_type)
+
+        flag_context = d.pop("flag_context", UNSET)
+
+        queue_name = d.pop("queue_name", UNSET)
+
+        _retry_policy = d.pop("retry_policy", UNSET)
+        retry_policy: RetryPolicyDTO | Unset
+        if isinstance(_retry_policy, Unset):
+            retry_policy = UNSET
+        else:
+            retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
+
+        _work = d.pop("work", UNSET)
+        work: InvokeWork | Unset
+        if isinstance(_work, Unset):
+            work = UNSET
+        else:
+            work = InvokeWork.from_dict(_work)
+
+        send_app_message_request = cls(
+            type_=type_,
+            data=data,
+            environment=environment,
+            id=id,
+            source=source,
+            time=time,
+            datacontenttype=datacontenttype,
+            data_content_type=data_content_type,
+            flag_context=flag_context,
+            queue_name=queue_name,
+            retry_policy=retry_policy,
+            work=work,
+        )
+
+        return send_app_message_request

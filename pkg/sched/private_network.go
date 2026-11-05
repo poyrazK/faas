@@ -128,7 +128,12 @@ func (a *PrivateNetworkPeeringRouteApplier) Apply(ctx context.Context, accountID
 	if a == nil || a.attachments == nil || a.routes == nil {
 		return errors.New("private network peering route applier is not configured")
 	}
-	attachments, err := a.attachments.ListAppPrivateNetworkAttachments(ctx, []string{api.PrivateNetworkAttachmentStatusReady}, 1000)
+	if api.PrivateNetworkFabricEnabled() {
+		if err := a.applyFabricPeerings(ctx, accountID, region, routes); err != nil {
+			return fmt.Errorf("apply private network L3 routing: %w", err)
+		}
+	}
+	attachments, err := state.ListScopedPrivateNetworkAttachments(ctx, a.attachments, state.PrivateNetworkAttachmentPage{AccountID: accountID, Region: region, Statuses: []string{api.PrivateNetworkAttachmentStatusReady}})
 	if err != nil {
 		return fmt.Errorf("list ready private network attachments: %w", err)
 	}
@@ -141,20 +146,30 @@ func (a *PrivateNetworkPeeringRouteApplier) Apply(ctx context.Context, accountID
 	}
 
 	var errs []error
-	for _, attachment := range attachments {
-		if attachment.AccountID != accountID || attachment.Region != region {
-			continue
-		}
-		effective := append([]netip.Prefix(nil), attachment.CIDRs...)
-		effective = append(effective, destinations[attachment.NetworkID]...)
-		effective = canonicalPrivateNetworkPrefixes(effective)
-		attachment.CIDRs = effective
-		if _, applyErr := a.routes.ApplyAttachmentWithReport(ctx, attachment); applyErr != nil {
-			err := fmt.Errorf("app %s: %w", attachment.AppID, applyErr)
-			errs = append(errs, err)
-			a.log.Warn("schedd: private network peering routes update failed", "account", accountID, "region", region, "app", attachment.AppID, "err", applyErr)
+	for _, selected := range attachments {
+		applyErr := state.WithPrivateNetworkScope(ctx, a.attachments, state.PrivateNetworkAttachmentScope(selected.AppID), func(ctx context.Context) error {
+			attachment, err := a.attachments.GetAppPrivateNetworkAttachment(ctx, accountID, selected.AppID)
+			if errors.Is(err, state.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if attachment.AccountID != accountID || attachment.Region != region || attachment.Status != api.PrivateNetworkAttachmentStatusReady {
+				return nil
+			}
+			attachment.CIDRs = canonicalPrivateNetworkPrefixes(append(append([]netip.Prefix(nil), attachment.CIDRs...), destinations[attachment.NetworkID]...))
+			authoritative := *a.routes
+			authoritative.peeringStore = nil
+			_, err = authoritative.ApplyAttachmentWithReport(ctx, attachment)
+			return err
+		})
+		if applyErr != nil {
+			errs = append(errs, fmt.Errorf("app %s: %w", selected.AppID, applyErr))
+			a.log.Warn("schedd: private network peering routes update failed", "account", accountID, "region", region, "app", selected.AppID, "err", applyErr)
 		}
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -215,7 +230,13 @@ func (a *PrivateNetworkRouteApplier) ApplyAttachmentWithReport(ctx context.Conte
 	}
 	if api.PrivateNetworkFabricEnabled() {
 		if fabric, ok := a.store.(state.PrivateNetworkStore); ok {
-			if _, err := fabric.GetPrivateNetwork(ctx, attachment.AccountID, attachment.NetworkID); err == nil {
+			if network, err := fabric.GetPrivateNetwork(ctx, attachment.AccountID, attachment.NetworkID); err == nil {
+				allowed, policyErr := privatenetwork.MergePolicyCIDRs(network.AllowedCIDRs, attachment.AllowedCIDRs, []netip.Prefix{network.CIDR})
+				if policyErr != nil {
+					return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network policy: %w", policyErr)
+				}
+				attachment.AllowedCIDRs = allowed
+				attachment.FirewallRules = clonePrivateNetworkFirewallRules(network.FirewallRules)
 				address, allocErr := fabric.AllocatePrivateNetworkAddress(ctx, attachment.AccountID, attachment.NetworkID, "app", attachment.AppID)
 				if allocErr != nil {
 					return privatenetwork.RouteApplyReport{}, fmt.Errorf("private network address: %w", allocErr)
@@ -237,12 +258,15 @@ func (a *PrivateNetworkRouteApplier) withReadyPeeringRoutes(ctx context.Context,
 	if !ok {
 		return state.AppPrivateNetworkAttachment{}, errors.New("private network peering route overlay requires private network state")
 	}
-	rows, err := a.peeringStore.ListPrivateNetworkPeeringsForReconcile(ctx, []string{api.PrivateNetworkPeeringStatusReady}, 1000)
+	rows, err := a.peeringStore.ListPrivateNetworkPeerings(ctx, attachment.AccountID, attachment.NetworkID)
 	if err != nil {
 		return state.AppPrivateNetworkAttachment{}, fmt.Errorf("list ready private network peerings: %w", err)
 	}
 	specs := make([]privatenetwork.PeeringSpec, 0, len(rows))
 	for _, row := range rows {
+		if row.Status != api.PrivateNetworkPeeringStatusReady {
+			continue
+		}
 		if row.AccountID != attachment.AccountID || row.Region != attachment.Region {
 			continue
 		}
@@ -277,7 +301,7 @@ func (a *PrivateNetworkRouteApplier) withReadyPeeringRoutes(ctx context.Context,
 }
 
 func (a *PrivateNetworkRouteApplier) applyWithReport(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, networkID string, address netip.Addr) (privatenetwork.RouteApplyReport, error) {
-	rows, err := a.store.ListInstancesForApp(ctx, appID)
+	rows, err := liveInstancesOf(ctx, a.store, appID)
 	if err != nil {
 		return privatenetwork.RouteApplyReport{}, err
 	}
@@ -707,10 +731,20 @@ func (s *PrivateNetworkAttachmentSubscriber) Handle(ctx context.Context, n db.No
 	if payload.Kind != "private_network_attachment" || payload.Status != "detached" {
 		return nil
 	}
-	if err := s.applier.Apply(ctx, payload.AppID, nil); err != nil {
-		return err
-	}
-	return nil
+	return state.WithPrivateNetworkScope(ctx, s.applier.store, state.PrivateNetworkAttachmentScope(payload.AppID), func(ctx context.Context) error {
+		reader, ok := s.applier.store.(state.PrivateNetworkAttachmentIntentReader)
+		if !ok {
+			return errors.New("private network attachment intent lookup unavailable")
+		}
+		current, err := reader.PrivateNetworkAttachmentByAppID(ctx, payload.AppID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+		if err == nil && current.Status == api.PrivateNetworkAttachmentStatusReady {
+			return nil
+		}
+		return s.applier.Apply(ctx, payload.AppID, nil)
+	})
 }
 
 func (s *PrivateNetworkAttachmentSubscriber) Run(ctx context.Context, ch <-chan db.Notification) error {

@@ -79,6 +79,12 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if problem != nil {
 		return rollbackProblemStatus(problem)
 	}
+	// Readiness may take minutes. Use serving history to distinguish a
+	// known-good rollback from a never-served release, then recheck current
+	// pause, freeze and approval controls immediately before routing.
+	if problem := s.supersededRollbackTargetProblem(ctx, app, target); problem != nil {
+		return rollbackProblemStatus(problem)
+	}
 	var updated api.RollbackOperation
 	problem, err = s.withBindingReleaseObservations(r, acct, app, observations, func(writeCtx context.Context) error {
 		var writeErr error

@@ -189,7 +189,7 @@ func TestAutomationsRunDiagnosisScopeAndGuidance(t *testing.T) {
 				t.Fatalf("printed rejected diagnostics: %s", output.String())
 			}
 			if mode == "success" || mode == "uppercase" {
-				if !strings.Contains(output.String(), "gregale workflows resume "+inspectorRunID+" --expected-resume-count 2") {
+				if !strings.Contains(output.String(), "gregale workflow resume "+inspectorRunID+" --expected-resume-count 2") {
 					t.Fatalf("missing guidance: %s", output.String())
 				}
 			}

@@ -1,0 +1,10 @@
+package preview
+
+import "github.com/poyrazK/faas/sdk/go/internal/api"
+
+type SetMCPReadinessPagerDutyAcknowledgementsRequest = api.SetMCPReadinessPagerDutyAcknowledgementsRequest
+type MCPReadinessPagerDutyAcknowledgementPolicy = api.MCPReadinessPagerDutyAcknowledgementPolicy
+type MCPReadinessPagerDutyAcknowledgementEvent = api.MCPReadinessPagerDutyAcknowledgementEvent
+type MCPReadinessPagerDutyAcknowledgementEvents = api.MCPReadinessPagerDutyAcknowledgementEvents
+
+type MCPReadinessPagerDutyAcknowledgementHold = api.MCPReadinessPagerDutyAcknowledgementHold

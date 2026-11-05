@@ -702,7 +702,7 @@ func TestDashboardPipelinesRequiresNamedCSRFAndScopesMetadata(t *testing.T) {
 
 func TestDashboardPipelinesConfiguresReadOnlyAppThroughExistingAppService(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: e.Acct().ID, Slug: "pipeline-api", Type: state.AppTypeApp, RequireAuthn: true})
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: e.Acct().ID, Slug: "pipeline-api", Type: state.AppTypeApp, RequireAuthn: true, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -712,6 +712,13 @@ func TestDashboardPipelinesConfiguresReadOnlyAppThroughExistingAppService(t *tes
 	configured, err := (*e.Store()).AppByID(t.Context(), app.ID)
 	if err != nil || configured.RequireAuthn || configured.PublicAuthMode != state.AppPublicAuthModeOpen || len(configured.EgressPorts) != 1 || configured.EgressPorts[0] != 5432 {
 		t.Fatalf("JWT app configuration was not applied: %+v %v", configured, err)
+	}
+	// Like the CLI's Data APIs, the runtime closes its SQL sessions before a snapshot.
+	if hook := configured.Manifest.BeforeCheckpoint; hook == nil || hook.Path != api.DataAPIBeforeCheckpointPath {
+		t.Fatalf("before-checkpoint hook = %+v", hook)
+	}
+	if hook := configured.Manifest.AfterRestore; hook == nil || hook.Path != api.DataAPIAfterRestorePath {
+		t.Fatalf("after-restore hook = %+v", hook)
 	}
 	foreign, err := (*e.Store()).CreateAccount(t.Context(), "foreign-pipeline-api@example.com", api.PlanPro)
 	if err != nil {

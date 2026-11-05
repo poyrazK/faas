@@ -6,6 +6,10 @@
  * Customer request to reserve a managed PostgreSQL database.
  */
 export type CreateManagedPostgresDatabaseRequest = {
+  /**
+   * Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name.
+   */
+  request_id?: string;
   name: string;
   region: string;
   postgres_major?: number;

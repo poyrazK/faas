@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -50,6 +51,10 @@ func TestGated(t *testing.T) {
 		{name: "completed a rollout", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.RolloutCompletedAt = &completed }},
 		{name: "serving release", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 100 }},
 		{name: "named scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "staging" }},
+		// The production environment's scope is the production lane, as for
+		// routing and release freezes: a release there waits like a default one.
+		{name: "production environment scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "production" }, want: true},
+		{name: "legacy empty scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "" }, want: true},
 		{name: "dark candidate", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 0; d.CanaryTotalSteps = 0 }, want: true},
 		{name: "worker app", policy: testPolicy(), app: state.App{ID: "app", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker}}},
 	} {
@@ -124,6 +129,31 @@ func TestStatusCountsEligibleApprovals(t *testing.T) {
 	}
 }
 
+// adr: 20261020085706 amendment 3 — a GitHub push has no recorded deployer,
+// so its author could approve it. Without self-approval it needs one more
+// approval, so someone other than its author approves it.
+func TestStatusAsksOneMoreApprovalWhenTheDeployerIsUnknown(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	pushed := candidate()
+	pushed.DeployedByUserID = ""
+	two := []state.ReleaseApproval{
+		{ApproverAccountID: "ana", Decision: state.ReleaseApprovalApprove, CreatedAt: t0},
+		{ApproverAccountID: "bo", Decision: state.ReleaseApprovalApprove, CreatedAt: t0},
+	}
+	now := t0.Add(150 * time.Minute)
+	if got := Status(testPolicy(), app, pushed, two, now); got.State != api.ReleaseApprovalStateWaiting || got.RequiredApprovals != 3 || got.Remaining() != 1 {
+		t.Fatalf("pushed release with two approvals = %+v, want waiting for a third", got)
+	}
+	selfAllowed := testPolicy()
+	selfAllowed.AllowSelfApproval = true
+	if got := Status(selfAllowed, app, pushed, two, now); got.State != api.ReleaseApprovalStateApproved || got.RequiredApprovals != 2 {
+		t.Fatalf("pushed release under self-approval = %+v, want approved by two", got)
+	}
+	if got := Status(testPolicy(), app, candidate(), two, now); got.State != api.ReleaseApprovalStateApproved || got.RequiredApprovals != 2 {
+		t.Fatalf("release with a known deployer = %+v, want approved by two", got)
+	}
+}
+
 func TestStatusBeforeTheWaitingStage(t *testing.T) {
 	policy := testPolicy()
 	policy.AfterStage = 2
@@ -178,6 +208,11 @@ func TestParkedNeedsCanary(t *testing.T) {
 	if !ParkedNeedsCanary(testPolicy(), app, parked) {
 		t.Fatal("a parked production release of an app with a policy needs a canary")
 	}
+	inProduction := parked
+	inProduction.Scope = "production"
+	if !ParkedNeedsCanary(testPolicy(), app, inProduction) {
+		t.Fatal("a parked release in the production environment's scope needs a canary too")
+	}
 	if ParkedNeedsCanary(nil, app, parked) {
 		t.Fatal("no policy, no requirement")
 	}
@@ -191,5 +226,127 @@ func TestParkedNeedsCanary(t *testing.T) {
 		if ParkedNeedsCanary(testPolicy(), app, d) {
 			t.Fatalf("%s needs no canary", name)
 		}
+	}
+}
+
+// releases is CanaryRequired's store: an app's policy and live deployments.
+type releases struct {
+	policy    bool
+	live      map[string]bool // scope → a live deployment
+	decisions []state.ReleaseApproval
+}
+
+func (r releases) ListReleaseApprovals(context.Context, string) ([]state.ReleaseApproval, error) {
+	return r.decisions, nil
+}
+
+func (r releases) ReleaseApprovalPolicy(context.Context, string) (state.ReleaseApprovalPolicy, error) {
+	if !r.policy {
+		return state.ReleaseApprovalPolicy{}, state.ErrNotFound
+	}
+	return *testPolicy(), nil
+}
+
+func (r releases) LiveDeploymentForScope(_ context.Context, _ string, scope string) (state.Deployment, error) {
+	if !r.live[scope] {
+		return state.Deployment{}, state.ErrNotFound
+	}
+	return state.Deployment{Scope: scope, Status: state.DeployLive}, nil
+}
+
+// A production release must wait in a canary whichever production scope it
+// names, and it is the app's first release only when no production scope has
+// one live.
+func TestCanaryRequired(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	serving := releases{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}
+	inProduction := releases{policy: true, live: map[string]bool{"production": true}}
+	for _, tc := range []struct {
+		name               string
+		store              releases
+		scope, environment string
+		want               bool
+	}{
+		{name: "default scope", store: serving, want: true},
+		{name: "production scope", store: serving, scope: "production", want: true},
+		{name: "production environment", store: serving, environment: "production", want: true},
+		{name: "production after production releases", store: inProduction, environment: "production", want: true},
+		{name: "default after production releases", store: inProduction, want: true},
+		{name: "named environment", store: serving, environment: "staging"},
+		{name: "named scope", store: serving, scope: "staging"},
+		{name: "first release", store: releases{policy: true}, scope: "production"},
+		{name: "no policy", store: releases{live: map[string]bool{api.DefaultEnvScope: true}}, scope: "production"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := CanaryRequired(context.Background(), tc.store, app, tc.scope, tc.environment)
+			if err != nil || got != tc.want {
+				t.Fatalf("CanaryRequired(%q, %q) = %v, %v; want %v", tc.scope, tc.environment, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// heldRelease is a production release reaching its release phase with a
+// release command (ADR-20261020085706 amendment 12).
+func heldRelease() state.Deployment {
+	return state.Deployment{ID: "dep", AppID: "app", Scope: api.DefaultEnvScope, Status: state.DeploySnapshotting,
+		ReleaseCommand: []string{"bin/migrate"}, CreatedAt: t0.Add(time.Hour), DeployedByUserID: "deployer"}
+}
+
+// A gated release waits for its approvals before its release command, from
+// its release phase for the policy's timeout. Releases that would not wait
+// in a canary run their command at once.
+func TestLoadReleaseCommandWait(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	serving := releases{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}
+	approve := func(who string) state.ReleaseApproval {
+		return state.ReleaseApproval{ApproverAccountID: who, Decision: state.ReleaseApprovalApprove, CreatedAt: t0.Add(2 * time.Hour)}
+	}
+	noCommand := heldRelease()
+	noCommand.ReleaseCommand = nil
+	staging := heldRelease()
+	staging.Scope = "staging"
+	live := heldRelease()
+	live.Status = state.DeployLive
+	held := heldRelease()
+	held.StageState = []byte(`{"current":"snapshot_prepare","current_started_at":"2026-10-20T11:00:00Z"}`)
+	for _, tc := range []struct {
+		name    string
+		store   releases
+		d       state.Deployment
+		now     time.Time
+		waits   bool
+		state   string
+		expires string
+	}{
+		{name: "waiting", store: serving, d: held, now: t0.Add(2 * time.Hour), waits: true,
+			state: api.ReleaseApprovalStateWaiting, expires: "2026-10-20T12:00:00Z"},
+		{name: "expired", store: serving, d: held, now: t0.Add(3 * time.Hour), waits: true,
+			state: api.ReleaseApprovalStateExpired, expires: "2026-10-20T12:00:00Z"},
+		{name: "approved", store: releases{policy: true, live: serving.live, decisions: []state.ReleaseApproval{approve("a"), approve("b")}},
+			d: held, now: t0.Add(3 * time.Hour), waits: true, state: api.ReleaseApprovalStateApproved},
+		{name: "rejected", store: releases{policy: true, live: serving.live, decisions: []state.ReleaseApproval{{ApproverAccountID: "a", Decision: state.ReleaseApprovalReject}}},
+			d: held, now: t0.Add(2 * time.Hour), waits: true, state: api.ReleaseApprovalStateRejected},
+		{name: "first release", store: releases{policy: true}, d: held, now: t0.Add(2 * time.Hour)},
+		{name: "no policy", store: releases{live: serving.live}, d: held, now: t0.Add(2 * time.Hour)},
+		{name: "no release command", store: serving, d: noCommand, now: t0.Add(2 * time.Hour)},
+		{name: "staging", store: serving, d: staging, now: t0.Add(2 * time.Hour)},
+		{name: "past its release phase", store: serving, d: live, now: t0.Add(2 * time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wait, err := LoadReleaseCommandWait(context.Background(), tc.store, app, tc.d, tc.now)
+			if err != nil || wait.Waits != tc.waits {
+				t.Fatalf("LoadReleaseCommandWait = %+v, %v; want waits=%v", wait, err, tc.waits)
+			}
+			if !tc.waits {
+				return
+			}
+			if wait.Status.State != tc.state || (tc.expires != "" && wait.Status.ExpiresAt != tc.expires) {
+				t.Fatalf("status = %s expires %q; want %s expires %q", wait.Status.State, wait.Status.ExpiresAt, tc.state, tc.expires)
+			}
+			if wait.Pending() != (tc.state == api.ReleaseApprovalStateWaiting) {
+				t.Fatalf("Pending() = %v for %s", wait.Pending(), tc.state)
+			}
+		})
 	}
 }

@@ -161,12 +161,27 @@ func (s *PgStore) FinishRollback(ctx context.Context, id string, o RollbackOutco
 		return RollbackRecord{}, false, fmt.Errorf("state: finish rollback begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var locked string
-	if err := tx.QueryRow(ctx, `select id::text from deployment_rollbacks where id = $1 and status = 'preparing' for update`, id).Scan(&locked); err != nil {
+	var targetID string
+	var requestedAt time.Time
+	if err := tx.QueryRow(ctx, `select target_deployment_id::text, requested_at from deployment_rollbacks where id = $1 and status = 'preparing' for update`, id).Scan(&targetID, &requestedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RollbackRecord{}, false, nil
 		}
 		return RollbackRecord{}, false, fmt.Errorf("state: lock rollback: %w", err)
+	}
+	if o.Status == RollbackStatusFailed {
+		// A rollback reported failed (for example rollback_timeout) must not
+		// cut over later: schedd's prime recovery would otherwise re-prime the
+		// still-prepared target and activate it after the customer was told it
+		// failed. Only this request's preparation is withdrawn; a newer
+		// prepare of the same target is left alone.
+		if _, err := tx.Exec(ctx, `update deployments
+			   set status = case when status = 'snapshotting' then 'superseded' else status end,
+			       rollback_prepared_at = null
+			 where id = $1 and rollback_prepared_at is not null and rollback_prepared_at <= $2
+			   and status <> 'live'`, targetID, requestedAt); err != nil {
+			return RollbackRecord{}, false, fmt.Errorf("state: withdraw failed rollback target: %w", err)
+		}
 	}
 	var auditID int64
 	if err := tx.QueryRow(ctx, `insert into deployment_audit
@@ -272,6 +287,18 @@ func (m *MemStore) FinishRollback(_ context.Context, id string, o RollbackOutcom
 	r, ok := m.rollbackRecords[id]
 	if !ok || r.Status != RollbackStatusPreparing {
 		return RollbackRecord{}, false, nil
+	}
+	if o.Status == RollbackStatusFailed {
+		// Mirrors PgStore: a failed rollback never cuts over later.
+		if preparedAt, prepared := m.rollbackPrepared[r.TargetDeploymentID]; prepared && !preparedAt.After(r.RequestedAt) {
+			if target, exists := m.deployments[r.TargetDeploymentID]; exists && target.Status != DeployLive {
+				if target.Status == DeploySnapshotting {
+					target.Status = DeploySuperseded
+					m.putDeploymentLocked(target.ID, target)
+				}
+				delete(m.rollbackPrepared, r.TargetDeploymentID)
+			}
+		}
 	}
 	auditID, err := m.appendDeploymentAuditLocked(o.Audit)
 	if err != nil {

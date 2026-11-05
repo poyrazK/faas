@@ -1,6 +1,6 @@
 # Bulk document edits
 
-Run `gregale data-api dev --port 0` here to generate the database contract and
+Run `gregale data-api serve --port 0` here to generate the database contract and
 verify document versioning and identity isolation. Install `@gregale/data` in
 your application and use the typed `bulkEditDocuments` workflow in `client.ts`.
 

@@ -22,7 +22,7 @@ import (
 //
 // The body mirrors run: the LISTEN is established before runWithDeps starts.
 func TestRun_StartupErrorExitsInsteadOfHanging(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t) // ADR-570 verifies its traffic tables before the egress ledger opens.
 	// A ledger directory under a regular file fails even for root.
 	notDir := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(notDir, nil, 0o600); err != nil {

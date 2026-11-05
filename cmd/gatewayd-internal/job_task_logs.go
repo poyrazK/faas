@@ -25,6 +25,7 @@ import (
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 const (
@@ -50,6 +51,9 @@ type JobTaskLogsHandler struct {
 	Targets jobTaskLogTargets
 	Nodes   appTaskAttachNodes
 	Log     *slog.Logger
+	// Traffic enrolls the stream under the account's security scope
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	Traffic *trafficrevocation.Registry
 	// Poll, Heartbeat and Backstop default to the constants above; tests
 	// shorten them.
 	Poll      time.Duration
@@ -90,9 +94,14 @@ func (h *JobTaskLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("could not load the task"))
 		return
 	}
+	ctx, release, ok := admitPlatformTraffic(r.Context(), w, r, h.Traffic, w.Header(), acct.ID, "")
+	if !ok {
+		return
+	}
+	defer release()
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	reason := h.follow(r.Context(), w, flusher, req, target)
+	reason := h.follow(ctx, w, flusher, req, target)
 	_, _ = fmt.Fprintf(w, "event: end\ndata: {\"reason\":%q}\n\n", reason)
 	if flusher != nil {
 		flusher.Flush()

@@ -69,7 +69,7 @@ func TestDeploymentOutcomeLostReplyExpiredRestart(t *testing.T) {
 					}))
 					t.Cleanup(backend.Close)
 					opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "submission"}
-					_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+					_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -113,7 +113,7 @@ func TestDeploymentOutcomeLostReplyExpiredRestart(t *testing.T) {
 					}
 					t.Cleanup(func() { _ = next.Close() })
 					opts.planStore, opts.AllowWrites = next, false
-					_, restored, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+					_, restored, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -179,7 +179,7 @@ func TestNamedDeploymentOutcome(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f, b, opts := namedStageOptions(t)
 			f.mode = mode
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,7 +228,7 @@ func TestDeploymentOutcomeLegacyAttemptsAndPruning(t *testing.T) {
 	t.Cleanup(b.Close)
 	store, _, _ := testStateStore(t)
 	opts := Options{APIBase: b.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "legacy"}
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestDeploymentOutcomeMismatchedEvidence(t *testing.T) {
 			f, _, _ := newReleaseFixture(t, true)
 			b := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 			t.Cleanup(b.Close)
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, Token: testToken, AllowWrites: true})
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, Token: testToken, AllowWrites: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -348,7 +348,7 @@ func TestDeploymentOutcomeFinalGuards(t *testing.T) {
 			b := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 			t.Cleanup(b.Close)
 			store, _, _ := testStateStore(t)
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, Token: testToken, AllowWrites: true, AllowedApps: map[string]string{"alpha": "app-one"}, planStore: store, planNamespace: "guard"})
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, Token: testToken, AllowWrites: true, AllowedApps: map[string]string{"alpha": "app-one"}, planStore: store, planNamespace: "guard"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -409,7 +409,7 @@ func TestDeploymentOutcomeSnapshotValidationAndLegacyPreservation(t *testing.T) 
 			store, _, _ := testStateStore(t)
 			opts := Options{APIBase: b.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "compat"}
 			client := api.NewClient(b.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -449,7 +449,7 @@ func TestDeploymentOutcomeSnapshotValidationAndLegacyPreservation(t *testing.T) 
 			if err := store.updateMany(map[string]any{deploymentOutcomeNamespace + "compat": saved, "future/opaque": map[string]int{"version": 9}}); err != nil {
 				t.Fatal(err)
 			}
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			valid := change == "orphan" || change == "unknown_namespace" || change == "stale_history"
 			if valid != (err == nil) {
 				t.Fatalf("restore %s: %v", change, err)

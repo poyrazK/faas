@@ -46,7 +46,7 @@ type savedPromptWorkflow struct {
 
 func (m *management) savedPromptWorkflow(ctx context.Context, args getActionArgs, environment bool) (*guardedRead, savedPromptWorkflow, error) {
 	var selector any = args
-	history, review, check := "gregale_get_action", "gregale_get_plan", "gregale_check_plan"
+	history, review, check := "gregale_get_action", "gregale_get_saved_plan", "gregale_check_plan"
 	var value any
 	var err error
 	if environment {
@@ -55,7 +55,7 @@ func (m *management) savedPromptWorkflow(ctx context.Context, args getActionArgs
 		history, review, check = "gregale_get_environment_action", "gregale_get_environment_plan", "gregale_check_environment_plan"
 		value, err = m.getEnvironmentPlan(ctx, envArgs)
 	} else {
-		value, err = m.getPlan(ctx, args)
+		value, err = m.getSavedPlan(ctx, args)
 	}
 	if err != nil {
 		if environment {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, exportDurableEntity, restoreDurableEntity } from '../src/index.js';
+import { FaaSClient, exportDurableEntity, restoreDurableEntity } from '../src/preview.js';
 
 test('export and restore retain the complete envelope and stable identity', async t => {
   let calls = 0;

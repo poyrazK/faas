@@ -41,10 +41,18 @@ fleet:
       role: compute-only
       address: fsn-2.gregale.dev:50051
       tags: ["gcp-vpc"]
+      # ADR-20261102081618: gregale-compute-1's forwarding rule
+      # gregale-compute-1-edge-https, which carries TCP 443 alone
+      # (deploy/scripts/gcp-compute-edge-address.sh).
+      public_ipv4: 34.148.143.180
+      public_ipv4_forwarded: true
     - name: fsn-3
       role: compute-only
       address: fsn-3.gregale.dev:50051
       tags: ["gcp-vpc"]
+      # gregale-compute-2's forwarding rule gregale-compute-2-edge-https.
+      public_ipv4: 34.26.249.95
+      public_ipv4_forwarded: true
 
 daemons:
   schedd:
@@ -63,6 +71,11 @@ daemons:
     # The control-plane schedd reaches the local edge; compute schedds use
     # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
+    # ADR-20261021215353 early freeze. Releases re-render schedd.toml from
+    # this manifest, so a value set by hand on a node is lost at the next
+    # rollout. Set it here only after a release whose gregalectl and imaged
+    # parse the key is live on every node: older ones reject unknown keys.
+    # frozen_tier_early_freeze_after_s: 10
   vmmd:
     bind: tcp://0.0.0.0:50051
     tls:
@@ -85,6 +98,11 @@ daemons:
     bind: tcp://0.0.0.0:443
   gatewayd_internal:
     bind: tcp://0.0.0.0:8080
+    # ADR-1520: spend the central rate-limit counters from local leases, so a
+    # request within its limit never waits on the control plane's Postgres.
+    # On by hand on fsn-2/fsn-3 since 2026-10-25 (owner); this keeps it on
+    # through releases, which re-render gatewayd-internal.toml.
+    ratelimit_lease: true
     apid_loopback: http://fsn-1.gregale.dev:8081
     schedd_tls:
       cert_path: /etc/faas/tls/gatewayd/schedd-client.crt
@@ -131,9 +149,86 @@ egress:
   overlay_exceptions:
     - 10.10.0.0/20
 
+# Branded S3 gateway (ADR 20261025111015). `managed` installs and health-gates
+# s3-gatewayd on the control-plane node from these operator-local files; leave
+# it unset only when no backend is configured. Strict `verify-fleet` fails when
+# the gateway runs without this.
+# object_storage:
+#   gateway: managed
+#   config_src: /operator/config/object-storage.json
+#   # S3/R2/OVH only; GCS with attached ADC has no provider env file.
+#   provider_env_src: /operator/secrets/object-storage.env
+
+# ADR-1343: every compute node runs the app edge (faas-gatewayd-public-edge
+# and the faas-cloudflared tunnel connector) and holds back 1,000 millicores
+# and 256 MB from tenants for it. No app traffic moves until an operator
+# stages the tunnel token and the public-timeout Worker routes a host to the
+# tunnel: docs/runbooks/AppEdgeCutover.md.
+public_edge:
+  # ADR-520: provision edge.gregale.dev as DNS-only A/AAAA records for the
+  # control plane before rollout. Add addresses to this block to support apexes.
+  custom_domains:
+    mode: on_demand
+    target: edge.gregale.dev
+    acme_email: ops@gregale.dev
+  compute_nodes: true
+  # ADR-20261031105055: Cloudflare sends almost every request to one
+  # connector; each edge hands a host to the node that last served it.
+  placement_routing: true
+  # ADR-20261102081618: the edges also take TLS on 443 at their forwarded
+  # address, beside the tunnel. The role writes the listener and removes the
+  # hand-placed 60-faas-edge-direct.conf it replaces.
+  entry: both
+  # ADR-20261103163954: nothing in front of the direct-entry names. Clients
+  # reach the edges on the forwarded addresses, which take 443 from everyone
+  # and nothing else (the entry-address firewall, ahead of sshd); the edges
+  # apply the per-client limits themselves. Names not listed under dns stay
+  # on the tunnel, untouched.
+  front: none
+  # ADR-20261103163954 pilot: edgednsd keeps direct-pilot.gregale.dev's
+  # DNS-only A records (TTL 60) pointed at the edges that are ready. An edge
+  # is ready only once it has loaded the certificate below, so no record
+  # points at an edge that cannot serve it.
+  dns:
+    zone_id: c0baeb8d33b48ec1704766edcb695394
+    names: ["direct-pilot.gregale.dev"]
+    live: true
+    # §3: edgednsd orders the apps domains' certificate from Let's Encrypt
+    # with DNS-01 and stores it with its key sealed to the edge-tls seal
+    # domain; each edge serves it, its key opened in memory. A failed order
+    # is retried after 1 h, doubling to 12 h; meanwhile the pilot host has no
+    # records and nothing else changes.
+    certificate:
+      names: ["*.gregale.dev"]
+      ca: letsencrypt
+      serve: letsencrypt
+      # Pages on a publicly trusted certificate under gregale.dev that
+      # edgednsd did not issue. Allowed, as Certificate Transparency listed
+      # them on 2026-11-04: Cloudflare's Universal SSL certificate
+      # (gregale.dev, *.gregale.dev), which the proxied platform hosts use, a
+      # certificate for the apex alone, and operations.gregale.dev's (Vercel).
+      transparency:
+        domain: gregale.dev
+        allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev"]
+
+# Customer log archive (pkg/logarchive). Keyless: every node's attached
+# service account holds roles/storage.objectUser on the bucket, whose
+# lifecycle rule deletes faas-logs/ objects after 90 days.
+log_archive:
+  bucket: gregale-prod-280686321025-log-archive
+  endpoint: https://storage.googleapis.com
+  auth: gcp_metadata
+
 dns:
   apps_domain: gregale.dev
   mode: cloudflare
+  # ADR-20261103172551: the control plane's platform site admits Cloudflare's
+  # address ranges, which every Cloudflare zone uses. any_zone keeps admitting
+  # them all, knowingly, as before; the control plane has no origin-pull CA
+  # yet, so `required` would stop its deploy. Switch to `required` once the
+  # zone's own origin-pull certificate is in place
+  # (docs/runbooks/EdgeDirectEntry.md, "The control plane's Caddy").
+  origin_pull: any_zone
 
 # Private transport names are managed from gathered host facts by the
 # provider-neutral Ansible adapter. GCP Cloud DNS may still provide a local
@@ -185,6 +280,13 @@ storage:
 cgroups:
   slice: faas-cp.slice
   controllers: "memory,cpu,io,pids"
+
+# Workload-identity tokens for queue workers (ADR-1141). Off until an
+# operator runs `gregalectl workload-identity init --out DIR` on the
+# controller and uncomments this with that DIR; converge the control plane
+# first. See deploy/manifest/README.md.
+# workload_identity:
+#   source_dir: /path/on/controller/workload-identity
 
 pki:
   root_dir: /etc/faas/tls

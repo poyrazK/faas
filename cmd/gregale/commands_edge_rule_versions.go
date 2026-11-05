@@ -18,7 +18,7 @@ func cmdEdgeRulesHistory(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules history --app <slug> [--version N]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule history --app <slug> [--version N]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()
@@ -44,7 +44,7 @@ func cmdEdgeRulesHistory(args []string) int {
 			if rule.Name != "" {
 				label = "  " + truncate(rule.Name, 40)
 			}
-			_, _ = fmt.Fprintf(osStdout, "  %-36s %-12s %-6d %-32s %s%s\n", rule.ID, rule.Kind, rule.Priority, truncate(rule.MatchHost, 32), rule.MatchPath, label)
+			_, _ = fmt.Fprintf(osStdout, "  %-36s %-12s %-6d %-32s %s%s\n", rule.ID, rule.Kind, rule.Priority, terminalSafe(truncate(rule.MatchHost, 32)), terminalSafe(rule.MatchPath), terminalSafe(label))
 		}
 		return 0
 	}
@@ -72,20 +72,24 @@ func cmdEdgeRulesHistory(args []string) int {
 
 // cmdEdgeRulesRollback restores an app's edge rules to a recorded version.
 // The restore replaces every current rule, so it asks for typed
-// confirmation unless --quiet.
+// confirmation unless --yes (or its older spelling --quiet).
 func cmdEdgeRulesRollback(args []string) int {
-	flags, positional := splitArgsForFlags(args, "quiet")
+	flags, positional := splitArgsForFlags(args, "quiet", "yes")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules rollback", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	to := fs.Int("to", 0, "version to restore (required; see edge-rules history)")
-	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	quiet := fs.Bool("yes", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "quiet", false, "alias of --yes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || *to < 1 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rollback --app <slug> --to <version> [--quiet]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule rollback --app <slug> --to <version> [--yes]", "edge-rules")
 		return 1
+	}
+	if code := requireConfirmationFlag(*quiet, "--yes", "edge rule rollback"); code != 0 {
+		return code
 	}
 	if !*quiet {
 		_, _ = fmt.Fprintf(osStderr, "About to replace every edge rule on %s with version %d.\n", *slug, *to)

@@ -66,6 +66,14 @@ func (s *Service) PreviewEvent(w http.ResponseWriter, r *http.Request, acct stat
 		Matches:    make([]api.EventPreviewSubscription, 0),
 		NonMatches: make([]api.EventPreviewSubscription, 0),
 	}
+	// Only recipients on apps the caller may see are listed or counted
+	// (ADR-20261025211616): a key bound to one company, or a creator who
+	// left it, must not map another company's event wiring.
+	access, err := s.eventAccess(r.Context(), acct)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("event preview"))
+		return
+	}
 	var appSlugs map[string]string
 	cursor := state.EventSubscriptionCursor{}
 	for {
@@ -94,6 +102,12 @@ func (s *Service) PreviewEvent(w http.ResponseWriter, r *http.Request, acct stat
 		}
 
 		for _, row := range subscriptions {
+			if visible, visibleErr := access.app(row.AppID); visibleErr != nil {
+				api.WriteProblem(w, api.ErrInternal("event preview"))
+				return
+			} else if !visible {
+				continue
+			}
 			out.CandidateCount++
 			item := api.EventPreviewSubscription{
 				AppSlug:        appSlugs[canonicalEventPreviewUUID(row.AppID)],
@@ -160,6 +174,12 @@ func (s *Service) PreviewEvent(w http.ResponseWriter, r *http.Request, acct stat
 				}
 			}
 			for _, row := range recipients {
+				if visible, visibleErr := access.app(row.AppID); visibleErr != nil {
+					api.WriteProblem(w, api.ErrInternal("event workflow preview"))
+					return
+				} else if !visible {
+					continue
+				}
 				out.CandidateCount++
 				var definition struct{ Name string }
 				_ = json.Unmarshal(row.Workflow, &definition)

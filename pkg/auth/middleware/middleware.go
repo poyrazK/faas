@@ -49,16 +49,20 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -113,6 +117,23 @@ type DeployTokenAuthenticator interface {
 	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
 }
 
+// DeploymentAppResolver is an optional extension that names the app a
+// deployment belongs to, so a deploy token can follow the deployments of its
+// own app (ADR-20261031162858). Without it a deploy token reads no
+// /v1/deployments route.
+type DeploymentAppResolver interface {
+	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
+}
+
+// deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
+// token may read, for a deployment of its own app: the ones
+// api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
+// deploy polls after it submits (ADR-20261031162858).
+var deployTokenDeploymentReads = map[string]bool{
+	"GET /v1/deployments/{id}":        true,
+	"GET /v1/deployments/{id}/status": true,
+}
+
 // PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, explicitly
 // scoped self-service bearer without widening account API-key capabilities.
 type PlatformTenantAccessTokenAuthenticator interface {
@@ -129,6 +150,29 @@ type deployTokenLastUsedToucher interface {
 // dragging in AEAD plumbing.
 type Sessions interface {
 	Verify(value string) (session.Envelope, error)
+}
+
+// ContextSessions is a Sessions that opens cookies somewhere else, such as
+// gatewayd-internal asking apid (ADR-20261102191500): the request's
+// context bounds the call. An error other than session.ErrInvalid means
+// the cookie could not be checked, and the request gets a retryable 503
+// with the cookie kept.
+type ContextSessions interface {
+	Sessions
+	VerifyContext(ctx context.Context, value string) (session.Envelope, error)
+}
+
+// verifySession opens a session cookie, through VerifyContext when the
+// Sessions supports it. unavailable reports that a ContextSessions could
+// not check the cookie; any other error means the cookie is invalid.
+func (m *Middleware) verifySession(ctx context.Context, value string) (env session.Envelope, unavailable bool, err error) {
+	remote, ok := m.Sessions.(ContextSessions)
+	if !ok {
+		env, err = m.Sessions.Verify(value)
+		return env, false, err
+	}
+	env, err = remote.VerifyContext(ctx, value)
+	return env, err != nil && !errors.Is(err, session.ErrInvalid), err
 }
 
 // SessionLookup is the live-session-row check IAM-3 (ADR-039)
@@ -192,8 +236,10 @@ type Middleware struct {
 	// (host-only cookie; dev/test default).
 	CookieDomain string
 
-	// SessionCookieName is the cookie name RequireSession reads
-	// (and clearSessionCookie writes). Empty = "faas_sid".
+	// SessionCookieName overrides the cookie RequireSession reads (and
+	// ClearSessionCookie writes). Empty or the default reads
+	// pkg/sessioncookie's __Host-faas_sid, then the legacy faas_sid
+	// (ADR-20261026112500).
 	SessionCookieName string
 
 	// keyDebounce gates per-key last_used_at touches to one
@@ -214,12 +260,41 @@ type Middleware struct {
 	keyTouchWindowForTest time.Duration
 	// sessionTouchWindowForTest: same override for sessions.
 	sessionTouchWindowForTest time.Duration
+	// Honeytokens, when set, is asked about a well-formed API key that
+	// matches no key (ADR 20261024014500). On a match OnHoneytoken runs and
+	// the request still gets the ordinary 401, so the caller learns nothing.
+	Honeytokens  HoneytokenMatcher
+	OnHoneytoken func(r *http.Request, h state.Honeytoken)
+
 	// BindingKeyFn is the IAM-hardening-mega-PR (logical change 5,
 	// ADR-076) HMAC key source. nil disables binding-hash
 	// computation (the envelope's `binding_hash` field is omitted;
 	// the cross-check is skipped). Production wires this to the
 	// first 32 bytes of the session-key AEAD secret.
 	BindingKeyFn func() []byte
+}
+
+// HoneytokenMatcher looks a presented credential up in the honeytoken
+// registry (ADR 20261024014500); state.ErrNotFound means no match. It gets
+// the plaintext because the registry is keyed by an HMAC the daemon holds.
+type HoneytokenMatcher interface {
+	MatchHoneytoken(ctx context.Context, token string) (state.Honeytoken, error)
+}
+
+// reportHoneytoken checks a bearer key that matched no API key against the
+// honeytoken registry. A failed lookup is logged and otherwise ignored: the
+// request is being refused either way.
+func (m *Middleware) reportHoneytoken(r *http.Request, token string) {
+	if m.Honeytokens == nil || m.OnHoneytoken == nil {
+		return
+	}
+	h, err := m.Honeytokens.MatchHoneytoken(r.Context(), token)
+	switch {
+	case err == nil:
+		m.OnHoneytoken(r, h)
+	case !errors.Is(err, state.ErrNotFound) && m.Log != nil:
+		m.Log.Warn("auth: honeytoken lookup failed", "err", err)
+	}
 }
 
 // keyTouchWindow returns the production 30s window unless an
@@ -353,7 +428,15 @@ func New(authn Authenticator, sessions Sessions, lookups SessionLookup,
 	}
 }
 
-const defaultSessionCookieName = "faas_sid"
+const defaultSessionCookieName = sessioncookie.LegacyName
+
+// sessionCookie returns the request's session cookie.
+func (m *Middleware) sessionCookie(r *http.Request) (*http.Cookie, error) {
+	if m.SessionCookieName == "" || m.SessionCookieName == defaultSessionCookieName {
+		return sessioncookie.Get(r)
+	}
+	return r.Cookie(m.SessionCookieName)
+}
 
 // keyTouchWindow is the per-key debounce window for last_used_at
 // touches. 30s matches cmd/apid's server.touchDebounce. Hot keys
@@ -476,7 +559,8 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			return
 		}
 		if api.ValidAPIKeyFormat(tok) {
-			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+			keyHash := api.HashAPIKey(tok)
+			acct, key, err := m.Authn.AuthenticateKey(r.Context(), keyHash)
 			// IAM-5 (issue #189): translate the IAM-5 sentinels
 			// to RFC 7807 + emit the audit row. The store
 			// already lazily marked the key status='revoked'
@@ -504,17 +588,23 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					m.credentialStoreUnavailable(w, r, err)
 					return
 				}
+				m.reportHoneytoken(r, tok)
 				// Fall through to the session-cookie branch —
 				// the key may have been deleted or the hash is
 				// simply unknown; both surface as "invalid
 				// bearer" through the legacy 401 path.
 			} else {
 				if !acct.Active() {
-					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
 					}
+				}
+				// ADR-20261104085712: an agent or mcp-login key limited to
+				// projects reaches only their apps and routes.
+				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
 				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
@@ -612,8 +702,14 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		if api.ValidOIDCKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
+				// A bearer exchanged under a trust policy Gregale created is
+				// bound to one app and confined like a per-app deploy token
+				// (ADR-20261101100000).
+				if key.AppID != "" && m.appBoundCredentialRefused(w, r, key, "OIDC token scope is app-bound") {
+					return
+				}
 				if !acct.Active() {
-					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -648,25 +744,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") {
-						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
-						return
-					}
-					bound, bindErr := m.deployTokenBoundTo(r, key)
-					if bindErr != nil {
-						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
-						return
-					}
-					if !bound {
-						// Same 404 shape LoadApp returns for a cross-app or
-						// cross-account slug probe.
-						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-							"Not found", "no such app"))
+					if m.appBoundCredentialRefused(w, r, key, "Deploy token scope is app-bound") {
 						return
 					}
 					if !acct.Active() {
-						if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+						if !inactiveCallerMayReach(r, acct) {
 							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 								"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 							return
@@ -704,8 +786,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		// (2) Session-cookie branch — verify AEAD, cross-check
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
-			if c, err := r.Cookie(m.SessionCookieName); err == nil && c.Value != "" {
-				env, err := m.Sessions.Verify(c.Value)
+			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
+				env, unavailable, err := m.verifySession(r.Context(), c.Value)
+				if unavailable {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
 					if cookieErr != nil {
@@ -736,7 +822,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
-							if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 									"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 								return
@@ -979,15 +1065,31 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
-	// (3.5) binding-hash mismatch = stolen-cookie auto-revoke
+	// (3.5) binding mismatch = stolen-cookie auto-revoke
 	// (IAM hardening mega-PR, logical change 5, ADR-076).
-	// Compare the envelope's binding_hash (sealed by AEAD at mint
-	// time) against the sessions row's binding_hash column.
-	// Either side empty = "binding not armed" (pre-PR-076 cookie
-	// or unix-socket code path); cross-check is skipped in that
-	// case. Mismatch ⇒ auto-revoke + audit + 401.
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" &&
-		env.BindingHash != sess.BindingHash {
+	// The envelope's binding hash (sealed at mint) must equal the
+	// live row's, and this request's browser family must equal the
+	// family the session was issued to, so a cookie copied into a
+	// different client (curl, another browser) is still caught.
+	//
+	// The client IP is deliberately NOT re-checked per request. The
+	// console reaches apid through a proxy (Vercel) whose egress
+	// address changes between requests, and browsers move between
+	// networks and between IPv4 and IPv6. rc.321 recomputed the
+	// IP-keyed hash on every request and revoked every console
+	// session on its first request from a new egress address.
+	//
+	// Either hash empty = "binding not armed" (pre-PR-076 cookie
+	// or unix-socket code path); the check is skipped in that
+	// case. An empty issued UA skips only the family comparison.
+	// Mismatch ⇒ auto-revoke + audit + 401.
+	bindingArmed := m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != ""
+	issuedFamily, presentedFamily := "", ""
+	if bindingArmed && sess.IssuedUA != "" {
+		issuedFamily = bindinghash.UAFamily(sess.IssuedUA)
+		presentedFamily = bindinghash.UAFamily(r.UserAgent())
+	}
+	if bindingArmed && (env.BindingHash != sess.BindingHash || issuedFamily != presentedFamily) {
 		// Best-effort revoke. Failure is logged but the
 		// 401 still returns — the request is rejected
 		// regardless of the revoke's success.
@@ -1000,11 +1102,13 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		// Audit emit (best-effort — never blocks the 401).
 		if m.Audit != nil {
 			m.Audit.Emit(ctx, "auth.session.binding_mismatch", &env.AccountID, map[string]any{
-				"sid":              env.Sid,
-				"method":           r.Method,
-				"path":             r.URL.Path,
-				"expected_prefix":  prefix8(sess.BindingHash),
-				"presented_prefix": prefix8(env.BindingHash),
+				"sid":                 env.Sid,
+				"method":              r.Method,
+				"path":                r.URL.Path,
+				"expected_prefix":     prefix8(sess.BindingHash),
+				"presented_prefix":    prefix8(env.BindingHash),
+				"expected_ua_family":  issuedFamily,
+				"presented_ua_family": presentedFamily,
 			})
 		}
 		m.clearSessionCookie(w)
@@ -1118,6 +1222,46 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 	return false
 }
 
+// inactiveCallerMayReach is InactiveAccountMayReach for the authenticated
+// caller. A caller whose personal account is suspended for billing alone (a
+// Free quota stop or dunning; not an abuse hold or a pending deletion) also
+// reaches the routes that address an application, because appaccess decides
+// those by the application's owner: the caller's own personal apps still
+// answer 402 there, and a company's apps follow the company's status. A
+// member's personal Free stop or failed card no longer locks them, and the
+// organization keys they created, out of a company in good standing
+// (bug hunt H87).
+func inactiveCallerMayReach(r *http.Request, acct state.Account) bool {
+	if InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+		return true
+	}
+	return acct.Status == state.AccountSuspended && !acct.AbuseHeld() && appAddressedPattern(r.Pattern)
+}
+
+// appAddressedPattern reports a route pattern whose application appaccess
+// resolves and authorizes before the handler runs (appaccess.Wrap): an app
+// by slug, a company app under its organization, or a deployment or build
+// by ID.
+func appAddressedPattern(pattern string) bool {
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		path = pattern
+	}
+	for _, prefix := range []string{"/v1/apps/{slug}", "/v1/orgs/{organization}/apps/{slug}", "/v1/deployments/{id}", "/v1/builds/{id}"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// SuspendedProblem is the 402 a billing-suspended account gets on a route it
+// may not reach.
+func SuspendedProblem() *api.Problem {
+	return api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+		"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL)
+}
+
 func isBillingRecoveryRoute(method, path string) bool {
 	if financialBudgetRecoveryRoute(method, path) {
 		return true
@@ -1132,7 +1276,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover":
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1524,7 +1668,7 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 			"Not found", "no such app"))
 		return state.App{}, false
 	}
-	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" && p.Key.AppID != app.ID {
+	if p, ok := principalFrom(r); ok && p.Key != nil && (p.Key.AppID != "" && p.Key.AppID != app.ID || AppOutsideKeyProjects(p.Key, app)) {
 		// App-bound deploy tokens must not be usable against another
 		// app in the same account. Collapse the mismatch to the same
 		// 404 shape as a cross-account slug probe.
@@ -1541,6 +1685,109 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
+// IsUploadSessionPath reports whether path is one of the resumable upload
+// routes: POST /v1/uploads and /v1/uploads/{id}[/commit].
+func IsUploadSessionPath(path string) bool {
+	const root = "/v1/uploads"
+	if path == root {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, root+"/")
+	if !ok || rest == "" {
+		return false
+	}
+	id, tail, _ := strings.Cut(rest, "/")
+	return id != "" && (tail == "" || tail == "commit")
+}
+
+// appBoundCredentialRefused confines a credential bound to one app (a per-app
+// deploy token, or an OIDC bearer exchanged for one app): it reaches its app's
+// /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
+// and nothing else. It answers the request and reports true when it refuses.
+func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
+	// App agents inspect their own minimal principal and platform capabilities
+	// before connecting to MCP. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+		return false
+	}
+	// The resumable upload routes are the CLI's default source
+	// deploy path. They name their app in the request body or the
+	// stored session, so the app binding is enforced where the
+	// handlers resolve it (appaccess.Authorize refuses a token
+	// bound to another app) instead of from the path here.
+	uploadRoute := IsUploadSessionPath(r.URL.Path)
+	// A deploy follows the deployment it created; the route
+	// is bound by the deployment's app, not a path slug.
+	deploymentRead := deployTokenDeploymentReads[r.Pattern]
+	// CI waits for its app's PR previews; the route is bound by the
+	// preview's production app (ADR-20261102203228).
+	previewStatusRead := appBoundPreviewStatusReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead && !previewStatusRead {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments and preview status"))
+		return true
+	}
+	var bound bool
+	var bindErr error
+	switch {
+	case uploadRoute:
+		bound = key.AppID != ""
+	case previewStatusRead:
+		bound, bindErr = m.credentialBoundToPreview(r, key)
+	case deploymentRead:
+		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
+	default:
+		bound, bindErr = m.deployTokenBoundTo(r, key)
+	}
+	if bindErr != nil {
+		m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
+		return true
+	}
+	if !bound {
+		// Same 404 shape LoadApp and the deployment reads return
+		// for a cross-app or cross-account probe.
+		detail := "no such app"
+		if deploymentRead {
+			detail = "no such deployment"
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Not found", detail))
+		return true
+	}
+	return false
+}
+
+// appBoundPreviewStatusReads are the PR preview status reads an app-bound
+// credential may make for its own app's previews.
+var appBoundPreviewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// credentialBoundToPreview reports whether the {slug} of a preview status read
+// names a preview of the app the credential is bound to.
+func (m *Middleware) credentialBoundToPreview(r *http.Request, key state.APIKey) (bool, error) {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false, nil
+	}
+	preview, err := m.Authn.AppBySlug(r.Context(), slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || preview.PreviewOfSlug == "" {
+		return false, err
+	}
+	parent, err := m.Authn.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return parent.ID == key.AppID && parent.AccountID == preview.AccountID, nil
+}
+
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {
@@ -1554,6 +1801,26 @@ func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool
 		return false, err
 	}
 	return app.ID == key.AppID, nil
+}
+
+// deployTokenBoundToDeployment reports whether the {id} of a deployment read
+// names a deployment of the app the deploy token is bound to.
+func (m *Middleware) deployTokenBoundToDeployment(r *http.Request, key state.APIKey) (bool, error) {
+	resolver, ok := m.Authn.(DeploymentAppResolver)
+	id := r.PathValue("id")
+	// A malformed id names no deployment: 404, never a store error.
+	wellFormed := uuid.Validate(id) == nil
+	if !ok || key.AppID == "" || !wellFormed {
+		return false, nil
+	}
+	appID, err := resolver.DeploymentAppID(r.Context(), id)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return appID == key.AppID, nil
 }
 
 // --- scope helpers -------------------------------------------------------
@@ -1694,8 +1961,9 @@ func (m *Middleware) clearSessionCookie(w http.ResponseWriter) {
 // session-revoke).
 func (m *Middleware) ClearSessionCookie(w http.ResponseWriter) {
 	name := m.SessionCookieName
-	if name == "" {
-		name = defaultSessionCookieName
+	if name == "" || name == defaultSessionCookieName {
+		sessioncookie.Clear(w, m.CookieDomain)
+		return
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,

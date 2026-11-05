@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, retryDurableEntity } from '../src/index.js';
+import { FaaSClient, retryDurableEntity } from '../src/preview.js';
 
 test('recovery preserves comparison fields and rejects unsafe or incomplete requests', async t => {
   let calls = 0;

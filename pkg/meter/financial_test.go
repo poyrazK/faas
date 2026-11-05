@@ -1,12 +1,14 @@
 package meter
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // adr: 566 — snapshots follow activations, including returning to an old plan.
@@ -53,6 +55,61 @@ func TestFinancialPricingHistory(t *testing.T) {
 	prices, err = store.ListFinancialPriceSnapshots(t.Context(), a.ID, start.AddDate(0, 1, 0))
 	if err != nil || len(prices) != 2 {
 		t.Fatalf("UTC period reset: %+v, %v", prices, err)
+	}
+}
+
+// countingPriceStore counts price snapshot reads.
+type countingPriceStore struct {
+	MemStore *state.MemStore
+	reads    int
+}
+
+func (s *countingPriceStore) ListFinancialPriceSnapshots(ctx context.Context, account string, period time.Time) ([]state.FinancialPriceSnapshot, error) {
+	s.reads++
+	return s.MemStore.ListFinancialPriceSnapshots(ctx, account, period)
+}
+
+// Unchanged terms cost no snapshot read per account per minute; a plan
+// change or a new month reads and captures again.
+// adr: 20261029180000
+func TestFinancialPricingSkipsUnchangedTerms(t *testing.T) {
+	counting := &countingPriceStore{MemStore: state.NewMemStore()}
+	store := statetest.NewMem(counting)
+	a, err := store.CreateAccount(t.Context(), "financial-pricing-cache@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &Loop{store: store}
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		if err := l.recordFinancialPricing(t.Context(), start.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counting.reads != 1 {
+		t.Fatalf("snapshot reads over 5 unchanged ticks = %d, want 1", counting.reads)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.recordFinancialPricing(t.Context(), start.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.recordFinancialPricing(t.Context(), start.AddDate(0, 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if counting.reads != 3 {
+		t.Fatalf("snapshot reads after a plan change and a new month = %d, want 3", counting.reads)
+	}
+	for _, period := range []time.Time{start, start.AddDate(0, 1, 0)} {
+		prices, err := store.ListFinancialPriceSnapshots(t.Context(), a.ID, period)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[time.Time]int{start: 4, start.AddDate(0, 1, 0): 2}[period]
+		if len(prices) != want {
+			t.Fatalf("%s snapshots = %d, want %d", period.Format("2006-01"), len(prices), want)
+		}
 	}
 }
 
@@ -103,5 +160,64 @@ func TestFinancialPricingClosedMinute(t *testing.T) {
 	}
 	if rows[1].PriceVersion != rows[2].PriceVersion || rows[3].PriceVersion == rows[2].PriceVersion || rows[4].PriceVersion == rows[1].PriceVersion || rows[4].PriceVersion == rows[3].PriceVersion {
 		t.Fatalf("activation identities lost across plan changes: %+v", rows)
+	}
+}
+
+// A plan change meterd observes late is dated from the subject's recorded
+// change time, not the minute meterd noticed it, and never before the
+// previous terms (ADR-20261103121407).
+// adr: 20261103121407
+func TestFinancialPricingDatesPlanChangeFromChangeTime(t *testing.T) {
+	store := state.NewMemStore()
+	a, err := store.CreateAccount(t.Context(), "financial-plan-change@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &Loop{store: store}
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	hobbyAt := start.Add(time.Hour)
+	if err := l.recordFinancialPricing(t.Context(), hobbyAt); err != nil {
+		t.Fatal(err)
+	}
+	effective := func(plan api.Plan) time.Time {
+		t.Helper()
+		prices, err := store.ListFinancialPriceSnapshots(t.Context(), a.ID, start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range prices {
+			if p.Plan == plan && p.Price.Meter == string(state.BillingMeterCompute) {
+				return p.EffectiveFrom.UTC()
+			}
+		}
+		t.Fatalf("no %s compute snapshot in %+v", plan, prices)
+		return time.Time{}
+	}
+
+	// Upgraded at 01:10:30 while meterd was down; meterd observes it at 04:00.
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	store.SetPlanChangedAt(a.ID, start.Add(70*time.Minute+30*time.Second))
+	if err := l.recordFinancialPricing(t.Context(), start.Add(4*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := effective(api.PlanPro), start.Add(70*time.Minute); !got.Equal(want) {
+		t.Fatalf("Pro effective from %s, want the recorded change minute %s", got, want)
+	}
+
+	// A change time before the previous terms took effect is clamped to them.
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanScale); err != nil {
+		t.Fatal(err)
+	}
+	store.SetPlanChangedAt(a.ID, start)
+	if err := l.recordFinancialPricing(t.Context(), start.Add(5*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := effective(api.PlanScale), start.Add(70*time.Minute); !got.Equal(want) {
+		t.Fatalf("Scale effective from %s, want clamped to the Pro terms' %s", got, want)
+	}
+	if got := effective(api.PlanHobby); !got.Equal(hobbyAt) {
+		t.Fatalf("Hobby effective from %s, want %s", got, hobbyAt)
 	}
 }

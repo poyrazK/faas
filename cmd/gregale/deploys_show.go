@@ -69,14 +69,14 @@ import (
 // deploysShowUsage is the canonical CLI usage string for the
 // `show` subcommand. Centralized so the cmdDeploys dispatcher and
 // the cli_meta.go cliCommand entry reuse the same wording.
-const deploysShowUsage = "usage: gregale deploys show <id> [--status] [--json] [--url]"
+const deploysShowUsage = "usage: gregale release stages <id> [--status] [--json] [--url]"
 
 // deploysStatusUsage mirrors deploysShowUsage for the `status`
 // subcommand. The wording intentionally distinguishes "show" (stage
 // table only) from "status" (stage table + terminal footer) so the
 // operator knows which verb carries the footer without reading the
 // help body.
-const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
+const deploysStatusUsage = "usage: gregale release get <id> [--json]"
 
 // cmdDeploysShow implements `gregale deploys show <id> [--status]
 // [--json] [--url]`. The --url flag is the issue #976 / ADR-122 /

@@ -1,0 +1,39 @@
+# ADR 20261024014500: honeytokens.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a presented honeytoken pages at once, summed across apid instances
+    interval: 30s
+    input_series:
+      - series: faas_honeytoken_presented_total{kind="api_key",instance="cp-1:9091",job="apid"}
+        values: 0 0 0 1 1 1 1 1 1 1
+      - series: faas_honeytoken_presented_total{kind="api_key",instance="cp-2:9091",job="apid"}
+        values: 0 0 0 0 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasHoneytokenPresented
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: FaasHoneytokenPresented
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              family: honeytokens
+              kind: api_key
+            exp_annotations:
+              summary: "A honeytoken (api_key) was presented to the API"
+              description: "Someone presented a decoy credential that belongs to no account. Whoever holds it has read the place it was planted, usually the secret store. Start the customer secret store compromise runbook; the security.honeytoken_presented audit event names the honeytoken and the caller."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHoneytokenPresented.md"
+
+  - name: no presentation, no page
+    interval: 30s
+    input_series:
+      - series: faas_honeytoken_presented_total{kind="api_key",instance="cp-1:9091",job="apid"}
+        values: 0x40
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasHoneytokenPresented
+        exp_alerts: []

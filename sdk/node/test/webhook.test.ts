@@ -6,11 +6,12 @@ import {
   DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS,
   verifyWebhook,
   WEBHOOK_DELIVERY_ID_HEADER,
+  WEBHOOK_PREVIOUS_SIGNATURE_HEADER,
   WEBHOOK_SIGNATURE_HEADER,
   WEBHOOK_TIMESTAMP_HEADER,
   WebhookVerificationError,
-} from '../src/index.js';
-import type { CreateAppWebhookRequest, WorkflowFinishedWebhookPayload } from '../src/index.js';
+} from '../src/preview.js';
+import type { CreateAppWebhookRequest, WorkflowFinishedWebhookPayload } from '../src/preview.js';
 
 const secret = 'whsec_test_123';
 const timestamp = 1_712_345_678;
@@ -123,4 +124,24 @@ test('tracker sync notification events can be selected independently', () => {
   };
   assert.deepEqual(JSON.parse(JSON.stringify(subscription)).event_filter,
     ['issue.tracker_sync.attention', 'issue.tracker_sync.recovered']);
+});
+
+test('verifyWebhook accepts the previous secret during a rotation overlap', () => {
+  const rotated = 'whsec_rotated_456';
+  const current =
+    'sha256=' +
+    createHmac('sha256', rotated).update(`${timestamp}.${deliveryId}.`, 'utf8').update(body).digest('hex');
+  const rotating = headers({
+    [WEBHOOK_SIGNATURE_HEADER]: current,
+    [WEBHOOK_PREVIOUS_SIGNATURE_HEADER]: signature,
+  });
+  const now = timestamp * 1000;
+  assert.equal(verifyWebhook(rotated, rotating, body, { now }).deliveryId, deliveryId);
+  assert.equal(verifyWebhook(secret, rotating, body, { now }).deliveryId, deliveryId);
+  assert.throws(
+    () => verifyWebhook('other', rotating, body, { now }),
+    (err: unknown) => err instanceof WebhookVerificationError && err.code === 'bad_signature',
+  );
+  const malformedPrevious = headers({ [WEBHOOK_SIGNATURE_HEADER]: current, [WEBHOOK_PREVIOUS_SIGNATURE_HEADER]: 'garbage' });
+  assert.equal(verifyWebhook(rotated, malformedPrevious, body, { now }).deliveryId, deliveryId);
 });

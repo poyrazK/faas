@@ -18,6 +18,13 @@ import (
 // records (13 of 32 slots) after rc.251's rollout, plus their materialised
 // snapshot files and layer clones on disk.
 //
+// A guest that claimed a prepared network (ADR-149) is an instance record like
+// any other: its process provenance and assets are checked the same way. Only
+// an unclaimed prepared spare is left to ADR-478's prior-boot path. Before
+// prepared networks were switched on, no claimed record existed; afterwards
+// every dead guest's record stayed forever (production-us fsn-2 carried 11 on
+// 2026-10-29, each quarantining a slot and refusing the no-drain check).
+//
 // It runs before reconcileJournal so a retired record's slot is never
 // quarantined. Only identity-verified temporary files are removed; links,
 // namespaces, jails, mounts and processes are never touched. Any ambiguity
@@ -36,7 +43,7 @@ func (inv *restartInventory) reclaimRestartDead(ctx context.Context, j *Resource
 		if err := ctx.Err(); err != nil {
 			return reclaimed, nil, err
 		}
-		if r.Prepared != nil || r.Process == nil {
+		if r.preparedSpare() || r.Process == nil {
 			continue
 		}
 		if dead, err := restartProcessGone(opts.procRoot, *r.Process); err != nil || !dead {
@@ -253,7 +260,7 @@ func (j *ResourceJournal) forgetRestartDead(r resourceJournalRecord) (bool, erro
 	if !ok {
 		return false, nil
 	}
-	if !resourceLeaseMatches(current.Lease, r.Lease) || current.Prepared != nil || current.Process == nil || r.Process == nil || *current.Process != *r.Process {
+	if !resourceLeaseMatches(current.Lease, r.Lease) || current.preparedSpare() || current.Process == nil || r.Process == nil || *current.Process != *r.Process {
 		return false, errors.New("dead instance record changed during retirement")
 	}
 	if err := j.forgetRecord(current); err != nil {

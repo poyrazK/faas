@@ -1,37 +1,60 @@
 package appaccess
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
+
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // These legacy resource URLs retain their creator-only permission boundary,
 // but an app's creator must still be a current owner/admin of its company.
 // An indirect URL never bypasses offboarding or grants a new shared action.
-func indirectlyAddressedApp(r *http.Request, store Store) (state.App, bool, error) {
+func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state.App, bool, error) {
 	var appID string
 	var err error
+	path, id := r.URL.Path, r.PathValue("id")
 	switch {
-	case strings.HasPrefix(r.URL.Path, "/v1/domains/") && r.PathValue("domain") != "":
+	case strings.HasPrefix(path, "/v1/domains/") && r.PathValue("domain") != "":
 		var domain state.CustomDomain
 		domain, err = store.DomainByName(r.Context(), strings.ToLower(r.PathValue("domain")))
 		appID = domain.AppID
-	case strings.HasPrefix(r.URL.Path, "/v1/crons/") && r.PathValue("id") != "":
+		if err == nil {
+			// Keep the claim that supplied the authorized app. A later handler
+			// reload must not widen this grant after a hostname is reassigned.
+			*r = *r.WithContext(state.WithCustomDomainProbe(r.Context(), domain))
+		}
+	case strings.HasPrefix(path, "/v1/crons/") && id != "":
 		var cron state.Cron
-		cron, err = store.CronByID(r.Context(), r.PathValue("id"))
+		cron, err = store.CronByID(r.Context(), id)
 		appID = cron.AppID
-	case strings.HasPrefix(r.URL.Path, "/v1/edge-rules/") && r.PathValue("id") != "":
+	case strings.HasPrefix(path, "/v1/cron-fire-now-requests/") && validID(r.PathValue("request_id")):
+		appID, err = fireNowRequestApp(r, store)
+	case strings.HasPrefix(path, "/v1/edge-rules/") && id != "":
 		var rule state.EdgeRule
-		rule, err = store.GetEdgeRuleByID(r.Context(), r.PathValue("id"))
+		rule, err = store.GetEdgeRuleByID(r.Context(), id)
 		appID = rule.AppID
-	case strings.HasPrefix(r.URL.Path, "/v1/invocations/") && r.PathValue("id") != "":
+	case companyListPath(path) && r.URL.Query().Get("app") != "":
+		// Edge-rule lists and CORS presets are account objects; ?app=<slug>
+		// manages a company app's own (ADR-091 amendment 2026-11-03,
+		// review round 9) with the member's organization role on it.
+		app, err := store.AppBySlug(r.Context(), r.URL.Query().Get("app"))
+		return app, true, err
+	case strings.HasPrefix(path, "/v1/invocations/") && id != "":
 		var invocation state.Invocation
-		invocation, err = store.InvocationByID(r.Context(), r.PathValue("id"))
+		invocation, err = store.InvocationByID(r.Context(), id)
 		appID = invocation.AppID
 	default:
-		return state.App{}, false, nil
+		appID, err = ownedResourceApp(r, store, actorID)
+		if appID == "" && err == nil {
+			return state.App{}, false, nil
+		}
 	}
 	if err != nil {
 		return state.App{}, true, err
@@ -41,4 +64,149 @@ func indirectlyAddressedApp(r *http.Request, store Store) (state.App, bool, erro
 	}
 	app, err := store.AppByID(r.Context(), appID)
 	return app, true, err
+}
+
+// previewStatusReads are the PR preview status reads a credential bound to the
+// production app may make (ADR-20261102203228).
+var previewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// previewAccessApp is the app a preview route is authorized against: the
+// preview, except for a status read made with a credential bound to one app,
+// which reads its own app's previews and is authorized against the preview's
+// production app (ADR-20261102203228).
+func previewAccessApp(r *http.Request, store Store, preview state.App) string {
+	if !previewStatusReads[r.Pattern] || preview.PreviewOfSlug == "" {
+		return preview.ID
+	}
+	_, key, _, ok := authmw.PrincipalFrom(r)
+	if !ok || key == nil || key.AppID == "" {
+		return preview.ID
+	}
+	parent, err := store.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if err != nil || parent.ID != key.AppID || parent.AccountID != preview.AccountID {
+		return preview.ID
+	}
+	return parent.ID
+}
+
+// fireNowRequestApp resolves the app behind a manual cron run's request. A
+// missing request or cron is left to the handler, which answers its own 404.
+func fireNowRequestApp(r *http.Request, store Store) (string, error) {
+	requests, ok := store.(interface {
+		GetFireNowRequest(context.Context, string) (state.FireNowRequest, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	request, err := requests.GetFireNowRequest(r.Context(), r.PathValue("request_id"))
+	if errors.Is(err, state.ErrFireNowRequestNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	cron, err := store.CronByID(r.Context(), request.CronID)
+	if err != nil {
+		return "", missing(err)
+	}
+	return cron.AppID, nil
+}
+
+// ownedResourceApp resolves the app behind resource URLs whose handlers check
+// only that the caller created the app. Their rows stay under the creator's
+// account after the creator leaves the company, so without this lookup a
+// removed or demoted creator keeps acting on the company app through them.
+// A missing resource is left to its handler, which answers with the error it
+// documents; the lookup never reveals another account's resource. Freezes,
+// operations and commit sources use the optional stores their handlers use.
+func ownedResourceApp(r *http.Request, store Store, actorID string) (string, error) {
+	ctx, path, id := r.Context(), r.URL.Path, r.PathValue("id")
+	switch {
+	case strings.HasPrefix(path, "/v1/triggers/") && validID(id):
+		trigger, err := store.TriggerByID(ctx, id)
+		if err != nil || !trigger.AppID.Valid {
+			return "", missing(err)
+		}
+		return uuid.UUID(trigger.AppID.Bytes).String(), nil
+	case strings.HasPrefix(path, "/v1/workflows/runs/") && validID(id):
+		run, err := store.GetWorkflowRun(ctx, id)
+		if err != nil || run == nil {
+			return "", missing(err)
+		}
+		return run.AppID, nil
+	case strings.HasPrefix(path, "/v1/delayed-tasks/") && validID(id):
+		invocation, err := store.InvocationByID(ctx, id)
+		return invocation.AppID, missing(err)
+	case strings.HasPrefix(path, "/v1/deleted-apps/") && validID(id):
+		return id, nil
+	case strings.HasPrefix(path, "/v1/preview/") && r.PathValue("slug") != "":
+		preview, err := store.AppBySlug(ctx, r.PathValue("slug"))
+		if err != nil {
+			return "", missing(err)
+		}
+		return previewAccessApp(r, store, preview), nil
+	case strings.HasPrefix(path, "/v1/freezes/") && validID(id):
+		freezes, ok := store.(state.ReleaseFreezeStore)
+		if !ok {
+			return "", nil
+		}
+		rows, err := freezes.ListReleaseFreezes(ctx, state.ReleaseFreezeOwner{AccountID: actorID}, time.Now().UTC())
+		for _, row := range rows {
+			if row.ID == id {
+				return row.AppID, nil
+			}
+		}
+		return "", missing(err)
+	case strings.HasPrefix(path, "/v1/operations/") && validID(id):
+		operations, ok := store.(state.ExclusiveWorkStore)
+		if !ok {
+			return "", nil
+		}
+		operation, err := operations.ExclusiveOperationByID(ctx, actorID, id)
+		return operation.AppID, missing(err)
+	case strings.HasPrefix(path, "/v1/event-recoveries/") && validID(r.PathValue("jobID")):
+		// A recovery job stays under the creator's account; its pause,
+		// cancel and workflow-cancel actions act on the company app.
+		recoveries, ok := store.(state.EventRecoveryStore)
+		if !ok {
+			return "", nil
+		}
+		job, err := recoveries.GetEventRecovery(ctx, actorID, r.PathValue("jobID"))
+		return job.AppID, missing(err)
+	case strings.HasPrefix(path, "/v1/commit-sources/") && r.PathValue("source") != "":
+		sources, ok := store.(state.CommitStore)
+		if !ok {
+			return "", nil
+		}
+		source, err := sources.CommitSourceByID(ctx, actorID, r.PathValue("source"))
+		return source.AppID, missing(err)
+	}
+	return "", nil
+}
+
+func validID(id string) bool {
+	_, err := uuid.Parse(id)
+	return id != "" && err == nil
+}
+
+// missing hides a not-found lookup so the handler keeps its own response.
+func missing(err error) error {
+	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrWorkflowRunNotFound) {
+		return nil
+	}
+	return err
+}
+
+// companyListPath is an edge-rule list or CORS preset URL, which addresses a
+// company app by its ?app= query.
+func companyListPath(path string) bool {
+	for _, prefix := range []string{"/v1/edge-rule-lists", "/v1/cors-presets"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }

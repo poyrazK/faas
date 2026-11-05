@@ -8,9 +8,10 @@ is the queue in front of its own pool, not Postgres.
 The counter behind the alert, `<daemon>_db_pool_canceled_acquires_total`, is
 deliberately the one without a warm-up floor. Its sibling
 `_db_pool_empty_acquires_total` also counts acquisitions that found no idle
-connection, but pools run `MinConns=0`, so every daemon necessarily posts
-empty acquires while warming up. A cancelled acquire cannot happen that way:
-someone gave up waiting.
+connection, but pools start empty (`MinConns=0`, or a warm floor from
+`pkg/db.DaemonMinConnections` opened in the background), so every daemon
+necessarily posts empty acquires while warming up. A cancelled acquire
+cannot happen that way: someone gave up waiting.
 
 pkg/db counts it with a pgxpool acquire tracer rather than pgxpool's own
 `CanceledAcquireCount`, which also counts an acquisition whose context had
@@ -26,6 +27,11 @@ This is the signal that did not exist on 2026-09-12, when `fsn-1` sat at 96 of
 `FaasDBPoolNearCap` (warn) is the early signal for the same failure: the
 daemon has held more than 90% of its pool cap for 10 minutes, before callers
 start giving up. Treat it with the "At the cap" branch under Check.
+
+Both alerts carry a `pool` label, the metric prefix of the pool that is short.
+A daemon can run more than one pool: apid's background loops have their own
+(`apid_background_db_pool_*`), separate from the one serving requests
+(`apid_db_pool_*`). Each pool is held against its own cap.
 
 ## Symptom
 

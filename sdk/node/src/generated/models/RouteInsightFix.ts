@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The edge-rule change applying an active insight would make now, planned from its evidence and the app's current rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads.
+ * The edge-rule change applying an active insight would make now, planned from its evidence and the app's current rules. Absent when the platform has no fix; never in webhook payloads.
  */
 export type RouteInsightFix = {
   /**

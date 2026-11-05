@@ -60,7 +60,7 @@ func (v *planCheck) replay(attempted, receipt bool) bool {
 }
 
 func (m *management) checkPlan(ctx context.Context, args getActionArgs) (any, error) {
-	value, err := m.getPlan(ctx, args)
+	value, err := m.getSavedPlan(ctx, args)
 	if err != nil {
 		return nil, err
 	}

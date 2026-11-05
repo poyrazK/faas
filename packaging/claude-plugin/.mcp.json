@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gregale": {
+      "type": "http",
+      "url": "https://api.gregale.dev/mcp"
+    }
+  }
+}

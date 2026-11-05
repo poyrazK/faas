@@ -15,7 +15,7 @@ plan or mistaking saved intent for current native eligibility.
 
 ## Decision
 
-Add read-only `gregale_get_plan` with the same app/project/environment selector
+Add read-only `gregale_get_saved_plan` with the same app/project/environment selector
 as app action detail, and `gregale_get_environment_plan` with an exact project
 and target environment. Both require the original connection-local plan ID.
 History entries with available plans provide exact review tool/argument hints;
@@ -71,3 +71,11 @@ Pinned real Codex acceptance reopens the same source, worker, budget and
 environment proposals across restart and OAuth refresh with zero model requests
 and native writes in read-only fixtures. Native/provider deployment
 qualification remains separate.
+
+## Main integration compatibility
+
+The saved original-proposal projection is exposed as `gregale_get_saved_plan`.
+`gregale_get_plan` retains the operation-receipt contract introduced independently
+on main. Both remain read-only; saved review keeps its immutable selectors and
+final consent guards. Recovery/history helpers belong to operate and are shared
+with release/diagnose workflows; focused core discovery keeps its existing budget.

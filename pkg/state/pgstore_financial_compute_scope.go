@@ -16,15 +16,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string) (computeScopes, error) {
+// computeAppScopeKey reports whether a workload key names an app row, the
+// only kind of workload with project, environment and deployment scopes.
+func computeAppScopeKey(key string) bool {
 	if _, ok := computeJobKey(key); ok || key == "" {
-		return computeScopes{}, nil
+		return false
 	}
 	if _, ok := computeSharedScopeOf(key); ok {
-		return computeScopes{}, nil
+		return false
 	}
 	// A key that is not a UUID names no app row, so it has no scopes.
-	if !validUUID(key) {
+	return validUUID(key)
+}
+
+func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string) (computeScopes, error) {
+	if !computeAppScopeKey(key) {
 		return computeScopes{}, nil
 	}
 	app, _ := parsePgUUID(key)

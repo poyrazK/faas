@@ -125,7 +125,7 @@ func TestPGPaymentFailedAtomicReplayAndOriginalDeadline(t *testing.T) {
 			if err := f.service.DeliverOne(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if len(f.sender.calls) != 2 || !reflect.DeepEqual(f.sender.calls[0], f.sender.calls[1]) || f.sender.calls[0].message.MessageID != "payment-failed:"+uuidString(r.ID.Bytes) || !strings.Contains(f.sender.calls[0].message.TextBody, at.Add(7*24*time.Hour).Format("2006-01-02 15:04:05 UTC")) {
+			if len(f.sender.calls) != 2 || !reflect.DeepEqual(f.sender.calls[0], f.sender.calls[1]) || f.sender.calls[0].message.MessageID != "payment-failed:"+uuidString(r.ID.Bytes) || !strings.Contains(f.sender.calls[0].message.TextBody, at.Add(7*24*time.Hour).UTC().Format("2006-01-02 15:04:05 UTC")) {
 				t.Fatal("retry changed the stable notification or its deadline")
 			}
 			assertMFAAlertErased(t, row(t, f, uuidString(r.ID.Bytes)))

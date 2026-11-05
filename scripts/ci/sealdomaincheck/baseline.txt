@@ -24,7 +24,6 @@ credential unit:faas-s3-gatewayd /etc/faas/secrets/fleet.age
 credential unit:faas-s3-gatewayd /etc/faas/secrets/host.age
 credential unit:faas-schedd /etc/faas/secrets/fleet.age
 credential unit:faas-schedd /etc/faas/secrets/host.age
-loader cmd/gatewayd-internal/log_drains.go 1
 loader cmd/gatewayd-internal/rehearsal_objects.go 1
 loader cmd/gatewayd-internal/run.go 1
 loader cmd/gatewayd-public/main.go 1
@@ -44,8 +43,14 @@ loader pkg/apid/mailoutbox/verification_config.go 1
 loader pkg/datapipeline/config.go 2
 loader pkg/internalmail/keyring_config.go 2
 plain accounts.mfa_recovery_codes_hash
+plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+plain app_env_batch_receipts.request_sha256
+plain app_fork_execs.stderr
+plain app_fork_execs.stdout
+plain app_forks.access_token_hash
 plain app_openapi_docs.doc_sha256
+plain app_scaling_receipts.request_hash
 plain app_task_attach_sessions.attach_token_sha256
 plain app_trusted_signers.cosign_public_key
 plain application_standard_publishers.public_key_der
@@ -55,6 +60,7 @@ plain billing_subscription_ends.subscription_hash
 plain build_export_publications.payload
 plain build_export_publications.signature
 plain ci_job_runtime.capability_hash
+plain cli_auth_codes.device_hash
 plain cli_auth_codes.token_hash
 plain consumer_keys.hashed_secret
 plain customer_operation_webhook_receipts.body_sha256
@@ -94,6 +100,8 @@ plain issue_ingest_tokens.token_hash
 plain job_run_attach_sessions.attach_token_sha256
 plain login_tokens.token_hash
 plain magic_link_tokens.token_hash
+plain managed_postgres_live_keys.sealed_secret_sig
+plain managed_postgres_live_logins.sealed_login_sig
 plain managed_realtime_channel_batches.payload_hash
 plain managed_realtime_channel_messages.data
 plain managed_realtime_channel_snapshots.data
@@ -108,6 +116,7 @@ plain managed_realtime_publisher_receipts.content_hash
 plain managed_realtime_schedules.data
 plain managed_realtime_subscription_tickets.token_hash
 plain managed_realtime_worker_credentials.token_hash
+plain mcp_bridge_state.sealed
 plain mfa_disable_requests.token_hash
 plain mfa_disable_tokens.token_hash
 plain migration_admissions.adoption_receipt
@@ -123,14 +132,18 @@ plain outbound_ai_prompt_prefixes.prefix_hash
 plain outbound_ai_replay_results.response_body
 plain outbound_ai_request_content.request_body
 plain outbound_ai_request_content.response_body
+plain outbound_ai_traces.tool_signature
 plain outbound_integrations.token_hash
 plain password_reset_tokens.token_hash
 plain platform_mail_outbox_reconciliations.request_hash
 plain platform_mail_producer_outbox.verification_token_hash
 plain platform_tenant_access_tokens.token_hash
 plain product_control_email_deliveries.unsubscribe_hash
+plain profile_capture_data.profile
 plain route_removal_approvals.baseline_sha256
 plain route_removal_approvals.candidate_sha256
+plain runtime_secret_signatures.ciphertext_sha256
+plain runtime_secret_signatures.signature
 plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope

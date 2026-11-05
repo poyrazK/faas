@@ -31,15 +31,15 @@ export type CreateAppRequest = {
    */
   visibility?: 'public' | 'internal';
   /**
-   * Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated.
+   * Standalone target-side service allowlist. Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated.
    */
   allowed_service_callers?: Array<string>;
   /**
-   * Optional target-side per-caller method/path grants (ADR-278). When present, callers absent from this map are denied; if allowed_service_callers is also set, both policies must allow the caller.
+   * Optional target-side per-caller method/path grants. When present, callers absent from this map are denied; if allowed_service_callers is also set, both policies must allow the caller.
    */
   allowed_service_call_scopes?: ServiceCallerScopes;
   /**
-   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
+   * Standalone outbound target app slugs. Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
    */
   service_binding_targets?: Array<string>;
   /**
@@ -47,7 +47,7 @@ export type CreateAppRequest = {
    */
   service_reliability?: ServiceReliabilityPolicies;
   /**
-   * Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only service_binding_targets.
+   * Standalone caller authorization. Omit for legacy same-account reachability; declared permits only service_binding_targets.
    */
   service_binding_policy?: 'account' | 'declared';
   /**
@@ -75,7 +75,7 @@ export type CreateAppRequest = {
    */
   request_timeout_s?: number;
   /**
-   * Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
+   * Requests one Node or Python function worker may serve at once. Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
    */
   function_concurrency?: number;
   /**
@@ -89,7 +89,7 @@ export type CreateAppRequest = {
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
   /**
-   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
+   * When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
    */
   pause?: 'between_requests' | 'when_idle' | 'never';
   /**
@@ -160,59 +160,59 @@ export type CreateAppRequest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe.
+   * Default rollout for production releases that name no rollout policy. Omit for safe.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449).
+   * Up to 3 concrete GET paths the default rollout probe checks instead of /.
    */
   release_probe_paths?: Array<string>;
   /**
-   * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
+   * Per-app streaming flag. Omitted at create-time → the API applies the plan default.
    */
   streaming_enabled?: boolean;
   /**
-   * Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → apid applies the plan default; PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed.
+   * Per-app raw-bytes Upgrade bridge flag. Omitted → the API applies the plan default; PATCH-true on Free is rejected by the API with 403 plan_websocket_not_allowed.
    */
   websocket_enabled?: boolean;
   /**
-   * Per-app per-route observability flag (ADR-093). Omitted → apid applies the plan default (Free = false; Hobby/Pro/Scale = true). PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
+   * Per-app per-route observability flag. Omitted → the API applies the plan default (Free = false; Hobby/Pro/Scale = true). PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;
   /**
-   * Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → apid applies the default (false). Free-tier allowed; no plan gate. Flipping this on at create time pins the app for maintenance from the first request.
+   * Coarse per-app maintenance toggle. Omitted → the API applies the default (false). Free-tier allowed; no plan gate. Flipping this on at create time pins the app for maintenance from the first request.
    */
   maintenance_mode?: boolean;
   /**
-   * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
+   * Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
   /**
-   * Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan default. Free/Hobby PATCH-true is rejected.
+   * Per-app two-tier snapshot flag. Omitted at create-time → the API applies the plan default. Free/Hobby PATCH-true is rejected.
    */
   warm_snapshot_enabled?: boolean;
   /**
-   * Optional create-time override for the warm-tier request-count threshold (issue #470 / ADR-055). Range [1, 100]. Omitted → apid applies the plan default.
+   * Optional create-time override for the warm-tier request-count threshold. Range [1, 100]. Omitted → the API applies the plan default.
    */
   warm_snapshot_min_requests?: number;
   /**
-   * Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds (issue #470 / ADR-055). Range [100, 60000]. Omitted → apid applies the plan default.
+   * Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds. Range [100, 60000]. Omitted → the API applies the plan default.
    */
   warm_snapshot_min_ms?: number;
   /**
-   * Desired paused warm-pool size (issue #1056 / ADR-074). Omit for the default of zero; non-zero values require Hobby+ and may not exceed max_concurrency.
+   * Desired paused warm-pool size. Omit for the default of zero; non-zero values require Hobby+ and may not exceed max_concurrency.
    */
   warm_pool_size?: number;
   /**
-   * Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → apid applies the schema default 'best_effort'.
+   * Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → the API applies the schema default 'best_effort'.
    */
   eviction_priority?: 'best_effort' | 'reserved';
   /**
-   * Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Wire form is compute_nodes.name (resolved server-side). Omitted → no preference; empty string at create-time is rejected with 422 invalid_overflow_node because the column starts NULL and there is no 'clear' path at create-time.
+   * Per-app preferred spill target for cross-node pressure rebalance. Wire form is compute_nodes.name (resolved server-side). Omitted → no preference; empty string at create-time is rejected with 422 invalid_overflow_node because the column starts NULL and there is no 'clear' path at create-time.
    */
   overflow_node?: string;
   /**
-   * Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false). Pro/Scale only.
+   * Per-deployment token-gate flag. Omitted at create-time → the API applies the plan default (false). Pro/Scale only.
    */
   require_authn?: boolean;
   /**

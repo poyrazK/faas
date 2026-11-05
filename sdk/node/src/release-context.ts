@@ -7,9 +7,47 @@ export const GREGALE_REVISION_HEADER = 'X-Gregale-Revision';
 /** Header carrying an immutable project deployment graph. */
 export const GREGALE_RELEASE_HEADER = 'X-Gregale-Release';
 
+/** Opaque platform-signed deadline for a participating managed HTTP chain. */
+export const GREGALE_REQUEST_DEADLINE_HEADER = 'X-Gregale-Request-Deadline';
+
+/**
+ * Time the request may still run, in milliseconds. Gregale sets it on every
+ * request it forwards to an app; on a call to another app's service it tells
+ * the service proxy when the caller's own request runs out, so the call ends
+ * then (ADR-20261102082606).
+ */
+export const GREGALE_DEADLINE_MS_HEADER = 'X-Faas-Deadline-Ms';
+
+/** Longest accepted X-Faas-Deadline-Ms: a day, beyond any plan's budget. */
+const DEADLINE_MS_MAX = 24 * 60 * 60 * 1000;
+
 const RELEASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const releaseContext = new AsyncLocalStorage<string | undefined>();
+const deadlineContext = new AsyncLocalStorage<string | undefined>();
+/** Absolute Date.now() time the current request runs out. */
+const deadlineAtContext = new AsyncLocalStorage<number | undefined>();
+
+function parseDeadlineMs(value: string | null | undefined): number | undefined {
+  if (!value || !/^\s*\d{1,9}\s*$/.test(value)) return undefined;
+  const ms = Number(value.trim());
+  return ms > 0 && ms <= DEADLINE_MS_MAX ? ms : undefined;
+}
+
+/**
+ * The header value for a managed call: the time left (never below 1, so the
+ * proxy refuses a call for a request that has run out instead of waking the
+ * target), or the caller's own shorter value.
+ */
+function deadlineMsFor(deadlineAt: number, own: string | null): string {
+  const remaining = Math.max(Math.floor(deadlineAt - Date.now()), 1);
+  const explicit = parseDeadlineMs(own);
+  return String(explicit !== undefined && explicit < remaining ? explicit : remaining);
+}
+
+function cleanDeadline(value: string | null | undefined): string | undefined {
+  return value && value.length <= 2048 && /^[A-Za-z0-9._-]+$/.test(value) ? value : undefined;
+}
 
 function cleanRelease(value: string | null | undefined): string | undefined {
   const release = value?.trim();
@@ -28,9 +66,17 @@ export function withGregaleReleaseContext<T>(release: string | null | undefined,
   return releaseContext.run(cleanRelease(release), handler);
 }
 
-/** Capture the header from a Web Request or Headers object and run a handler. */
+/**
+ * Capture the release, the signed deadline and the time the request has left
+ * (`X-Faas-Deadline-Ms`) from a Web Request or Headers object and run a
+ * handler.
+ */
 export function withGregaleRequestContext<T>(headers: HeadersInit, handler: () => T): T {
-  return withGregaleReleaseContext(new Headers(headers).get(GREGALE_RELEASE_HEADER), handler);
+  const inbound = new Headers(headers);
+  const deadlineMs = parseDeadlineMs(inbound.get(GREGALE_DEADLINE_MS_HEADER));
+  return deadlineAtContext.run(deadlineMs === undefined ? undefined : Date.now() + deadlineMs, () =>
+    deadlineContext.run(cleanDeadline(inbound.get(GREGALE_REQUEST_DEADLINE_HEADER)), () =>
+      withGregaleReleaseContext(inbound.get(GREGALE_RELEASE_HEADER), handler)));
 }
 
 /**
@@ -49,6 +95,21 @@ export function currentGregaleRelease(): string | undefined {
   return releaseContext.getStore();
 }
 
+/**
+ * Milliseconds the current request may still run, when the handler runs in
+ * `withGregaleRequestContext` and Gregale sent `X-Faas-Deadline-Ms`. Zero once
+ * it has run out.
+ */
+export function gregaleRequestTimeRemainingMs(): number | undefined {
+  const deadlineAt = deadlineAtContext.getStore();
+  return deadlineAt === undefined ? undefined : Math.max(Math.floor(deadlineAt - Date.now()), 0);
+}
+
+/** Return the opaque deadline selected for this request. Never edit its bytes. */
+export function currentGregaleRequestDeadline(): string | undefined {
+  return deadlineContext.getStore();
+}
+
 function urlOf(input: RequestInfo | URL): URL | undefined {
   try {
     if (input instanceof URL) return input;
@@ -61,7 +122,8 @@ function urlOf(input: RequestInfo | URL): URL | undefined {
 }
 
 function isManagedGregaleService(url: URL): boolean {
-  return url.hostname.toLowerCase().replace(/\.$/, '').endsWith('.svc.gregale');
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  return host.endsWith('.svc.gregale') || host.endsWith('.internal');
 }
 
 function isRedirectStatus(status: number): boolean {
@@ -77,6 +139,7 @@ async function fetchWithFlagContext(
   init: RequestInit | undefined,
   headers: Headers,
   flagContext: string,
+  deadlineMsAdded: boolean,
 ): Promise<Response> {
   const redirectMode = init?.redirect ?? (input instanceof Request ? input.redirect : 'follow');
   if (redirectMode !== 'follow') return fetchImpl(input, { ...init, headers });
@@ -91,6 +154,8 @@ async function fetchWithFlagContext(
     } else {
       requestHeaders.delete(GREGALE_FLAG_PROPAGATION_HEADER);
       requestHeaders.delete(GREGALE_RELEASE_HEADER);
+      requestHeaders.delete(GREGALE_REQUEST_DEADLINE_HEADER);
+      if (deadlineMsAdded) requestHeaders.delete(GREGALE_DEADLINE_MS_HEADER);
       managedChain = false;
     }
 
@@ -137,10 +202,11 @@ async function fetchWithFlagContext(
 }
 
 /**
- * Create a fetch function that forwards the current release and, when opted
- * in, used flag decisions to managed Gregale service hosts only. Flag context
- * is stripped from every outbound origin so an application cannot leak it to
- * an external service.
+ * Create a fetch function that forwards the current release, signed deadline,
+ * the time the request has left and optional flag decisions to managed
+ * Gregale service hosts. Revision pins
+ * are scoped to the caller app. Deadline and flag carriers are stripped from
+ * external calls. Signed calls expose redirects for explicit application handling.
  *
  * Use it once at app startup and wrap inbound handlers with
  * `withGregaleRequestContext(request.headers, handler)`. Pass the request's
@@ -155,7 +221,10 @@ export function createGregaleFetch(
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
     headers.delete(GREGALE_FLAG_PROPAGATION_HEADER);
-    if (!url || !isManagedGregaleService(url)) return fetchImpl(input, { ...init, headers });
+    if (!url || !isManagedGregaleService(url)) {
+      headers.delete(GREGALE_REQUEST_DEADLINE_HEADER);
+      return fetchImpl(input, { ...init, headers });
+    }
 
     // A revision is scoped to the current app and must never escape to a
     // downstream service. The graph release is the only cross-service pin.
@@ -163,12 +232,22 @@ export function createGregaleFetch(
     const release = cleanRelease(headers.get(GREGALE_RELEASE_HEADER)) ?? currentGregaleRelease();
     if (release) headers.set(GREGALE_RELEASE_HEADER, release);
     else headers.delete(GREGALE_RELEASE_HEADER);
+    // Request context wins over an explicit downstream carrier: replacing it
+    // would unlink the call from its parent. The gateway verifies the token.
+    const deadline = currentGregaleRequestDeadline() ?? cleanDeadline(headers.get(GREGALE_REQUEST_DEADLINE_HEADER));
+    if (deadline) headers.set(GREGALE_REQUEST_DEADLINE_HEADER, deadline);
+    else headers.delete(GREGALE_REQUEST_DEADLINE_HEADER);
+    // The time left bounds the call at the service proxy; it only shortens.
+    const deadlineAt = deadlineAtContext.getStore();
+    if (deadlineAt !== undefined) headers.set(GREGALE_DEADLINE_MS_HEADER, deadlineMsFor(deadlineAt, headers.get(GREGALE_DEADLINE_MS_HEADER)));
+
     const flagContext = options.flags?.propagationHeader();
     if (flagContext) {
       headers.set(GREGALE_FLAG_PROPAGATION_HEADER, flagContext);
-      return fetchWithFlagContext(fetchImpl, input, init, headers, flagContext);
+      if (!deadline) return fetchWithFlagContext(fetchImpl, input, init, headers, flagContext, deadlineAt !== undefined);
     }
 
-    return fetchImpl(input, { ...init, headers });
+    const redirect = init?.redirect ?? (input instanceof Request ? input.redirect : undefined);
+    return fetchImpl(input, { ...init, headers, ...(deadline ? { redirect: redirect === 'error' ? 'error' as const : 'manual' as const } : {}) });
   };
 }

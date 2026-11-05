@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, McpService, type SetMCPReadinessFallbackRequest, type MCPReadinessFallbackPolicy, type MCPReadinessDeliveryRouting, type AlertDeliveryResponse } from '../src/index.js';
+import { FaaSClient, McpService, type SetMCPReadinessFallbackRequest, type MCPReadinessFallbackPolicy, type MCPReadinessDeliveryRouting, type AlertDeliveryResponse } from '../src/preview.js';
 
 test('fallback configuration preserves zero versions and receiver progress', async (t) => {
   const rule = '00000000-0000-0000-0000-000000000001';

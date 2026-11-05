@@ -32,12 +32,29 @@ type InboundWebhookEndpoint struct {
 	Enabled             bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	// PreviousSigningSecretSealed is the secret a rotation replaced; it
+	// still verifies deliveries until PreviousSigningSecretExpiresAt
+	// (ADR-20261101093517). Empty when there is none.
+	PreviousSigningSecretSealed    []byte
+	PreviousSigningSecretExpiresAt *time.Time
+}
+
+// PreviousSigningSecretAt returns the previous sealed secret while its
+// overlap window lasts at now, or nil.
+func (e InboundWebhookEndpoint) PreviousSigningSecretAt(now time.Time) []byte {
+	if len(e.PreviousSigningSecretSealed) == 0 || e.PreviousSigningSecretExpiresAt == nil || !e.PreviousSigningSecretExpiresAt.After(now) {
+		return nil
+	}
+	return e.PreviousSigningSecretSealed
 }
 
 type UpdateInboundWebhookEndpointParams struct {
 	SigningSecretSealed *[]byte
 	DeliveryPath        *string
 	Enabled             *bool
+	// PreviousSecretUntil, set with SigningSecretSealed, keeps the secret
+	// being replaced valid until this instant (ADR-20261101093517).
+	PreviousSecretUntil *time.Time
 }
 
 type InboundWebhookQuotaScope string
@@ -69,6 +86,7 @@ type InboundWebhookStore interface {
 }
 
 func (m *MemStore) CreateInboundWebhookEndpointIfUnderQuota(_ context.Context, in InboundWebhookEndpoint, limits api.Limits) (InboundWebhookEndpoint, error) {
+	in.TokenHash = storedCredential(credTagInboundWebhook, in.TokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[in.AppID]
@@ -78,6 +96,7 @@ func (m *MemStore) CreateInboundWebhookEndpointIfUnderQuota(_ context.Context, i
 	if m.inboundWebhookEndpoints == nil {
 		m.inboundWebhookEndpoints = make(map[string]InboundWebhookEndpoint)
 	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	appCount, accountCount := 0, 0
 	for _, endpoint := range m.inboundWebhookEndpoints {
 		if endpoint.AppID == in.AppID {
@@ -86,7 +105,7 @@ func (m *MemStore) CreateInboundWebhookEndpointIfUnderQuota(_ context.Context, i
 				return InboundWebhookEndpoint{}, ErrConflict
 			}
 		}
-		if endpoint.AccountID == in.AccountID {
+		if m.countsTowardQuotaSubjectLocked(endpoint.AccountID, endpoint.AppID, subject) {
 			accountCount++
 		}
 		if bytes.Equal(endpoint.TokenHash, in.TokenHash) {
@@ -147,7 +166,7 @@ func (m *MemStore) InboundWebhookEndpointByTokenHash(_ context.Context, tokenHas
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, endpoint := range m.inboundWebhookEndpoints {
-		if bytes.Equal(endpoint.TokenHash, tokenHash) {
+		if credentialIn(credTagInboundWebhook, tokenHash, endpoint.TokenHash) {
 			app, exists := m.apps[endpoint.AppID]
 			if !exists || app.Status == AppDeleted {
 				return InboundWebhookEndpoint{}, ErrNotFound
@@ -166,6 +185,11 @@ func (m *MemStore) UpdateInboundWebhookEndpoint(_ context.Context, id string, pa
 		return InboundWebhookEndpoint{}, ErrNotFound
 	}
 	if params.SigningSecretSealed != nil {
+		if params.PreviousSecretUntil != nil && !bytes.Equal(endpoint.SigningSecretSealed, *params.SigningSecretSealed) {
+			until := *params.PreviousSecretUntil
+			endpoint.PreviousSigningSecretSealed = endpoint.SigningSecretSealed
+			endpoint.PreviousSigningSecretExpiresAt = &until
+		}
 		endpoint.SigningSecretSealed = bytes.Clone(*params.SigningSecretSealed)
 	}
 	if params.DeliveryPath != nil {
@@ -205,12 +229,18 @@ func (m *MemStore) DeleteInboundWebhookEndpoint(_ context.Context, id string) er
 func cloneInboundWebhookEndpoint(endpoint InboundWebhookEndpoint) InboundWebhookEndpoint {
 	endpoint.TokenHash = bytes.Clone(endpoint.TokenHash)
 	endpoint.SigningSecretSealed = bytes.Clone(endpoint.SigningSecretSealed)
+	endpoint.PreviousSigningSecretSealed = bytes.Clone(endpoint.PreviousSigningSecretSealed)
+	if endpoint.PreviousSigningSecretExpiresAt != nil {
+		until := *endpoint.PreviousSigningSecretExpiresAt
+		endpoint.PreviousSigningSecretExpiresAt = &until
+	}
 	return endpoint
 }
 
 const inboundWebhookEndpointColumns = `id, app_id, account_id, name, provider,
        token_hash, signing_secret_sealed, delivery_path, enabled,
-       created_at, updated_at`
+       created_at, updated_at, previous_signing_secret_sealed,
+       previous_signing_secret_expires_at`
 
 type inboundWebhookEndpointScanner interface{ Scan(dest ...any) error }
 
@@ -221,25 +251,27 @@ func scanInboundWebhookEndpoint(row inboundWebhookEndpointScanner) (InboundWebho
 		&endpoint.ID, &endpoint.AppID, &endpoint.AccountID, &endpoint.Name, &provider,
 		&endpoint.TokenHash, &endpoint.SigningSecretSealed, &endpoint.DeliveryPath,
 		&endpoint.Enabled, &endpoint.CreatedAt, &endpoint.UpdatedAt,
+		&endpoint.PreviousSigningSecretSealed, &endpoint.PreviousSigningSecretExpiresAt,
 	)
 	endpoint.Provider = InboundWebhookProvider(provider)
 	return endpoint, err
 }
 
 func (s *PgStore) CreateInboundWebhookEndpointIfUnderQuota(ctx context.Context, in InboundWebhookEndpoint, limits api.Limits) (InboundWebhookEndpoint, error) {
+	in.TokenHash = storedCredential(credTagInboundWebhook, in.TokenHash)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return InboundWebhookEndpoint{}, fmt.Errorf("state: begin inbound webhook create: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var locked int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and account_id=$2 and status <> 'deleted' for update`, in.AppID, in.AccountID).Scan(&locked); err != nil {
-		return InboundWebhookEndpoint{}, mapErr(err)
+	// Locking the app's billing owner serializes the per-account count across
+	// concurrent creates on different apps.
+	subject, accountID, err := lockQuotaSubjectTx(ctx, tx, in.AppID)
+	if err != nil {
+		return InboundWebhookEndpoint{}, err
 	}
-	// Serialize the account-wide count across concurrent creates on different
-	// apps; the app row lock above alone protects only the per-app cap.
-	if err := tx.QueryRow(ctx, `select 1 from accounts where id=$1 for update`, in.AccountID).Scan(&locked); err != nil {
-		return InboundWebhookEndpoint{}, mapErr(err)
+	if accountID != in.AccountID {
+		return InboundWebhookEndpoint{}, ErrNotFound
 	}
 	var appCount, accountCount int
 	if err := tx.QueryRow(ctx, `select count(*) from inbound_webhook_endpoints where app_id=$1`, in.AppID).Scan(&appCount); err != nil {
@@ -248,7 +280,9 @@ func (s *PgStore) CreateInboundWebhookEndpointIfUnderQuota(ctx context.Context, 
 	if limits.InboundWebhookPerApp <= 0 || appCount >= limits.InboundWebhookPerApp {
 		return InboundWebhookEndpoint{}, &InboundWebhookQuotaError{Scope: InboundWebhookQuotaScopeApp, Limit: limits.InboundWebhookPerApp, Observed: appCount}
 	}
-	if err := tx.QueryRow(ctx, `select count(*) from inbound_webhook_endpoints where account_id=$1`, in.AccountID).Scan(&accountCount); err != nil {
+	if err := tx.QueryRow(ctx, `select count(*) from inbound_webhook_endpoints e
+		join apps a on a.id=e.app_id left join orgs o on o.id=a.org_id
+		where `+quotaSubjectSQL+`=$1::uuid and a.status <> 'deleted'`, subject).Scan(&accountCount); err != nil {
 		return InboundWebhookEndpoint{}, fmt.Errorf("state: count inbound webhooks for account: %w", err)
 	}
 	if limits.InboundWebhookPerAccount <= 0 || accountCount >= limits.InboundWebhookPerAccount {
@@ -298,12 +332,21 @@ func (s *PgStore) InboundWebhookEndpointByID(ctx context.Context, id string) (In
 }
 
 func (s *PgStore) InboundWebhookEndpointByTokenHash(ctx context.Context, tokenHash []byte) (InboundWebhookEndpoint, error) {
-	endpoint, err := scanInboundWebhookEndpoint(s.pool.QueryRow(ctx, `select `+prefixedInboundWebhookEndpointColumns("w")+`
-		from inbound_webhook_endpoints w
-		join apps a on a.id=w.app_id and a.status <> 'deleted'
-		where w.token_hash=$1`, tokenHash))
+	endpoint, err := firstCredential(ctx, credentialLookups(credTagInboundWebhook, tokenHash), func(ctx context.Context, value []byte) (InboundWebhookEndpoint, error) {
+		endpoint, err := scanInboundWebhookEndpoint(s.pool.QueryRow(ctx, `select `+prefixedInboundWebhookEndpointColumns("w")+`
+			from inbound_webhook_endpoints w
+			join apps a on a.id=w.app_id and a.status <> 'deleted'
+			where w.token_hash=$1`, value))
+		return endpoint, mapErr(err)
+	})
 	if err != nil {
-		return InboundWebhookEndpoint{}, mapErr(err)
+		return InboundWebhookEndpoint{}, err
+	}
+	// ADR 20261029202403: rewrite a plain or older-key hash on use.
+	if next, stale := staleCredential(credTagInboundWebhook, tokenHash, endpoint.TokenHash); stale {
+		if _, err := s.pool.Exec(ctx, `update inbound_webhook_endpoints set token_hash = $1 where id = $2 and token_hash = $3`, next, endpoint.ID, endpoint.TokenHash); err == nil {
+			endpoint.TokenHash = next
+		}
 	}
 	return endpoint, nil
 }
@@ -327,6 +370,13 @@ func (s *PgStore) UpdateInboundWebhookEndpoint(ctx context.Context, id string, p
 		return InboundWebhookEndpoint{}, mapErr(err)
 	}
 	if params.SigningSecretSealed != nil {
+		if params.PreviousSecretUntil != nil && !bytes.Equal(endpoint.SigningSecretSealed, *params.SigningSecretSealed) {
+			// The row is locked FOR UPDATE above, so the secret read is
+			// the one being replaced.
+			until := *params.PreviousSecretUntil
+			endpoint.PreviousSigningSecretSealed = endpoint.SigningSecretSealed
+			endpoint.PreviousSigningSecretExpiresAt = &until
+		}
 		endpoint.SigningSecretSealed = *params.SigningSecretSealed
 	}
 	if params.DeliveryPath != nil {
@@ -335,10 +385,16 @@ func (s *PgStore) UpdateInboundWebhookEndpoint(ctx context.Context, id string, p
 	if params.Enabled != nil {
 		endpoint.Enabled = *params.Enabled
 	}
+	previous := endpoint.PreviousSigningSecretSealed
+	if previous == nil {
+		previous = []byte{}
+	}
 	endpoint, err = scanInboundWebhookEndpoint(tx.QueryRow(ctx, `update inbound_webhook_endpoints
-		set signing_secret_sealed=$2,delivery_path=$3,enabled=$4,updated_at=now()
+		set signing_secret_sealed=$2,delivery_path=$3,enabled=$4,
+		    previous_signing_secret_sealed=$5,previous_signing_secret_expires_at=$6,updated_at=now()
 		where id=$1 returning `+inboundWebhookEndpointColumns,
-		id, endpoint.SigningSecretSealed, endpoint.DeliveryPath, endpoint.Enabled))
+		id, endpoint.SigningSecretSealed, endpoint.DeliveryPath, endpoint.Enabled,
+		previous, endpoint.PreviousSigningSecretExpiresAt))
 	if err != nil {
 		return InboundWebhookEndpoint{}, mapErr(err)
 	}

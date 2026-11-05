@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
+import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
+import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { ApplicationStandardAssignment } from '../models/ApplicationStandardAssignment.js';
 import type { ApplicationStandardAssignmentList } from '../models/ApplicationStandardAssignmentList.js';
@@ -29,16 +32,30 @@ import type { CreateApplicationStandardLogDestinationRequest } from '../models/C
 import type { CreateApplicationStandardPublisherRequest } from '../models/CreateApplicationStandardPublisherRequest.js';
 import type { CreateApplicationStandardVersionRequest } from '../models/CreateApplicationStandardVersionRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
+import type { CreateFinancialBudgetRequest } from '../models/CreateFinancialBudgetRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
+import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
+import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
+import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
+import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
+import type { FinancialBudgetPreviewResponse } from '../models/FinancialBudgetPreviewResponse.js';
+import type { FinancialBudgetResponse } from '../models/FinancialBudgetResponse.js';
+import type { FinancialCostsResponse } from '../models/FinancialCostsResponse.js';
 import type { InvitationListResponse } from '../models/InvitationListResponse.js';
 import type { InvitationWithTokenResponse } from '../models/InvitationWithTokenResponse.js';
 import type { InviteMemberRequest } from '../models/InviteMemberRequest.js';
 import type { InvoiceListResponse } from '../models/InvoiceListResponse.js';
 import type { ListOrgActivityResponse } from '../models/ListOrgActivityResponse.js';
 import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js';
+import type { ListReleaseFreezesResponse } from '../models/ListReleaseFreezesResponse.js';
 import type { MemberListResponse } from '../models/MemberListResponse.js';
+import type { OrgAgentPolicyRequest } from '../models/OrgAgentPolicyRequest.js';
+import type { OrgAgentPolicyResponse } from '../models/OrgAgentPolicyResponse.js';
 import type { OrgAppListResponse } from '../models/OrgAppListResponse.js';
+import type { OrgBillingEmailRequest } from '../models/OrgBillingEmailRequest.js';
+import type { OrgBillingEmailResponse } from '../models/OrgBillingEmailResponse.js';
 import type { OrgInvitationResponse } from '../models/OrgInvitationResponse.js';
 import type { OrgListResponse } from '../models/OrgListResponse.js';
 import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
@@ -47,21 +64,325 @@ import type { OrgResponse } from '../models/OrgResponse.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
+import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
+import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { RevokeApplicationStandardExceptionRequest } from '../models/RevokeApplicationStandardExceptionRequest.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
 import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.js';
 import type { SeatUsageResponse } from '../models/SeatUsageResponse.js';
 import type { SetApplicationStandardLocalIntentRequest } from '../models/SetApplicationStandardLocalIntentRequest.js';
 import type { TransferOwnershipRequest } from '../models/TransferOwnershipRequest.js';
+import type { UpdateFinancialBudgetRequest } from '../models/UpdateFinancialBudgetRequest.js';
 import type { UsageResponse } from '../models/UsageResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OrgsService {
   /**
+   * List a company organization's deploy freezes.
+   * The organization's unlifted freezes that have not ended, on all of its apps and on single apps. Requires `org.read_app`. A personal organization's apps use `/v1/freezes` (409).
+   * @returns ListReleaseFreezesResponse The organization's freezes.
+   * @throws ApiError
+   */
+  public static listOrgReleaseFreezes({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<ListReleaseFreezesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/freezes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Freeze production releases of every app of a company organization.
+   * Creates a freeze on all of the organization's apps; `app` must be empty (freeze one app with `POST /v1/apps/{slug}/freezes`). A member who deploys (`org.deploy_app`) may create a window; weekly and after-rollback policies need an owner or admin.
+   * @returns ReleaseFreeze The freeze on all of the organization's apps.
+   * @throws ApiError
+   */
+  public static createOrgReleaseFreeze({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: CreateReleaseFreezeRequest,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/freezes',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Lift a company organization's deploy freeze.
+   * Lifts one of the organization's freezes. Needs the admin scope (a signed-in session or an admin key). A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID.
+   * @returns ReleaseFreeze The organization's lifted freeze.
+   * @throws ApiError
+   */
+  public static liftOrgReleaseFreeze({
+    slug,
+    id,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * The ID of one of the organization's freezes.
+     */
+    id: string,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/freezes/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the agents acting in an organization.
+   * Hosted MCP connections bound to the organization and its API keys
+   * with the `agent` scope that still work, newest first, with the
+   * member who connected each. Owners and admins only.
+   *
+   * @returns AgentConnectionsResponse The organization's connected agents.
+   * @throws ApiError
+   */
+  public static listOrgAgentConnections({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AgentConnectionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/agent-connections',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke every agent acting in an organization.
+   * Revokes the API key of every agent acting in the organization; each
+   * must sign in again. Owners and admins only. Each revocation is
+   * recorded in the organization's activity.
+   *
+   * @returns AgentConnectionsRevokeAllResponse How many of the organization's connections were revoked.
+   * @throws ApiError
+   */
+  public static revokeAllOrgAgentConnections({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AgentConnectionsRevokeAllResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/revoke_all',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke one agent acting in an organization.
+   * Revokes the agent's API key; the agent must sign in again. Owners and
+   * admins only. An id that is not one of the organization's agents is
+   * 404.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeOrgAgentConnection({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The API key id of an agent acting in the organization.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/agent-connections/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show whether agents may act in an organization.
+   * An organization that never set a policy allows agents with every
+   * capability. Every member may read it.
+   *
+   * @returns OrgAgentPolicyResponse The organization's agent policy.
+   * @throws ApiError
+   */
+  public static getOrgAgentPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<OrgAgentPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/agent-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set whether agents may act in an organization.
+   * Owners and admins only. Agents connecting to the organization get
+   * only the capabilities the policy allows. Connections the new policy
+   * no longer allows are revoked in the same request, and `revoked`
+   * counts them.
+   *
+   * @returns OrgAgentPolicyResponse The policy as saved.
+   * @throws ApiError
+   */
+  public static setOrgAgentPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OrgAgentPolicyRequest,
+  }): CancelablePromise<OrgAgentPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/agent-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List API keys minted against the active org.
    * Returns every key the org owns (active + grace + revoked).
-   * Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+   * Mirrors `GET /v1/keys`; the canonical path. The `org_id`
    * on every row will match `{slug}` because the store filters
    * server-side on the loaded membership.
    *
@@ -133,9 +454,8 @@ export class OrgsService {
   }
   /**
    * Fetch a single API key by id (org-scoped).
-   * Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-   * exist by id in pre-PR-6 — this path is the canonical single-key
-   * read). The response is the standard `APIKeyResponse` (no
+   * Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+   * single-key read. The response is the standard `APIKeyResponse` (no
    * plaintext). Cross-org probes collapse to 404.
    *
    * @returns APIKeyResponse Single API key.
@@ -177,8 +497,7 @@ export class OrgsService {
    * Revoke an API key (org-scoped).
    * Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
    * 'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-   * (401 unauthenticated). The audit row carries `org_id` (PR 6
-   * closes the ADR-061 §E "audit scoped to org" gap).
+   * (401 unauthenticated). The audit row carries `org_id`.
    *
    * @returns void
    * @throws ApiError
@@ -292,7 +611,8 @@ export class OrgsService {
    * `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
    * trimmed-non-empty (1..256 chars). Personal orgs cannot be
    * created via this endpoint — every account already has a
-   * personal org (PR 3 backfill / migration 00099).
+   * personal org (backfill). A new org starts on the Free plan,
+   * and an account may own one Free org at a time.
    *
    * @returns OrgResponse The new shared org.
    * @throws ApiError
@@ -320,6 +640,10 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `\`403 Forbidden\` — the caller already owns as many Free orgs
+        as an account may (\`org_free_limit_exceeded\`, with the limit
+        and the observed count). Upgrade or delete one first.
+        `,
         409: `\`409 Conflict\` — slug already taken (\`org_slug_taken\`) or the
         caller is already a member of an org with the same slug
         (\`org_already_member\`).
@@ -341,8 +665,7 @@ export class OrgsService {
    * Returns the org row + the caller's role on the org. Authz:
    * any active member of the org (`org.view`); non-members see
    * 403 `org_role_forbidden`. Unknown slugs are 404
-   * `org_not_found` (IDOR-safe — same wire shape as the
-   * pkg/authz.LoadOrg middleware).
+   * `org_not_found` (IDOR-safe — the same wire shape as every org route).
    *
    * @returns OrgResponse The org + the caller's role.
    * @throws ApiError
@@ -352,8 +675,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -398,8 +720,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -424,7 +745,7 @@ export class OrgsService {
         `,
         404: `code: not_found`,
         409: `\`409 Conflict\` — the target org is the caller's personal
-        org (created by the PR 3 backfill); personal orgs cannot be soft-deleted.
+        org (created by the backfill); personal orgs cannot be soft-deleted.
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
@@ -454,8 +775,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -511,8 +831,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -577,8 +896,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -628,8 +946,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -672,8 +989,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -726,8 +1042,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -785,8 +1100,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -844,8 +1158,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -903,8 +1216,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -959,8 +1271,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1002,8 +1313,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1048,8 +1358,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1109,8 +1418,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1170,8 +1478,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1219,8 +1526,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1282,8 +1588,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1345,8 +1650,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1396,8 +1700,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1452,8 +1755,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1509,8 +1811,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1564,8 +1865,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1614,8 +1914,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1658,8 +1957,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1713,8 +2011,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1763,8 +2060,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1810,8 +2106,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1854,8 +2149,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1904,7 +2198,7 @@ export class OrgsService {
    * boundary). Each row carries the joined `account.email`
    * so the dashboard can render `bob@acme.com` without a
    * second round-trip. Removed rows do NOT count toward the
-   * member cap (per ADR-061 §B).
+   * member cap.
    *
    * @returns MemberListResponse The active member list.
    * @throws ApiError
@@ -1914,8 +2208,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1946,7 +2239,7 @@ export class OrgsService {
    * Mints a 32-byte plaintext token, hashes it via SHA-256 for
    * storage, and returns the plaintext ONCE in the response.
    * The token expires after 14 days; admins can revoke earlier by
-   * row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
+   * row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (owns
    * the accept surface too — see
    * `POST /v1/invitations/{token}/accept`). Role cannot be
    * `owner`; transfer-ownership is the only path to owner.
@@ -1961,8 +2254,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1995,7 +2287,7 @@ export class OrgsService {
         Stable codes \`org_role_forbidden\` | \`org_invitation_cap_exceeded\`.
         `,
         409: `\`409 Conflict\` — the target org is the caller's personal
-        org (created by the PR 3 backfill); personal orgs are immutable on POST /members (invite).
+        org (created by the backfill); personal orgs are immutable on POST /members (invite).
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
@@ -2022,8 +2314,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2062,8 +2353,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2105,8 +2395,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2140,8 +2429,7 @@ export class OrgsService {
    * Change a member's role.
    * Owner-only (`org.change_role`). Role cannot be `owner` on
    * this endpoint; transfer-ownership is the only path to owner.
-   * The exactly-one-owner invariant lives in
-   * `pkg/state::UpdateOrgMemberRole`'s tx; demoting the last
+   * The exactly-one-owner invariant lives::UpdateOrgMemberRole`'s tx; demoting the last
    * active owner surfaces as 409 `org_last_owner`.
    *
    * @returns OrgMemberResponse The updated member row.
@@ -2154,8 +2442,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2195,8 +2482,7 @@ export class OrgsService {
         409: `\`409 Conflict\` — caller attempted to demote or remove
         the only remaining active owner of the org. The
         exactly-one-owner invariant lives on the
-        \`org_memberships_one_owner_idx\` partial unique index
-        (migration 00099). Stable code \`org_last_owner\`.
+        \`org_memberships_one_owner_idx\` partial unique index. Stable code \`org_last_owner\`.
         `,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2211,7 +2497,10 @@ export class OrgsService {
    * Owner-only (`org.remove_members`). Stamps `removed_at` on
    * the row (the row stays for audit; live-cap count drops).
    * Self-removal is rejected at the boundary; the last-owner
-   * invariant surfaces as 409 `org_last_owner`.
+   * invariant surfaces as 409 `org_last_owner`. The member whose email
+   * the organization bills to cannot be removed while the organization
+   * has a billing customer (409 `billing_contact_member`); set another
+   * billing email with `PUT /v1/orgs/{slug}/billing/email` first.
    *
    * @returns void
    * @throws ApiError
@@ -2222,8 +2511,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2260,8 +2548,7 @@ export class OrgsService {
         409: `\`409 Conflict\` — caller attempted to remove (DELETE) the only
         the only remaining active owner of the org. The
         exactly-one-owner invariant lives on the
-        \`org_memberships_one_owner_idx\` partial unique index
-        (migration 00099). Stable code \`org_last_owner\`.
+        \`org_memberships_one_owner_idx\` partial unique index. Stable code \`org_last_owner\`.
         `,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2277,8 +2564,7 @@ export class OrgsService {
    * demotes the caller to admin via `Store.TransferOrgOwnership`
    * (a single PostgreSQL tx with `FOR UPDATE` locks on both
    * rows). The exactly-one-owner invariant is enforced by the
-   * partial unique `org_memberships_one_owner_idx`
-   * (migration 00099). The new owner must already be an active
+   * partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
    * member of the org.
    *
    * @returns OrgResponse The org (post-transfer).
@@ -2290,8 +2576,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2329,7 +2614,7 @@ export class OrgsService {
    * (email, role, org slug, expires_at) without consuming the
    * token. Used by the dashboard to render "you've been invited
    * to Acme Inc. as developer" without forcing the invitee
-   * to accept yet. PR 7 added the accept surface at
+   * to accept yet. added the accept surface at
    * `POST /v1/invitations/{token}/accept`.
    *
    * @returns OrgInvitationResponse The pending invitation.
@@ -2367,13 +2652,12 @@ export class OrgsService {
    * Accept an invitation token (consume + add as member).
    * Consumes the invitation via `Store.ConsumeOrgInvitation` —
    * the load-bearing tx stamps `consumed_at`, inserts the active
-   * membership, and reads the live member cap (PR 2 cap-in-tx
-   * back-stop; documents at `pkg/state/memstore.go`). Two audit
-   * rows fire post-mutation per ADR-035: `org.invitation.accepted`
+   * membership, and reads the live member cap (cap-in-tx
+   * back-stop; documents). Two audit
+   * rows fire post-mutation: `org.invitation.accepted`
    * (invitation-side record) and `org.member.added` (member-side
    * record). The bearer must have a valid session or API key but
-   * no `X-Active-Org` — the invitation IS how they get one. PR 8
-   * adds step-up at accept time.
+   * no `X-Active-Org` — the invitation IS how they get one. adds step-up at accept time.
    *
    * @returns OrgMemberResponse The new membership row.
    * @throws ApiError
@@ -2406,8 +2690,12 @@ export class OrgsService {
       },
       errors: {
         401: `code: unauthorized`,
-        403: `\`403 Forbidden\` — the org is at the member cap. Stable
-        code \`org_member_cap_exceeded\`.
+        403: `\`403 Forbidden\` — the org is at the member cap (stable code
+        \`org_member_cap_exceeded\`), the caller has no fresh step-up
+        (\`step_up_required\`), or the accepting account has not
+        verified its email address (\`email_verification_required\`).
+        The invitation's email match binds acceptance to the invitee
+        only for a verified address.
         `,
         409: `\`409 Conflict\` — the bearer is already an active member
         of the target org. The wire detail carries the
@@ -2445,8 +2733,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2487,10 +2774,9 @@ export class OrgsService {
    * Seat usage visibility for the active org.
    * Returns `{used, limit, plan}` from `Store.CountActiveOrgMembers`
    * (the same row the cap-in-tx inside `ConsumeOrgInvitation`
-   * reads). `limit` comes from `org.Plan.OrgMembersMax()` — the
+   * reads). `limit` comes from `org.Plan.OrgMembersMax` — the
    * `free` plan returns `0` to render "personal org only" in the
-   * dashboard rather than "0 of 0 used". Visibility-only; PR 9
-   * ships the per-seat pricing cut-over per ADR-061 §"Out of
+   * dashboard rather than "0 of 0 used". Visibility-only; ships the per-seat pricing cut-over §"Out of
    * scope". Every role may read (gated by `org.view`).
    *
    * @returns SeatUsageResponse The seat usage.
@@ -2501,8 +2787,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2536,14 +2821,13 @@ export class OrgsService {
    * opaque (base64-url-of-JSON) compound key `(created_at,
    * id)`; `?before=<cursor>` partitions the next page so
    * the row at the boundary is visited exactly once even
-   * under random UUIDs (PR-9 cursor upgrade). Default limit
-   * 25, max 100 (per the strict-mode pagination contract at
-   * issue #393). Every role may read (gated by `org.view`,
+   * under random UUIDs. Default limit
+   * 25, max 100 (the strict-mode pagination contract).
+   * Every role may read (gated by `org.view`,
    * the same access model as GET /v1/orgs/{slug}/members).
-   * PR-8 ships the surface so the dashboard can render a
-   * "Pending invitations" table next to the "Members"
-   * table. Each render emits one `org.invitation.viewed`
-   * audit row (success-only, per ADR-035).
+   * The dashboard renders it as a "Pending invitations" table
+   * next to the "Members" table. Each successful render emits one
+   * `org.invitation.viewed` audit row.
    *
    * @returns InvitationListResponse The page of invitations.
    * @throws ApiError
@@ -2555,8 +2839,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2568,7 +2851,7 @@ export class OrgsService {
      * encoded by the server in `next_before`). Pass the
      * prior response's `next_before` unchanged. Omit on
      * the first page. Malformed cursors return 400 with
-     * the stable code `invalid_cursor` (PR-9).
+     * the stable code `invalid_cursor`.
      *
      */
     before?: string,
@@ -2615,8 +2898,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2652,8 +2934,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2698,8 +2979,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2751,8 +3031,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2781,7 +3060,13 @@ export class OrgsService {
    * Requires the organization owner, admin credential scope, verified email,
    * MFA and recent step-up. Paid entitlements activate only after provider
    * confirmation. Existing personal subscriptions are never reassigned.
-   * A payment-required response carries checkout_url or billing_portal_url.
+   * A payment-required response carries checkout_url, or billing_portal_url
+   * when the upgrade charge of an existing subscription is declined. The
+   * first checkout bills the acting owner's email until
+   * `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+   * Asking for the organization's current plan keeps its subscription,
+   * undoing a scheduled cancellation or downgrade; while a cancellation is
+   * scheduled any other plan answers 409 `billing_subscription_ending`.
    *
    * @returns OrgPlanResponse The confirmed organization plan.
    * @throws ApiError
@@ -2793,8 +3078,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2833,6 +3117,545 @@ export class OrgsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read the organization's monthly spend cap.
+   * Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members.
+   * @returns AccountOverageCapResponse The saved monthly spend cap.
+   * @throws ApiError
+   */
+  public static getOrgOverageCap({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<AccountOverageCapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/overage-cap',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set or clear the organization's monthly spend cap.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. `{"overage_cap_cents": <int|null>}`: null clears
+   * the cap, 0 allows no overage. Once the organization's overage this month
+   * meets the cap, the scheduler stops its apps' wakes (HTTP 402
+   * `admission_refused`) until the cap is raised or the month ends. A paid
+   * organization starts with its plan's default cap.
+   *
+   * @returns AccountOverageCapResponse The organization's spend cap after the change.
+   * @throws ApiError
+   */
+  public static setOrgOverageCap({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: RaiseOverageCapRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AccountOverageCapResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/overage-cap',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's attributable usage costs.
+   * Requires current organization membership, usage:read and session MFA.
+   * An organization that owns its resources pays for its apps, so their
+   * usage evidence is recorded under it rather than under the members who
+   * created them. Same report as GET /v1/billing/costs, for the organization.
+   *
+   * @returns FinancialCostsResponse Organization-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+   * @throws ApiError
+   */
+  public static getOrgFinancialCosts({
+    slug,
+    month,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * UTC usage month of the organization's report; defaults to the current month.
+     */
+    month?: string,
+  }): CancelablePromise<FinancialCostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/costs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the organization's budget policies.
+   * Requires current organization membership, usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+   * @returns FinancialBudgetListResponse Organization-owned policies, bounded to 128.
+   * @throws ApiError
+   */
+  public static listOrgFinancialBudgets({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<FinancialBudgetListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/budgets',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save an organization budget policy.
+   * Requires the organization owner or billing role, admin scope, session MFA
+   * and an Idempotency-Key (1..255 bytes). A budget covers what the
+   * organization pays for: its apps, projects and environments, and its
+   * whole account scope. The organization must own its resources. Monitored
+   * notify and compute-only stop_previews policies can activate; alerts go
+   * to the organization's billing contact. Strict policies return 422
+   * financial_budget_activation_unavailable.
+   *
+   * @returns FinancialBudgetResponse Saved policy with revision 1; retries retain its identity.
+   * @throws ApiError
+   */
+  public static createOrgFinancialBudget({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of this organization budget creation, required for retries.
+     */
+    idempotencyKey: string,
+    requestBody: CreateFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/billing/budgets',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid organization policy count, or a strict or unsupported activation; nothing was written.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview an organization budget and its workload consequences without writes.
+   * Requires current organization membership, usage:read and session MFA. Same preview as POST /v1/billing/budgets/preview, over the apps the organization pays for. No policies, holds or decisions are written.
+   * @returns FinancialBudgetPreviewResponse The organization's financial observation, affected workloads and readiness.
+   * @throws ApiError
+   */
+  public static previewOrgFinancialBudget({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: FinancialBudgetPreviewRequest,
+  }): CancelablePromise<FinancialBudgetPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/billing/budgets/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an organization budget, including its deletion tombstone.
+   * Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
+   * @returns FinancialBudgetResponse The organization budget's saved intent and enforcement readiness.
+   * @throws ApiError
+   */
+  public static getOrgFinancialBudget({
+    slug,
+    id,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of an organization-owned budget policy.
+     */
+    id: string,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an organization budget at its expected revision.
+   * Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision must match the current policy; stale edits return 409. Strict policies return 422 financial_budget_activation_unavailable.
+   * @returns FinancialBudgetResponse Updated policy and incremented revision.
+   * @throws ApiError
+   */
+  public static updateOrgFinancialBudget({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of an organization-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry key for replacing this organization budget at its expected revision.
+     */
+    idempotencyKey: string,
+    requestBody: UpdateFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Strict or unsupported activation for an organization; its current revision is kept.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Tombstone an organization budget while retaining its revision history.
+   * Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion.
+   * @returns FinancialBudgetResponse The organization budget's tombstone at its next revision.
+   * @throws ApiError
+   */
+  public static deleteOrgFinancialBudget({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of an organization-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry identity for tombstoning this organization budget.
+     */
+    idempotencyKey: string,
+    requestBody: DeleteFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Page through an organization budget's immutable revisions.
+   * Requires current organization membership, usage:read and session MFA. Use next_revision as after_revision for continuation.
+   * @returns FinancialBudgetHistoryResponse The organization budget's revisions, oldest first.
+   * @throws ApiError
+   */
+  public static listOrgFinancialBudgetRevisions({
+    slug,
+    id,
+    afterRevision,
+    limit = 100,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Organization budget whose immutable revision audit is listed.
+     */
+    id: string,
+    /**
+     * Exclusive cursor over the organization budget's revisions; pass the last next_revision.
+     */
+    afterRevision?: number,
+    /**
+     * Maximum organization budget revisions returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<FinancialBudgetHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}/revisions',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'after_revision': afterRevision,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set the email the organization bills to.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. The billing provider sends this address the
+   * organization's invoices and signs it in to the organization's billing
+   * portal, so use an address the organization controls rather than a
+   * member's. The first organization checkout bills the member who starts
+   * it until this is set. When the organization already has a billing
+   * customer, the customer moves to the new email first and nothing changes
+   * if the provider refuses. The provider keeps one customer per email: an
+   * email another Gregale account or organization already pays with is
+   * refused with 409 `billing_email_in_use`. While a member's email is the
+   * billing email, that member cannot be removed (409
+   * `billing_contact_member`).
+   *
+   * @returns OrgBillingEmailResponse The organization's billing email after the change.
+   * @throws ApiError
+   */
+  public static setOrgBillingEmail({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: OrgBillingEmailRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<OrgBillingEmailResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/billing/email',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        502: `The billing provider could not move the customer (\`billing_email_change_failed\`); the billing email is unchanged.`,
       },
     });
   }

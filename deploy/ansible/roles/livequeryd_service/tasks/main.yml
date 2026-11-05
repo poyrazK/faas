@@ -205,6 +205,40 @@
     - faas_livequeryd_databases | length == 0
   notify: restart faas-livequeryd
 
+# ADR 20261028161502: apid's live signing key (0400, a credential for apid)
+# and the public key livequeryd verifies with.
+- name: livequeryd_service — install apid's live signing key
+  ansible.builtin.copy:
+    src: "{{ faas_livequeryd_signing_key_src }}"
+    dest: /etc/faas/secrets/livequeryd/signing.key
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_signing_key_src | length > 0
+  notify: restart faas-apid for live queries
+
+- name: livequeryd_service — install the live signature verify keys
+  ansible.builtin.copy:
+    src: "{{ faas_livequeryd_signing_pub_src }}"
+    dest: /etc/faas/livequeryd/signing.pub
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_signing_pub_src | length > 0
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — check the signature contract has keys to verify with
+  ansible.builtin.assert:
+    that:
+      - not (faas_livequeryd_require_signatures | bool) or faas_livequeryd_signing_pub_src | length > 0
+    fail_msg: faas_livequeryd_require_signatures needs faas_livequeryd_signing_pub_src.
+  when: faas_livequeryd_enabled | bool
+
 # The recipient is public; apid refuses a file that grants group or other write.
 - name: livequeryd_service — install live-key recipient for apid
   ansible.builtin.copy:

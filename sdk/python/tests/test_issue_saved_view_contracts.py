@@ -1,9 +1,9 @@
 from uuid import uuid4
 
-from faas_sdk.api.apps import get_issue_saved_view, put_issue_saved_view
-from faas_sdk.models.issue_ownership_rule import IssueOwnershipRule
-from faas_sdk.models.issue_saved_view import IssueSavedView
-from faas_sdk.models.put_issue_saved_view_request import PutIssueSavedViewRequest
+from faas_sdk.preview.api.apps import get_issue_saved_view, put_issue_saved_view
+from faas_sdk.preview.models.issue_ownership_rule import IssueOwnershipRule
+from faas_sdk.preview.models.issue_saved_view import IssueSavedView
+from faas_sdk.preview.models.put_issue_saved_view_request import PutIssueSavedViewRequest
 
 
 def test_saved_view_preserves_relative_owner_and_stable_key():

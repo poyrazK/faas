@@ -41,7 +41,7 @@ export type BillingRunItemResponse = {
   attempts: number;
   updated_at: string;
   /**
-   * Payment status of the invoice exported for the item's statement (ADR-1504).
+   * Payment status of the invoice exported for the item's statement.
    */
   payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';
 };

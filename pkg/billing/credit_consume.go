@@ -31,10 +31,12 @@ import (
 
 var ErrInvoiceHistoricalPlanUnknown = errors.New("billing: invoice historical plan is unknown")
 
-// ComputeInvoiceOverageCents converts the account's usage_minutes for
-// the invoice's billing period [PeriodStart, PeriodEnd) into integer
-// cents of overage, floored. The plan allowance is applied once to the
-// account aggregate, never once per app.
+// ComputeInvoiceOverageCents is the overage, in integer cents, that credits
+// may offset on an invoice. When the provider itemised the invoice
+// (complete, categorised lines), it is the usage the invoice actually billed
+// (ADR-20261028101500). Otherwise it converts the account's usage_minutes for
+// the invoice's billing period [PeriodStart, PeriodEnd) into overage cents,
+// floored, applying the plan allowance once to the account aggregate.
 //
 // Returns 0 when the account had no usage in the period (Free /
 // Hobby under quota). The caller treats 0 as a no-op target: the
@@ -46,6 +48,9 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 	plan := inv.Plan
 	if plan == state.InvoicePlanUnknown {
 		return 0, ErrInvoiceHistoricalPlanUnknown
+	}
+	if billed, ok := InvoiceBilledUsageCents(inv); ok {
+		return billed, nil
 	}
 	if !plan.Valid() {
 		// Compatibility for invoice rows created before plan snapshots shipped.
@@ -141,4 +146,25 @@ func ConsumeCreditsForInvoiceUpTo(ctx context.Context, store state.Store, invoic
 		return state.ConsumeAccountCreditResult{}, inv, fmt.Errorf("billing: consume: %w", err)
 	}
 	return res, inv, nil
+}
+
+// InvoiceBilledUsageCents is the usage the provider billed on an invoice, from
+// its lines. ok is false unless the lines are complete and every one is
+// categorised, so a partial or unknown snapshot falls back to recomputing the
+// period. A usage charge is billed in arrears and need not fall inside the
+// invoice's service period, which is why the lines, not the period, decide.
+func InvoiceBilledUsageCents(inv state.Invoice) (int64, bool) {
+	if inv.Details == nil || inv.Details.Lines == nil || !inv.Details.Lines.Complete || len(inv.Details.Lines.Items) == 0 {
+		return 0, false
+	}
+	var billed int64
+	for _, line := range inv.Details.Lines.Items {
+		switch line.ChargeCategory {
+		case "":
+			return 0, false
+		case "Usage":
+			billed += line.NetCents
+		}
+	}
+	return max(billed, 0), true
 }

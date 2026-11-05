@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -38,12 +40,12 @@ func TestSavedRoutePolicyClientWireBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := faas.RoutePolicyPlanRequest{Saved: true, ExpectedRevision: &revision, DeploymentID: "00000000-0000-4000-8000-000000000001"}
-	plan, err := client.PlanRoutePolicy(context.Background(), "demo", request)
+	request := preview.RoutePolicyPlanRequest{Saved: true, ExpectedRevision: &revision, DeploymentID: "00000000-0000-4000-8000-000000000001"}
+	plan, err := preview.Wrap(client).PlanRoutePolicy(context.Background(), "demo", request)
 	if err != nil || plan.RequirementsRevision != revision {
 		t.Fatalf("saved plan response: %+v %v", plan, err)
 	}
-	response, err := client.ApplyRoutePolicy(context.Background(), "demo", "retry", faas.RoutePolicyApplyRequest{RoutePolicyPlanRequest: request, Confirm: true, ExpectedPlanSHA256: "reviewed"})
+	response, err := preview.Wrap(client).ApplyRoutePolicy(context.Background(), "demo", "retry", preview.RoutePolicyApplyRequest{RoutePolicyPlanRequest: request, Confirm: true, ExpectedPlanSHA256: "reviewed"})
 	if err != nil || !response.Replayed || response.Receipt.ID != "receipt" {
 		t.Fatalf("saved apply response: %+v %v", response, err)
 	}

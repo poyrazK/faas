@@ -76,6 +76,24 @@ type eventAdmissionPlan struct {
 	key              string
 	fairness         []string
 	cancel           bool
+	// reaccepted marks a delivery under PublishedEventReacceptanceID: an
+	// earlier acceptance of the identity kept the original delivery.
+	reaccepted bool
+}
+
+// unsubscribe settles a recipient whose subscription was disabled or removed
+// after the event was accepted as filtered: it is not delivered and not
+// retried (ADR-20261031130000). It carries no filter reason, because the
+// routing history's filter_reason column admits none for it.
+func (p *eventAdmissionPlan) unsubscribe() {
+	p.matched = false
+}
+
+// eventAdmissionChecksSubscription reports whether admission must confirm the
+// recipient's subscription is still enabled: an application subscription
+// matched by this event, with no delivery already created for it.
+func eventAdmissionChecksSubscription(p eventAdmissionPlan) bool {
+	return p.matched && !p.prior && isEventSubscriptionUUID(p.recipient.ID)
 }
 
 func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
@@ -143,6 +161,12 @@ func newEventAdmissionPlan(ctx context.Context, receipt *PublishedEventWork, cla
 	headerMap := propagation.MapCarrier{"x-gregale-event-id": envelope.ID, "x-gregale-event-source": envelope.Source,
 		"x-gregale-event-type": envelope.Type, "x-gregale-event-subscription-id": r.ID,
 		"x-gregale-event-acceptance-id": strconv.FormatInt(receipt.ID, 10)}
+	// ADR-1411: a subscription with an acknowledgment lease gets
+	// it on every delivery, so the scheduler issues the consumer a token.
+	// Only the legacy routeSubscription path stamped it before.
+	if receipt.ID > 0 && r.AcknowledgmentLeaseSeconds > 0 {
+		headerMap[eventAcknowledgmentSecondsHeader] = strconv.Itoa(r.AcknowledgmentLeaseSeconds)
+	}
 	otel.GetTextMapPropagator().Inject(traceContext, headerMap)
 	if span := trace.SpanContextFromContext(traceContext); span.IsValid() {
 		headerMap[api.TraceIDHeader] = span.TraceID().String()
@@ -166,6 +190,9 @@ func prepareEventAdmission(ctx context.Context, store eventAdmissionLookup, rece
 	}
 	inv, err := store.InvocationByID(ctx, p.invocation.ID)
 	if err == nil {
+		if inv.CreatedAt.Before(receipt.CreatedAt) && !p.reaccepted {
+			return reacceptEventAdmission(ctx, store, receipt, p)
+		}
 		if !sameMemUUID(inv.AppID, p.invocation.AppID) || !sameMemUUID(inv.AccountID, p.invocation.AccountID) || inv.Source != InvocationAsyncInvoke ||
 			inv.CreatedAt.Before(receipt.CreatedAt) || !jsonEqual(inv.Payload, p.invocation.Payload) {
 			return ErrConflict
@@ -178,6 +205,9 @@ func prepareEventAdmission(ctx context.Context, store eventAdmissionLookup, rece
 	}
 	cancellation, err := store.WorkCancellationByID(ctx, p.invocation.ID)
 	if err == nil {
+		if cancellation.CreatedAt.Before(receipt.CreatedAt) && !p.reaccepted {
+			return reacceptEventAdmission(ctx, store, receipt, p)
+		}
 		if !sameMemUUID(cancellation.AppID, p.invocation.AppID) || cancellation.CreatedAt.Before(receipt.CreatedAt) {
 			return ErrConflict
 		}
@@ -258,7 +288,27 @@ func eventAdmissionProgress(p eventAdmissionPlan, attempts int) PublishedEventRe
 	if p.filterReason == eventcontract.MatchReasonSchemaVersionMismatch {
 		return EventSchemaVersionFilteredProgress(PublishedEventRecipientProgress{}, max(0, attempts-1), time.Now().UTC())
 	}
-	return PublishedEventRecipientProgress{State: state, Attempts: attempts, UpdatedAt: time.Now().UTC()}
+	progress := PublishedEventRecipientProgress{State: state, Attempts: attempts, UpdatedAt: time.Now().UTC()}
+	if p.reaccepted && p.matched {
+		progress.DeliveryID = p.invocation.ID
+	}
+	return progress
+}
+
+// reacceptEventAdmission routes a re-accepted event: the receipt of an earlier
+// acceptance with the same identity was pruned after its window while its
+// delivery (or cancellation) is still retained. Deduplication lasts only as
+// long as the receipt (docs/event-driven.md), so this acceptance is a new
+// delivery under its own identity. Finding that identity again means an
+// earlier attempt of this receipt committed; the usual checks then apply.
+func reacceptEventAdmission(ctx context.Context, store eventAdmissionLookup, receipt *PublishedEventWork, p *eventAdmissionPlan) error {
+	var envelope eventcontract.Envelope
+	if err := json.Unmarshal(receipt.Payload, &envelope); err != nil {
+		return err
+	}
+	p.reaccepted = true
+	p.invocation.ID = PublishedEventReacceptanceID(envelope.AccountID, envelope.Source, envelope.ID, p.recipient.ID, receipt.ID)
+	return prepareEventAdmission(ctx, store, receipt, p)
 }
 
 func eventAdmissionPrepareError(err error) error {

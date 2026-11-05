@@ -1,6 +1,6 @@
 # ADR-1450 · One rollout flag and a live rollout view
 
-- **Status:** proposed
+- **Status:** accepted (shipped in PR 4872, 2026-10-18)
 - **Date:** 2026-10-16
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (release policy), [ADR-1321](1321-evidence-paced-default-rollouts.md) (`--safe`)
 - **Decision:** `gregale deploy --rollout safe|fast|immediate` is the one way to choose how a release reaches traffic, and the app's `release_policy` accepts the same three words as its stored default. At a terminal, `gregale deploy` follows a canary rollout live to 100%; Ctrl-C detaches and leaves the rollout running. `--safe`, `--canary-preset` and `--canary-stages` keep working for existing scripts and are marked deprecated; `--traffic-percent`, `--no-traffic` and `--rollback-on-5xx` stay, because they set a split, a dark deployment and the rollback opt-out rather than a rollout speed.

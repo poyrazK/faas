@@ -40,6 +40,20 @@ func contextEventTime(t *testing.T, f overviewFixture, kind string, at time.Time
 	}
 }
 
+// contextIntentTime sets every operator intent's requested_at.
+func contextIntentTime(t *testing.T, f overviewFixture, at time.Time) {
+	t.Helper()
+	if f.mem != nil {
+		intents := f.mem.OperatorIntents()
+		for id, intent := range intents {
+			intent.RequestedAt = at
+			intents[id] = intent
+		}
+	} else if _, err := f.pool.Exec(f.ctx, "UPDATE operator_intents SET requested_at=$1", at); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
@@ -102,6 +116,12 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 			if _, err := f.store.InsertOperatorIntent(f.ctx, state.OperatorIntentKindForceColdBoot, appA.ID, &a.ID, a.ID, "private-reason", []byte(`{"private":"payload"}`), &trace); err != nil {
 				t.Fatal(err)
 			}
+			// Entries written at the store's clock land after now on a slow
+			// runner, where setup outlasts now's one-second lead; pin them
+			// inside the window.
+			contextEventTime(t, f, "app.context", now.Add(-time.Minute))
+			contextEventTime(t, f, "operator.action.context", now.Add(-time.Minute))
+			contextIntentTime(t, f, now.Add(-time.Minute))
 			filter := state.OperatorIncidentContextFilter{Kind: "compute_node", ID: state.ContextCanonicalID(local.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100}
 			out, err := f.store.OperatorIncidentContext(f.ctx, filter)
 			if err != nil {

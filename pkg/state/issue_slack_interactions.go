@@ -2,16 +2,33 @@ package state
 
 import (
 	"context"
-	"regexp"
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const IssueSlackSigningSecretNamespace = "issue-slack-signing-secret"
 
-var slackWorkspace = regexp.MustCompile(`^T[A-Z0-9]{8,31}$`)
-var slackApp = regexp.MustCompile(`^A[A-Z0-9]{8,31}$`)
-var slackUser = regexp.MustCompile(`^[UW][A-Z0-9]{8,31}$`)
-var slackLinkToken = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var slackWorkspace = lazyregexp.New(`^T[A-Z0-9]{8,31}$`)
+var slackApp = lazyregexp.New(`^A[A-Z0-9]{8,31}$`)
+var slackUser = lazyregexp.New(`^[UW][A-Z0-9]{8,31}$`)
+var slackLinkToken = lazyregexp.New(`^[0-9a-f]{64}$`)
+
+// slackLinkTokenHash is what issue_slack_link_challenges.token stores for a
+// link token: the hex SHA-256 of its 32 random bytes, never the token, so a
+// database reader cannot link someone's Slack identity to their own account.
+// token must match slackLinkToken.
+func slackLinkTokenHash(token string) string {
+	raw, _ := hex.DecodeString(token)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// slackOAuthStateHash is a stored OAuth state hash: a hex SHA-256, or a
+// keyed digest (ADR 20261029202403).
+var slackOAuthStateHash = lazyregexp.New(`^[0-9a-f]{64}([0-9a-f]{2})?$`)
 
 func ValidIssueSlackUser(s string) bool { return slackUser.MatchString(s) }
 

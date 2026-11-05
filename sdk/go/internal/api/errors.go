@@ -556,7 +556,7 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
-		WithDocs(docsBase + "/build/limits#app-layer")
+		WithDocs(docsBase + "/build#limits")
 }
 
 // ErrPlanLimitConcurrency is returned when waking another instance would exceed
@@ -599,7 +599,7 @@ func ErrSourceTooLarge(l Limits, observedBytes int64) *Problem {
 		"Source too large",
 		fmt.Sprintf("%s plan caps source at %d MB.", l.Plan, l.SourceTarballMaxMB)).
 		WithLimit(capBytes, observedBytes).
-		WithDocs(docsBase + "/build/limits")
+		WithDocs(docsBase + "/build#limits")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation
@@ -616,7 +616,7 @@ func ErrDomainNotVerified(domain string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDomainNotVerified,
 		"Domain not verified",
 		fmt.Sprintf("TXT challenge for %q not yet satisfied; publish the required TXT record and retry.", domain)).
-		WithDocs(docsBase + "/domains/verify")
+		WithDocs(docsBase + "/domains#verify")
 }
 
 // ErrCronInvalid is returned for malformed cron expressions.
@@ -873,7 +873,7 @@ func ErrInvalidCredentials() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeInvalidCredentials,
 		"Sign in failed",
 		"email or password is incorrect.").
-		WithDocs(docsBase + "/auth/sign-in")
+		WithDocs(docsBase + "/auth#sign-in")
 }
 
 // ErrEmailNotVerified is the 401 returned by the Google / GitHub OAuth
@@ -885,7 +885,7 @@ func ErrEmailNotVerified(provider string) *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeEmailNotVerified,
 		"Email not verified",
 		fmt.Sprintf("the %s account's primary email is not verified; verify it on the provider and retry.", provider)).
-		WithDocs(docsBase + "/auth/oauth")
+		WithDocs(docsBase + "/auth#oauth")
 }
 
 // ErrPasswordTooWeak is the 400 returned by POST /signup and POST
@@ -895,7 +895,7 @@ func ErrEmailNotVerified(provider string) *Problem {
 func ErrPasswordTooWeak(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodePasswordTooWeak,
 		"Password too weak", reason).
-		WithDocs(docsBase + "/auth/password")
+		WithDocs(docsBase + "/auth#password")
 }
 
 // ErrResetTokenInvalid is the 410 returned by GET / POST /auth/reset
@@ -906,7 +906,7 @@ func ErrResetTokenInvalid() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenInvalid,
 		"Reset link invalid",
 		"this password-reset link is unknown or has already been used.").
-		WithDocs(docsBase + "/auth/reset")
+		WithDocs(docsBase + "/auth#reset")
 }
 
 // ErrResetTokenExpired is the 410 returned by GET / POST /auth/reset
@@ -917,7 +917,7 @@ func ErrResetTokenExpired() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenExpired,
 		"Reset link expired",
 		"this password-reset link has expired; request a new one.").
-		WithDocs(docsBase + "/auth/reset")
+		WithDocs(docsBase + "/auth#reset")
 }
 
 // ErrInvalidRegistryHost is the 400 returned when the request body's

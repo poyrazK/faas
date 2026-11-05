@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -56,7 +57,7 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
-	dsn, err := probeDSN(material)
+	dsn, err := ownerDSN(material)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +85,32 @@ func credentialSQLError(err error) error {
 	}
 }
 
+// ownerSearchPath is the search_path of every session that runs control-plane
+// SQL as a database's owner login. The tenant's migration login owns schema
+// public, so with the default "$user", public an unqualified call such as
+// hashtextextended($1, 0) resolves to a better-matching overload the tenant
+// planted in public and runs it as the owner. pg_temp is listed last so the
+// session's own temporary objects are not searched first either.
+const ownerSearchPath = "pg_catalog,pg_temp"
+
+// ownerDSN is probeDSN for an owner session, with search_path pinned to
+// ownerSearchPath as a startup parameter (owner material always carries the
+// direct endpoint, which accepts it).
+func ownerDSN(material managedpostgres.CredentialMaterial) (string, error) {
+	dsn, err := probeDSN(material)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", managedpostgres.ErrInvalid
+	}
+	query := u.Query()
+	query.Set("search_path", ownerSearchPath)
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
 // External PostgreSQL DDL cannot bind identifiers. All names are derived by
 // this adapter and quoted with pgx.Identifier; passwords contain hex only.
 func roleIdentifier(name string) string { return pgx.Identifier{name}.Sanitize() }
@@ -101,7 +128,7 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Schema initialization and role creation are serialized across replicas.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, role.schemaOwner); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, role.schemaOwner); err != nil {
 		return err
 	}
 	if err := initializeCredentialSchema(ctx, tx, role); err != nil {
@@ -390,7 +417,7 @@ func revokeCredentialRole(ctx context.Context, conn *pgx.Conn, role credentialRo
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, role.schemaOwner); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, role.schemaOwner); err != nil {
 		return err
 	}
 	info, err := credentialRoleInfo(ctx, tx, role.name)
@@ -417,7 +444,7 @@ func revokeCredentialRole(ctx context.Context, conn *pgx.Conn, role credentialRo
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, role.schemaOwner); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, role.schemaOwner); err != nil {
 		return err
 	}
 	var ownsObjects bool
@@ -456,9 +483,12 @@ func (m *sqlCredentialRoles) RestrictInherited(ctx context.Context, material man
 		return err
 	}
 	defer func() { _ = conn.Close(ctx) }()
+	// The live-query login (gregale_live_<scope>) is restricted too: a
+	// restored or cloned branch must not keep the source's live login.
 	rows, err := conn.Query(ctx, `SELECT rolname::text FROM pg_roles WHERE rolcanlogin
- AND rolname ~ '^gregale_(rt_|ro_|mig_|api_|auth_)?[0-9a-f]{40}$'
- AND COALESCE(shobj_description(oid, 'pg_authid'), '') NOT LIKE $1`, "gregale:credential:v1:"+scope+":%")
+ AND rolname ~ '^gregale_(rt_|ro_|mig_|api_|auth_|live_)?[0-9a-f]{40}$'
+ AND COALESCE(shobj_description(oid, 'pg_authid'), '') NOT LIKE $1
+ AND COALESCE(shobj_description(oid, 'pg_authid'), '') <> $2`, "gregale:credential:v1:"+scope+":%", "gregale:live:v1:"+scope)
 	if err != nil {
 		return err
 	}

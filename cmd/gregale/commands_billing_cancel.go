@@ -4,11 +4,12 @@
 // keeps running until period end, then downgrades to Free
 // (spec §4.7).
 //
-// Destructive — gated by the standard y/N confirm pattern
-// (matches `cmdAccountDelete`'s `-q` flag at commands4.go:86).
+// Destructive — gated by the shared y/N prompt (confirmYesNo).
 // apid itself does not gate (MFA-on-cancel is a tier-3 follow-up);
-// headless callers can wire their own confirm and pass --yes to
-// skip the prompt.
+// headless callers pass --yes. Without it, JSON output,
+// --non-interactive and a stdin that is not a terminal refuse instead
+// of cancelling: JSON mode used to skip the prompt and cancel (CLI
+// audit 2026-10-31).
 package main
 
 import (
@@ -18,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -32,6 +32,8 @@ const billingSubCancelUsage = `usage: gregale billing cancel [--yes]
   Destructive — y/N confirmation prompt by default. --yes skips
   the prompt (intended for non-interactive shells / CI only;
   still POSTs the same /v1/billing/cancel route server-side).
+  Without --yes, --json, --non-interactive and a stdin that is
+  not a terminal refuse with "Confirmation required".
 
 Exit codes:
   0   cancellation scheduled
@@ -46,23 +48,15 @@ func cmdBillingCancel(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprint(os.Stderr, billingSubCancelUsage)
+		PrintUsage(os.Stderr, billingSubCancelUsage, "billing")
 		return 1
 	}
 
-	if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
-		return code
-	}
-	if !*yes && !jsonOutput {
-		fmt.Fprintf(os.Stderr,
-			"This will schedule your subscription for cancellation at the end of the current period. "+
-				"Your apps will stop running on that date and your account will downgrade to Free. "+
-				"Continue? [y/N] ")
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			fmt.Println("aborted")
-			return 1
+	if !*yes {
+		question := "This will schedule your subscription for cancellation at the end of the current period. " +
+			"Your apps will stop running on that date and your account will downgrade to Free. Continue?"
+		if code := confirmYesNo(question, "--yes", "billing cancel"); code != 0 {
+			return code
 		}
 	}
 

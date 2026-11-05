@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func verifyCloneValuePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, resources []ProjectEnvironmentCloneResource) error {
@@ -50,5 +52,25 @@ func verifyCloneValuePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnv
 	if err != nil {
 		return err
 	}
-	return validateCloneValuePublication(op, resources, records, targets, projectCloneManagedValuePreparations{Postgres: postgres, Objects: objects})
+	restored, err := cloneRestoredDatabasesTx(ctx, tx, op)
+	if err != nil {
+		return err
+	}
+	return validateCloneValuePublication(op, resources, records, targets, projectCloneManagedValuePreparations{Postgres: postgres, Objects: objects, Restored: restored})
+}
+
+func cloneRestoredDatabasesTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) (map[string]projectCloneRestoredDatabase, error) {
+	rows, err := sqlc.New().ReadProjectEnvironmentCloneRestoredDatabases(ctx, tx, sqlc.ReadProjectEnvironmentCloneRestoredDatabasesParams{
+		OperationID: mustPgUUID(op.ID), AccountID: mustPgUUID(op.AccountID)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	restored := make(map[string]projectCloneRestoredDatabase, len(rows))
+	for _, row := range rows {
+		if !row.PointInTime.Valid {
+			return nil, ErrConflict
+		}
+		restored[row.DatabaseID] = projectCloneRestoredDatabase{SourceID: row.SourceDatabaseID, Point: row.PointInTime.Time.UTC()}
+	}
+	return restored, nil
 }

@@ -1,0 +1,301 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AppReleaseReview } from './AppReleaseReview.js';
+import type { BuildPlan } from './BuildPlan.js';
+import type { DatabaseSwitch } from './DatabaseSwitch.js';
+import type { DeploymentCompanion } from './DeploymentCompanion.js';
+import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
+import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
+import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
+import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DeploymentRelease } from './DeploymentRelease.js';
+import type { DeploymentStageState } from './DeploymentStageState.js';
+import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
+import type { DevPatchPreview } from './DevPatchPreview.js';
+import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
+import type { LogExcerpt } from './LogExcerpt.js';
+import type { RollbackOperation } from './RollbackOperation.js';
+import type { RolloutDecision } from './RolloutDecision.js';
+import type { ScanResult } from './ScanResult.js';
+import type { ScheduledRelease } from './ScheduledRelease.js';
+import type { SecretScanResult } from './SecretScanResult.js';
+import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
+import type { WorkflowSpec } from './WorkflowSpec.js';
+import type { WorkloadDependency } from './WorkloadDependency.js';
+/**
+ * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
+ */
+export type DeploymentResponse = {
+  /**
+   * Read-only diagnostics included by GET /v1/deployments/{id}; absent on older servers and other response surfaces.
+   */
+  configuration?: DeploymentConfigurationStatus;
+  /**
+   * Intent snapshot committed with a zero-traffic reviewed candidate.
+   */
+  staged_review?: AppReleaseReview;
+  worker_drain?: DeploymentWorkerDrainStatus;
+  /**
+   * Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
+   */
+  promotion_hold?: DeploymentPromotionHold;
+  /**
+   * The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended.
+   */
+  scheduled_release?: ScheduledRelease;
+  /**
+   * The switch a rollback with restore_databases started.
+   */
+  database_switch?: DatabaseSwitch;
+  durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
+  /**
+   * Actual stage progress; the same document GET /v1/deployments/{id}/stages serves. retry_requested_stage and retry_restart_reason appear when prerequisites must be rebuilt; hosting_verification appears during unavailable candidate verification recovery.
+   */
+  stage_state?: DeploymentStageState;
+  dev_patch?: DevPatchPreview;
+  id: string;
+  app_id: string;
+  /**
+   * Per-app deployment revision, rendered as `v42`. Accepted in place of a deployment id wherever this API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id.
+   */
+  revision?: number;
+  build_id?: string | null;
+  /**
+   * Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup.
+   */
+  build_cache_status?: 'hit' | 'miss' | 'invalidated';
+  /**
+   * SHA-256 digest of the versioned BuildCacheRecipe. Plan, runtime base, builder identity, platform, framework, and source root remain part of the digest input.
+   */
+  cache_key_sha256?: string;
+  image_digest: string;
+  kind: string;
+  status: string;
+  error?: string | null;
+  error_code?: string | null;
+  /**
+   * One-line next-action lifted catalog.
+   */
+  error_hint?: string | null;
+  /**
+   * Human-readable cause with observed value.
+   */
+  error_why?: string | null;
+  /**
+   * Prescriptive remediation (1-3 lines).
+   */
+  error_fix?: string | null;
+  /**
+   * Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes by the CLI tripwire.
+   */
+  error_relevant_logs?: Array<LogExcerpt>;
+  created_at: string;
+  /**
+   * Upstream repository or registry reference that produced this deployment, when known.
+   */
+  source_url?: string | null;
+  /**
+   * Upstream commit SHA that produced this deployment, when known.
+   */
+  commit_sha?: string | null;
+  /**
+   * Repository-relative build root used by a workspace context upload; omitted when the archive root is built.
+   */
+  source_root?: string;
+  /**
+   * SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source revisions.
+   */
+  source_sha256?: string;
+  /**
+   * True when this deployment carries a non-null override_* column set.
+   */
+  has_overrides?: boolean;
+  /**
+   * Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean;
+  /**
+   * Entrypoint override echoed verbatim from the create request. nil when no override was supplied.
+   */
+  override_entrypoint?: Array<string>;
+  /**
+   * Cmd override echoed verbatim from the create request.
+   */
+  override_cmd?: Array<string>;
+  /**
+   * Sorted set of env-var keys set by the env override. VALUES ARE NEVER ECHOED.
+   */
+  override_env_keys?: Array<string>;
+  /**
+   * Sorted set of env-var keys set by the env_secrets override. The parallel refs are echoed in `override_env_secret_refs` because the ref shape is non-secret by design.
+   */
+  override_env_secret_keys?: Array<string>;
+  /**
+   * Verbatim `secret:NAME` ref map; the customer needs to see which secret they bound to which env var to debug a misconfigured deploy.
+   */
+  override_env_secret_refs?: Record<string, string>;
+  /**
+   * Listen-port override; 0 = absent (fall back to image default).
+   */
+  override_port?: number;
+  /**
+   * Startup readiness-probe override echoed verbatim.
+   */
+  override_healthcheck?: (DeploymentHealthcheck | null);
+  /**
+   * Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing and restored after recovery; the VM is not restarted.
+   */
+  override_readiness_probe?: (DeploymentReadinessProbe | null);
+  /**
+   * Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites.
+   */
+  override_main_depends_on?: Array<WorkloadDependency>;
+  /**
+   * Liveness-probe override echoed verbatim. nil when the deployment used the per-plan default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so the customer can audit which probe the host is running against the VM.
+   */
+  override_liveness_probe?: (DeploymentLivenessProbe | null);
+  /**
+   * Per-deployment cold-wake floor override (closure). 0 = inherit from parent app (default); positive value is the deployment's own floor. Effective per-instance floor = max(app.EffectiveMinInstances, d.EffectiveMinInstances). Validated against the parent app's plan MaxMinInstances cap on PATCH.
+   */
+  min_instances?: number;
+  /**
+   * Per-deploy grype CVE scan surface. nil on pre-feature rows (the migration backfilled scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the API read path returns nil so the dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce, the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN findings; off/warn remain advisory.
+   */
+  scan?: (ScanResult | null);
+  /**
+   * Per-deployment parking reason (and scheduled image quarantine). Closed-set vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked deployments — surfaced as no field on the wire via omitempty.
+   */
+  parked_reason?: 'liveness_exhausted' | 'lifecycle_park' | 'admin_park' | 'security_scan_regressed';
+  /**
+   * Wall-clock timestamp the deployment was parked (set once, idempotent across the scheduler restart cycles). nil for never-parked deployments.
+   */
+  parked_at?: string | null;
+  /**
+   * Per-deployment traffic-split weight. Summed across live rows for the app = 100 by construction.
+   */
+  traffic_percent?: number;
+  /**
+   * Per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
+   */
+  scope?: string | null;
+  /**
+   * Per-deploy secret-scan audit row. Mirrors
+   * the `scan` field shape — absent when the row has not been
+   * scanned yet (deploy mid-pipeline or an older deployment), present
+   * with `findings=[]` for a clean walk, present with
+   * one-or-more entries for a hit. Read by the dashboard's
+   * "secret scan" card and the CLI's `--show-secret-scan`
+   * flag. Stamped both for the image service-side layer walk (main
+   * image + each sidecar; post-build, loud-fail on any
+   * finding) and — forward-compat — for the API-side
+   * source-tree 422 path. Status closed-set the writer
+   * stamps: "complete" (clean) | "complete_with_redactions"
+   * (hit). The `image_digest` sub-field records which OCI
+   * digest the image service walk ran against; null on legacy
+   * older rows.
+   *
+   */
+  secret_scan?: (SecretScanResult | null);
+  /**
+   * Auto-detected build plan. One-line summary the CLI prints after `gregale deploy`. nil for image deploys.
+   */
+  build_plan?: (BuildPlan | null);
+  /**
+   * Validated workflow definitions persisted with this immutable deployment revision.
+   */
+  workflows?: Array<WorkflowSpec>;
+  /**
+   * Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included.
+   */
+  companions?: Array<DeploymentCompanion>;
+  /**
+   * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
+   */
+  hosting_receipt?: any | null;
+  /**
+   * UUID of the deploying local account (FK → accounts.id, ON DELETE SET NULL). Empty when the deploy came from a non-local source (e.g. a GitHub integration pusher not bound to a local account).
+   */
+  deployed_by_user_id?: string | null;
+  /**
+   * Closed-set classifier of how this deployment was submitted. One of `api` (SDK / API key) / `cli` (bearer token) / `dashboard` (session cookie) / `github` (GitHub integration) / `operator` (admin). Enforced by a database CHECK constraint.
+   */
+  deployed_via?: 'api' | 'cli' | 'dashboard' | 'github' | 'operator';
+  /**
+   * The client IP the platform's edge established for the request. Deployments started by the GitHub integration record an internal platform address. Both IPv4 and IPv6 are accepted at the wire and stored in Postgres' native `inet` type (which canonicalises both families); the OpenAPI schema intentionally omits `format: ipv4` so v6 deployments (which grow as the public gateway picks up AAAA records) do not fail schema validation. v6 is rendered as the bracketed colon-hex form per RFC 5952.
+   */
+  deployed_from_ip?: string | null;
+  /**
+   * Raw GitHub login of the pusher when `deployed_via == "github"`. Empty for all other via values. Distinct from the human-readable `DeployedBy` text column — pusher_login is the unmodified GH identity, suitable for downstream GitHub-API correlation.
+   */
+  pusher_login?: string | null;
+  /**
+   * Free-form operator note on the source-ref deploy request (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
+   */
+  reason?: string;
+  /**
+   * Closed-set annotation tag on the source-ref deploy request for grouping/filtering.
+   */
+  tag?: 'incident_recovery' | 'hotfix' | 'scheduled_maintenance' | 'compliance_hold' | 'partner_request';
+  /**
+   * Human-readable actor label on the source-ref deploy request. CLI auto-captures from `git config user.name`; the GitHub integration stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}.
+   */
+  deployed_by?: string;
+  /**
+   * Pull-request number that drove this source-ref deploy request (the GitHub integration pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR.
+   */
+  pr_number?: number;
+  /**
+   * Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path.
+   */
+  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100' | 'adaptive';
+  /**
+   * Current zero-based canary ladder step.
+   */
+  canary_step?: number;
+  /**
+   * Total number of canary ladder steps; zero means no canary ladder.
+   */
+  canary_total_steps?: number;
+  /**
+   * Wall-clock timestamp at which the current canary step began.
+   */
+  canary_step_started_at?: string | null;
+  /**
+   * Durable rollout state used by the canary orchestrator and operator recovery path.
+   */
+  rollout_state?: 'pending' | 'rolling_out' | 'complete' | 'aborted';
+  /**
+   * Wall-clock timestamp at which rollout processing began.
+   */
+  rollout_started_at?: string | null;
+  /**
+   * Wall-clock timestamp at which the rollout reached complete.
+   */
+  rollout_completed_at?: string | null;
+  /**
+   * Wall-clock timestamp at which the rollout was aborted.
+   */
+  rollout_aborted_at?: string | null;
+  /**
+   * Operator or orchestrator reason recorded when the rollout is aborted.
+   */
+  rollout_aborted_reason?: string;
+  /**
+   * Evidence recorded with the latest rollout transition. It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort.
+   */
+  rollout_decision?: RolloutDecision;
+  /**
+   * The newest hold recorded since the current canary step started, while the rollout is in flight. Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  rollout_hold?: RolloutDecision;
+  /**
+   * The deployment's release command run, for a deployment that declares one. Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  release?: DeploymentRelease;
+  rollback_operation?: RollbackOperation;
+  service_rollout_handoff?: ServiceRolloutHandoffResponse;
+};
+

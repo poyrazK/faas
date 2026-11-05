@@ -22,7 +22,7 @@ type AppEventPublicationVerification struct {
 }
 
 // VerifyAppEventPublication compares retained content without publishing it.
-func (c *Client) VerifyAppEventPublication(ctx context.Context, slug string, req AppPublishEventRequest, options ...AppEventAcceptanceGuard) (AppEventPublicationVerification, error) {
+func (c *PreviewClient) VerifyAppEventPublication(ctx context.Context, slug string, req AppPublishEventRequest, options ...AppEventAcceptanceGuard) (AppEventPublicationVerification, error) {
 	var out AppEventPublicationVerification
 	if err := req.Validate(); err != nil {
 		return out, err

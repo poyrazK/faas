@@ -58,7 +58,9 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 	if err := os.Mkdir(filepath.Join(dest, ".gregale-tools"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(dest, ".gregale"), 0o700); err != nil {
+	// The template ships .gregale/env.json (Hunt 14 H14-52); local CLI state
+	// joins it there.
+	if err := os.MkdirAll(filepath.Join(dest, ".gregale"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dest, ".gregale", "data-api-dev-local.json"), []byte("private test identity"), 0o600); err != nil {

@@ -12,12 +12,18 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func Plan(ctx context.Context, store any, account state.Account, project state.Project, safe *api.ProjectSafeRelease, apps []state.App, scan reposcan.Result) ([]state.App, error) {
+	var err error
+	apps, err = state.ProjectAppsForEnvironment(ctx, store, account.ID, project.ID, "production", apps)
+	if err != nil {
+		return nil, err
+	}
 	dormant := map[string]bool{}
 	reader, available := store.(state.ProjectReleaseAdditionsStore)
 	if available {
@@ -146,6 +152,10 @@ func ReservationProblem(err error, plan api.Plan) *api.Problem {
 	var quota *state.QuotaError
 	if errors.As(err, &quota) {
 		return api.ErrPlanLimitApps(api.MustLimitsFor(plan), quota.Observed)
+	}
+	// A new service's hostname can expose an oversized policy (ADR-570).
+	if problem := trafficproblem.Policy(err, nil); problem != nil {
+		return problem
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Service addition reservation changed", "Project membership or reserved service settings changed; scan again.")
 }

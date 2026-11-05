@@ -119,6 +119,17 @@ func TestCPUProfileAutomaticWorkerIsolationAndCoverage(t *testing.T) {
 	if a, retry := (*e.S()).AssessProfileDeploymentCheck(t.Context(), work); a.Status != "inconclusive" || retry {
 		t.Fatal("retry limit ignored", a, retry)
 	}
+	// A backend outage retries until the same limit, not forever.
+	(*(*e.S()).ProfileBackend()) = nil
+	work.Check.Attempts = 1
+	if _, retry := (*e.S()).AssessProfileDeploymentCheck(t.Context(), work); !retry {
+		t.Fatal("backend outage not retried")
+	}
+	work.Check.Attempts = api.ProfileAutoMaxAttempts
+	if _, retry := (*e.S()).AssessProfileDeploymentCheck(t.Context(), work); retry {
+		t.Fatal("backend outage retried past the attempt limit")
+	}
+	(*(*e.S()).ProfileBackend()) = missing
 	q := *work.Check.Baseline
 	q.Start, q.End = q.Start.Add(-30*24*time.Hour), q.End.Add(-30*24*time.Hour)
 	work.Check.Baseline = &q

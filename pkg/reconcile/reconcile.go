@@ -50,10 +50,10 @@ type Service struct {
 	// Limits resolves the per-plan quota table. Defaults to
 	// api.MustLimitsFor in NewService; tests inject a fake.
 	Limits func(plan api.Plan) api.Limits
-	// Scan is the reposcan entry point. Defaults to reposcan.Scan
+	// Scan is the reposcan entry point. Defaults to reposcan.ScanWithOptions
 	// in NewService; tests inject a fake that returns a fixed
-	// Result.
-	Scan func(fsys fs.FS) (reposcan.Result, error)
+	// Result. Callers pass the account's capability-gated options.
+	Scan func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error)
 	// Log receives diagnostic output. Optional; defaults to
 	// slog.Default().
 	Log *slog.Logger
@@ -127,7 +127,7 @@ func NewService(store state.Store, aud *audit.Auditor, log *slog.Logger) *Servic
 		Store:  store,
 		Audit:  aud,
 		Limits: api.MustLimitsFor,
-		Scan:   reposcan.Scan,
+		Scan:   reposcan.ScanWithOptions,
 		Log:    log,
 	}
 }
@@ -280,6 +280,10 @@ func (s *Service) Plan(
 		excludeSet[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 	actions := workloadDiff(scan, project, existing, excludeSet)
+	actions, err = preserveEnvironmentOnlyActions(ctx, s.Store, project, actions)
+	if err != nil {
+		return Result{}, err
+	}
 
 	// 4. Project the would-be Result without applying. The shape
 	// mirrors applyActions' return: Added = would-be creates,

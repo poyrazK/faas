@@ -21,6 +21,8 @@ var routes = []string{
 	"/v1/apps/{}/consumer-plans",
 	"/v1/apps/{}/consumer-billing-policy",
 	"/v1/apps/{}/consumer-overdue-holds",
+	"/v1/apps/{}/consumer-signup",
+	"/v1/apps/{}/consumer-signups",
 	"/v1/apps/{}/consumers/{}/usage/quote",
 	"/v1/apps/{}/consumers/{}/usage-alerts",
 	"/v1/apps/{}/consumers/{}/usage-completeness",
@@ -43,6 +45,7 @@ var routes = []string{
 	"/v1/account/platform-tenants/{}/credits",
 	"/v1/account/platform-tenants/{}/spend-cap",
 	"/v1/consumer-billing",
+	"/v1/consumer-signup",
 	"/v1/platform-tenant-self/usage-statements",
 }
 
@@ -75,6 +78,9 @@ func Path(p string) bool {
 var WebhookEvents = []string{
 	"usage_statement.finalized",
 	"consumer.usage_threshold",
+	"consumer.signed_up",
+	"consumer.plan_changed",
+	"consumer.closed",
 	"platform_tenant.statement.finalized",
 }
 
@@ -83,6 +89,9 @@ var WebhookEvents = []string{
 var Schemas = []string{
 	"APIConsumerUsageThresholdWebhookPayload",
 	"APIConsumerUsageStatementFinalizedWebhookPayload",
+	"APIConsumerSignedUpWebhookPayload",
+	"APIConsumerPlanChangedWebhookPayload",
+	"APIConsumerClosedWebhookPayload",
 	"PlatformTenantStatementFinalizedWebhookPayload",
 }
 

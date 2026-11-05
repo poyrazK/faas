@@ -107,13 +107,33 @@ type Workload struct {
 	// DockerfileBuild carries a source-built Compose service's build.args
 	// and build.target (ADR-20261019142544). Nil builds the final stage with
 	// every ARG at its default.
-	DockerfileBuild  *api.DockerfileBuildOptions
+	DockerfileBuild *api.DockerfileBuildOptions
+	// GoCommand selects which `cmd/<GoCommand>` main package of the Go module
+	// at RootDir a source build compiles, for a module with several commands
+	// and none at its root (ADR-20261025134512). Empty builds what Railpack
+	// picks by default.
+	GoCommand        string
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
-	// ImageProcess carries a prebuilt image's Compose entrypoint, user,
-	// working_dir and stop contract (ADR-1337). Nil inherits the image.
+	// ReadinessCheck is an HTTP or gRPC check of the serving port that gates
+	// readiness, from a Kubernetes readinessProbe or startupProbe
+	// (ADR-20261029093621 §3). The deployment runs it as its startup probe.
+	ReadinessCheck *api.DeploymentHealthcheck
+	// IngressSettings are the proxy annotations of the Kubernetes Ingresses
+	// that route to the workload (ADR-20261029093621 §6). They are not
+	// applied; the plan compares each with what the account's plan does.
+	IngressSettings []IngressSetting
+	// ImageProcess carries the Compose entrypoint, user, working_dir and stop
+	// contract (ADR-1337). A built service's entrypoint is folded into its
+	// Command instead (ADR-20261022160000). Nil inherits the image.
 	ImageProcess *api.ComposeProcess
-	Command      []string // start-command override (compose `command:`, Procfile rhs)
+	// SecretFiles are the service's Compose secrets, written to /run/secrets
+	// (ADR-20261023090000). They name app secrets, never values.
+	SecretFiles []api.SecretFile
+	// Resources are the service's Compose deploy.replicas and resource
+	// limits (ADR-20261023120000); nil declares none.
+	Resources *api.ComposeResources
+	Command   []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.
@@ -123,12 +143,19 @@ type Workload struct {
 	// multi-process project does not run the same migration more than once.
 	ReleaseCommand      []string
 	ReleaseCommandShell bool
+	// ReleaseService names the Compose service whose command is
+	// ReleaseCommand: a service this one waits for with
+	// service_completed_successfully, which is not deployed as an app
+	// (ADR-20261102192943). Empty for a Procfile release command. Reconcile
+	// keeps such a command on the app, so every deploy path runs it.
+	ReleaseService string `json:",omitempty"`
 	// SourceSHA256 identifies the selected workload subtree. It is internal
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
 	SourceSHA256 string
-	// DependsOn contains service names declared by Compose's depends_on.
-	// The graph orders admission; explicit conditions also gate release.
+	// DependsOn contains service names declared by Compose's depends_on or by
+	// .gregale/project.yaml (ADR-20261025093331). The graph orders admission;
+	// explicit conditions also gate release.
 	DependsOn           []string
 	DependsOnConditions map[string]string
 	// ServiceBindingPolicy is the caller-side internal-service authorization
@@ -153,16 +180,34 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
-	// Unpublished marks a Compose service without `ports:`. Docker publishes
-	// nothing for it, so a new app for it is internal (ADR-20261022131852).
+	// RenamedFrom is the service's previous name (Compose
+	// x-gregale-renamed-from). A deploy updates that name's app in place
+	// instead of removing it and creating a new one (ADR-20261029090000).
+	RenamedFrom string
+	// Unpublished marks a Compose service without `ports:`, which Docker does
+	// not publish, or a service .gregale/project.yaml declares internal. A new
+	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
 	Unpublished bool
+	// Labels are the source's labels for the app reconcile creates: a
+	// Kubernetes object's metadata.labels, without gregale.dev/ keys or
+	// invalid ones (ADR-20261031100025 §7). Nil declares none.
+	Labels map[string]string `json:",omitempty"`
 	// InternalPorts are internal-only TCP listeners from compose expose:
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
 	InternalPorts []api.WorkloadPort
+	// ListenerUnknown marks a worker whose prebuilt image the scan could not
+	// read, so it cannot tell whether the service listens. Reconcile keeps
+	// an existing app's serving class for it (ADR-20261029120000
+	// amendment 2).
+	ListenerUnknown bool
 
-	Class    Class  // http|graphql|grpc|job|worker|server|unknown
-	Schedule string // primary cron expression retained for the existing plan wire
+	Class Class // http|graphql|grpc|job|worker|server|unknown
+	// composeDefaultWorker marks a Compose service that is a worker only
+	// because it publishes no ports. Scan makes it an HTTP service when
+	// another service calls it, then clears the mark (ADR-20261029120000).
+	composeDefaultWorker bool
+	Schedule             string // primary cron expression retained for the existing plan wire
 	// Schedules is the complete desired cron set. Schedule remains the first
 	// expression for compatibility with clients that predate multi-schedule
 	// workloads; callers that reconcile crons must use CronSchedules.
@@ -203,10 +248,13 @@ const (
 )
 
 // CronSchedule is one schedule discovered for a workload. Enabled preserves
-// source activation state such as Kubernetes CronJob spec.suspend.
+// source activation state such as Kubernetes CronJob spec.suspend. Timezone
+// is the IANA zone the expression runs in (a CronJob's timeZone); empty is
+// UTC, or the zone an operator set on an existing cron.
 type CronSchedule struct {
 	Expression string
 	Enabled    bool
+	Timezone   string `json:",omitempty"`
 }
 
 // CronSchedules returns the complete schedule set and adapts legacy detector
@@ -314,6 +362,41 @@ type Result struct {
 // merge rule can prefer an explicit source on a (RootDir, Name)
 // collision.
 func Scan(fsys fs.FS) (Result, error) {
+	return ScanWithOptions(fsys, ScanOptions{})
+}
+
+// KubernetesManifestsCapability is the product capability that releases
+// ScanOptions.KubernetesManifests (pkg/productcap/catalog.json).
+const KubernetesManifestsCapability = "kubernetes-manifests"
+
+// ScanOptions extends Scan with lookups outside the repository and with
+// behaviour a product capability releases per account. The zero value
+// scans the repository alone, with the behaviour every account gets.
+type ScanOptions struct {
+	// ImageListening, when set, tells whether a prebuilt Compose image
+	// that a request-serving service depends on listens, so it can deploy
+	// as an HTTP service (ADR-20261029120000 amendment 2).
+	ImageListening ImageListening
+	// KubernetesManifests maps a Kubernetes container's resources,
+	// readiness/startup exec probe and process fields onto the workload,
+	// and reports the pod-spec fields it does not apply
+	// (ADR-20261029093621 §3, the kubernetes-manifests capability).
+	KubernetesManifests bool
+	// HTTPSTransportUnavailable refuses a service that asks for the https
+	// service transport (x-gregale-service-transport: https) where the
+	// private-service-https capability is off (ADR-20261029230000). The zero
+	// value keeps the transport, so an offline scan is unchanged.
+	HTTPSTransportUnavailable bool
+	// ResourceLabels carries a Kubernetes Deployment's and CronJob's
+	// metadata.labels to its workload (ADR-20261031100025 §7, the
+	// resource-labels capability). The zero value drops them, as before.
+	ResourceLabels bool
+}
+
+// ScanWithOptions is Scan with opts. Every caller that scans a project for
+// an account must pass the same capability options for it, so a push
+// deploy and a reviewed deploy produce the same workloads.
+func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	var (
 		seeds             []workloadSeed
 		managed           []Managed
@@ -335,7 +418,7 @@ func Scan(fsys fs.FS) (Result, error) {
 	}{
 		{detCompose, detectCompose},
 		{detProcfile, detectProcfile},
-		{detK8s, detectK8s},
+		{detK8s, func(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) { return detectK8sWith(fsys, opts) }},
 		{detRender, detectRender},
 		{detFly, detectFly},
 		{detServerless, detectServerless},
@@ -404,14 +487,30 @@ func Scan(fsys fs.FS) (Result, error) {
 		highestTier = TierSingle
 	}
 
-	workloads := mergeByKey(seeds)
+	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(foldCoveredRoots(dropShadowedGoCommands(seeds))))
+	if err != nil {
+		return Result{}, err
+	}
+	warnings = append(warnings, releaseWarnings...)
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}
+	if err := applyProjectConfig(fsys, workloads); err != nil {
+		return Result{}, err
+	}
+	if opts.HTTPSTransportUnavailable {
+		for _, w := range workloads {
+			if w.ServiceBindingTransport == ServiceBindingTransportHTTPS {
+				return Result{}, fmt.Errorf("reposcan: service %q sets x-gregale-service-transport: https, but %s", w.Name, api.PrivateServiceHTTPSUnavailable)
+			}
+		}
+	}
+	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads, opts.ImageListening)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
+	sourceTrees := make(map[string]string)
 	for i := range workloads {
-		digest, err := hashWorkloadSource(fsys, workloads[i])
+		digest, err := hashWorkloadSourceWithCache(fsys, workloads[i], sourceTrees)
 		if err != nil {
 			return Result{}, fmt.Errorf("reposcan: hash workload %q source: %w", workloads[i].Name, err)
 		}
@@ -424,7 +523,7 @@ func Scan(fsys fs.FS) (Result, error) {
 		Workloads:         workloads,
 		Managed:           managed,
 		Tier:              highestTier,
-		Warnings:          warnings,
+		Warnings:          append(warnings, serviceNameWarnings(workloads)...),
 		DetectionWarnings: detectionWarnings,
 	}, nil
 }
@@ -451,24 +550,48 @@ func attachProcfileReleaseCommand(fsys fs.FS, workloads []Workload) error {
 			owner = i
 		}
 	}
+	// Two declarations of the migration would run it twice.
+	for _, w := range workloads {
+		if w.ReleaseService != "" {
+			return fmt.Errorf("reposcan: %s: release: %s already runs Compose service %s as its release command; keep one of them", src, w.Name, w.ReleaseService)
+		}
+	}
 	workloads[owner].ReleaseCommand = []string{command}
 	workloads[owner].ReleaseCommandShell = true
 	return nil
 }
 
 func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
+	return hashWorkloadSourceWithCache(fsys, workload, make(map[string]string))
+}
+
+func hashWorkloadSourceWithCache(fsys fs.FS, workload Workload, sourceTrees map[string]string) (string, error) {
 	root := workload.RootDir
 	cleanRoot := path.Clean(root)
 	if root != "" && root != "." && (!fs.ValidPath(root) || cleanRoot != root) {
 		return "", fmt.Errorf("invalid source root %q", root)
 	}
-	walkRoot := cleanRoot
-	if walkRoot == "" {
-		walkRoot = "."
+	// Workspace, convention and Railpack builds receive the repository, so
+	// root lockfiles and sibling packages are build inputs too. Only a Compose
+	// Dockerfile build narrows the staged archive to its declared context.
+	walkRoot := "."
+	if workload.DetectedBy.Detector == DetectorCompose && workload.Image == "" && cleanRoot != "." {
+		dockerfile := workload.Dockerfile
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		if info, err := fs.Stat(fsys, path.Join(cleanRoot, dockerfile)); err == nil && !info.IsDir() {
+			walkRoot = cleanRoot
+		}
 	}
-	relRoot := cleanRoot
-	if relRoot == "." {
-		relRoot = ""
+	tree, ok := sourceTrees[walkRoot]
+	if !ok {
+		var err error
+		tree, err = hashSourceTree(fsys, walkRoot)
+		if err != nil {
+			return "", err
+		}
+		sourceTrees[walkRoot] = tree
 	}
 	h := sha256.New()
 	// The accepted digest is also the retry checkpoint for build-affecting
@@ -488,7 +611,17 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	for _, arg := range workload.ReleaseCommand {
 		_, _ = fmt.Fprintf(h, "release_arg=%d:%s\x00", len(arg), arg)
 	}
-	err := fs.WalkDir(fsys, walkRoot, func(name string, entry fs.DirEntry, walkErr error) error {
+	_, _ = fmt.Fprintf(h, "context=%s\x00tree=%s\x00", walkRoot, tree)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func hashSourceTree(fsys fs.FS, root string) (string, error) {
+	h := sha256.New()
+	relRoot := root
+	if root == "." {
+		relRoot = ""
+	}
+	err := fs.WalkDir(fsys, root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

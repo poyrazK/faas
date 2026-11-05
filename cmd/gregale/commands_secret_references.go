@@ -17,7 +17,7 @@ func secretReferenceCLIFlags() []cliFlag {
 
 func cmdSecretReferences(args []string) int {
 	if len(args) == 0 || (args[0] != "list" && args[0] != "set" && args[0] != "unset") {
-		printCommandValidation(osStderr, "usage: gregale secrets refs <list|set|unset> --app <slug> --environment <name> [KEY=secret:NAME|KEY]\n")
+		printCommandValidation(osStderr, "usage: gregale env ref <list|set|unset> --app <slug> --environment <name> [KEY=secret:NAME|KEY]\n")
 		return 1
 	}
 	operation := args[0]

@@ -5,6 +5,8 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -110,53 +112,69 @@ func TestListenResumeHookLocalSocket(t *testing.T) {
 	}
 }
 
+// adr: 20261025150000 — the guest tells vmmd when no extension endpoint
+// accepted an event, so vmmd can stop sending per-request invoke events.
 func TestHandleResumeConnExtension(t *testing.T) {
-	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
-	if err != nil {
-		t.Fatalf("socketpair: %v", err)
+	cases := []struct {
+		name    string
+		hookErr error
+		wantAck byte
+	}{
+		{name: "extension accepted", hookErr: nil, wantAck: VsockResumeAckOK},
+		{name: "no extension endpoint", hookErr: fmt.Errorf("extension invoke: %w", extension.ErrUnavailable), wantAck: VsockExtensionAckUnavailable},
+		{name: "extension broke the contract", hookErr: errors.New("decode ack: bad json"), wantAck: VsockResumeAckOK},
 	}
-	readEnd := os.NewFile(uintptr(fds[0]), "guest-extension")
-	writeEnd := os.NewFile(uintptr(fds[1]), "host-extension")
-	defer func() { _ = readEnd.Close() }()
-	defer func() { _ = writeEnd.Close() }()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+			if err != nil {
+				t.Fatalf("socketpair: %v", err)
+			}
+			readEnd := os.NewFile(uintptr(fds[0]), "guest-extension")
+			writeEnd := os.NewFile(uintptr(fds[1]), "host-extension")
+			defer func() { _ = readEnd.Close() }()
+			defer func() { _ = writeEnd.Close() }()
 
-	body, err := json.Marshal(extensionHookRequest{
-		Phase: extension.PhaseInvoke,
-		Metadata: map[string]string{
-			"invocation_id": "inv-123",
-			"source":        "gateway",
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	msg := make([]byte, 8+len(body))
-	binary.BigEndian.PutUint32(msg[:4], VsockExtensionMsgType)
-	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
-	copy(msg[8:], body)
+			body, err := json.Marshal(extensionHookRequest{
+				Phase: extension.PhaseInvoke,
+				Metadata: map[string]string{
+					"invocation_id": "inv-123",
+					"source":        "gateway",
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			msg := make([]byte, 8+len(body))
+			binary.BigEndian.PutUint32(msg[:4], VsockExtensionMsgType)
+			binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+			copy(msg[8:], body)
 
-	called := make(chan extensionHookRequest, 1)
-	go func() {
-		_, _ = writeEnd.Write(msg)
-	}()
-	handleResumeConnWithExtension(readEnd, slog.Default(), nil, func(req extensionHookRequest) {
-		called <- req
-	}, nil)
-	ack := []byte{0}
-	if _, err := writeEnd.Read(ack); err != nil {
-		t.Fatalf("read ack: %v", err)
-	}
-	if ack[0] != VsockResumeAckOK {
-		t.Fatalf("ack = %d, want %d", ack[0], VsockResumeAckOK)
-	}
+			called := make(chan extensionHookRequest, 1)
+			go func() {
+				_, _ = writeEnd.Write(msg)
+			}()
+			handleResumeConnWithExtension(readEnd, slog.Default(), nil, func(req extensionHookRequest) error {
+				called <- req
+				return tc.hookErr
+			}, nil)
+			ack := []byte{0}
+			if _, err := writeEnd.Read(ack); err != nil {
+				t.Fatalf("read ack: %v", err)
+			}
+			if ack[0] != tc.wantAck {
+				t.Fatalf("ack = %d, want %d", ack[0], tc.wantAck)
+			}
 
-	select {
-	case req := <-called:
-		if req.Phase != extension.PhaseInvoke || req.Metadata["invocation_id"] != "inv-123" {
-			t.Fatalf("request = %+v", req)
-		}
-	default:
-		t.Fatal("extension callback was not invoked")
+			select {
+			case req := <-called:
+				if req.Phase != extension.PhaseInvoke || req.Metadata["invocation_id"] != "inv-123" {
+					t.Fatalf("request = %+v", req)
+				}
+			default:
+				t.Fatal("extension callback was not invoked")
+			}
+		})
 	}
 }
 

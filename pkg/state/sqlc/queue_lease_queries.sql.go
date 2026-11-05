@@ -20,6 +20,82 @@ func (q *Queries) DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocati
 	return err
 }
 
+const exhaustExpiredQueueLease = `-- name: ExhaustExpiredQueueLease :execrows
+UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
+    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
+    outcome_code='queue_lease_attempts_exhausted'
+WHERE id=$1::uuid AND state='dispatching' AND NOT quota_reserved AND attempts=$2::integer
+    AND lease_expires_at <= $3::timestamptz
+`
+
+type ExhaustExpiredQueueLeaseParams struct {
+	ID      pgtype.UUID
+	Attempt int32
+	NowAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ExhaustExpiredQueueLease(ctx context.Context, db DBTX, arg ExhaustExpiredQueueLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, exhaustExpiredQueueLease, arg.ID, arg.Attempt, arg.NowAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expiredQueueLeases = `-- name: ExpiredQueueLeases :many
+SELECT i.id, i.attempts, i.retry_policy, coalesce(a.plan, o.plan, '')::text AS plan
+FROM invocations i
+JOIN invocation_queue_lease_receipts r ON r.invocation_id = i.id AND r.attempt = i.attempts
+    AND r.replay_generation = i.replay_generation
+LEFT JOIN accounts a ON a.id = i.account_id
+LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE i.state = 'dispatching' AND i.source = 'queue' AND i.environment_id IS NULL AND NOT i.quota_reserved
+    AND i.lease_expires_at IS NOT NULL AND i.lease_expires_at <= $1::timestamptz
+ORDER BY i.lease_expires_at, i.id
+LIMIT $2::integer
+FOR UPDATE OF i SKIP LOCKED
+`
+
+type ExpiredQueueLeasesParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+type ExpiredQueueLeasesRow struct {
+	ID          pgtype.UUID
+	Attempts    int32
+	RetryPolicy []byte
+	Plan        string
+}
+
+// ADR-20261101093812: pull leases that lapsed, with what their attempt budget
+// comes from. A lease on the message's last attempt dead-letters when it
+// lapses instead of waiting, pending, for a lease call that may never come.
+func (q *Queries) ExpiredQueueLeases(ctx context.Context, db DBTX, arg ExpiredQueueLeasesParams) ([]ExpiredQueueLeasesRow, error) {
+	rows, err := db.Query(ctx, expiredQueueLeases, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpiredQueueLeasesRow{}
+	for rows.Next() {
+		var i ExpiredQueueLeasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Attempts,
+			&i.RetryPolicy,
+			&i.Plan,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const extendQueueLeaseInvocation = `-- name: ExtendQueueLeaseInvocation :one
 UPDATE invocations SET lease_expires_at=clock_timestamp()+make_interval(secs => $1::integer)
 WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
@@ -148,28 +224,44 @@ func (q *Queries) QueueLeaseActiveCount(ctx context.Context, db DBTX, arg QueueL
 }
 
 const queueLeaseCandidates = `-- name: QueueLeaseCandidates :many
-SELECT w.id FROM production_invocation_work w
-WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
-    AND w.due_at<=clock_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
-    AND w.work_policy_name IS NULL AND NOT w.quota_reserved
-    AND (w.queue_binding_id=$2::uuid
-        OR (w.queue_binding_id IS NULL AND w.queue_name=$3::text))
-ORDER BY w.due_at, w.created_at, w.id LIMIT $4::integer
+SELECT c.id FROM (
+    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
+         AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
+         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND w.queue_binding_id=$2::uuid
+     ORDER BY w.due_at, w.created_at, w.id LIMIT $3::integer)
+    UNION ALL
+    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+     WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
+         AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
+         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND w.queue_binding_id IS NULL AND w.queue_name=$4::text
+     ORDER BY w.due_at, w.created_at, w.id LIMIT $3::integer)
+) c
+ORDER BY c.due_at, c.created_at, c.id LIMIT $3::integer
 `
 
 type QueueLeaseCandidatesParams struct {
 	AppID          pgtype.UUID
 	BindingID      pgtype.UUID
-	QueueName      string
 	CandidateLimit int32
+	QueueName      string
 }
 
+// The binding's own messages and legacy messages under its name, each read in
+// due order from its own index (invocations_queue_lease_binding_idx and
+// _name_idx), so a lease reads about candidate_limit rows whatever the
+// backlog, its own or another app's (ADR-20261022105723 amendment
+// 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
+// bounds the index range, where volatile clock_timestamp() left only a filter
+// and the planner walked the global due index instead.
 func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error) {
 	rows, err := db.Query(ctx, queueLeaseCandidates,
 		arg.AppID,
 		arg.BindingID,
-		arg.QueueName,
 		arg.CandidateLimit,
+		arg.QueueName,
 	)
 	if err != nil {
 		return nil, err
@@ -287,7 +379,8 @@ func (q *Queries) QueueLeaseClock(ctx context.Context, db DBTX) (pgtype.Timestam
 
 const queueLeaseExhaustInvocation = `-- name: QueueLeaseExhaustInvocation :execrows
 UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
-    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL
+    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
+    outcome_code='queue_lease_attempts_exhausted'
 WHERE id=$1::uuid AND app_id=$2::uuid AND state='pending' AND attempts=$3::integer
 `
 

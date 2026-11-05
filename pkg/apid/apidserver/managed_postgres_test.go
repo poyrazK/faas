@@ -18,7 +18,7 @@ import (
 )
 
 func TestLoadManagedPostgresIsDarkWhenUnconfigured(t *testing.T) {
-	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(nil, func(string) string { return "" }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(nil, func(string) string { return "" }, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil || service != nil || reconciler != nil || bindingService != nil || bindingReconciler != nil || usageCollector != nil || healthCollector != nil {
 		t.Fatalf("unconfigured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
 	}
@@ -68,7 +68,7 @@ func TestLoadManagedPostgresRegistersNeonDriver(t *testing.T) {
 		}
 	}
 	registry := prometheus.NewRegistry()
-	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)), registry)
+	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, registry)
 	if err != nil || service == nil || reconciler == nil || bindingService == nil || bindingReconciler == nil || usageCollector == nil || healthCollector == nil {
 		t.Fatalf("configured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
 	}
@@ -97,16 +97,22 @@ func TestManagedPostgresUsageCeilingsFollowPlanStorage(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s plan missing", plan)
 		}
-		got := apidserver.ManagedPostgresUsageCeilings(limits)
-		want := managedpostgres.UsageCeilings{
-			MaxMonthlyStorageByteSeconds: limits.StorageLimitBytes * month,
-			MaxMonthlyComputeUnitSeconds: limits.MonthlyComputeUnitSeconds,
-		}
-		if got != want {
-			t.Fatalf("%s ceiling = %+v, want the pooled %+v", plan, got, want)
+		for _, overage := range []bool{false, true} {
+			got := apidserver.ManagedPostgresUsageCeilings(limits, overage)
+			want := managedpostgres.UsageCeilings{
+				MaxMonthlyStorageByteSeconds: limits.StorageLimitBytes * month,
+				MaxMonthlyComputeUnitSeconds: limits.MonthlyComputeUnitSeconds,
+			}
+			// adr: 20261025094915 — overage raises only the compute ceiling, to 2x.
+			if overage {
+				want.MaxMonthlyComputeUnitSeconds *= api.ManagedPostgresOverageCeilingMultiplier
+			}
+			if got != want {
+				t.Fatalf("%s overage=%v ceiling = %+v, want the pooled %+v", plan, overage, got, want)
+			}
 		}
 	}
-	if got := apidserver.ManagedPostgresUsageCeilings(api.ManagedPostgresPlanLimits{}); got != (managedpostgres.UsageCeilings{}) {
+	if got := apidserver.ManagedPostgresUsageCeilings(api.ManagedPostgresPlanLimits{}, true); got != (managedpostgres.UsageCeilings{}) {
 		t.Fatalf("no-database ceiling = %+v, want zero", got)
 	}
 }

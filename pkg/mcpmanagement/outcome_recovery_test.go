@@ -23,7 +23,7 @@ func TestOutcomeRecoveryDiscoveryExpiredRestartMCP(t *testing.T) {
 				store, path, key := testStateStore(t)
 				opts.planStore, opts.planNamespace = store, "outcome-discovery"
 				opts.Environments.DefaultWrite = true
-				_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+				_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -119,7 +119,7 @@ func TestOutcomeRecoveryDiscoveryExpiredRestartMCP(t *testing.T) {
 				if !bytes.Equal(before, final) {
 					t.Fatal("following reads changed state")
 				}
-				callTool(t, ctx, cs, "gregale_get_plan", selector, true)
+				callTool(t, ctx, cs, "gregale_get_saved_plan", selector, true)
 				callTool(t, ctx, cs, "gregale_check_plan", selector, true)
 			})
 		}
@@ -132,7 +132,7 @@ func TestOutcomeRecoveryFinalGuardsAndNoUpgrades(t *testing.T) {
 			f, b, opts := newBudgetFixture(t)
 			store, _, _ := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "outcome-guards"
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,7 +192,7 @@ func TestOutcomeRecoveryFinalGuardsAndNoUpgrades(t *testing.T) {
 	}
 	// A reference appearing after the initial snapshot never upgrades discovery.
 	_, b, opts := newBudgetFixture(t)
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestOutcomeRecoveryUnavailablePlanLinksRemainUsable(t *testing.T) {
 	for _, change := range []string{"removed", "binding"} {
 		t.Run(change, func(t *testing.T) {
 			f, b, opts := newBudgetFixture(t)
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}

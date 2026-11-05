@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentAdoptRetryPolicyOptions,
     EventAcknowledgmentIntentPolicyAdoptionReceipt,
     EventAcknowledgmentIntentRetryPolicy,

@@ -7,7 +7,7 @@ from typing import Any
 
 from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from durable_consumer import _ack
-from faas_sdk import (
+from faas_sdk.preview import (
     aclaim_event_consumer_processing,
     ainspect_event_consumer_processing,
     event_consumer_request_from_headers,

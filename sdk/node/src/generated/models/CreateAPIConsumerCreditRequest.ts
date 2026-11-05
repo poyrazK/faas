@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Prepaid credit for one consumer (ADR-1306).
+ * Prepaid credit for one consumer.
  */
 export type CreateAPIConsumerCreditRequest = {
   currency: string;

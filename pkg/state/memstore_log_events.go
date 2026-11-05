@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -45,28 +46,7 @@ func (m *MemStore) ListLogEvents(_ context.Context, filter LogEventFilter) ([]Lo
 
 	rows := make([]LogEvent, 0, normalized.Limit+1)
 	for _, event := range m.logEvents {
-		if event.AccountID != normalized.AccountID || event.AppID != normalized.AppID {
-			continue
-		}
-		if event.OccurredAt.Before(normalized.Since) || !event.OccurredAt.Before(normalized.Until) {
-			continue
-		}
-		if normalized.Source != "" && event.Source != normalized.Source {
-			continue
-		}
-		if normalized.DeploymentID != "" && event.DeploymentID != normalized.DeploymentID {
-			continue
-		}
-		if normalized.RequestID != "" && event.RequestID != normalized.RequestID && event.TraceID != normalized.RequestID {
-			continue
-		}
-		if normalized.TraceID != "" && event.TraceID != normalized.TraceID {
-			continue
-		}
-		if normalized.Route != "" && event.Route != normalized.Route {
-			continue
-		}
-		if normalized.Status != 0 && event.Status != normalized.Status {
+		if !logEventMatches(event, normalized) {
 			continue
 		}
 		if !normalized.BeforeAt.IsZero() {
@@ -88,6 +68,45 @@ func (m *MemStore) ListLogEvents(_ context.Context, filter LogEventFilter) ([]Lo
 		rows = rows[:normalized.Limit]
 	}
 	return rows, hasMore, nil
+}
+
+// FacetLogEvents mirrors the PostgreSQL facet counts over the same predicate.
+func (m *MemStore) FacetLogEvents(_ context.Context, filter LogEventFilter, routeLimit int) (LogEventFacets, error) {
+	normalized, err := normalizeLogEventFilter(filter)
+	if err != nil {
+		return LogEventFacets{}, err
+	}
+	if routeLimit < 1 {
+		routeLimit = 1
+	}
+	sources, levels, classes, routes := map[string]int64{}, map[string]int64{}, map[string]int64{}, map[string]int64{}
+	var facets LogEventFacets
+	m.mu.Lock()
+	for _, event := range m.logEvents {
+		if !logEventMatches(event, normalized) {
+			continue
+		}
+		n := int64(max(event.Occurrences, 1))
+		facets.Total += n
+		sources[string(event.Source)] += n
+		if event.Level != "" {
+			levels[event.Level] += n
+		}
+		if event.Status != 0 {
+			classes[fmt.Sprintf("%dxx", event.Status/100)] += n
+		}
+		if event.Route != "" {
+			routes[event.Route] += n
+		}
+	}
+	m.mu.Unlock()
+	for dim, counts := range map[string]map[string]int64{"source": sources, "level": levels, "status": classes, "route": routes} {
+		for value, count := range counts {
+			facets.add(dim, value, count)
+		}
+	}
+	facets.finish(routeLimit)
+	return facets, nil
 }
 
 // ListAccountTraceLogEvents mirrors the PostgreSQL account-wide trace read.

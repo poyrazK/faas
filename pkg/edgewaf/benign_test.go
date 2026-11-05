@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
@@ -176,5 +177,27 @@ func TestBenignCorpus(t *testing.T) {
 			}
 		}
 		t.Logf("[%s] %d of %d benign requests flagged", cfg.name, flagged, len(benignCorpus()))
+	}
+}
+
+// TestKnownFalsePositivesMatchBenignCorpus keeps the catalog the WAF review
+// cites (api.EdgeWAFKnownFalsePositive, ADR-831 amendment 13) equal to the
+// paranoia level 1 false positives this corpus pins.
+func TestKnownFalsePositivesMatchBenignCorpus(t *testing.T) {
+	pinned := map[int]bool{}
+	for _, br := range benignCorpus() {
+		for _, id := range slices.Concat(br.sampledFP, br.inPathFP) {
+			pinned[id] = true
+		}
+	}
+	for id := range pinned {
+		if api.EdgeWAFKnownFalsePositive(id) == "" {
+			t.Errorf("the benign corpus pins CRS %d but api.EdgeWAFKnownFalsePositive does not name it", id)
+		}
+	}
+	for id := api.EdgeWAFCRSRuleIDMin; id <= api.EdgeWAFCRSRuleIDMax; id++ {
+		if api.EdgeWAFKnownFalsePositive(id) != "" && !pinned[id] {
+			t.Errorf("api.EdgeWAFKnownFalsePositive names CRS %d but no benign request pins it", id)
+		}
 	}
 }

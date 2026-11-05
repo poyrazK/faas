@@ -7,6 +7,31 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP PR #6601 main integration — 2026-11-05 (branch, not released)
+
+The recovery branch integrates main through `ceec5d1bb`. Operation receipts retain
+`gregale_get_plan`; original proposal review uses `gregale_get_saved_plan` with
+its original selectors and final guards. History helpers follow operate and
+release/diagnose toolsets; focused core discovery retains its existing boundary.
+The local read-only core fixture has 18 tools. Full-catalog fixtures have 76 local
+read tools, or 73 read/83 write-enabled tools for their remote grants; historical
+catalog counts below describe earlier branch snapshots.
+
+History/replay batches commit through both file and leased PostgreSQL backends,
+retain ordered OAuth updates and preserve headless recovery until history expiry.
+Rollback admission preserves monitor claims, reclaimed-artifact checks and the
+original attempt identity; database-restore requests cannot use request-rollback
+attempt headers. Shared SDK schema caches reuse only fixed tool contracts and
+input types across connections. Contract equivalence and concurrent reuse are
+covered by race tests, along with grant isolation and stale-snapshot refusal.
+
+The merged MCP race suite completed within five minutes after schema-cache
+wiring; its outdated local-catalog assertion was corrected and the affected
+journey rerun. Node/Python receipt transport checks and generation pass. Native
+handler/state race checks and invalid-index replay now pass. SQLC regeneration
+is clean; CLI/real-client revalidation and GitHub CI remain pending.
+Portable fixtures do not qualify native/provider deployment execution.
+
 ## Management MCP named service-abort outcomes — 2026-11-04 (branch, not released)
 
 Named service-abort recovery now preserves project/environment UUIDs in the native
@@ -80,7 +105,7 @@ changed attempts and preserve existing worker/traffic guards. Go SDK tests,
 Node build/transport, Python transport and deterministic SDK regeneration pass.
 Spec/docs, typed coverage, test-store, seal-domain and ADR gates pass. API, MCP, state and HTTP-server lint pass. Native/provider
 execution qualification remains separate. See
-[ADR-20261026090000](adr/20261026090000-management-mcp-rollback-outcomes.md).
+[ADR-20261105000513](adr/20261105000513-management-mcp-rollback-outcomes.md).
 
 ## Management MCP promotion outcome recovery — 2026-10-25 (branch, not released)
 
@@ -108,7 +133,7 @@ and byte-identical Node/Python generation pass. MCP, API, state and HTTP-server
 lint pass. SQLC, spec/documentation, typed-client coverage, test-store,
 seal-domain, migration and ADR integrity gates pass. Portable fixtures do not
 qualify native/provider execution. See
-[ADR-20261025090000](adr/20261025090000-management-mcp-promotion-outcomes.md).
+[ADR-20261105000512](adr/20261105000512-management-mcp-promotion-outcomes.md).
 
 ## Management MCP deployment acceptance outcomes — 2026-10-24 (branch, not released)
 
@@ -240,7 +265,7 @@ pinned Codex 0.159.0-alpha.3 tool/resource acceptance passes in all three profil
 its app-server API does not expose prompt-get. CLI contracts, affected-package
 lint, fake-store/seal-domain guards and spec/docs gates pass without generated
 drift. Native/provider deployment qualification remains separate.
-See [ADR-20261024140000](adr/20261024140000-management-mcp-saved-plan-recovery-prompts.md).
+See [ADR-20261105000511](adr/20261105000511-management-mcp-saved-plan-recovery-prompts.md).
 
 ## Management MCP plan drift details — 2026-10-24 (branch, not released)
 
@@ -357,20 +382,528 @@ Native/provider deployment qualification remains separate.
 
 ## Event substrate benchmark (V12) — 2026-10-22
 
+## Managed PostgreSQL GA — 2026-10-31 (not released)
+
+[ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
+`managed-postgres`, `postgres-bindings` and `postgres-restore` to `ga` and
+resize and organization databases to `beta`. Rollbacks that restore the
+database become their own preview, `database-rollbacks`. The code-side GA
+blockers from the 2026-10-23 review are closed (caps, storage pool, delete
+undo window, SQL probe, the Neon review fixes); all of it is unreleased.
+
+Managed PostgreSQL launches GA with the public release. Customers get it when
+the flag opens, after the public-release gate in the ADR: the P0 workstreams
+of [#6146](https://github.com/poyrazK/faas/issues/6146) (lifecycle evidence,
+sustained production use with priced continuation, customer recovery).
+
+Open evidence:
+- `tests/journeys/postgres_test.go::TestManagedPostgres` has not run against
+  production yet. It needs the release, an approved production backend and
+  the owner's account released by the `managed_postgres` flag (the
+  [GA rollout](managed-postgres.md#ga-rollout)).
+- The compute and storage cap qualifications, the deletion hold check and the
+  enforcement switches are operator steps in the same rollout.
+- Free and Hobby restore into the restore slot
+  ([ADR-20261031123259](adr/20261031123259-managed-postgres-restore-slot.md)):
+  one copy past the database limit until the slot ends. A rollback that
+  restores the database must fit inside the limit, so it needs room for a
+  second database.
+- A source with restore copies can be deleted, and work on existing
+  databases no longer stops when the production approval lapses or a
+  capacity setting changes
+  ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md),
+  not released).
+
+## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
+
+The 2026-10-26 crons GA review found four blockers; #5649 fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
+Follow-ups from the same review (#5711, #5906, and branch `fix/crons-prod-findings`):
+
+- Schedule decisions and manual-run requests older than 90 days
+  (`api.CronHistoryRetention`, the longest plan's run history) are pruned on
+  schedd's hourly retention tick; unsettled decisions are kept.
+- `schedd_cron_delivery_total{outcome}` and
+  `schedd_cron_schedule_lag_seconds` back two operator alerts,
+  `FaasCronDeliveryLag` and `FaasCronDeliveryFailing`
+  ([runbook](runbooks/FaasCronDelivery.md)).
+- Cron paths are validated (single leading `/`, no host, at most 2,048 bytes)
+  by the API, the triggers API, source-ref manifests and `gregale.yaml`.
+- The OpenAPI spec documents `GET /v1/crons?slug=`; the Go SDK gains
+  `GetCron`, `FireCron`, `GetFireCronRequest` and `ListCronRuns`.
+- Crons are not triggers (#2757): `GET /v1/triggers?kind=cron` answers 400;
+  `gregale cron run --wait` exits non-zero when the run fails.
+- A plain HTTP cron run Gregale refused before delivery is retried up to three
+  attempts (ADR-20261026201726 amendment 2026-10-29); `gregale cron runs`
+  explains runs the app answered with 404.
+
+Audit findings 2026-10-30 (branch `fix/crons-audit-findings`):
+
+- Deleting a cron cancels its runs that have not started, including runs
+  waiting to retry.
+- `schedd_cron_delivery_total` counts runs the app answered with an error as
+  `app_error`, so `FaasCronDeliveryFailing` pages on platform failures only.
+- A schedule-policy cron's catch-up after a long gap records only the newest
+  `api.CronCatchUpRecordedMax` (20) due times.
+- The cron tick skips suspended accounts and apps without the crons
+  capability before claiming a fire.
+- A manual run of a cron that a plan downgrade stopped gets
+  `403 plan_cron_quota` (`pkg/apid/cronrun`), matching the scheduler's gate.
+
+Audit round 2, 2026-11-01 (branch `fix/crons-audit-round2`,
+ADR-20261026201726 amendment 2026-11-02, ADR-20261026151103 amendment 5):
+
+- A cron with a schedule policy but no failure rules is delivered once per
+  scheduled time; it took the plan's queue retry budget (up to 25 attempts).
+- A plain cron run that could not be queued is retried on the next sweep
+  instead of being lost; a schedule-policy cron on an app with no live
+  deployment is suspended.
+- The cron sweep yields schedd's main loop after 10 s and continues within the
+  minute, so many due crons cannot hold the heartbeat.
+- GitHub push deploys stage the crons `gregale.yaml` declares; source-declared
+  crons keep their timezone and `skip_if_running` (they were staged in UTC).
+- Company members can read a cron's status and poll a manual run's request.
+- `gregale cron status` reports `plan_limit` or `account_suspended` for a cron
+  that will not fire; a duplicate schedule and path is `409`; a suspended
+  cron's manual run is `409`; manual-run failures name their reason; timezone
+  `Local` is refused.
+
+Audit round 3, 2026-11-02 (branch `fix/crons-audit-round3`,
+ADR-20261026201726 amendment 2026-11-02 (2)):
+
+- A strict compute budget hold no longer piles up a run per scheduled time:
+  the sweep leaves the cron due and it runs once after the hold.
+- The drain cancels runs of crons removed by `gregale.yaml`, a project apply
+  or an app's deletion, not only by `DeleteCron`.
+- Manual-run requests a scheduler restart interrupted are failed with a reason
+  instead of staying running forever.
+- Rollbacks warn (HTTP `Warning`, printed by the CLI) about crons added after
+  the deployment they return to; crons are not rolled back.
+- `gregale cron runs` explains `405` (crons always send `POST`) as it does
+  `404`; the webhook delivery example no longer names the unemitted
+  `cron.fired` event.
+
+Audit round 4, 2026-11-03 (branch `fix/crons-audit-round4`,
+ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
+
+- Company members other than an app's creator list its crons by slug; the
+  404 also failed their `gregale.yaml` deploys, which list crons first.
+- A `gregale.yaml` deploy no longer checks its crons against the deployer's
+  own plan; the company's plan applies, checked by apid.
+- A `deploy:write` key can follow the manual run it starts
+  (`gregale cron run --wait`).
+- Deployment cron staging applies the cron API's path and timezone rules.
+- The dashboard refuses a disabled cron's manual run and names each refusal.
+
+Audit round 5, 2026-11-03 (branch `fix/crons-audit-round5`,
+ADR-20261026201726 amendment 2026-11-03 (2)):
+
+- A cron's schedule policy and failure rules can be removed
+  (`clear_schedule_policy`, `clear_failure_rules`, the matching CLI flags, and
+  Terraform when the configuration drops them).
+- On a preview app a compute budget holds, `gregale cron status` reports
+  `budget_held` and a manual run is refused (`402`) instead of waiting.
+- A disabled cron's manual run is refused (`409`); the scheduler no longer
+  lists disabled crons from PostgreSQL.
+
+Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
+passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
+cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
+1,781 cron runs in 24 h, 213 failed: 192 were apps answering 404 for the
+cron's path and about 21 were platform refusals or timeouts.
+
+## Release guards — 2026-10-26
+
+Production releases can be held back by:
+
+- deploy freezes and release windows
+  ([ADR-20261019071733](adr/20261019071733-deploy-freezes-and-release-windows.md)),
+  shipped in #5034;
+- release gates on customer signals
+  ([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md)),
+  shipped in #5034;
+- release approvals ([ADR-20261020085706](adr/20261020085706-release-approvals.md)),
+  shipped in #5126 with the release diff
+  ([ADR-20261021101117](adr/20261021101117-release-diff.md));
+- scheduled releases ([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)),
+  shipped in #5126.
+
+Database-restoring rollbacks
+([ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md))
+shipped in #5305 behind the preview `postgres-restore` flag. All of these are
+preview capabilities except rollback (GA).
+
+Evidence: the n2 metal drill `TestReleaseGuardsDrillMetal`
+(`cmd/e2e/release_guards_drill_metal_test.go`) passed 5/5 on 2026-10-27 on
+main `461fd086f8`, which includes the release-guard gap fixes (#5568) and the
+ADR-570 hosting-smoke fix (#5574). It covered:
+
+- a freeze refusing a release, an audited override, and a release after the lift;
+- a canary gate abort (`abort_release_gate`) in 47 s;
+- a post-release gate rollback in 58 s, followed by the after-rollback freeze;
+- an approval hold, admin approval to completion in 26 s, and a rejection, with email notices;
+- a scheduled start 11 s after its time, and a schedule blocked by a freeze.
+
+Leakcheck was clean. An earlier run the same day, on a pre-ADR-570 base, also
+passed and also refused self-approval with `release_approval_self`. Runs on main
+before #5574 failed: the gateway refused imaged's hosting smoke of a
+`snapshotting` candidate with `policy_unavailable`.
+
+A release-tooling audit on 2026-10-26 closed these gaps (amendment 1 of the
+freeze and approval ADRs):
+
+- **Retries.** Retries meet freezes and the approval canary rule.
+- **GitOps activation.** Activation into `production` holds for a freeze, and
+  for an app that requires approvals unless the revision was approved in
+  Gregale.
+- **Promotions.** Promotions into an unprotected production environment refuse
+  apps that require approvals.
+- **Project applies.** Project applies refuse such apps too.
+- **Production environment.** A project's `production` environment counts as
+  production for approvals (#5538, which this work builds on).
+- **Runtime upgrades.** Runtime upgrade staging refuses frozen apps.
+- **`restore_databases`.** It is hidden while `postgres-restore` is off.
+- **Metrics.** The guards export `faas_release_*` metrics
+  (`pkg/releasemetrics`).
+- **Alerts.** Six `release_guards` alerts, with promtool fixtures and the
+  runbook `FaasReleaseGuards.md`.
+- **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows freezes, gates,
+  approvals and schedules.
+
+The n2 metal drill `TestReleaseGuardsGADrillMetal`
+(`cmd/e2e/release_guards_ga_drill_metal_test.go`) adds the GA evidence, on a
+Pro account against a real Prometheus. On 2026-10-27 it covered:
+
+- an approval wait that survived apid and meterd restarts, then timed out
+  (`abort_approval_timeout`) 2 s after its deadline, with the email notice;
+- a scheduled release that fell due while apid was down and started 0 s after
+  apid returned (48 s late);
+- a `new_errors` gate that kept judging a canary across a meterd restart and
+  aborted it 65 s later;
+- an `slo` latency gate that aborted a slow canary (burn rate 100, max 10, over
+  123 requests);
+- a `custom_metric` gate that aborted on the metric's history (8 pushed values
+  averaging 1, below 5). The gate used to read only the latest value and never
+  reached its sample floor; amendment 1 of ADR-20261019071734 fixed that;
+- an `error_rate_pct` alert that rolled a completed release back (ADR-604): the
+  release's own evidence was 17.6% 5xx over 1,344 requests, and the receipt
+  completed. apid used to accept a post-deploy window on rules that could never
+  roll back, such as `latency_p95_ms`; ADR-605 amendment 1 refuses them;
+- a critical-route guard in abort mode (ADR-458) that aborted a canary failing
+  `/api` 351 s after the deploy (share 50% to 0%,
+  `consecutive_server_error_regression`), while `/api` stayed under the circuit
+  breaker's 5% floor.
+
+Six cases passed in one run (`592b2953be`). Reruns passed the alert case with a
+stricter receipt check (`b7e1874099`) and the route case once the drill sent
+enough `/api` traffic and read the saved abort (`a13a35f012`).
+Leakcheck was clean after every run. Under the n2 host's I/O pressure, every
+run had at least one deploy refused with `traffic_policy_too_complex` (the 2 s
+policy-check limit, H14-78); the route case needed four attempts while it
+served about 30 requests a second. The drill retries, as the problem asks.
+
+GA follow-ups closed on 2026-10-28:
+
+- **Timed-out policy checks.** A 422 `traffic_policy_too_complex` from the 2 s
+  time ceiling carries `Retry-After`. apid no longer replays it for the deploy's
+  Idempotency-Key; before, a retried `gregale deploy` got the stored refusal for
+  24 hours. The CLI and the SDK retry layers resend it (ADR-570 amendment).
+- **Runtime upgrade cutover.** It waits while a freeze is active, instead of
+  switching traffic (ADR-20261019071733 amendment 2).
+- **Route-health report.** After a guard abort, the report shows the saved abort
+  evidence instead of `unknown` (ADR-458 amendment).
+
+A release review on 2026-10-28 found and fixed:
+
+- **Teams on company apps.** Rollback, rollout recovery, canary advance,
+  traffic, promote, release gates, the route-health guard, freeze status and
+  alert rollbacks were missing from the organization route map, so only an
+  app's creator could reach them; an admin got 403 rolling back. Members who
+  deploy now operate releases; gates and the guard stay with owners and admins
+  (ADR-20261026151103 amendment 3).
+- **Automatic rollback targets.** The post-release watch and the first-wake
+  5xx guard could pick an aborted canary, or a build that never served, as the
+  release to return to. They now use the plain rollback's target (ADR-1445
+  amendment 1, ADR-625 amendment).
+- **Freezes.** A release parked dark before a freeze can no longer ship during
+  it by `traffic`, promote or a rollback to it; the override audit is written
+  once the release exists (ADR-20261019071733 amendment 3).
+- **Approvals.** An approved release is decided (no late reject that aborts
+  it, no repeated "approved" notices), and a release without a known deployer
+  (a GitHub push) needs one more approval when self-approval is off
+  (ADR-20261020085706 amendment 3).
+- **Gates.** Rollout decisions list gates that were not judged
+  (`not_judged`), and an SLO that gates judge cannot be deleted
+  (ADR-20261019071734 amendment 2).
+
+Company-owned freezes (ADR-20261019071733 amendment 4, 2026-10-29). A
+company organization now owns its apps' freezes, through
+`/v1/apps/{slug}/freezes` and `/v1/orgs/{slug}/freezes` and `gregale release
+freeze --org`. Before, only an app's creator could freeze a company app, no
+freeze covered all of a company's apps, and a creator's freeze on all of their
+apps also froze the company apps they had created. Members who deploy create
+and lift their own windows; owners and admins create weekly and after-rollback
+policies and lift any freeze. Every freeze check reads the app's owner. Both
+drills passed on main `2b4a480d38` on 2026-10-29 before this change; it is
+covered by store conformance on both stores and by apidserver tests.
+
+Still open:
+
+- real Slack/Resend delivery has not been drilled;
+- no database switch has been drilled with a real provider restore;
+- the dashboard has no page for a company's freezes yet: faas-web needs a
+  "Release freezes" section in the organization's settings. The app's
+  release-safety page already lists the company freezes that cover the app.
+
+## Routes at public scale — 2026-10-24
+
+[ADR-20261024154324](adr/20261024154324-route-subsystems-at-public-scale.md)
+removes the three limits a routes readiness review found and gives operators
+signals for the route workers:
+
+- Each `gatewayd-internal` exports per-route series for at most
+  `RouteMetricsMaxRoutesPerGateway` (5,000) (app, route) pairs and deletes an
+  app's series after an idle hour, so the export no longer grows with every
+  app a gateway has served. apid lists routes over a seven-day lookback.
+- The route insights evaluator walks every app on a telemetry plan, least
+  recently evaluated first, claiming each one (`route_insight_evaluations`),
+  instead of the first 500 app IDs; stale insights of apps no longer
+  evaluated resolve.
+- The production route monitor evaluates every due monitor, four at a time,
+  instead of 20 per 30 s.
+- Metrics and five warn alerts cover the series budget, the insights
+  evaluator, monitor lag and worker failures (runbooks
+  `GatewayRouteMetricsBudget.md`, `FaasRouteWorkers.md`).
+
+Verified with unit tests (series budget under `-race`, evaluator rotation past
+one batch, concurrent drain), a PostgreSQL test of the claim, candidate and
+batch-resolve queries, and promtool fixtures for every alert.
+
+End to end (2026-10-26, KVM-free on the n2 test node,
+`cmd/e2e/routes_e2e_test.go`): anonymous traffic through gatewayd-public and
+gatewayd-internal is listed per route through the gateway control listener and
+through a real Prometheus scraping the gateway, within the per-gateway series
+budget; route advice and the awake report read it; apid's own insights
+evaluator records a cacheable insight whose fix makes the gateway answer from
+its cache without reaching the app; and apid's production route monitor opens
+one incident from two sustained 5xx windows. The first runs also hit the
+ADR-570 regression where the public routing pinner refused every public request
+with the default `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`, fixed by
+#5406; the passing runs carried an equivalent fix. Canary route health has
+its own end-to-end test (2026-10-26, n2, `cmd/e2e/routes_canary_e2e_test.go`):
+two apps at a 50% canary, an enforce-mode gate on two routes; the canary whose
+`/checkout` answers 500 is held with `route_health_blocked` and a blocked
+history entry, the healthy one advances to 100% and the gateway follows. The
+three routes tests and the general-path tests run nightly, and on pull
+requests labelled `e2e-general` (docs/ci-general-path.md, ADR-20261029121500). Open: route
+requirements and OpenAPI contract preview have no end-to-end test; six routes
+capabilities are `internal` and three `preview` (ADR-20261023115741).
+
+A follow-up review (2026-10-26,
+[ADR-20261026143210](adr/20261026143210-route-labels-for-served-routes.md))
+closed three gaps: a route now earns one of the app's 50 labels only after
+the app answers it, so scanner 404s and made-up methods can no longer blind
+the monitor, insights and route list; routes analytics reads stop at 10 s and
+tell the caller to narrow the window; and route priorities, throttle
+suggestions and route lifecycle review refuse the Free plan, as the catalog
+lists them. Residual: an app that answers every path with 200 can still have
+its labels filled unless it declares its routes.
+
+## Every capability behind a platform flag — 2026-10-23 (branch, not released)
+
+The product catalog now lists every customer capability (161, from the
+[GA inventory](ga-capability-inventory.md)) with its tier and the apid routes
+it owns, and every capability has a platform flag
+([ADR-20261023115741](adr/20261023115741-every-capability-behind-a-platform-flag.md)).
+GA and beta flags are on for every account; preview and internal flags are off
+by default and released per account. apid hides a capability whose flag is
+off: before authentication when its kill switch is off, per account after.
+Dashboard links and `GET /v1/capabilities` follow the same decision. Core
+capability flags need `--force` to turn off.
+
+Large capabilities are split into 90 sub-feature flags, each released only
+while its parent is; always-on capabilities have no flag; `gregalectl flags`
+writes by `--tier` or `--capability` in bulk and lists each flag's tier,
+parent and enforcement. Settings are gated too: app create/update fields, edge
+rule kinds, function runtimes, gregale.yaml blocks and wildcard domains are
+refused with `403 capability_not_released` while their capability is off.
+Flags also stop work outside apid: schedd defers crons, triggers, queued
+deliveries, jobs and workflows without spending attempts; githubd ignores
+pushes and PR previews; gatewayd-internal drops cache, async, retry and
+breaker rules and stops mirroring, session affinity and the wake page
+(restrictive edge rules keep enforcing); apid withdraws realtime endpoints
+from realtimed. The gregale CLI hides the commands and verbs of capabilities
+that are off for the account (help, completion, man pages, suggestions) from
+`hidden_capabilities` in `GET /v1/capabilities`, and logged-out CLIs follow
+tier defaults. The anonymous OpenAPI spec and `/docs` publish only what every
+account gets, and the SDKs are generated from `sdk/openapi.yaml` (GA and beta):
+`@gregale/sdk-node`, `faas_sdk` and `faas.Client` cover GA and beta, and
+`@gregale/sdk-node/preview`, `faas_sdk.preview` and `sdk/go/preview` add the
+preview capabilities, their helpers included. 236 of 246 flags are enforced; the rest are VM behavior
+or CLI-side.
+
+Portable tests cover the catalog, the generated flags, the gate, route
+coverage (`TestEveryApidRouteHasACapability`), the dashboard and the CLI, and
+ci-light's `make capability-coverage-check` fails any new customer entry point
+(route, command, manifest key, flag, SDK file, table, ...) that maps to no
+inventory row. Open: a production usage check of preview capabilities before
+rollout.
+
+## Edge security release gate — 2026-10-24
+
+All five edge features sit behind platform flags that are off for every
+account, each a catalog capability with a scorecard gate
+([ADR-20261024082000](adr/20261024082000-edge-security-ga-gate.md)). WAF
+warn and block and the browser challenge are `ga` (the product owner's
+decision, ADR-831 amendment 11) and go live by turning `edge_waf_blocking`
+and `edge_challenge` on once the release carrying the `@grx` engine is
+deployed. Penalties, attack mode and AI crawler controls are `preview`.
+
+Met: the kill switches; rules the edge does not enforce say so
+(`unreleased_features`); WAF latency and skips at 100-500 req/s on the
+reference node (p95 1.48-1.58 ms, under 0.05% skipped, three passes on
+2026-10-24, ADR-831 amendment 14); corpus detection; fail-open; the challenge journey,
+solver and escalation; penalty correctness, caps and sharing across
+gateways (in tests); attack mode and its two-flag gate; AI crawler matching,
+range refresh and gating.
+
+Open:
+- Challenge solve time on a low-end phone: estimated at p95 0.88-1.12 s on a
+  2020 mid-range phone from throttled Chrome, after ADR-831 amendment 15
+  made the solver about 5x faster (3.8-4.9 s before); the device
+  measurement is still needed.
+- The 14-day reviews at the internal and design-partner stages (penalties,
+  attack mode, AI crawler controls), and the WAF production false-positive
+  review (the review tool and procedure exist: ADR-831 amendment 13,
+  `docs/runbooks/edge-waf-false-positive-review.md`). The penalty box,
+  challenge solve-rate and AI crawler catalog reviews have their
+  procedures too (ADR-20261024082000 amendment 4): `edge-penalty-box-review.md`,
+  `edge-challenge-solve-rate-review.md` and `edge-ai-crawler-catalog-review.md`
+  under `docs/runbooks/`.
+
+Alerts and runbooks for the five features' failure modes (criterion C3) are
+in the `faas_edge_security` group (ADR-20261024082000 amendment 1).
+
+2026-10-27: an end-to-end review found three ways a visitor could never pass
+a challenge, now fixed (ADR-831 amendment 17, criterion H6). The production
+compute gateways signed with different keys, the declared-route and rewrite
+gates took the solution post, and passes bound to one app failed on hosts
+whose paths route to several apps. Open before releasing `edge_challenge` or
+`edge_attack_mode`: deliver the fleet's `gatewayd_edge_challenge_key` to
+every gateway and see `FaasEdgeChallengeKeyMismatch` quiet
+(`docs/ops/platform-flags.md`).
+
+2026-10-31: a security review fixed three more. A per-app deploy token could
+write rules covering every app of its account; it is now limited to its own
+app's hosts (ADR-091 amendment 2026-10-31, later). A cookie planted by
+another app on the shared apps domain could hide a challenge pass (now a
+`__Host-` cookie) or get a visitor boxed through a WAF `block` rule
+(cookie-only detections no longer count toward penalties), and challenged CORS
+preflights broke cross-origin calls (now answered at the edge; ADR-831
+amendment 18). Open: such a planted cookie still trips `block` rules on
+`gregale.dev` hosts until apps move to a domain on the Public Suffix List
+(ADR-20261026100000 amendment 1, proposed).
+
+2026-11-02: a third review fixed four more. Cloudflare cached gated
+responses and served them past `ip`, `geo` and `jwt` rules; such responses
+are now CDN-private (ADR-091 amendment 2026-11-02). Any client could escape
+the penalty box by sending `Sec-Fetch-Site: cross-site`; such refusals now
+count, and only a box made of them alone is capped at a minute
+(ADR-20261022105846 amendment 3). Large request headers made WAF checks slow
+enough to hold every check slot; a check now scores at most 16 KiB of
+headers (ADR-831 amendment 19). Docs and a CLI warning now steer gates to
+`@app`, since a rule naming one host leaves the app's platform hostname open.
+
+2026-11-02, later: a fourth review fixed five more (ADR-091 amendment
+2026-11-02, later). Gates scoped to `DELETE`, `PUT` or `PATCH` now also cover
+a POST that asks the app to run it as that method (`X-HTTP-Method-Override`
+and similar headers, `?_method=`), and path gates also match the path without
+`;` parameters, which Java servers drop. A deny-only `geo` rule no longer
+answers 503 to an address the database places in no country (an allow list
+refuses it); a failed lookup still answers 503. The country database moves
+to the 2026-11 release, and `FaasGeoIPDatabaseStale` warns when it is more
+than 75 days old. The challenge-pass docs now say a pass is shared by its
+/24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
+headers, cookies or query values the client chooses.
+
+2026-11-03: a fifth review found the scheduler's synth routes
+(`/v1/synthesize`, `/v1/invocations:dispatch`, `:dispatch_batch`) reachable
+from the internet on every app host: anyone with an app ID could wake it or
+invoke it and read the response, past its public auth and edge rules. schedd
+now sends an app-bound scheduler token on every synth request, the gateway
+refuses one without it, and the public edge refuses these paths unless the
+local scheduler sent them (ADR-20261103090000). The same record has
+`validate` check bodies sent with `Connection: Upgrade`, and keeps requests
+with `X-API-Key` or `Proxy-Authorization` out of the shared cache.
+
+2026-11-03: a sixth review found that basic-auth passwords could be guessed
+at the edge's request rate, that the control plane's Caddy admitted every
+Cloudflare customer's zone (the origin-pull check was off and pointed at
+Cloudflare's shared CA), and that a platform site with no Cloudflare in front
+took the client's `CF-Connecting-IP`. Basic auth allows 10 wrong
+passwords per client prefix and app a minute and new passwords are 12+ bytes
+(H76, #6498); the
+public_edge role refuses to deploy a Cloudflare-admitting site without the
+zone's own origin-pull certificate (manifest `dns.origin_pull: required`,
+or knowingly `any_zone`); and a site with no Cloudflare
+in front uses the peer address (ADR-20261103172551). The next control-plane
+deploy needs `dns.origin_pull` set in the manifest, and for `required` the
+origin-pull CA installed first (docs/runbooks/EdgeDirectEntry.md, "The
+control plane's Caddy").
+
+## Event substrate benchmark (V12) — 2026-10-23
+
 `make bench-event-substrate` measures event publish, fanout routing, the
 invocation drain and webhook delivery on disposable PostgreSQL, on
 `gregale-internal-test-1`, a 2 vCPU shared host. The first run
 ([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) sustained
 5 events/s end to end. Skipping the ordering scan for recipients without a
 work policy (#5090) and the webhook backlog drain (#5091) raised that to 20
-events/s and webhook delivery to about 150/s. Batched fanout claims
-(`perf/event-fanout-batch-claim`,
+events/s and webhook delivery to about 150/s. Batched fanout claims (#5161,
 [report](ops/evidence/20261022-event-fanout-batch-claims/REPORT.md)) bring
-fanout to 74 events/s over a 2,000-event backlog and the pipeline to
-**48.5 events/s at 50 offered** (p95 830 ms), and ordered work-policy lanes
-from under 1 to 21.7 events/s. Fanout is still the first stage to fall
-behind, at 200 events/s offered. Event caps stay where they are until the
-benchmark is re-run on the reference node.
+fanout to 74 events/s over a 2,000-event backlog and ordered work-policy
+lanes from under 1 to 21.7 events/s.
+
+A provisional V12 run of main on the same host
+([report](ops/evidence/20261022-v12-provisional/REPORT.md)), chosen by the
+owner until launch hardware is available, **sustains 20 events/s in every
+run**. 50/s holds only when the host is otherwise quiet: 49.9/s, p95 232 ms,
+against 27–33/s under other load. 75/s never holds. That bounds the aggregate
+event rate the caps may admit on one control plane at 10 events/s, far above
+today's per-account caps. Fanout no longer dominates database time. Publish
+(9.2 ms per event) and the invocation lifecycle (21.4 ms per invocation) now
+do. Removing their no-op reads, writes and re-plans (#5182,
+[report](ops/evidence/20261022-event-path-planning-waste/REPORT.md)) cut
+database time per delivered event from 37.8 to 26.3 ms. The pipeline then
+held 48.7/s at 50 offered (p95 437 ms) and 30.1/s at 150 offered, against
+18.0/s on main. The owner raised the event caps on this provisional bound
+rather than wait for the reference node
+([ADR-20261023215834](adr/20261023215834-event-plan-caps.md)): settled
+receipts are kept 1/3/7/14 days by plan instead of 30, and the retained
+budgets sustain at most 6.9 events/s per Scale account. Publish admission
+now reads trigger-kept counts instead of counting the account's retained
+receipts, which took 0.7–1.4 s per publish at a million
+([report](ops/evidence/20261024-event-plan-caps/REPORT.md)). The caps are
+revisited when the benchmark runs on the reference node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
@@ -756,6 +1289,24 @@ listener behind a socket unit each restarted five times under load with 0 of
 138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
 returned 103,323 502s. Open: the first socket conversion through `node_join`
 and deployctl, and the listeners the ADR leaves without socket activation.
+
+## Worker end-to-end fixes — 2026-10-27
+
+`worker.scale` in gregale.yaml now becomes the app's queue scaling policy on
+CLI, repository and GitHub deploys, and a first deploy of a worker is no longer
+refused for its queue target. `gregale worker scale` keeps the app's queue
+metric (default `queue_depth`), and a scaling policy's `min_instances: 0` lets
+the pool stop when worker replica bounds are unset
+([ADR-20261018101500](adr/20261018101500-worker-pool-scale-out-off-loop.md)
+amendment 2026-10-27). Queue gauges refresh every 30 seconds for every worker
+app from bounded reads, and `queue_backlog` / `queue_oldest_age_seconds` alert
+on the durable queue. Single-process apps report OOM kills, and only a release
+that is not yet fully live fails on one
+([ADR-121](adr/121-runtime-oom-detection-on-workload-cgroup.md) amendment).
+On the nested-KVM test node at 81723d5f4a, `TestSingleProcessOOMMetal` (live
+release keeps serving; startup OOM fails the deployment with `app_runtime_oom`,
+peak 456 MB) and `TestDirectOCIMainHealthcheckMetal` passed with a clean leak
+check. This change is not deployed.
 
 ## Worker admission explanations — 2026-10-18
 
@@ -2115,6 +2666,57 @@ remain open; production admission is disabled.
   deployment, merged onto the built image's HEALTHCHECK and enforced by the
   ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
   native run.
+- **Compose build secrets.**
+  [ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)
+  (2026-10-22): `build.secrets` naming `environment:` secrets mount the app's
+  secrets into Dockerfile builds. builderd passes only ciphertext; vmmd, the
+  `runtime` domain's reader, opens it into the builder VM; guest-init hands it
+  to buildctl and deletes it. Builds with secrets skip warm builders. Unit tests
+  pass; a native private-dependency build has not run.
+- **Compose service secrets as files.**
+  [ADR-20261023090000](adr/20261023090000-compose-runtime-secret-files.md)
+  (2026-10-23): a service's `secrets` naming `environment:` secrets become
+  files in a tmpfs `/run/secrets` of its main workload, written by guest-init
+  from the secrets vmmd delivers and rewritten on live reload. Unit tests pass;
+  no native run.
+- **Compose deploy resources and replicas.**
+  [ADR-20261023120000](adr/20261023120000-compose-deploy-resources.md)
+  (2026-10-23): `deploy.resources.limits` (or `mem_limit`/`cpus`) and
+  `deploy.replicas` (or `scale`) set the app's `ram_mb`, CPU share and
+  `max_concurrency` or worker/service replicas within plan limits, written by
+  the project apply. Unit and store tests pass; no native run.
+- **Compose process overrides on built services.**
+  [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
+  (2026-10-22): a built service's `entrypoint` joins its start command, and
+  `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
+  deployment and applied to the built image. Unit tests pass; no native run.
+- **Compose include env files.**
+  [ADR-20261025090000](adr/20261025090000-compose-include-env-files.md)
+  (2026-10-25): an included Compose file interpolates with its own values (the
+  including project's, overlaid by its `env_file` list or the `.env` beside it);
+  environment import now honors `COMPOSE_PROFILES`. Unit tests pass.
+- **Image runs read a Docker config.**
+  [ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)
+  (2026-10-25): `gregale run --docker-config PATH` takes the image registry's
+  credentials from a Docker `config.json`, its inline `auths` or the configured
+  credential helper, instead of `--registry-username`. Unit tests pass.
+- **Build secrets resolve like the runtime.**
+  [ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)
+  (2026-10-24): a build secret named `NAME` gets the secret the app receives
+  as `NAME`, including environment aliases and inherited project environment
+  secrets, through a resolver a scheduler test keeps equal to wake delivery.
+  Unit tests pass; no native run.
+- **Dockerfile HEALTHCHECK enforced on source builds.**
+  [ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)
+  (2026-10-24): imaged records the readiness verdict for every source build
+  whose image declares a command HEALTHCHECK, not only Compose overrides, and
+  the scheduler enforces it as for a pushed image. Existing deployments keep
+  their readiness until redeployed. Unit and store tests pass; no native run.
+- **Compose profiles.**
+  [ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)
+  (2026-10-22): `COMPOSE_PROFILES` in the source's `.env` activates Compose
+  profiles (`*` for all); services in inactive profiles are skipped with a
+  warning. Unit tests pass.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.
@@ -2467,6 +3069,54 @@ Cold boot, restore, warm-pool resume and migration preserve that requirement;
 older daemon/guest responses cannot acknowledge it. Existing releases need
 reassembly or redeployment to gain the gate. Native boot/restore and leak
 qualification remain pending ([ADR-683](adr/683-image-healthcheck-readiness.md)).
+
+Forks, crash snapshots and savings update (2026-10-09): production forks
+([ADR-732](adr/732-production-forks.md)), crash snapshots with encryption at
+rest ([ADR-733](adr/733-crash-snapshots.md)) and the savings report are in
+`preview` behind `FAAS_APP_FORKS` / `FAAS_CRASH_SNAPSHOTS`. On the internal
+test node (n2-highmem-2, nested KVM, Firecracker 1.7.0) one combined build
+passed `TestSavingsMetal`, `TestCrashSnapshotMetal`, `TestForkMetal`,
+`TestMetalQuarantineDataPlane` and the PgStore fork/capture tests, with
+`deploy/scripts/leakcheck.sh` reporting no new leaks across the run (the
+metal tests now idle-park their apps before the harness stops; earlier runs
+leaked the serving microVM). Nested KVM is functional evidence only: the
+native x86_64 acceptance run of the same set, with `-race`, is pending.
+Alerts for both features are in `faas_crash_snapshots`
+([runbook](runbooks/FaasCrashSnapshots.md)). A later run on the same node
+also passed `TestLiveForkMetal` (live forks see the instance's current
+memory, the serving instance keeps running) and the PgStore live-fork and
+SDK-trigger tests, again with no new leaks. `TestCrashSnapshotSDKMetal`
+first failed there because guest-init dialed vsock through `net.FileConn`,
+which does not support AF_VSOCK; after that fix it passes (refused without
+opt-in, the app captures itself mid-request, and a fork of the capture
+resumes inside the same call with `in_fork`), with no new leaks.
+Since 2026-10-10 vmmd seals every crash capture at the source (ADR-733
+amendment): only encrypted twins are stored, so captures work on the
+remote (GCS) backend production uses, and a fork decrypts into its own
+staging. On the test node `TestCrashSnapshotMetal` (no plaintext on
+storage at any point), `TestCrashSnapshotSDKMetal`, `TestLiveForkMetal`,
+`TestForkMetal` and the PgStore fork/capture tests pass on sealed
+captures, with no new leaks.
+Fork exec (ADR-732 amendment, 2026-10-14): `POST /v1/apps/{slug}/forks/{id}/execs`
+runs a command inside a running fork. On the test node, rebased onto main
+and built with Go 1.26.9 / golang.org/x/net v0.60.0 (the guest-init in the
+staged base now scans with no fix-available findings, so vmmd's scan gate
+admits cold boots), `TestForkMetal` passes including
+`exec-runs-inside-the-fork`, together with `TestCrashSnapshotMetal`,
+`TestLiveForkMetal`, `TestCrashSnapshotSDKMetal` and the PgStore
+fork/capture/exec tests, with no new leaks. The first exec run failed
+because guest-init wrapped its vsock listener with `net.FileListener`, which
+does not support AF_VSOCK; the SDK trigger failed after the rebase because
+main's outbound relay took host vsock port 1032, so the crash capture
+receiver moved to 1033.
+Re-verified 2026-10-22 after merging main (f433f78ef0 on Go 1.26.9, then
+92873a46d2 on Go 1.26.10 after #5148), built from source on the test node:
+`TestForkMetal` (all seven subtests, exec
+included), `TestCrashSnapshotMetal`, `TestLiveForkMetal`,
+`TestCrashSnapshotSDKMetal`, the PgStore fork/capture/exec tests and the
+crashcrypt, netns, fcvm, gateway, imaged, sched and guest-init unit tests
+pass, with no new leaks. The staged base-minimal (digest-pinned) scans with
+zero findings at any severity.
 
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures

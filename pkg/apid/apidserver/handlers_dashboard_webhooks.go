@@ -49,7 +49,7 @@ func parseAppWebhooksPath(rest string) (string, bool) {
 func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -58,7 +58,7 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 	data := dashboard.AppWebhooksData{
 		App:           dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain)},
 		PlanAllowed:   planKnown && limits.WebhookPerApp > 0,
-		Events:        s.appWebhookEvents(),
+		Events:        s.appWebhookEvents(acct.ID),
 		RetryPolicies: append([]string(nil), api.AllowedAppWebhookRetryPolicies...),
 		Action:        dashboardWebhooksActionFlash(r),
 	}
@@ -72,6 +72,11 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 				rows = rows[:dashboardWebhooksPageLimit]
 			}
 			data.Webhooks = s.projectDashboardWebhooks(ctx, log, rows, app.ID, acct.ID)
+			if !appWebhookTargetVisible(r) {
+				for i := range data.Webhooks {
+					data.Webhooks[i].TargetURL = api.MaskAppLogDrainTargetURL(data.Webhooks[i].TargetURL)
+				}
+			}
 		}
 		if deliveryID := r.URL.Query().Get("delivery_id"); deliveryID != "" {
 			delivery, readErr := s.store.AppWebhookDeliveryByID(ctx, deliveryID)
@@ -107,9 +112,9 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 	}
 
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardWebhooksAction, acct.ID, dashboardWebhooksCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardWebhooksAction, actorAccount(r, acct).ID, dashboardWebhooksCSRFCookie)
 		if tokenErr != nil {
-			log.Warn("dashboard webhooks: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+			log.Warn("dashboard webhooks: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{

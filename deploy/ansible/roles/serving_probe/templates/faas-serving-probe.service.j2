@@ -1,0 +1,40 @@
+[Unit]
+Description=Probe Gregale's public serving path from this node (ADR-20261023124955)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/faas/serving-probe.env
+
+[Service]
+Type=oneshot
+# A transient, unprivileged user named after the unit; the probe needs no
+# host identity beyond its state directory.
+DynamicUser=yes
+User=faas-serving-probe
+# Writes serving-probe.prom into the shared node_exporter textfile directory.
+SupplementaryGroups=node_exporter
+EnvironmentFile=/etc/faas/serving-probe.env
+LoadCredential=webhook_url:{{ faas_serving_probe_secrets_dir }}/webhook_url
+{% if serving_probe_heartbeat_file.stat.exists %}
+LoadCredential=heartbeat_url:{{ faas_serving_probe_secrets_dir }}/heartbeat_url
+{% endif %}
+StateDirectory=faas-serving-probe
+ExecStart=/usr/local/sbin/faas-serving-probe
+# URLs run one after another: two attempts and the retry delay each, plus
+# the notification and heartbeat calls.
+TimeoutStartSec={{ ((faas_serving_probe_timeout_seconds | int) * 2 + (faas_serving_probe_retry_delay_seconds | int)) * (faas_serving_probe_urls | length) + 60 }}
+UMask=0022
+CPUQuota=20%
+MemoryMax=64M
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/faas
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

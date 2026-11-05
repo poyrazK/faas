@@ -15,6 +15,7 @@ import (
 )
 
 func (s *server) configureProfiles(getenv func(string) string) error {
+	s.profileCaptures.Enabled = getenv("FAAS_PROFILING_ON_DEMAND") == "1"
 	if getenv("FAAS_PROFILING_ENABLED") != "1" {
 		return nil
 	}
@@ -90,11 +91,24 @@ func (s *server) profileQueryScope(ctx context.Context, acct state.Account, app 
 	return dep.Scope, nil
 }
 
+// profilePlan is the plan profiling is judged by for app: its resource
+// owner's, so an organization's app follows the organization's plan whoever
+// asks or created it (ADR-819, ADR-1155). fallback, the caller's plan,
+// answers when the owner cannot be read.
+func (s *server) profilePlan(ctx context.Context, fallback api.Plan, app state.App) api.Plan {
+	owner, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return fallback
+	}
+	return owner.Plan
+}
+
 func (s *server) profileQueryDeployment(ctx context.Context, acct state.Account, app state.App, q api.ProfileQuery) (state.Deployment, *api.Problem) {
 	var empty state.Deployment
-	limits := api.MustLimitsFor(acct.Plan).Profiling
+	plan := s.profilePlan(ctx, acct.Plan, app)
+	limits := api.MustLimitsFor(plan).Profiling
 	if !limits.Enabled {
-		return empty, api.ErrPlanFeatureGated("profiling", acct.Plan)
+		return empty, api.ErrPlanFeatureGated("profiling", plan)
 	}
 	if err := profiling.ValidateQuery(q, time.Now(), limits.RetentionDays); err != nil {
 		return empty, api.ErrValidation(err.Error())

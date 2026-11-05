@@ -3,9 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // CommitRecoveryPlan is a read-only live eligibility sample, not an executable authorization.
@@ -54,7 +55,7 @@ func (c *Client) PlanCommitRecovery(ctx context.Context, saved CommitDeliveryRep
 	return out, err
 }
 
-var commitRecoverySlug = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var commitRecoverySlug = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 func commitRecoveryEligibility(row CommitDeliveryReportSubscriber) (string, string, *CommitRecoveryPlanAction) {
 	skip := func(reason string) (string, string, *CommitRecoveryPlanAction) { return "skipped", reason, nil }

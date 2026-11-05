@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row of the errors summary (ADR-096 / PR-B).
+ * One row of the errors summary.
  */
 export type AppErrorSummaryItem = {
   /**

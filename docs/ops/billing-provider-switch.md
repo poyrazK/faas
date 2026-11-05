@@ -55,6 +55,12 @@ configure the same values on `apid` and `meterd`:
 | `FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB` | Pro monthly allowance |
 | `FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB` | Scale monthly allowance |
 
+The three allowances default to each plan's `MonthlyEgressGiB` in
+`pkg/api/limits.go` (Hobby 100, Pro 500, Scale 2,000). While a plan's egress is
+not billed live, meterd stops a subject at that allowance until the month
+ends (`quota_exceeded_egress`, ADR-20261103131742); Free always stops at its
+10 GiB.
+
 Use `shadow` first. It calculates net calendar-month overage from canonical
 `usage_minutes.net_tx_bytes`, writes durable shadow receipts, and logs the
 would-be quantities without sending Polar events. The explicit billing-from
@@ -65,26 +71,39 @@ and to match the configured price exactly. Switching back to `off` stops egress
 processing without affecting compute billing.
 
 Object-storage billing has its own default-off rollout gate. Configure these
-values on both daemons so they validate the same Polar catalog; `apid` owns the
-actual UTC-month close and event delivery:
+values on both daemons so they validate the same Polar catalog. `apid` owns the
+daily charge steps, the UTC-month close and event delivery. meterd reserves the
+live object-storage charge under the overage cap:
 
 | Variable | Purpose |
 |---|---|
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE` | `off`, `shadow`, or `live` |
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM` | RFC3339 UTC-month boundary; earlier periods are never charged |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` | `off`, `shadow`, or `live`: managed PostgreSQL compute overage (ADR-20261031110037) |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` | RFC3339 UTC-month boundary; earlier months are never charged |
+| `FAAS_POLAR_MANAGED_POSTGRES_METER_ID` | separate Polar meter summing `charge_millicents` for `faas_managed_postgres_usage` |
 | `FAAS_POLAR_OBJECT_STORAGE_METER_ID` | Separate meter that sums `charge_millicents` |
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 
 The object-storage rate card remains in the object-storage registry and must
-use USD, the billing currency (ADR-1430). At month close Gregale freezes exact storage, request, and egress
-components, then sends their total as an integer `charge_millicents` quantity.
-The Polar metered price must be USD `0.001` cents per unit. Each product can
-therefore show one Object storage usage line while Gregale retains the detailed
-components in event metadata and its immutable ledger. Use `shadow` first;
-shadow and pre-activation decisions are durable and cannot be replayed after a
-switch to `live`. Polar bills a backdated event in the billing cycle in which
-it is received, so the invoice line appears after Gregale closes the UTC month;
-the closed usage month remains explicit in event metadata.
+use USD, the billing currency (ADR-1430).
+
+- **Daily steps.** At most once a day, Gregale prices each paid account's
+  month-to-date storage and sends the part not yet billed as an integer
+  `charge_millicents` quantity.
+- **Month close.** Once the month has ended, Gregale freezes the exact storage,
+  request, and egress components and sends the rest of the month the same way.
+- **Polar price.** The Polar metered price must be USD `0.001` cents per unit.
+  Each product can therefore show one Object storage usage line, while Gregale
+  keeps the detailed components in event metadata and its immutable ledger.
+- **Invoicing.** Events are timestamped when sent, so storage is invoiced in
+  the subscription cycle it accrues in. A subscription that ends mid-month is
+  billed up to its last daily step
+  ([ADR 20261027093220](../adr/20261027093220-object-storage-billed-daily.md)).
+- **Rollout.** Use `shadow` first. Shadow and pre-activation decisions are
+  durable and cannot be replayed after a switch to `live`. Switch to `live`
+  only once every `apid` runs a release with daily steps: an older `apid`
+  closing a month would bill the whole month again.
 
 Create one active monthly recurring product per paid plan in the selected
 Polar environment. Each product must contain the fixed monthly price and the
@@ -93,13 +112,48 @@ enabled metered USD prices backed by their configured meters. The compute meter 
 included calendar-month allowance locally before sending overage events, so
 do not add a Polar meter-credit benefit to these products.
 
+In the organization's settings (Settings, Subscriptions), turn off multiple
+subscriptions per customer. Gregale follows one subscription per account;
+with the setting on, a customer who completes two checkouts pays twice. Set
+proration to invoice immediately (`proration_behavior: invoice`): with
+"prorate", a plan upgrade in the customer portal applies at once and its
+charge waits for the next renewal, which a cancellation may never reach.
+
+In Settings, Customer portal, turn off plan changes
+(`customer_portal_settings.subscription.update_plan`). A portal switch to a
+higher plan and back again cost little and skipped the downgrade check;
+subscribers upgrade through `gregale plan` and the dashboard instead, which
+change the subscription with `proration_behavior: invoice` (charged at once,
+applied only if the charge succeeds) and downgrade at the period end
+(ADR-20261103131742).
+
 `apid` validates the catalog at boot. `meterd` validates it before starting
-the usage loop. A missing product, archived resource, wrong recurring period,
-wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
+the usage loop. An organization that allows multiple subscriptions, does
+not invoice prorations immediately or lets the portal change plans
+(ADR-20261103131742), a token that does not see exactly one
+organization, a missing product, archived resource, wrong recurring period,
+wrong fixed price, wrong meter, or meter-credit benefit prevents startup
+(ADR-20261029180000, ADR-20261031090658). Polar being
+unreachable does not: on a timeout, connection failure, HTTP 429 or 5xx the
+daemon starts, logs `billing: Polar unreachable at boot`, and retries the
+check in the background until it passes; a configuration problem it then
+finds is logged as `billing: Polar catalog does not satisfy the billing
+contract` on every retry (ADR-20261031100000).
+
+`PATCH /v1/account/billing` sends the business name to the Polar customer's
+name, which Polar prints on invoices. Polar needs a structured billing
+address with a country and validates tax IDs against it, so the free-form
+address and tax ID stay in Gregale; customers enter them at checkout or in
+the customer portal (ADR-20261031090658).
 
 ## Runtime behavior
 
 - Polar checkout creates/reuses a customer using Gregale’s external account ID.
+  Polar keeps one customer per email: a checkout whose email belongs to a
+  deleted account's or organization's customer deletes that leftover and
+  creates its own; an email a live subject pays with answers 409
+  `billing_email_in_use`. `PUT /v1/orgs/{slug}/billing/email` moves an
+  organization's customer to its own address (ADR-20261103131742).
 - Customer portal sessions are created on demand for payment-method and
   subscription management.
 - Plan upgrades use hosted checkout when no subscription exists. Three
@@ -184,7 +238,16 @@ Monitor these metrics and logs:
   expected while delivery catches up, a cap applies, or ledger evidence is
   missing.
 - `polar_webhook.verify_failed` and `polar_webhook.unknown_customer` identify
-  signature or customer-binding failures.
+  signature or customer-binding failures. A delivery for a customer no account
+  is bound to is acknowledged (logged as `polar_webhook.unknown_customer`);
+  only a failed lookup (`polar_webhook.customer_lookup_failed`) is retried.
+- `apid_billing_reconcile_corrections_total{correction}` counts accounts that
+  subscription reconciliation moved to their Polar subscription's state
+  (ADR-20261029094512). Any increase means a webhook delivery was missed:
+  check the Polar endpoint's delivery log, and whether Polar disabled the
+  endpoint. Each correction also writes a `billing.subscription_reconciled`
+  audit event. `apid_billing_reconcile_passes_total{result="failed"}` means
+  the pass itself could not run.
 - `meter` logs with `replay=true` show durable usage recovery after an outage.
 
 ## Switching providers
@@ -230,12 +293,40 @@ handling rules.
 
 ## Webhook and failure handling
 
-Register `https://<host>/v1/webhooks/polar` and subscribe to subscription
-creation/update/cancellation/past-due/revocation plus order creation/payment/
-refund events. Polar Standard Webhooks headers are verified before parsing;
+Register `https://<host>/v1/webhooks/polar` and subscribe to exactly these
+events:
+
+`subscription.created`, `subscription.updated`, `subscription.active`,
+`subscription.canceled`, `subscription.uncanceled`, `subscription.revoked`,
+`subscription.past_due`, `subscription.cycled`, `order.created`,
+`order.updated`, `order.paid`, `order.refunded`, `refund.created`,
+`refund.updated`.
+
+`order.created` and `order.updated` project an unpaid renewal as an `open`
+invoice, so a past-due customer sees what they owe; a late one never reopens a
+`paid` invoice (ADR-20261028101500). Compute and egress usage events are
+stamped when meterd sends them, so they land in the cycle that is open when
+they arrive. Polar processes an event a few minutes after it arrives: one
+processed after a renewal is billed on the next order, and one processed after
+the subscription ended is not billed (ADR-20261029094512). Polar Standard Webhooks headers are verified before parsing;
 database persistence and replay-claim failures return non-2xx so the provider
 can retry. A valid duplicate delivery is acknowledged without repeating the
 state transition.
+
+Polar disables an endpoint after 10 consecutive failed deliveries and does not
+re-enable it. apid counts every answer in
+`apid_ops_total{op="polar_webhook",code}`, and `FaasPolarWebhookFailing` fires
+after three failed answers in 30 minutes (runbook
+[PolarBillingWebhooks](../runbooks/PolarBillingWebhooks.md)). Re-enable the
+endpoint in the Polar dashboard once apid is healthy.
+Deliveries Polar dropped in the meantime are not replayed, but every 30
+minutes one apid replica compares each Polar-billed account with its
+customer's subscriptions and applies the missed transition when two passes in
+a row agree: a paid-up subscription ends dunning, a past-due one starts it
+(with its email), an ended one downgrades to Free, and a changed product
+re-binds the plan (ADR-20261029094512). `subscription.cycled` is a period
+change, not a payment: a payment success delivered while Polar still reports
+the subscription `past_due` keeps the plan but does not end dunning.
 
 The hourly pusher is intentionally at-least-once. If Polar is unavailable,
 the failed window remains durable and is retried on the next pass. Investigate

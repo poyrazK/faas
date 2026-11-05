@@ -7,18 +7,18 @@ import (
 	"database/sql"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 // RecoverCallbacks sends saved callbacks only. Keep db/client available until
 // this call returns, then inspect both progress and err before scheduling more.
-func RecoverCallbacks(ctx context.Context, db *sql.DB, client *faas.Client, accountID, appID string) (faas.EventAcknowledgmentIntentRecoveryPassResult, error) {
-	return faas.RecoverEventAcknowledgmentIntents(ctx, db, client, accountID, appID,
-		faas.EventAcknowledgmentIntentRecoveryPassOptions{
+func RecoverCallbacks(ctx context.Context, db *sql.DB, client *preview.Client, accountID, appID string) (preview.EventAcknowledgmentIntentRecoveryPassResult, error) {
+	return preview.RecoverEventAcknowledgmentIntents(ctx, db, client, accountID, appID,
+		preview.EventAcknowledgmentIntentRecoveryPassOptions{
 			MaxAttempts:   100,
 			Concurrency:   4,
 			ClaimDuration: 30 * time.Second,
-			RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{
+			RetryPolicy: &preview.EventAcknowledgmentIntentRetryPolicy{
 				InitialBackoff: time.Second,
 				MaxBackoff:     5 * time.Minute,
 			},

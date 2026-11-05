@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -109,11 +110,11 @@ func TestIsAppHost(t *testing.T) {
 		"evilgregale.dev":        false,
 		"":                       false,
 	} {
-		if got := isAppHost(host, "gregale.dev"); got != want {
+		if got := isAppHost(host, testDomains(t, "", "gregale.dev")); got != want {
 			t.Errorf("isAppHost(%q) = %v, want %v", host, got, want)
 		}
 	}
-	if isAppHost("shop.gregale.dev", "") {
+	if isAppHost("shop.gregale.dev", hostidentity.Domains{}) {
 		t.Error("an empty apps domain admitted a host")
 	}
 }
@@ -122,7 +123,7 @@ func TestIsAppHost(t *testing.T) {
 func TestAppHostsOnlyAnswersOtherHostsWith421(t *testing.T) {
 	m := newEdgeMetrics()
 	var served bool
-	h := appHostsOnly(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }), "gregale.dev", m.misdirected)
+	h := appHostsOnly(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }), testDomains(t, "", "gregale.dev"), m.misdirected)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://shop.gregale.dev/", nil)
@@ -338,7 +339,7 @@ func TestComputeEdgeRootForwardsUploads(t *testing.T) {
 	var hit string
 	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
-	root, err := computeEdgeRoot(next, forward, emptyPublicReadStore{}, "gregale.dev", quietEdgeLog())
+	root, err := computeEdgeRoot(next, forward, nil, emptyPublicReadStore{}, nil, testDomains(t, "", "gregale.dev"), quietEdgeLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,6 +356,31 @@ func TestComputeEdgeRootForwardsUploads(t *testing.T) {
 	}
 }
 
+// adr: 20261031122757 — once the edge serves public reads itself, every
+// request but an upload reaches its read handler, which passes route misses
+// on; uploads still go to the control plane.
+func TestComputeEdgeRootServesPublicReadsLocally(t *testing.T) {
+	var hit string
+	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
+	local := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "local" })
+	root, err := computeEdgeRoot(next, forward, local, emptyPublicReadStore{}, nil, testDomains(t, "", "gregale.dev"), quietEdgeLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"/uploads/avatars": "forward",
+		"/assets/logo.png": "local",
+		"/api/users":       "local",
+	} {
+		hit = ""
+		root.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://shop.gregale.dev"+path, nil))
+		if hit != want {
+			t.Errorf("%s went to %q, want %q", path, hit, want)
+		}
+	}
+}
+
 func TestRequireComputeEdgeConfig(t *testing.T) {
 	if err := requireComputeEdgeConfig(func(string) string { return "" }); err == nil {
 		t.Fatal("compute edge started without FAAS_APPS_DOMAIN")
@@ -362,4 +388,67 @@ func TestRequireComputeEdgeConfig(t *testing.T) {
 	if err := requireComputeEdgeConfig(func(string) string { return "gregale.dev" }); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// fakeAlternatePool is the compute pool for the local-first dialer's
+// failover tests.
+type fakeAlternatePool struct {
+	dials int
+	name  string
+}
+
+func (p *fakeAlternatePool) DialContext(ctx context.Context, _ string) (net.Conn, error) {
+	p.dials++
+	gateway.DialRecordFrom(ctx).RecordDialed(p.name)
+	c, _ := net.Pipe()
+	return c, nil
+}
+
+func (p *fakeAlternatePool) HasAlternate(_ context.Context, rec *gateway.DialRecord) bool {
+	return !rec.Excluded(p.name)
+}
+
+// adr: 20261022184531 — a compute edge sends the retry of a response its own
+// node's gateway refused to the other nodes, without counting a fallback
+// (step 5).
+func TestLocalFirstDialerSendsARetryToTheOtherNodes(t *testing.T) {
+	local := dialerFunc(func(context.Context, string) (net.Conn, error) {
+		c, _ := net.Pipe()
+		return c, nil
+	})
+	pool := &fakeAlternatePool{name: "fsn-2"}
+	m := newEdgeMetrics()
+	d := newLocalFirstDialer(local, pool, &url.URL{Scheme: "http", Host: "gatewayd-internal"}, m, quietEdgeLog()).
+		withDrainWatch("fsn-3", nil)
+	d.healthy.Store(true)
+
+	first := gateway.NewDialRecord()
+	c, err := d.DialContext(gateway.WithDialRecord(context.Background(), first), "")
+	if err != nil || first.Dialed() != "fsn-3" || pool.dials != 0 {
+		t.Fatalf("first attempt: err=%v dialed=%q poolDials=%d, want this node", err, first.Dialed(), pool.dials)
+	}
+	_ = c.Close()
+
+	retry := gateway.NewDialRecord("fsn-3")
+	c, err = d.DialContext(gateway.WithDialRecord(context.Background(), retry), "")
+	if err != nil || retry.Dialed() != "fsn-2" || pool.dials != 1 {
+		t.Fatalf("retry: err=%v dialed=%q poolDials=%d, want the pool", err, retry.Dialed(), pool.dials)
+	}
+	_ = c.Close()
+	if got := testutil.ToFloat64(m.fallbacks); got != 0 {
+		t.Fatalf("fallbacks = %v; a retry is a planned route", got)
+	}
+	if !d.HasAlternate(context.Background(), gateway.NewDialRecord("fsn-3")) || d.HasAlternate(context.Background(), gateway.NewDialRecord("fsn-3", "fsn-2")) {
+		t.Fatal("HasAlternate does not follow the pool")
+	}
+
+	// A node without a name cannot be excluded, so the edge must not retry.
+	unnamed := newLocalFirstDialer(local, pool, &url.URL{Scheme: "http", Host: "gatewayd-internal"}, m, quietEdgeLog())
+	unnamed.healthy.Store(true)
+	rec := gateway.NewDialRecord()
+	c, err = unnamed.DialContext(gateway.WithDialRecord(context.Background(), rec), "")
+	if err != nil || rec.Dialed() != "" {
+		t.Fatalf("unnamed node: err=%v dialed=%q, want no name", err, rec.Dialed())
+	}
+	_ = c.Close()
 }

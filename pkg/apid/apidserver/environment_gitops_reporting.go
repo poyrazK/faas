@@ -9,9 +9,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Reporting observes persisted approved definitions without executing intent,
-// recovering enforce effects, or launching workload qualification. The complete
-// graph executor remains separately gated on native acceptance.
+// Reporting observes persisted approved definitions and finalizes already-fresh
+// runtime bookkeeping without executing intent, replaying fleet effects or
+// launching qualification. The graph executor remains gated on native acceptance.
 func (s *server) startEnvironmentGitDriftReporting(ctx context.Context, getenv func(string) string) func() {
 	if !strings.EqualFold(strings.TrimSpace(getenv("FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED")), "true") {
 		return func() {}

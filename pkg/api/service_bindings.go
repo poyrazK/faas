@@ -475,7 +475,7 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 	for _, binding := range bindings {
 		env[binding.Binding] = ServiceBindingCanonicalURL(binding.Service, transport)
 		env[ServiceBindingHTTPSEnvKey(binding.Service)] = ServiceBindingCanonicalURL(binding.Service, ServiceBindingTransportHTTPS)
-		env[ServiceBindingHostEnvKey(binding.Service)] = binding.Service + ".svc.gregale"
+		env[ServiceBindingHostEnvKey(binding.Service)] = ServiceDNSName(binding.Service) + ".svc.gregale"
 	}
 	if len(env) == 0 {
 		return nil
@@ -483,14 +483,59 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 	return env
 }
 
+// PrivateServiceHTTPSCapability is the product capability an operator turns
+// on once every compute node runs the private service HTTPS listener and
+// gives guests its CA (docs/networking.md). It is off until then, and the
+// https service transport is refused while it is (ADR-20261029230000).
+const PrivateServiceHTTPSCapability = "private-service-https"
+
+// PrivateServiceHTTPSUnavailable is the reason the https service transport
+// is refused where the installation has not enabled private service HTTPS.
+const PrivateServiceHTTPSUnavailable = "private service HTTPS is not enabled on this installation, so https://<service>.internal does not answer; use the http transport (the default) or ask the operator to enable the private-service-https capability"
+
+// PrivateServiceHTTPSTransportProblem refuses the https transport while the
+// private-service-https capability is off. Every call from such a caller
+// would fail: the service proxy refuses its plain-HTTP calls, and nothing
+// answers its HTTPS ones.
+func PrivateServiceHTTPSTransportProblem(transport ServiceBindingTransport, enabled bool) *Problem {
+	if enabled || transport != ServiceBindingTransportHTTPS {
+		return nil
+	}
+	return ErrValidation("service_binding_transport https: " + PrivateServiceHTTPSUnavailable)
+}
+
 // ServiceBindingCanonicalURL is the GREGALE_SERVICE_<NAME>_URL value for a
 // caller's transport: the private HTTPS alias, or the plaintext service proxy.
 func ServiceBindingCanonicalURL(service string, transport ServiceBindingTransport) string {
+	service = ServiceDNSName(service)
 	if transport.Effective() == ServiceBindingTransportHTTPS {
 		return "https://" + service + ".internal"
 	}
 	return fmt.Sprintf("http://%s.svc.gregale:%d", service, ServiceBindingPort)
 }
+
+// serviceDNSNameReplacer maps the Compose service-name characters a DNS label
+// cannot carry to the hyphen (ADR-20261026170512).
+var serviceDNSNameReplacer = strings.NewReplacer("_", "-", ".", "-")
+
+// ServiceDNSName is the name a service is called by over the network
+// (`<name>.internal`, `<name>.svc.gregale`): the repository service name in
+// lower case, with `_` and `.` written as `-`, so Compose's `billing_api` is
+// `billing-api`. Stored names keep their declared form; every comparison and
+// generated address uses this one (ADR-20261026170512).
+func ServiceDNSName(name string) string {
+	return serviceDNSNameReplacer.Replace(strings.ToLower(strings.TrimSpace(name)))
+}
+
+// SameServiceName reports whether two service names call the same service.
+func SameServiceName(a, b string) bool {
+	return ServiceDNSName(a) == ServiceDNSName(b)
+}
+
+// ValidServiceName reports whether name is a service DNS label, the name
+// `<name>.internal` and `<name>.svc.gregale` resolve (1 to 63 lowercase
+// letters, digits and inner hyphens).
+func ValidServiceName(name string) bool { return validServiceCallerName(name) }
 
 func validServiceCallerName(name string) bool {
 	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {

@@ -63,7 +63,7 @@ func namedServiceAbortOutcomeFixture(t *testing.T) (*management, string, *api.Se
 	}))
 	t.Cleanup(b.Close)
 	opts.APIBase = b.URL
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken).SetCompletionCache(nil), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken).SetCompletionCache(nil), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestServiceAbortNamedLostReplyExpiry(t *testing.T) {
 	for _, protocol := range []string{"2026-07-28", "2025-11-25"} {
 		t.Run(protocol, func(t *testing.T) {
 			m, id, r, _ := namedServiceAbortOutcomeFixture(t)
-			path := m.opts.planStore.path
+			path := m.opts.planStore.persist.(*fileState).path
 			m.plans[id].ExpiresAt = time.Now().Add(-time.Minute)
 			if err := m.persistPlans(); err != nil {
 				t.Fatal(err)

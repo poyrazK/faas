@@ -17,15 +17,15 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 	if build == nil {
 		return App{}, 0, ErrInvalidArgument
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppConfigMutation(ctx, id, p)
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app config activity update: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	var before App
-	if err := scanAppInto(&before, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id)); err != nil {
-		return App{}, 0, mapErr(err)
+	before, err := readAppForConfigUpdateTx(ctx, tx, id)
+	if err != nil {
+		return App{}, 0, err
 	}
 	p, err = prepareDeploySettingsUpdateTx(ctx, tx, before, p)
 	if err != nil {
@@ -63,4 +63,10 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 		return App{}, 0, fmt.Errorf("state: commit app config activity update: %w", err)
 	}
 	return after, outboxID, nil
+}
+
+func readAppForConfigUpdateTx(ctx context.Context, tx pgx.Tx, id string) (App, error) {
+	var app App
+	err := scanAppInto(&app, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id))
+	return app, mapErr(err)
 }

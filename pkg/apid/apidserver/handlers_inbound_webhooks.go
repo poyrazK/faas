@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -26,7 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const inboundWebhookSecretSealLabel = "inbound_webhook"
+const inboundWebhookSecretSealLabel = api.InboundWebhookSecretNamespace
 
 var inboundWebhookNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 var genericWebhookTimestampPattern = regexp.MustCompile(`^[0-9]{1,12}$`)
@@ -115,14 +116,9 @@ func (s *server) createInboundWebhookEndpointValidated(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("inbound webhook store unavailable"))
 		return
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret"))
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, inboundWebhookSecretSealLabel, []byte(req.SigningSecret), api.InboundWebhookSigningSecretMaxBytes)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not seal inbound webhook secret"))
+	sealed, prob := sealInboundWebhookSigningSecret(req.SigningSecret)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	token, tokenHash, err := generateInboundWebhookToken()
@@ -225,6 +221,7 @@ func (s *server) updateInboundWebhookEndpoint(w http.ResponseWriter, r *http.Req
 			return
 		}
 		params.SigningSecretSealed = &sealed
+		params.PreviousSecretUntil = webhookSecretOverlapUntil()
 	}
 	store, _ := inboundWebhookStore(s.store)
 	updated, err := store.UpdateInboundWebhookEndpoint(r.Context(), endpoint.ID, params)
@@ -243,11 +240,18 @@ func sealInboundWebhookSecret(plaintext string, provider state.InboundWebhookPro
 	if provider == state.InboundWebhookProviderGeneric && len(plaintext) < api.InboundWebhookGenericSecretMinBytes {
 		return nil, inboundWebhookProblem(http.StatusBadRequest, "generic signing_secret must contain at least 32 bytes")
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
+	return sealInboundWebhookSigningSecret(plaintext)
+}
+
+// sealInboundWebhookSigningSecret seals an inbound webhook endpoint's
+// signing secret, an account value apid opens to verify deliveries (ADR
+// 20261022111812).
+func sealInboundWebhookSigningSecret(plaintext string) ([]byte, *api.Problem) {
+	recipients, err := accountRecipients(hostSecretRecipient())
+	if err != nil {
 		return nil, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret")
 	}
-	sealed, err := secretbox.SealBytes(recipient, inboundWebhookSecretSealLabel, []byte(plaintext), api.InboundWebhookSigningSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, inboundWebhookSecretSealLabel, []byte(plaintext), api.InboundWebhookSigningSecretMaxBytes)
 	if err != nil {
 		return nil, api.ErrCapacity("could not seal inbound webhook secret")
 	}
@@ -295,7 +299,7 @@ func inboundWebhookEndpointResponse(endpoint state.InboundWebhookEndpoint) api.I
 }
 
 func (s *server) inboundWebhookURL(token string) string {
-	domain := strings.TrimPrefix(strings.TrimSpace(s.domain), ".")
+	domain := strings.TrimPrefix(strings.TrimSpace(s.platformHost()), ".")
 	return "https://api." + domain + "/v1/hooks/" + token
 }
 
@@ -363,12 +367,18 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, acct.InactiveProblem())
 		return
 	}
+	limits := api.MustLimitsFor(acct.Plan)
+	// ADR-20261101093517: the route carries no API credential, so the API
+	// budget never applied; a valid signature admitted any rate.
+	if wait, allowed := s.inboundWebhookAccepts.take(acct.ID, limits.InboundWebhookAcceptsPerMinute); !allowed {
+		api.WriteProblem(w, api.ErrInboundWebhookRateLimited(limits.InboundWebhookAcceptsPerMinute, int(math.Ceil(wait.Seconds()))))
+		return
+	}
 	// ADR-1193: an operation binding takes over delivery for this endpoint.
 	if s.operation.ReceiveBoundWebhook(w, r, endpoint, providerEventID, eventType, body) {
 		return
 	}
-	limits := api.MustLimitsFor(acct.Plan)
-	s.acceptInboundWebhook(w, r, endpoint, providerEventID, eventType, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts))
+	s.acceptInboundWebhook(w, r, endpoint, providerEventID, eventType, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts), limits)
 }
 
 func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *api.Problem) {
@@ -389,24 +399,55 @@ func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *ap
 
 // inboundWebhookUnsealCause describes why the endpoint's secret cannot be
 // unsealed: the identity count and the error, never secret material.
-func inboundWebhookUnsealCause(ctx context.Context, endpoint state.InboundWebhookEndpoint) string {
-	identities := hostIdentitiesForUnseal(ctx)
+func inboundWebhookUnsealCause(_ context.Context, endpoint state.InboundWebhookEndpoint) string {
+	identities := accountIdentities()
 	namespace, _, err := secretbox.OpenBytesMulti(identities, endpoint.SigningSecretSealed)
 	return fmt.Sprintf("identities=%d sealed_bytes=%d namespace=%q err=%v", len(identities), len(endpoint.SigningSecretSealed), namespace, err)
 }
 
-func verifyInboundWebhook(ctx context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte, now time.Time) (string, string, *api.Problem) {
-	identities := hostIdentitiesForUnseal(ctx)
+// inboundWebhookSecrets opens the endpoint's signing secret and, during a
+// rotation's overlap window, the secret it replaced (ADR-20261101093517), so
+// a sender that has not switched yet still verifies. A previous secret that
+// does not open is skipped; the current one must open.
+func inboundWebhookSecrets(endpoint state.InboundWebhookEndpoint, now time.Time) ([]string, *api.Problem) {
+	identities := accountIdentities()
 	if len(identities) == 0 {
-		return "", "", api.ErrCapacity("host identity not loaded — refusing to verify webhook")
+		return nil, api.ErrCapacity("host identity not loaded — refusing to verify webhook")
 	}
 	namespace, secret, err := secretbox.OpenBytesMulti(identities, endpoint.SigningSecretSealed)
 	if err != nil || namespace != inboundWebhookSecretSealLabel {
-		return "", "", api.ErrCapacity("could not unseal inbound webhook secret")
+		return nil, api.ErrCapacity("could not unseal inbound webhook secret")
+	}
+	secrets := []string{string(secret)}
+	if previous := endpoint.PreviousSigningSecretAt(now); previous != nil {
+		if namespace, secret, err := secretbox.OpenBytesMulti(identities, previous); err == nil && namespace == inboundWebhookSecretSealLabel && len(secret) > 0 {
+			secrets = append(secrets, string(secret))
+		}
+	}
+	return secrets, nil
+}
+
+// anySecretVerifies reports whether verify accepts the delivery under any of
+// the endpoint's valid secrets.
+func anySecretVerifies(secrets []string, verify func(secret string) bool) bool {
+	for _, secret := range secrets {
+		if verify(secret) {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyInboundWebhook(_ context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte, now time.Time) (string, string, *api.Problem) {
+	secrets, problem := inboundWebhookSecrets(endpoint, now)
+	if problem != nil {
+		return "", "", problem
 	}
 	switch endpoint.Provider {
 	case state.InboundWebhookProviderStripe:
-		if err := stripex.VerifySignature(body, headers.Get("Stripe-Signature"), string(secret), inboundWebhookSignatureTolerance); err != nil {
+		if !anySecretVerifies(secrets, func(secret string) bool {
+			return stripex.VerifySignature(body, headers.Get("Stripe-Signature"), secret, inboundWebhookSignatureTolerance) == nil
+		}) {
 			return "", "", api.ErrInboundWebhookBadSignature()
 		}
 		var envelope struct {
@@ -423,7 +464,9 @@ func verifyInboundWebhook(ctx context.Context, endpoint state.InboundWebhookEndp
 		if !api.ValidInboundWebhookEventID(eventID) || !api.ValidInboundWebhookEventType(eventType) {
 			return "", "", inboundWebhookProblem(http.StatusBadRequest, "generic webhooks require a valid event id and event type header")
 		}
-		if !verifyGenericInboundWebhookSignature(headers.Get(api.InboundWebhookTimestampHeader), headers.Get(api.InboundWebhookSignatureHeader), eventID, eventType, body, string(secret), now) {
+		if !anySecretVerifies(secrets, func(secret string) bool {
+			return verifyGenericInboundWebhookSignature(headers.Get(api.InboundWebhookTimestampHeader), headers.Get(api.InboundWebhookSignatureHeader), eventID, eventType, body, secret, now)
+		}) {
 			return "", "", api.ErrInboundWebhookBadSignature()
 		}
 		return eventID, eventType, nil
@@ -460,7 +503,7 @@ func verifyGenericInboundWebhookSignature(timestampValue, signatureValue, eventI
 	return hmac.Equal(provided, mac.Sum(nil))
 }
 
-func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body, retryPolicy json.RawMessage) {
+func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body, retryPolicy json.RawMessage, limits api.Limits) {
 	now := time.Now().UTC()
 	receiptID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+providerEventID)).String()
 	bodyDigest := sha256.Sum256(body)
@@ -516,10 +559,12 @@ func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, en
 		Source: state.InvocationInboundWebhook, State: state.InvocationPending,
 		Method: http.MethodPost, Path: endpoint.DeliveryPath, Payload: body,
 		Headers: headers, DueAt: now, CreatedAt: now, RetryPolicyJSON: retryPolicy,
+		// ADR-20261101093517: the app's queue caps, as for a queue send.
+		AdmissionMaxPending: limits.MaxQueueDepth, AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
 	})
 	duplicate := errors.Is(err, state.ErrConflict)
 	if err != nil && !duplicate {
-		api.WriteProblem(w, api.ErrCapacity("could not durably accept inbound webhook"))
+		api.WriteProblem(w, inboundWebhookEnqueueProblem(err))
 		return
 	}
 	if duplicate {
@@ -544,6 +589,21 @@ func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, en
 	writeJSON(w, http.StatusAccepted, api.InboundWebhookReceiptResponse{
 		ReceiptID: receiptID, Status: "accepted", Duplicate: duplicate, AcceptedAt: acceptedAt.UTC().Format(time.RFC3339),
 	})
+}
+
+// inboundWebhookEnqueueProblem maps a refused inbound enqueue. A full backlog
+// answers 429 with Retry-After: the provider keeps the event and retries it,
+// where a 5xx or 403 could end its retries.
+func inboundWebhookEnqueueProblem(err error) *api.Problem {
+	var depth *state.InvocationDepthError
+	if errors.As(err, &depth) {
+		return api.ErrInboundWebhookBacklogFull(api.WebhookBacklogCapCount, int64(depth.Limit), int64(depth.Observed))
+	}
+	var backlog *state.InvocationBacklogBytesError
+	if errors.As(err, &backlog) {
+		return api.ErrInboundWebhookBacklogFull(api.WebhookBacklogCapBytes, backlog.Limit, backlog.Observed)
+	}
+	return api.ErrCapacity("could not durably accept inbound webhook")
 }
 
 func inboundWebhookReceiptMatches(invocation state.Invocation, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte) bool {

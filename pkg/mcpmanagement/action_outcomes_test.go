@@ -65,7 +65,7 @@ func TestActionOutcomeExpiredEncryptedRestart(t *testing.T) {
 	store, path, key := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "outcome-grant"
 	client := api.NewClient(backend.URL, testToken)
-	_, m, err := newManagementServer(client, opts)
+	_, m, err := newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestActionOutcomeExpiredEncryptedRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = next.Close() })
 	opts.planStore, opts.AllowWrites = next, false
-	_, restored, err := newManagementServer(client, opts)
+	_, restored, err := newHistoryTestManagementServer(client, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestActionOutcomeExpiredEncryptedRestart(t *testing.T) {
 	}
 	// The lookup is grant-local and is removed with retained history.
 	opts.planNamespace = "another-grant"
-	_, other, err := newManagementServer(client, opts)
+	_, other, err := newHistoryTestManagementServer(client, opts)
 	if err != nil || len(other.actions) != 0 || len(other.budgetOutcomes) != 0 {
 		t.Fatal("another grant inherited outcome")
 	}
@@ -183,7 +183,7 @@ func TestActionOutcomeUnavailableAndMismatchedEvidence(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			f, b, opts := newBudgetFixture(t)
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -215,7 +215,7 @@ func TestActionOutcomeAbsentReceiptAndFinalGuards(t *testing.T) {
 			f, b, opts := newBudgetFixture(t)
 			store, _, _ := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "guard-grant"
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -276,7 +276,7 @@ func TestBudgetOutcomeRestoreCompatibilityAndValidation(t *testing.T) {
 			store, _, _ := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "compat-grant"
 			client := api.NewClient(b.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -305,7 +305,7 @@ func TestBudgetOutcomeRestoreCompatibilityAndValidation(t *testing.T) {
 			if err := store.updateMany(map[string]any{budgetOutcomeNamespace + opts.planNamespace: snapshot, "unrelated/future": map[string]int{"version": 9}}); err != nil {
 				t.Fatal(err)
 			}
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			if change == "future" || change == "binding" {
 				if err == nil {
 					t.Fatal("invalid snapshot restored")

@@ -10,6 +10,26 @@ ConditionPathExists=/var/lib/pgsql/backup-rclone.conf
 Type=oneshot
 User=root
 Group=root
+# Security review 2026-10-23: these units hold the off-host backup
+# credentials or the backups themselves. Deny what backup work never needs:
+# gaining privileges, kernel tunables, modules and logs, cgroup, clock and
+# hostname changes, new namespaces, realtime scheduling, setuid files and
+# foreign syscall ABIs. Filesystem and capability limits are deliberately
+# left out: the scripts read and prune files other users own and rclone may
+# write under the invoking user's home, which only a live host can verify.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 Environment=FAAS_PG_WAL_ARCHIVE_ROOT=/var/lib/pgsql/archive
 Environment=FAAS_PG_BASEBACKUP_ROOT=/var/lib/pgsql/basebackup
 Environment=FAAS_PG_BACKUP_STATE_ROOT=/var/lib/faas/backup-state
@@ -22,6 +42,18 @@ TimeoutStartSec=2h
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
+# The first prune after each nightly basebackup hashes a day of WAL (about
+# 24 GB at one segment a minute) for the off-host check, from the disk
+# PostgreSQL runs on. Unbounded, it saturated that disk for 7-8 minutes every
+# day near 04:00 UTC on production-us, and control-plane database calls timed
+# out until it finished. The I/O priority above does nothing on a disk whose
+# scheduler is `none` (cloud persistent disks); the cgroup read cap does. At
+# 16 MB/s a day of WAL takes about 25 minutes, inside the timeout and the 2 h
+# prune-freshness alert. MemoryHigh keeps the segments it streams from
+# evicting PostgreSQL's pages from the page cache.
+IOReadBandwidthMax=/var/lib/pgsql/archive 16M
+MemoryHigh=512M
+CPUQuota=50%
 UMask=0077
 StandardOutput=journal
 StandardError=journal

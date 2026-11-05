@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -133,6 +134,9 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	if err := json.Unmarshal(schema, &doc); err != nil {
 		return nil, errors.Join(ErrSchemaInvalid, err)
 	}
+	if err := CheckSchemaComplexity(doc); err != nil {
+		return nil, err
+	}
 	if rejectUnknownFields {
 		closeUnknownFields(doc, true, legacyDraft(doc))
 	}
@@ -145,6 +149,101 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	}
 
 	return &CompiledSchema{Schema: compiled, Digest: digest}, nil
+}
+
+// CheckSchemaComplexity refuses a decoded schema document whose combinators
+// nest deeper than MaxSchemaCombinatorDepth (ErrSchemaTooComplex). Every
+// place that compiles a customer's schema runs it first.
+func CheckSchemaComplexity(doc any) error {
+	if depth := (&combinatorWalk{root: doc, memo: map[string]int{}, open: map[string]bool{}}).depth(doc); depth > MaxSchemaCombinatorDepth {
+		return fmt.Errorf("%w: %d levels, at most %d", ErrSchemaTooComplex, depth, MaxSchemaCombinatorDepth)
+	}
+	return nil
+}
+
+// combinatorWalk measures how deeply combinators nest in a schema document,
+// following local "#..." $refs once per path (a recursive $ref stops there)
+// and memoizing each ref's depth so the walk stays linear.
+type combinatorWalk struct {
+	root any
+	memo map[string]int
+	open map[string]bool
+}
+
+func (c *combinatorWalk) depth(node any) int {
+	switch v := node.(type) {
+	case []any:
+		deepest := 0
+		for _, item := range v {
+			deepest = max(deepest, c.depth(item))
+		}
+		return deepest
+	case map[string]any:
+		deepest := 0
+		for key, val := range v {
+			switch key {
+			case "anyOf", "oneOf", "allOf", "not", "if", "then", "else":
+				deepest = max(deepest, 1+c.depth(val))
+			case "$ref":
+				if ref, ok := val.(string); ok {
+					deepest = max(deepest, c.refDepth(ref))
+				}
+			default:
+				deepest = max(deepest, c.depth(val))
+			}
+		}
+		return deepest
+	}
+	return 0
+}
+
+func (c *combinatorWalk) refDepth(ref string) int {
+	if !strings.HasPrefix(ref, "#") || c.open[ref] {
+		return 0
+	}
+	if d, ok := c.memo[ref]; ok {
+		return d
+	}
+	target, ok := resolveLocalPointer(c.root, strings.TrimPrefix(ref, "#"))
+	if !ok {
+		return 0
+	}
+	c.open[ref] = true
+	d := c.depth(target)
+	delete(c.open, ref)
+	c.memo[ref] = d
+	return d
+}
+
+// resolveLocalPointer follows an RFC 6901 JSON pointer within doc.
+func resolveLocalPointer(doc any, pointer string) (any, bool) {
+	if pointer == "" {
+		return doc, true
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return nil, false
+	}
+	node := doc
+	for _, token := range strings.Split(pointer[1:], "/") {
+		token = strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+		switch v := node.(type) {
+		case map[string]any:
+			next, ok := v[token]
+			if !ok {
+				return nil, false
+			}
+			node = next
+		case []any:
+			i, err := strconv.Atoi(token)
+			if err != nil || i < 0 || i >= len(v) {
+				return nil, false
+			}
+			node = v[i]
+		default:
+			return nil, false
+		}
+	}
+	return node, true
 }
 
 // rejectUnknownFieldsDigestSuffix separates the digest of a closed

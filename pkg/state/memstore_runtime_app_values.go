@@ -70,6 +70,18 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 			return RuntimeAppValuesSnapshot{}, ErrConflict
 		}
 		settings = spec.Settings
+		if d.EnvironmentWorkloadRuntime != "" {
+			// Guest fields follow the frozen candidate overlay, as PgStore does.
+			overlaid, err := settings.ApplyTo(App{ID: appID, AccountID: accountID})
+			if err == nil {
+				overlaid, err = AppForDeploymentRuntime(overlaid, d)
+			}
+			if err != nil {
+				return RuntimeAppValuesSnapshot{}, err
+			}
+			settings.Manifest, settings.StartCommand = overlaid.Manifest, overlaid.StartCommand
+			settings.Type, settings.Runtime, settings.WorkloadClass = overlaid.Type, overlaid.Runtime, overlaid.WorkloadClass
+		}
 	}
 	result.SidecarLayers = []DeploymentSidecarLayer{}
 	for _, layer := range m.deploymentSidecarLayers {
@@ -85,11 +97,19 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 	return result, nil
 }
 
+// inheritsProjectEnvironment mirrors the runtime queries'
+// inherits_project_environment column: a PR preview runs unreviewed code and
+// never inherits the project environment its scope maps to (the default
+// scope maps to production).
+func inheritsProjectEnvironment(app App) bool {
+	return app.ProjectID != "" && app.PreviewOfSlug == ""
+}
+
 // inheritedProjectEnvLocked reads the latest configuration of the project
 // environment the owner's scope maps to (ADR-1136).
 func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]AppEnv, error) {
 	app := m.apps[owner.AppID]
-	if app.ProjectID == "" {
+	if !inheritsProjectEnvironment(app) {
 		return []AppEnv{}, nil
 	}
 	versions := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(app.ProjectID, workloadEnvironmentSlug(owner.Scope))]
@@ -104,7 +124,7 @@ func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]App
 // project_secrets column (ADR-1139).
 func (m *MemStore) inheritedProjectSecretsLocked(snapshot RuntimeAppValuesSnapshot) []ProjectEnvironmentSecret {
 	app := m.apps[snapshot.AppID]
-	if app.ProjectID == "" {
+	if !inheritsProjectEnvironment(app) {
 		return []ProjectEnvironmentSecret{}
 	}
 	var rows []ProjectEnvironmentSecret

@@ -55,7 +55,7 @@ func parseAppInstancesPath(rest string) (string, bool) {
 func (s *server) renderAppInstances(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -69,9 +69,9 @@ func (s *server) renderAppInstances(w http.ResponseWriter, r *http.Request, log 
 
 	token := ""
 	if s.sessions != nil {
-		token, err = middleware.IssueForAuthenticatedNamed(s.sessions, dashboardInstanceAction, acct.ID, dashboardInstanceCSRFCookie)
+		token, err = middleware.IssueForAuthenticatedNamed(s.sessions, dashboardInstanceAction, actorAccount(r, acct).ID, dashboardInstanceCSRFCookie)
 		if err != nil {
-			log.Warn("dashboard renderAppInstances: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", err)
+			log.Warn("dashboard renderAppInstances: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", err)
 			token = ""
 		} else {
 			http.SetCookie(w, &http.Cookie{
@@ -209,7 +209,7 @@ func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -242,8 +242,7 @@ func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request)
 		returnDashboardInstanceAction(w, r, slug, dashboardInstanceActionWoken, wakeID)
 	case "restart":
 		if app.Status != state.AppActive {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"App is not active", "only an active app can be restarted"))
+			api.WriteProblem(w, appRestartRefusal(app))
 			return
 		}
 		claimed, err := claimAppRestart(r.Context(), s.store, app.ID)

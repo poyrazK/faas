@@ -46,6 +46,25 @@ func TestCmdRealtimeSendReadsBinarySafeStdin(t *testing.T) {
 
 func TestCmdRealtimePublishUsesChannelRouteAndReportsQueued(t *testing.T) {
 	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"queued":3}`, http.StatusOK)
+	oldOut := (*main.OsStdout)
+	var out bytes.Buffer
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+
+	if code := main.CmdRealtimePublish([]string{"demo", "endpoint-1", "room-a", "--data", "hello"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/apps/demo/realtime/endpoints/endpoint-1/channels/room-a/publish" {
+		t.Fatalf("route = %s %s", (*f.SawMethod()), (*f.SawPath()))
+	}
+	if !strings.Contains(out.String(), "3 connection(s)") {
+		t.Fatalf("queued count missing: %s", out.String())
+	}
+}
+
+func TestCmdRealtimePublishUsesChannelRouteAndReportsQueuedDocumentedStatus(t *testing.T) {
+	main.ResetJSONOut(t)
 	f := main.AuthedFakeAPI(t, `{"queued":3,"subscribers":3}`, http.StatusOK)
 	oldOut := (*main.OsStdout)
 	var out bytes.Buffer
@@ -64,6 +83,21 @@ func TestCmdRealtimePublishUsesChannelRouteAndReportsQueued(t *testing.T) {
 }
 
 func TestCmdRealtimePublishWarnsOnPartialFleet(t *testing.T) {
+	main.ResetJSONOut(t)
+	_ = main.AuthedFakeAPI(t, `{"queued":2,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	var out, errOut bytes.Buffer
+	(*main.OsStdout), (*main.OsStderr) = &out, &errOut
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
+	if code := main.CmdRealtimePublish([]string{"demo", "endpoint-1", "room-a", "--data", "hello"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "partial") || !strings.Contains(errOut.String(), "duplicates") {
+		t.Fatalf("partial warning missing: %s", errOut.String())
+	}
+}
+
+func TestCmdRealtimePublishWarnsOnPartialFleetDocumentedStatus(t *testing.T) {
 	main.ResetJSONOut(t)
 	_ = main.AuthedFakeAPI(t, `{"queued":2,"subscribers":3,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
 	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)

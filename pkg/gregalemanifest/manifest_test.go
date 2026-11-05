@@ -355,6 +355,7 @@ scaling:
   concurrency_overflow: drop
   max_queue_depth: 11
   max_queue_wait_ms: 1250
+  per_instance_concurrency: 2
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -369,7 +370,8 @@ scaling:
 	if policy.MinInstances != 1 || policy.MaxInstances != 4 || policy.Target == nil ||
 		policy.Target.Metric != "concurrent_requests" || policy.Target.Value != 2 ||
 		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 ||
-		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 {
+		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 ||
+		policy.PerInstanceConcurrency != 2 {
 		t.Fatalf("policy = %+v, want manifest values plus default scale-out cooldown", policy)
 	}
 }
@@ -390,6 +392,8 @@ func TestScalingConfigValidation(t *testing.T) {
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
 		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
 		{"bad queue depth", &ScalingConfig{MaxQueueDepth: -1}, "max_queue_depth"},
+		// adr: 20261022203523 — the API applies the plan's upper bound.
+		{"negative per-instance concurrency", &ScalingConfig{PerInstanceConcurrency: -1}, "per_instance_concurrency"},
 		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
 		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
 		// adr: 194 — p99_latency_ms validated for releases with no source
@@ -680,12 +684,14 @@ func TestValidate_BadSchedule(t *testing.T) {
 }
 
 func TestValidate_PathNoSlash(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{
-		{Kind: TriggerKindCron, App: "x", Schedule: "0 3 * * *", Path: "cleanup"},
-	}}
-	err := m.Validate()
-	if err == nil || !strings.Contains(err.Error(), "path must start with '/'") {
-		t.Errorf("err = %v, want path-must-start-with-slash message", err)
+	for _, path := range []string{"cleanup", "//evil.example/x", "/a b"} {
+		m := &Manifest{Triggers: []Trigger{
+			{Kind: TriggerKindCron, App: "x", Schedule: "0 3 * * *", Path: path},
+		}}
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), "path must start with a single /") {
+			t.Errorf("%q: err = %v, want the cron path rule", path, err)
+		}
 	}
 }
 
@@ -820,7 +826,9 @@ func TestValidate_RedisStreams_Happy(t *testing.T) {
 	}
 }
 
-func TestValidate_SQSCompat_Happy(t *testing.T) {
+// sqs_compat is delisted (2026-10-29): a manifest declaring it is refused
+// like amqp, as a trigger and as a worker source.
+func TestValidate_SQSCompat_Unavailable(t *testing.T) {
 	m := &Manifest{Triggers: []Trigger{{
 		Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext-jobs",
 		Config: map[string]any{
@@ -828,21 +836,8 @@ func TestValidate_SQSCompat_Happy(t *testing.T) {
 			"long_poll_secs": 20,
 		},
 	}}}
-	if err := m.Validate(); err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-}
-
-func TestValidate_SQSCompat_BadLongPoll(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext-jobs",
-		Config: map[string]any{
-			"queue_url":      "http://faas-queue:9090/queues/ext-jobs",
-			"long_poll_secs": 25,
-		},
-	}}}
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "long_poll_secs") {
-		t.Errorf("err = %v, want long_poll_secs range message", err)
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "sqs_compat triggers are not available yet") {
+		t.Errorf("err = %v, want the unavailable-kind refusal", err)
 	}
 }
 
@@ -948,7 +943,7 @@ func TestValidate_MaxAttemptsOutOfRange(t *testing.T) {
 }
 
 // Happy-path mixed manifest: cron + kafka + nats + redis_streams +
-// sqs_compat + queue. The combined Validate() runs every kind's
+// queue. The combined Validate() runs every kind's
 // validator in a single pass; the cron path keeps its (schedule,
 // path) shape, the five new kinds carry (slug, config).
 func TestValidate_AllSixKinds(t *testing.T) {
@@ -960,9 +955,6 @@ func TestValidate_AllSixKinds(t *testing.T) {
 		}},
 		{Kind: TriggerKindRedisStreams, App: "my-api", Slug: "cache", Config: map[string]any{
 			"addr": "redis:6379", "stream": "s", "group": "g",
-		}},
-		{Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext", Config: map[string]any{
-			"queue_url": "http://q:9090/queues/ext",
 		}},
 		{Kind: TriggerKindQueue, App: "my-api", Slug: "in", Config: map[string]any{"mode": "queue"}},
 	}}
@@ -1766,5 +1758,43 @@ func TestValidateBucketComputeTriggers(t *testing.T) {
 		if (m.Buckets[0].Triggers != nil) != (decl != "") {
 			t.Fatal("declaration intent lost", m.Buckets)
 		}
+	}
+}
+
+// ADR-20261018101500 amendment 2026-10-27: the CLI and apid's source deploys
+// apply one scaling policy. A worker block's metric takes the bounds and
+// target, and the cooldowns are never zero, which the API refuses.
+func TestScalingPolicyRequest(t *testing.T) {
+	parse := func(t *testing.T, content string) *Manifest {
+		t.Helper()
+		m, err := ParseBytes([]byte(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	worker := parse(t, "worker:\n  scale:\n    min: 0\n    max: 3\n    metric: queue_depth\n    target: 100\n")
+	policy := worker.ScalingPolicyRequest()
+	if policy == nil || policy.MinInstances != 0 || policy.MaxInstances != 3 || policy.Target == nil ||
+		policy.Target.Metric != api.ScalingMetricQueueDepth || policy.Target.Value != 100 ||
+		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != defaultScaleInCooldownS {
+		t.Fatalf("worker block policy = %+v", policy)
+	}
+
+	both := parse(t, "worker:\n  scale:\n    min: 1\n    max: 4\n    metric: queue_depth\n    target: 20\n"+
+		"scaling:\n  scale_in_cooldown_s: 120\n  targets:\n    - metric: cpu\n      value: 70\n")
+	policy = both.ScalingPolicyRequest()
+	if policy == nil || policy.MinInstances != 1 || policy.MaxInstances != 4 || len(policy.Targets) != 0 ||
+		policy.Target == nil || policy.Target.Metric != api.ScalingMetricQueueDepth || policy.ScaleInCooldownS != 120 {
+		t.Fatalf("worker over scaling block = %+v", policy)
+	}
+
+	scalingOnly := parse(t, "scaling:\n  min_instances: 0\n  max_instances: 2\n")
+	if policy := scalingOnly.ScalingPolicyRequest(); policy == nil || policy.MaxInstances != 2 || policy.Target != nil {
+		t.Fatalf("scaling block policy = %+v", policy)
+	}
+	noMetric := parse(t, "worker:\n  scale:\n    min: 1\n    max: 1\n")
+	if policy := noMetric.ScalingPolicyRequest(); policy != nil {
+		t.Fatalf("worker without a metric asked for a policy: %+v", policy)
 	}
 }

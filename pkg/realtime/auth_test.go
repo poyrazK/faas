@@ -59,7 +59,7 @@ func TestManagerJWTAuthorizationUsesBearerAndPrincipal(t *testing.T) {
 	authorizer := &recordingJWTAuthorizer{}
 	m := NewManager(Config{JWTAuthorizer: authorizer}, nil)
 	defer m.Close()
-	err := m.RegisterEndpoint(Endpoint{
+	err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "private",
 		ClientAuth: AuthPolicy{
 			Mode:       AuthModeOIDCJWT,
@@ -99,7 +99,7 @@ func TestManagerJWTAuthorizationUsesBearerAndPrincipal(t *testing.T) {
 func TestManagerAcceptsPreviousStaticBearerDuringGraceWindow(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID:                         "rotating",
 		AuthToken:                  "new-token",
 		AuthTokenPrevious:          "old-token",
@@ -125,7 +125,7 @@ func TestManagerAcceptsPreviousStaticBearerDuringGraceWindow(t *testing.T) {
 		_ = client.Close()
 	}
 
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID:                         "expired",
 		AuthToken:                  "new-token",
 		AuthTokenPrevious:          "old-token",

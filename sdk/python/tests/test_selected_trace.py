@@ -3,9 +3,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.account import get_selected_app_trace
+from faas_sdk.preview.api.account import get_selected_app_trace
 from faas_sdk.client import Client
-from faas_sdk.models import SelectedTraceLookupResponse
+from faas_sdk.preview.models import SelectedTraceLookupResponse
 
 
 def test_selected_trace_wire_partial_and_missing_source_time():

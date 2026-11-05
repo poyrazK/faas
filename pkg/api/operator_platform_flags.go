@@ -111,6 +111,18 @@ type OperatorPlatformFlag struct {
 	Receipts    []OperatorRuntimeConfigApplyReceipt `json:"receipts"`
 	Convergence OperatorPlatformFlagConvergence     `json:"convergence"`
 	OptIns      OperatorPlatformFlagOptIns          `json:"opt_ins"`
+	// Maturity is the released capability's tier (ga, beta, preview,
+	// internal) and Parent its parent capability (ADR-20261023115741).
+	Maturity string `json:"maturity,omitempty"`
+	Parent   string `json:"parent,omitempty"`
+	// Core marks a core capability flag: turning it off needs force.
+	Core bool `json:"core,omitempty"`
+	// Enforcement says what the flag gates today, "+"-joined: "routes" (apid
+	// hides the capability's routes), "settings" (apid refuses its request
+	// fields and gregale.yaml blocks), "daemons" (schedd, githubd or
+	// gatewayd-internal stop its work outside apid); or "handler" (a consumer
+	// decides it in code) or "none" (not enforced yet).
+	Enforcement string `json:"enforcement,omitempty"`
 }
 
 // OperatorPlatformFlagGroups is the shared named account sets, with the

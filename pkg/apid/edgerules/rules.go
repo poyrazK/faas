@@ -15,6 +15,7 @@ package edgerules
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,7 +23,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -69,9 +72,49 @@ func EdgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Expired:      r.EdgeRuleExpired(time.Now()),
 		Match:        r.Match,
 		Mode:         edgeRuleResponseMode(r.Mode),
+		ManagedBy:    edgeRuleManagedBy(r),
+		Penalty:      apiEdgeRulePenalty(r.Action.Penalty),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+// edgeRuleManagedBy names the switch that owns r, or "".
+func edgeRuleManagedBy(r state.EdgeRule) string {
+	if r.AttackMode() {
+		return api.EdgeRuleManagedByAttackMode
+	}
+	return ""
+}
+
+// apiEdgeRulePenalty and stateEdgeRulePenalty convert the penalty box
+// (ADR-20261022105846) between its wire and stored shapes.
+func apiEdgeRulePenalty(p *state.EdgeRulePenalty) *api.EdgeRulePenalty {
+	if p == nil {
+		return nil
+	}
+	return &api.EdgeRulePenalty{Seconds: p.Seconds, After: p.After, WithinSeconds: p.WithinSeconds}
+}
+
+func stateEdgeRulePenalty(p *api.EdgeRulePenalty) *state.EdgeRulePenalty {
+	if p == nil {
+		return nil
+	}
+	return &state.EdgeRulePenalty{Seconds: p.Seconds, After: p.After, WithinSeconds: p.WithinSeconds}
+}
+
+// wafModeFromAction is a waf rule's effective mode from its wire action
+// ("" for other kinds); an unset mode is observe.
+func wafModeFromAction(kind string, raw json.RawMessage) string {
+	if kind != string(state.EdgeRuleKindWAF) {
+		return ""
+	}
+	var a api.EdgeRuleWAFAction
+	_ = json.Unmarshal(raw, &a)
+	if a.Mode == "" {
+		return api.EdgeWAFModeObserve
+	}
+	return a.Mode
 }
 
 // cloneValidateParameters copies the raw parameter schemas so the stored
@@ -114,6 +157,27 @@ func utcTimePtr(t *time.Time) *time.Time {
 // the explicit ThrottleValidationContext keeps the boundary clear
 // without forcing a global lookup. matchPath is the rule's effective
 // match_path; kind=validate path parameters must align with it.
+// JWTAudienceProblem refuses a new or edited kind=jwt action that names
+// neither an audience nor a required claim (ADR-091 amendment 2026-11-02,
+// review round 8). The gateway skips the aud check when audience is empty, so
+// such a rule accepted every token its issuer signs: with a shared issuer
+// (GitHub Actions OIDC, Google) anyone can mint one for an audience of their
+// own. Rules saved before this check keep working, and a rollback may restore
+// one; only create and update are refused.
+func JWTAudienceProblem(a api.EdgeRuleJWTAction) *api.Problem {
+	for _, aud := range a.Audience {
+		if strings.TrimSpace(aud) == "" {
+			return api.ErrValidation("jwt action audience entries must not be empty")
+		}
+	}
+	if len(a.Audience) > 0 || len(a.RequiredClaims) > 0 {
+		return nil
+	}
+	return api.ErrValidation("jwt action needs an audience (or at least one required_claims entry): without one, " +
+		"every token the issuer signs passes, including tokens a shared issuer such as GitHub Actions or Google " +
+		"mints for anyone's audience")
+}
+
 func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, plan api.Plan) *api.Problem {
 	k := state.EdgeRuleKind(kind)
 	if !k.IsValid() {
@@ -149,13 +213,19 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("cors action: %v", err))
 		}
-		return a.Validate()
+		if prob := a.Validate(); prob != nil {
+			return prob
+		}
+		return SharedDomainCORSOriginProblem(a.AllowOrigins, a.AllowCredentials)
 	case state.EdgeRuleKindJWT:
 		var a api.EdgeRuleJWTAction
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("jwt action: %v", err))
 		}
-		return a.Validate()
+		if prob := a.Validate(); prob != nil {
+			return prob
+		}
+		return JWTAudienceProblem(a)
 	case state.EdgeRuleKindIP:
 		var a api.EdgeRuleIPAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -294,6 +364,79 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
 }
 
+// RouteTargetProblem refuses a kind=route rule whose target is an internal
+// app of the rule's account. Private apps are off the public edge entirely:
+// the gateway resolves route targets through the same visibility check, so
+// such a rule would never fire, and before that check it served the internal
+// app on a public host. Unknown slugs and other accounts' apps keep their
+// handling (the gateway refuses them at match time), so the check reveals
+// nothing about slugs the caller does not own.
+//
+// A credential bound to one app may route only to that app (ADR-091
+// amendment 2026-11-02, review round 8).
+//
+// A target of the account in another edge-rule scope is refused too (ADR-091
+// amendment 2026-10-31): a company app keeps its creator's account, so a
+// route on the creator's personal app could serve the company app on the
+// personal host, out of the company's sight, and the gateway refuses such a
+// route at match time.
+func (s *Service) RouteTargetProblem(ctx context.Context, accountID, sourceAppID, kind string, raw json.RawMessage) *api.Problem {
+	if kind != string(state.EdgeRuleKindRoute) || len(raw) == 0 {
+		return nil
+	}
+	var action api.EdgeRuleRouteAction
+	if json.Unmarshal(raw, &action) != nil || action.TargetAppSlug == "" {
+		return nil //nolint:nilerr // A malformed action is ValidateEdgeRuleAction's to report.
+	}
+	if prob := s.appBoundRouteTargetProblem(ctx, sourceAppID, action.TargetAppSlug); prob != nil {
+		return prob
+	}
+	target, err := s.Host.Store().AppBySlug(ctx, action.TargetAppSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil //nolint:nilerr // An unknown slug is the gateway's to refuse; refusing it here would reveal which slugs exist.
+	}
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	if target.AccountID != accountID {
+		return nil
+	}
+	if api.NormalizeAppVisibility(target.Visibility) == api.AppVisibilityInternal {
+		return InternalRouteTargetProblem(target.Slug)
+	}
+	return s.routeTargetScopeProblem(ctx, sourceAppID, target)
+}
+
+// routeTargetScopeProblem refuses a route target outside the source app's
+// edge-rule scope.
+func (s *Service) routeTargetScopeProblem(ctx context.Context, sourceAppID string, target state.App) *api.Problem {
+	if sourceAppID == "" || sourceAppID == target.ID {
+		return nil
+	}
+	source, err := s.Host.Store().AppByID(ctx, sourceAppID)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	sourceScope, err := state.AppEdgeRuleScope(ctx, s.Host.Store(), source)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	targetScope, err := state.AppEdgeRuleScope(ctx, s.Host.Store(), target)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	if sourceScope == targetScope {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf("route target %q belongs to a different owner than this app: route only between your personal apps, or between one organization's apps", target.Slug))
+}
+
+// InternalRouteTargetProblem is the refusal for a route rule, or manifest path
+// route, whose target app is internal.
+func InternalRouteTargetProblem(slug string) *api.Problem {
+	return api.ErrValidation(fmt.Sprintf("route target %q is an internal app; internal apps are off the public edge. Route to a public app, or call %q as an internal service", slug, slug))
+}
+
 // validateEdgeRuleAsyncDestinations keeps async-route callbacks scoped to the
 // same app and account as the edge rule. Invocation destinations use the same
 // ownership boundary, so a route cannot turn a webhook ID into a cross-tenant
@@ -329,20 +472,27 @@ func (s *Service) ValidateEdgeRuleAsyncDestinations(ctx context.Context, appID, 
 // listEdgeRulesForApp returns every rule bound to the slug's app,
 // ordered by priority ASC then created_at DESC (the same shape the
 // gateway matcher sees so the dashboard's "match order" preview
-// matches the wire behaviour).
+// matches the wire behaviour). With ?covering=true it also returns the
+// rules of the account's other apps whose host pattern can cover this app's
+// hosts (CoveringRules), each with its own app_id; the ETag stays this app's.
 func (s *Service) ListEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
 	rules, err := s.Host.Store().ListEdgeRulesForApp(r.Context(), app.ID)
+	if err == nil && wantsCoveringRules(r) {
+		var covering []state.EdgeRule
+		covering, err = s.VisibleCoveringRules(r, acct, app)
+		rules = state.MergeEdgeRulesInOrder(rules, covering)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
 	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		out = append(out, EdgeRuleResponse(rule))
+		out = append(out, s.RuleResponse(acct, rule))
 	}
 	s.setEdgeRuleSetETag(r.Context(), w, app.ID)
 	httpkit.WriteJSON(w, http.StatusOK, out)
@@ -357,9 +507,22 @@ func (s *Service) ListEdgeRules(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
 	}
+	// Company apps and their creator's personal apps share AccountID, so the
+	// account's rules are filtered to the apps this caller may still see: a
+	// removed creator or a key bound to one app or org sees only those, as
+	// the other account-wide lists do.
+	actor := acct
+	if a, _, ok := middleware.AccountFromContext(r); ok {
+		actor = a
+	}
+	rules, err = appaccess.VisibleResources(r, s.Host.Store(), actor, rules, func(rule state.EdgeRule) string { return rule.AppID })
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
+		return
+	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		out = append(out, EdgeRuleResponse(rule))
+		out = append(out, s.RuleResponse(acct, rule))
 	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
@@ -397,7 +560,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	// The per-kind cap is enforced inside the store's
 	// CreateEdgeRuleIfUnderQuota FOR UPDATE lock and surfaced
 	// below via qe.PerKind / ErrPlanEdgeRuleKindQuotaReached.
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -408,7 +571,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	m, prob := s.createRule(r.Context(), acct, app, req, func(ctx context.Context) (string, *api.Problem) {
 		return s.ifMatchProblem(ctx, r, app.ID)
 	})
-	s.writeRuleMutation(r.Context(), w, m, prob, http.StatusCreated)
+	s.writeRuleMutation(r.Context(), w, acct, m, prob, http.StatusCreated)
 }
 
 // ValidateEdgeRuleBody checks the non-action fields (match_host /
@@ -437,6 +600,11 @@ func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 		return api.ErrValidation(headerErr.Error())
 	}
 	req.MatchHeaders = matchHeaders
+	matchMethods, methodsProb := api.NormalizeEdgeRuleMatchMethods(req.MatchMethods)
+	if methodsProb != nil {
+		return methodsProb
+	}
+	req.MatchMethods = matchMethods
 	if req.MatchHost == "" {
 		return api.ErrValidation("match_host is required")
 	}
@@ -485,6 +653,14 @@ func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	if prob := ValidateEdgeRuleAction(req.Kind, req.Action, req.MatchPath, plan); prob != nil {
 		return prob
 	}
+	if req.Penalty != nil {
+		if prob := api.ValidateEdgeRulePenaltyKind(req.Kind, wafModeFromAction(req.Kind, req.Action)); prob != nil {
+			return prob
+		}
+		if prob := req.Penalty.Validate(); prob != nil {
+			return prob
+		}
+	}
 	return ValidateMCPRuleSelectors(req.Kind, req.MatchHost, req.MatchPath, req.MatchMethods, req.MatchHeaders, req.Action)
 }
 
@@ -532,6 +708,9 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				AllowOrigins: a.AllowOrigins, AllowMethods: a.AllowMethods,
 				AllowHeaders: a.AllowHeaders, ExposeHeaders: a.ExposeHeaders,
 				AllowCredentials: a.AllowCredentials, MaxAgeSeconds: a.MaxAgeSeconds,
+				// The preset reference, which used to be dropped (ADR-091
+				// amendment 2026-11-04).
+				CorsPresetID: corsPresetRef(kind, raw),
 			}
 		}
 	case state.EdgeRuleKindJWT:
@@ -542,7 +721,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
 				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
 				MCP:                            a.MCP,
-				RequireExp:                     a.RequireExp,
+				RequireExp:                     a.RequiresExp(),
 			}
 		}
 	case state.EdgeRuleKindIP:
@@ -637,6 +816,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// apid-Validate.
 			out.Budget = &state.EdgeRuleBudgetAction{
 				BudgetMs:            a.BudgetMs,
+				TotalDeadlineMs:     a.TotalDeadlineMs,
 				AllowOverrideHeader: a.AllowOverrideHeader,
 			}
 		}
@@ -729,6 +909,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			out.Challenge = &state.EdgeRuleChallengeAction{
 				Difficulty:     a.Difficulty,
 				PassTTLSeconds: a.PassTTLSeconds,
+				MaxDifficulty:  a.MaxDifficulty,
 			}
 		}
 	}
@@ -753,7 +934,7 @@ func (s *Service) GetEdgeRule(w http.ResponseWriter, r *http.Request, acct state
 		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleResponse(row))
+	httpkit.WriteJSON(w, http.StatusOK, s.RuleResponse(acct, row))
 }
 
 // --- update ----------------------------------------------------------------
@@ -777,7 +958,7 @@ func (s *Service) UpdateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	m, prob := s.updateRule(r.Context(), acct, row, req, func(ctx context.Context) (string, *api.Problem) {
 		return s.ifMatchProblem(ctx, r, row.AppID)
 	})
-	s.writeRuleMutation(r.Context(), w, m, prob, http.StatusOK)
+	s.writeRuleMutation(r.Context(), w, acct, m, prob, http.StatusOK)
 }
 
 // edgeRuleUpdateParamsFrom adapts the wire UpdateEdgeRuleRequest
@@ -812,6 +993,12 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 	if req.Action != nil {
 		decoded := ActionFromBody(string(kind), *req.Action)
 		out.Action = &decoded
+		if kind == state.EdgeRuleKindCORSA {
+			// A replaced cors action sets or clears the preset column
+			// with it (ADR-091 amendment 2026-11-04).
+			preset := corsPresetRef(string(kind), *req.Action)
+			out.CorsPresetID = &preset
+		}
 	}
 	// ValidateMode (ADR-128 D1): top-level wire field wins.
 	// If absent (nil pointer) AND Action carries a deprecated

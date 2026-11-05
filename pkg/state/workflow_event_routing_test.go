@@ -260,6 +260,38 @@ func TestEventWorkflowRecipientAdmissionInvalidDefinitionIsTerminal(t *testing.T
 	})
 }
 
+func TestEventWorkflowRecipientPlanDowngradeAndRecovery(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		app, _, claim := seedOwnedWorkflowRouting(t, store, 150)
+		ctx := t.Context()
+		// Simulate a snapshot captured on Pro before a downgrade to Hobby.
+		definition := `{"name":"paid","trigger":{"type":"event","source":"billing.*","event_type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}}},"steps":[{"name":"main","path":"/paid","timeout":"20m"}]}`
+		switch s := store.(type) {
+		case *MemStore:
+			s.mu.Lock()
+			s.routingReceiptLocked(claim.OutboxID).RecipientSnapshot[0].Workflow = json.RawMessage(definition)
+			s.mu.Unlock()
+		case *PgStore:
+			if _, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox SET recipient_snapshot=jsonb_set(recipient_snapshot,'{0,workflow}',$2::jsonb) WHERE id=$1`, claim.OutboxID, definition); err != nil {
+				t.Fatal(err)
+			}
+		}
+		admission := store.(EventWorkflowRecipientAdmissionStore)
+		result, err := admission.AdmitEventWorkflowRecipient(ctx, claim)
+		var classified *EventRecipientAdmissionError
+		if !result.Matched || !errors.Is(err, ErrWorkflowEventPlanIneligible) || !errors.As(err, &classified) || !classified.Retryable {
+			t.Fatalf("downgrade result=%+v err=%v", result, err)
+		}
+		if err := store.UpdateAccountPlan(ctx, app.AccountID, api.PlanPro); err != nil {
+			t.Fatal(err)
+		}
+		result, err = admission.AdmitEventWorkflowRecipient(ctx, claim)
+		if err != nil || !result.RunCreated || result.RunID == "" {
+			t.Fatalf("upgrade result=%+v err=%v", result, err)
+		}
+	})
+}
+
 func TestEventWorkflowRecipientAdmissionWebhook(t *testing.T) {
 	for _, provider := range []InboundWebhookProvider{InboundWebhookProviderStripe, InboundWebhookProviderGeneric} {
 		t.Run(string(provider), func(t *testing.T) {
@@ -451,5 +483,55 @@ func TestPgEventWorkflowRecipientAdmissionLeaseExpiresWhileWaiting(t *testing.T)
 			t.Fatalf("expired admission created runs=%d err=%v", total, err)
 		}
 		assertWorkflowRoutingEvidence(t, store, app, claim, "", 0)
+	})
+}
+
+// A burst past the app's concurrent workflow run limit waits as capacity: the
+// claim spends no routing attempt and creates no run, and the recipient routes
+// once a run finishes. Counting it as an attempt dropped bursts after 12 tries.
+func TestEventWorkflowRecipientAdmissionDefersAtRunLimit(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		app, work, claim := seedOwnedWorkflowRouting(t, store, 150)
+		ctx := t.Context()
+		limit := api.PlanHobby.WorkflowMaxConcurrentRuns()
+		runs := make([]string, 0, limit)
+		for range limit {
+			run := &WorkflowRun{AppID: app.ID, WorkflowName: "busy", DefinitionSnapshot: json.RawMessage(`{"name":"busy","steps":[{"name":"main","path":"/busy"}]}`), Input: json.RawMessage(`{}`)}
+			if err := store.CreateWorkflowRun(ctx, run); err != nil {
+				t.Fatal(err)
+			}
+			runs = append(runs, run.ID)
+		}
+		admission := store.(EventWorkflowRecipientAdmissionStore)
+		result, err := admission.AdmitEventWorkflowRecipient(ctx, claim)
+		if err != nil {
+			t.Fatalf("admission at the run limit = %v, want a capacity wait", err)
+		}
+		if !result.Matched || !result.CapacityDeferred || result.RunID != "" || result.Progress.State != PublishedEventRecipientPending ||
+			result.Progress.CapacityScope != "app" || result.Progress.CapacityDeferrals != 1 || result.Progress.NextAttemptAt == nil {
+			t.Fatalf("deferred result = %+v", result)
+		}
+		if active, _, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 100}); err != nil || len(active) != limit {
+			t.Fatalf("runs after the deferred admission = %d %v, want %d", len(active), err, limit)
+		}
+		if _, err := store.CancelWorkflowRun(ctx, runs[0], "test"); err != nil {
+			t.Fatal(err)
+		}
+		recipients := store.(PublishedEventRecipientWorkStore)
+		next, err := recipients.ClaimDuePublishedEventRecipient(ctx, time.Now().Add(EventDeliveryCapacityRetryDelay+time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.OutboxID != work.ID || next.Recipient.ID != claim.SubscriptionID {
+			t.Fatalf("reclaimed %d/%s, want the deferred recipient", next.OutboxID, next.Recipient.ID)
+		}
+		if spent := next.Attempts - next.GenerationCapacityDeferrals; spent != 1 {
+			t.Fatalf("routing attempts after one deferral = %d (attempts %d, deferrals %d), want 1", spent, next.Attempts, next.GenerationCapacityDeferrals)
+		}
+		result, err = admission.AdmitEventWorkflowRecipient(ctx, PublishedEventRoutingClaim{OutboxID: next.OutboxID, SubscriptionID: next.Recipient.ID,
+			ClaimToken: next.ClaimToken, Generation: next.Generation})
+		if err != nil || result.CapacityDeferred || !result.RunCreated || result.Progress.State != PublishedEventRecipientEnqueued || result.Progress.CapacityDeferrals != 1 {
+			t.Fatalf("admission after a run finished = %+v %v", result, err)
+		}
 	})
 }

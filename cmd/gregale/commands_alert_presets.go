@@ -36,7 +36,7 @@ import (
 func cmdAlertsPreset(args []string) int {
 	parent, _ := lookupCliCommand("alerts")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale alerts preset <list|enable> --app <slug>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert preset <list|enable> --app <slug>", "alerts")
 		return 1
 	}
 	switch args[0] {
@@ -46,9 +46,7 @@ func cmdAlertsPreset(args []string) int {
 		return cmdAlertPresetEnable(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown alerts preset subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "alerts preset", parent, args[0])
 }
 
 // cmdAlertPresetList mirrors cmdAlertList (commands_alerts.go:68)
@@ -62,7 +60,7 @@ func cmdAlertPresetList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale alerts preset list", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert preset list", "alerts")
 		return 1
 	}
 	client, err := authedClient()
@@ -118,7 +116,8 @@ func cmdAlertPresetEnable(args []string) int {
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	cooldown := fs.Int(flagNameCooldownMinutes, 0, fmt.Sprintf("cooldown override in minutes (%d..%d); 0 means use preset default", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the instantiated rule is enabled")
-	if err := fs.Parse(args); err != nil {
+	// The preset name may come before the flags (rc.318 field report).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *interactive {
@@ -134,7 +133,7 @@ func cmdAlertPresetEnable(args []string) int {
 		return cmdAlertPresetEnableInteractive(*slug)
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts preset enable --app <slug> [--webhook-url <url>] (--webhook-secret-stdin|--webhook-secret <s>) [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert preset enable --app <slug> [--webhook-url <url>] (--webhook-secret-stdin|--webhook-secret <s>) [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")
 		return 1
 	}
 	if err := resolveAlertSecret(webhookSecret, *webhookSecretStdin); err != nil {

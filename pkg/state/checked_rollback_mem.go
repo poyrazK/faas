@@ -98,9 +98,12 @@ func (m *MemStore) CreateCheckedRollback(ctx context.Context, acct, app, target,
 			return api.RollbackOperation{}, ErrInvalidArgument
 		}
 	}
-	return m.createCheckedRollbackLocked(acct, app, target, current, reason, id)
+	if claim, ok := routeMonitorRollbackClaim(ctx); ok {
+		return m.createMonitorRollbackLocked(ctx, acct, app, target, current, reason, claim)
+	}
+	return m.createCheckedRollbackLocked(ctx, acct, app, target, current, reason, id)
 }
-func (m *MemStore) createCheckedRollbackLocked(acct, app, target, current, reason, id string) (api.RollbackOperation, error) {
+func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, target, current, reason, id string) (api.RollbackOperation, error) {
 	a, ok := m.apps[app]
 	if !ok || a.AccountID != acct || a.Status == AppDeleted {
 		return api.RollbackOperation{}, ErrNotFound
@@ -121,7 +124,7 @@ func (m *MemStore) createCheckedRollbackLocked(acct, app, target, current, reaso
 			return r, ErrConflict
 		}
 	}
-	d, err := m.prepareDeploymentRollbackLocked(app, target)
+	d, err := m.prepareDeploymentRollbackLocked(ctx, app, target)
 	if err != nil {
 		return r, err
 	}

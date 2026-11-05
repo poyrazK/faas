@@ -1,4 +1,4 @@
-// adr: 20261025090000
+// adr: 20261105000512
 package mcpmanagement
 
 import (
@@ -66,7 +66,7 @@ func TestPromotionOutcomeLostReplyExpiry(t *testing.T) {
 				}))
 				t.Cleanup(backend.Close)
 				opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "promotion"}
-				_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+				_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -176,7 +176,7 @@ func TestPromotionOutcomeNamedAndFinalGuards(t *testing.T) {
 			}))
 			t.Cleanup(backend.Close)
 			opts.APIBase = backend.URL
-			_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -280,7 +280,7 @@ func TestPromotionOutcomeLegacyAndUnsupported(t *testing.T) {
 	f, _, _ := newReleaseFixture(t, true)
 	backend := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	defer backend.Close()
-	_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true})
+	_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestPromotionOutcomeSnapshotIntegrity(t *testing.T) {
 			defer backend.Close()
 			store, _, _ := testStateStore(t)
 			opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "snapshot"}
-			_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -388,7 +388,7 @@ func TestPromotionOutcomeSnapshotIntegrity(t *testing.T) {
 			if err = store.updateMany(map[string]any{promotionOutcomeNamespace + "snapshot": snapshot, "future/opaque": map[string]int{"version": 9}}); err != nil {
 				t.Fatal(err)
 			}
-			_, restored, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, restored, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			valid := change == "orphan" || change == "n_minus_one"
 			if valid && err != nil || !valid && err == nil {
 				t.Fatalf("restore %s=%v", change, err)

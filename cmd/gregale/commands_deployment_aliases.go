@@ -16,11 +16,11 @@ const deploymentAliasRowFormat = "%-20s %-10s %-36s %s\n"
 // cmdDeploymentAliases implements `gregale deployments alias list|set|delete`.
 func cmdDeploymentAliases(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments alias [list|set|delete]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias [list|set|delete]", "deployments")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, "usage: gregale deployments alias [list|set|delete]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias [list|set|delete]", "deployments")
 		return 0
 	}
 	switch args[0] {
@@ -31,7 +31,7 @@ func cmdDeploymentAliases(args []string) int {
 	case "delete":
 		return cmdDeploymentAliasDelete(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale deployments alias [list|set|delete]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias [list|set|delete]", "deployments")
 		return 1
 	}
 }
@@ -43,7 +43,7 @@ func cmdDeploymentAliasesList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments alias list [--app SLUG]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias list [--app SLUG]", "deployments")
 		return 1
 	}
 	slug, code := resolveDeploymentAliasApp(*appFlag)
@@ -56,14 +56,14 @@ func cmdDeploymentAliasesList(args []string) int {
 	}
 	page, err := client.ListDeploymentAliases(context.Background(), slug)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list deployment aliases", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
 	}
 	if len(page.Items) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No deployment aliases for app %q.\n", slug)
-		_, _ = fmt.Fprintf(osStdout, "Set one: `gregale deployments alias set --app %s --name canary --deployment vN`.\n", slug)
+		_, _ = fmt.Fprintf(osStdout, "Set one: `gregale release alias set --app %s --name canary --release vN`.\n", slug)
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, deploymentAliasRowFormat, "NAME", "REVISION", "DEPLOYMENT", "URL")
@@ -89,7 +89,7 @@ func cmdDeploymentAliasSet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 || *name == "" || *deploymentRef == "" {
-		PrintUsage(os.Stderr, "usage: gregale deployments alias set --name NAME --deployment <ID|vN> [--app SLUG]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias set --name NAME --release <ID|vN> [--app SLUG]", "deployments")
 		return 1
 	}
 	if !api.ValidDeploymentAliasName(*name) {
@@ -112,7 +112,7 @@ func cmdDeploymentAliasSet(args []string) int {
 	}
 	alias, err := client.SetDeploymentAlias(context.Background(), slug, *name, api.SetDeploymentAliasRequest{DeploymentID: deploymentID})
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not set deployment alias", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(alias))
@@ -133,7 +133,7 @@ func cmdDeploymentAliasDelete(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 || *name == "" {
-		PrintUsage(os.Stderr, "usage: gregale deployments alias delete --name NAME [--app SLUG]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias delete --name NAME [--app SLUG]", "deployments")
 		return 1
 	}
 	if !api.ValidDeploymentAliasName(*name) {
@@ -148,7 +148,7 @@ func cmdDeploymentAliasDelete(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteDeploymentAlias(context.Background(), slug, *name); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete deployment alias", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"app": slug, "name": *name, "deleted": true}))

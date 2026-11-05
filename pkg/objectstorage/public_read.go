@@ -13,10 +13,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-const publicImmutableCacheControl = "public, max-age=31536000, immutable"
 
 var publicReadPathRE = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
 
@@ -34,12 +33,23 @@ type PublicReadConfig struct {
 	Registry       *Registry
 	RequestMetrics state.ObjectStorageProviderUsageStore
 	Accounting     state.ObjectStorageAccountingStore
-	Enabled        func() bool
-	AppsDomain     string
-	Next           http.Handler
-	HTTPClient     *http.Client
-	Now            func() time.Time
-	Log            *slog.Logger
+	// ReadAdmitter, when set, admits gateway-safety reads from cached
+	// decisions and batches their counts (ADR-20261030075301 step 2). Build
+	// it with the registry's AnonymousReadPolicy.
+	ReadAdmitter *ReadAdmitter
+	// Transfers paces object bodies to the edge's part of its node's port
+	// share on a compute node; nil leaves them unpaced (ADR-20261031122757
+	// step 7).
+	Transfers *TransferLimiter
+	// HostLookups bounds store reads for hostnames never seen naming an
+	// app; nil leaves them unbounded (ADR-20261103163954 §4).
+	HostLookups *HostLookupBudget
+	Enabled     func() bool
+	AppsDomain  string
+	Next        http.Handler
+	HTTPClient  *http.Client
+	Now         func() time.Time
+	Log         *slog.Logger
 }
 
 type publicReadHandler struct {
@@ -47,6 +57,8 @@ type publicReadHandler struct {
 	registry       *Registry
 	requestMetrics state.ObjectStorageProviderUsageStore
 	accounting     state.ObjectStorageAccountingStore
+	readAdmitter   *ReadAdmitter
+	transfers      *TransferLimiter
 	enabled        func() bool
 	appsDomain     string
 	next           http.Handler
@@ -54,6 +66,8 @@ type publicReadHandler struct {
 	now            func() time.Time
 	log            *slog.Logger
 	mounts         *publicMountCache
+	hostLookups    *HostLookupBudget
+	limiters       *publicReadLimiters
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -96,10 +110,10 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 	}
 	return &publicReadHandler{
 		store: c.Store, registry: c.Registry, requestMetrics: c.RequestMetrics,
-		accounting: c.Accounting, enabled: c.Enabled,
+		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, transfers: c.Transfers, enabled: c.Enabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
-		mounts: newPublicMountCache(),
+		mounts: newPublicMountCache(), hostLookups: c.HostLookups, limiters: newPublicReadLimiters(),
 	}, nil
 }
 
@@ -131,6 +145,10 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket, key, matched, err := h.lookup(r)
+	if errors.Is(err, errHostLookupShed) {
+		writeHostLookupShed(w)
+		return
+	}
 	if err != nil {
 		if matched {
 			http.Error(w, "invalid object path", http.StatusBadRequest)
@@ -156,8 +174,15 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := h.accounting.AdmitObjectURL(r.Context(), bucket.AccountID, bucket.ID, key, 0, false, h.registry.Accounting); err != nil {
-		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
+	if !h.limiters.allow(bucket.ID) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many requests for this public bucket", http.StatusTooManyRequests)
+		return
+	}
+	// Strangers spend at most a share of the account's monthly budget.
+	policy := h.registry.Accounting.AnonymousReadPolicy()
+	read, admitted := h.admit(w, r, bucket, key, policy)
+	if !admitted {
 		return
 	}
 	backend, err := h.registry.Resolve(bucket.BackendID, bucket.BackendFingerprint)
@@ -183,9 +208,9 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream.Header.Set(name, value)
 		}
 	}
-	if h.requestMetrics != nil {
-		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), h.registry.Accounting); err != nil {
-			http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
+	if h.requestMetrics != nil && read == nil {
+		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), policy); err != nil {
+			writePublicReadRefusal(w, err)
 			return
 		}
 	}
@@ -197,7 +222,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = response.Body.Close() }() // best effort; the provider response is already accounted
 	if response.StatusCode == http.StatusNotModified {
 		copyPublicObjectHeaders(w.Header(), response.Header)
-		w.Header().Set("Cache-Control", publicImmutableCacheControl)
+		w.Header().Set("Cache-Control", publicCacheControl)
 		w.Header().Del("Content-Disposition")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -217,14 +242,14 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
-		if err := ReserveGatewayRead(r.Context(), h.requestMetrics, bucket.ID, response, h.registry.Accounting, h.now()); err != nil {
+		if err := h.reserveEgress(r.Context(), bucket, response, policy, read); err != nil {
 			w.Header().Del("Content-Length")
-			http.Error(w, "object storage egress budget is unavailable or exhausted", http.StatusServiceUnavailable)
+			writePublicReadRefusal(w, err)
 			return
 		}
 	}
 	copyPublicObjectHeaders(w.Header(), response.Header)
-	w.Header().Set("Cache-Control", publicImmutableCacheControl)
+	w.Header().Set("Cache-Control", publicCacheControl)
 	w.Header().Del("Content-Disposition")
 	w.WriteHeader(response.StatusCode)
 	if r.Method != http.MethodGet {
@@ -234,12 +259,46 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.registry.Accounting.GatewaySafety() {
 		body = io.LimitReader(body, response.ContentLength)
 	}
+	body = h.transfers.Reader(r.Context(), body, TransferDownload)
 	n, _ := io.Copy(w, body)
 	if !h.registry.Accounting.GatewaySafety() {
 		if err := RecordDeliveredEgress(r.Context(), h.requestMetrics, bucket.ID, n, h.now()); err != nil {
 			h.log.Warn("public object egress metric write failed", "bucket_id", bucket.ID)
 		}
 	}
+}
+
+// admit admits an anonymous read. Under gateway safety with a read admitter
+// it is admitted from the cached decision and its counts are batched
+// (ADR-20261030075301 step 2); the returned read then carries its egress
+// reservation. Otherwise it takes the locking admission and read is nil.
+func (h *publicReadHandler) admit(w http.ResponseWriter, r *http.Request, bucket state.ObjectBucket, key string, policy api.ObjectStoragePolicy) (*AdmittedRead, bool) {
+	if h.readAdmitter != nil && h.registry.Accounting.GatewaySafety() {
+		read, err := h.readAdmitter.AdmitRead(r.Context(), bucket)
+		if err != nil {
+			writePublicReadRefusal(w, err)
+			return nil, false
+		}
+		return &read, true
+	}
+	if err := h.accounting.AdmitObjectURL(r.Context(), bucket.AccountID, bucket.ID, key, 0, false, policy); err != nil {
+		writePublicReadRefusal(w, err)
+		return nil, false
+	}
+	return nil, true
+}
+
+// reserveEgress reserves a gateway-safety GET's body against the egress
+// ceiling: in the admitter for a cached admission, otherwise in the
+// database. An unknown length fails closed.
+func (h *publicReadHandler) reserveEgress(ctx context.Context, bucket state.ObjectBucket, response *http.Response, policy api.ObjectStoragePolicy, read *AdmittedRead) error {
+	if read == nil {
+		return ReserveGatewayRead(ctx, h.requestMetrics, bucket.ID, response, policy, h.now())
+	}
+	if response.ContentLength < 0 || response.Uncompressed {
+		return state.ErrObjectUsageStale
+	}
+	return h.readAdmitter.ReserveEgress(*read, response.ContentLength)
 }
 
 func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string, bool, error) {
@@ -284,6 +343,7 @@ func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]stat
 	}
 	var buckets []state.ObjectBucket
 	if found {
+		h.hostLookups.found(host)
 		all, err := h.store.ListObjectBuckets(ctx, app.AccountID, app.ID)
 		if err != nil {
 			return nil, err
@@ -294,6 +354,17 @@ func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]stat
 	return buckets, nil
 }
 
+// errHostLookupShed is a host lookup refused by the new-host budget. It is
+// answered 503, never passed on as a miss: the host may be a real app's.
+var errHostLookupShed = errors.New("object storage public read: host lookup shed: new-host lookup budget spent")
+
+// writeHostLookupShed answers a request whose host lookup was shed.
+func writeHostLookupShed(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
+		"Traffic policy unavailable", "Gregale could not look up this host right now. Retry shortly."))
+}
+
 func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App, bool, error) {
 	var app state.App
 	var err error
@@ -302,8 +373,14 @@ func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App
 		if slug == "" || strings.Contains(slug, ".") {
 			return state.App{}, false, nil
 		}
+		if !h.hostLookups.admit(host) {
+			return state.App{}, false, errHostLookupShed
+		}
 		app, err = h.store.AppBySlug(ctx, slug)
 	} else {
+		if !h.hostLookups.admit(host) {
+			return state.App{}, false, errHostLookupShed
+		}
 		domain, domainErr := h.store.DomainByName(ctx, host)
 		if domainErr != nil {
 			if errors.Is(domainErr, state.ErrNotFound) {

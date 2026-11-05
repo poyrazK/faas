@@ -23,7 +23,7 @@ T = TypeVar("T", bound="NotificationChannelResponse")
 
 @_attrs_define
 class NotificationChannelResponse:
-    """One alert notification channel (ADR-749)."""
+    """One alert notification channel."""
 
     id: UUID
     name: str

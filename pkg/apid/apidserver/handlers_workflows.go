@@ -310,7 +310,7 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	maxConcurrent := acct.Plan.WorkflowMaxConcurrentRuns()
+	maxConcurrent, maxParked := acct.Plan.WorkflowMaxConcurrentRuns(), acct.Plan.WorkflowMaxParkedRuns()
 
 	run := &state.WorkflowRun{
 		DeploymentID:       dep.ID,
@@ -326,9 +326,9 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	var activeRuns int
 	var replayed bool
 	if idempotencyKey != "" {
-		activeRuns, replayed, err = s.store.CreateWorkflowRunAdmittedWithIdempotencyKey(r.Context(), run, maxConcurrent, idempotencyKey, requestFingerprint)
+		activeRuns, replayed, err = s.store.CreateWorkflowRunAdmittedWithIdempotencyKey(r.Context(), run, maxConcurrent, maxParked, idempotencyKey, requestFingerprint)
 	} else {
-		activeRuns, err = s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent)
+		activeRuns, err = s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent, maxParked)
 	}
 	if errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxConcurrent, activeRuns))
@@ -616,19 +616,8 @@ func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("event_name is required"))
 		return
 	}
-	if api.IsWorkflowCallbackEventName(req.EventName) {
+	if api.IsWorkflowReservedEventName(req.EventName) {
 		api.WriteProblem(w, api.ErrValidation("callback event names are reserved; use the callback completion endpoint"))
-		return
-	}
-
-	// Events may arrive before schedd claims a newly-created run, and recording
-	// an unrelated event atomically wakes an awaiting run back to pending for
-	// re-evaluation. Accept every active state while continuing to reject
-	// terminal runs.
-	if run.Status != state.WorkflowRunStatusPending &&
-		run.Status != state.WorkflowRunStatusRunning &&
-		run.Status != state.WorkflowRunStatusAwaitingEvent {
-		api.WriteProblem(w, api.ErrWorkflowNotRunning())
 		return
 	}
 
@@ -652,6 +641,14 @@ func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Reques
 		err = s.store.InsertWorkflowEvent(r.Context(), evt)
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrWorkflowInvalidInput) {
+			api.WriteProblem(w, api.ErrValidation("Event payload exceeds the supported size or numeric range."))
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event idempotency conflict", "The event key was already used with different content."))
+			return
+		}
 		if errors.Is(err, state.ErrWorkflowRunNotFound) {
 			api.WriteProblem(w, api.ErrWorkflowRunNotFound())
 			return
@@ -814,6 +811,8 @@ func (s *server) completeWorkflowCallbackForRun(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, api.ErrWorkflowCallbackClosed())
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.ErrWorkflowCallbackPayloadConflict())
+		case errors.Is(err, state.ErrWorkflowInvalidInput):
+			api.WriteProblem(w, api.ErrValidation("Callback payload exceeds the supported size or numeric range."))
 		default:
 			s.log.Error("complete workflow callback failed", "run_id", run.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("failed to complete workflow callback"))
@@ -879,7 +878,7 @@ func (s *server) retryWorkflowStep(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	maxActive := acct.Plan.WorkflowMaxConcurrentRuns()
-	run, active, err := retryStore.RetryWorkflowStep(r.Context(), run.ID, r.PathValue("step"), maxActive)
+	run, active, err := retryStore.RetryWorkflowStep(r.Context(), run.ID, r.PathValue("step"), maxActive, acct.Plan.WorkflowMaxParkedRuns())
 	if errors.Is(err, state.ErrWorkflowRunNotFound) {
 		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
 		return

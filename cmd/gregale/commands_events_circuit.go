@@ -27,7 +27,7 @@ func cmdEventsSubscriptionCircuit(args []string, action string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || action != "status" && !*yes {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-circuit-"+action+" <app> <subscription-id> [policy flags] [--yes]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-circuit-"+action+" <app> <subscription-id> [policy flags] [--yes]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[1]); err != nil {

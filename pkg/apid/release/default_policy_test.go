@@ -23,7 +23,7 @@ func (f releasePolicyFakeStore) LiveDeploymentForScope(_ context.Context, _, sco
 	if f.lookupErr != nil {
 		return state.Deployment{}, f.lookupErr
 	}
-	if !f.live || scope != api.DefaultEnvScope {
+	if !f.live || (scope != api.DefaultEnvScope && scope != "production") {
 		return state.Deployment{}, state.ErrNotFound
 	}
 	return state.Deployment{ID: "live", Status: state.DeployLive}, nil
@@ -62,6 +62,15 @@ func TestApplyDefaultReleasePolicy(t *testing.T) {
 		{name: "service app keeps scheduler rollout", store: serving,
 			app: state.App{Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeService}}},
 		{name: "named environment scope stays immediate", store: serving, req: api.CreateDeploymentRequest{Scope: "staging"}},
+		{name: "staging environment stays immediate", store: serving, req: api.CreateDeploymentRequest{Environment: "staging", Scope: "staging"}},
+		{name: "project production environment is safe", store: serving,
+			req:  api.CreateDeploymentRequest{Environment: "production", Scope: "production"},
+			want: PolicySafe, wantCanary: api.DefaultReleaseCanaryPreset, wantRollback: ptrBool(true)},
+		{name: "unresolved production environment is safe", store: serving,
+			req:  api.CreateDeploymentRequest{Environment: "production"},
+			want: PolicySafe, wantCanary: api.DefaultReleaseCanaryPreset, wantRollback: ptrBool(true)},
+		{name: "first production environment deploy stays immediate", store: releasePolicyFakeStore{leaseOK: true},
+			req: api.CreateDeploymentRequest{Environment: "production", Scope: "production"}},
 		{name: "explicit canary none keeps rollback default", store: serving,
 			req:  api.CreateDeploymentRequest{Canary: &api.CanaryPresetSpec{Preset: "none"}},
 			want: PolicySafe, wantCanary: "none", wantRollback: ptrBool(true)},
@@ -142,3 +151,21 @@ func TestApplyDefaultReleaseToEnqueue(t *testing.T) {
 }
 
 func ptrBool(v bool) *bool { return &v }
+
+func TestDefaultRollbackOn5xxForPromotions(t *testing.T) {
+	serving := releasePolicyFakeStore{live: true}
+	app := state.App{ID: "app"}
+	if !DefaultRollbackOn5xx(context.Background(), serving, slog.Default(), app, api.PlanFree, "production") {
+		t.Fatal("a promotion into a serving production environment gets rollback_on_5xx")
+	}
+	if DefaultRollbackOn5xx(context.Background(), serving, slog.Default(), app, api.PlanFree, "staging") {
+		t.Fatal("a promotion into staging is unchanged")
+	}
+	if DefaultRollbackOn5xx(context.Background(), releasePolicyFakeStore{}, slog.Default(), app, api.PlanFree, "production") {
+		t.Fatal("a first promotion into production has nothing to roll back to")
+	}
+	immediate := state.App{ID: "app", Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyImmediate}}
+	if DefaultRollbackOn5xx(context.Background(), serving, slog.Default(), immediate, api.PlanFree, "production") {
+		t.Fatal("release_policy immediate opts out")
+	}
+}

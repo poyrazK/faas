@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,9 +108,13 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps := m.projectEnvironmentAppIDsLocked(accountID, projectID, environment)
 	count := 0
 	for _, app := range m.apps {
 		if app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+			continue
+		}
+		if !slices.Contains(environmentApps, app.ID) {
 			continue
 		}
 		if omitted[app.ID] {
@@ -271,12 +276,7 @@ func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, p
 }
 
 func (m *MemStore) validateProjectReleaseFallbackLocked(projectID, environment string, expected []ProjectReleaseMember) error {
-	appIDs := make([]string, 0)
-	for _, app := range m.apps {
-		if app.ProjectID == projectID && app.Status != AppDeleted && app.PreviewOfSlug == "" {
-			appIDs = append(appIDs, app.ID)
-		}
-	}
+	appIDs := m.projectEnvironmentAppIDsLocked(m.projects[projectID].AccountID, projectID, environment)
 	return m.validateProjectReleaseFallbackForAppsLocked(appIDs, environment, expected)
 }
 
@@ -362,9 +362,13 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	if allowGitOpsReplacement {
 		excluded = m.workloadReleaseExclusionsLocked(EnvironmentGitSource{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
 	}
+	environmentApps := m.projectEnvironmentAppIDsLocked(accountID, projectID, environment)
 	count := 0
 	for _, app := range m.apps {
 		if excluded[app.ID] || app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+			continue
+		}
+		if !slices.Contains(environmentApps, app.ID) {
 			continue
 		}
 		count++
@@ -438,7 +442,7 @@ func (m *MemStore) validateGitOpsReleaseMembersLocked(activeID string, proposed 
 	}
 	for _, member := range active.Members {
 		deployment, exists := m.deployments[member.DeploymentID]
-		if exists && deployment.EnvironmentWorkloadManaged() && proposed[member.AppID] != member.DeploymentID {
+		if exists && m.environmentGitOpsOwnsDeploymentLocked(deployment) && proposed[member.AppID] != member.DeploymentID {
 			return ErrConflict
 		}
 	}
@@ -447,14 +451,14 @@ func (m *MemStore) validateGitOpsReleaseMembersLocked(activeID string, proposed 
 
 func (m *MemStore) releaseSetHasManagedMembersLocked(release ProjectReleaseSet) bool {
 	for _, member := range release.Members {
-		if deployment, ok := m.deployments[member.DeploymentID]; ok && deployment.EnvironmentWorkloadManaged() {
+		if deployment, ok := m.deployments[member.DeploymentID]; ok && m.environmentGitOpsOwnsDeploymentLocked(deployment) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -520,6 +524,9 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := m.checkMemPromotionWorkloadBindingsLocked(ctx, promotion.AccountID, changes); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, false, false)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -546,7 +553,7 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	return cloneProjectReleaseSet(release), nil
 }
 
-func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -602,6 +609,9 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := m.checkMemPromotionWorkloadBindingsLocked(ctx, promotion.AccountID, changes); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, true, false)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -624,7 +634,7 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 
 func (m *MemStore) releaseTargetLiveLocked(appID, deploymentID string) bool {
 	dep, ok := m.deployments[deploymentID]
-	if !ok || dep.AppID != appID || dep.Status != DeployLive || m.migrationDeploymentRetiredLocked(deploymentID) {
+	if !ok || dep.AppID != appID || dep.Status != DeployLive || dep.DeletedAt != nil || m.migrationDeploymentRetiredLocked(deploymentID) {
 		return false
 	}
 	if dep.TrafficPercent > 0 {
@@ -678,7 +688,7 @@ func (m *MemStore) ResolveProjectRelease(_ context.Context, appID, scope, reques
 
 func (m *MemStore) resolveProjectReleaseLocked(appID, scope, requestedID string) (string, string, error) {
 	app, ok := m.apps[appID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || app.Status == AppDeleted || app.DeletedAt != nil {
 		return "", "", ErrNotFound
 	}
 	if app.ProjectID == "" {
@@ -702,7 +712,8 @@ func (m *MemStore) resolveProjectReleaseLocked(appID, scope, requestedID string)
 		return "", "", nil
 	}
 	depID := releaseMemberForApp(release, appID)
-	if depID == "" || !m.releaseTargetLiveLocked(appID, depID) {
+	dep := m.deployments[depID]
+	if depID == "" || normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) || !m.releaseTargetLiveLocked(appID, depID) {
 		return "", "", ErrConflict
 	}
 	return id, depID, nil

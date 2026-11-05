@@ -7,7 +7,7 @@
  * closed and uniform across row kinds; the difference is which
  * optional fields are populated. Security: secret cells never
  * emit a `value` field; env cells never emit a `value_hash`
- * field. Pre-PR-C rows have value_hash = '' and emit no field.
+ * field. Older rows have value_hash = '' and emit no field.
  *
  */
 export type EnvDiffCell = {

@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/schedule"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -46,21 +47,25 @@ func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
 	// ADR 20261022140000: a break-glass pause holds due schedules; they are
 	// decided on the first pass after it is lifted.
 	if s.platformReleasePauseProblem() != nil {
+		s.releaseMetrics.Pass(releasemetrics.WorkerScheduledReleases, now)
 		return
 	}
 	due, err := store.DueScheduledReleases(ctx, now, api.ScheduledReleaseBatch)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.log.Warn("scheduled releases: list due", "err", err)
+			s.releaseMetrics.Error(releasemetrics.WorkerScheduledReleases)
 		}
 		return
 	}
+	s.releaseMetrics.Pass(releasemetrics.WorkerScheduledReleases, now)
 	for _, sr := range due {
 		if ctx.Err() != nil {
 			return
 		}
 		if err := s.runScheduledRelease(ctx, store, sr, now); err != nil {
 			s.log.Warn("scheduled releases: start", "schedule", sr.ID, "deployment", sr.DeploymentID, "err", err)
+			s.releaseMetrics.Error(releasemetrics.WorkerScheduledReleases)
 		}
 	}
 }
@@ -87,6 +92,14 @@ func (s *server) runScheduledRelease(ctx context.Context, store state.ScheduledR
 		return err
 	}
 	decision := schedule.Decide(sr, d, siblings, now)
+	if decision.Action == schedule.ActionWait || decision.State == state.ScheduledReleaseExpired {
+		// A release waiting for approval before its release command is not
+		// a build that did not finish (ADR-20261020085706 amendment 14).
+		// imaged closes it if the schedule ends first.
+		if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err == nil && wait.Pending() {
+			decision = schedule.WaitOrExpire(sr, now, "it was still waiting for approval before its release command")
+		}
+	}
 	var overridden []string
 	if decision.Action == schedule.ActionStart {
 		decision, overridden = s.scheduleStartChecks(ctx, sr, app, d, siblings, now)
@@ -125,7 +138,7 @@ func (s *server) scheduleSiblings(ctx context.Context, d state.Deployment) ([]st
 // before a start. It returns the start decision and the freezes the
 // schedule's override covers now.
 func (s *server) scheduleStartChecks(ctx context.Context, sr state.ScheduledRelease, app state.App, d state.Deployment, siblings []state.Deployment, now time.Time) (schedule.Decision, []string) {
-	active, err := freeze.ActiveFor(ctx, s.store, app.AccountID, app.ID, d.Scope, now)
+	active, err := freeze.ActiveFor(ctx, s.store, app, d.Scope, now)
 	if err != nil {
 		s.log.Warn("scheduled releases: read freezes", "schedule", sr.ID, "err", err)
 		return schedule.WaitOrExpire(sr, now, "Gregale could not read the deploy freezes"), nil
@@ -190,6 +203,7 @@ func (s *server) startSchedule(ctx context.Context, store state.ScheduledRelease
 	if err != nil {
 		return s.scheduleStartFailed(ctx, store, sr, app, d, err, now)
 	}
+	s.releaseMetrics.Decision(releasemetrics.GuardSchedule, "started")
 	if s.notif != nil {
 		if err := s.notif.Notify(ctx, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"traffic","app_id":"%s","deployment_id":"%s","traffic_percent":%d}`,
@@ -267,11 +281,12 @@ func (s *server) endSchedule(ctx context.Context, store state.ScheduledReleaseSt
 	if err != nil {
 		return fmt.Errorf("end schedule: %w", err)
 	}
-	kind := "release.schedule_cancelled"
+	kind, outcome := "release.schedule_cancelled", "ended"
 	if decision.State == state.ScheduledReleaseBlocked || decision.State == state.ScheduledReleaseExpired {
-		kind = "release.schedule_blocked"
+		kind, outcome = "release.schedule_blocked", "blocked"
 		s.notifySchedule(ctx, app, d, ended, alertchannels.EventScheduleBlocked, ended.OutcomeDetail)
 	}
+	s.releaseMetrics.Decision(releasemetrics.GuardSchedule, outcome)
 	if s.audit != nil {
 		s.audit.Emit(ctx, kind, &app.AccountID, map[string]any{
 			"app": app.ID, "deployment": d.ID, "schedule": sr.ID, "state": decision.State, "code": decision.Code,

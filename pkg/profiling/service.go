@@ -34,6 +34,18 @@ type Principal struct {
 	Runtime      string    `json:"runtime"`
 	Plan         api.Plan  `json:"plan"`
 	StartedAt    time.Time `json:"started_at"`
+	// Pool is the app's resource owner (an organization, or the account),
+	// whose plan Plan is and whose upload quota the upload counts in. An
+	// older vmmd leaves it empty: the account's.
+	Pool string `json:"pool,omitempty"`
+}
+
+// quotaKey is the pool an upload counts in.
+func (p Principal) quotaKey() string {
+	if p.Pool != "" {
+		return p.Pool
+	}
+	return p.AccountID
 }
 
 // Upload is the guest's contribution. It contains no tenant or deployment
@@ -58,6 +70,13 @@ type accountWindow struct {
 	count   int
 	touched time.Time
 }
+
+// retryEntry is one upload in the replay cache, in arrival order.
+type retryEntry struct {
+	id string
+	at time.Time
+}
+
 type Service struct {
 	Backend    Backend
 	clock      func() time.Time
@@ -66,6 +85,9 @@ type Service struct {
 	accounts   map[string]accountWindow
 	accepted   *prometheus.CounterVec
 	duplicates map[string]time.Time
+	// retryOrder holds duplicates' entries oldest first, so expiry and
+	// eviction never scan the whole cache.
+	retryOrder []retryEntry
 	inflight   map[string]bool
 	failures   map[string]time.Time
 }
@@ -96,6 +118,9 @@ func validPrincipal(p Principal) bool {
 			return false
 		}
 	}
+	if _, err := uuid.Parse(p.Pool); p.Pool != "" && err != nil {
+		return false
+	}
 	if p.StartedAt.IsZero() || p.Generation == "" || len(p.Generation) > api.ProfileMaxGenerationBytes || api.ValidateScope(p.Scope) != nil {
 		return false
 	}
@@ -110,10 +135,8 @@ func (s *Service) admit(account string, limit int, now time.Time) bool {
 			delete(s.accounts, key)
 		}
 	}
-	for key, at := range s.duplicates {
-		if now.Sub(at) > api.ProfileRetryCacheTTL {
-			delete(s.duplicates, key)
-		}
+	for len(s.retryOrder) > 0 && now.Sub(s.retryOrder[0].at) > api.ProfileRetryCacheTTL {
+		s.forgetOldestUploadLocked()
 	}
 	w, exists := s.accounts[account]
 	if !exists && len(s.accounts) >= api.ProfileMaxTrackedAccounts {
@@ -155,7 +178,7 @@ func (s *Service) Push(ctx context.Context, e Envelope) (result error) {
 			s.recordFailure(ctx, e.Principal)
 		}
 	}()
-	if !s.admit(e.Principal.AccountID, limits.Profiling.UploadsPerMinute, s.clock()) {
+	if !s.admit(e.Principal.quotaKey(), limits.Profiling.UploadsPerMinute, s.clock()) {
 		s.accepted.WithLabelValues("limited").Inc()
 		return status.Error(codes.ResourceExhausted, "profile upload quota exceeded")
 	}
@@ -170,15 +193,27 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		}
 		e.Upload.ProcessID = strconv.FormatUint(pid, 10)
 	}
+	heap := e.Upload.Kind == api.ProfileKindHeap
+	if e.Upload.Kind != "" && e.Upload.Kind != api.ProfileKindCPU && !heap {
+		s.accepted.WithLabelValues("invalid").Inc()
+		return status.Error(codes.InvalidArgument, "unknown profile kind")
+	}
 	p, err := Parse(e.Upload.Profile)
-	if err == nil {
+	if err == nil && heap {
+		err = NormalizeHeap(p)
+	} else if err == nil {
 		reasons := sanitizeRouteSamples(p, e.Principal.Routes)
 		ctx = context.WithValue(ctx, routeReasonsKey{}, reasons)
 		err = normalizeCPU(p, true)
 	}
 	if err != nil {
 		s.accepted.WithLabelValues("invalid").Inc()
-		return status.Error(codes.InvalidArgument, "invalid CPU profile")
+		return status.Error(codes.InvalidArgument, "invalid profile")
+	}
+	if heap {
+		// A heap profile is a point-in-time snapshot; its collection window
+		// is the interval since the collector's previous report (ADR-1155).
+		p.TimeNanos, p.DurationNanos = e.Upload.FromUnixNano, 0
 	}
 	if p.TimeNanos == 0 {
 		p.TimeNanos = e.Upload.FromUnixNano
@@ -192,25 +227,22 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		s.accepted.WithLabelValues("invalid").Inc()
 		return status.Error(codes.InvalidArgument, "profile window crosses its instance lifetime or exceeds bounds")
 	}
-	if report := admitRouteRequestReport(e.Upload.RouteRequests, e.Principal, p); report != nil && report.Until <= s.clock().Add(time.Second).UnixNano() {
+	if report := admitRouteRequestReport(e.Upload.RouteRequests, e.Principal, p); !heap && report != nil && report.Until <= s.clock().Add(time.Second).UnixNano() {
 		ctx = context.WithValue(ctx, routeRequestReportKey{}, report)
 	}
 	// Avoid replaying SDK retries within the same VM generation. The set has
 	// a hard cap and TTL, independent of tenant-provided labels.
 	hash := sha256.Sum256(append(append([]byte(nil), e.Upload.Profile...), []byte(fmt.Sprintf(":%d:%d", p.TimeNanos, p.DurationNanos))...))
-	id := e.Principal.InstanceID + ":" + e.Principal.Generation + ":" + e.Upload.ProcessID + ":" + hex.EncodeToString(hash[:])
+	id := e.Principal.InstanceID + ":" + e.Principal.Generation + ":" + e.Upload.ProcessID + ":" + e.Upload.Kind + ":" + hex.EncodeToString(hash[:])
 	s.mu.Lock()
 	if s.inflight[id] {
 		s.mu.Unlock()
 		return status.Error(codes.Unavailable, "profile upload in progress")
 	}
 	_, seen := s.duplicates[id]
-	if !seen && len(s.duplicates) < api.ProfileMaxTrackedAccounts {
-		s.duplicates[id] = s.clock()
+	if !seen {
+		s.rememberUploadLocked(id, s.clock())
 		s.inflight[id] = true
-	} else if !seen {
-		s.mu.Unlock()
-		return status.Error(codes.ResourceExhausted, "profile retry cache is full")
 	}
 	s.mu.Unlock()
 	if seen {
@@ -236,13 +268,45 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		ReceivedAt: s.clock(),
 	}
 	ctx = context.WithValue(ctx, rawSampleIdentityKey{}, identity)
-	if err := s.Backend.Push(ctx, e.Principal, p); err != nil {
+	push := s.Backend.Push
+	if heap {
+		hb, ok := s.Backend.(HeapBackend)
+		if !ok {
+			s.accepted.WithLabelValues("unavailable").Inc()
+			return status.Error(codes.Unavailable, "heap profiles are unsupported by the backend")
+		}
+		push = hb.PushHeap
+	}
+	if err := push(ctx, e.Principal, p); err != nil {
 		s.accepted.WithLabelValues("unavailable").Inc()
 		return status.Error(codes.Unavailable, "profile backend unavailable")
 	}
 	exported = true
 	s.accepted.WithLabelValues("accepted").Inc()
 	return nil
+}
+
+// rememberUploadLocked records an upload in the replay cache. At the bound it
+// evicts the oldest entries instead of refusing: the cache is shared by every
+// tenant on the node, and one tenant's volume must not block another's
+// uploads. The caller holds s.mu.
+func (s *Service) rememberUploadLocked(id string, now time.Time) {
+	for len(s.duplicates) >= api.ProfileRetryCacheMaxEntries && len(s.retryOrder) > 0 {
+		s.forgetOldestUploadLocked()
+	}
+	s.duplicates[id] = now
+	s.retryOrder = append(s.retryOrder, retryEntry{id: id, at: now})
+}
+
+// forgetOldestUploadLocked drops the oldest cache entry. An entry already
+// removed after a failed export, or re-added since, is left alone.
+func (s *Service) forgetOldestUploadLocked() {
+	oldest := s.retryOrder[0]
+	s.retryOrder[0] = retryEntry{}
+	s.retryOrder = s.retryOrder[1:]
+	if at, ok := s.duplicates[oldest.id]; ok && at.Equal(oldest.at) {
+		delete(s.duplicates, oldest.id)
+	}
 }
 
 // The internal unary RPC uses well-known protobuf messages. BytesValue holds

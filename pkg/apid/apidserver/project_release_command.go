@@ -20,7 +20,7 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 	for i, app := range apps {
 		workload := scan.Workloads[i]
 		resolved := deploymentReleaseCommand{command: workload.ReleaseCommand, shell: workload.ReleaseCommandShell}
-		manifest, problem := loadSourceRefManifest(source, app, acct.Plan)
+		manifest, problem := loadSourceRefManifest(source, app, acct.Plan, s.agentStepsAllowed(acct))
 		if problem != nil {
 			return problem
 		}
@@ -28,7 +28,7 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 			return api.ErrValidation("atomic migration deploy cannot change operation declarations")
 		}
 		if len(apps) == 1 {
-			resolved, problem = resolveSourceReleaseCommand(source, app, manifest)
+			resolved, problem = resolveSourceReleaseDeclaration(source, app, manifest)
 			if problem != nil {
 				return problem
 			}
@@ -37,6 +37,9 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 		}
 		if len(resolved.command) == 0 {
 			continue
+		}
+		if s.releasePhaseOff {
+			return releasePhaseOffProblem()
 		}
 		if command != nil {
 			return api.ErrValidation("atomic migration deploy supports one release command per project")

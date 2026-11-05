@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { SLOStatus } from './SLOStatus.js';
 /**
- * One customer-defined SLO (ADR-747).
+ * One customer-defined SLO.
  */
 export type SLOResponse = {
   id: string;

@@ -24,18 +24,15 @@ package sched
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -119,20 +116,7 @@ func newRedisPoller(t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := &redis.Options{
-		Addr:         cfg.Addr,
-		Username:     cfg.Username,
-		Password:     cfg.Password,
-		Dialer:       oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second}),
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-		PoolSize:     4,
-	}
-	if cfg.TLS {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	client := redis.NewClient(opts)
+	client := redis.NewClient(redisTriggerOptions(cfg))
 	// Verify the connection up-front — a misconfigured addr is a
 	// startup failure, not a per-tick surprise.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -196,7 +180,13 @@ func (r *redisPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	if pelErr != nil && !errors.Is(pelErr, redis.Nil) {
 		return PollResult{Error: fmt.Errorf("redis_poller: xreadgroup pel: %w", pelErr)}
 	}
-	r.appendOutFromXReadGroup(out, pelRes)
+	out = r.appendOutFromXReadGroup(out, pelRes)
+	if int64(len(out)) >= limit {
+		// The pending list filled the batch. A Count of 0 would make
+		// go-redis drop COUNT and read the whole backlog of new entries
+		// into memory (ADR-20261101093512).
+		return PollResult{Records: out}
+	}
 	newRes, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    r.group,
 		Consumer: r.consumer,
@@ -207,7 +197,7 @@ func (r *redisPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return PollResult{Error: fmt.Errorf("redis_poller: xreadgroup: %w", err)}
 	}
-	r.appendOutFromXReadGroup(out, newRes)
+	out = r.appendOutFromXReadGroup(out, newRes)
 	return PollResult{Records: out}
 }
 

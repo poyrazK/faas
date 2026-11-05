@@ -1,4 +1,4 @@
-"""adr: 20261025090000 — historical receipt GET must not retry traffic."""
+"""adr: 20261105000512 — historical receipt GET must not retry traffic."""
 import httpx
 
 from faas_sdk.api.deployments import get_deployment_promotion_receipt

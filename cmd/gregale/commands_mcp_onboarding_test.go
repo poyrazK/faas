@@ -236,6 +236,13 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 			if !bytes.Contains(guide, []byte("--token-env MCP_ACCESS_TOKEN")) || !bytes.Contains(guide, []byte("--observer-app reports-observer --min 0")) {
 				t.Fatal("private or scale-to-zero setup guidance missing")
 			}
+			if runtime == "node" {
+				if !bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
+					t.Fatal("Node release guidance missing")
+				}
+			} else if !bytes.Contains(guide, []byte("manual rollout")) || bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
+				t.Fatal("Go/Python guide recommends an unsupported automated release")
+			}
 		})
 	}
 }
@@ -250,7 +257,7 @@ func TestMCPStarterCapabilityReferenceFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got.Bytes(), want) {
-		t.Fatal("regenerate docs/mcp-capabilities.md with gregale mcp capabilities --markdown")
+		t.Fatal("regenerate docs/mcp-capabilities.md with gregale mcp server capabilities --markdown")
 	}
 }
 

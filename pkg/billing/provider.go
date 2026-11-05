@@ -301,6 +301,14 @@ type UsageModeProvider interface {
 	UsageMode() UsageMode
 }
 
+// DeliveryTimeStamper is an optional provider contract: a provider that
+// stamps each usage event with the time it is sent, not the hour it
+// measures (Polar, ADR-20261028101500), totals usage by delivery time, so
+// ReconcileUsage over a window counts what was delivered in it.
+type DeliveryTimeStamper interface {
+	StampsUsageAtDelivery() bool
+}
+
 // UsageMode describes the quantity passed to PushUsageRecord and returned by
 // ReconcileUsage.
 type UsageMode string
@@ -329,10 +337,93 @@ type CustomerPortalProvider interface {
 // changes leave customers on the hosted billing portal path.
 //
 // targetPlan == api.PlanFree means cancel the subscription at period end;
-// paid-to-paid changes should use the provider's non-prorating or
-// next-period semantics unless the provider explicitly documents otherwise.
+// a downgrade takes effect at the period end. An upgrade is charged and
+// applied now, and fails without changing anything when the charge does not
+// go through: it is the upgrade path for an existing subscription, because
+// the provider's customer portal does not switch plans (ADR-20261103131742).
 type SubscriptionPlanChangeProvider interface {
 	ChangeSubscriptionPlan(ctx context.Context, acct state.Account, targetPlan api.Plan) (effectiveAt time.Time, err error)
+}
+
+// SubscriptionResumer is an optional provider surface that undoes a
+// subscription's scheduled cancellation and scheduled plan change, so it
+// renews on its current plan (ADR-20261103131742 amendment 1). undone reports
+// whether a scheduled change was undone; false means none was scheduled. A
+// subscription that has already ended is ErrSubscriptionGone.
+type SubscriptionResumer interface {
+	ResumeSubscription(ctx context.Context, acct state.Account) (undone bool, err error)
+}
+
+// SubscriptionStateProvider is an optional provider surface for reading a
+// subscription's current state. Webhook deliveries are neither ordered nor
+// prompt, so a delivery describes the subscription as it was; apid asks for
+// the current state before a delivery may move the account (Hunt 17 H17-1).
+type SubscriptionStateProvider interface {
+	SubscriptionState(ctx context.Context, subscriptionID string) (SubscriptionState, error)
+}
+
+// CustomerSubscriptionLister is an optional provider surface listing a
+// customer's subscriptions. apid reconciles billed accounts against it, so a
+// webhook delivery that was missed or never accepted cannot leave an account's
+// plan or dunning state behind the provider's for good
+// (ADR-20261029094512).
+type CustomerSubscriptionLister interface {
+	// CustomerSubscriptions returns the customer's subscriptions in every
+	// status, most recently started first.
+	CustomerSubscriptions(ctx context.Context, customerID string) ([]Subscription, error)
+}
+
+// Subscription is one provider subscription and its current state.
+type Subscription struct {
+	ID string
+	SubscriptionState
+}
+
+// SubscriptionState is a provider subscription's current status and plan.
+// PlanID uses the same encoding as Event.PlanID; empty means the product does
+// not map to a plan.
+type SubscriptionState struct {
+	Status SubscriptionStatus
+	PlanID string
+	// CancelAtPeriodEnd is set when the subscription is scheduled to end at
+	// EndsAt instead of renewing.
+	CancelAtPeriodEnd bool
+	// EndsAt is when a scheduled cancellation ends the subscription; zero
+	// when none is scheduled.
+	EndsAt time.Time
+	// PendingPlanID is the plan a scheduled plan change moves the
+	// subscription to at PendingAt (Event.PlanID encoding); empty when no
+	// plan change is scheduled.
+	PendingPlanID string
+	PendingAt     time.Time
+}
+
+// ScheduledChange reports whether the subscription will end or change plan
+// at a later date instead of renewing as it is.
+func (s SubscriptionState) ScheduledChange() bool {
+	return s.CancelAtPeriodEnd || s.PendingPlanID != ""
+}
+
+// SubscriptionStatus is a provider subscription status, lowercased.
+type SubscriptionStatus string
+
+// Subscription statuses that decide whether a delivery is stale.
+const (
+	SubscriptionStatusActive   SubscriptionStatus = "active"
+	SubscriptionStatusTrialing SubscriptionStatus = "trialing"
+	SubscriptionStatusPastDue  SubscriptionStatus = "past_due"
+)
+
+// InGoodStanding reports whether the subscription is paid up: a payment
+// failure delivered for it is stale.
+func (s SubscriptionStatus) InGoodStanding() bool {
+	return s == SubscriptionStatusActive || s == SubscriptionStatusTrialing
+}
+
+// Live reports whether the subscription still grants its plan, paid up or in
+// the provider's own payment retry period.
+func (s SubscriptionStatus) Live() bool {
+	return s.InGoodStanding() || s == SubscriptionStatusPastDue
 }
 
 // InvoicePDFRequester is an optional provider surface for requesting an
@@ -349,6 +440,41 @@ type InvoicePDFRequester interface {
 type CustomerBillingInfoProvider interface {
 	SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error
 }
+
+// CustomerEmailUpdater is an optional provider surface for moving an
+// existing billing customer to the subject's current billing email
+// (ADR-20261103131742). A provider whose customer email must be unique
+// returns a *CustomerEmailInUseError when another customer holds it.
+type CustomerEmailUpdater interface {
+	UpdateCustomerEmail(ctx context.Context, acct state.Account) error
+}
+
+// CustomerDeleter is an optional provider surface for deleting a billing
+// customer whose Gregale subject no longer exists, so a returning customer
+// can reuse the email it held (ADR-20261103131742). Deleting a customer
+// that is already gone succeeds.
+type CustomerDeleter interface {
+	DeleteCustomer(ctx context.Context, customerID string) error
+}
+
+// ErrCustomerEmailInUse matches a *CustomerEmailInUseError with errors.Is.
+var ErrCustomerEmailInUse = errors.New("billing: another billing customer uses this email")
+
+// CustomerEmailInUseError reports that a provider keeps one customer per
+// email and another customer already holds the subject's billing email.
+// ExternalID is that customer's Gregale subject ID when it has one, so the
+// caller can tell a deleted subject's leftover customer from a live one.
+type CustomerEmailInUseError struct {
+	Email      string
+	CustomerID string
+	ExternalID string
+}
+
+func (e *CustomerEmailInUseError) Error() string {
+	return "billing: another billing customer uses this email"
+}
+
+func (e *CustomerEmailInUseError) Is(target error) bool { return target == ErrCustomerEmailInUse }
 
 // CatalogProvider is an optional operator surface for inspecting and
 // revalidating the active provider's configured product catalog. The API
@@ -531,6 +657,14 @@ type Event struct {
 	// projection (currently Paddle and Polar). It is persisted independently of the
 	// event type so order.created can populate invoice history before payment.
 	Invoice *InvoiceData
+
+	// HoldDunning marks a payment success whose subscription the provider
+	// still reports as past due: a late or out-of-order delivery for an
+	// earlier payment. The payment stands (invoice, credits, plan), but it
+	// does not end dunning; the payment that settles the overdue balance
+	// does, as does reconciliation once the provider reports the
+	// subscription paid up.
+	HoldDunning bool
 }
 
 // RefundResult is what Provider.Refund returns on a successful refund.
@@ -594,6 +728,24 @@ var ErrNoOpenCharge = errors.New("billing: no open charge to retry")
 // recurring transaction; the SDK call itself distinguishes the
 // "cancelled" vs "never subscribed" cases from the response shape.
 var ErrAlreadyCancelled = errors.New("billing: subscription already cancelled or not active")
+
+// ErrSubscriptionGone is returned by SubscriptionState when the provider has
+// no such subscription, so it can never renew.
+var ErrSubscriptionGone = errors.New("billing: subscription not found at the provider")
+
+// ErrSubscriptionEnding is returned by a plan change the provider refuses
+// because the subscription is scheduled to end: a cancelled subscription
+// cannot change product until its cancellation is undone.
+var ErrSubscriptionEnding = errors.New("billing: subscription is scheduled to end; undo the cancellation first")
+
+// ErrPaymentAuthenticationRequired is returned when a charge made while the
+// customer is away from the card (an upgrade's prorated charge) needs the
+// bank's confirmation (3-D Secure). Nothing was charged or changed.
+var ErrPaymentAuthenticationRequired = errors.New("billing: the bank asked for the payment to be confirmed")
+
+// ErrPaymentDeclined is returned when such a charge was declined or there is
+// no card to charge. Nothing was charged or changed.
+var ErrPaymentDeclined = errors.New("billing: the payment was declined")
 
 // PaymentMethod is the provider-agnostic card-on-file summary
 // (issue #242). Lives in pkg/billing (NOT pkg/api) to avoid the
@@ -689,6 +841,10 @@ const (
 	// live object-storage charge meter and implements ObjectStorageLineItemSink.
 	// Shadow configurations retain local receipts without this capability.
 	CapObjectStorageUsage
+
+	// CapManagedPostgresUsage means the provider has a separately configured,
+	// live managed PostgreSQL overage charge meter (ADR-20261031110037).
+	CapManagedPostgresUsage
 )
 
 // CapabilitySet is the bitmask of capabilities a Provider exposes.
@@ -723,6 +879,7 @@ func (s CapabilitySet) String() string {
 		{CapUsageLineItem, "usage_line_item"},
 		{CapEgressUsage, "egress_usage"},
 		{CapObjectStorageUsage, "object_storage_usage"},
+		{CapManagedPostgresUsage, "managed_postgres_usage"},
 	} {
 		if s.Has(c.cap) {
 			parts = append(parts, c.name)

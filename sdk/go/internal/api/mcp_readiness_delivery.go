@@ -43,12 +43,12 @@ type MCPReadinessDeliveryRouting struct {
 	FallbackDelivered bool   `json:"fallback_delivered"`
 }
 
-func (c *Client) GetMCPReadinessFallback(ctx context.Context, app, rule string) (MCPReadinessFallbackPolicy, error) {
+func (c *PreviewClient) GetMCPReadinessFallback(ctx context.Context, app, rule string) (MCPReadinessFallbackPolicy, error) {
 	var out MCPReadinessFallbackPolicy
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-fallback", nil, &out)
 	return out, err
 }
-func (c *Client) SetMCPReadinessFallback(ctx context.Context, app, rule string, request SetMCPReadinessFallbackRequest) (MCPReadinessFallbackPolicy, error) {
+func (c *PreviewClient) SetMCPReadinessFallback(ctx context.Context, app, rule string, request SetMCPReadinessFallbackRequest) (MCPReadinessFallbackPolicy, error) {
 	var out MCPReadinessFallbackPolicy
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-fallback", request, &out)
 	return out, err
@@ -120,7 +120,7 @@ type MCPReadinessNotificationQueues struct {
 	NextAfter  string                          `json:"next_after,omitempty"`
 }
 
-func (c *Client) ListMCPReadinessNotificationQueues(ctx context.Context, app, scope, after string, limit int) (MCPReadinessNotificationQueues, error) {
+func (c *PreviewClient) ListMCPReadinessNotificationQueues(ctx context.Context, app, scope, after string, limit int) (MCPReadinessNotificationQueues, error) {
 	q := url.Values{}
 	if scope != "" {
 		q.Set("scope", scope)
@@ -135,7 +135,7 @@ func (c *Client) ListMCPReadinessNotificationQueues(ctx context.Context, app, sc
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/mcp-readiness-notifications?"+q.Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) ActMCPReadinessNotification(ctx context.Context, app string, r MCPReadinessNotificationAction) (MCPReadinessNotificationReceipt, error) {
+func (c *PreviewClient) ActMCPReadinessNotification(ctx context.Context, app string, r MCPReadinessNotificationAction) (MCPReadinessNotificationReceipt, error) {
 	var out MCPReadinessNotificationReceipt
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/mcp-readiness-notifications/actions", r, &out)
 	return out, err
@@ -173,7 +173,7 @@ type MCPReadinessIncidentTimeline struct {
 	NextBefore string                      `json:"next_before,omitempty"`
 }
 
-func (c *Client) ListMCPReadinessIncidents(ctx context.Context, app, scope, before string, limit int) (MCPReadinessIncidentTimeline, error) {
+func (c *PreviewClient) ListMCPReadinessIncidents(ctx context.Context, app, scope, before string, limit int) (MCPReadinessIncidentTimeline, error) {
 	q := url.Values{}
 	if scope != "" {
 		q.Set("scope", scope)

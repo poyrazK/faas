@@ -31,8 +31,10 @@ func TestCompileChallengeRules(t *testing.T) {
 		challengeStateRule("second", 20, "/*", &state.EdgeRuleChallengeAction{}),
 		challengeStateRule("first", 10, "/account/*", valid),
 	})
-	if len(parseErrs) != 1 {
-		t.Errorf("parse errors = %v, want one for bad-glob", parseErrs)
+	// A value apid would refuse fails the host closed like a bad glob
+	// (ADR-091 amendment 2026-11-02); a missing action is edgeRuleShapeError's.
+	if len(parseErrs) != 2 || parseErrs[0].RuleID != "too-easy" || parseErrs[1].RuleID != "bad-glob" {
+		t.Errorf("parse errors = %v, want too-easy and bad-glob", parseErrs)
 	}
 	if len(rules) != 2 || rules[0].ID != "first" || rules[1].ID != "second" {
 		t.Fatalf("compiled = %+v, want [first second]", rules)
@@ -43,6 +45,16 @@ func TestCompileChallengeRules(t *testing.T) {
 	// A row written without effective values compiles with apid's defaults.
 	if rules[1].Difficulty != 16 || rules[1].PassTTLSeconds != 3600 {
 		t.Errorf("second = %+v, want difficulty 16 and a one-hour pass", rules[1])
+	}
+	if rules[0].AttackMode || rules[1].AttackMode {
+		t.Error("an ordinary challenge rule compiled as attack mode")
+	}
+	// adr: 20261021220456 — amendment 1: the attack-mode rule is marked so
+	// the gateway can gate it on edge_attack_mode.
+	attack := challengeStateRule("attack", 0, "/**", valid)
+	attack.ManifestKey = state.EdgeRuleAttackModeKey
+	if compiled, _ := compileChallengeRules([]state.EdgeRule{attack}); len(compiled) != 1 || !compiled[0].AttackMode {
+		t.Fatalf("attack-mode rule compiled = %+v, want AttackMode set", compiled)
 	}
 }
 

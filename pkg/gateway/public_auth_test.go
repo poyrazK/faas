@@ -257,6 +257,9 @@ func TestPublicAuth_BearerExpired_401(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
 	}
+	if got := rr.Header().Get("WWW-Authenticate"); got != `Bearer realm="apps", error="invalid_token"` {
+		t.Errorf("WWW-Authenticate = %q, want the invalid_token challenge", got)
+	}
 	if audit.counts["instances.public_auth_invalid"] != 1 {
 		t.Errorf("invalid audit count = %d, want 1", audit.counts["instances.public_auth_invalid"])
 	}

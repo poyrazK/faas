@@ -45,6 +45,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
@@ -80,8 +81,9 @@ type apidProxy struct {
 	// hop; the gate's bypass path is a true no-op so the proxy
 	// hop is unchanged for reads and same-box writes.
 	writeGate http.Handler
-	// appsDomain scopes the reservation to platform hosts (ADR-480).
-	appsDomain string
+	// platformDomain scopes the reservation to platform hosts (ADR-480,
+	// ADR-20261026100000).
+	platformDomain string
 }
 
 // newApidProxy parses target and returns the wrapping handler.
@@ -108,7 +110,7 @@ func newApidProxyWithLogs(target string, next http.Handler, logsHandler http.Han
 // exists so single-node tests that don't care about the gate
 // don't have to thread a no-op handler through every
 // constructor call.
-func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handler, appsDomain string, log *slog.Logger) http.Handler {
+func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handler, platformDomain string, log *slog.Logger) http.Handler {
 	if target == "" || log == nil {
 		return next
 	}
@@ -122,12 +124,12 @@ func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handl
 		"write_gate", writeGate != nil,
 	)
 	return &apidProxy{
-		target:      u,
-		next:        next,
-		logsHandler: logsHandler,
-		writeGate:   writeGate,
-		appsDomain:  appsDomain,
-		log:         log,
+		target:         u,
+		next:           next,
+		logsHandler:    logsHandler,
+		writeGate:      writeGate,
+		platformDomain: platformDomain,
+		log:            log,
 	}
 }
 
@@ -158,7 +160,7 @@ func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ADR-480: on an app, preview or customer host the platform paths
 	// belong to the app. The compute-owned log stream above stays on every
 	// host because the CLI and dashboard address it that way.
-	if isApidPath(r.URL.Path) && apid.IsPlatformHost(r.Host, a.appsDomain) {
+	if isApidPath(r.URL.Path) && apid.IsPlatformHost(r.Host, a.platformDomain) {
 		// Tier A9 / ADR-084: route every apid-bound
 		// request through the standby write-redirect
 		// gate BEFORE the proxy hop. The gate's
@@ -324,13 +326,20 @@ func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
 			if proto != "" {
 				pr.Out.Header.Set("X-Forwarded-Proto", proto)
 			}
-			// Pin X-Forwarded-For to the real client IP from
-			// pr.In's RemoteAddr — the gatewayd edge sees the
-			// customer's IP before the loopback hop. We
+			// Pin X-Forwarded-For to the real client IP. We
 			// overwrite (rather than append) so apid sees
 			// exactly one value, the contract its
 			// defaultClientIP predicate relies on (issue #89).
-			if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil && host != "" {
+			// The customer is the single entry gatewayd-public
+			// pinned: this daemon is reached over a unix socket
+			// (or from a peer node's edge), so pr.In.RemoteAddr
+			// is gatewayd-public, not the customer. Reading only
+			// RemoteAddr left every login and key audit row
+			// with 127.0.0.1 (issue #2316). A direct caller with
+			// no forwarded entry falls back to its own address.
+			if ip, ok := gateway.TrustedClientIP(pr.In); ok {
+				pr.Out.Header.Set("X-Forwarded-For", ip.String())
+			} else if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil && host != "" {
 				pr.Out.Header.Set("X-Forwarded-For", host)
 			}
 			// Mint x-faas-request-id (gateway.Handler does this

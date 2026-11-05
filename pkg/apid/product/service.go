@@ -27,9 +27,11 @@ type Host interface {
 }
 
 type Service struct {
-	EmailTransport     *productemail.Transport
-	EmailSeal          func(string, string) ([]byte, error)
-	EmailOpen          func(string, []byte) (string, error)
+	EmailTransport *productemail.Transport
+	EmailSeal      func(string, string) ([]byte, error)
+	EmailOpen      func(string, []byte) (string, error)
+	// EmailOrigin is the platform's public https origin, for links back to
+	// the portal in email and provider pages.
 	EmailOrigin        string
 	EmailReady         func() bool
 	EmailWebhookSecret string
@@ -58,6 +60,17 @@ type Service struct {
 	// PlanPricingEnabled reads the product_control_plan_pricing_enabled
 	// release gate (ADR-20261021154511); nil is off.
 	PlanPricingEnabled func() bool
+	// SignupEnabled reads the product_control_signup_enabled switch
+	// (ADR-20261022100735); nil is off.
+	SignupEnabled func() bool
+	// SignupCustomer creates a signup's customer in the account's billing
+	// provider and returns its ID.
+	SignupCustomer func(ctx context.Context, acct state.Account, provider, idempotencyKey, email, name string, metadata map[string]string) (string, *api.Problem)
+	// PaymentMethod, PaymentMethodCheckout and CompletePaymentMethod reach a
+	// workspace's card on file in the account's Stripe.
+	PaymentMethod         func(ctx context.Context, acct state.Account, customer string) (*api.ProductPaymentMethod, *api.Problem)
+	PaymentMethodCheckout func(ctx context.Context, acct state.Account, customer, currency, idempotencyKey, successURL, cancelURL string) (string, *api.Problem)
+	CompletePaymentMethod func(ctx context.Context, acct state.Account, customer, sessionID string) (*api.ProductPaymentMethod, *api.Problem)
 }
 
 // errPlanPricingUnavailable refuses a catalog with plan fees or included

@@ -120,6 +120,9 @@ func (s *Service) startDueSchedules(ctx context.Context, store state.BillingRunS
 		return fmt.Errorf("list due billing run schedules: %w", err)
 	}
 	for _, sched := range due {
+		if !s.released(sched.AccountID) {
+			continue // starts once the account has API monetization again
+		}
 		start := sched.NextPeriodStart
 		next := sched
 		next.NextPeriodStart = start.AddDate(0, 1, 0)
@@ -146,6 +149,15 @@ func (s *Service) advanceRun(ctx context.Context, store state.BillingRunStore) e
 	}
 	if err != nil {
 		return fmt.Errorf("claim billing run: %w", err)
+	}
+	if !s.released(run.AccountID) {
+		// Hold the run aside without billing anyone, so it neither runs nor
+		// keeps other accounts' runs waiting (ADR-20261020170649).
+		if err := store.RenewBillingRunLease(ctx, run.ID, owner, s.now().Add(api.APIMonetizationUnreleasedRetry)); err != nil &&
+			!errors.Is(err, state.ErrBillingRunLeaseLost) {
+			return fmt.Errorf("set aside billing run: %w", err)
+		}
+		return nil
 	}
 	if err := s.processBatch(ctx, store, run, owner); err != nil {
 		if errors.Is(err, state.ErrBillingRunLeaseLost) {

@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	q "github.com/onebox-faas/faas/pkg/apid/mailoutbox/sqlc"
 	"github.com/onebox-faas/faas/pkg/internalmail"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // ScheduleNonpaymentDeletionWithNotice commits the deletion-pending transition,
@@ -87,9 +88,14 @@ func (s *Service) nonpaymentDeletionPeriod(ctx context.Context, tx pgx.Tx, a q.L
 	if err == nil {
 		return period, nil
 	}
-	r, err := s.queries.ScheduleNonpaymentDeletionAccount(ctx, tx, a.ID)
+	// ADR-20261024150500: the deletion includes the account's managed
+	// PostgreSQL databases unless the operator kill switch is off.
+	r, err := s.queries.ScheduleNonpaymentDeletionAccount(ctx, tx, q.ScheduleNonpaymentDeletionAccountParams{ID: a.ID, IncludeManagedPostgres: api.NonpaymentDeletionIncludesManagedPostgres()})
 	if err != nil {
-		return period, err
+		// A deletion guard (live managed PostgreSQL databases, shared app
+		// ownership) holds until someone resolves it; report it as such so
+		// meterd's follow-up does not read it as an outage.
+		return period, state.AccountDeletionGuardError(err)
 	}
 	if err := s.queries.CancelPreDeletionDunningIntents(ctx, tx, a.ID); err != nil {
 		return period, err

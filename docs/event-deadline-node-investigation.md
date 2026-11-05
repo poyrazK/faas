@@ -6,7 +6,7 @@ alert. Configure SDK authentication normally, then load the Node checkpoint and
 choose its alert by `{ incidentId, sequence }`:
 
 ```ts
-import { investigateEventDeadlineAlert, validateEventDeadlineCheckpoint } from '@gregale/sdk-node';
+import { investigateEventDeadlineAlert, validateEventDeadlineCheckpoint } from '@gregale/sdk-node/preview';
 
 // savedJSON is application-owned checkpoint data; choose the alert explicitly.
 const checkpoint = validateEventDeadlineCheckpoint(savedJSON);

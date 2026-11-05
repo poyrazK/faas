@@ -5,8 +5,7 @@
 import type { EgressCircuitBreakerPolicy } from './EgressCircuitBreakerPolicy.js';
 /**
  * A single customer data upstream. The plaintext host is replaced by
- * `host_redacted_hash` (sha256(salt||host) 8-hex prefix); the §11
- * barrier means the wire format never carries the customer's DSN.
+ * `host_redacted_hash` (sha256(salt||host) 8-hex prefix); the barrier means the wire format never carries the customer's DSN.
  *
  */
 export type DataUpstreamResponse = {
@@ -26,11 +25,11 @@ export type DataUpstreamResponse = {
   host_last4?: string;
   port: number;
   /**
-   * ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies.
+   * Deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies.
    */
   scope?: string;
   /**
-   * ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Echoes the value persisted on the row; absent when the default scope applies.
+   * Widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Echoes the value persisted on the row; absent when the default scope applies.
    */
   deployment_scope?: string;
   /**

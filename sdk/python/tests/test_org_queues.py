@@ -1,9 +1,9 @@
 import httpx
 
-from faas_sdk.api.queues import lease_org_queue_messages, ack_org_queue_leases, get_org_queue_usage
-from faas_sdk.api.projects import get_org_project_environment_queue_bindings
+from faas_sdk.preview.api.queues import lease_org_queue_messages, ack_org_queue_leases, get_org_queue_usage
+from faas_sdk.preview.api.projects import get_org_project_environment_queue_bindings
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.queue_lease_receipts_request import QueueLeaseReceiptsRequest
+from faas_sdk.preview.models.queue_lease_receipts_request import QueueLeaseReceiptsRequest
 
 
 def test_company_queues_preserve_ownership_paths() -> None:

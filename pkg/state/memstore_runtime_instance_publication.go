@@ -38,6 +38,11 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 	if err != nil {
 		return Instance{}, err
 	}
+	if p.ExpectedState == string(StateFrozen) && p.targetState() == string(StateRunning) {
+		if err := m.checkThawReservationLocked(ctx, p.InstanceID, p.NodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if p.AdmissionReceipt != nil || p.PromotionReceipt != nil {
 		instance, err := m.publishOwnedStandardRuntimeLocked(ctx, p)
 		if err != nil {

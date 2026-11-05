@@ -50,7 +50,7 @@ func cmdProjectsEnvironmentGitOpsReleases(args []string) int {
 }
 
 func gitOpsRollbackCommand(project, environment, release, commit string) string {
-	return fmt.Sprintf("gregale projects environments gitops rollback-plan %s %s --to-release %s --target-commit %s", project, environment, release, commit)
+	return fmt.Sprintf("gregale environment gitops rollback-plan %s %s --to-release %s --target-commit %s", project, environment, release, commit)
 }
 
 func writeGitOpsRecoveryCatalog(w io.Writer, out api.ListEnvironmentGitReleasesResponse) error {

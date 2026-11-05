@@ -83,7 +83,7 @@ func cmdJobsRmInteractive() int {
 	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := client.DeleteJob(writeCtx, job.Name); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete job", err)
 	}
 	PrintOK(osStdout, "Removed Job %s.", job.Name)
 	return 0

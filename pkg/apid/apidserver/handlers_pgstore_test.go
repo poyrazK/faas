@@ -92,6 +92,7 @@ func (e pgHandlerEnv) do(t *testing.T, method, path string, body any, headers ma
 
 func (e pgHandlerEnv) addAdminSession(t *testing.T, req *http.Request) {
 	t.Helper()
+	enrollOperatorForTest(req.Context(), t, e.store, e.acct.ID)
 	sid := uuid.NewString()
 	if _, err := e.store.CreateSession(req.Context(), sid, e.acct.ID, "192.0.2.10", "pg-handler-test"); err != nil {
 		t.Fatalf("CreateSession: %v", err)

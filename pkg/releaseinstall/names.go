@@ -12,14 +12,17 @@ import (
 // required-daemon catalog. They travel with the atomic release because vmmd
 // starts the bridge helpers, imaged injects init as the guest PID 1, the
 // upgrade path invokes gregalectl, and the optional object-storage role starts
-// s3-gatewayd from the active release tree.
+// s3-gatewayd from the active release tree. The optional hosted management MCP
+// server, mcp-bridged, starts the same way (ADR-20261026195952).
 var supportBinaryNames = []string{
 	"gregale",
 	"gregalectl",
 	"init",
+	"mcp-bridged",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",
+	"vmmd-guestdisk",
 	"vmmd-raw-bridge",
 	"vmmd-tcp-bridge",
 	"vmmd-udp-bridge",
@@ -28,6 +31,11 @@ var supportBinaryNames = []string{
 	// the signed bundle so compute hosts never rebuild a host-specific kernel
 	// during a production join.
 	"vmlinux",
+	// imaged verifies platform base provenance offline against the Sigstore
+	// root its own release shipped, and admits the frozen pre-attestation
+	// digest list without an attestation (ADR-20261029155852).
+	"sigstore-trusted-root.json",
+	"base-provenance-legacy.txt",
 }
 
 // legacyUnhashedSupportBinaryNames contains support files that appeared in

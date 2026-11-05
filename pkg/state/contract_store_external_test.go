@@ -16,12 +16,20 @@ import (
 // test compile peak at 4.9 GB of heap instead of 1.5 GB (ADR-982).
 type contractTestStore interface {
 	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
+	state.RollbackTrafficStore
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AgentClientStore
+	state.OrgAgentStore
+	state.KeyProjectLimitStore
 	state.AppWorkPolicyStore
+	state.ObjectStorageCeilingGrantStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
+	state.ComputeNodeReadinessStore
+	state.ComputeNodeWakeBreakerStore
+	state.ComputeNodeCPUPressureStore
 	state.ComputeNodeUsageBatcher
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
@@ -34,13 +42,18 @@ type contractTestStore interface {
 	state.EventFanoutReplayBatchStore
 	state.EventFanoutReplayStore
 	state.EventReceiptAcceptanceStore
+	state.EventReceiptAttemptStore
 	state.EventReceiptReplayStore
+	state.EventReceiptScopeStore
 	state.EventReceiptStore
 	state.EventReplayPreviewStore
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionReconcileStore
+	state.EventSubscriptionActivationStore
 	state.EventWorkBindingStore
+	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
 	state.HostPortLeaseStore
 	state.InvocationEnvironmentQueueAdmissionReader
@@ -70,11 +83,16 @@ type contractTestStore interface {
 	state.MigrationSourceStore
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
+	state.NodeMemoryReportStore
+	state.AppMemoryPressureStore
 	state.ObjectBucketAccessStore
+	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore
 	state.ObjectBucketStore
 	state.ObjectBucketWriteFenceStore
+	state.ObjectReadAdmissionStore
 	state.ObjectCapacityStore
+	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore
 	state.ObjectMultipartURLCapabilityStore
@@ -102,6 +120,8 @@ type contractTestStore interface {
 	state.PlatformTenantReconciliationStore
 	state.PlatformTenantStore
 	state.PlatformTenantWebhookStore
+	state.ProfileCaptureQueue
+	state.ProfileCaptureStore
 	state.ProjectEnvironmentCloneBindingCaptureStore
 	state.ProjectEnvironmentCloneLeasedObjectManifestStore
 	state.ProjectEnvironmentCloneObjectBucketStore

@@ -97,8 +97,9 @@ func TestLoadSealDomains(t *testing.T) {
 }
 
 // TestSetGithubWebhookSecret_StoresASealedCopy pins the ADR 20261022111812
-// fix for the plaintext webhook secret: the admin route writes a copy githubd
-// opens, and refuses to write when it cannot seal.
+// fix for the plaintext webhook secret: the admin route writes only a copy
+// githubd opens, never the plaintext, and refuses to write when it cannot
+// seal.
 func TestSetGithubWebhookSecret_StoresASealedCopy(t *testing.T) {
 	fleet := mustSealIdentity(t)
 	secret := []byte("0123456789abcdef0123456789abcdef")
@@ -132,8 +133,8 @@ func TestSetGithubWebhookSecret_StoresASealedCopy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(got.Value, secret) {
-			t.Fatal("the plaintext column the previous release reads was not written")
+		if len(got.Value) != 0 {
+			t.Fatal("the secret was stored in plaintext; only the sealed copy is written now")
 		}
 		opened, err := sealdomain.OpenGithubWebhookSecret([]*age.X25519Identity{fleet}, got.Sealed)
 		if err != nil || !bytes.Equal(opened, secret) {

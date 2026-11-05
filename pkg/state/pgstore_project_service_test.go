@@ -44,4 +44,57 @@ func TestPgProjectServiceLookupScopesAliasesAndRejectsAmbiguity(t *testing.T) {
 	if _, err := state.AppByServiceName(ctx, store, caller, "api"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("ambiguous alias accepted: %v", err)
 	}
+
+	// ADR-20261026170512: a Compose billing_api is called billing-api, in
+	// production and from its own PR's preview.
+	billing := create(account.ID, "shop-billing", "billing_api", "")
+	if resolved, err := state.AppByServiceName(ctx, store, caller, "billing-api"); err != nil || resolved.ID != billing.ID {
+		t.Fatalf("billing-api resolved to %+v, %v", resolved, err)
+	}
+	preview, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-9-shop-billing", WorkloadName: "billing_api",
+		PreviewOfSlug: billing.Slug, PreviewPrNumber: 9, Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sibling, err := store.PreviewAppByProjectWorkload(ctx, account.ID, project.ID, 9, "billing-api"); err != nil || sibling.ID != preview.ID {
+		t.Fatalf("preview sibling billing-api = %+v, %v", sibling, err)
+	}
+}
+
+// adr: 20261022120205
+func TestPgDeletedProjectMemberKeepsItsServiceName(t *testing.T) {
+	store, _ := pgStore(t)
+	deletedProjectMemberContract(t, store, func(read func(deletedMemberLookup)) { read(store) })
+}
+
+// The gateway's pinned service-policy view resolves aliases with its own
+// query; it must keep a deleted member's name too.
+func TestPgServicePolicyViewKeepsADeletedProjectMembersServiceName(t *testing.T) {
+	store, ctx := pgStore(t)
+	deletedProjectMemberContract(t, store, func(read func(deletedMemberLookup)) {
+		if err := store.WithServicePolicySnapshot(ctx, func(view state.ServicePolicyReader) error {
+			read(view)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// adr: 20261030131528
+func TestPgProjectBindingNamesOnlyItsProject(t *testing.T) {
+	store, _ := pgStore(t)
+	boundProjectServiceContract(t, store, func(read func(deletedMemberLookup)) { read(store) })
+}
+
+func TestPgServicePolicyViewProjectBindingNamesOnlyItsProject(t *testing.T) {
+	store, ctx := pgStore(t)
+	boundProjectServiceContract(t, store, func(read func(deletedMemberLookup)) {
+		if err := store.WithServicePolicySnapshot(ctx, func(view state.ServicePolicyReader) error {
+			read(view)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

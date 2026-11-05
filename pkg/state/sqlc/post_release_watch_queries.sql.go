@@ -22,10 +22,13 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
          WHERE p.app_id = d.app_id
            AND COALESCE(NULLIF(p.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND p.status = 'superseded' AND p.created_at < d.created_at
-         ORDER BY p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true
+           AND NOT (p.canary_total_steps > 0 AND p.rollout_state = 'aborted' AND p.rollout_completed_at IS NULL)
+         ORDER BY COALESCE(p.serving_ended_at, p.created_at) DESC, p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
    AND d.last_auto_rollback_reason IS NULL
+   -- A regression the watch could not roll back is judged once.
+   AND COALESCE(d.rollout_decision->>'rollback_skipped', '') = ''
    AND d.traffic_percent = 100
    AND d.rollout_state = 'complete'
    AND d.rollout_completed_at IS NOT NULL
@@ -35,7 +38,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
          WHERE n.app_id = d.app_id
            AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND n.created_at > d.created_at
-           AND n.status NOT IN ('failed', 'cancelled'))
+           AND n.status NOT IN ('failed', 'cancelled')
+           AND (n.serving_ended_at IS NOT NULL OR (n.status = 'live' AND n.traffic_percent > 0)))
  ORDER BY d.rollout_completed_at, d.id
  LIMIT $2::int
 `
@@ -58,10 +62,20 @@ type ListPostReleaseWatchCandidatesRow struct {
 // ADR-1445: post-release watch.
 // Completed live releases that kept automatic rollback, finished within the
 // watch window (plus telemetry grace), are the newest deployment in their
-// scope, and have a superseded predecessor created before them. Being the
-// newest excludes rollback targets, which are older than what they replaced.
+// scope to have served, and have a superseded predecessor created before them.
+// Being the newest to have served excludes rollback targets, which are older
+// than what they replaced. A newer release that never served (staged with no
+// traffic, parked for its schedule, or still building) leaves the serving
+// release watched (ADR-1445 amendment 5); before, it silenced the watch.
 // An immediate release may not stamp rollout_started_at; its baseline then
 // ends when it completed.
+// The predecessor is the release a plain rollback returns to
+// (LatestRetainedRollbackDeployment): the one that served most recently, never
+// a canary candidate aborted before it completed. Ordered by created_at, a
+// canary aborted between v1 and v3 (retired as superseded when v3 completed)
+// or a build superseded before it went live was chosen, so the watch compared
+// v3 with a release that never served and rolled back to it (release review
+// 2026-10-28).
 func (q *Queries) ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error) {
 	rows, err := db.Query(ctx, listPostReleaseWatchCandidates, arg.WindowSeconds, arg.RowLimit)
 	if err != nil {

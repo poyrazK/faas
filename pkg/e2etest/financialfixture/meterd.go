@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -20,13 +19,13 @@ import (
 // binaries from another acceptance run. Call once on the parent test.
 func BuildMeterd(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate checkout")
+	dir, err := e2etest.CallerDir()
+	if err != nil {
+		t.Fatalf("locate checkout: %v", err)
 	}
 	binary := filepath.Join(t.TempDir(), "meterd")
 	cmd := exec.Command("go", "build", "-p=1", "-ldflags=-s -w", "-o", binary, "./cmd/meterd")
-	cmd.Dir = filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
+	cmd.Dir = filepath.Clean(filepath.Join(dir, "../../.."))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build matching meterd: %v\n%s", err, output)
 	}

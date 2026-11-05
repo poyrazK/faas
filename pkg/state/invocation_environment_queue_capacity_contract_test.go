@@ -14,10 +14,23 @@ import (
 )
 
 func TestMemEnvironmentQueueProducerDepthIsAtomicAndIsolated(t *testing.T) {
-	testEnvironmentQueueProducerDepth(t, state.NewMemStore())
+	store := state.NewMemStore()
+	testEnvironmentQueueProducerDepth(t, store, func(t *testing.T, id string, n int) {
+		rows := store.Invocations()
+		for range n {
+			c := (*rows)[id]
+			c.ID = uuid.NewString()
+			(*rows)[c.ID] = c
+		}
+	})
 }
 
-func testEnvironmentQueueProducerDepth(t *testing.T, store environmentQueueInvocationTestStore) {
+// copyInvocation duplicates an admitted invocation n times, bypassing
+// admission, so a test can fill a plan's queue depth without paying one
+// depth-counting admission per row.
+type copyInvocation func(t *testing.T, id string, n int)
+
+func testEnvironmentQueueProducerDepth(t *testing.T, store environmentQueueInvocationTestStore, copyRow copyInvocation) {
 	t.Helper()
 	ctx := t.Context()
 	f := seedQueueConsumers(t, store)
@@ -61,14 +74,17 @@ func testEnvironmentQueueProducerDepth(t *testing.T, store environmentQueueInvoc
 	if err := store.UpdateAccountPlan(ctx, f.account.ID, api.PlanHobby); err != nil {
 		t.Fatal(err)
 	}
+	// ADR-20261022105723 raised Hobby's depth to 10,000. Admit one row of each
+	// kind through the store and copy it to fill the rest: both admission
+	// paths count depth per call, so admitting every row took minutes.
 	limit := api.MustLimitsFor(api.PlanHobby).MaxQueueDepth
-	for range limit + 2 {
-		if _, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: f.app.ID, AccountID: f.account.ID, Source: state.InvocationQueue, DueAt: time.Now()}); err != nil {
-			t.Fatal(err)
-		}
+	production, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: f.app.ID, AccountID: f.account.ID, Source: state.InvocationQueue, DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
 	}
+	copyRow(t, production.ID, limit+1)
 	var rows []state.Invocation
-	for i := range limit - 1 {
+	for i := range 2 {
 		dep, name := f.dep.ID, "orders"
 		if i%2 == 1 {
 			dep, name = newer.ID, "retry"
@@ -79,6 +95,7 @@ func testEnvironmentQueueProducerDepth(t *testing.T, store environmentQueueInvoc
 		}
 		rows = append(rows, inv)
 	}
+	copyRow(t, rows[0].ID, limit-3)
 	var admitted atomic.Int32
 	var wg sync.WaitGroup
 	var rejected sync.Map

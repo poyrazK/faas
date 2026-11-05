@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -19,7 +21,7 @@ func TestBucketDefaultEncryptionClient(t *testing.T) {
 			t.Error(r.URL, r.Header)
 		}
 		if r.Method == "PUT" {
-			var in faas.ObjectBucketEncryptionRequest
+			var in preview.ObjectBucketEncryptionRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || in.Encryption.Algorithm != "AES256" {
 				t.Error(in)
 			}
@@ -35,14 +37,14 @@ func TestBucketDefaultEncryptionClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := c.PutObjectBucketEncryption(context.Background(), "demo/x", "bucket/x", faas.ObjectEncryption{Algorithm: "AES256"})
+	created, err := preview.Wrap(c).PutObjectBucketEncryption(context.Background(), "demo/x", "bucket/x", preview.ObjectEncryption{Algorithm: "AES256"})
 	if err != nil || created.State != "waiting" || created.DesiredEncryption == nil || created.DesiredEncryption.Algorithm != "AES256" {
 		t.Fatal(created, err)
 	}
-	if _, err = c.GetObjectBucketEncryption(context.Background(), "demo/x", "bucket/x"); err != nil {
+	if _, err = preview.Wrap(c).GetObjectBucketEncryption(context.Background(), "demo/x", "bucket/x"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.DeleteObjectBucketEncryption(context.Background(), "demo/x", "bucket/x"); err != nil {
+	if _, err = preview.Wrap(c).DeleteObjectBucketEncryption(context.Background(), "demo/x", "bucket/x"); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(calls) != "[PUT GET DELETE]" {

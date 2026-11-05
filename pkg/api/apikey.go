@@ -332,16 +332,27 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //
 // The closed vocabulary is mirrored at the DB layer by migration
 // 00046's api_keys_scopes_vocab_chk CHECK constraint (and widened by
-// migration 00063 to admit env:read/env:write for issue #395). The Go
-// side is the first line; the constraint is the floor a typo cannot
-// cross.
+// migration 00063 to admit env:read/env:write for issue #395), named
+// api_keys_scopes_vocab_v2_chk since secrets:request
+// (ADR-20261026195952) and api_keys_scopes_vocab_v3_chk since agent
+// (ADR-20261029085359). The Go side is the first line; the constraint is
+// the floor a typo cannot cross.
 const (
 	ScopeAdmin        = "admin"
 	ScopeAppsRead     = "apps:read"
 	ScopeDeployWrite  = "deploy:write"
 	ScopeSecretsRead  = "secrets:read"
 	ScopeSecretsWrite = "secrets:write"
-	ScopeUsageRead    = "usage:read"
+	// ScopeSecretsRequest only opens one-time secret-entry pages for the
+	// account's signed-in user (ADR-20261026174727, ADR-20261026195952). It
+	// never writes or reads a secret value.
+	ScopeSecretsRequest = "secrets:request"
+	// ScopeAgent marks a key made for a headless agent (ADR-20261029085359).
+	// Only such keys open the hosted management MCP server; the key's other
+	// scopes decide its tools. It grants no API route by itself, never
+	// combines with admin, and always carries apps:read.
+	ScopeAgent     = "agent"
+	ScopeUsageRead = "usage:read"
 	// Runs credentials let unattended agents use disposable executions
 	// without granting deployment or secret-management permissions.
 	ScopeRunsRead  = "runs:read"
@@ -405,6 +416,12 @@ const (
 	// deploy:write so a CI key cannot silently take over a source-control
 	// connection.
 	ScopeGithubManage = "github:manage"
+	// ScopePreviewsRead reads the PR preview status of one app and nothing
+	// else. Only an OIDC exchange issues it (capability preview-read), bound
+	// to that app, so pull request CI can wait for its preview without a
+	// stored key (ADR-20261102203228). It is not in validScopes: no API key
+	// carries it.
+	ScopePreviewsRead = "previews:read"
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
@@ -433,6 +450,8 @@ var validScopes = map[string]struct{}{
 	ScopeDeployWrite:               {},
 	ScopeSecretsRead:               {},
 	ScopeSecretsWrite:              {},
+	ScopeSecretsRequest:            {},
+	ScopeAgent:                     {},
 	ScopeUsageRead:                 {},
 	ScopeRunsRead:                  {},
 	ScopeRunsWrite:                 {},
@@ -492,6 +511,16 @@ func NormalizeCreateKeyScopes(requested []string) ([]string, error) {
 		seen[s] = struct{}{}
 		out = append(out, s)
 	}
+	if _, agent := seen[ScopeAgent]; agent {
+		// An agent key is never an admin key, and it can always inspect:
+		// the MCP server's tools all start there (ADR-20261029085359).
+		if _, admin := seen[ScopeAdmin]; admin {
+			return nil, fmt.Errorf("scope %q cannot be combined with %q", ScopeAgent, ScopeAdmin)
+		}
+		if _, read := seen[ScopeAppsRead]; !read {
+			out = append(out, ScopeAppsRead)
+		}
+	}
 	return out, nil
 }
 
@@ -528,6 +557,21 @@ var (
 	// deployment it just created without receiving account-wide apps:read.
 	ScopesDeploymentReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
 
+	// ScopesPreviewStatusReadSurface: read a PR preview's status
+	// (GET /v1/preview/{slug} and its environment). deploy:write is admitted
+	// as for deployment reads, and previews:read is the preview-read OIDC
+	// bearer's only scope (ADR-20261102203228).
+	ScopesPreviewStatusReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopePreviewsRead}
+
+	// ScopesDeployTargetReadSurface: read the app a deploy targets
+	// (GET /v1/apps/{slug}). Every CLI deploy reads its app first, so
+	// deploy:write is admitted for the same reason as above: a deploy
+	// token, a GitHub Actions OIDC bearer or a deploy:write key can deploy
+	// without account-wide apps:read. It reveals nothing new: deploy:write
+	// can already PATCH the app, which answers the same document, and a
+	// deploy token stays bound to its own app (ADR-20261031162858).
+	ScopesDeployTargetReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
+
 	// ScopesUsageReadSurface: the two narrow usage endpoints.
 	// Granted by admin or usage:read.
 	ScopesUsageReadSurface = []string{ScopeAdmin, ScopeUsageRead}
@@ -536,6 +580,21 @@ var (
 	// /v1/apps/{slug}/secrets/{key}. Granted by admin or
 	// secrets:write.
 	ScopesSecretsWriteSurface = []string{ScopeAdmin, ScopeSecretsWrite}
+	// ScopesSecretRequestSurface opens secret-entry pages and reads their
+	// status; secrets:write still allows both.
+	ScopesSecretRequestSurface = []string{ScopeAdmin, ScopeSecretsWrite, ScopeSecretsRequest}
+
+	// ScopesAppForkSecretsSurface: POST /v1/apps/{slug}/forks (ADR-732).
+	// A fork copies production memory, secrets included, so the route
+	// requires this surface in addition to ScopesDeployWriteSurface.
+	// Granted by admin or secrets:read.
+	ScopesAppForkSecretsSurface = []string{ScopeAdmin, ScopeSecretsRead}
+
+	// ScopesAIContentReadSurface: GET
+	// /v1/outbound/integrations/{integration}/ai-requests/{request}/content
+	// (ADR 20261027132936). Captured prompts and answers can hold personal
+	// data, so reading them is granted by admin or secrets:read.
+	ScopesAIContentReadSurface = []string{ScopeAdmin, ScopeSecretsRead}
 
 	// ScopesEnvWriteSurface: PUT/DELETE on /v1/apps/{slug}/env/{key}
 	// (issue #395 / ADR-045). Granted by admin or env:write.
@@ -560,6 +619,13 @@ var (
 	// runtime telemetry on the same trust model as env vars, and the
 	// pusher is typically unattended automation that cannot satisfy MFA.
 	ScopesMetricsWriteSurface = []string{ScopeAdmin, ScopeMetricsWrite}
+
+	// ScopesTracesWriteSurface: POST /v1/otel/v1/traces, the customer
+	// OTLP trace ingest (ADR-127 PR-D). Pushed spans are telemetry on
+	// metrics:write's trust model; deploy:write stays accepted for keys
+	// minted before ingest checked scopes, as on the events and queue
+	// producer routes. A read-only key cannot write traces.
+	ScopesTracesWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeMetricsWrite}
 
 	// Delayed-task routes retain deploy:write/apps:read compatibility while
 	// allowing unattended schedulers to use a purpose-built credential.

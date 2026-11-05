@@ -1,4 +1,4 @@
-// adr: 20261026090000
+// adr: 20261105000513
 package mcpmanagement
 
 import (
@@ -64,7 +64,7 @@ func TestRollbackOutcomeLostReplyExpiry(t *testing.T) {
 			}))
 			defer backend.Close()
 			opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "rollback"}
-			_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,7 +161,7 @@ func rollbackOutcomeFixture(t *testing.T) (*management, string, *api.RollbackOpe
 	}))
 	t.Cleanup(backend.Close)
 	store, _, _ := testStateStore(t)
-	_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "rollback"})
+	_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "rollback"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestRollbackOutcomeSnapshotCompatibility(t *testing.T) {
 			if err := store.updateMany(map[string]any{rollbackOutcomeNamespace + "rollback": snapshot, "future/opaque": map[string]int{"version": 9}}); err != nil {
 				t.Fatal(err)
 			}
-			_, restored, err := newManagementServer(m.client, m.opts)
+			_, restored, err := newHistoryTestManagementServer(m.client, m.opts)
 			valid := change == "preserve" || change == "n_minus_one" || change == "orphan"
 			if valid != (err == nil) {
 				t.Fatalf("restore %s: %v", change, err)

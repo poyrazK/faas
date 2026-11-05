@@ -35,7 +35,7 @@ For external PostgreSQL, run the migration separately with an explicit
 `MIGRATION_DATABASE_URL`, then remove the `release:` line from `Procfile` and the
 `release` section from `gregale.yaml`. Grant the serving role schema USAGE, notes
 SELECT and INSERT, and sequence USAGE. Store only its `DATABASE_URL` with
-`gregale secrets set --app <slug>` or a protected `--secrets-file` outside this
+`gregale env set --app <slug>` or a protected `--secrets-file` outside this
 directory. An ordinary secret named `MIGRATION_DATABASE_URL` does not obtain the
 managed release-only isolation: never attach that secret to a serving workload.
 

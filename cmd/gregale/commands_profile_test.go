@@ -230,7 +230,7 @@ func TestConnectionProfileBashCompletion(t *testing.T) {
 	}{
 		{"gregale --profile sta", 2, "staging"},
 		{"gregale --profile=sta", 1, "--profile=staging"},
-		{"gregale profile use sta", 3, "staging"},
+		{"gregale config profile use sta", 4, "staging"},
 		{"gregale --profile staging profile remove sta", 5, "staging"},
 	} {
 		script := buf.String() + "\ngregale() { printf 'default\\nstaging\\n'; }\nCOMP_WORDS=(" + tc.words + ")\nCOMP_CWORD=" + strconv.Itoa(tc.index) + "\n__gregale\nprintf '%s\\n' \"${COMPREPLY[@]}\"\n"

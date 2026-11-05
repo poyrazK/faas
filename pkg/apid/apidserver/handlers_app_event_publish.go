@@ -2,17 +2,14 @@ package apidserver
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -44,6 +41,10 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "app_event_identity_mismatch", "Application changed", "expected_app_id does not match the resolved application"))
 		return
 	}
+	if problem := s.appEvents.PublishRateProblem(acct, 1); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	appID, source, id, err := appProducerEventIdentity(app.ID, req.Key)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("application identity"))
@@ -54,6 +55,7 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	envelope.Producer = eventcontract.AppProducer(appID)
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]
 	payload, err := json.Marshal(envelope)
@@ -71,7 +73,15 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("event acceptance store"))
 		return
 	}
+	fits := api.WorkflowEventEnvelopeFits(payload)
 	accepted, err := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+	// Preserve a retained duplicate even if it predates the envelope bound.
+	// Invalid oversized numbers can also make PostgreSQL's lookup fail while
+	// decoding jsonb, so report the size limit rather than a transient error.
+	if !fits && err != nil && !errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		if !s.appEvents.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 			return
@@ -99,13 +109,5 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 }
 
 func appProducerEventIdentity(app, key string) (string, string, string, error) {
-	id, err := uuid.Parse(app)
-	if err != nil || id == uuid.Nil {
-		return "", "", "", api.ErrValidation("invalid application identity")
-	}
-	if err := api.ValidateAppEventProducerKey(key); err != nil {
-		return "", "", "", err
-	}
-	digest := sha256.Sum256([]byte(key))
-	return id.String(), "app." + id.String(), "key." + hex.EncodeToString(digest[:]), nil
+	return appevents.AppProducerEventIdentity(app, key)
 }

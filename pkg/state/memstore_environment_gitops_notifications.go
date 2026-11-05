@@ -42,7 +42,8 @@ func (m *MemStore) enqueueEnvironmentGitNotificationLocked(memory *environmentGi
 		return
 	}
 	for _, hook := range m.appWebhooks {
-		if hook.AccountID != memory.source.AccountID || hook.Scope != AppWebhookScopeAccount || !hook.Enabled || !slices.Contains(hook.EventFilter, string(AppWebhookEventEnvironmentGitOpsChanged)) {
+		if hook.AccountID != memory.source.AccountID || hook.Scope != AppWebhookScopeAccount || !hook.Enabled || !slices.Contains(hook.EventFilter, string(AppWebhookEventEnvironmentGitOpsChanged)) ||
+			!m.accountMaySeeOrgLocked(hook.AccountID, m.projects[memory.source.ProjectID].OrgID) {
 			continue
 		}
 		id := newID()

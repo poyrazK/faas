@@ -1,4 +1,4 @@
-"""adr: 20261026090000 — stable rollback identity never leaks into receipt reads."""
+"""adr: 20261105000513 — stable rollback identity never leaks into receipt reads."""
 from uuid import UUID
 
 from faas_sdk.api.deployments import rollback_app, get_rollback_operation

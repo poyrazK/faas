@@ -13,7 +13,7 @@ import (
 
 // WatchCommitRecoveryStatus polls a fixed selection within the caller's deadline.
 // Progress receives detached snapshots; unknown attempts never prove recovery.
-func (c *Client) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult)) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) WatchCommitRecoveryStatus(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult)) (CommitRecoveryStatusResult, error) {
 	return c.WatchCommitRecoveryStatusWithRetry(ctx, plan, applied, previous, refresh, limit, pages, interval, progress, 0)
 }
 
@@ -31,12 +31,12 @@ type CommitRecoveryWatchOptions struct {
 }
 
 // WatchCommitRecoveryStatusWithRetry permits a bounded total number of transient read retries.
-func (c *Client) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) WatchCommitRecoveryStatusWithRetry(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), readRetries int) (CommitRecoveryStatusResult, error) {
 	return c.WatchCommitRecoveryStatusWithOptions(ctx, plan, applied, previous, refresh, limit, pages, interval, progress, CommitRecoveryWatchOptions{ReadRetries: readRetries})
 }
 
 // WatchCommitRecoveryStatusWithOptions enforces optional evidence freshness before settlement.
-func (c *Client) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), options CommitRecoveryWatchOptions) (out CommitRecoveryStatusResult, err error) {
+func (c *PreviewClient) WatchCommitRecoveryStatusWithOptions(ctx context.Context, plan CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, interval time.Duration, progress func(CommitRecoveryStatusResult), options CommitRecoveryWatchOptions) (out CommitRecoveryStatusResult, err error) {
 	if options.WatchDiagnostics {
 		options.Diagnostics = true
 	}

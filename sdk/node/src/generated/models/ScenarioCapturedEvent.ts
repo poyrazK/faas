@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An event an enrolled app published. It never reached the account's event bus; the sealed snapshot is its only record. Platform-generated IDs and times do not compare (ADR-20261020090000).
+ * An event an enrolled app published. It never reached the account's event bus; the sealed snapshot is its only record. Platform-generated IDs and times do not compare.
  */
 export type ScenarioCapturedEvent = {
   id: string;

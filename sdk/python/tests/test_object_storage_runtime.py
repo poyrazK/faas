@@ -1,6 +1,6 @@
 import unittest
 
-from faas_sdk.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
 
 
 def values():

@@ -68,17 +68,20 @@ func TestMetalRestoreUserspaceRNGDiffers(t *testing.T) {
 			continue
 		}
 		ran++
-		for _, reseed := range []bool{true, false} {
-			name := rt.name + "/reseed"
-			if !reseed {
-				name = rt.name + "/reseed-off-control"
-			}
+		// reseed-thread boots with the ADR-20261024105607 thread-mode
+		// client, which must hold the same guarantee.
+		for _, arm := range []struct {
+			name           string
+			reseed, thread bool
+		}{{"reseed", true, false}, {"reseed-thread", true, true}, {"reseed-off-control", false, false}} {
+			reseed := arm.reseed
+			name := rt.name + "/" + arm.name
 			t.Run(name, func(t *testing.T) {
 				env := map[string]string{}
 				if !reseed {
 					env["GREGALE_RESTORE_RESEED"] = "off"
 				}
-				first, second := restoreSnapshotTwice(t, kernel, tarball, rt.file, rt.script, rt.entrypoint, env)
+				first, second := restoreSnapshotTwice(t, kernel, tarball, rt.file, rt.script, rt.entrypoint, env, arm.thread)
 				t.Logf("restore 1: %v", first)
 				t.Logf("restore 2: %v", second)
 				if reseed {
@@ -105,7 +108,7 @@ func TestMetalRestoreUserspaceRNGDiffers(t *testing.T) {
 // restoreSnapshotTwice cold-boots the app, parks it into one snapshot, then
 // restores that snapshot twice (destroying the first instance in between)
 // and returns the JSON each restored process served on its first request.
-func restoreSnapshotTwice(t *testing.T, kernel, tarball, file, script string, entrypoint []string, env map[string]string) (map[string]any, map[string]any) {
+func restoreSnapshotTwice(t *testing.T, kernel, tarball, file, script string, entrypoint []string, env map[string]string, thread bool) (map[string]any, map[string]any) {
 	t.Helper()
 	dir := benchFixtureDir(t)
 	base := filepath.Join(dir, "rng-base.ext4")
@@ -128,7 +131,7 @@ func restoreSnapshotTwice(t *testing.T, kernel, tarball, file, script string, en
 	if err != nil {
 		t.Fatal(err)
 	}
-	vmm := newMetalVMM(t, 60*time.Second).WithStorage(store)
+	vmm := newMetalVMM(t, 60*time.Second).WithStorage(store).WithRestoreReseedThread(thread)
 	stageBenchMountHelper(t, vmm)
 	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
@@ -206,16 +209,24 @@ func buildRuntimeBaseExt4(dst, repoRoot, tarball, file, script string, entrypoin
 		}
 	}
 	_ = os.Remove(filepath.Join(work, "sbin", "init"))
-	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", filepath.Join(work, "sbin", "init"), ".")
-	build.Dir = filepath.Join(repoRoot, "guest", "init")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
-	if out, err := build.CombinedOutput(); err != nil {
-		return fmt.Errorf("build guest-init: %w: %s", err, out)
+	if prebuilt := os.Getenv("FAAS_TEST_GUEST_INIT_BIN"); prebuilt != "" {
+		// A host that runs the suite as root without a Go toolchain uses a
+		// guest-init built from this tree elsewhere.
+		if err := bbCopyFile(prebuilt, filepath.Join(work, "sbin", "init")); err != nil {
+			return fmt.Errorf("copy prebuilt guest-init: %w", err)
+		}
+	} else {
+		build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", filepath.Join(work, "sbin", "init"), ".")
+		build.Dir = filepath.Join(repoRoot, "guest", "init")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+		if out, err := build.CombinedOutput(); err != nil {
+			return fmt.Errorf("build guest-init: %w: %s", err, out)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(work, file), []byte(script), 0o644); err != nil {
 		return err
 	}
-	manifest, err := json.Marshal(map[string]any{"entrypoint": entrypoint, "port": 8080, "env": env})
+	manifest, err := json.Marshal(map[string]any{"entrypoint": rootfsEntrypoint(work, entrypoint), "port": 8080, "env": env})
 	if err != nil {
 		return err
 	}
@@ -245,6 +256,25 @@ func buildRuntimeBaseExt4(dst, repoRoot, tarball, file, script string, entrypoin
 		return fmt.Errorf("mkfs.ext4: %w: %s", err, out)
 	}
 	return os.Chmod(dst, 0o644)
+}
+
+// rootfsEntrypoint points an absolute interpreter path at the copy the
+// unpacked rootfs has: wolfi installs python3 in /usr/bin, the
+// python:3.12-slim runner base in /usr/local/bin.
+func rootfsEntrypoint(root string, entrypoint []string) []string {
+	if len(entrypoint) == 0 || !filepath.IsAbs(entrypoint[0]) {
+		return entrypoint
+	}
+	if _, err := os.Lstat(filepath.Join(root, entrypoint[0])); err == nil {
+		return entrypoint
+	}
+	for _, dir := range []string{"/usr/local/bin", "/usr/bin", "/bin"} {
+		candidate := filepath.Join(dir, filepath.Base(entrypoint[0]))
+		if _, err := os.Lstat(filepath.Join(root, candidate)); err == nil {
+			return append([]string{candidate}, entrypoint[1:]...)
+		}
+	}
+	return entrypoint
 }
 
 // The probe apps draw from every in-process generator at startup, so the

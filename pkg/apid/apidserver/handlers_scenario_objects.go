@@ -31,7 +31,7 @@ func (s *server) configureRehearsalObjects(ctx context.Context, getenv func(stri
 }
 func (s *server) createScenarioObjects(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.rehearsalObjectsEnabled || s.rehearsalObjects == nil || !s.rehearsalCommandsEnabled || !s.rehearsalNetworkEnabled || !s.rehearsalSimulationEnabled {
-		api.WriteProblem(w, api.ErrCapacity("isolated object rehearsal support is disabled"))
+		api.WriteProblem(w, api.ErrRehearsalNotEnabled("Isolated object storage fixtures"))
 		return
 	}
 	var req rehearsalobj.CreateRequest

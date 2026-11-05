@@ -183,14 +183,14 @@ func TestDataAPICheckHostedInspectsOnceAndNeverMutatesApp(t *testing.T) {
 			var calls atomic.Int32
 			management := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
-				if r.Method != "POST" || r.URL.Path != "/v1/apps/notes/tasks" {
+				if r.Method != "POST" || r.URL.Path != "/v1/apps/notes/data-api/contract-tasks" {
 					t.Errorf("unexpected app mutation %s %s", r.Method, r.URL.Path)
 				}
-				var request api.CreateAppTaskRequest
+				var request api.CreateDataAPIContractTaskRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Error(err)
 				}
-				if strings.Join(request.Command, " ") != "node /app/types.mjs --snapshot" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
+				if request.Kind != api.DataAPIContractSchema {
 					t.Errorf("unexpected task: %+v", request)
 				}
 				task := api.AppTaskResponse{ID: "inspection", DeploymentID: "revision", Status: api.AppTaskStatusSucceeded, StdoutTail: string(content)}

@@ -1,0 +1,51 @@
+---
+# ADR-989 app relay: vmmd's relay client leaf is a fleet-PKI feature leaf
+# (pkg/pki outbound-relay) that carries this node's identity, the
+# compute_nodes.name outboundd's relay accepts. Only the CA's host issues it:
+# the control plane writes it into a per-node staging directory and this node
+# copies it in. A run keeps a leaf that stays valid for 30 days or more, so
+# this is also its renewal. vmmd reads the leaf at start, so a new leaf
+# restarts it.
+- name: vmmd_service — require an issuer for vmmd's relay client leaf (ADR-989)
+  ansible.builtin.assert:
+    that:
+      - (faas_box_role | default('single-box')) == 'compute-only'
+      - faas_vmmd_outbound_relay_target is match('tcp://')
+      - faas_vmmd_outbound_relay_tls_issuer_host | length > 0
+      - faas_node_name | default('') is match('^[A-Za-z0-9._-]+$')
+    fail_msg: >-
+      faas_vmmd_outbound_relay_tls_managed is for a compute node whose relay
+      target is tcp:// (a single box uses outboundd's Unix socket). The leaf is
+      issued on the control plane: the inventory needs a control_plane host
+      and this node's faas_node_name.
+
+- name: vmmd_service — issue vmmd's relay client leaf on the control plane (ADR-989)
+  ansible.builtin.command:
+    argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, outbound-relay, --box-role, compute-only,
+           --cn, "{{ faas_node_name }}", --ca-dir, /etc/faas/tls,
+           --root-dir, "/var/lib/faas/pki-features/{{ faas_node_name }}"]
+  delegate_to: "{{ faas_vmmd_outbound_relay_tls_issuer_host }}"
+  register: faas_vmmd_relay_tls_issued
+  changed_when: (faas_vmmd_relay_tls_issued.stdout | from_json).issued | length > 0
+
+- name: vmmd_service — read the staged relay client leaf (ADR-989)
+  ansible.builtin.slurp:
+    src: "/var/lib/faas/pki-features/{{ faas_node_name }}/vmmd/{{ item }}"
+  delegate_to: "{{ faas_vmmd_outbound_relay_tls_issuer_host }}"
+  register: faas_vmmd_relay_tls_staged
+  loop: [outboundd-client.crt, outboundd-client.key]
+  no_log: true
+
+# vmmd runs as root, so the key stays root-only like vmmd's other leaves.
+- name: vmmd_service — install vmmd's relay client leaf (ADR-989)
+  ansible.builtin.copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "{{ vmmd_outbound_client_tls_cert_path if item.item.endswith('.crt') else vmmd_outbound_client_tls_key_path }}"
+    owner: root
+    group: root
+    mode: "{{ '0400' if item.item.endswith('.key') else '0444' }}"
+  loop: "{{ faas_vmmd_relay_tls_staged.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  no_log: true
+  notify: restart faas-vmmd

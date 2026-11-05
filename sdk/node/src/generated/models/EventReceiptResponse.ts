@@ -24,7 +24,7 @@ export type EventReceiptResponse = {
    */
   routing_settled_at?: string;
   /**
-   * Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.
+   * Settled receipt retention boundary: the settled-receipt window of the plan after routing settled. Absent for active routing.
    */
   retain_until?: string;
   /**

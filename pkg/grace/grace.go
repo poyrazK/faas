@@ -22,7 +22,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -80,6 +82,10 @@ type Params struct {
 type Grace struct {
 	p       Params
 	metrics *metrics
+	// mu guards blocked: the tombstones whose last purge was refused. It is
+	// in memory, so a restart retries every one at once.
+	mu      sync.Mutex
+	blocked map[string]purgeBlock
 }
 
 // New returns a Grace ready to Run. Defaults: Interval 60s, Now
@@ -106,7 +112,7 @@ func New(p Params) *Grace {
 	if p.Audit == nil {
 		p.Audit = noopAuditor{}
 	}
-	return &Grace{p: p, metrics: newMetrics(p.Registry)}
+	return &Grace{p: p, metrics: newMetrics(p.Registry), blocked: map[string]purgeBlock{}}
 }
 
 // noopAuditor discards every emit. Default for tests.
@@ -158,6 +164,8 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		return err
 	}
 	cutoff := g.p.Now().Add(-state.DeletionGraceDuration())
+	deferred := 0
+	defer func() { g.metrics.setAccountsDeferred(deferred) }()
 	for _, acct := range rows {
 		if acct.Status != state.AccountDeletedPending {
 			continue
@@ -171,8 +179,19 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		if g.p.BeforeAccountDelete != nil {
 			if err := g.p.BeforeAccountDelete(ctx, acct); err != nil {
 				g.p.Log.Warn("grace: external cleanup deferred", "account", acct.ID, "err", err)
+				deferred++
 				continue
 			}
+		}
+		if err := g.deleteAccountAppArtifacts(ctx, acct.ID); err != nil {
+			g.p.Log.Warn("grace: app artifact cleanup deferred", "account", acct.ID, "err", err)
+			deferred++
+			continue
+		}
+		if err := g.startAccountHostingDeletion(ctx, acct.ID); err != nil {
+			g.p.Log.Warn("grace: hosting site cleanup deferred", "account", acct.ID, "err", err)
+			deferred++
+			continue
 		}
 		// Past grace — hard delete. The next tick will skip this row
 		// because DeleteAccount removed it; we still guard on the
@@ -182,6 +201,17 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 			if errors.Is(err, state.ErrNotFound) {
 				continue
 			}
+			// A refused erasure is held, not dropped: it counts toward
+			// apid_account_grace_deferred_accounts, so
+			// FaasAccountErasureDeferred pages after a day. Before, it was
+			// only this log line, every tick, forever (2026-11-03).
+			deferred++
+			stage := "account_purge"
+			var blocked *state.AccountPurgeBlockedError
+			if errors.As(err, &blocked) {
+				stage = "account_purge_" + blocked.Reason
+			}
+			g.metrics.failure(stage)
 			g.p.Log.Warn("grace: hard delete failed", "account", acct.ID, "err", err)
 			continue
 		}
@@ -233,6 +263,86 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 	return g.RunAppsOnce(ctx)
 }
 
+// deleteAccountAppArtifacts deletes the stored rootfs layers, sidecar layers
+// and snapshot objects of an account's live personal apps before
+// DeleteAccount drops the rows that name them. Account deletion does not
+// tombstone the apps, so the app purge never ran for them and their objects
+// stayed in the snapshot backend and layer store forever (bug hunt
+// 2026-10-28 B19). Any failure defers the account to the next pass.
+// startAccountHostingDeletion starts the deletion of every active hosting site
+// of an account past its grace. The hosting reconciler retires each site's
+// routes and releases and then purges it; DeleteAccount refuses
+// (hosting_site) until none is left, so the account waits a few ticks.
+func (g *Grace) startAccountHostingDeletion(ctx context.Context, accountID string) error {
+	hosting, ok := g.p.Store.(state.HostingStore)
+	if !ok {
+		return nil
+	}
+	sites, err := hosting.ListHostingSites(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list hosting sites: %w", err)
+	}
+	for _, site := range sites {
+		if site.Status != "active" {
+			continue
+		}
+		if _, err := hosting.DeleteHostingSite(ctx, accountID, site.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("delete hosting site %s: %w", site.ID, err)
+		}
+	}
+	return nil
+}
+
+func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string) error {
+	apps, err := g.p.Store.ListApps(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list account apps: %w", err)
+	}
+	for _, app := range apps {
+		if app.AccountID != accountID {
+			continue
+		}
+		// A company app outlives its creator's account: DeleteAccount keeps
+		// it, and its organization keeps running it. Its rootfs layers and
+		// snapshots must stay, or the app can neither wake nor cold-boot
+		// (invariant 3, bug hunt 35). Only personal apps go with the account.
+		personal, err := g.personalApp(ctx, app)
+		if err != nil {
+			return fmt.Errorf("check organization of app %s: %w", app.ID, err)
+		}
+		if !personal {
+			continue
+		}
+		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("list artifacts of app %s: %w", app.ID, err)
+		}
+		if len(artifacts) != 0 && g.p.Artifacts == nil {
+			return fmt.Errorf("app %s has %d artifacts and no artifact backend is configured", app.ID, len(artifacts))
+		}
+		for _, artifact := range artifacts {
+			if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
+				g.metrics.failure("delete_artifact")
+				return fmt.Errorf("delete artifact of app %s: %w", app.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+// personalApp reports whether app goes with its account on erasure: it has no
+// organization or the account's personal one, as DeleteAccount decides.
+func (g *Grace) personalApp(ctx context.Context, app state.App) (bool, error) {
+	if app.OrgID == "" {
+		return true, nil
+	}
+	org, err := g.p.Store.OrgByID(ctx, app.OrgID)
+	if err != nil {
+		return false, err
+	}
+	return org.Personal, nil
+}
+
 // RunAppsOnce permanently removes app tombstones whose seven-day restore
 // window has elapsed. It is separate so callers and tests can drive app
 // cleanup independently from the account sweep.
@@ -245,8 +355,15 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 	now := g.p.Now()
 	missingDeadlines := 0
 	var retainedArtifactBytes int64
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	listed := make(map[string]struct{}, len(rows))
 	for _, app := range rows {
+		listed[app.ID] = struct{}{}
 		if app.DeleteGraceUntil != nil && app.DeleteGraceUntil.After(now) {
+			continue
+		}
+		if g.backingOff(app.ID, now) {
 			continue
 		}
 		if app.DeleteGraceUntil != nil {
@@ -303,13 +420,10 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 			continue
 		}
 		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				continue
-			}
-			g.metrics.failure("delete_database")
-			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
+			g.purgeRefused(ctx, app, err, now)
 			continue
 		}
+		delete(g.blocked, app.ID)
 		g.metrics.deleted.Inc()
 		// Reuse the existing lifecycle channel so schedd's cleanup path
 		// gets a durable redelivery signal. The app row has already been
@@ -324,6 +438,7 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		})
 		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
 	}
+	g.recordBlocked(listed)
 	g.metrics.missingDeadlines.Set(float64(missingDeadlines))
 	g.metrics.expiredArtifactBytes.Set(float64(retainedArtifactBytes))
 	g.metrics.lastSuccess.SetToCurrentTime()

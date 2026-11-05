@@ -15,6 +15,8 @@ type WorkflowMetrics struct {
 	AwaitingEvents      *prometheus.GaugeVec
 	DeadLetterTotal     *prometheus.CounterVec
 	DispatchLagSeconds  *prometheus.HistogramVec
+	DispatchSlotsBusy   prometheus.Gauge
+	DispatchSlots       prometheus.Gauge
 }
 
 // NewWorkflowMetrics creates and registers workflow metric families with the given registerer.
@@ -67,11 +69,19 @@ func NewWorkflowMetrics(reg prometheus.Registerer) *WorkflowMetrics {
 		DispatchLagSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "workflow_dispatch_lag_seconds",
-				Help:    "Delay between scheduled_for and actual step execution dispatch in seconds.",
-				Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10},
+				Help:    "Seconds between a run's scheduled_for and schedd claiming it for dispatch.",
+				Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600},
 			},
 			[]string{"plan"},
 		),
+		DispatchSlotsBusy: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "workflow_dispatch_slots_busy",
+			Help: "Workflow dispatch slots found still busy by the last dispatch tick.",
+		}),
+		DispatchSlots: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "workflow_dispatch_slots",
+			Help: "Workflow dispatch slots one scheduler may run at once.",
+		}),
 	}
 
 	if reg != nil {
@@ -83,6 +93,8 @@ func NewWorkflowMetrics(reg prometheus.Registerer) *WorkflowMetrics {
 			m.AwaitingEvents,
 			m.DeadLetterTotal,
 			m.DispatchLagSeconds,
+			m.DispatchSlotsBusy,
+			m.DispatchSlots,
 		)
 	}
 
@@ -105,6 +117,23 @@ func (m *WorkflowMetrics) ObserveStepComplete(app, plan, step, outcome string, d
 	}
 	m.StepsTotal.WithLabelValues(app, plan, step, outcome).Inc()
 	m.StepDurationSeconds.WithLabelValues(app, plan, step).Observe(duration.Seconds())
+}
+
+// ObserveDispatchLag records how late a due run was claimed.
+func (m *WorkflowMetrics) ObserveDispatchLag(plan string, lag time.Duration) {
+	if m == nil {
+		return
+	}
+	m.DispatchLagSeconds.WithLabelValues(plan).Observe(max(0, lag.Seconds()))
+}
+
+// SetDispatchSlots records how many dispatch slots the last tick found busy.
+func (m *WorkflowMetrics) SetDispatchSlots(busy, slots int) {
+	if m == nil {
+		return
+	}
+	m.DispatchSlotsBusy.Set(float64(busy))
+	m.DispatchSlots.Set(float64(slots))
 }
 
 // ObserveDeadLetter records a dead-letter event.

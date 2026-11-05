@@ -101,7 +101,7 @@ def sync_detailed(
 ) -> Response[FinancialBudgetChannelsResponse | Problem]:
     """Replace the notification channels a budget's threshold alerts also go to.
 
-     Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+     Requires admin scope, session MFA and Idempotency-Key.
     Every id must be one of the account's notification channels, at most 5,
     without duplicates. Each threshold alert is delivered once per channel
     and retried with backoff for up to 12 attempts. A channel added later
@@ -113,7 +113,7 @@ def sync_detailed(
         id (UUID):
         idempotency_key (str):
         body (SetFinancialBudgetChannelsRequest): The full replacement set of notification
-            channels for a budget's alerts (ADR-20261019193500).
+            channels for a budget's alerts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,7 +145,7 @@ def sync(
 ) -> FinancialBudgetChannelsResponse | Problem | None:
     """Replace the notification channels a budget's threshold alerts also go to.
 
-     Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+     Requires admin scope, session MFA and Idempotency-Key.
     Every id must be one of the account's notification channels, at most 5,
     without duplicates. Each threshold alert is delivered once per channel
     and retried with backoff for up to 12 attempts. A channel added later
@@ -157,7 +157,7 @@ def sync(
         id (UUID):
         idempotency_key (str):
         body (SetFinancialBudgetChannelsRequest): The full replacement set of notification
-            channels for a budget's alerts (ADR-20261019193500).
+            channels for a budget's alerts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,7 +184,7 @@ async def asyncio_detailed(
 ) -> Response[FinancialBudgetChannelsResponse | Problem]:
     """Replace the notification channels a budget's threshold alerts also go to.
 
-     Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+     Requires admin scope, session MFA and Idempotency-Key.
     Every id must be one of the account's notification channels, at most 5,
     without duplicates. Each threshold alert is delivered once per channel
     and retried with backoff for up to 12 attempts. A channel added later
@@ -196,7 +196,7 @@ async def asyncio_detailed(
         id (UUID):
         idempotency_key (str):
         body (SetFinancialBudgetChannelsRequest): The full replacement set of notification
-            channels for a budget's alerts (ADR-20261019193500).
+            channels for a budget's alerts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -226,7 +226,7 @@ async def asyncio(
 ) -> FinancialBudgetChannelsResponse | Problem | None:
     """Replace the notification channels a budget's threshold alerts also go to.
 
-     Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+     Requires admin scope, session MFA and Idempotency-Key.
     Every id must be one of the account's notification channels, at most 5,
     without duplicates. Each threshold alert is delivered once per channel
     and retried with backoff for up to 12 attempts. A channel added later
@@ -238,7 +238,7 @@ async def asyncio(
         id (UUID):
         idempotency_key (str):
         body (SetFinancialBudgetChannelsRequest): The full replacement set of notification
-            channels for a budget's alerts (ADR-20261019193500).
+            channels for a budget's alerts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

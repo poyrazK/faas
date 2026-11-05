@@ -153,8 +153,9 @@ func TestScan_ComposeK8sFixture(t *testing.T) {
 			if w.Class != ClassHTTP {
 				t.Errorf("api Class = %q, want http (compose publishes a port)", w.Class)
 			}
-			if len(w.Ports) != 1 || w.Ports[0] != 8080 {
-				t.Errorf("api Ports = %v, want [8080]", w.Ports)
+			// The container side of the mapping (ADR-20261103112845).
+			if len(w.Ports) != 1 || w.Ports[0] != 80 {
+				t.Errorf("api Ports = %v, want [80]", w.Ports)
 			}
 			if !equalSet(w.EnvKeys, []string{"RAILS_ENV", "DATABASE_URL"}) {
 				t.Errorf("api EnvKeys = %v, want {RAILS_ENV, DATABASE_URL}", w.EnvKeys)
@@ -341,10 +342,11 @@ func TestScan_SortedByNameCaseInsensitive(t *testing.T) {
 func TestHashWorkloadSourceScopesContentAndBuildMetadata(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"services/api/server.js": &fstest.MapFile{Data: []byte("v1")},
-		"README.md":              &fstest.MapFile{Data: []byte("outside-v1")},
+		"services/api/server.js":  &fstest.MapFile{Data: []byte("v1")},
+		"services/api/Dockerfile": &fstest.MapFile{Data: []byte("FROM node:22")},
+		"README.md":               &fstest.MapFile{Data: []byte("outside-v1")},
 	}
-	workload := Workload{RootDir: "services/api", Dockerfile: "Dockerfile", Command: []string{"node", "server.js"}}
+	workload := Workload{RootDir: "services/api", Dockerfile: "Dockerfile", Command: []string{"node", "server.js"}, DetectedBy: Detection{Detector: DetectorCompose}}
 	base, err := hashWorkloadSource(fsys, workload)
 	if err != nil {
 		t.Fatal(err)

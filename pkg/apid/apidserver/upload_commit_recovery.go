@@ -1,17 +1,19 @@
 package apidserver
 
 import (
-	"context"
 	"errors"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // uploadCommitRecoveryProblem recovers a retained outcome only after deriving
-// its owner from the deployment. A missing session row no longer supplies the
+// its app from the deployment and authorizing the caller for it, as the
+// session's own routes do. A missing session row no longer supplies the
 // account boundary, and the outcome itself contains no account ID.
-func (s *server) uploadCommitRecoveryProblem(ctx context.Context, accountID, uploadID string) *api.Problem {
+func (s *server) uploadCommitRecoveryProblem(r *http.Request, acct state.Account, uploadID string) *api.Problem {
+	ctx := r.Context()
 	outcome, err := s.store.GetUploadCommitOutcome(ctx, uploadID)
 	if errors.Is(err, state.ErrNotFound) {
 		return api.ErrUploadSessionExpired(uploadID)
@@ -33,7 +35,7 @@ func (s *server) uploadCommitRecoveryProblem(ctx context.Context, accountID, upl
 	if err != nil {
 		return api.ErrCapacity("could not load upload app")
 	}
-	if app.AccountID != accountID {
+	if _, prob := s.authorizeUploadApp(r, acct, app); prob != nil {
 		return api.ErrUploadSessionNotFound(uploadID)
 	}
 	return api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID)

@@ -114,7 +114,9 @@ func TestServiceAuthorizationExplanation(t *testing.T) {
 		{"project outsider", "GET", "/invoices", "denied", "target_not_declared", func(c, t *api.AppResponse) {
 			c.ServiceBindingPolicy, c.ProjectID, t.ProjectID = api.ServiceBindingPolicyProject, "shop", "search"
 		}},
-		{"project outsider declared", "GET", "/invoices", "allowed", "target_declared", func(c, t *api.AppResponse) {
+		// ADR-20261030131528: a project service's bindings name its own
+		// project's services.
+		{"project outsider declared", "GET", "/invoices", "denied", "binding_outside_project", func(c, t *api.AppResponse) {
 			c.ServiceBindingPolicy, c.ProjectID = api.ServiceBindingPolicyProject, "shop"
 			c.ServiceBindings = []api.AppServiceBinding{{Service: "billing"}}
 		}},

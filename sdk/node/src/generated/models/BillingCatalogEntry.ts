@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row in the provider price + product catalog (PR-P3).
+ * One row in the provider price + product catalog.
  * Plan values are the billable api.Plan constants
  * ("hobby", "pro", "scale") — PlanFree is intentionally
  * absent because it carries no recurring line item.

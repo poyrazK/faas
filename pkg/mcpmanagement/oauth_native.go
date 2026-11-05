@@ -2,7 +2,9 @@ package mcpmanagement
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -26,6 +28,12 @@ func (r *remoteServer) nativeLogin(w http.ResponseWriter, req *http.Request, flo
 		r.startNativeLogin(ctx, w, req, flow, client)
 		return
 	}
+	r.finishNativeLogin(ctx, w, req, flow, client, req.PostForm.Get("csrf"))
+}
+
+// finishNativeLogin exchanges the approved browser code for the connection's
+// key. The key is an mcp-login key, so the grant renews it while used.
+func (r *remoteServer) finishNativeLogin(ctx context.Context, w http.ResponseWriter, req *http.Request, flow *authorizationRequest, client *api.Client, csrf string) {
 	if flow.NativeCode == "" {
 		oauthError(w, 400, "invalid_request", "Start Gregale sign-in first")
 		return
@@ -36,24 +44,99 @@ func (r *remoteServer) nativeLogin(w http.ResponseWriter, req *http.Request, flo
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if active := r.requests[flow.ID]; active != nil {
-			r.renderConsent(w, active, req.PostForm.Get("csrf"), "")
+			r.renderConsent(w, active, csrf, "")
 			return
 		}
+	}
+	// An organization that doesn't allow agents, or a role that can't
+	// connect them, refuses the exchange (ADR-20261101225122).
+	if errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusForbidden {
+		oauthError(w, http.StatusForbidden, "access_denied", apiErr.Problem.Detail)
+		return
 	}
 	expiry, expiryErr := time.Parse(time.RFC3339, result.ExpiresAt)
 	if err != nil || expiryErr != nil || result.Plaintext == "" || result.Account.ID == "" || !expiry.After(time.Now()) {
 		oauthError(w, 401, "access_denied", "Gregale sign-in expired or could not be verified; start a new connection")
 		return
 	}
-	r.prepareAccount(w, req, flow, r.apiClient(result.Plaintext), result.Account.ID, minTime(expiry, time.Now().Add(oauthGrantTTL)))
+	client = r.apiClient(result.Plaintext)
+	r.nameAgentClient(ctx, client, flow)
+	r.prepareAccount(w, req, flow, client, result.Account.ID, minTime(expiry, time.Now().Add(maxConnectionLifetime)), csrf, true)
+}
+
+// continueLogin is where apid sends the browser after the user approves a
+// hosted connection's code (ADR-20261028205920): the flow cookie names the
+// flow, so the user reviews the account without returning to another tab.
+func (r *remoteServer) continueLogin(w http.ResponseWriter, req *http.Request) {
+	cookie, err := req.Cookie(flowCookieName)
+	if err != nil || r.opts.Onboarding != "browser" {
+		oauthError(w, 400, "invalid_request", "This sign-in is no longer open here; start again from your agent")
+		return
+	}
+	hash := tokenHash(cookie.Value)
+	csrf, err := randomToken("gmcp_csrf_")
+	if err != nil {
+		oauthError(w, 500, "server_error", "Could not continue authorization")
+		return
+	}
+	r.mu.Lock()
+	r.pruneLocked()
+	var flow *authorizationRequest
+	for _, candidate := range r.requests {
+		if subtle.ConstantTimeCompare([]byte(candidate.CookieHash), []byte(hash)) == 1 {
+			flow = candidate
+			break
+		}
+	}
+	if flow == nil || flow.NativeCode == "" || flow.GrantID != "" {
+		r.mu.Unlock()
+		oauthError(w, 400, "invalid_request", "This sign-in is no longer open here; start again from your agent")
+		return
+	}
+	// The page this replaces held the old token; the review page gets a new one.
+	flow.CSRFHash = tokenHash(csrf)
+	copyFlow := *flow
+	r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(req.Context(), r.opts.Timeout)
+	defer cancel()
+	r.finishNativeLogin(ctx, w, req, &copyFlow, r.apiClient(""), csrf)
 }
 
 func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWriter, req *http.Request, flow *authorizationRequest, client *api.Client) {
 	if flow.NativeCode != "" {
-		oauthError(w, 400, "invalid_request", "Sign-in already started")
+		// A browser back to the first page resubmits it: show the sign-in
+		// link and "I authorized" again rather than failing the flow.
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if active := r.requests[flow.ID]; active != nil {
+			r.renderConsent(w, active, req.PostForm.Get("csrf"), "")
+			return
+		}
+		oauthError(w, 400, "invalid_request", "Browser authorization expired; start again from your agent")
 		return
 	}
-	code, err := client.MintMCPAuthCode(ctx, slices.Contains(flow.Scopes, scopeWrite))
+	writes := slices.Contains(flow.Scopes, scopeWrite)
+	capabilities, err := chosenCapabilities(req.PostForm["capability"], writes)
+	if err != nil {
+		oauthError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	toolsets, err := connectionToolsets(req.PostForm.Get("toolsets"), r.opts.Toolsets)
+	if err != nil {
+		oauthError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	var code api.CliAuthCodeResponse
+	if len(capabilities) == 0 {
+		code, err = client.MintMCPAuthCode(ctx, writes)
+	} else {
+		// The code carries exactly these scopes (ADR-20261026195952).
+		scopes := append([]string(nil), capabilities...)
+		if writes {
+			scopes = append([]string{api.ScopeDeployWrite}, scopes...)
+		}
+		code, err = client.MintScopedMCPAuthCode(ctx, scopes)
+	}
 	login, parseErr := url.Parse(code.URL)
 	// The API controls its console origin; never render credential-bearing,
 	// script or arbitrary non-browser redirect schemes.
@@ -69,11 +152,25 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		oauthError(w, 400, "access_denied", "Browser authorization expired or was already started")
 		return
 	}
-	active.NativeCode, active.NativeURL = code.Code, code.URL
+	active.NativeCode, active.NativeURL, active.Capabilities = code.Code, code.URL, capabilities
+	active.Toolsets = toolsets
+	r.opts.Telemetry.consentStep("sign_in_started")
+	if r.opts.Hosted {
+		// One tab: approval sends the browser back to continueLogin
+		// (ADR-20261028205920); this page's "I authorized" stays as a fallback.
+		query := login.Query()
+		query.Set("return", "mcp")
+		login.RawQuery = query.Encode()
+		active.NativeURL = login.String()
+		http.Redirect(w, req, active.NativeURL, http.StatusSeeOther)
+		return
+	}
 	r.renderConsent(w, active, req.PostForm.Get("csrf"), "")
 }
 
-func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, flow *authorizationRequest, client *api.Client, accountID string, expiry time.Time) {
+// prepareAccount records the signed-in account for review. A renewable
+// grant holds an mcp-login key the bridge renews while it is used.
+func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, flow *authorizationRequest, client *api.Client, accountID string, expiry time.Time, csrf string, renewable bool) {
 	ctx, cancel := context.WithTimeout(req.Context(), r.opts.Timeout)
 	defer cancel()
 	account, err := client.Whoami(ctx)
@@ -81,12 +178,16 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 401, "access_denied", "Gregale could not verify this account credential")
 		return
 	}
-	apps, err := client.ListApps(ctx)
+	org, orgName := "", ""
+	if account.KeyOrg != nil {
+		org, orgName = account.KeyOrg.Slug, account.KeyOrg.Name
+	}
+	apps, err := listApps(ctx, client, org)
 	if err != nil {
 		oauthError(w, 403, "access_denied", "Credential must permit app inspection")
 		return
 	}
-	environments, err := discoverEnvironments(ctx, client)
+	environments, err := discoverEnvironments(ctx, client, org)
 	if err != nil {
 		oauthError(w, 502, "server_error", "Gregale could not load environments for consent")
 		return
@@ -95,6 +196,7 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 	for i, app := range apps {
 		apps[i] = api.AppResponse{ID: app.ID, Slug: app.Slug}
 	}
+	r.releaseRevokedGrants(ctx, account.ID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pruneLocked()
@@ -103,8 +205,12 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 400, "access_denied", "Browser authorization expired or was already reviewed")
 		return
 	}
-	if len(r.grants) >= maxOAuthEntries {
+	if len(r.grants) >= r.capacity() {
 		oauthError(w, 429, "temporarily_unavailable", "Authorization grant capacity reached")
+		return
+	}
+	if r.opts.Hosted && r.accountGrantsLocked(account.ID) >= hostedGrantsPerAccount {
+		oauthError(w, 429, "temporarily_unavailable", fmt.Sprintf("This account already has %d agent connections. Revoke one with `gregale mcp connection revoke`, or wait for one to expire.", hostedGrantsPerAccount))
 		return
 	}
 	id, err := randomToken("gmcp_grant_")
@@ -112,10 +218,12 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 500, "server_error", "Could not prepare account connection")
 		return
 	}
-	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: append([]string(nil), flow.Scopes...), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, availableApps: apps, availableEnvironments: environments}
+	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: grantScopes(flow.Scopes, account.KeyScopes), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, renewable: renewable, credentialIssued: time.Now(), availableApps: apps, availableEnvironments: environments, capabilities: keyCapabilities(flow.Capabilities, account.KeyScopes), org: org, orgName: orgName, toolsets: slices.Clone(flow.Toolsets), projects: account.KeyProjects}
 	r.grants[id], active.GrantID = g, id
+	active.Toolsets = slices.Clone(g.toolsets)
+	r.opts.Telemetry.consentStep("signed_in")
 	active.NativeCode, active.NativeURL = "", ""
-	r.renderConsent(w, active, req.PostForm.Get("csrf"), account.ID)
+	r.renderConsent(w, active, csrf, account.ID)
 }
 
 func selectedApps(req *http.Request, apps []api.AppResponse) (map[string]string, error) {

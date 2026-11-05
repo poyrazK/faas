@@ -1,13 +1,13 @@
 # Installing the gregale CLI
 
-The curl installer is the available install path. The npm channel is staged
-by the release workflow, but is not available until a release successfully
-publishes it to the public registry. Decision and rejected alternatives:
+Two channels ship the same release archives: the curl installer and npm.
+On npm, use the `rc` tag until the first stable release (see [npm](#npm)).
+Decision and rejected alternatives:
 [ADR-172](adr/172-cli-distribution-channels.md).
 
 | | curl installer | npm |
 |---|---|---|
-| Command | `curl -fsSL https://get.gregale.dev \| sh` | `npm install -g gregale@rc` after publication |
+| Command | `curl -fsSL https://get.gregale.dev \| sh` | `npm install -g gregale@rc` |
 | Needs | curl/wget, tar, sha256sum | Node ≥ 18 |
 | Verifies checksum | yes, against the release `CLI-SHA256SUMS` | yes, npm integrity + provenance |
 | Pin a version | `--version v0.1.18` | `gregale@0.1.18` |
@@ -24,7 +24,9 @@ curl -fsSL https://get.gregale.dev | sh
 
 Installs to `$HOME/.local/bin` as a normal user, or `/usr/local/bin` when
 run as root. The script prints a PATH hint for your shell if the target
-directory is not already on `PATH`.
+directory is not already on `PATH`, and warns when another `gregale` comes
+first on `PATH` (an npm install, or an older copy in `/usr/local/bin`), since
+plain `gregale` would keep running that copy.
 
 Flags go after `sh -s --`:
 
@@ -36,6 +38,19 @@ curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18 --dir /usr/local
 |---|---|---|
 | `--version <tag>` | `GREGALE_VERSION` | newest stable with matching CLI assets; otherwise newest compatible release |
 | `--dir <path>` | `GREGALE_INSTALL_DIR` | `$HOME/.local/bin`, or `/usr/local/bin` as root |
+
+### How it picks a version
+
+Without `--version`, the script reads two one-line pointers that the
+release workflow keeps on the `cli-channel` release: `CLI-STABLE`, the
+newest stable tag, then `CLI-LATEST`, the newest tag, which may be a
+prerelease (the script warns when it installs one). Both are read through
+`releases/download`, which GitHub does not count against its anonymous API
+limit of 60 requests an hour per address, so installs from a shared office,
+CI or conference address keep working. If neither pointer names a release
+with your platform, the script falls back to the GitHub API
+([ADR-20261025092617](adr/20261025092617-cli-install-channel-pointer.md)).
+If that fallback is rate limited too, pass `--version`.
 
 Upgrading is re-running the script; it replaces the binary in place. A
 running `gregale logs -f` keeps its open inode and is unaffected.
@@ -76,27 +91,41 @@ if that tag or its assets are unavailable.
 
 ## npm
 
-Check that the package has been published before using this channel:
+Every release publishes the npm channel: a prerelease under the `rc`
+dist-tag, a stable release under `latest`. There is no stable release yet,
+so install with `@rc` or an exact version:
+
+```bash
+npm install -g gregale@rc
+npx gregale@rc deploy                   # without installing
+npm install -g gregale@0.1.18-rc.313    # one exact release
+```
+
+Do not use a bare `npm install -g gregale` yet. npm gave `latest` to the
+first version ever published, `0.1.18-rc.224`, which predates the current
+command tree, and npm refuses to remove `latest`, so it stays there until
+the first stable release publishes. From then on `latest` moves to each
+stable release, prereleases move only `rc`, and if npm hands `latest` to a
+newly published prerelease the release job puts the newest stable version
+back. Check where the tags point:
 
 ```bash
 npm view gregale dist-tags --json
 ```
 
-The release workflow now fails if `NPM_TOKEN` is missing and verifies that the
-published package installs from the public registry. It waits for all four
-platform manifests and tarballs before publishing the launcher, including on
-retries, and rejects missing provenance or mismatched platform/dependency pins.
-The install test uses empty npm configs, no credentials, and disabled lifecycle
-scripts, then checks the installed binary against the release archive.
-Until that job succeeds,
-use the curl installer above. Prereleases use the `rc` tag; `latest` appears
-only after the first stable release.
-
-```bash
-npm install -g gregale@rc
-npx gregale@rc deploy       # without installing
-npm install -g gregale      # after a stable release publishes
-```
+A failed npm publish fails the release's workflow run: a missing
+`NPM_TOKEN`, a platform package that is not public within ten minutes,
+missing provenance, mismatched platform or dependency pins, or a package
+that does not install from the public registry. The job waits for all four
+platform packages before publishing the launcher, including on retries, and
+its install test uses empty npm configs, no credentials and disabled
+lifecycle scripts, then checks the installed binary against the release
+archive. The GitHub release does not wait for npm, and for a prerelease
+neither does the curl installer's channel, so an rc can be installable with
+curl while its npm version is missing; use the curl installer above when
+`npm view` does not list the version you want. A stable release promotes
+the curl installer's stable channel only after npm publishes it, so the two
+channels' stable versions match.
 
 The `gregale` package holds no binary. It declares four
 `optionalDependencies` gated on `os`/`cpu`, so npm downloads only the
@@ -109,11 +138,6 @@ may have been skipped, or the matching platform version may not yet be public:
 ```bash
 npm install -g --include=optional gregale@rc
 ```
-
-`latest` tracks stable releases; prerelease tags publish under `rc`.
-New npm packages can acquire an initial `latest` even when published with
-`--tag rc`; the release job removes that prerelease tag and preserves an
-existing stable `latest`.
 
 ## In CI
 

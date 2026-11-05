@@ -26,6 +26,9 @@ type runtimeSecretsState struct {
 	revision   string
 	projection *runtimeSecretProjection
 	process    runtimeSecretProcessState
+	// files rewrites the workload's /run/secrets files with each published
+	// generation; nil when it declares none. Set before the reloader starts.
+	files *secretFileWriter
 }
 
 // Projection identity is resolved once against the workload's image, before
@@ -47,6 +50,10 @@ func newProjectedRuntimeSecretsState(initial map[string]string, projection runti
 func (s *runtimeSecretsState) publishProjection(secrets map[string]string, revision string) error {
 	if s == nil || s.projection == nil {
 		return errors.New("runtime secret projection is unavailable")
+	}
+	// Files go first: if the projection then fails, the retry rewrites both.
+	if err := s.files.write(secrets); err != nil {
+		return err
 	}
 	p := s.projection
 	return s.publishForOwner(p.secretsPath, p.revisionPath, p.uid, p.dirUID, p.dirGID, secrets, revision)

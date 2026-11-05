@@ -15,7 +15,7 @@ func writeDashboardUnauthorized(w http.ResponseWriter, r *http.Request) {
 		api.CodeUnauthorized,
 		"Sign in required",
 		"Your dashboard session is missing or has expired.",
-	).WithHint("Sign in again, then retry this action.").WithDocs("https://gregale.dev/docs/auth/sign-in"))
+	).WithHint("Sign in again, then retry this action.").WithDocs("https://gregale.dev/docs/auth#sign-in"))
 }
 
 // writeDashboardBadRequest gives malformed path/form fallbacks a stable code

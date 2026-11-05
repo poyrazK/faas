@@ -63,32 +63,7 @@ func NewUnixClient(socket string) *Client {
 
 // RegisterEndpoint makes an endpoint available on this realtimed node.
 func (c *Client) RegisterEndpoint(ctx context.Context, endpoint Endpoint) error {
-	request := endpointRequest{
-		ID:                         endpoint.ID,
-		AppID:                      endpoint.AppID,
-		AccountID:                  endpoint.AccountID,
-		CallbackURL:                endpoint.CallbackURL,
-		ConnectPath:                endpoint.ConnectPath,
-		MessagePath:                endpoint.MessagePath,
-		DisconnectPath:             endpoint.DisconnectPath,
-		CallbackAuthToken:          endpoint.CallbackAuthToken,
-		AuthToken:                  endpoint.AuthToken,
-		AuthTokenPrevious:          endpoint.AuthTokenPrevious,
-		AuthTokenPreviousExpiresAt: optionalTime(endpoint.AuthTokenPreviousExpiresAt),
-		AuthMode:                   endpoint.ClientAuth.Mode,
-		AuthIssuer:                 endpoint.ClientAuth.Issuer,
-		AuthJWKSURL:                endpoint.ClientAuth.JWKSURL,
-		AuthAudience:               append([]string(nil), endpoint.ClientAuth.Audience...),
-		AuthAlgorithms:             append([]string(nil), endpoint.ClientAuth.Algorithms...),
-		AuthRequiredClaims:         cloneStringMap(endpoint.ClientAuth.RequiredClaims),
-		AllowedOrigins:             append([]string(nil), endpoint.AllowedOrigins...),
-		MaxConnections:             endpoint.MaxConnections,
-		MaxMessageBytes:            endpoint.MaxMessageBytes,
-		MaxConnectionAgeSeconds:    int64(endpoint.MaxConnectionAge / time.Second),
-		AccountMaxConnections:      endpoint.AccountMaxConnections,
-		LiveRoutes:                 append([]LiveRoute(nil), endpoint.LiveRoutes...),
-		Previews:                   clonePreviews(endpoint.Previews),
-	}
+	request := endpointRequestFor(endpoint)
 	return c.do(ctx, http.MethodPost, "/internal/endpoints", request, nil)
 }
 
@@ -370,4 +345,36 @@ func (c *Client) doWithStatus(ctx context.Context, method, path string, payload 
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+// endpointRequestFor is an endpoint as the management API carries it.
+func endpointRequestFor(endpoint Endpoint) endpointRequest {
+	return endpointRequest{
+		ID:                         endpoint.ID,
+		AppID:                      endpoint.AppID,
+		AccountID:                  endpoint.AccountID,
+		CallbackURL:                endpoint.CallbackURL,
+		ConnectPath:                endpoint.ConnectPath,
+		MessagePath:                endpoint.MessagePath,
+		DisconnectPath:             endpoint.DisconnectPath,
+		CallbackAuthToken:          endpoint.CallbackAuthToken,
+		AuthToken:                  endpoint.AuthToken,
+		AuthTokenPrevious:          endpoint.AuthTokenPrevious,
+		AuthTokenPreviousExpiresAt: optionalTime(endpoint.AuthTokenPreviousExpiresAt),
+		AuthMode:                   endpoint.ClientAuth.Mode,
+		AuthIssuer:                 endpoint.ClientAuth.Issuer,
+		AuthJWKSURL:                endpoint.ClientAuth.JWKSURL,
+		AuthAudience:               append([]string(nil), endpoint.ClientAuth.Audience...),
+		AuthAlgorithms:             append([]string(nil), endpoint.ClientAuth.Algorithms...),
+		AuthRequiredClaims:         cloneStringMap(endpoint.ClientAuth.RequiredClaims),
+		AllowedOrigins:             append([]string(nil), endpoint.AllowedOrigins...),
+		MaxConnections:             endpoint.MaxConnections,
+		MaxMessageBytes:            endpoint.MaxMessageBytes,
+		MaxConnectionAgeSeconds:    int64(endpoint.MaxConnectionAge / time.Second),
+		AccountMaxConnections:      endpoint.AccountMaxConnections,
+		Preview:                    endpoint.Preview,
+		ChannelRules:               append([]api.RealtimeChannelRule(nil), endpoint.ChannelRules...),
+		LiveRoutes:                 append([]LiveRoute(nil), endpoint.LiveRoutes...),
+		Previews:                   clonePreviews(endpoint.Previews),
+	}
 }

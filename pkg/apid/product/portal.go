@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-//go:embed portal.html portal.js portal-core.js portal-plans.js portal-team.js portal-guidance.js portal-help.js portal-notifications.js portal-activity.js portal-run.js portal-history.js portal-email.js portal.css email-unsubscribe.html email-unsubscribe.js
+//go:embed portal.html portal.js portal-core.js portal-plans.js portal-team.js portal-guidance.js portal-help.js portal-notifications.js portal-activity.js portal-run.js portal-history.js portal-email.js portal-signup.js portal.css email-unsubscribe.html email-unsubscribe.js
 var portalFiles embed.FS
 
 func (s *Service) PortalPage(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +43,9 @@ func (s *Service) PortalRun(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Service) PortalHistory(w http.ResponseWriter, r *http.Request) {
 	servePortalFile(w, r, "portal-history.js", "text/javascript; charset=utf-8")
+}
+func (s *Service) PortalSignup(w http.ResponseWriter, r *http.Request) {
+	servePortalFile(w, r, "portal-signup.js", "text/javascript; charset=utf-8")
 }
 func (s *Service) PortalStyle(w http.ResponseWriter, r *http.Request) {
 	servePortalFile(w, r, "portal.css", "text/css; charset=utf-8")

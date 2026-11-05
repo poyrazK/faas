@@ -34,25 +34,55 @@ type WarmVM interface {
 	DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error
 }
 
+// DeferredCacheVM is the optional capability behind DeferCacheExport
+// (ADR-20261029171525). When WaitForCompletion reports
+// BuildOutcome.DependencyCacheDeferred, it has kept the build drive, and the
+// orchestrator passes the handle to exactly one of these methods.
+type DeferredCacheVM interface {
+	VM
+	// ExportDeferredCache boots a second VM on the kept drive, waits for it to
+	// export only the dependency cache, and publishes that cache. The drive is
+	// removed on every path. An error costs only the next build's cache. The
+	// outcome carries the run's log tail whenever the VM wrote a result.
+	ExportDeferredCache(ctx context.Context, h BuildHandle) (BuildOutcome, error)
+	// DiscardDeferredCache removes the kept drive without exporting.
+	DiscardDeferredCache(h BuildHandle)
+}
+
+// DeferredCacheInstanceSuffix names the second VM of a deferred cache
+// export: instance "build-<id>-cache". Cancel(buildID + suffix) stops it.
+const DeferredCacheInstanceSuffix = "-cache"
+
+// DeferredCacheSpec is what a deferred cache export's second VM boots with:
+// the build's manifest and plan.
+type DeferredCacheSpec struct {
+	Manifest api.BuildManifest
+	Plan     string
+}
+
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
 	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
-	BuildID               string
-	TenantID              string
-	DeploymentID          string
-	SourcePath            string // tarball or dockerfile source on disk
-	SourceSHA256          string // digest already verified by the orchestrator
-	SourceRoot            string // repository-relative build root inside the archive; empty = archive root
-	DockerfilePath        string // relative to SourceRoot; empty selects Dockerfile
-	Framework             Framework
-	Runtime               string // app runtime id (node22, python312, go124-alpine, ...)
-	RuntimeBaseRef        string // resolved OCI ref used by Railpack for this build
-	IssueSourceMaps       *api.IssueSourceMapBuildConfig
-	Function              bool // handler build; allows markerless Node/Python sources
-	SharedRuntime         bool // container app built on a shared runner base (H10-140)
+	GoCommand             string                      // cmd/<name> a Go module build compiles (ADR-20261025134512)
+	// BuildSecrets is the ciphertext of the app secrets the build mounts
+	// (ADR-20261022185329); vmmd opens it into the builder VM.
+	BuildSecrets    []SealedBuildSecret
+	BuildID         string
+	TenantID        string
+	DeploymentID    string
+	SourcePath      string // tarball or dockerfile source on disk
+	SourceSHA256    string // digest already verified by the orchestrator
+	SourceRoot      string // repository-relative build root inside the archive; empty = archive root
+	DockerfilePath  string // relative to SourceRoot; empty selects Dockerfile
+	Framework       Framework
+	Runtime         string // app runtime id (node22, python312, go124-alpine, ...)
+	RuntimeBaseRef  string // resolved OCI ref used by Railpack for this build
+	IssueSourceMaps *api.IssueSourceMapBuildConfig
+	Function        bool // handler build; allows markerless Node/Python sources
+	SharedRuntime   bool // container app built on a shared runner base (H10-140)
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
 	// DevWatchHost is the developer app's public hostname for that image.
@@ -74,9 +104,21 @@ type VMRequest struct {
 	// The guaranteed-slot orchestrator sets it only after the vmmd warm
 	// transport capability has been confirmed.
 	KeepWarm bool
+	// LayerCompression is the build manifest's LayerCompression: "" for
+	// BuildKit's gzip or api.BuildLayerCompressionZstd.
+	LayerCompression string
+	// BuildKitSnapshotter is the build manifest's BuildKitSnapshotter.
+	BuildKitSnapshotter string
+	// DeferCacheExport asks the guest to export the dependency cache after the
+	// image handoff, from a second VM (DeferredCacheVM).
+	DeferCacheExport bool
 	// WarmScopeKey identifies the app/runtime scope allowed to reuse a warm
 	// builder drive. It is host metadata and is never written into the guest.
 	WarmScopeKey string
+	// RegistryCredentials are the app's sealed registry credentials a
+	// Dockerfile build pulls its base images with (ADR-20261026091500);
+	// vmmd opens them into the builder VM's Docker config.
+	RegistryCredentials []SealedRegistryCredential
 }
 
 // VMResult is the legacy single-step result — kept for backwards compat
@@ -107,6 +149,9 @@ type BuildHandle struct {
 	// build-done.json.
 	BuilderSliceOOMKillsAtStart uint64
 	BuilderSliceOOMCounterValid bool
+	// DeferredCache is set when the build's manifest asked the guest to defer
+	// its dependency-cache export.
+	DeferredCache *DeferredCacheSpec
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at
@@ -117,6 +162,7 @@ type BuildOutcome struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string
 	DockerfileBuildSHA256 string
+	GoCommand             string // the Go command the guest built; empty from older guests
 	BuildID               string // echoes handle.BuildID
 	InstanceID            string // echoes handle.Instance
 	// ExportDir is the node-local handoff directory. imaged leases image.tar
@@ -154,9 +200,18 @@ type BuildOutcome struct {
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool
 	DependencyCacheStoreError string
+	// DependencyCacheSharedBytes: bytes of the stored cache that link to
+	// shared platform layers instead of being its own (ADR-20261031103801).
+	DependencyCacheSharedBytes int64
 	// DependencyCacheUnchanged: the guest kept the imported cache because
 	// the build's plan and install inputs matched it, so nothing was stored.
 	DependencyCacheUnchanged bool
+	// DependencyCacheDeferred: the guest exported only the image, and the
+	// driver kept the drive for DeferredCacheVM.ExportDeferredCache.
+	DependencyCacheDeferred bool
+	// Timings is where the build spent its time in the builder VM, as the
+	// guest reported it; nil from older guests.
+	Timings *api.BuildTimings
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string

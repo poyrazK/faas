@@ -9,7 +9,7 @@ import (
 )
 
 func cmdBucketDeletions(args []string) int {
-	usage := "usage: gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null] | status <app> <bucket-id> <request-id>"
+	usage := "usage: gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null] | status <app> <bucket-id> <request-id>"
 	if len(args) < 4 || !api.ValidAppSlug(args[1]) {
 		PrintUsage(osStderr, usage, "bucket")
 		return 1
@@ -34,10 +34,12 @@ func cmdBucketDeletions(args []string) int {
 			}
 		}
 	}
-	for _, value := range []string{bucket, id} {
+	for i, value := range []string{bucket, id} {
 		parsed, e := uuid.Parse(value)
 		if e != nil || parsed.String() != value {
-			PrintUsage(osStderr, usage, "bucket")
+			// The request ID is a UUID the caller chooses and reuses to retry.
+			name := [...]string{"bucket-id", "request-id"}[i]
+			PrintUsage(osStderr, name+" must be a lowercase UUID; "+usage, "bucket")
 			return 1
 		}
 	}

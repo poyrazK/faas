@@ -63,7 +63,7 @@ func cmdWorkflowsQueuedCancel(args []string, execute bool) int {
 		response, err = client.PreviewUnstartedWorkflowRunCancellations(context.Background(), *app, request)
 	}
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not preview queued workflow cancellations", err)
 	}
 	if jsonOutput {
 		return jsonOut(json.NewEncoder(osStdout).Encode(response))

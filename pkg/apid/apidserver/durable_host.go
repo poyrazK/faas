@@ -44,11 +44,8 @@ func (h durableHost) ResultRetention(acct state.Account) *time.Time {
 	return retentionForRequest(nil, acct)
 }
 
-func (h durableHost) SecretRecipient() *age.X25519Recipient {
-	if setSecretRecipient == nil {
-		return nil
-	}
-	return hostSecretRecipient()
+func (h durableHost) ExecutionPayloadRecipients() ([]*age.X25519Recipient, string, error) {
+	return executionPayloadRecipients()
 }
 
 func (h durableHost) ExecutionAPIEnabled() bool { return h.s.executionAPIEnabled }

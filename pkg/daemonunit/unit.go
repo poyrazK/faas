@@ -97,6 +97,7 @@ type Unit struct {
 	// starts a two-generation hand-off (ADR-1736).
 	ExecReload      string
 	Restart         string
+	KillMode        string // explicit process fence for bridge-owning daemons
 	RestartSec      string
 	TimeoutStartSec string // bounded allowance for Type=notify startup work
 	// WatchdogSec (ADR-190) is the systemd watchdog interval. A
@@ -106,7 +107,10 @@ type Unit struct {
 	// not just a dead process — triggers the restart. Empty omits
 	// the directive (Type=simple units, and units that opt out).
 	WatchdogSec string
-	Slice       string
+	// FileDescriptorStoreMax lets the daemon keep listening sockets in
+	// systemd's fd store across restarts (daemonunit.FDStore). Empty omits it.
+	FileDescriptorStoreMax string
+	Slice                  string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
 	// below MemoryMax so a slow leak degrades the daemon rather than
@@ -137,8 +141,15 @@ type Unit struct {
 	PrivateDevices          bool
 	ProtectKernelTunables   bool
 	ProtectKernelModules    bool
+	ProtectKernelLogs       bool
 	ProtectControlGroups    bool
 	SystemCallArchitectures string // "native" for the two gatewayd-internal daemons
+	// SystemCallFilter is rendered one directive per entry, in order: an
+	// allow list first, then "~" deny lists, which systemd applies in turn.
+	SystemCallFilter []string
+	// SystemCallErrorNumber makes a filtered call fail with this errno
+	// (e.g. "EPERM") instead of killing the process. Empty omits it.
+	SystemCallErrorNumber   string
 	LockPersonality         bool
 	RestrictNamespaces      bool
 	RestrictRealtime        bool
@@ -153,8 +164,11 @@ type Unit struct {
 	ReadWritePaths       []string
 	StateDirectory       string
 	StateDirectoryMode   string
-	RuntimeDirectory     string // legacy generic field; vmmd uses host tmpfiles instead
+	RuntimeDirectory     string // legacy generic field; vmmd uses host tmpfiles for /run/faas
 	RuntimeDirectoryMode string
+	// RuntimeDirectoryPreserve keeps RuntimeDirectory across stops ("yes")
+	// or restarts ("restart"). Empty omits it.
+	RuntimeDirectoryPreserve string
 
 	// [Install]
 	WantedBy string
@@ -169,15 +183,17 @@ func BoolPtr(b bool) *bool { return &b }
 // Inside [Service], field ordering is fixed (Type → NotifyAccess → User →
 // Group → ExecStartPre → ExecStart → ExecStartPost → ExecReload → Restart →
 // RestartSec →
-// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → OOMPolicy → CPUQuota → TasksMax → Delegate →
+// TimeoutStartSec → WatchdogSec → FileDescriptorStoreMax → Slice → MemoryHigh → MemoryMax → OOMPolicy → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
-// ProtectKernelTunables → ProtectKernelModules → ProtectControlGroups →\n →
-// SystemCallArchitectures → LockPersonality → RestrictNamespaces →\n →
+// ProtectKernelTunables → ProtectKernelModules → ProtectKernelLogs →
+// ProtectControlGroups →\n → SystemCallArchitectures → SystemCallFilter
+// entries → SystemCallErrorNumber → LockPersonality → RestrictNamespaces →\n →
 // RestrictRealtime → RestrictSUIDSGID → RestrictAddressFamilies →\n →
 // ProtectHostname → ProtectClock → ProtectProc →\n → ReadOnlyPaths →\n →
-// ReadWritePaths →\n → RuntimeDirectory → RuntimeDirectoryMode → [Install]).
+// ReadWritePaths →\n → RuntimeDirectory → RuntimeDirectoryMode →
+// RuntimeDirectoryPreserve → [Install]).
 //
 // Render() never comments. The wiped rationale moves to godoc on
 // UnitXxx() in pkg/daemonunitspec + ADR-078.
@@ -219,9 +235,11 @@ func (u Unit) Render() []byte {
 	}
 	writeStringKV(&buf, "ExecReload", u.ExecReload)
 	writeStringKV(&buf, "Restart", u.Restart)
+	writeStringKV(&buf, "KillMode", u.KillMode)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "WatchdogSec", u.WatchdogSec)
+	writeStringKV(&buf, "FileDescriptorStoreMax", u.FileDescriptorStoreMax)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
@@ -301,12 +319,25 @@ func (u Unit) Render() []byte {
 	if u.ProtectKernelModules {
 		buf.WriteString("ProtectKernelModules=yes\n")
 	}
+	if u.ProtectKernelLogs {
+		buf.WriteString("ProtectKernelLogs=yes\n")
+	}
 	if u.ProtectControlGroups {
 		buf.WriteString("ProtectControlGroups=yes\n")
 	}
 	if u.SystemCallArchitectures != "" {
 		buf.WriteString("SystemCallArchitectures=")
 		buf.WriteString(u.SystemCallArchitectures)
+		buf.WriteByte('\n')
+	}
+	for _, filter := range u.SystemCallFilter {
+		buf.WriteString("SystemCallFilter=")
+		buf.WriteString(filter)
+		buf.WriteByte('\n')
+	}
+	if u.SystemCallErrorNumber != "" {
+		buf.WriteString("SystemCallErrorNumber=")
+		buf.WriteString(u.SystemCallErrorNumber)
 		buf.WriteByte('\n')
 	}
 	if u.LockPersonality {
@@ -355,6 +386,7 @@ func (u Unit) Render() []byte {
 			buf.WriteString(u.RuntimeDirectoryMode)
 			buf.WriteByte('\n')
 		}
+		writeStringKV(&buf, "RuntimeDirectoryPreserve", u.RuntimeDirectoryPreserve)
 	}
 
 	buf.WriteByte('\n')
@@ -528,6 +560,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.NotifyAccess = val
 	case "[Service]/Restart":
 		u.Restart = val
+	case "[Service]/KillMode":
+		u.KillMode = val
 	case "[Service]/RestartSec":
 		u.RestartSec = val
 	case "[Service]/TimeoutStartSec":
@@ -586,10 +620,16 @@ func apply(u *Unit, section, key, val string) error {
 		u.ProtectKernelTunables = parseYes(val)
 	case "[Service]/ProtectKernelModules":
 		u.ProtectKernelModules = parseYes(val)
+	case "[Service]/ProtectKernelLogs":
+		u.ProtectKernelLogs = parseYes(val)
 	case "[Service]/ProtectControlGroups":
 		u.ProtectControlGroups = parseYes(val)
 	case "[Service]/SystemCallArchitectures":
 		u.SystemCallArchitectures = val
+	case "[Service]/SystemCallFilter":
+		u.SystemCallFilter = append(u.SystemCallFilter, val)
+	case "[Service]/SystemCallErrorNumber":
+		u.SystemCallErrorNumber = val
 	case "[Service]/LockPersonality":
 		u.LockPersonality = parseYes(val)
 	case "[Service]/RestrictNamespaces":
@@ -743,8 +783,12 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "PrivateDevices", boolStr(a.PrivateDevices), boolStr(b.PrivateDevices))
 	add("[Service]", "ProtectKernelTunables", boolStr(a.ProtectKernelTunables), boolStr(b.ProtectKernelTunables))
 	add("[Service]", "ProtectKernelModules", boolStr(a.ProtectKernelModules), boolStr(b.ProtectKernelModules))
+	add("[Service]", "ProtectKernelLogs", boolStr(a.ProtectKernelLogs), boolStr(b.ProtectKernelLogs))
 	add("[Service]", "ProtectControlGroups", boolStr(a.ProtectControlGroups), boolStr(b.ProtectControlGroups))
 	add("[Service]", "SystemCallArchitectures", a.SystemCallArchitectures, b.SystemCallArchitectures)
+	// Order matters: systemd applies the entries in turn.
+	add("[Service]", "SystemCallFilter", strings.Join(a.SystemCallFilter, " | "), strings.Join(b.SystemCallFilter, " | "))
+	add("[Service]", "SystemCallErrorNumber", a.SystemCallErrorNumber, b.SystemCallErrorNumber)
 	add("[Service]", "LockPersonality", boolStr(a.LockPersonality), boolStr(b.LockPersonality))
 	add("[Service]", "RestrictNamespaces", boolStr(a.RestrictNamespaces), boolStr(b.RestrictNamespaces))
 	add("[Service]", "RestrictRealtime", boolStr(a.RestrictRealtime), boolStr(b.RestrictRealtime))

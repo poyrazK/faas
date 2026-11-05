@@ -30,7 +30,7 @@ import (
 // --- closeBatch ---------------------------------------------------
 
 func TestCloseBatch_Empty(t *testing.T) {
-	if got := closeBatch(nil, 0, 0); len(got) != 0 {
+	if got := closeBatch(nil, 0, 0).batch; len(got) != 0 {
 		t.Errorf("nil input: %d, want 0", len(got))
 	}
 }
@@ -40,7 +40,7 @@ func TestCloseBatch_UnderSizeAndByteCap(t *testing.T) {
 		{ItemIdentifier: "a", Payload: []byte("aa")},
 		{ItemIdentifier: "b", Payload: []byte("bb")},
 	}
-	got := closeBatch(in, 10, 1000)
+	got := closeBatch(in, 10, 1000).batch
 	if len(got) != 2 {
 		t.Errorf("got %d records, want 2", len(got))
 	}
@@ -52,7 +52,7 @@ func TestCloseBatch_TruncatesAtSizeMax(t *testing.T) {
 		{ItemIdentifier: "b", Payload: []byte("x")},
 		{ItemIdentifier: "c", Payload: []byte("x")},
 	}
-	got := closeBatch(in, 2, 10000)
+	got := closeBatch(in, 2, 10000).batch
 	if len(got) != 2 {
 		t.Errorf("sizeMax truncation: got %d, want 2", len(got))
 	}
@@ -70,7 +70,7 @@ func TestCloseBatch_TruncatesAtByteCap(t *testing.T) {
 		{ItemIdentifier: "b", Payload: make([]byte, 100)},
 		{ItemIdentifier: "c", Payload: make([]byte, 100)},
 	}
-	got := closeBatch(in, 100, 150)
+	got := closeBatch(in, 100, 150).batch
 	if len(got) != 1 || got[0].ItemIdentifier != "a" {
 		t.Errorf("byteCap truncation: got %v, want [a]", got)
 	}
@@ -81,7 +81,7 @@ func TestCloseBatch_SizeMaxZeroMeansNoCap(t *testing.T) {
 	in := []SourceRecord{
 		{ItemIdentifier: "a"}, {ItemIdentifier: "b"}, {ItemIdentifier: "c"},
 	}
-	got := closeBatch(in, 0, 10000)
+	got := closeBatch(in, 0, 10000).batch
 	if len(got) != 3 {
 		t.Errorf("sizeMax=0: got %d, want 3", len(got))
 	}
@@ -100,8 +100,9 @@ func mustUUID(t *testing.T, s string) pgtype.UUID {
 
 func TestBuildDispatchEnvelope_BasicFields(t *testing.T) {
 	tr := sqlc.Trigger{
-		ID:    mustUUID(t, "11111111-1111-1111-1111-111111111111"),
-		AppID: mustUUID(t, "22222222-2222-2222-2222-222222222222"),
+		ID:        mustUUID(t, "11111111-1111-1111-1111-111111111111"),
+		AppID:     mustUUID(t, "22222222-2222-2222-2222-222222222222"),
+		AccountID: mustUUID(t, "33333333-3333-3333-3333-333333333333"),
 	}
 	batch := []SourceRecord{
 		{ItemIdentifier: "k1", Payload: []byte(`{"hello":"world"}`), Headers: map[string]string{"X-K": "v"}},
@@ -109,6 +110,9 @@ func TestBuildDispatchEnvelope_BasicFields(t *testing.T) {
 	env := buildDispatchEnvelope(tr, batch)
 	if env.AppID != "22222222-2222-2222-2222-222222222222" {
 		t.Errorf("AppID = %q", env.AppID)
+	}
+	if env.AccountID != "33333333-3333-3333-3333-333333333333" {
+		t.Errorf("AccountID = %q", env.AccountID)
 	}
 	if !strings.HasPrefix(env.InvocationID, "trigger-") {
 		t.Errorf("InvocationID prefix = %q", env.InvocationID)
@@ -352,7 +356,7 @@ func TestMarkRetryAllUsesConfiguredTriggerRetryPolicy(t *testing.T) {
 		Config:      []byte(`{"retry_policy":{"base_seconds":7,"max_seconds":30}}`),
 	}
 	started := time.Now()
-	retryItems, exhausted := (&Loop{}).markRetryAll(context.Background(), trigger, []sqlc.TriggerRecord{{Attempts: 0}}, "gateway unavailable", store)
+	retryItems, _, exhausted := (&Loop{}).markRetryAll(context.Background(), trigger, []sqlc.TriggerRecord{{Attempts: 0}}, "gateway unavailable", store)
 	if len(retryItems) != 1 || len(exhausted) != 0 || len(store.retries) != 1 {
 		t.Fatalf("markRetryAll outputs retry_items=%d exhausted=%d retries=%d, want 1/0/1", len(retryItems), len(exhausted), len(store.retries))
 	}

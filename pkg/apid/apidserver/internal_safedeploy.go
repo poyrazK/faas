@@ -109,7 +109,7 @@ func (s *server) internalAdvanceCanary(w http.ResponseWriter, r *http.Request) {
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
 	}
-	s.idempotent(s.advanceCanaryByWorker)(w, r, acct)
+	s.idempotentIntent(s.advanceCanaryByWorker)(w, r, acct)
 }
 
 func (s *server) internalRecoverDeploymentRollout(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +129,7 @@ func (s *server) internalRecoverDeploymentRollout(w http.ResponseWriter, r *http
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), bindingReleaseWorkerReadsKey{}, true))
-	s.idempotent(s.recoverDeploymentRollout)(w, r, acct)
+	s.idempotentIntent(s.recoverDeploymentRollout)(w, r, acct)
 }
 
 func (s *server) internalForApp(next accountHandler) http.HandlerFunc {
@@ -144,7 +144,7 @@ func (s *server) internalForApp(next accountHandler) http.HandlerFunc {
 			s.internalSafeDeployLookupError(w, r, err, "app")
 			return
 		}
-		s.idempotent(next)(w, r, acct)
+		s.idempotentIntent(next)(w, r, acct)
 	}
 }
 

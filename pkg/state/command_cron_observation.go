@@ -16,7 +16,7 @@ import (
 // Times are cursor evidence, not a continuous eligibility clock.
 type CommandCronObservation struct {
 	Schedule, Timezone                                               string
-	CreatedAt, LastFiredAt                                           time.Time
+	CreatedAt, LastFiredAt, ScheduleAnchorAt                         time.Time
 	Enabled, Suspended, AppDeleted, AccountActive                    bool
 	LiveDeployment, ActiveTasks, ActiveOrdinaryTasks, ExclusiveBound bool
 	TimingValid, PolicyValid, BindingValid, SkipIfRunning            bool
@@ -48,6 +48,9 @@ func (s *PgStore) CommandCronObservations(ctx context.Context, owner, local stri
 		}
 		if r.LastFiredAt.Valid && r.LastFiredAt.InfinityModifier == pgtype.Finite {
 			p.LastFiredAt = r.LastFiredAt.Time.UTC()
+		}
+		if r.ScheduleAnchorAt.Valid && r.ScheduleAnchorAt.InfinityModifier == pgtype.Finite {
+			p.ScheduleAnchorAt = r.ScheduleAnchorAt.Time.UTC()
 		}
 		if len(r.SchedulePolicy) > 0 {
 			p.Policy = &workpolicy.SchedulePolicy{}
@@ -92,7 +95,7 @@ func (m *MemStore) CommandCronObservations(ctx context.Context, owner, local str
 			continue
 		}
 		account := m.accounts[a.AccountID]
-		p := CommandCronObservation{Schedule: c.Schedule, Timezone: c.Timezone, CreatedAt: c.CreatedAt, LastFiredAt: c.LastFiredAt,
+		p := CommandCronObservation{Schedule: c.Schedule, Timezone: c.Timezone, CreatedAt: c.CreatedAt, LastFiredAt: c.LastFiredAt, ScheduleAnchorAt: c.ScheduleAnchorAt,
 			Enabled: c.Enabled, Suspended: c.SuspendedReason != "", AppDeleted: a.Status == AppDeleted, AccountActive: account.Active(),
 			Policy: workpolicy.Clone(c.SchedulePolicy), PolicyValid: c.SchedulePolicy == nil || c.SchedulePolicy.Validate() == nil,
 			SkipIfRunning: c.SkipIfRunning, TimingValid: true, BindingValid: true}

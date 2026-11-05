@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
 
 test('migration verification preserves receipt identity, checks and cold-wake consent', async () => {
   const originalFetch = globalThis.fetch;

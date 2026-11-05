@@ -37,19 +37,22 @@ func (h statementInvoicesHost) Audit(ctx context.Context, event, accountID strin
 	h.s.audit.Emit(ctx, event, &accountID, fields)
 }
 
+// SealSecret seals a billing provider key, an account value (ADR
+// 20261022111812).
 func (statementInvoicesHost) SealSecret(namespace string, plaintext []byte, maxBytes int) ([]byte, error) {
-	if mfaRecipient == nil || mfaRecipient() == nil {
+	var legacy *age.X25519Recipient
+	if mfaRecipient != nil {
+		legacy = mfaRecipient()
+	}
+	recipients, err := accountRecipients(legacy)
+	if err != nil {
 		return nil, errors.New("seal secret: recipient unavailable")
 	}
-	return secretbox.SealBytes(mfaRecipient(), namespace, plaintext, maxBytes)
+	return secretbox.SealBytesTo(recipients, namespace, plaintext, maxBytes)
 }
 
 func (statementInvoicesHost) OpenSecret(blob []byte) (string, []byte, error) {
-	var identities []*age.X25519Identity
-	if mfaIdentities != nil {
-		identities = mfaIdentities()
-	}
-	return secretbox.OpenBytesMulti(identities, blob)
+	return secretbox.OpenBytesMulti(accountIdentities(), blob)
 }
 
 func (h statementInvoicesHost) SendEmail(ctx context.Context, to, subject, body, messageID string) error {

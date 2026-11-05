@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,9 +21,14 @@ func TestProcessOnePartitionsCacheByBuildEnvironment(t *testing.T) {
 	vm := &fakeVM{environment: BuildEnvironment{BuilderBaseIdentity: "builder-a", TargetPlatform: "linux/amd64"}}
 	b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
+	// Every build belongs to one account, so only the environment separates them.
+	account, err := store.CreateAccount(ctx, "environment@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	run := func(slug, artifact string, wantHit bool) {
 		t.Helper()
-		buildID, deploymentID, _ := seedDeploymentWithSlugContext(t, ctx, store, source, slug)
+		buildID, deploymentID, _ := seedDeploymentForAccount(t, ctx, store, source, account.ID, slug)
 		output := filepath.Join(t.TempDir(), "image.tar")
 		if err := os.WriteFile(output, []byte(artifact), 0o600); err != nil {
 			t.Fatal(err)

@@ -25,7 +25,7 @@ func (c *dispatchQueryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn,
 	if strings.HasSuffix(data.SQL, " from apps where id = $1") {
 		c.counts["AppByID"]++
 	}
-	for _, name := range []string{"AppByID", "ReadInvocationDispatchAuthority", "ReadInvocationEnvironmentOwner", "ReadQueueCanary", "QueueCanarySnapshot"} {
+	for _, name := range []string{"AppByID", "ReadInvocationVersionApp", "ReadInvocationDispatchAuthority", "ReadInvocationEnvironmentOwner", "ReadQueueCanary", "QueueCanarySnapshot"} {
 		if strings.HasPrefix(data.SQL, "-- name: "+name+" ") {
 			c.counts[name]++
 		}
@@ -54,7 +54,8 @@ func TestPgDispatchAuthorityOrdinaryQueryBudget(t *testing.T) {
 	}
 	counter.mu.Lock()
 	defer counter.mu.Unlock()
-	if counter.counts["AppByID"] != 1 || counter.counts["ReadInvocationDispatchAuthority"] != 1 || counter.counts["ReadInvocationEnvironmentOwner"] != 1 || counter.counts["ReadQueueCanary"] != 0 || counter.counts["QueueCanarySnapshot"] != 0 {
+	// ADR-570 reads the app inside the invocation version snapshot.
+	if counter.counts["AppByID"]+counter.counts["ReadInvocationVersionApp"] != 1 || counter.counts["ReadInvocationDispatchAuthority"] != 1 || counter.counts["ReadInvocationEnvironmentOwner"] != 1 || counter.counts["ReadQueueCanary"] != 0 || counter.counts["QueueCanarySnapshot"] != 0 {
 		t.Fatalf("dispatch SQL reads: %+v", counter.counts)
 	}
 }

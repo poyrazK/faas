@@ -74,7 +74,7 @@ func TestTCPIngressMetal(t *testing.T) {
 		t.Fatalf("create app %q: status=%d", slug, got)
 	}
 
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, slug, NodeFixtureTCP(t), false, &api.CreateDeploymentOverrides{Port: 5432}, "")
+	raw, status := postMultipartDeploymentWithFields(t, h, key, slug, NodeFixtureTCP(t), false, nil, "")
 	if status != 202 {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
 	}
@@ -122,7 +122,11 @@ func TestTCPIngressMetal(t *testing.T) {
 	for _, instance := range beforeTLS {
 		priorWakeIDs[instance.WakeID] = true
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, app.ID, state.StateParked, 90*time.Second); err != nil {
+	// The echo VM must park so TLS takes a fresh restore wake. Pro's idle
+	// timeout (300 s) outlasts the wait, so drop to the floor; and the
+	// priming snapshot's parked row is still there, so require no residents.
+	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
+	if _, err := e2etest.WaitForAppParked(ctx, t, pool, app.ID, 90*time.Second); err != nil {
 		t.Fatalf("no park before TLS wake: %v", err)
 	}
 	hostname := slug + ".example"

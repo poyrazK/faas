@@ -75,7 +75,9 @@ func TestMigrations_00030_Invocations(t *testing.T) {
 			"invocations_due_idx",
 			"invocations_app_pending_idx",
 			"invocations_delayed_idx",
-			"invocations_instance_idx",
+			// invocations_instance_idx is dropped by
+			// 20261023112631406_invocation_instance_stamp.sql: the woken
+			// instance is stamped without index writes (#5230).
 		}
 		for _, idx := range wantIdx {
 			var found bool

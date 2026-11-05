@@ -47,6 +47,14 @@ type ObjectDeletionActivityStore interface {
 	HasActiveObjectDeletion(context.Context, string, string, string) (bool, error)
 }
 
+// ObjectLifecycleDeletionActivityStore reports whether a lifecycle scan must
+// pause: one of its own deletions is unsettled, or a version protection job
+// runs in its bucket. Deletions of other keys do not pause a scan
+// (ADR-20261025115958).
+type ObjectLifecycleDeletionActivityStore interface {
+	HasActiveObjectLifecycleDeletion(ctx context.Context, bucket, scan string) (bool, error)
+}
+
 func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
 	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, NativeGCS: j.NativeGCS, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
 }

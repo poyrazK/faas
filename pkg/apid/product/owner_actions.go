@@ -156,6 +156,9 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 		{Feature: "Monthly fee", Before: beforeFee, After: ownerPlanFee(p.Catalog, p.After.Plan)},
 		{Feature: "Free trial", Before: ownerTrial(p.Before, 0), After: ownerTrial(p.Before, p.Catalog.Spec.Plans[p.After.Plan].TrialDays)},
 		{Feature: "Product access", Before: beforeAccess, After: afterAccess}, {Feature: "Auth organization (preserved for existing customers)", After: p.After.AuthOrganizationID}}
+	if plan := p.Catalog.Spec.Plans[p.After.Plan]; plan.RequiresPaymentMethod {
+		confirmation.Details = append(confirmation.Details, dashboard.ProductControlComparison{Feature: "After the trial", After: ownerTrialConversion(plan, p.Before)})
+	}
 	names := map[string]bool{}
 	for name := range p.Catalog.Spec.Features {
 		names[name] = true
@@ -203,6 +206,15 @@ func ownerTrial(customer *api.ProductCustomer, days int64) string {
 		return "Starts now for " + strconv.FormatInt(days, 10) + " days"
 	}
 	return "None"
+}
+
+// ownerTrialConversion describes what follows the trial on a plan that
+// requires a payment method (ADR-20261022180921).
+func ownerTrialConversion(plan api.ProductPlan, customer *api.ProductCustomer) string {
+	if customer != nil && customer.PaymentMethodAt != nil {
+		return "Keeps the plan; a payment method is on file"
+	}
+	return "Keeps the plan only with a payment method on file; otherwise moves to " + plan.FallbackPlan
 }
 
 // ownerPlanFee describes a plan's monthly fee (ADR-20261021154511).

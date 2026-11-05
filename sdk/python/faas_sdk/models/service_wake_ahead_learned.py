@@ -20,8 +20,8 @@ T = TypeVar("T", bound="ServiceWakeAheadLearned")
 
 @_attrs_define
 class ServiceWakeAheadLearned:
-    """What the gateways measured for this caller app (ADR-1152): its top service edges and what wake-ahead did over the
-    evidence window. Present on GET; source is unavailable when gateway metrics cannot be read.
+    """What the gateways measured for this caller app: its top service edges and what wake-ahead did over the evidence
+    window. Present on GET; source is unavailable when gateway metrics cannot be read.
 
     """
 

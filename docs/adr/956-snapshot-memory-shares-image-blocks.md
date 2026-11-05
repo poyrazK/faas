@@ -93,3 +93,74 @@
   Runs of ≥ 16 pages saved 205 MB in 4 extents per file, with warm and cold
   restores within noise. That makes cross-file sharing a candidate for a
   later pass under the same rule.
+- **Amended 2026-10-31: share runs between memory files.**
+  - **Why.** On production on 2026-10-31, in-use snapshots averaged
+    153 MB of `stored_bytes`. A capture's non-zero memory breaks down as:
+    - guest page cache, which this ADR already shares with the image;
+    - app heap;
+    - kernel data and slab;
+    - the guest's struct page array, about 16 MB per GiB of plan RAM.
+
+    The last two repeat across snapshots, and so do runtime heaps.
+
+    A read-only replay of this pass ran over the 27 in-use memory files
+    cached on compute-2 (3.3 GB non-zero, 564 MB already shared with
+    images). Runs of at least 16 pages found in an earlier memory file
+    covered another 659 MB, 19.8% of the non-zero memory and about 24 MB
+    per file, in about 44 runs per file. Restricting matches to the same
+    owner found 632 MB, only because production had two owners. Restricting
+    them to the same app found 191 MB (5.7%).
+  - **Decision.**
+    1. **Second pass.** After the image pass, snapshothipd runs a peer
+       pass. It shares the memory file's remaining runs of at least
+       `memoryShareMinRun` with memory files already processed on the
+       node, of any app or owner (owner's decision, 2026-10-31).
+       - Pages already in a shared extent (FIEMAP) are left as they are,
+         so pages shared with an image stay shared with it.
+       - A run is shared in FIDEDUPERANGE calls of up to 1 MiB, with the
+         same retry rule as above.
+    2. **Peer index.** The node keeps an in-process index of the
+       processed memory files. It holds the hash of each non-zero page at
+       a 64 KiB-aligned offset of each file.
+       - Any 16 consecutive pages of a file contain exactly one such
+         anchor, so the anchors find every run the pass may share. The
+         index is 1/16 the size of a page index: about 2,400 entries, or
+         ~100 KB, for a file with 150 MB of non-zero memory.
+       - A hit is extended page by page in both directions, by hashing
+         the anchor file's pages a 1 MiB chunk at a time.
+       - Files are recorded by inode and checked when reopened. Evicted
+         or replaced files are pruned every 10 minutes.
+    3. **Marker levels.** The marker records how far a file got: `1` for
+       images only (every file processed before this amendment), `2` for
+       images and peers.
+       - After a restart, revalidation re-offers every cached snapshot.
+         A level-2 file is only re-indexed, reading 4 KiB of every 64 KiB.
+         A level-1 file gets the peer pass.
+       - So existing caches converge within one revalidation cycle,
+         without a full re-read.
+    4. **Kill switch.** The pass is on by default.
+       `FAAS_SNAPSHOT_MEMORY_PEER_SHARING=off` turns off only the peer
+       pass; `FAAS_SNAPSHOT_MEMORY_SHARING=off` still turns off both.
+  - **Why sharing across owners is safe.**
+    - FIDEDUPERANGE compares the bytes in the kernel before it shares,
+      and the shared blocks are copy-on-write. Every memory file keeps
+      reading exactly its own bytes.
+    - XFS keeps page cache per inode, not per block, so a restore of one
+      file neither warms nor evicts another tenant's pages.
+    - A match needs 16 identical, consecutive, page-aligned pages, and a
+      guest cannot see whether any of its pages were shared. The remaining
+      exposure is the general dedup timing channel, accepted here.
+  - **Consequences.**
+    - Node-local memory files shrink by about 20% more.
+    - `stored_bytes` stays the unshared upper bound.
+    - The capture log line gains `peer_shared_bytes`.
+    - vmmd holds the peer index: about 100 KB per cached memory file,
+      ~15 MB for 150 files.
+    - Each pass reads the memory file once more, plus 1 MiB chunks of the
+      peer files its runs come from, off the wake path.
+    - The first memory file of a run of identical pages keeps the blocks.
+      When the cache evicts it, its anchors leave the index, and the next
+      file holding those pages takes their place.
+    - A node whose memory files are reflink clones of a local parent copy
+      sees every page as already shared and shares nothing with peers.
+      Production's parent is remote.

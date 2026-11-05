@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const routesPriorityUsage = "usage: gregale routes priority APP [--critical \"[METHOD] PATH\"]... [--bulk \"[METHOD] PATH\"]... | --clear | --reset"
+const routesPriorityUsage = "usage: gregale api route priority APP [--critical \"[METHOD] PATH\"]... [--bulk \"[METHOD] PATH\"]... | --clear | --reset"
 
 // cmdRoutesPriority shows or replaces an app's route priorities (ADR-978).
 func cmdRoutesPriority(args []string) int {

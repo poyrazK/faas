@@ -7,11 +7,11 @@
   "scripts": { "start": "node server.js", "start:tasks-worker": "node tasks-worker.js", "start:tasks-observer": "node tasks-observer.js", "test": "node --test test/*.test.js", "tasks:release": "node tasks-release.js", "tasks:migrate": "node tasks-migrate.js", "tasks:roles": "node tasks-roles.js", "tasks:admission": "node tasks-admission.js", "check:task-compatibility": "node tasks-compatibility.js", "doctor:tasks": "node task-doctor.js", "test:postgres": "node --test test/tasks.postgres.test.js" },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.2",
-    "@modelcontextprotocol/node": "2.1.1",
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "express": "5.2.1",
     "jose": "6.2.12",
     "pg": "8.23.1",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   }
 }

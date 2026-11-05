@@ -1,0 +1,5 @@
+# Managed by Ansible (gatewayd_public_service). Local edits are overwritten.
+# ADR-20261026195952: route /mcp and its OAuth metadata on the api. host to the
+# hosted management MCP server on this host's loopback listener.
+[Service]
+Environment=FAAS_MCP_BRIDGE_LOOPBACK=http://127.0.0.1:8787

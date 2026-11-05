@@ -4,16 +4,107 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
+
+func TestIssueReporterRejectsInvalidOptionalContext(t *testing.T) {
+	var events []faas.IssueEvent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var event faas.IssueEvent
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			t.Error(err)
+		}
+		events = append(events, event)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test", HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reporter.Close(context.Background())
+	crumbs := []faas.IssueBreadcrumb{
+		{Category: "custom", Level: "info", Message: "zero"},
+		{OccurredAt: time.Now().Add(10 * time.Minute), Category: "custom", Level: "info", Message: "future"},
+		{OccurredAt: time.Now(), Category: "bad", Level: "info", Message: "invalid"},
+		{OccurredAt: time.Now(), Category: "custom", Level: "info", Message: "good"},
+	}
+	if reporter.CaptureException(errors.New("failure"), preview.IssueContext{TraceID: "bad", SpanID: strings.Repeat("0", 16), InvocationID: "bad", HTTPStatus: 200, Breadcrumbs: crumbs, Tags: map[string]string{"component": "bad\x00value", "operation": "good"}}) == "" {
+		t.Fatal("capture failed")
+	}
+	if reporter.CaptureException(errors.New("good"), preview.IssueContext{TraceID: strings.Repeat("A", 32), SpanID: strings.Repeat("B", 16), InvocationID: "C4F3D348-8842-4EEC-B6E4-9666096E5D48", HTTPStatus: 503}) == "" {
+		t.Fatal("capture failed")
+	}
+	if err := reporter.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events: %+v", events)
+	}
+	first := events[0]
+	if first.TraceID != "" || first.SpanID != "" || first.InvocationID != "" || first.HTTPStatus != 0 || len(first.Breadcrumbs) != 1 || first.BreadcrumbsDropped != 3 || len(first.Tags) != 1 || first.Tags["operation"] != "good" {
+		t.Fatalf("invalid optional context retained: %+v", first)
+	}
+	if events[1].TraceID != strings.Repeat("a", 32) || events[1].SpanID != strings.Repeat("b", 16) || events[1].InvocationID != "c4f3d348-8842-4eec-b6e4-9666096e5d48" || events[1].HTTPStatus != 503 {
+		t.Fatalf("valid IDs lost: %+v", events[1])
+	}
+}
+
+func TestIssueReporterBoundsPayloadWithoutContextChangingGrouping(t *testing.T) {
+	var events []faas.IssueEvent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || len(body) > 65536 {
+			t.Errorf("body size %d: %v", len(body), err)
+		}
+		var event faas.IssueEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			t.Error(err)
+		}
+		events = append(events, event)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test", HTTPClient: srv.Client(), GroupingStrategy: "cause-chain-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reporter.Close(context.Background())
+	var root error = errors.New(strings.Repeat("\x01", 2048))
+	for range 8 {
+		root = fmt.Errorf("%s: %w", strings.Repeat("\x01", 2048), root)
+	}
+	crumbs := make([]faas.IssueBreadcrumb, 16)
+	for i := range crumbs {
+		crumbs[i] = faas.IssueBreadcrumb{OccurredAt: time.Now(), Category: "custom", Level: "info", Message: strings.Repeat("\x01", 256)}
+	}
+	capture := func(ctx preview.IssueContext) {
+		if reporter.CaptureException(root, ctx) == "" {
+			t.Error("capture failed")
+		}
+	}
+	for _, ctx := range []preview.IssueContext{{}, {Breadcrumbs: crumbs, Route: strings.Repeat("\x01", 256), HTTPStatus: 500}} {
+		capture(ctx)
+	}
+	if err := reporter.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || !reflect.DeepEqual(events[0].Causes, events[1].Causes) || events[0].CausesIncomplete != events[1].CausesIncomplete || !reflect.DeepEqual(events[0].Frames, events[1].Frames) {
+		t.Fatal("grouping evidence changed with optional context")
+	}
+}
 
 func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	type captured struct {
@@ -33,7 +124,7 @@ func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", HTTPClient: srv.Client(),
 	})
 	if err != nil {
@@ -41,7 +132,7 @@ func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	}
 	defer reporter.Close(context.Background())
 
-	eventID := reporter.CaptureException(errors.New("invalid format"), faas.IssueContext{
+	eventID := reporter.CaptureException(errors.New("invalid format"), preview.IssueContext{
 		RequestID: "request-123", TraceID: strings.Repeat("a", 32), Route: "/exports",
 		SourceKind: "worker", InvocationID: "c4f3d348-8842-4eec-b6e4-9666096e5d48",
 	})
@@ -101,14 +192,14 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: 10 * time.Millisecond,
 		GroupingStrategy: "failure-site-v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID := reporter.CaptureException(errors.New("temporary outage"), faas.IssueContext{
+	eventID := reporter.CaptureException(errors.New("temporary outage"), preview.IssueContext{
 		ErrorCode: "PROVIDER_503", FingerprintOverride: strings.Repeat("é", 200),
 	})
 	if eventID == "" {
@@ -141,6 +232,58 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 	}
 }
 
+func TestIssueReporterHonorsRateLimitRetryAfter(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			attempts := make(chan struct{}, 2)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				attempts <- struct{}{}
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+			reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: 10 * time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reporter.CaptureException(errors.New("limited"), preview.IssueContext{})
+			select {
+			case <-attempts:
+			case <-time.After(time.Second):
+				t.Fatal("first attempt missing")
+			}
+			select {
+			case <-attempts:
+				t.Fatal("retried before Retry-After")
+			case <-time.After(100 * time.Millisecond):
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			_ = reporter.Close(ctx)
+		})
+	}
+}
+
+func TestIssueReporterReportsPermanentRejection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter.CaptureException(errors.New("rejected"), preview.IssueContext{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := reporter.Flush(ctx); !errors.Is(err, preview.ErrIssueReporterDropped) {
+		t.Fatalf("Flush: %v", err)
+	}
+	if err := reporter.Close(ctx); !errors.Is(err, preview.ErrIssueReporterDropped) {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestIssueReporterBoundsQueueAndReportsOverflow(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -155,7 +298,7 @@ func TestIssueReporterBoundsQueueAndReportsOverflow(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", MaxQueue: 1,
 	})
 	if err != nil {
@@ -178,8 +321,8 @@ func TestIssueReporterBoundsQueueAndReportsOverflow(t *testing.T) {
 	close(release)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := reporter.Close(ctx); err != nil {
-		t.Fatalf("Close: %v", err)
+	if err := reporter.Close(ctx); !errors.Is(err, preview.ErrIssueReporterDropped) {
+		t.Fatalf("Close = %v, want dropped error", err)
 	}
 	if stats := reporter.Stats(); stats.Queued != 0 || stats.Accepted != 1 || stats.Dropped != 1 {
 		t.Fatalf("Stats after close = %+v", stats)
@@ -196,7 +339,7 @@ func TestIssueReporterRecoverAndRepanicPreservesValue(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test"})
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +350,7 @@ func TestIssueReporterRecoverAndRepanicPreservesValue(t *testing.T) {
 				t.Fatalf("recovered value = %#v, want %#v", got, panicValue)
 			}
 		}()
-		defer reporter.RecoverAndRepanic(faas.IssueContext{RequestID: "panic-request"})
+		defer reporter.RecoverAndRepanic(preview.IssueContext{RequestID: "panic-request"})
 		panic(panicValue)
 	}()
 
@@ -246,7 +389,7 @@ func TestIssueReporterDoesNotFollowRedirects(t *testing.T) {
 	}))
 	defer redirect.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: redirect.URL, App: "exports", Token: "g_issue_test",
 	})
 	if err != nil {
@@ -255,7 +398,7 @@ func TestIssueReporterDoesNotFollowRedirects(t *testing.T) {
 	reporter.CaptureException(errors.New("redirect"))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := reporter.Close(ctx); err != nil {
+	if err := reporter.Close(ctx); !errors.Is(err, preview.ErrIssueReporterDropped) {
 		t.Fatalf("Close: %v", err)
 	}
 	if forwarded {
@@ -277,7 +420,7 @@ func TestIssueReporterCloseDeadlineLeavesQueuedEventVisible(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: time.Second,
 	})
 	if err != nil {
@@ -301,13 +444,13 @@ func TestIssueReporterCloseDeadlineLeavesQueuedEventVisible(t *testing.T) {
 	}
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), time.Second)
 	defer flushCancel()
-	if err := reporter.Flush(flushCtx); !errors.Is(err, faas.ErrIssueReporterStopped) {
+	if err := reporter.Flush(flushCtx); !errors.Is(err, preview.ErrIssueReporterStopped) {
 		t.Fatalf("Flush after stopped worker = %v, want ErrIssueReporterStopped", err)
 	}
 }
 
 func TestIssueReporterContainsCustomTransportPanic(t *testing.T) {
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test",
 		HTTPClient: &http.Client{Transport: panicRoundTripper{}},
 	})
@@ -319,7 +462,7 @@ func TestIssueReporterContainsCustomTransportPanic(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := reporter.Close(ctx); err != nil {
+	if err := reporter.Close(ctx); !errors.Is(err, preview.ErrIssueReporterDropped) {
 		t.Fatalf("Close: %v", err)
 	}
 	if stats := reporter.Stats(); stats.Queued != 0 || stats.Dropped != 1 {
@@ -328,7 +471,7 @@ func TestIssueReporterContainsCustomTransportPanic(t *testing.T) {
 }
 
 func TestIssueReporterContainsPanickingErrorFormatter(t *testing.T) {
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test",
 	})
 	if err != nil {
@@ -340,13 +483,13 @@ func TestIssueReporterContainsPanickingErrorFormatter(t *testing.T) {
 	if stats := reporter.Stats(); stats.Queued != 0 || stats.Dropped != 1 {
 		t.Fatalf("Stats = %+v", stats)
 	}
-	if err := reporter.Close(context.Background()); err != nil {
+	if err := reporter.Close(context.Background()); !errors.Is(err, preview.ErrIssueReporterDropped) {
 		t.Fatalf("Close: %v", err)
 	}
 }
 
 func TestNewIssueReporterRejectsUnsafeConfiguration(t *testing.T) {
-	cases := []faas.IssueReporterOptions{
+	cases := []preview.IssueReporterOptions{
 		{BaseURL: "ftp://api.example.test", App: "exports", Token: "g_issue_test"},
 		{BaseURL: "https://user:pass@api.example.test", App: "exports", Token: "g_issue_test"},
 		{BaseURL: "https://api.example.test/path", App: "exports", Token: "g_issue_test"},
@@ -355,7 +498,7 @@ func TestNewIssueReporterRejectsUnsafeConfiguration(t *testing.T) {
 		{BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test", GroupingStrategy: "unknown"},
 	}
 	for _, options := range cases {
-		if reporter, err := faas.NewIssueReporter(options); err == nil {
+		if reporter, err := preview.NewIssueReporter(options); err == nil {
 			_ = reporter.Close(context.Background())
 			t.Errorf("NewIssueReporter(%+v) unexpectedly succeeded", options)
 		}
@@ -387,7 +530,7 @@ func TestIssueReporterCopiesOperationalContext(t *testing.T) {
 	var got faas.IssueEvent
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&got); w.WriteHeader(202) }))
 	defer srv.Close()
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{BaseURL: srv.URL, App: "worker", Token: "g_issue_test", GroupingStrategy: "failure-site-v1", SymbolicationStrategy: "deployment-source-maps-v1"})
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "worker", Token: "g_issue_test", GroupingStrategy: "failure-site-v1", SymbolicationStrategy: "deployment-source-maps-v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +539,7 @@ func TestIssueReporterCopiesOperationalContext(t *testing.T) {
 		entries = append(entries, faas.IssueBreadcrumb{OccurredAt: time.Now(), Category: "workflow", Level: "info", Message: strings.Repeat("x", 300)})
 	}
 	tags := map[string]string{"component": "payments", "email": "private@example.com"}
-	if reporter.CaptureException(errors.New("failed"), faas.IssueContext{Breadcrumbs: entries, Tags: tags}) == "" {
+	if reporter.CaptureException(errors.New("failed"), preview.IssueContext{Breadcrumbs: entries, Tags: tags}) == "" {
 		t.Fatal("not queued")
 	}
 	tags["component"] = "later"

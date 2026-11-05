@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -19,8 +20,11 @@ import (
 // EdgeRuleList is one account-scoped list. Items are stored canonicalized
 // (api.NormalizeEdgeRuleListItems) by apid.
 type EdgeRuleList struct {
-	ID          string
-	AccountID   string
+	ID        string
+	AccountID string
+	// OrgID is the organization a list created through a company app
+	// belongs to (ADR-091 amendment 2026-11-03); "" is a personal list.
+	OrgID       string
 	Name        string
 	Kind        string
 	Description string
@@ -38,6 +42,7 @@ type EdgeRuleListRef struct {
 // CreateEdgeRuleListParams is the insert shape.
 type CreateEdgeRuleListParams struct {
 	AccountID   string
+	OrgID       string
 	Name        string
 	Kind        string
 	Description string
@@ -62,6 +67,70 @@ type EdgeRuleListInUseError struct {
 
 func (e *EdgeRuleListInUseError) Error() string {
 	return fmt.Sprintf("state: edge rule list %q is referenced by %d rule(s)", e.Name, len(e.Refs))
+}
+
+// EdgeRuleListMissingError is a rule write whose match condition references
+// a list the account does not have.
+type EdgeRuleListMissingError struct {
+	Name string
+}
+
+func (e *EdgeRuleListMissingError) Error() string {
+	return fmt.Sprintf("state: edge rule list %q does not exist", e.Name)
+}
+
+// lockEdgeRuleListRefs takes a share lock on every account list the
+// conditions reference and fails with EdgeRuleListMissingError when one does
+// not exist. DeleteEdgeRuleList locks the list row FOR UPDATE before it reads
+// the references, so a rule write that references a list and that list's
+// deletion cannot both commit: apid checked the list exists before the write,
+// without a lock, and a concurrent delete left a rule referencing a missing
+// list, which then never matched (ADR-091 amendment 2026-10-28).
+func lockEdgeRuleListRefs(ctx context.Context, tx pgx.Tx, accountID string, exprs ...*api.EdgeRuleMatchExpr) error {
+	var names []string
+	for _, expr := range exprs {
+		names = append(names, api.EdgeRuleMatchListRefs(expr)...)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	rows, err := tx.Query(ctx,
+		`select name from edge_rule_lists where account_id = $1 and name = any($2) order by name for share`,
+		accountID, names)
+	if err != nil {
+		return fmt.Errorf("state: lock edge rule lists: %w", err)
+	}
+	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("state: lock edge rule lists: %w", err)
+	}
+	for _, name := range names {
+		if !slices.Contains(found, name) {
+			return &EdgeRuleListMissingError{Name: name}
+		}
+	}
+	return nil
+}
+
+// memEdgeRuleListMissing is lockEdgeRuleListRefs for MemStore, whose writes
+// already hold its one mutex. Callers hold m.mu.
+func (m *MemStore) memEdgeRuleListMissing(accountID string, exprs ...*api.EdgeRuleMatchExpr) error {
+	for _, expr := range exprs {
+		for _, name := range api.EdgeRuleMatchListRefs(expr) {
+			found := false
+			for _, l := range m.edgeRuleLists {
+				if l.AccountID == accountID && l.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return &EdgeRuleListMissingError{Name: name}
+			}
+		}
+	}
+	return nil
 }
 
 // EdgeRuleListStore is the ADR-963 capability; apid and gatewayd
@@ -89,11 +158,11 @@ var (
 	_ EdgeRuleListStore = (*MemStore)(nil)
 )
 
-const edgeRuleListCols = `id::text, account_id::text, name, kind, description, items, created_at, updated_at`
+const edgeRuleListCols = `id::text, account_id::text, coalesce(org_id::text, ''), name, kind, description, items, created_at, updated_at`
 
 func scanEdgeRuleList(row pgx.Row) (EdgeRuleList, error) {
 	var l EdgeRuleList
-	err := row.Scan(&l.ID, &l.AccountID, &l.Name, &l.Kind, &l.Description, &l.Items, &l.CreatedAt, &l.UpdatedAt)
+	err := row.Scan(&l.ID, &l.AccountID, &l.OrgID, &l.Name, &l.Kind, &l.Description, &l.Items, &l.CreatedAt, &l.UpdatedAt)
 	return l, err
 }
 
@@ -181,16 +250,19 @@ func (s *PgStore) CreateEdgeRuleList(ctx context.Context, p CreateEdgeRuleListPa
 			return err
 		}
 		var n int
-		if err := tx.QueryRow(ctx, `select count(*) from edge_rule_lists where account_id = $1`, p.AccountID).Scan(&n); err != nil {
+		// The cap counts the lists of the new list's scope: an
+		// organization's lists and the member's personal ones have
+		// separate plans (ADR-091 amendment 2026-11-04).
+		if err := tx.QueryRow(ctx, `select count(*) from edge_rule_lists where account_id = $1 and org_id is not distinct from nullif($2, '')::uuid`, p.AccountID, p.OrgID).Scan(&n); err != nil {
 			return err
 		}
 		if n >= maxLists {
 			return ErrEdgeRuleListQuota
 		}
 		l, err := scanEdgeRuleList(tx.QueryRow(ctx, `
-			insert into edge_rule_lists (account_id, name, kind, description, items)
-			values ($1, $2, $3, $4, $5)
-			returning `+edgeRuleListCols, p.AccountID, p.Name, p.Kind, p.Description, nonNilStrings(p.Items)))
+			insert into edge_rule_lists (account_id, org_id, name, kind, description, items)
+			values ($1, nullif($2, '')::uuid, $3, $4, $5, $6)
+			returning `+edgeRuleListCols, p.AccountID, p.OrgID, p.Name, p.Kind, p.Description, nonNilStrings(p.Items)))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -355,7 +427,7 @@ func (m *MemStore) CreateEdgeRuleList(_ context.Context, p CreateEdgeRuleListPar
 	defer m.mu.Unlock()
 	n := 0
 	for _, l := range m.edgeRuleLists {
-		if l.AccountID == p.AccountID {
+		if l.AccountID == p.AccountID && l.OrgID == p.OrgID {
 			n++
 		}
 	}
@@ -370,7 +442,7 @@ func (m *MemStore) CreateEdgeRuleList(_ context.Context, p CreateEdgeRuleListPar
 	}
 	now := time.Now().UTC()
 	l := EdgeRuleList{
-		ID: uuid.NewString(), AccountID: p.AccountID, Name: p.Name, Kind: p.Kind,
+		ID: uuid.NewString(), AccountID: p.AccountID, OrgID: p.OrgID, Name: p.Name, Kind: p.Kind,
 		Description: p.Description, Items: append([]string{}, p.Items...),
 		CreatedAt: now, UpdatedAt: now,
 	}

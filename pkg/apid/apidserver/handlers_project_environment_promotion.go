@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	promotionapi "github.com/onebox-faas/faas/pkg/apid/promotion"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -151,10 +153,17 @@ func (s *server) buildProjectEnvironmentPromotionSecretPlan(ctx context.Context,
 	if err != nil {
 		return plan, api.ErrCapacity("could not list project workloads")
 	}
+	apps, err = promotionapi.Membership(ctx, s.store, acct.ID, project.ID, fromEnvironment, toEnvironment, apps)
+	if err != nil {
+		return plan, api.ErrCapacity("could not inspect promotion environment membership")
+	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
 
 	changes := make([]api.ProjectEnvironmentPromotionChange, 0, len(apps))
 	blockingReasons := make([]string, 0)
+	if len(apps) == 0 {
+		blockingReasons = append(blockingReasons, "source environment has no workloads to promote")
+	}
 	if reason := s.promotionWorkerOptions(plan, len(verify) > 0 && verify[0], toEnvironment); reason != "" {
 		blockingReasons = append(blockingReasons, reason)
 	}
@@ -487,6 +496,10 @@ func (s *server) buildProjectEnvironmentPromotionResumePlan(ctx context.Context,
 	if err != nil {
 		return plan, api.ErrCapacity("could not list project workloads")
 	}
+	apps, err = promotionapi.Membership(ctx, s.store, acct.ID, project.ID, from.Slug, to.Slug, apps)
+	if err != nil {
+		return plan, api.ErrCapacity("could not inspect promotion environment membership")
+	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
 	workloadBySlug := make(map[string]state.ProjectEnvironmentPromotionWorkload, len(workloads))
 	for _, workload := range workloads {
@@ -742,12 +755,25 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.promotionApprovalProblem(r.Context(), plan, toEnvironment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if plan.Preview.ApprovalRequired {
 		approvalToken := strings.TrimSpace(req.ApprovalToken)
 		if approvalToken == "" {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
 				"Protected environment approval required", "approve this exact promotion before executing it"))
 			return
+		}
+		// The approval stands in for each app's own release approval policy,
+		// so it is held to it: who approved, against who promotes.
+		if approval, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, projectSlug, toEnvironment,
+			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken)); err == nil {
+			if problem := s.protectedPromotionApprovalProblem(r.Context(), plan, toEnvironment, approval.ApprovedByAccountID, actorAccount(r, acct).ID); problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
 		}
 
 	}
@@ -1235,11 +1261,9 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 			if err := s.durable.CheckProjectValidatorMembers(ctx, []state.ProjectReleaseMember{{AppID: existing.AppID, DeploymentID: existing.ID}}); err != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("validator binding unavailable for resumed promotion")
 			}
-			updated, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, "")
-			if updateErr != nil {
+			if _, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, ""); updateErr != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
 			}
-			workload = updated
 			continue
 		}
 		var promoted state.Deployment
@@ -1540,6 +1564,22 @@ func promoteProjectEnvironmentDeploymentDark(ctx context.Context, store state.St
 	return promoteProjectEnvironmentDeploymentWithTraffic(ctx, store, source, targetEnvironment, promotionID, true)
 }
 
+// promotionDefaultRollbackOn5xx gives a promotion into production the default
+// first-wake 5xx rollback and post-release watch its app would get from a
+// deploy (ADR-1446 amendment 2): the staging release it copies never had
+// them. Lookup failures leave the promotion as it was.
+func promotionDefaultRollbackOn5xx(ctx context.Context, store state.Store, appID, targetEnvironment string) bool {
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return false
+	}
+	acct, err := store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return false
+	}
+	return release.DefaultRollbackOn5xx(ctx, store, slog.Default(), app, acct.Plan, targetEnvironment)
+}
+
 func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store state.Store, source state.Deployment, targetEnvironment, promotionID string, dark bool, configuration ...state.ProjectEnvironmentPromotionWorkloadSpecInput) (state.Deployment, error) {
 	if err := durable.TransferPromotionValidator(ctx, source, ""); err != nil {
 		return state.Deployment{}, err
@@ -1569,6 +1609,8 @@ func promoteProjectEnvironmentDeploymentWithTraffic(ctx context.Context, store s
 	if dark {
 		candidate.TrafficPercent = 0
 		candidate.TrafficPercentExplicit = true
+	} else if !candidate.RollbackOn5xx {
+		candidate.RollbackOn5xx = promotionDefaultRollbackOn5xx(ctx, store, source.AppID, targetEnvironment)
 	}
 	candidate.RolloutState = "pending"
 	candidate.RolloutStartedAt = nil

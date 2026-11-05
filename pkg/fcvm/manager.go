@@ -36,8 +36,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/sealsig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -288,15 +291,15 @@ type AdvisoryForwarder interface {
 
 // StaticEgressIPEntry (ADR-119 redesign) is the canonical
 // (accountID, appID, customerIP, perVMHostIP) tuple consumed by
-// Manager.SetStaticEgressIPAliases and the host renderer.
+// Manager.SetStaticEgressIPAliases.
 //
 // AccountID is the apps.account_id the entry is provisioned for
 // (the Postgres bundle gate is keyed on (account_id, customer_ip));
 // AppID is the apps.id of the pinned app; IP is the customer-
 // supplied IP aliased on br-tenants; PerVMHostIP is the per-VM
-// host IP allocated from the dedicated static-egress pool
-// (10.200.x.y/16, see alloc.go::AcquireStaticEgressIP) — the
-// `ip saddr` in the host renderer's SNAT rule.
+// reservation address allocated from the dedicated static-egress pool
+// (10.200.x.y/16, see alloc.go::AcquireStaticEgressIP). Runtime SNAT
+// source matches come from live VM leases instead.
 //
 // Defined in pkg/fcvm so cmd/vmmd/egress_static_ip_bundle.go
 // can type-alias it without a circular dependency. Both sides
@@ -322,7 +325,8 @@ type bringUpTimings struct {
 	coldBootMs   int64
 	restoreError string
 	// restoreFallbackReason is customer-safe only for the application
-	// after_restore failure. Other restore diagnostics stay operator-only.
+	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
+	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
@@ -432,13 +436,22 @@ type Instance struct {
 	Method                    WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
-	runtimeAdmissionEgress  WakeRequest
+	// admissionHeldFrom is the incarnation that issued runtimeAdmissionReceipt
+	// when this process adopted the guest carrying it (ADR-595 extension):
+	// grants naming that receipt as parent are then this process's to serve.
+	admissionHeldFrom      string
+	runtimeAdmissionEgress WakeRequest
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly  bool
 	DataRepairOnly bool
+	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
+	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
+	AgentRunOnly bool
+	// AgentRunRelay is the run principal of the VM's relay; host-only.
+	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
 	// The lease and grant list are host-only broker inputs and must never be
 	// serialized into guest-visible state.
@@ -460,6 +473,10 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// AgentWaitPauseAfter is an agent run's model-wait pause delay
+	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
+	// running while it waits on the model.
+	AgentWaitPauseAfter time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -469,6 +486,11 @@ type Instance struct {
 	// freezing is non-nil while a Freeze decides and pauses, and closes once
 	// that freeze has settled either way. Guarded by Manager.mu.
 	freezing chan struct{}
+	// parking is non-nil while a terminal Park runs and closes once it ends;
+	// parkHeld counts the forwards waiting on it (park_hold.go). Both are
+	// guarded by Manager.mu.
+	parking  chan struct{}
+	parkHeld int64
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -478,6 +500,8 @@ type Instance struct {
 	// JobInteractive marks a Job whose guest holds its command for one
 	// attached session (ADR-1330).
 	JobInteractive bool
+	// jobExit is the job's exit once its guest reported it (RecordJobExit).
+	jobExit *JobExitPayload
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
@@ -498,9 +522,11 @@ type Instance struct {
 	// operator can distinguish a stale snapshot from a guest resume-hook
 	// failure (including its ACK code).
 	RestoreError string
-	// RestoreFallbackReason is the closed customer-facing reason for a
-	// successful cold-boot fallback after an application restore hook failure.
-	// Empty for other failures, planned cold boots, and successful restores.
+	// RestoreFallbackReason is the closed reason for a successful cold-boot
+	// fallback: WakeReasonAfterRestoreFailed (customer-facing) after an
+	// application restore hook failure, RestoreFallbackNodeLocal (operator
+	// only) when the failure was this node's. Empty for other failures,
+	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
@@ -511,6 +537,8 @@ type Instance struct {
 	// stays allocator-owned and the Instance carries the
 	// schedd-owned app identity.
 	AppID string
+	// WakeID and NodeID bind traffic-readiness observations to this live VM.
+	WakeID, NodeID string
 
 	// AccountID is the apps.account_id the instance was woken
 	// for (mirrors AppID). Captured from WakeRequest.AccountID
@@ -530,7 +558,8 @@ type Instance struct {
 	// no apid round-trip. Empty on legacy single-workload wakes
 	// (pre-PR-B callers don't carry a deployment_id on the wire);
 	// the dispatch path is tolerant of "" and skips the flip.
-	DeploymentID string
+	DeploymentID         string
+	StaticEgressExcluded bool // non-production deployments never use the app pin
 
 	// LivenessProbe preserves the per-deployment probe override across a
 	// migration pause/resume cycle. It is copied from WakeRequest so ResumeVM
@@ -565,7 +594,8 @@ type Instance struct {
 	// needing to thread the plan through the vmm-side Lease type.
 	// The Lease stays allocator-owned and instance-id-keyed; the Plan
 	// is schedd-owned and recorded at Wake time.
-	Plan api.Plan
+	Plan                  api.Plan
+	httpForwardGeneration string
 
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
 	// override port copied from WakeRequest.Port. The vmmdgrpc
@@ -666,7 +696,11 @@ type Instance struct {
 	// resolvedEgress is when each address vmmd added to this instance's
 	// egress_resolved set expires (ADR-373), so repeated lookups of the
 	// same name skip the nft call until half the TTL has passed.
-	resolvedEgress map[netip.Addr]time.Time
+	networkPolicyMu *sync.Mutex // initialized under Manager.mu; snapshots must not copy a mutex
+	resolvedEgress  map[netip.Addr]time.Time
+	// databaseEgress is when each address . port pair in this instance's
+	// egress_db set expires (ADR 20261026150000), on the same rule.
+	databaseEgress map[databaseEgressKey]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -695,6 +729,30 @@ type Instance struct {
 	// Reset to 0 on every Wake. Mirrors pkg/state/types.go
 	// where it lives on DailyUsage after the meterd rollup.
 	tailSecondsAccum int64
+	// adoptionVCPUs and adoptionMemSizeMiB are the machine configuration the
+	// guest was launched with, recorded in its adoption block (ADR §1).
+	adoptionVCPUs      int
+	adoptionMemSizeMiB int
+	// adoptionOp is the operation intent in flight, recorded in the
+	// adoption block. Guarded by Manager.mu.
+	adoptionOp *resourceAdoptionOp
+	// devPatched marks a guest served a developer live patch (ADR-740),
+	// recorded in its adoption block so a successor keeps refusing its
+	// snapshots. Guarded by Manager.mu.
+	devPatched bool
+	// bridge is the instance bridge unit run recorded in the adoption block
+	// (instance_bridge.go). Guarded by Manager.mu.
+	bridge *resourceAdoptionBridge
+	// migrationPaused marks a live-migration source SnapshotKeepAlive left
+	// paused for the migration lease owner, who alone may resume or destroy
+	// it. Recorded in the adoption block, so a successor keeps it paused.
+	// Guarded by Manager.mu.
+	migrationPaused bool
+	// warmSpare marks a warm-pool restore not yet claimed: it stays paused
+	// until ResumeWarmInstance. Paused alone cannot say so, because it stays
+	// set on a claimed warm instance. Recorded in the adoption block.
+	// Guarded by Manager.mu.
+	warmSpare bool
 }
 
 // LiveEgressInstance is the minimal live-instance view needed by vmmd's
@@ -819,6 +877,11 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// Forwarding permits belong to the live instance generation, not a gateway
+	// process. Cleanup drains them before recycling its network or lease.
+	httpForwards map[string]*httpForwardGeneration
+	// httpAdmissionDisabled is the FAAS_HTTP_ADMISSION=off kill switch.
+	httpAdmissionDisabled bool
 	// qualificationInstances owns isolated qualification targets without
 	// making them discoverable through serving lookups, CID routing, health
 	// loops, or app policy fan-out. Guarded by mu.
@@ -833,6 +896,17 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
+	// appDatabaseResolved is the same per app for bound managed databases'
+	// address . port pairs (ADR 20261026150000).
+	appDatabaseResolved map[string]map[databaseEgressKey]time.Time
+	// ADR-570: serialize circuit updates and pending-network registration so
+	// a wake cannot miss a policy change before it enters the live map.
+	egressCircuitMu           sync.Mutex
+	egressCircuitEnabled      bool
+	appEgressCircuits         map[string][]netns.EgressCircuitTarget
+	appEgressCircuitRevisions map[string]int64
+	egressCircuitSource       func(context.Context, string) (netns.EgressCircuitSnapshot, error)
+	egressCircuitNetworks     map[string]egressCircuitNetwork
 	// dnsGatingOff is the operator's emergency switch for ADR-373 DNS-gated
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
@@ -868,9 +942,18 @@ type Manager struct {
 	// ADR-472: observed restart survivors have no reconstructed lifecycle
 	// owner. Their slots and IDs stay quarantined; they are never live-map
 	// entries, cleanup identities or permission to replay a failure report.
-	restartQuarantine          map[string]struct{}
-	restartInventoryDone       bool
-	resourceJournal            *ResourceJournal
+	restartQuarantine    map[string]struct{}
+	restartInventoryDone bool
+	resourceJournal      *ResourceJournal
+	// anchorNetns re-creates an adopted guest's netns binding; tests replace
+	// it. nil uses anchorAdoptedNetns.
+	anchorNetns func(name string, pid int, want resourceFileIdentity) (*resourceAsset, error)
+	// adoption writes version-7 adoption blocks once EnableAdoptionRecords
+	// is called; nil writes none. Atomic so state changes can mark an
+	// instance whether or not they hold mu.
+	adoption atomic.Pointer[adoptionWriter]
+	// adoptAdmittedRuntimes: see WithAdoptAdmittedRuntimes.
+	adoptAdmittedRuntimes      bool
 	resourceLinks              map[string]ownedResourceLink
 	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
 	linkContext                func() (*resourceMountIdentity, error)
@@ -1005,6 +1088,9 @@ type Manager struct {
 	// because the workload is already dead and the VM is about
 	// to be torn down by the manager's destroy path.
 	workloadOOMRelay WorkloadOOMSink
+	// memoryPressureRelay forwards guest memory-pressure reports to schedd,
+	// which queues an automatic heap capture (ADR-1155). nil drops them.
+	memoryPressureRelay MemoryPressureSink
 	// livenessRegistry (issue #554 / ADR-078 / PR review fix)
 	// is the per-instance poll goroutine registry the cmd/vmmd
 	// main loop wires via WithLivenessProbes. The Manager owns
@@ -1040,6 +1126,9 @@ type Manager struct {
 	lifecycleCtx         context.Context
 	frameworkReadyReader func(context.Context, string) (frameworkready.Status, error)
 	frameworkReadyRuns   map[string]*frameworkReadyRun
+	// qualificationFrameworkReadyRecorder stores a restored qualification
+	// target's framework-ready receipt (ADR 20261023093000).
+	qualificationFrameworkReadyRecorder func(context.Context, state.EnvironmentQualificationExecution, string, int64) error
 	// hostIdentities is the slice of X25519 secret keys used to
 	// unseal per-app sealed env blobs at wake time (spec §11/G2).
 	// Holds the current identity alone in the normal pre-rotation
@@ -1049,6 +1138,18 @@ type Manager struct {
 	// rejected with ErrNoHostKey rather than silently dropping
 	// plaintext. vmmd owns the on-disk files.
 	hostIdentities []*age.X25519Identity
+	// registryIdentities open the registry passwords a builder VM pulls its
+	// base images with (ADR-20261026091500): the build seal domain, then
+	// the fleet and host identities. nil leaves builders anonymous.
+	registryIdentities []*age.X25519Identity
+	// requireSecretBinding refuses runtime envelopes that carry no account
+	// binding (ADR-20261023173624, contract step). Off until every stored
+	// envelope is bound.
+	requireSecretBinding bool
+	// runtimeSignatures verifies apid's writer signature on runtime
+	// envelopes before any is opened (ADR 20261028161502, amendment 1).
+	// nil checks nothing.
+	runtimeSignatures *sealsig.RuntimeChecker
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1071,6 +1172,15 @@ type Manager struct {
 	backingMu       sync.Mutex
 	backingDigests  map[fileIdentityKey]string
 	instanceBacking map[string]BackingIdentity
+	// backingHashing is each file version being hashed now, and
+	// backingPending each instance whose identity is still being computed
+	// (rememberInstanceBacking): its channel closes when the identity, or
+	// its absence, is recorded.
+	backingHashing map[fileIdentityKey]*backingDigestCall
+	backingPending map[string]chan struct{}
+	// beforeBackingHash, when set, runs before a file version is hashed.
+	// Tests use it to hold a hash in flight.
+	beforeBackingHash func(path string)
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -1158,7 +1268,8 @@ type Manager struct {
 	// alias set matches the operator TOML. The actual `ip addr
 	// add/del` happens inside SetStaticEgressIPAliases so the
 	// in-memory cache and the kernel state stay in lock-step.
-	staticEgressAliases map[string]netip.Addr
+	staticEgressAliases       map[string]netip.Addr
+	staticEgressAliasAccounts map[string]string
 	// staticEgressAliasesMu guards staticEgressAliases. Held
 	// briefly for the read-then-diff path inside
 	// SetStaticEgressIPAliases. SIGHUP redelivery lands here;
@@ -1181,23 +1292,7 @@ type Manager struct {
 	// in the steady-state (UpdateStaticEgressIP also
 	// writes).
 	perAppStaticIPMu sync.RWMutex
-	// perVMHostIP (ADR-119 redesign) is the live per-VM
-	// host IP map keyed by appID. The host renderer
-	// consumes the (perVMHostIP, customerIP) tuple for each
-	// live VM of a static-egress-pinned app. The map is
-	// populated by:
-	//   1. SetStaticEgressIPAliases (operator bundle reload)
-	//   2. RegisterStaticEgressIPForVM (called on Wake)
-	//   3. UnregisterStaticEgressIPForVM (called on Park /
-	//      Destroy, on the customer-clear path)
-	// Source of truth is the pkg/fcvm static-egress pool
-	// (alloc.go::AcquireStaticEgressIP / ReleaseStaticEgressIP);
-	// this map is the vmmd Manager's view of that pool,
-	// updated on every mutation.
-	perVMHostIP map[string]netip.Addr
-	// perVMHostIPMu guards perVMHostIP. Same discipline as
-	// perAppStaticIPMu (brief read-then-set locks).
-	perVMHostIPMu sync.RWMutex
+
 	// privateNetworkFabric tracks the node-local Gregale network bridges
 	// reconciled through the vmmd control surface. The map is only a cache for
 	// idempotent command planning; the kernel remains the source of truth and
@@ -1231,18 +1326,44 @@ type Manager struct {
 	// leaf lock: it is never held while m.mu or a quietState lock is taken.
 	quietActivity QuietActivity
 	quietMetrics  *QuietPauseMetrics
+	quietObserve  bool
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
 
+	// Model-wait pause of agent runs (ADR-20261027090012;
+	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
+	// agentWaitMu guards agentWaits and is a leaf lock, like quietMu.
+	agentWaitCPU     AgentWaitCPU
+	agentWaitMetrics *AgentWaitMetrics
+	agentWaitMu      sync.Mutex
+	agentWaits       map[string]*agentWaitState
+	// agentUsageTick is the agent run usage sample interval
+	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
+	agentUsageTick time.Duration
+
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
-	freezeActivity                QuietActivity
-	freezeMetrics                 *FreezeMetrics
-	functionActivity              *activity.ActivityTracker
-	functionMigrationSources      map[string]*functionMigrationSource
-	functionMigrationDestinations map[string]*functionMigrationDestination
-	functionStarting              map[string]*Instance
+	freezeActivity                  QuietActivity
+	freezeMetrics                   *FreezeMetrics
+	functionActivity                *activity.ActivityTracker
+	functionMigrationSources        map[string]*functionMigrationSource
+	functionMigrationDestinations   map[string]*functionMigrationDestination
+	functionStarting                map[string]*Instance
+	perAppStaticAccounts            map[string]string
+	perAppStaticBlocked             map[string]bool
+	privateNetworkAddressOwners     map[string]string
+	privateNetworkMemberRelease     func(context.Context, string, string, string, string, bool) error
+	privateNetworkMemberSource      func(context.Context, PrivateNetworkMemberRequest) (PrivateNetworkMemberIdentity, error)
+	privateNetworkRouters           map[string]bool
+	privateNetworkTransportIdentity map[string]privatenetwork.FabricTransportSpec
+	privateNetworkVNISource         func(context.Context, string, string, string) (uint32, error)
+	staticEgressAliasIPs            map[netip.Addr]bool
+	staticEgressAliasesManaged      bool
+	staticEgressPolicySource        func(context.Context, string, string) (*netip.Addr, error)
+	staticEgressStarting            map[string]netns.StaticEgressRule
+	staticEgressWakeSequence        atomic.Uint64
+	staticEgressWakeStates          sync.Map
 }
 
 type appCPUPolicy struct {
@@ -1269,6 +1390,10 @@ type HostRenderer interface {
 	// rules.
 	SetStaticEgressRules(rules []netns.StaticEgressRule)
 }
+
+// JailLeases is the host's jail-identity allocator. Database VMs (ADR-1027)
+// take their jail uid from it so they never share one with an app VM.
+func (m *Manager) JailLeases() *Allocator { return m.alloc }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
 // to decide snapshot usability, ADR-005). log may be nil (a discard logger).
@@ -1307,7 +1432,6 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		// (per-VM host IP) is the new map that drives the host
 		// renderer.
 		perAppStaticIP:               make(map[string]*netip.Addr),
-		perVMHostIP:                  make(map[string]netip.Addr),
 		privateNetworkFabric:         make(map[string]netip.Prefix),
 		privateNetworkTransport:      make(map[string]bool),
 		privateNetworkTransportPeers: make(map[string]string),
@@ -1326,89 +1450,10 @@ func (m *Manager) SetHostRenderer(r HostRenderer) {
 	m.hostRenderer = r
 }
 
-// rebuildHostStaticEgressRules rebuilds the host renderer's
-// StaticEgressRules from the active per-VM host IP map and the
-// per-app customer IP cache, then triggers a host ruleset
-// reload. Called on every cache mutation (Wake, Teardown, drift,
-// SIGHUP).
-//
-// The rule list is the cross-product of perVMHostIP and
-// perAppStaticIP, filtered to apps that have BOTH a non-nil
-// per-VM host IP entry (the host renderer needs a `ip saddr`
-// source) AND a non-nil customer IP (the SNAT target). Apps
-// missing either field are silently dropped — the per-VM host
-// IP is set on Wake, the customer IP is set on the apid PUT.
-//
-// The reload is fire-and-forget: a failure logs a Warn and
-// returns; the next cache event re-triggers the rebuild. The
-// renderer reload is gated through the staging-dir + atomic-
-// replace pipeline in cmd/vmmd/egress_watcher.go, so a failed
-// Render does NOT break the live ruleset.
-func (m *Manager) rebuildHostStaticEgressRules(ctx context.Context) {
-	if m.hostRenderer == nil {
-		return
-	}
-	m.hostPolicyMu.Lock()
-	defer m.hostPolicyMu.Unlock()
-	m.perVMHostIPMu.RLock()
-	perVM := make(map[string]netip.Addr, len(m.perVMHostIP))
-	for k, v := range m.perVMHostIP {
-		perVM[k] = v
-	}
-	m.perVMHostIPMu.RUnlock()
-
-	m.perAppStaticIPMu.RLock()
-	perApp := make(map[string]*netip.Addr, len(m.perAppStaticIP))
-	for k, v := range m.perAppStaticIP {
-		perApp[k] = v
-	}
-	m.perAppStaticIPMu.RUnlock()
-
-	// Look up account IDs by walking live instances. The
-	// account→app mapping is read from the live state; the
-	// reservation table (alloc.go) owns the per-VM host IP
-	// slot but not the account_id (the worker writes it at
-	// acquire time, and SetStaticEgressIPAliases from the
-	// operator bundle re-asserts it on SIGHUP).
-	accountByApp := make(map[string]string, len(perVM))
-	m.mu.Lock()
-	for _, inst := range m.live {
-		if _, ok := perVM[inst.AppID]; ok {
-			accountByApp[inst.AppID] = inst.AccountID
-		}
-	}
-	m.mu.Unlock()
-
-	rules := make([]netns.StaticEgressRule, 0, len(perVM))
-	for appID, perVMHostIP := range perVM {
-		ip := perApp[appID]
-		if ip == nil {
-			continue
-		}
-		rules = append(rules, netns.StaticEgressRule{
-			PerVMHostIP: perVMHostIP,
-			CustomerIP:  *ip,
-			AccountID:   accountByApp[appID],
-			AppID:       appID,
-		})
-	}
-	// Install the rules into the live host policy via
-	// atomic swap. The current pointer is read-then-copied,
-	// the new rules are written into the copy, and the new
-	// pointer is published. The watcher reads the new
-	// pointer on the next Render cycle.
-	cur := netns.ActiveHostPolicyForRender()
-	if cur != nil {
-		next := *cur
-		next.StaticEgressRules = rules
-		netns.SwapActiveHostPolicy(next)
-	} else {
-		m.log.Warn("fcvm: rebuildHostStaticEgressRules: ActiveHostPolicy pointer is nil; rules not installed")
-	}
-	if err := m.hostRenderer.Render(ctx); err != nil {
-		m.log.Warn("fcvm: rebuildHostStaticEgressRules reload failed; live ruleset unchanged",
-			"err", err, "rules", len(rules))
-	}
+// rebuildHostStaticEgressRules refreshes both host projections from the live
+// leases. The namespace masquerades to Lease.HostIP, not the app reservation.
+func (m *Manager) rebuildHostStaticEgressRules(ctx context.Context) error {
+	return m.renderHostSMTPAllowlistRules(ctx, false)
 }
 
 // rebuildHostSMTPAllowlistRules projects the authoritative per-app CIDR
@@ -1417,15 +1462,15 @@ func (m *Manager) rebuildHostStaticEgressRules(ctx context.Context) {
 // enforcement point. Rules are rebuilt on every live-map or allowlist mutation
 // so a PATCH takes effect without a cold wake.
 func (m *Manager) rebuildHostSMTPAllowlistRules(ctx context.Context) {
-	m.renderHostSMTPAllowlistRules(ctx, false)
+	_ = m.renderHostSMTPAllowlistRules(ctx, false)
 }
 
 // Wake can avoid reapplying an unchanged host policy. All other mutation and
 // repair paths retain forced Render semantics; renderers without this optional
 // capability also retain their existing behavior.
-func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bool) {
+func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bool) error {
 	if m.hostRenderer == nil {
-		return
+		return nil
 	}
 	m.hostPolicyMu.Lock()
 	defer m.hostPolicyMu.Unlock()
@@ -1438,11 +1483,40 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	}
 	m.perAppAllowlistMu.RUnlock()
 
+	m.privateNetworkFabricMu.Lock()
+	var privateBridges []string
+	for key := range m.privateNetworkFabric {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) == 2 {
+			privateBridges = append(privateBridges, privatenetwork.BridgeName(parts[0], parts[1]))
+		}
+	}
+	m.privateNetworkFabricMu.Unlock()
+	slices.Sort(privateBridges)
+	m.perAppStaticIPMu.RLock()
+	pins := make(map[string]netip.Addr, len(m.perAppStaticIP))
+	for appID, ip := range m.perAppStaticIP {
+		if ip != nil {
+			pins[appID] = *ip
+		}
+	}
+	blockedApps := make(map[string]bool, len(m.perAppStaticBlocked))
+	for app, blocked := range m.perAppStaticBlocked {
+		blockedApps[app] = blocked
+	}
+	m.perAppStaticIPMu.RUnlock()
+	var staticRules []netns.StaticEgressRule
+	var blockedSources []netip.Addr
 	var rules []netns.SMTPAllowlistRule
 	m.mu.Lock()
 	for _, inst := range m.live {
 		if inst.QualificationOnly || inst.AppID == "" || !inst.Lease.HostIP.IsValid() || !inst.Lease.HostIP.Is4() {
 			continue
+		}
+		if blockedApps[inst.AppID] && !inst.StaticEgressExcluded && !inst.Net.Quarantine {
+			blockedSources = append(blockedSources, inst.Lease.HostIP)
+		} else if ip, pinned := pins[inst.AppID]; pinned && !inst.StaticEgressExcluded && !inst.Net.Quarantine {
+			staticRules = append(staticRules, netns.StaticEgressRule{PerVMHostIP: inst.Lease.HostIP, CustomerIP: ip, AccountID: inst.AccountID, AppID: inst.AppID})
 		}
 		allowlist, ok := perApp[inst.AppID]
 		if !ok {
@@ -1465,15 +1539,38 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 			AppID:        inst.AppID,
 		})
 	}
+	for id, starting := range m.staticEgressStarting {
+		if m.live[id] != nil {
+			continue
+		}
+		if blockedApps[starting.AppID] {
+			blockedSources = append(blockedSources, starting.PerVMHostIP)
+			continue
+		}
+		if ip, pinned := pins[starting.AppID]; pinned {
+			starting.CustomerIP = ip
+			staticRules = append(staticRules, starting)
+		}
+	}
 	m.mu.Unlock()
 
+	slices.SortFunc(staticRules, func(a, b netns.StaticEgressRule) int { return a.PerVMHostIP.Compare(b.PerVMHostIP) })
+	slices.SortFunc(rules, func(a, b netns.SMTPAllowlistRule) int { return a.SourceIP.Compare(b.SourceIP) })
 	cur := netns.ActiveHostPolicyForRender()
 	if cur == nil {
 		m.log.Warn("fcvm: rebuildHostSMTPAllowlistRules: ActiveHostPolicy pointer is nil; rules not installed")
-		return
+		return errors.New("host egress policy unavailable")
 	}
 	next := *cur
 	next.SMTPAllowlistRules = rules
+	next.StaticEgressRules = staticRules
+	next.StaticEgressBlockedSources = blockedSources
+	next.PrivateNetworkBridges = privateBridges
+	if next.TenantEgressIface != "" && len(staticRules) > 0 {
+		if err := m.ensureStaticEgressRouting(ctx, next.BridgeName); err != nil {
+			return err
+		}
+	}
 	netns.SwapActiveHostPolicy(next)
 	render := m.hostRenderer.Render
 	if conditional, ok := m.hostRenderer.(interface {
@@ -1484,37 +1581,9 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	if err := render(ctx); err != nil {
 		m.log.Warn("fcvm: rebuildHostSMTPAllowlistRules reload failed; live ruleset unchanged",
 			"err", err, "rules", len(rules))
+		return err
 	}
-}
-
-// RegisterStaticEgressIPForVM is called on Wake to associate the
-// per-VM host IP (allocated by alloc.go::AcquireStaticEgressIP at
-// the customer's apid PUT time) with the appID. Subsequent
-// rebuildHostStaticEgressRules calls surface the (perVMHostIP,
-// customerIP) tuple to the host renderer.
-func (m *Manager) RegisterStaticEgressIPForVM(appID string, perVMHostIP netip.Addr) {
-	if appID == "" || !perVMHostIP.IsValid() {
-		return
-	}
-	m.perVMHostIPMu.Lock()
-	m.perVMHostIP[appID] = perVMHostIP
-	m.perVMHostIPMu.Unlock()
-}
-
-// UnregisterStaticEgressIPForVM is called on the customer-clear
-// path (DELETE /v1/apps/{slug}/static-egress-ip) to remove the
-// per-VM host IP association. A live VM may still be running for
-// the app — the per-VM host IP is NOT released from the alloc.go
-// pool until the customer subsequently clears the pin via the
-// apid API (the alloc.go side Release is driven by the apid
-// handler, not by per-VM teardown).
-func (m *Manager) UnregisterStaticEgressIPForVM(appID string) {
-	if appID == "" {
-		return
-	}
-	m.perVMHostIPMu.Lock()
-	delete(m.perVMHostIP, appID)
-	m.perVMHostIPMu.Unlock()
+	return nil
 }
 
 // SetHostIdentity attaches the unseal key. Only vmmd calls this — the
@@ -1549,6 +1618,42 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 		return
 	}
 	m.hostIdentities = ids
+}
+
+// RequireSecretBinding makes every path that opens runtime secrets refuse
+// an envelope with no account binding (ADR-20261023173624, contract step).
+// Turn it on only once the binding pass bound every stored envelope and
+// every writer binds new ones. NOT safe to call concurrently with Wake;
+// production wires it before serving traffic.
+func (m *Manager) RequireSecretBinding(required bool) {
+	m.requireSecretBinding = required
+}
+
+// WithRuntimeSecretSignatures makes every path that opens runtime secrets
+// verify their writer signatures first (ADR 20261028161502, amendment 1).
+// NOT safe to call concurrently with Wake; production wires it before
+// serving traffic.
+func (m *Manager) WithRuntimeSecretSignatures(checker *sealsig.RuntimeChecker) *Manager {
+	m.runtimeSignatures = checker
+	return m
+}
+
+// checkRuntimeSignatures refuses the entries if any envelope's signature
+// does not verify, naming the entry.
+func (m *Manager) checkRuntimeSignatures(ctx context.Context, entries []SealedEnvEntry) error {
+	if m.runtimeSignatures == nil {
+		return nil
+	}
+	blobs := make([][]byte, len(entries))
+	for i, entry := range entries {
+		blobs[i] = entry.Ciphertext
+	}
+	err := m.runtimeSignatures.Check(ctx, blobs)
+	var refused *sealsig.BlobError
+	if errors.As(err, &refused) {
+		return fmt.Errorf("sealed env[%s]: %w", logsanitize.Field(entries[refused.Index].Key), refused.Err)
+	}
+	return err
 }
 
 // WithStorage wires the artifact backend the Manager uses to read
@@ -1891,6 +1996,7 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 		// receipts remain owned by WaitJobExit and the stuck-task reaper.
 		return
 	}
+	m.retireHTTPForwards(inst.Lease)
 
 	m.failRehearsalRecorder(instance)
 	// Stop the health loop before notifying schedd. Otherwise the
@@ -1976,6 +2082,31 @@ func (m *Manager) WithLivenessSink(relay LivenessFailedSink) *Manager {
 // Mirrors WithLivenessSink's signature shape (ctx + instance id +
 // observed payload); the only difference is the payload shape
 // (peakMB + planMB ints instead of a closed-set reason string).
+// MemoryPressureSink receives a guest memory-pressure report in MiB.
+type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool)
+
+// WithMemoryPressureSink attaches the best-effort memory-pressure relay.
+func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
+	m.memoryPressureRelay = relay
+	return m
+}
+
+// ReportMemoryPressure relays one guest report for a live app instance.
+// Reports for unknown, execution-only or job VMs are dropped.
+func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool) {
+	if m.memoryPressureRelay == nil {
+		return
+	}
+	m.mu.Lock()
+	live := m.live[instanceID]
+	ok := live != nil && !live.ExecutionOnly && !live.IsJob
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB, profiling)
+}
+
 func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 	m.workloadOOMRelay = relay
 	return m
@@ -1994,6 +2125,11 @@ func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 // returning, then retries delivery independently of the receiver context
 // (ADR-471). A storage error is logged and retained for persistence retry.
 func (m *Manager) ReportWorkloadOOM(ctx context.Context, instanceID string, peakMB, planMB int) {
+	// A kill before readiness explains the failed startup (ADR-121
+	// amendment); schedd ignores reports for instances not yet RUNNING.
+	if noter, ok := m.vmm.(interface{ NoteWorkloadOOM(string, int, int) }); ok {
+		noter.NoteWorkloadOOM(instanceID, peakMB, planMB)
+	}
 	if m.workloadOOMRelay == nil {
 		return
 	}
@@ -2315,6 +2451,19 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 // returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
+// stopSignalsGuest reports whether a graceful stop must reach the workload
+// through guest-init's control port: every job, and a declared or
+// characterized worker that is not frozen. Signalling the Firecracker host
+// process never reaches the guest, so scaling a worker in killed its VM in
+// ~140 ms without its stop signal while the drain audit said "completed"
+// (Hunt 14 H14-59). A frozen guest cannot act on a signal.
+func stopSignalsGuest(inst *Instance, frozen bool) bool {
+	if inst.IsJob {
+		return true
+	}
+	return !frozen && instanceHasNoHTTPContract(inst)
+}
+
 // instanceHasNoHTTPContract reports whether the instance is a declared
 // worker/job (ADR-137), or a legacy undeclared app the guest characterized
 // as a worker, so no port answers the plan-default HTTP liveness probe.
@@ -2523,6 +2672,7 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	appID = inst.AppID
 	runtime = inst.Runtime
 	m.mu.Unlock()
+	m.markAdoptionDirty(instance)
 	ctx, readySpan := pkgtrace.StartSpan(ctx, "guest.framework_ready",
 		attribute.String("instance_id", instance),
 		attribute.String("app_id", appID),
@@ -2715,9 +2865,7 @@ func (m *Manager) MarkInstanceTailTerminal(ctx context.Context, instance string,
 	// a 1 ms task is 1 second, a 1000 ms task is 1 second, a
 	// 1001 ms task is 2 seconds. tail_seconds is informational
 	// only; an over-count is safe (it does not enter billing).
-	if elapsedMs > 0 {
-		inst.tailSecondsAccum += (elapsedMs + 999) / 1000
-	}
+	inst.tailSecondsAccum = addTailSeconds(inst.tailSecondsAccum, elapsedMs, inst.Plan)
 	appID = inst.AppID
 	m.mu.Unlock()
 	// Mirror to SQL so schedd's reaper (PR 4) sees the same
@@ -2735,6 +2883,29 @@ func (m *Manager) MarkInstanceTailTerminal(ctx context.Context, instance string,
 	}
 	_ = outcome
 	return true, appID, nil
+}
+
+// maxTailSecondsPerTick caps one instance's tail seconds between two sampler
+// reads. usage_daily sums usage_minutes.tail_seconds into a bigint in one
+// statement for the whole fleet, so an unbounded value from one guest would
+// fail every account's rollup.
+const maxTailSecondsPerTick int64 = 1<<31 - 1
+
+// addTailSeconds adds one waitUntil task's duration, rounded up to whole
+// seconds, to accum. elapsedMs comes from the guest. The runner cancels a
+// task at the plan's TailTimeoutSeconds, so a longer report is clamped to that
+// ceiling plus one second of grace, and the sum saturates at
+// maxTailSecondsPerTick.
+func addTailSeconds(accum, elapsedMs int64, plan api.Plan) int64 {
+	if elapsedMs <= 0 {
+		return accum
+	}
+	ceilingMs := int64(plan.TailTimeoutSeconds()+1) * 1000
+	seconds := (min(elapsedMs, ceilingMs) + 999) / 1000
+	if accum >= maxTailSecondsPerTick-seconds {
+		return maxTailSecondsPerTick
+	}
+	return accum + seconds
 }
 
 // ReadAndResetTailSeconds (issue #667 / ADR-078) atomically
@@ -2842,6 +3013,9 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// qualification marks a held GitOps qualification candidate (ADR-568):
+	// it boots with its app's identity but takes no external action.
+	qualification bool
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -2849,38 +3023,23 @@ type wakingInstance struct {
 // before readiness (a worker is characterized for the whole
 // CharacterizationDeadline), and the identity is fixed when the wake starts,
 // so a queue consumer can lease while it boots (ADR-1141 amendment
-// 2026-10-17). Other guest services keep InstanceIdentity's live-only rule.
-//
-// A live instance goes through InstanceExternalActionIdentity. A booting one
-// gets the same rehearsal containment: no token while its app has a contained
-// run or the wake joined one.
+// 2026-10-17). It is the external-action rule, which the relay and event
+// publishing follow too (amendment 2026-10-24); InstanceIdentity stays
+// live-only.
 func (m *Manager) WorkloadTokenIdentity(ctx context.Context, instance string) (string, string, error) {
-	m.mu.Lock()
-	_, live := m.live[instance]
-	booting, waking := m.waking[instance]
-	m.mu.Unlock()
-	if live || !waking {
-		return m.InstanceExternalActionIdentity(ctx, instance)
-	}
-	if booting.appID == "" || booting.accountID == "" {
-		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: booting without an app identity", instance)
-	}
-	if booting.contained {
-		return "", "", ErrRehearsalExternalActionDenied
-	}
-	run, err := m.rehearsalNetworkRun(ctx, booting.appID)
-	if err != nil {
-		return "", "", err
-	}
-	if run != "" {
-		return "", "", ErrRehearsalExternalActionDenied
-	}
+	return m.InstanceExternalActionIdentity(ctx, instance)
+}
+
+// WorkloadTokenDeployment is the deployment a live or booting instance runs,
+// whose scope names the environment in its workload-identity tokens. Empty
+// when the instance is unknown or its wake carried no deployment.
+func (m *Manager) WorkloadTokenDeployment(instance string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if current, ok := m.waking[instance]; !ok || current != booting {
-		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: changed during policy read", instance)
+	if inst := m.live[instance]; inst != nil {
+		return inst.DeploymentID
 	}
-	return booting.appID, booting.accountID, nil
+	return m.waking[instance].deploymentID
 }
 
 // workerProven reports whether a declared worker's deployment already
@@ -3051,6 +3210,27 @@ func (m *Manager) InstanceDeploymentIDAndAppID(instance string) (deploymentID, a
 	inst, ok := m.live[instance]
 	if !ok {
 		return "", "", fmt.Errorf("fcvm: InstanceDeploymentIDAndAppID %s: not live", instance)
+	}
+	return inst.DeploymentID, inst.AppID, nil
+}
+
+// ErrUndeclaredSidecar reports a guest sidecar event that names a workload the
+// instance was not booted with.
+var ErrUndeclaredSidecar = errors.New("fcvm: sidecar not declared for instance")
+
+// InstanceSidecarOwner returns the deployment and app of a live instance that
+// runs the named sidecar. Sidecar names in guest lifecycle frames are
+// guest-controlled and become metric labels and event fields, so vmmd accepts
+// only the sidecars the instance was booted with.
+func (m *Manager) InstanceSidecarOwner(instance, sidecar string) (deploymentID, appID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", fmt.Errorf("fcvm: InstanceSidecarOwner %s: not live", instance)
+	}
+	if sidecar == "" || sidecar == WorkloadNameMain || !hasWorkloadName(inst.WorkloadNames, sidecar) {
+		return "", "", fmt.Errorf("%w: instance %s", ErrUndeclaredSidecar, instance)
 	}
 	return inst.DeploymentID, inst.AppID, nil
 }
@@ -3317,12 +3497,25 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // is still closed; keeping the preparation here preserves the Manager as the
 // only secret-unseal boundary without allowing guest-init to race a late
 // loopback write.
-func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
+func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
+	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, openErr := m.openSealedEnvEntries(req.SealedEnvEntries)
-		if openErr != nil {
-			return nil, nil, openErr
+		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
+		if err != nil {
+			return nil, nil, err
 		}
+	}
+	// ADR-20261026091500: a builder's Docker config rides in its
+	// secrets.env, written after the build's own secrets.
+	if req.ExportDir != "" {
+		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
+			if merged == nil {
+				merged = secretbox.Envelope{}
+			}
+			merged[api.BuildRegistryAuthKey] = config
+		}
+	}
+	if merged != nil {
 		secretsJSON, err = jsonMarshalEnvelope(merged)
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal envelope: %w", err)
@@ -3330,11 +3523,11 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 	}
 
 	if len(req.APIEnvEntries) > 0 {
-		merged := make(map[string]string, len(req.APIEnvEntries))
+		apiEnv := make(map[string]string, len(req.APIEnvEntries))
 		for _, entry := range req.APIEnvEntries {
-			merged[entry.Key] = entry.Value
+			apiEnv[entry.Key] = entry.Value
 		}
-		apiJSON, err = json.Marshal(merged)
+		apiJSON, err = json.Marshal(apiEnv)
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal api env: %w", err)
 		}
@@ -3342,16 +3535,22 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 	return secretsJSON, apiJSON, nil
 }
 
-func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Envelope, error) {
+// openSealedEnvEntries opens a workload's selected ciphertext for accountID,
+// the account the workload runs for. An envelope bound to another account
+// (ADR-20261023173624) is refused before any of its values are used.
+func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
 	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
+	}
 	merged := secretbox.Envelope{}
 	for _, entry := range entries {
-		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		inner, err := m.openBoundEntry(entry, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("open sealed env[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
@@ -3374,17 +3573,21 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 // by an authorization-aware caller. It does not perform authorization and
 // requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
-// the guest's runtime projection.
-func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
+// the guest's runtime projection. accountID is the account the workload runs
+// for; an envelope bound to another account is refused.
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
 	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
+	}
 	secrets := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		inner, err := m.openBoundEntry(entry, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("open runtime secret[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
@@ -3400,6 +3603,24 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 	return secrets, nil
 }
 
+// openBoundEntry opens one entry and enforces its account binding. With
+// RequireSecretBinding it also refuses an unbound envelope.
+func (m *Manager) openBoundEntry(entry SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+	inner, binding, err := secretbox.OpenMultiBound(m.hostIdentities, entry.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	check := binding.Check
+	if m.requireSecretBinding {
+		check = binding.Require
+	}
+	if err := check(accountID); err != nil {
+		clear(inner)
+		return nil, err
+	}
+	return inner, nil
+}
+
 func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string, bool) {
 	source := entry.SourceKey
 	if source == "" {
@@ -3413,7 +3634,7 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
-func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
+func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
@@ -3448,7 +3669,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(secretEntries)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -3507,9 +3728,20 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
+	// NodeID is supplied by the serving vmmd, never by a guest frame.
+	NodeID         string
 	dataRepairOnly bool
-	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
-	Instance       string
+	// agentRunOnly is set only by WakeAgentRun (ADR-20261027090010 §6), on top of
+	// ExecutionOnly; RunAgent accepts no other instance. agentRunRelay is
+	// the run's relay principal, accepted only with agentRunOnly.
+	agentRunOnly     bool
+	agentRunRelay    *AgentRunRelay
+	agentRunInputKey string
+	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
+	// only with agentRunOnly (ADR-20261027090012).
+	agentRunWaitPauseAfter time.Duration
+	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
+	Instance               string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -3572,6 +3804,11 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
+	// BuildRegistryCredentials are the sealed registry credentials of the
+	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
+	// them into the builder's secrets.env as a Docker config. Ignored for
+	// every VM that is not a builder.
+	BuildRegistryCredentials []BuildRegistryCredential
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port
@@ -3657,6 +3894,12 @@ type WakeRequest struct {
 	// FIFO. They are deliberately unexported and never cross the gRPC wire.
 	preparedSecretsEnvJSON []byte
 	preparedAPIEnvJSON     []byte
+	// qualificationRestoreReceipt is a native qualification restore's fresh
+	// guest receipt control. It is sent with the resume hook, never staged.
+	// The restore consumes the waiter's receipt before its private guest
+	// channels close.
+	qualificationRestoreReceipt       qualificationRestoreReceiptControl
+	qualificationRestoreReceiptWaiter *qualificationConfigReceiptWaiter
 	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
 	// outbound IPv4/v6 allowlist. Each entry is a CIDR string (e.g.
 	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule
@@ -3689,6 +3932,11 @@ type WakeRequest struct {
 	// on the workload's private side-link.
 	PrivateNetworkID      string
 	PrivateNetworkAddress string
+	// Quarantine (ADR-732) wakes a production fork: the netns renders the
+	// quarantine base chains, and wake drops every connectivity input
+	// (allowlist, private network, static egress IP, operator bundle) so
+	// no other path can add reachability.
+	Quarantine bool
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -3715,7 +3963,8 @@ type WakeRequest struct {
 	Sidecars []WorkloadSpec
 	// MainDependsOn carries the deployment's primary workload startup gates.
 	// It is copied into the main entry in the guest workload roster.
-	MainDependsOn []api.WorkloadDependency
+	MainDependsOn        []api.WorkloadDependency
+	StaticEgressExcluded bool
 }
 
 // ExecutionWakeRequest is the payload-free machine envelope for a disposable
@@ -3809,6 +4058,9 @@ type WakeNetworkReady struct {
 	Instance     string
 	Netns        string
 	PublicTarget *netns.PublicForwardTarget
+	// JailUID is the lease's jail uid. vmmd derives the instance bridge's
+	// unprivileged uid from it before the instance is live.
+	JailUID int
 }
 
 // WakeNetworkReadyHook must return promptly. Manager invokes it synchronously
@@ -3897,6 +4149,9 @@ type ColdBootRequest struct {
 	PrivateNetworkAddress       string
 	PrivateNetworkAllowedCIDRs  []string
 	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
+	// Quarantine (ADR-732) — same as WakeRequest. A fork whose capture is
+	// unusable cold-boots; it must stay quarantined.
+	Quarantine bool
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3953,7 +4208,8 @@ type ColdBootRequest struct {
 	// the wire, and the sidecar-init-failed dispatch skips the
 	// deploy-row flip on "". Same symmetry rationale as Port /
 	// HealthcheckPath above.
-	DeploymentID string
+	DeploymentID         string
+	StaticEgressExcluded bool
 }
 
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
@@ -3972,8 +4228,10 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
+		Quarantine:                  req.Quarantine,
 		PrivateNetworkID:            req.PrivateNetworkID,
 		PrivateNetworkAddress:       req.PrivateNetworkAddress,
+		StaticEgressExcluded:        req.StaticEgressExcluded,
 		Plan:                        req.Plan,
 		Port:                        req.Port,
 		// ADR-057 / PR-D: forward the per-deployment override
@@ -4033,7 +4291,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// per-task secrets.env file before Firecracker starts.
 	var secretsEnvJSON []byte
 	if len(req.SealedEnvEntries) > 0 {
-		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries})
+		secretsEnvJSON, _, err = m.prepareWakeFiles(ctx, WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
 		if err != nil {
 			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
 		}
@@ -4187,6 +4445,8 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		Lease:               lease,
 		Net:                 nc,
 		Method:              WakeColdBoot, // jobs are always cold-boot
+		adoptionVCPUs:       req.VcpuCount,
+		adoptionMemSizeMiB:  req.MemSizeMiB,
 		IsJob:               true,
 		JobInteractive:      req.Interactive != nil,
 		JobStartGateEnabled: req.StartHeld,
@@ -4213,6 +4473,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
 	}
 	m.mu.Unlock()
+	if !qualificationOnly {
+		m.markAdoptionDirty(req.Instance) // A job has no readiness: record it now.
+	}
 	// MarkInstanceFrameworkReady isn't called here — the
 	// supervisor doesn't emit a framework-ready receipt. The
 	// job exit frame is the only receipt.
@@ -4234,6 +4497,18 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 func (m *Manager) WaitJobExit(ctx context.Context, instance string, deadline time.Duration) (JobExitPayload, error) {
 	if m.vmm == nil {
 		return JobExitPayload{}, fmt.Errorf("manager: WaitJobExit: nil vmm")
+	}
+	m.mu.Lock()
+	var recorded *JobExitPayload
+	if inst := m.live[instance]; inst != nil && inst.jobExit != nil {
+		v := *inst.jobExit
+		recorded = &v
+	}
+	m.mu.Unlock()
+	if recorded != nil {
+		// Recorded by this vmmd's receiver or, for an adopted job, by the
+		// predecessor's: the call is a retry after the first was cut short.
+		return *recorded, nil
 	}
 	lease := Lease{Instance: instance, Slot: -1} // WaitJobExit ignores slot
 	return m.vmm.WaitJobExit(ctx, lease, deadline)
@@ -4351,6 +4626,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		qualificationOnly = true
 	}
+	req = quarantineWakeRequest(req)
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -4436,10 +4712,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err != nil {
 		return nil, err
 	}
-	var wakeID string
-	if fields, ok := wire.FromContext(ctx); ok {
-		wakeID = fields.WakeID
+	fields, _ := wire.FromContext(ctx)
+	wakeID := fields.WakeID
+	fields.AppID = req.AppID
+	if req.NodeID != "" {
+		fields.NodeID = req.NodeID
 	}
+	ctx = wire.WithContext(ctx, fields)
 	// Phase timing (see wakePhases). Reported on EVERY failure and on
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
@@ -4466,7 +4745,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 	lease, preparedNetwork, err := m.acquireWakeNetwork(req, computeLease.egressFunded()) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
-		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
+		return nil, wakeNotStarted(fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err))
 	}
 	phases.mark("lease_acquire")
 	// Stamp the Plan onto the Lease (issue #301, ADR-044) so the
@@ -4479,6 +4758,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
+	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -4487,11 +4767,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
+	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
+		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -4508,6 +4790,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			cleanupNet := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 			if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" {
 				cleanupNet.PrivateVethHost, cleanupNet.PrivateVethPeer = privateVethNames(lease.Slot)
+				cleanupNet.PrivateNetworkID = req.PrivateNetworkID
+				cleanupNet.PrivateNetworkAppID = req.AppID
+				cleanupNet.PrivateNetworkAccountID = req.AccountID
 			}
 			if req.ExecutionOnly {
 				cleanupNet = netns.Config{Instance: lease.Instance}
@@ -4535,6 +4820,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port
+	// ADR-732: set before anything compares or renders nc, so a prepared
+	// non-quarantined namespace is never reused for a fork.
+	nc.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
 		if req.AccountID == "" {
 			return nil, fmt.Errorf("wake %s: private network: account_id is required for Gregale fabric attachment", req.Instance)
@@ -4578,12 +4866,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// stages these bytes before releasing Firecracker's config FIFO; test VMMs
 	// without the pre-boot marker keep the legacy post-ready staging hooks
 	// below for compatibility.
-	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(req)
+	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(ctx, req)
 	if err != nil {
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
-	if err = m.prepareSidecarEnvFiles(&req); err != nil {
+	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
 	}
@@ -4602,6 +4890,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if !req.ExecutionOnly {
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
+		nc.EgressCircuitEnabled = m.egressCircuitEnabled && req.AppID != ""
 	}
 	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
 	// netip.Prefix once, here, so the nft renderer never touches
@@ -4640,6 +4929,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if perr != nil {
 			return nil, fmt.Errorf("wake %s: private network: %w", req.Instance, perr)
 		}
+		if req.PrivateNetworkAddress != "" {
+			address, parseErr := netip.ParseAddr(req.PrivateNetworkAddress)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			privateCIDRs, perr = memberFirstPrivateNetworkCIDRs(privateCIDRs, address)
+			if perr != nil {
+				return nil, perr
+			}
+		}
 		nc.PrivateNetworkCIDRs = privateCIDRs
 		if len(req.PrivateNetworkAllowedCIDRs) > 0 {
 			allowed, aerr := api.ValidatePrivateNetworkPolicyCIDRs(req.PrivateNetworkAllowedCIDRs, privateCIDRs)
@@ -4669,60 +4968,24 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, fmt.Errorf("wake %s: private network: member address %s is outside network CIDR", req.Instance, address)
 		}
 		nc.PrivateNetworkAddress = address
+		nc.PrivateNetworkID, nc.PrivateNetworkAppID, nc.PrivateNetworkAccountID = req.PrivateNetworkID, req.AppID, req.AccountID
+		if m.privateNetworkMemberSource != nil {
+			identity, memberErr := m.privateNetworkMemberSource(ctx, PrivateNetworkMemberRequest{AccountID: req.AccountID, AppID: req.AppID, NetworkID: req.PrivateNetworkID, InstanceID: req.Instance, DeploymentID: req.DeploymentID, ExpectedService: address, RequireReady: true, Eligible: !qualificationOnly && !req.Quarantine && !req.StaticEgressExcluded})
+			if memberErr != nil {
+				return nil, fmt.Errorf("private network member: %w", memberErr)
+			}
+			if !identity.Address.Is4() || !nc.PrivateNetworkCIDRs[0].Contains(identity.Address) {
+				return nil, errors.New("private member address outside network")
+			}
+			nc.PrivateNetworkAddress, nc.PrivateNetworkServiceAddress = identity.Address, identity.Service
+		}
+		if err := m.reservePrivateNetworkAddresses(nc, req.Instance); err != nil {
+			return nil, err
+		}
+		nc.PrivateNetworkMTU = m.privateNetworkMTU()
 	}
-	// ADR-119 (redesign): per-app static egress IP. The
-	// per-netns SNAT was moved to the host renderer (see
-	// pkg/netns/policy.go::HostPolicy.StaticEgressRules + the
-	// `nftables NAT is first-match + terminal` rule). vmmd no
-	// longer writes nc.AccountStaticIP at all — the per-VM
-	// host IP is acquired from the alloc.go pool on the
-	// customer's apid PUT (the (accountID, appID) reservation
-	// lives until the customer clears the pin). The Wake
-	// path only:
-	//
-	//   1. validates the customer IP through the canonical
-	//      api.ValidateStaticEgressIP (failure = wake rejected),
-	//   2. looks up the reservation,
-	//   3. registers the per-VM host IP on the Manager so the
-	//      host renderer emits an `ip saddr <perVMHostIP> snat
-	//      to <customerIP>` rule.
-	//
-	// Empty StaticEgressIP is the default (no pin); the early
-	// branch skips the lookup + register.
-	if req.StaticEgressIP != "" {
-		ip, err := netip.ParseAddr(req.StaticEgressIP)
-		if err != nil {
-			return nil, fmt.Errorf("wake %s: static egress IP: invalid dotted-quad %q: %w", req.Instance, req.StaticEgressIP, err)
-		}
-		if !ip.Is4() {
-			return nil, fmt.Errorf("wake %s: static egress IP: rejected %q (IPv6 deferred)", req.Instance, req.StaticEgressIP)
-		}
-		if err := api.ValidateStaticEgressIP(ip); err != nil {
-			return nil, fmt.Errorf("wake %s: static egress IP: rejected %q: %w", req.Instance, req.StaticEgressIP, err)
-		}
-		// Reservation must already exist if the customer has
-		// pinned. The apid PUT path acquires; the Wake path
-		// only reads. If a customer clears their pin between
-		// dispatch and wake, the reservation is gone and the
-		// wake dies here — the gRPC fault is the customer's
-		// signal to drop the request.
-		//
-		// The accountID guard is the wire-side defence against
-		// a malicious or buggy shedder that forwards a
-		// different accountID than the one that acquired the
-		// pin. The reservation is keyed by (accountID, appID) so
-		// the cross-check is one field comparison.
-		res, ok := StaticEgressReservationFor(req.AppID)
-		if !ok {
-			return nil, fmt.Errorf("wake %s: static egress IP: no reservation for app_id=%s", req.Instance, req.AppID)
-		}
-		if res.AccountID != req.AccountID {
-			return nil, fmt.Errorf("wake %s: static egress IP: app_id=%s reserved under account_id=%s, not %s", req.Instance, req.AppID, res.AccountID, req.AccountID)
-		}
-		if res.CustomerIP != ip {
-			return nil, fmt.Errorf("wake %s: static egress IP: app_id=%s reserved with %s, not %s", req.Instance, req.AppID, res.CustomerIP, req.StaticEgressIP)
-		}
-		m.RegisterStaticEgressIPForVM(req.AppID, res.PerVMHostIP)
+	if err := m.prepareStaticEgressWake(ctx, req, qualificationOnly); err != nil {
+		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
 	// Issue #679 / PR-A: cache the per-app slice BEFORE the
 	// operator-bundle merge so SetEgressOperatorBundle can read
@@ -4739,25 +5002,34 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		copy(perAppSnapshot, nc.EgressAllowlist)
 		m.perAppAllowlist[req.AppID] = perAppSnapshot
 		m.perAppAllowlistMu.Unlock()
-		// ADR-119 (redesign): cache the per-app customer IP
-		// from the Wake request. The UpdateStaticEgressIP gRPC
-		// path writes here too. A nil pointer clears the per-app
-		// pin. The address is parsed from the wire payload
-		// (validated above against the canonical deny-set);
-		// the per-VM host IP lives on the alloc.go reservation
-		// — see StaticEgressReservationFor above.
-		m.perAppStaticIPMu.Lock()
-		if m.perAppStaticIP == nil {
-			m.perAppStaticIP = make(map[string]*netip.Addr)
+	}
+
+	if req.AppID != "" && !qualificationOnly && !req.Quarantine && !req.ExecutionOnly && !req.StaticEgressExcluded {
+		m.perAppStaticIPMu.RLock()
+		pinned := m.perAppStaticIP[req.AppID] != nil
+		m.perAppStaticIPMu.RUnlock()
+		if pinned && m.hostRenderer == nil {
+			return nil, fmt.Errorf("wake %s: static egress requires the host policy renderer", req.Instance)
 		}
-		if req.StaticEgressIP == "" {
-			m.perAppStaticIP[req.AppID] = nil
-		} else {
-			wireIP, _ := netip.ParseAddr(req.StaticEgressIP)
-			ipCopy := wireIP
-			m.perAppStaticIP[req.AppID] = &ipCopy
+		m.mu.Lock()
+		if m.staticEgressStarting == nil {
+			m.staticEgressStarting = make(map[string]netns.StaticEgressRule)
 		}
-		m.perAppStaticIPMu.Unlock()
+		m.staticEgressStarting[req.Instance] = netns.StaticEgressRule{PerVMHostIP: lease.HostIP, AppID: req.AppID, AccountID: req.AccountID}
+		m.mu.Unlock()
+		defer func() {
+			m.mu.Lock()
+			delete(m.staticEgressStarting, req.Instance)
+			m.mu.Unlock()
+			if err != nil {
+				_ = m.rebuildHostStaticEgressRules(context.WithoutCancel(ctx))
+			}
+		}()
+		if pinned {
+			if renderErr := m.rebuildHostStaticEgressRules(ctx); renderErr != nil {
+				return nil, fmt.Errorf("wake %s: install static egress before boot: %w", req.Instance, renderErr)
+			}
+		}
 	}
 	// Issue #679 / PR-A: merge the operator-managed egress
 	// bundle into the per-app slice before render. The bundle
@@ -4766,7 +5038,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// merge dedups across per-app + operator (an entry that's
 	// already in the per-app set doesn't get a duplicate row
 	// in the rendered anonymous daddr-set).
-	if !qualificationOnly {
+	// ADR-732: a fork gets no operator exceptions either. The quarantine
+	// chains would drop them anyway; rendering none keeps the ruleset
+	// honest about what the fork can reach.
+	if !qualificationOnly && !req.Quarantine {
 		nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
 	}
 
@@ -4790,9 +5065,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
-		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
+		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() error {
+			// Circuit policy must be installed before the guest can boot.
+			return m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
+		}, func() {
 			if networkReady != nil {
-				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
+				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
 		})
 		// Registered after the cleanup defer, so it runs first: cleanup
@@ -4805,7 +5083,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr))
 		}
 		timings.netnsTapMs = network.duration.Milliseconds()
 		if m.preparedNetworks != nil {
@@ -4824,6 +5102,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		var networkErr error
 		if !req.ExecutionOnly {
 			preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
+			if networkErr == nil {
+				networkErr = m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
+			}
 		}
 		err = networkErr
 		if err != nil {
@@ -4842,7 +5123,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, err))
 		}
 		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 		if !req.ExecutionOnly {
@@ -4852,7 +5133,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			}
 		}
 		if networkReady != nil && !req.ExecutionOnly {
-			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget})
+			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget, JailUID: lease.UID})
 		}
 		if m.preparedNetworks != nil && !req.ExecutionOnly {
 			m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
@@ -4983,7 +5264,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writeAppCgroup(req.Instance, req.Plan, wakeGuestMemoryMiB(req), req.CPUMillicores)
+			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -5092,19 +5373,23 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
+		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
+		StaticEgressExcluded: req.StaticEgressExcluded,
+		WakeID:               wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:  quietPauseAfterFor(req, qualificationOnly),
-		ExecutionMode:    req.ExecutionMode,
-		Characterization: report, Runtime: req.Runtime,
+		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
+		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
+		ExecutionMode:       req.ExecutionMode,
+		Characterization:    report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
@@ -5259,8 +5544,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		break
 	}
 	phases.mark("post_bring_up")
+	m.markAdoptionDirty(req.Instance)
 	if !req.ExecutionOnly {
-		m.renderHostSMTPAllowlistRules(ctx, true)
+		_ = m.renderHostSMTPAllowlistRules(ctx, true)
 		m.seedResolvedEgress(ctx, req.Instance)
 	}
 	phases.mark("host_policy")
@@ -5330,6 +5616,14 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
+	// ADR-733: a sealed crash capture restores or fails. Cold booting would
+	// hand the caller a fresh instance that is not the capture.
+	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
+	if sealed {
+		if err := m.openSealedSnapshot(req.Snapshot); err != nil {
+			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+		}
+	}
 	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
 	// A paused wake is a restore contract, not an ordinary wake preference.
 	// If the snapshot is stale, version-mismatched, incomplete, or has a
@@ -5346,6 +5640,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
 		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+			if sealed {
+				return WakeRestore, fmt.Errorf("sealed crash capture: %w", refusal)
+			}
 			if req.KeepPaused || req.functionMigrationDestination != nil {
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
 			}
@@ -5353,6 +5650,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", refusal)
 			if timings != nil {
 				timings.restoreError = refusal.Error()
+				if RestoreFailureNodeLocal(refusal) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
+				}
 			}
 			m.metrics.ObserveFallback()
 			if m.wakeFailureMetrics != nil {
@@ -5360,6 +5660,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			}
 			restorable = false
 		}
+	}
+	if sealed && !restorable {
+		return WakeRestore, fmt.Errorf("sealed crash capture %s is not restorable on this node (fc_version %s)", req.Snapshot.CaptureID, m.fcVersion)
 	}
 	if restorable {
 		rs := RestoreSpec{
@@ -5374,6 +5677,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// the VMM falls back to RestoreSpec.VMStatePath above,
 			// preserving the legacy host-path branch.
 			VMStateStorageKey: req.Snapshot.VMStateStorageKey,
+			Storage:           req.Snapshot.Storage,
 			Tap:               nc.Tap,
 			// The restored VM re-reads kernel + drives under the chroot
 			// basenames; Park→Kill erased the previous chroot, so hand the
@@ -5407,6 +5711,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			ServiceDiscoveryIP: serviceDiscoveryIP,
 			Networkless:        req.ExecutionOnly,
 			KeepPaused:         req.KeepPaused,
+			AgentInput:         req.agentRunOnly,
+			InputKey:           req.agentRunInputKey,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so
@@ -5431,6 +5737,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
+			if sealed {
+				// ADR-733: a cold-booted instance would not be the capture.
+				return WakeRestore, fmt.Errorf("sealed crash capture restore: %w", rErr)
+			}
 			if req.KeepPaused || req.functionMigrationDestination != nil {
 				// A paused warm-pool entry must never silently turn into a
 				// running cold boot. The scheduler can retry reconciliation;
@@ -5465,6 +5775,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				timings.restoreError = rErr.Error()
 				if errors.Is(rErr, ErrAfterRestoreHook) {
 					timings.restoreFallbackReason = WakeReasonAfterRestoreFailed
+				} else if RestoreFailureNodeLocal(rErr) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
 				}
 			}
 			m.metrics.ObserveFallback()
@@ -5570,9 +5882,15 @@ func (m *Manager) readBaseScan(ctx context.Context, scanKey string) (baseScanSid
 	return scan, nil
 }
 
-// ensureBaseGeneration refreshes a stale logical runtime-base group before
-// admission. The marker makes the steady-state path a local file read; only a
-// release reference change streams the base from shared storage.
+// ensureBaseGeneration adopts the configured generation of a runtime base
+// group before admission. The marker makes the steady-state path a local file
+// read; only a release reference change streams the base from shared storage.
+// It adopts from the generation's own keys, which only releases configured for
+// that generation write, and falls back to the legacy logical keys only when
+// no release since ADR-20261026181418 published the generation. On
+// production-us (2026-10-26) an rc.294 imaged restaged the logical key with
+// its own generation after rc.296's pre-stage had published there, and every
+// rc.296 cold boot on fsn-2 was refused from then on.
 func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey string) error {
 	expected := m.baseGenerations[baseKey]
 	if expected == "" {
@@ -5599,52 +5917,47 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 		m.log.Info("runtime base cache generation refresh started", "base_key", baseKey, "generation", expected)
 	}
 
-	// imaged publishes the scan sidecar after the base and digest sidecar.
-	// Read that commit marker first: once it names expected, the canonical
-	// parent already contains the complete generation. Pulling the large base
-	// before this check could otherwise race a release publication and combine
-	// the previous base with the new digest and scan sidecars.
-	scanCache, scanCacheKey, routeErr := storage.CacheBackendForKey(m.storage, scanKey)
-	if routeErr != nil {
-		return fmt.Errorf("resolve cache route for %q: %w", scanKey, routeErr)
-	}
-	if scanCache == nil || scanCache != baseCache {
-		return fmt.Errorf("runtime base group %q is not owned by one read-through cache", baseKey)
-	}
-	rc, refreshErr := scanCache.Refresh(ctx, scanCacheKey)
-	if refreshErr != nil {
-		return fmt.Errorf("refresh runtime base artifact %q: %w", scanKey, refreshErr)
-	}
-	if closeErr := rc.Close(); closeErr != nil {
-		return fmt.Errorf("close refreshed runtime base artifact %q: %w", scanKey, closeErr)
-	}
-	scan, err := m.readBaseScan(ctx, scanKey)
+	// The scan sidecar comes first: imaged publishes it after the base and
+	// digest sidecar, so once it names expected the rest of the group is
+	// complete. Pulling the large base before this check could otherwise race
+	// a publication and combine the previous base with the new sidecars.
+	logical, err := baseGroupCacheKeys(m.storage, baseCache, []string{scanKey, baseKey, baseKey + ".digest"})
 	if err != nil {
-		return fmt.Errorf("read refreshed scan sidecar: %w", err)
+		return err
 	}
-	if !scanNamesConfiguredBase(scan.Image, expected) {
-		return fmt.Errorf("refreshed scan generation %q does not match configured runtime base %q", scan.Image, expected)
+	generationKey := storagekey.BaseGeneration(baseKey, expected)
+	published, err := baseGroupCacheKeys(m.storage, baseCache, []string{wire.ScanKeyForBaseKey(generationKey), generationKey, generationKey + ".digest"})
+	if err != nil {
+		return err
 	}
-
-	keys := []string{baseKey, baseKey + ".digest"}
-	for _, key := range keys {
-		cache, relativeKey, routeErr := storage.CacheBackendForKey(m.storage, key)
-		if routeErr != nil {
-			return fmt.Errorf("resolve cache route for %q: %w", key, routeErr)
-		}
-		if cache == nil || cache != baseCache {
-			return fmt.Errorf("runtime base group %q is not owned by one read-through cache", baseKey)
-		}
-		rc, refreshErr := cache.Refresh(ctx, relativeKey)
+	source := "generation"
+	err = m.adoptBaseScan(ctx, baseCache, scanKey, logical[0], published[0], expected)
+	if errors.Is(err, storage.ErrNotFound) {
+		// No release since ADR-20261026181418 published this generation. A
+		// release before it may have, under the logical keys, which any
+		// release could overwrite: adopt them only while their scan names it.
+		source, published = "legacy", logical
+		err = m.adoptBaseScan(ctx, baseCache, scanKey, logical[0], logical[0], expected)
+	}
+	if err != nil {
+		return err
+	}
+	for i := 1; i < len(logical); i++ {
+		rc, refreshErr := baseCache.RefreshFrom(ctx, logical[i], published[i])
 		if refreshErr != nil {
-			return fmt.Errorf("refresh runtime base artifact %q: %w", key, refreshErr)
+			return fmt.Errorf("refresh runtime base artifact %q: %w", published[i], refreshErr)
 		}
 		if closeErr := rc.Close(); closeErr != nil {
-			return fmt.Errorf("close refreshed runtime base artifact %q: %w", key, closeErr)
+			return fmt.Errorf("close refreshed runtime base artifact %q: %w", published[i], closeErr)
 		}
 	}
-	if err := baseCache.MarkGeneration(baseCacheKey, expected); err != nil {
-		return fmt.Errorf("commit runtime base generation: %w", err)
+	// The base marker is the commit record; marking the sidecars first keeps
+	// the whole adopted group out of cache eviction, so a later read of the
+	// scan never falls through to another release's publication.
+	for _, key := range []string{logical[2], logical[0], logical[1]} {
+		if err := baseCache.MarkGeneration(key, expected); err != nil {
+			return fmt.Errorf("commit runtime base generation: %w", err)
+		}
 	}
 	// ADR-510: identify the refreshed base now, while this admission is
 	// already paying for the refresh, rather than in a later restore.
@@ -5654,7 +5967,7 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 		}
 	}
 	if m.log != nil {
-		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected)
+		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected, "source", source)
 	}
 	return nil
 }
@@ -5683,21 +5996,26 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
+		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, "generation_unavailable")
+		if m.log != nil {
+			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
+		}
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
-			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
+			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
 	scan, readErr := m.readBaseScan(ctx, scanKey)
-	gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	reason, gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	// The sidecar is read through this node's cache. Another node may since
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
-	if gateErr != nil && m.refreshCachedScan(ctx, scanKey) {
+	if gateErr != nil && m.refreshCachedScan(ctx, baseKey, scanKey) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
-		gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
 	if gateErr != nil {
+		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, reason)
 		return gateErr
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
@@ -5711,19 +6029,20 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 }
 
 // baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
-func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) error {
+// A refusal also returns its wire.BaseScanRefusalReasons reason.
+func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) (string, error) {
 	if readErr != nil {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "sidecar_missing", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
 	}
 	if expected := m.baseGenerations[baseKey]; expected != "" && !scanNamesConfiguredBase(scan.Image, expected) {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "generation_mismatch", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar generation mismatch",
 			fmt.Sprintf("scan sidecar at %q names %q, want configured runtime base %q; refusing to boot (issue #299)", scanKey, scan.Image, expected))
 	}
 	if _, ok := scan.Findings["CRITICAL"]; !ok {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
@@ -5736,31 +6055,52 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 	}
 	n, ok := gateFindings["CRITICAL"]
 	if !ok {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
-	if n > 0 {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
-			"Fixable CRITICAL vulnerability in base ext4",
-			fmt.Sprintf("base %q has %d fix-available CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
+	if n >= wire.BaseScanFailedCount {
+		// imaged's placeholder for a scan that failed, not findings (#5709:
+		// customers read "9999 fix-available CRITICAL vulnerabilities").
+		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"Base image scan unavailable",
+			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
 	}
-	return nil
+	if n > 0 {
+		// The deploy and wake errors carry this detail to the customer, who
+		// cannot rebuild a Gregale runtime base: say whose problem it is.
+		return "critical", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"Fixable CRITICAL vulnerability in base ext4",
+			fmt.Sprintf("Gregale's base image %q has %d fix-available CRITICAL vulnerabilities, so Gregale will not start instances on it until a patched base is published; this is a platform problem, not your code", baseKey, n))
+	}
+	return "", nil
 }
 
 // refreshCachedScan replaces this node's cached copy of scanKey with the
-// canonical object. It reports false when the key is not cache-backed or the
-// refresh fails, leaving the cached verdict in force.
-func (m *Manager) refreshCachedScan(ctx context.Context, scanKey string) bool {
+// canonical object: for a generation-gated base, its generation's own scan,
+// or the legacy logical scan when no release since ADR-20261026181418
+// published the generation and the legacy scan still names it. It reports
+// false when the key is not cache-backed or no such copy can be read, leaving
+// the cached verdict in force.
+func (m *Manager) refreshCachedScan(ctx context.Context, baseKey, scanKey string) bool {
 	cache, rel, err := storage.CacheBackendForKey(m.storage, scanKey)
 	if err != nil || cache == nil {
 		return false
 	}
-	rc, err := cache.Refresh(ctx, rel)
+	expected := m.baseGenerations[baseKey]
+	if expected == "" {
+		rc, err := cache.Refresh(ctx, rel)
+		return err == nil && rc.Close() == nil
+	}
+	published, err := baseGroupCacheKeys(m.storage, cache, []string{wire.ScanKeyForBaseKey(storagekey.BaseGeneration(baseKey, expected))})
 	if err != nil {
 		return false
 	}
-	return rc.Close() == nil
+	rc, err := cache.RefreshFrom(ctx, rel, published[0])
+	if errors.Is(err, storage.ErrNotFound) && m.legacyScanNames(ctx, cache, rel, expected) {
+		rc, err = cache.RefreshFrom(ctx, rel, rel)
+	}
+	return err == nil && rc.Close() == nil
 }
 
 // Park snapshots a running instance then destroys it, freeing all resident RAM
@@ -5783,9 +6123,25 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
 	}
+	// Hold new forwards until teardown and let the ones already at the guest
+	// finish before the pause (park_hold.go). Released after cleanup, so a
+	// held forward finds the instance gone and is re-routed.
+	defer m.holdForwardsForPark(inst)()
+	if remaining := m.drainForwardsForPark(operationCtx, inst); remaining > 0 {
+		m.log.Warn("park: forwards still in flight at the drain deadline", "instance", instance,
+			"forwards", remaining, "drain_s", parkForwardDrainTimeout.Seconds())
+	}
 	m.mu.Lock()
 	flight.parking = true
 	m.mu.Unlock()
+	defer m.beginAdoptionOp(instance, adoptionOpPark, spec.StorageKey, spec.VMStateStorageKey)()
+	forwards := m.retireHTTPForwards(inst.Lease)
+	// Snapshot only after the old bridges have stopped forwarding. Cleanup
+	// remains owed even if the caller expires while waiting for that drain.
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		destroyErr := m.Destroy(context.WithoutCancel(ctx), instance)
+		return SnapshotInfo{}, destroyErr == nil, fmt.Errorf("park %s: drain forwarding: %w", instance, err)
+	}
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -5794,6 +6150,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
 	if snapshotErr != nil {
@@ -5811,7 +6168,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
 		return SnapshotInfo{}, cleanupErr == nil, fmt.Errorf("park %s: %w", instance, err)
 	}
-	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	if spec.nativeRuntime == nil {
+		// The native producer already published the backing object exclusively.
+		m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil
 }
@@ -5868,15 +6228,24 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, ErrInstanceFrozen)
 	}
+	defer m.beginAdoptionOp(instance, adoptionOpWarmSnapshot, spec.StorageKey, spec.VMStateStorageKey)()
 	if m.functionResourcesEnabled(inst) {
 		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
 	} else {
+		spec.nativeRuntime = m.nativeRuntimeCapture(ctx, inst, spec)
 		info, err = m.warmSnapshotInstance(ctx, inst, spec)
 	}
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+	if spec.nativeRuntime == nil {
+		// The native producer already published the backing object exclusively.
+		store := m.storage
+		if spec.Storage != nil {
+			store = spec.Storage
+		}
+		m.writeSnapshotBackingTo(ctx, store, instance, spec.StorageKey)
+	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5892,6 +6261,16 @@ func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec
 	defer func() { restartProbes(resumed) }()
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
+	if spec.nativeRuntime != nil {
+		// The native producer owns its one-shot resume and never replays an
+		// uncertain effect (ADR 20261022184951). A failed capture is not
+		// resumed here; the engine destroys a VM whose warm capture failed.
+		if err != nil {
+			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
+		}
+		resumed = true
+		return info, ctx.Err()
+	}
 	if err != nil {
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.
@@ -5972,11 +6351,17 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
 	}
+	defer m.beginAdoptionOp(instance, adoptionOpSnapshot, spec.StorageKey, spec.VMStateStorageKey)()
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, ErrInstanceFrozen)
 	}
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
+	}
+	forwards := m.retireHTTPForwards(inst.Lease)
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		m.reopenHTTPForwards(inst)
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: drain forwarding: %w", instance, err)
 	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
@@ -5984,6 +6369,12 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
+	if err == nil {
+		// The source stays paused for the lease owner. Record that before
+		// the prepare answers: a successor that took the pause for a quiet
+		// one would resume it beside the destination (adoption ADR §3).
+		err = m.recordMigrationPause(instance, inst)
+	}
 	if err == nil {
 		// The migration destination verifies this capture's backing identity
 		// like any restore (ADR-510). Without it every live migration was
@@ -6006,6 +6397,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if cancelled := resumeCtx.Err(); cancelled != nil {
 		return SnapshotInfo{}, errors.Join(err, cancelled)
 	}
+	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -6080,7 +6472,10 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 	if err := m.resumeWithRehearsalNetwork(ctx, inst); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
-	m.clearFrozen(inst)
+	m.mu.Lock()
+	inst.migrationPaused, inst.warmSpare = false, false
+	m.mu.Unlock()
+	m.clearFrozen(inst) // Rewrites the adoption block, clearing all three.
 	if inst.ImageHealthcheckRequired {
 		checker, ok := m.vmm.(interface {
 			WaitImageHealthcheck(context.Context, Lease, int) error
@@ -6102,6 +6497,7 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
+	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -6154,10 +6550,14 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		}
 		return m.vmm.SignalAndKill(ctx, Lease{Instance: instance}, signal, grace)
 	}
+	m.retireHTTPForwards(inst.Lease)
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
+	// A completed teardown retires the record; a failed one keeps this
+	// intent so a successor resumes it (adoption ADR §3).
+	m.beginAdoptionOp(instance, adoptionOpStop)
 	if signaler, supported := m.vmm.(interface {
 		SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
-	}); inst.IsJob && supported {
+	}); supported && stopSignalsGuest(inst, m.isFrozen(inst)) {
 		killSignalSent, exitCode, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
 	} else if m.isFrozen(inst) {
 		// A frozen guest (ADR-1151) cannot act on a signal, so the grace
@@ -6215,7 +6615,11 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 		}
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
+	m.retireHTTPForwards(inst.Lease)
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
+	// A completed teardown retires the record; a failed one keeps this
+	// intent so a successor resumes it (adoption ADR §3).
+	m.beginAdoptionOp(instance, adoptionOpStop)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
@@ -6303,6 +6707,26 @@ func (m *Manager) LastLivenessDestroyAtForDeployment(deploymentID string) time.T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.cooldownByDeployment[deploymentID]
+}
+
+// SetInstanceSidecarsForTest is a test-only seam that records the sidecars a
+// RegisterInstanceForTest instance was booted with, so the cmd/vmmd guest
+// event receiver tests can exercise InstanceSidecarOwner. Production code
+// MUST NOT call this; Wake sets the names from the boot request.
+func (m *Manager) SetInstanceSidecarsForTest(instanceID string, sidecars ...string) *Manager {
+	if m == nil {
+		return m
+	}
+	specs := make([]WorkloadSpec, 0, len(sidecars))
+	for _, name := range sidecars {
+		specs = append(specs, WorkloadSpec{Name: name})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst := m.live[instanceID]; inst != nil {
+		inst.WorkloadNames = workloadNamesFor(specs)
+	}
+	return m
 }
 
 // RegisterInstanceForTest is a test-only seam that injects an
@@ -6455,6 +6879,23 @@ func (m *Manager) LogRing(instance string) *logbuf.Ring {
 	return m.vmm.LogRing(instance)
 }
 
+// BridgeCredential returns the unprivileged uid and gid an instance's bridge
+// runs as (BridgeUIDForJailUID of its lease). ok is false for an instance
+// that is not live, so a bridge is never started for a lease that has gone.
+func (m *Manager) BridgeCredential(instance string) (uid, gid int, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, live := m.live[instance]
+	if !live {
+		return 0, 0, false
+	}
+	uid, ok = BridgeUIDForJailUID(inst.Lease.UID)
+	if !ok {
+		return 0, 0, false
+	}
+	return uid, uid, true
+}
+
 // NetnsFor returns the network namespace name (fc-<instance>) the
 // Manager bound to this instance at Wake time, plus a boolean that
 // reports whether the instance is currently live. Empty string +
@@ -6469,9 +6910,23 @@ func (m *Manager) NetnsFor(instance string) (string, bool) {
 	defer m.mu.Unlock()
 	inst, ok := m.live[instance]
 	if !ok {
-		return "", false
+		if inst = m.restoredQualificationTargetLocked(instance); inst == nil {
+			return "", false
+		}
 	}
 	return inst.Lease.Netns, true
+}
+
+// restoredQualificationTargetLocked returns a restored qualification target
+// from the private registry. It stays out of the serving index, but its
+// isolated smoke must reach it the way a source candidate's does (ADR
+// 20261023093000). Held qualification Jobs stay unreachable. Caller holds m.mu.
+func (m *Manager) restoredQualificationTargetLocked(instance string) *Instance {
+	inst := m.qualificationInstances[instance]
+	if inst == nil || !inst.QualificationOnly || inst.Method != WakeRestore || inst.IsJob {
+		return nil
+	}
+	return inst
 }
 
 // operatorBundleSnapshot returns a copy of the current
@@ -6573,8 +7028,26 @@ func (m *Manager) SetStaticEgressIPAliases(entries []StaticEgressIPEntry) {
 	}
 
 	m.staticEgressAliasesMu.Lock()
+	m.staticEgressAliasesManaged = true
 	defer m.staticEgressAliasesMu.Unlock()
-	prev := m.staticEgressAliases
+	m.staticEgressAliasAccounts = make(map[string]string, len(entries))
+	for _, e := range entries {
+		m.staticEgressAliasAccounts[e.AppID] = e.AccountID
+	}
+	if m.staticEgressAliasIPs == nil {
+		m.staticEgressAliasIPs = make(map[netip.Addr]bool)
+	}
+	aliasCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if m.captureRunner != nil {
+		if output, err := m.captureRunner.RunCapture(aliasCtx, []string{"ip", "-o", "-4", "addr", "show", "dev", "br-tenants"}); err == nil {
+			// Inventory is authoritative for our labeled addresses. This also
+			// detects aliases removed externally while the desired grant is unchanged.
+			m.staticEgressAliasIPs = managedStaticEgressAliases(output)
+		} else {
+			m.log.Warn("fcvm: inspect static egress aliases", "err", err)
+		}
+	}
 
 	// Diff: which IPs need to be added, which need to be
 	// removed. The per-app ID is informational only here — the
@@ -6587,8 +7060,8 @@ func (m *Manager) SetStaticEgressIPAliases(entries []StaticEgressIPEntry) {
 	for _, ip := range want {
 		wantIPs[ip] = struct{}{}
 	}
-	prevIPs := make(map[netip.Addr]struct{}, len(prev))
-	for _, ip := range prev {
+	prevIPs := make(map[netip.Addr]struct{}, len(m.staticEgressAliasIPs))
+	for ip := range m.staticEgressAliasIPs {
 		prevIPs[ip] = struct{}{}
 	}
 
@@ -6599,7 +7072,7 @@ func (m *Manager) SetStaticEgressIPAliases(entries []StaticEgressIPEntry) {
 	var ops []op
 	for ip := range wantIPs {
 		if _, had := prevIPs[ip]; !had {
-			ops = append(ops, op{ip: ip, verb: "add"})
+			ops = append(ops, op{ip: ip, verb: "replace"})
 		}
 	}
 	for ip := range prevIPs {
@@ -6607,6 +7080,8 @@ func (m *Manager) SetStaticEgressIPAliases(entries []StaticEgressIPEntry) {
 			ops = append(ops, op{ip: ip, verb: "del"})
 		}
 	}
+	// Publish label/account changes even when the bridge IP set is unchanged.
+	m.staticEgressAliases = want
 	if len(ops) == 0 {
 		return // no change
 	}
@@ -6617,15 +7092,22 @@ func (m *Manager) SetStaticEgressIPAliases(entries []StaticEgressIPEntry) {
 	// silently skipping everything.
 	for _, o := range ops {
 		argv := []string{"ip", "addr", o.verb, o.ip.String() + "/32", "dev", "br-tenants"}
-		if err := m.run.Run(context.Background(), argv); err != nil {
+		if o.verb != "del" {
+			argv = append(argv, "label", staticEgressAliasLabel)
+		}
+		if err := m.run.Run(aliasCtx, argv); err != nil {
 			m.log.Warn("fcvm: SetStaticEgressIPAliases ip addr failed",
 				"verb", o.verb, "ip", o.ip.String(), "err", err)
 			continue
 		}
+		if o.verb == "del" {
+			delete(m.staticEgressAliasIPs, o.ip)
+		} else {
+			m.staticEgressAliasIPs[o.ip] = true
+		}
 		m.log.Debug("fcvm: SetStaticEgressIPAliases applied",
 			"verb", o.verb, "ip", o.ip.String())
 	}
-	m.staticEgressAliases = want
 }
 
 // mergeOperatorBundle appends the operator bundle to the
@@ -6942,16 +7424,19 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		if err != nil {
 			return err
 		}
-		// Adding the first allowlist entry or clearing the list changes
-		// the chain's shape (the terminal allowlist drop, the accept's
-		// place before the DNS gate), which an in-place patch cannot
-		// reproduce: an appended accept landed after the drops and had no
-		// effect, and a cleared list left the terminal drop blocking all
-		// egress (hunt #10, H10-36). Those instances keep their boot-time
-		// rules, and their cached state, until they next start.
-		if egressAllowlistNeedsRestart(t.prior, allowlist, t.handleV4, t.handleV6) {
-			m.log.Info("fcvm: egress allowlist change applies when the instance next starts",
-				"app_id", appID, "instance", t.instanceID, "prior_entries", len(t.prior), "new_entries", len(allowlist))
+		if egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
+			nc := t.net
+			nc.EgressAllowlist = append([]netip.Prefix(nil), allowlist...)
+			if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
+				return fmt.Errorf("fcvm: replace egress policy app=%s netns=%s: %w", appID, t.netns, err)
+			}
+			m.mu.Lock()
+			if inst := m.live[t.instanceID]; inst == t.instance {
+				inst.Net.EgressAllowlist = nc.EgressAllowlist
+				newHandles[t.instanceID] = struct{ v4, v6 uint64 }{inst.AllowlistHandleV4, inst.AllowlistHandleV6}
+				m.markAdoptionDirty(t.instanceID)
+			}
+			m.mu.Unlock()
 			continue
 		}
 		next := build(t)
@@ -6978,12 +7463,12 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		copy(inst.Net.EgressAllowlist, allowlist)
 		inst.AllowlistHandleV4 = nh.v4
 		inst.AllowlistHandleV6 = nh.v6
+		m.markAdoptionDirty(t.instanceID)
 	}
 	m.mu.Unlock()
 	// Keep the defense-in-depth host exception in sync with the live
 	// per-netns allowlist. Port 25 remains denied by the host policy.
-	m.rebuildHostSMTPAllowlistRules(ctx)
-	return nil
+	return m.renderHostSMTPAllowlistRules(ctx, false)
 }
 
 // UpdatePrivateNetwork applies provider-verified destination CIDRs to every
@@ -7005,6 +7490,11 @@ func (m *Manager) UpdatePrivateNetworkWithFirewall(ctx context.Context, appID st
 }
 
 func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
+	unlock, lockErr := m.lockAppEgressPolicy(ctx, appID)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
 	return m.updatePrivateNetworkForTargets(ctx, appID, cidrs, allowedCIDRs, firewallRules, nil)
 }
 
@@ -7083,7 +7573,11 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 
 	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
 	for _, t := range targets {
-		if err := errors.Join(m.checkOwnedNamespace(t.net.Netns), m.checkNetworkLinks(t.net)); err != nil {
+		checked := t.net
+		if len(cidrs) == 0 {
+			checked.PrivateVethHost, checked.PrivateVethPeer = "", ""
+		}
+		if err := errors.Join(m.checkOwnedNamespace(t.net.Netns), m.checkNetworkLinks(checked)); err != nil {
 			return fmt.Errorf("fcvm: private network resource identity: %w", err)
 		}
 		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
@@ -7109,6 +7603,65 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 		// update cannot expose a newly requested destination.
 		if err := m.runCommands(ctx, nc.PrivateNetworkRouteCommands()); err != nil {
 			return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s routes: %w", appID, t.netns, err)
+		}
+		if len(cidrs) == 0 && t.net.PrivateVethHost != "" {
+			clean := nc
+			clean.PrivateNetworkBridge = ""
+			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
+			clean.PrivateNetworkAddress = netip.Addr{}
+			clean.PrivateNetworkServiceAddress = netip.Addr{}
+			// Replace the complete policy in one nft transaction before removing
+			// the link. A failed rebuild leaves the owned link available for retry.
+			// Retain circuit denies while recreating their sets.
+			if rebuildErr := m.replaceNetworkPolicy(ctx, t.instance, clean); rebuildErr != nil {
+				return fmt.Errorf("fcvm: withdraw private policy app=%s netns=%s: %w", appID, t.netns, rebuildErr)
+			}
+			m.mu.Lock()
+			if inst := m.live[t.id]; inst == t.instance {
+				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+			}
+			m.mu.Unlock()
+			if err := m.removeNetworkLink(ctx, t.net.Instance, t.net.PrivateVethHost); err != nil {
+				return fmt.Errorf("fcvm: private side-link removal: %w", err)
+			}
+			if err := m.releasePrivateNetworkMember(ctx, t.net, t.id, false); err != nil {
+				return err
+			}
+			// Publish each detached target immediately: a later sibling failure
+			// must not make retries fence this already-removed owned link as drift.
+			m.mu.Lock()
+			if inst := m.live[t.id]; inst == t.instance {
+				inst.Net.PrivateNetworkCIDRs = nil
+				inst.Net.PrivateNetworkAllowedCIDRs = nil
+				inst.Net.PrivateNetworkFirewallRules = nil
+				inst.Net.PrivateNetworkBridge = ""
+				inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = "", ""
+				inst.Net.PrivateNetworkAddress = netip.Addr{}
+				inst.Net.PrivateNetworkServiceAddress = netip.Addr{}
+				inst.Net.PrivateNetworkID, inst.Net.PrivateNetworkAppID, inst.Net.PrivateNetworkAccountID = "", "", ""
+				m.markAdoptionDirty(t.id)
+			}
+			m.mu.Unlock()
+			newHandles[t.id] = struct{ h4, h6 uint64 }{}
+			continue
+		}
+		if nc.PrivateVethHost != "" || len(renderedRules) > 0 || len(t.net.PrivateNetworkFirewallRules) > 0 {
+			// Multiple protocol/port rules cannot be tracked by the legacy
+			// single-handle patch path. Rebuild atomically so stale accepts and
+			// terminal drops are removed together, preserving fail-closed updates.
+			if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s firewall rebuild: %w", appID, t.netns, err)
+			}
+			for _, old := range t.prior {
+				if containsPrefix(cidrs, old) {
+					continue
+				}
+				if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
+					m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
+				}
+			}
+			newHandles[t.id] = struct{ h4, h6 uint64 }{}
+			continue
 		}
 		h4, h6 := t.h4, t.h6
 		priorRuleCIDRs := t.prior
@@ -7137,27 +7690,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s delete v6 rule: %w", appID, t.netns, err)
 			}
 		}
-		if len(renderedRules) > 0 || len(t.net.PrivateNetworkFirewallRules) > 0 {
-			// Multiple protocol/port rules cannot be tracked by the legacy
-			// single-handle patch path. Rebuild atomically so stale accepts and
-			// terminal drops are removed together, preserving fail-closed updates.
-			if err := m.runCommands(ctx, nc.NftResetCommands()); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s firewall reset: %w", appID, t.netns, err)
-			}
-			if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s firewall rebuild: %w", appID, t.netns, err)
-			}
-			for _, old := range t.prior {
-				if containsPrefix(cidrs, old) {
-					continue
-				}
-				if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
-					m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
-				}
-			}
-			newHandles[t.id] = struct{ h4, h6 uint64 }{}
-			continue
-		}
+
 		v4 := nc.ForwardPrivateNetworkRule(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
 		v6 := nc.ForwardPrivateNetworkRule6(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
 		// The boot renderer emits private accepts before lateral-movement
@@ -7208,26 +7741,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 				h6 = 0
 			}
 		}
-		if len(cidrs) == 0 && t.net.PrivateVethHost != "" {
-			// Remove the private side-link and rebuild the per-netns table so
-			// its NAT rules cannot reference a detached interface. Public
-			// egress rules are rendered from the same cached Config.
-			if err := m.removeNetworkLink(ctx, t.net.Instance, t.net.PrivateVethHost); err != nil {
-				return fmt.Errorf("fcvm: private side-link removal: %w", err)
-			}
-			clean := t.net
-			clean.PrivateNetworkCIDRs = nil
-			clean.PrivateNetworkAllowedCIDRs = nil
-			clean.PrivateNetworkFirewallRules = nil
-			clean.PrivateNetworkBridge = ""
-			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
-			clean.PrivateNetworkAddress = netip.Addr{}
-			_ = m.runCommands(ctx, clean.NftResetCommands())
-			if err := m.runNftCommands(ctx, clean.Netns, clean.NftCommands()); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s rebuild policy: %w", appID, t.netns, err)
-			}
-			h4, h6 = 0, 0
-		}
+
 		newHandles[t.id] = struct{ h4, h6 uint64 }{h4, h6}
 	}
 	m.mu.Lock()
@@ -7247,8 +7761,11 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 			inst.Net.PrivateNetworkBridge = ""
 			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = "", ""
 			inst.Net.PrivateNetworkAddress = netip.Addr{}
+			inst.Net.PrivateNetworkServiceAddress = netip.Addr{}
+			inst.Net.PrivateNetworkID, inst.Net.PrivateNetworkAppID, inst.Net.PrivateNetworkAccountID = "", "", ""
 		}
 		inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = nh.h4, nh.h6
+		m.markAdoptionDirty(t.id)
 	}
 	m.mu.Unlock()
 	return nil
@@ -7274,14 +7791,16 @@ func (m *Manager) UpdatePrivateNetworkAttachmentWithFirewall(ctx context.Context
 }
 
 func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
+	unlock, lockErr := m.lockAppEgressPolicy(ctx, appID)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
 	if appID == "" || networkID == "" || !address.IsValid() || !address.Is4() {
 		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: invalid identity")
 	}
 	if err := api.ValidatePrivateNetworkIdentifier(networkID); err != nil {
 		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: network_id: %w", err)
-	}
-	if len(cidrs) == 0 || !cidrs[0].Contains(address) {
-		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: member address %s is outside the private network", address)
 	}
 	raw := make([]string, 0, len(cidrs))
 	for _, p := range cidrs {
@@ -7291,7 +7810,10 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	if err != nil {
 		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s: %w", appID, err)
 	}
-	cidrs = validated
+	cidrs, err = memberFirstPrivateNetworkCIDRs(validated, address)
+	if err != nil {
+		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: %w", err)
+	}
 	if len(allowedCIDRs) > 0 {
 		rawAllowed := make([]string, 0, len(allowedCIDRs))
 		for _, p := range allowedCIDRs {
@@ -7335,38 +7857,59 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			return err
 		}
 		nc := t.net
-		if err := errors.Join(m.checkOwnedNamespace(nc.Netns), m.checkNetworkLinks(nc)); err != nil {
+		checked := nc
+		if nc.PrivateNetworkBridge != privatenetwork.BridgeName(t.account, networkID) {
+			checked.PrivateVethHost, checked.PrivateVethPeer = "", ""
+		}
+		if err := errors.Join(m.checkOwnedNamespace(nc.Netns), m.checkNetworkLinks(checked)); err != nil {
 			return fmt.Errorf("fcvm: private attachment resource identity: %w", err)
 		}
 		if t.account == "" {
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s: account identity is missing", appID, t.id)
 		}
+		memberAddress, serviceAddress := address, netip.Addr{}
+		if m.privateNetworkMemberSource != nil {
+			identity, memberErr := m.privateNetworkMemberSource(ctx, PrivateNetworkMemberRequest{AccountID: t.account, AppID: appID, NetworkID: networkID, InstanceID: t.id, DeploymentID: t.instance.DeploymentID, ExpectedService: address, Eligible: !t.instance.StaticEgressExcluded && !t.net.Quarantine})
+			if memberErr != nil {
+				return memberErr
+			}
+			memberAddress, serviceAddress = identity.Address, identity.Service
+		}
 		desiredBridge := privatenetwork.BridgeName(t.account, networkID)
-		if nc.PrivateNetworkBridge == desiredBridge && nc.PrivateNetworkAddress == address && nc.PrivateVethHost != "" {
-			if samePrefixSet(nc.PrivateNetworkAllowedCIDRs, allowedCIDRs) && sameFirewallRules(nc.PrivateNetworkFirewallRules, renderedRules) {
+		nc.PrivateNetworkMTU = m.privateNetworkMTU()
+		if nc.PrivateNetworkBridge == desiredBridge && nc.PrivateNetworkAddress == memberAddress && nc.PrivateVethHost != "" {
+			if err := m.runCommands(ctx, nc.PrivateNetworkMTUCommands()); err != nil {
+				return err
+			}
+			if nc.PrivateNetworkServiceAddress != serviceAddress {
+				if err := m.changePrivateNetworkService(ctx, t.instance, nc, serviceAddress); err != nil {
+					return err
+				}
+				nc.PrivateNetworkServiceAddress = serviceAddress
+			}
+			if t.net.PrivateNetworkMTU == nc.PrivateNetworkMTU && samePrefixSet(nc.PrivateNetworkAllowedCIDRs, allowedCIDRs) && sameFirewallRules(nc.PrivateNetworkFirewallRules, renderedRules) {
 				continue
 			}
 			// Re-rendering the complete per-netns table is deliberately
 			// fail-closed: policy is never widened if the replacement fails.
 			nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
 			nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
-			_ = m.runCommands(ctx, nc.NftResetCommands())
-			if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
+			if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s policy rebuild: %w", appID, t.id, err)
 			}
 			m.mu.Lock()
 			if inst := m.live[t.id]; inst == t.instance {
+				inst.Net.PrivateNetworkMTU = nc.PrivateNetworkMTU
 				inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
 				inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+				m.markAdoptionDirty(t.id)
 			}
 			m.mu.Unlock()
 			continue
 		}
-		if nc.PrivateVethHost != "" && (nc.PrivateNetworkBridge != desiredBridge || nc.PrivateNetworkAddress != address) {
-			if err := m.removeNetworkLink(ctx, nc.Instance, nc.PrivateVethHost); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s remove old side-link: %w", appID, t.id, err)
-			}
+		if nc.PrivateVethHost != "" && (nc.PrivateNetworkBridge != desiredBridge || nc.PrivateNetworkAddress != memberAddress) {
+
 			clean := nc
 			clean.PrivateNetworkCIDRs = nil
 			clean.PrivateNetworkAllowedCIDRs = nil
@@ -7374,20 +7917,32 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			clean.PrivateNetworkBridge = ""
 			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
 			clean.PrivateNetworkAddress = netip.Addr{}
-			_ = m.runCommands(ctx, clean.NftResetCommands())
-			if err := m.runNftCommands(ctx, clean.Netns, clean.NftCommands()); err != nil {
+			clean.PrivateNetworkServiceAddress = netip.Addr{}
+			if err := m.replaceNetworkPolicy(ctx, t.instance, clean); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s clear old private policy: %w", appID, t.id, err)
+			}
+			if err := m.removeNetworkLink(ctx, nc.Instance, nc.PrivateVethHost); err != nil {
+				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s remove old side-link: %w", appID, t.id, err)
+			}
+			if err := m.releasePrivateNetworkMember(ctx, nc, t.id, false); err != nil {
+				return err
 			}
 			nc.PrivateVethHost, nc.PrivateVethPeer, nc.PrivateNetworkBridge = "", "", ""
 			nc.PrivateNetworkAddress = netip.Addr{}
 			m.mu.Lock()
 			if inst := m.live[t.id]; inst == t.instance {
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+				m.markAdoptionDirty(t.id)
 			}
 			m.mu.Unlock()
 		}
 		nc.PrivateNetworkBridge = desiredBridge
-		nc.PrivateNetworkAddress = address
+		nc.PrivateNetworkAddress = memberAddress
+		nc.PrivateNetworkServiceAddress = serviceAddress
+		nc.PrivateNetworkID, nc.PrivateNetworkAppID, nc.PrivateNetworkAccountID = networkID, appID, t.account
+		if err := m.reservePrivateNetworkAddresses(nc, t.id); err != nil {
+			return err
+		}
 		nc.PrivateNetworkCIDRs = cidrs
 		nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
 		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
@@ -7400,8 +7955,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		// additive helper cannot safely position protocol rules relative to the
 		// established/reply accept and lateral deny rules, so rebuild the table
 		// fail-closed before publishing the link in the live instance state.
-		_ = m.runCommands(ctx, nc.NftResetCommands())
-		if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
+		if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
 			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
@@ -7409,6 +7963,9 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.PrivateNetworkBridge = nc.PrivateNetworkBridge
 			inst.Net.PrivateNetworkAddress = nc.PrivateNetworkAddress
+			inst.Net.PrivateNetworkServiceAddress = nc.PrivateNetworkServiceAddress
+			inst.Net.PrivateNetworkID, inst.Net.PrivateNetworkAppID, inst.Net.PrivateNetworkAccountID = nc.PrivateNetworkID, nc.PrivateNetworkAppID, nc.PrivateNetworkAccountID
+			inst.Net.PrivateNetworkMTU = nc.PrivateNetworkMTU
 			inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
 			inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = nc.PrivateVethHost, nc.PrivateVethPeer
@@ -7464,17 +8021,13 @@ func containsPrefix(prefixes []netip.Prefix, want netip.Prefix) bool {
 // validates it (parse + IPv4 + canonical deny-set) so a
 // malformed or reserved value cannot reach the host ruleset.
 //
-// Idempotent fast-path: when the cached per-app IP equals the
-// incoming IP, the host rebuild is skipped (the ruleset is
-// already correct). Schedd's redelivery-on-reconnect lands
-// here; without the fast-path the host renderer would rewrite
-// the same bytes on every reconnect and atomic-rename the file
-// for nothing.
+// Redelivery also replays the host policy: a previous reload may have
+// failed after the desired pin was cached. Never acknowledge that failed
+// projection merely because the desired address has not changed.
 //
-// Failure model matches UpdateEgressAllowlist: a failed
-// host-renderer reload logs at Warn and returns; the next
-// cache mutation (a Wake, Teardown, SIGHUP, or another drift
-// event) re-triggers the rebuild. The renderer reload is
+// A failed host-renderer reload returns an error so drift delivery can
+// retry. Live-map changes and other policy updates also rebuild the
+// projection. The renderer reload is
 // gated through the staging-dir + atomic-replace pipeline in
 // cmd/vmmd/egress_watcher.go (a failed Render does NOT break
 // the live ruleset).
@@ -7497,27 +8050,46 @@ func (m *Manager) UpdateStaticEgressIP(ctx context.Context, accountID, appID str
 		next = &parsed
 	}
 
-	// Idempotent fast-path: cached per-app IP already matches
-	// the incoming IP. Skip the cache write + alloc + rebuild.
-	m.perAppStaticIPMu.RLock()
-	cur, exists := m.perAppStaticIP[appID]
-	m.perAppStaticIPMu.RUnlock()
-	if next == nil && cur == nil {
-		return nil
+	unlock, err := m.lockAppEgressPolicy(ctx, appID)
+	if err != nil {
+		return err
 	}
-	if next != nil && exists && cur.Compare(*next) == 0 {
-		return nil
+	defer unlock()
+
+	if m.staticEgressPolicySource != nil {
+		current, sourceErr := m.staticEgressPolicySource(ctx, accountID, appID)
+		if sourceErr != nil {
+			return fmt.Errorf("read static egress intent: %w", sourceErr)
+		}
+		if !sameStaticEgressIP(current, next) {
+			return errors.New("static egress policy changed; retry with current app intent")
+		}
+	}
+	if err := m.applyStaticEgressIPLocked(ctx, accountID, appID, next, false); err != nil {
+		return err
+	}
+	if next == nil {
+		m.forgetClearedStaticEgressAccount(appID)
+	}
+	return nil
+}
+
+// Caller holds the exclusive app policy gate.
+func (m *Manager) applyStaticEgressIPLocked(ctx context.Context, accountID, appID string, next *netip.Addr, blocked bool) error {
+	m.rememberStaticEgressAccount(accountID, appID)
+	if next != nil && !blocked {
+		if err := m.ensureStaticEgressAlias(ctx, accountID, *next); err != nil {
+			return err
+		}
 	}
 
 	// ADR-119 redesign note: vmmd owns the per-VM host IP
 	// reservation. The set path allocates from the dedicated
 	// 10.200.0.0/16 pool (alloc.go::AcquireStaticEgressIP); the
 	// clear path returns it (alloc.go::ReleaseStaticEgressIP).
-	// The reservation is what makes the Wake path able to look
-	// up the per-VM host IP for the app — without this the host
-	// renderer would have nothing to bind into the rule's `ip
-	// saddr <per-VM-host-IP>` source field.
-	if next != nil {
+	// The reservation authorizes future wakes. SNAT source matches come
+	// from each live or starting VM's actual lease address.
+	if next != nil && !blocked {
 		if _, rerr := AcquireStaticEgressIP(accountID, appID, *next); rerr != nil {
 			return fmt.Errorf("fcvm: UpdateStaticEgressIP app=%s: reserve per-VM host IP: %w", appID, rerr)
 		}
@@ -7535,23 +8107,41 @@ func (m *Manager) UpdateStaticEgressIP(ctx context.Context, accountID, appID str
 	// host rebuild so the rebuild reads the consistent value
 	// (matches the UpdateEgressAllowlist ordering invariant).
 	m.perAppStaticIPMu.Lock()
+	if blocked {
+		if m.perAppStaticBlocked == nil {
+			m.perAppStaticBlocked = make(map[string]bool)
+		}
+		m.perAppStaticBlocked[appID] = true
+	} else {
+		delete(m.perAppStaticBlocked, appID)
+	}
 	if m.perAppStaticIP == nil {
 		m.perAppStaticIP = make(map[string]*netip.Addr)
 	}
-	if next == nil {
-		m.perAppStaticIP[appID] = nil
-	} else {
+	if next != nil {
 		ipCopy := *next
 		m.perAppStaticIP[appID] = &ipCopy
+	} else if !blocked {
+		m.perAppStaticIP[appID] = nil
 	}
+	if m.perAppStaticAccounts == nil {
+		m.perAppStaticAccounts = make(map[string]string)
+	}
+	m.perAppStaticAccounts[appID] = accountID
 	m.perAppStaticIPMu.Unlock()
 
-	// Rebuild the host renderer. If there are no live VMs for
-	// this app, the rebuild still walks the per-VM map and
-	// drops the rule (the alloc.go reservation persists
-	// until the customer clears the pin, so a subsequent Wake
-	// re-adds the rule from the per-VM host IP registration).
-	m.rebuildHostStaticEgressRules(ctx)
+	// Rebuild using every live or starting VM's lease. Apps without a
+	// source keep their desired pin for their next wake.
+	m.mu.Lock()
+	for id, inst := range m.live {
+		if inst.AppID == appID {
+			m.markAdoptionDirty(id)
+		}
+	}
+	m.mu.Unlock()
+	if err := m.rebuildHostStaticEgressRules(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -7596,7 +8186,7 @@ func (m *Manager) applyOneInstancePatch(
 	var zero struct{ v4, v6 uint64 }
 	// Caller already short-circuited the set-equal case via
 	// samePrefixSet and routed changes that need a restart away
-	// (egressAllowlistNeedsRestart), so every family here either has a
+	// (egressAllowlistNeedsReplacement), so every family here either has a
 	// rule to rewrite or a rule to drop.
 	nx := func(parts ...string) []string {
 		return append([]string{"ip", "netns", "exec", netnsName, "nft"}, parts...)
@@ -7676,11 +8266,11 @@ func (m *Manager) applyOneInstancePatch(
 	return struct{ v4, v6 uint64 }{v4: newH4, v6: newH6}, nil
 }
 
-// egressAllowlistNeedsRestart reports a live allowlist change that the
+// egressAllowlistNeedsReplacement reports a live allowlist change that the
 // in-place patch cannot apply: adding the first entries or clearing the
 // list (the terminal allowlist drop exists only when entries do), or a
 // family gaining entries with no rule of its own to rewrite in place.
-func egressAllowlistNeedsRestart(prior, next []netip.Prefix, handleV4, handleV6 uint64) bool {
+func egressAllowlistNeedsReplacement(prior, next []netip.Prefix, handleV4, handleV6 uint64) bool {
 	if (len(prior) == 0) != (len(next) == 0) {
 		return true
 	}

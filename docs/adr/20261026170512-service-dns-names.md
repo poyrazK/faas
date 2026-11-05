@@ -1,0 +1,25 @@
+# ADR-20261026170512: Services are called by the DNS form of their name
+
+- **Status:** accepted
+- **Date:** 2026-10-26
+- **Decision:** A service is called over the network by the DNS form of its repository service name: lower case, with `_` and `.` written as `-`. Compose's `billing_api`, `Billing.API` and `BILLING_API` are all called `billing-api` (`billing-api.internal`, `billing-api.svc.gregale`).
+  - **Stored names keep their declared form.** `apps.workload_name`, `depends_on` entries and service bindings are unchanged. Reconcile, previews and the release graph key on them as before, and no project is rewritten.
+  - **Every comparison and generated address uses the DNS form**, through `api.ServiceDNSName` and `api.SameServiceName`:
+    - the `GREGALE_SERVICE_<NAME>_URL`, `_HTTPS_URL` and `_HOST` values;
+    - the binding inventory's URLs;
+    - project member lookup (memory and Postgres, `translate(lower(workload_name), '_.', '--')`);
+    - the PR-preview sibling lookup, which was also case-sensitive;
+    - the declared-binding check, the caller allowlist and call scopes, and the reliability policy lookup;
+    - the `.internal` alias check;
+    - declared wake-ahead targets;
+    - `gregale dev --all` service names.
+  - **The plan warns** when a service's DNS form is not a DNS label (for example `_worker`), and when two services share one DNS form (`billing_api` and `billing-api`). Calls to an ambiguous name are refused, as before.
+- **Why:** The gateway accepts only DNS labels in a service host, and Compose allows `_`, `.` and capitals in service names. A dependent of `billing_api` was given `GREGALE_SERVICE_BILLING_API_URL=http://billing_api.svc.gregale:10081`, which the gateway answered with 404. No name reached the service by its workload name: `billing-api.internal` worked only when the app's slug happened to be `billing-api`. Underscored names are common in Compose files (`celery_worker`, `api_gateway`).
+- **Consequences:**
+  - Existing apps are called by the DNS form at once, with no re-apply. Their stored bindings are compared through it.
+  - Existing dependents keep the old, unusable URL in their environment until the next project apply regenerates it.
+  - `x-gregale-allow-callers` and call-scope entries, which are already DNS labels, now match a caller declared as `web_ui`.
+  - Rolling upgrades: older gateways keep the exact-name match, so DNS-form calls to underscore services work once the gateway updates; services already named with DNS labels are unaffected. There is no schema change, and the one changed query compares the same rows.
+- **Rejected alternatives:**
+  - **Rename workloads to the DNS form at scan time.** Existing projects would see every such service removed and re-added by the next apply.
+  - **Accept `_` in service hosts.** Hostnames may not carry `_`, so TLS for `*.internal` and many HTTP clients would reject them.

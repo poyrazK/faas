@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, McpService, type SetMCPReadinessFallbackRequest, type MCPReadinessFallbackPolicy, type SetMCPReadinessPagerDutyAcknowledgementsRequest, type MCPReadinessPagerDutyAcknowledgementPolicy, type MCPReadinessPagerDutyAcknowledgementEvent } from '../src/index.js';
+import { FaaSClient, McpService, type SetMCPReadinessFallbackRequest, type MCPReadinessFallbackPolicy, type SetMCPReadinessPagerDutyAcknowledgementsRequest, type MCPReadinessPagerDutyAcknowledgementPolicy, type MCPReadinessPagerDutyAcknowledgementEvent } from '../src/preview.js';
 
 test('native PagerDuty fallback and activated receiver acknowledgement contracts', { timeout: 10000 }, async (t) => {
  const rule = '00000000-0000-0000-0000-000000000001';

@@ -65,8 +65,7 @@ func filterRealtimeSchedules(r *http.Request, rows []state.ManagedRealtimeSchedu
 	return out, nil
 }
 func (s *Service) ManagedRealtimeScheduleGroup(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "scheduled realtime publishing preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "scheduled realtime publishing preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

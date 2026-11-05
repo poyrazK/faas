@@ -30,8 +30,9 @@ SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDAT
 SELECT deployment_mail_revision,subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
-UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
-WHERE id=$1 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at;
+UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp()),
+    deletion_includes_managed_postgres=deletion_includes_managed_postgres OR sqlc.arg(include_managed_postgres)::boolean
+WHERE id=sqlc.arg(id) AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at;
 
 -- name: ExistingIntent :one
 SELECT id FROM platform_mail_producer_outbox WHERE account_id=$1 AND template='account_deletion_pending' AND deletion_requested_at=$2;
@@ -71,6 +72,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
         OR (o.template='deployment_failed' AND sqlc.arg(deployment_failed_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(deployment_failed_keys)::text[]))
+        OR (o.template='agent_run_delivered' AND sqlc.arg(agent_run_delivered_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(agent_run_delivered_keys)::text[]))
         OR (o.template='subscription_ended' AND sqlc.arg(subscription_ended_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(subscription_ended_keys)::text[]))
         OR (o.template='quota_warning' AND sqlc.arg(quota_warning_enabled)::boolean
@@ -79,6 +82,12 @@ WITH candidate AS (
           AND o.security_alert_key_id=ANY(sqlc.arg(nonpayment_deletion_keys)::text[]))
         OR (o.template='account_suspended' AND sqlc.arg(account_suspended_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(account_suspended_keys)::text[]))
+        OR (o.template='managed_postgres_cap' AND sqlc.arg(managed_postgres_cap_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(managed_postgres_cap_keys)::text[]))
+        OR (o.template='managed_postgres_restore_slot' AND sqlc.arg(managed_postgres_restore_slot_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(managed_postgres_restore_slot_keys)::text[]))
+        OR (o.template='managed_postgres_plan_excess' AND sqlc.arg(managed_postgres_plan_excess_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(managed_postgres_plan_excess_keys)::text[]))
         OR (o.template='account_restored' AND sqlc.arg(account_restored_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(account_restored_keys)::text[]))
         OR (o.template='payment_failed' AND sqlc.arg(payment_failed_enabled)::boolean
@@ -160,7 +169,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'agent_run_delivered' THEN 'agent-run-delivered:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'managed_postgres_cap' THEN 'managed-postgres-cap:' WHEN 'managed_postgres_restore_slot' THEN 'managed-postgres-restore-slot:' WHEN 'managed_postgres_plan_excess' THEN 'managed-postgres-plan-excess:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -497,11 +506,14 @@ SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_secret_encrypted FROM a
 -- from replacing a factor after another request has confirmed it.
 -- name: SavePendingMFAEnrollment :execrows
 UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_revision=mfa_revision+1
+    ,mfa_totp_last_step=NULL
 WHERE id=$1 AND mfa_enrolled_at IS NULL;
 
 -- name: ConfirmMFAEnabledEnrollment :one
 UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,mfa_revision=mfa_revision+1
+    ,mfa_totp_last_step=sqlc.arg(step)::bigint
 WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted IS NOT NULL
+    AND (mfa_totp_last_step IS NULL OR mfa_totp_last_step<sqlc.arg(step)::bigint)
 RETURNING mfa_enrolled_at;
 
 -- name: PaymentFailedReady :one
@@ -743,8 +755,9 @@ SELECT id,email,status,past_due_at,deletion_requested_at,billing_mail_revision,c
 FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ScheduleNonpaymentDeletionAccount :one
-UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp()
-WHERE id=$1 AND status='suspended' AND deletion_requested_at IS NULL
+UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp(),
+    deletion_includes_managed_postgres=sqlc.arg(include_managed_postgres)::boolean
+WHERE id=sqlc.arg(id) AND status='suspended' AND deletion_requested_at IS NULL
 RETURNING billing_mail_revision,deletion_requested_at;
 
 -- name: CreateNonpaymentDeletionIntent :exec
@@ -1095,3 +1108,192 @@ FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
     AND m.idempotency_key='deployment-failed:'||o.id::text AND o.template='deployment_failed' AND o.expires_at=m.expires_at
 JOIN accounts a ON a.id=o.account_id
 WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- ADR-20261025094915: managed PostgreSQL compute cap warnings.
+-- name: ManagedPostgresCapReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('managed_postgres_cap' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: ManagedPostgresCapSchemaReady :exec
+SELECT e.subject_id,e.period_start,e.threshold,e.mail_intent_id FROM managed_postgres_cap_events e LIMIT 0;
+
+-- name: ManagedPostgresCapKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='managed_postgres_cap' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: LockManagedPostgresCapAccount :one
+SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: CreateManagedPostgresCapIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_cap',1,$7,$8,$9,$10);
+
+-- name: LinkManagedPostgresCapEvent :execrows
+UPDATE managed_postgres_cap_events SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE subject_id=sqlc.arg(subject_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
+  AND threshold=sqlc.arg(threshold)::text AND mail_intent_id IS NULL;
+
+-- name: ShareManagedPostgresCapSubmissionAccount :one
+SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='managed-postgres-cap:'||o.id::text AND o.template='managed_postgres_cap'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: ManagedPostgresCapDeliveryReady :exec
+SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_cap' LIMIT 0;
+
+-- Managed PostgreSQL restore slot notices (ADR-20261031123259). The slot
+-- sweep records each notice once; its intent is linked in the same
+-- transaction, so a notice is mailed at most once. The account is locked
+-- with LockManagedPostgresCapAccount.
+
+-- name: ManagedPostgresRestoreSlotReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('managed_postgres_restore_slot' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: ManagedPostgresRestoreSlotSchemaReady :exec
+SELECT n.database_id,n.kind,n.mail_intent_id FROM managed_postgres_restore_slot_notices n LIMIT 0;
+
+-- name: ManagedPostgresRestoreSlotKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='managed_postgres_restore_slot' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: CreateManagedPostgresRestoreSlotIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_restore_slot',1,$7,$8,$9,$10);
+
+-- name: LinkManagedPostgresRestoreSlotNotice :execrows
+UPDATE managed_postgres_restore_slot_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND kind=sqlc.arg(kind)::text AND mail_intent_id IS NULL;
+
+-- name: ShareManagedPostgresRestoreSlotSubmissionAccount :one
+SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='managed-postgres-restore-slot:'||o.id::text AND o.template='managed_postgres_restore_slot'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: ManagedPostgresRestoreSlotDeliveryReady :exec
+SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_restore_slot' LIMIT 0;
+
+-- Managed PostgreSQL plan excess notices (ADR-20261102125208). The cap
+-- sweep records each notice once per suspension; its intent is linked in the
+-- same transaction, so a notice is mailed at most once. The account is
+-- locked with LockManagedPostgresCapAccount.
+
+-- name: ManagedPostgresPlanExcessReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('managed_postgres_plan_excess' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: ManagedPostgresPlanExcessSchemaReady :exec
+SELECT n.database_id,n.reason,n.mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0;
+
+-- name: ManagedPostgresPlanExcessKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='managed_postgres_plan_excess' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: CreateManagedPostgresPlanExcessIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_plan_excess',1,$7,$8,$9,$10);
+
+-- name: LinkManagedPostgresPlanExcessNotice :execrows
+UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND mail_intent_id IS NULL;
+
+-- name: ShareManagedPostgresPlanExcessSubmissionAccount :one
+SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='managed-postgres-plan-excess:'||o.id::text AND o.template='managed_postgres_plan_excess'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: ManagedPostgresPlanExcessDeliveryReady :exec
+SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_plan_excess' LIMIT 0;
+
+-- Agent run summaries (ADR-20261027090010 §8). agent_deliveries belongs to agentd;
+-- capture reads it, sharing the row so agentd cannot end a delivery while it
+-- is being captured, and writes only its own receipt.
+
+-- name: AgentRunDeliveredReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('agent_run_delivered' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: AgentRunDeliveredSchemaReady :exec
+SELECT d.id,d.destination,d.state,d.body,d.body_truncated,d.created_at,r.agent_id,a.name,o.agent_delivery_id,c.started_at,x.disposition
+FROM agent_deliveries d JOIN agent_runs r ON r.id=d.run_id JOIN agents a ON a.id=r.agent_id
+JOIN platform_mail_producer_outbox o ON o.agent_delivery_id=d.id
+JOIN platform_mail_agent_run_capture c ON c.namespace=o.namespace AND c.producer_id=o.producer_id
+JOIN platform_mail_agent_run_observations x ON x.delivery_id=d.id LIMIT 0;
+
+-- name: AgentRunDeliveredKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='agent_run_delivered' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: EnrollAgentRunCapture :exec
+INSERT INTO platform_mail_agent_run_capture(namespace,producer_id,recovery_id) VALUES($1,$2,$3)
+ON CONFLICT(namespace,producer_id) DO UPDATE SET started_at=clock_timestamp(),recovery_id=EXCLUDED.recovery_id
+WHERE platform_mail_agent_run_capture.recovery_id<>EXCLUDED.recovery_id;
+
+-- name: AgentRunCapture :one
+SELECT started_at,recovery_id FROM platform_mail_agent_run_capture WHERE namespace=$1 AND producer_id=$2;
+
+-- name: AgentRunDeliveryCandidates :many
+SELECT d.id,d.account_id FROM agent_deliveries d
+JOIN platform_mail_agent_run_capture c ON c.namespace=$1 AND c.producer_id=$2
+WHERE d.destination='email' AND d.created_at>=c.started_at
+    AND d.created_at>clock_timestamp()-make_interval(secs=>sqlc.arg(ttl_seconds)::integer)
+    AND NOT EXISTS(SELECT 1 FROM platform_mail_agent_run_observations x WHERE x.delivery_id=d.id)
+ORDER BY d.created_at,d.id LIMIT sqlc.arg(batch_size);
+
+-- name: ShareAgentRunDelivery :one
+SELECT d.id,d.account_id,d.run_id,d.state,d.body,d.body_truncated,d.created_at,d.deadline_at,a.name AS agent_name
+FROM agent_deliveries d JOIN agent_runs r ON r.id=d.run_id JOIN agents a ON a.id=r.agent_id
+WHERE d.id=$1 AND d.destination='email' FOR SHARE OF d;
+
+-- name: AgentRunDeliveryObserved :one
+SELECT EXISTS(SELECT 1 FROM platform_mail_agent_run_observations WHERE delivery_id=$1)::boolean;
+
+-- name: RecordAgentRunDeliveryObservation :exec
+INSERT INTO platform_mail_agent_run_observations(delivery_id,account_id,disposition,intent_id) VALUES($1,$2,$3,$4);
+
+-- name: CreateAgentRunDeliveredIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,agent_delivery_id)
+VALUES($1,$2,$3,$4,$5,$6,'agent_run_delivered',1,$7,$8,$9,$10,$11);

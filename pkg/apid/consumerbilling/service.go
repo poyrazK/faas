@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,6 +28,20 @@ type Host interface {
 	Store() state.Store
 	// QuoteConsumerUsage prices usage in [since, until) like a statement.
 	QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error)
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649).
+	Released(accountID string) bool
+	// OfferedPlans lists the plans sign-up offers with their current prices
+	// (ADR-20261021143000).
+	OfferedPlans(ctx context.Context, app state.App, settings state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error)
+	// StripeKey opens the account's Stripe billing connection (ADR-1502).
+	StripeKey(ctx context.Context, accountID string) (key string, livemode bool, problem *api.Problem)
+	// CreatorBills reports whether app's customers may be billed through
+	// the account that created it, whose billing connection they use: always
+	// for a personal app, and for a company app only while that account is a
+	// member of the company (ADR-20261026151103 amendment 2).
+	CreatorBills(ctx context.Context, app state.App) bool
+	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 
 // Service serves the consumer billing endpoints. Now is the clock; nil uses
@@ -34,12 +49,17 @@ type Host interface {
 type Service struct {
 	Host Host
 	Now  func() time.Time
+	// Stripe is the customer portal client (ADR-20261021183000); nil uses
+	// the real API.
+	Stripe *stripeinvoice.Client
 
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
 }
 
-// limiterCap bounds the per-prefix limiter map; it is reset when full.
+// limiterCap bounds the per-prefix limiter map. When it is full, idle
+// limiters (back at full burst) are dropped first; the map is never reset,
+// which wiped the limits of real keys too (bug hunt H15).
 const limiterCap = 10000
 
 func (s *Service) now() time.Time {
@@ -53,15 +73,40 @@ func (s *Service) now() time.Time {
 func (s *Service) allow(prefix string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.limiters == nil || len(s.limiters) >= limiterCap {
+	if s.limiters == nil {
 		s.limiters = map[string]*rate.Limiter{}
 	}
 	limiter, ok := s.limiters[prefix]
 	if !ok {
+		if len(s.limiters) >= limiterCap {
+			s.evictLimitersLocked()
+		}
 		limiter = rate.NewLimiter(rate.Limit(float64(api.ConsumerBillingRequestsPerMinute)/60), api.ConsumerBillingBurst)
 		s.limiters[prefix] = limiter
 	}
 	return limiter.Allow()
+}
+
+// evictLimitersLocked drops limiters that are back at full burst, which
+// remember nothing, then ones with tokens left, and only then ones that are
+// refusing their key, down to nine tenths of the cap.
+func (s *Service) evictLimitersLocked() {
+	now := time.Now()
+	for prefix, l := range s.limiters {
+		if l.TokensAt(now) >= float64(api.ConsumerBillingBurst) {
+			delete(s.limiters, prefix)
+		}
+	}
+	for _, throttled := range []bool{false, true} {
+		for prefix, l := range s.limiters {
+			if len(s.limiters) < limiterCap*9/10 {
+				return
+			}
+			if throttled || l.TokensAt(now) >= 1 {
+				delete(s.limiters, prefix)
+			}
+		}
+	}
 }
 
 // caller is the app and consumer a request's key resolved to.
@@ -98,7 +143,7 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (caller, 
 		return caller{}, false
 	}
 	key, err := s.Host.Store().ConsumerKeyByAppAndPrefix(ctx, app.AccountID, app.ID, prefix)
-	if err != nil || !api.ConstantTimeEqualHash(api.HashConsumerKey(token), key.Hash) || key.RevokedAt != nil ||
+	if err != nil || !state.CredentialMatches(state.CredentialColumnConsumerKey, api.HashConsumerKey(token), key.Hash) || key.RevokedAt != nil ||
 		(key.ExpiresAt != nil && !key.ExpiresAt.After(s.now())) || key.ConsumerID == "" {
 		unauthorized(w)
 		return caller{}, false
@@ -111,6 +156,11 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (caller, 
 	consumer, err := s.Host.Store().GetAPIConsumerByID(ctx, app.AccountID, key.ConsumerID)
 	if err != nil || consumer.AppID != app.ID || !consumer.Active() {
 		unauthorized(w)
+		return caller{}, false
+	}
+	if !s.Host.Released(app.AccountID) {
+		// The app owner does not have API monetization: no such route.
+		httpkit.NoSuchRoute(w)
 		return caller{}, false
 	}
 	return caller{app: app, consumer: consumer}, true
@@ -290,7 +340,7 @@ func (s *Service) Statements(w http.ResponseWriter, r *http.Request) {
 	for _, st := range finalized {
 		item := api.ConsumerBillingStatement{ID: st.ID, PeriodStart: st.PeriodStart.UTC(), PeriodEnd: st.PeriodEnd.UTC(),
 			Revision: st.Revision, Currency: st.Currency, BillableUnits: st.BillableUnits, AmountMillicents: st.AmountMillicents,
-			FinalizedAt: st.FinalizedAt}
+			CreditAppliedMillicents: st.CreditAppliedMillicents, AmountDueMillicents: st.AmountDueMillicents(), FinalizedAt: st.FinalizedAt}
 		if exports != nil {
 			if e, err := exports.GetStatementInvoiceExport(r.Context(), c.app.AccountID, state.StatementSourceAppConsumer, st.ID); err == nil &&
 				e.Status == state.StatementInvoiceExportCompleted {

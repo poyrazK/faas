@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -13,11 +14,11 @@ import (
 func (s *PgStore) CreateAppLogDrain(ctx context.Context, in AppLogDrain) (AppLogDrain, error) {
 	row := s.pool.QueryRow(ctx, `
 		insert into app_log_drains
-			(app_id, account_id, kind, target_url, auth_header_sealed, enabled)
-		values ($1, $2, $3, $4, $5, $6)
+			(app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_by_account_id)
+		values ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid)
 		returning id, app_id, account_id, kind, target_url,
 		          auth_header_sealed, enabled, created_at, updated_at
-	`, in.AppID, in.AccountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled)
+	`, in.AppID, in.AccountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled, in.CreatedByAccountID)
 	drain, err := scanAppLogDrain(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -35,17 +36,9 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
-	var accountID string
-	if err := tx.QueryRow(ctx, `
-		select account_id from apps where id = $1 and status <> 'deleted' for update
-	`, in.AppID).Scan(&accountID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AppLogDrain{}, ErrNotFound
-		}
-		return AppLogDrain{}, fmt.Errorf("state: lock app %s for log drain: %w", in.AppID, err)
-	}
-	if _, err := tx.Exec(ctx, `select 1 from accounts where id = $1 for update`, accountID); err != nil {
-		return AppLogDrain{}, fmt.Errorf("state: lock account %s for log drain: %w", accountID, err)
+	subject, accountID, err := lockQuotaSubjectTx(ctx, tx, in.AppID)
+	if err != nil {
+		return AppLogDrain{}, err
 	}
 
 	var appCount int
@@ -60,9 +53,10 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 	if err := tx.QueryRow(ctx, `
 		select count(*) from app_log_drains d
 		join apps a on a.id = d.app_id
-		where a.account_id = $1 and a.status <> 'deleted'
-	`, accountID).Scan(&accountCount); err != nil {
-		return AppLogDrain{}, fmt.Errorf("state: count app log drains for account %s: %w", accountID, err)
+		left join orgs o on o.id = a.org_id
+		where `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'
+	`, subject).Scan(&accountCount); err != nil {
+		return AppLogDrain{}, fmt.Errorf("state: count app log drains for %s: %w", subject, err)
 	}
 	if accountCount >= limits.LogDrainPerAccount {
 		return AppLogDrain{}, &AppLogDrainQuotaError{Scope: AppLogDrainQuotaScopeAccount, Limit: limits.LogDrainPerAccount, Observed: accountCount}
@@ -70,11 +64,11 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 
 	row := tx.QueryRow(ctx, `
 		insert into app_log_drains
-			(app_id, account_id, kind, target_url, auth_header_sealed, enabled)
-		values ($1, $2, $3, $4, $5, $6)
+			(app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_by_account_id)
+		values ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid)
 		returning id, app_id, account_id, kind, target_url,
 		          auth_header_sealed, enabled, created_at, updated_at
-	`, in.AppID, accountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled)
+	`, in.AppID, accountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled, in.CreatedByAccountID)
 	drain, err := scanAppLogDrain(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -166,15 +160,46 @@ func (s *PgStore) ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, e
 	if err != nil {
 		return nil, fmt.Errorf("list enabled app log drains: %w", err)
 	}
-	result := make([]AppLogDrain, 0, len(rows))
+	drains := make([]AppLogDrain, 0, len(rows))
+	owners := make([]appLogDrainOwnership, 0, len(rows))
 	for _, row := range rows {
 		d, err := appLogDrainWithStandardBinding(row)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, d)
+		var owner appLogDrainOwnership
+		if err := json.Unmarshal(row.Owner, &owner); err != nil {
+			return nil, fmt.Errorf("decode app log drain owner: %w", err)
+		}
+		drains = append(drains, d)
+		owners = append(owners, owner)
 	}
-	return result, nil
+	return planCoveredAppLogDrains(drains, owners), nil
+}
+
+// ListAppLogDrainsPausedByPlan names appID's enabled drains that the delivery
+// reads leave out because its owner's plan does not cover them.
+func (s *PgStore) ListAppLogDrainsPausedByPlan(ctx context.Context, appID string) ([]string, error) {
+	id, err := parsePgUUID(appID)
+	if err != nil {
+		return []string{}, nil //nolint:nilerr // A malformed id names no app, so none of its drains is paused.
+	}
+	rows, err := sqlc.New().ListAppLogDrainPlanSubjectDrains(ctx, s.pool, id)
+	if err != nil {
+		return nil, fmt.Errorf("state: list app log drain plan coverage: %w", err)
+	}
+	ledger := newAppLogDrainPlanLedger()
+	paused := []string{}
+	for _, row := range rows {
+		var owner appLogDrainOwnership
+		if err := json.Unmarshal(row.Owner, &owner); err != nil {
+			return nil, fmt.Errorf("decode app log drain owner: %w", err)
+		}
+		if !ledger.admit(row.AppID, owner) && row.Addressed {
+			paused = append(paused, row.ID)
+		}
+	}
+	return paused, nil
 }
 
 func (s *PgStore) listAppLogDrains(ctx context.Context, query string, args ...any) ([]AppLogDrain, error) {

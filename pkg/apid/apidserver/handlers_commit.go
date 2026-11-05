@@ -264,11 +264,12 @@ func (s *server) putCommitSourceConnection(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	if outboundCredentialRecipient == nil || outboundCredentialRecipient() == nil {
+	recipients, err := commitConnectionRecipients()
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("credential encryption unavailable"))
 		return
 	}
-	blob, err := commitwork.SealConnection(outboundCredentialRecipient(), source, req.Connection)
+	blob, err := commitwork.SealConnectionTo(recipients, source, req.Connection)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("seal database credential"))
 		return

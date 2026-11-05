@@ -2,6 +2,7 @@ package migrationverify
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/google/uuid"
@@ -35,6 +36,12 @@ func ValidateConnectionTargets(ctx context.Context, reader ConnectionTargetReade
 			return state.ErrConflict
 		}
 		target, err := state.AppByServiceName(ctx, reader, caller, connection.Service)
+		if errors.Is(err, state.ErrNotFound) {
+			// A bound name resolves only inside the caller's project
+			// (ADR-20261030131528); no member there is a conflict, as an
+			// outside target is.
+			return state.ErrConflict
+		}
 		if err != nil {
 			return err
 		}

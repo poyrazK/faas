@@ -206,7 +206,7 @@ func cmdBindingsService(args []string) int {
 		return cmdBindingsServiceApply(args[1:])
 	}
 	if len(args) == 0 || args[0] != "configure" {
-		return printErr("Invalid service command", fmt.Errorf("usage: gregale bindings service configure APP --file policy.json [--dry-run]"))
+		return printErr("Invalid service command", fmt.Errorf("usage: gregale app binding service configure APP --file policy.json [--dry-run]"))
 	}
 	fs := newFlagSet("bindings service configure", flag.ContinueOnError)
 	file := fs.String("file", "", "JSON service binding settings patch")
@@ -214,7 +214,7 @@ func cmdBindingsService(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "preview current and proposed binding settings without mutation")
 	flags, pos := splitArgsForFlags(args[1:], "dry-run")
 	if fs.Parse(flags) != nil || fs.NArg() != 0 || len(pos) != 1 || !api.ValidAppSlug(pos[0]) || *file == "" {
-		return printErr("Invalid service configuration", fmt.Errorf("usage: gregale bindings service configure APP --file policy.json [--dry-run]"))
+		return printErr("Invalid service configuration", fmt.Errorf("usage: gregale app binding service configure APP --file policy.json [--dry-run]"))
 	}
 	f, err := openCustomerFile(*file)
 	if err != nil {

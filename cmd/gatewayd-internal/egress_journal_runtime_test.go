@@ -20,6 +20,10 @@ func TestRunWithDeps_EnvironmentEgressJournalServesAndShutsDown(t *testing.T) {
 	deps := defaultDeps()
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
+	// No pool here; shared traffic counters (the default) need one.
+	deps.config = &Config{RateLimit: TOMLRateLimitConfig{Mode: "local"}}
+	// ADR-570 pins edge rules per request and fails closed without a matcher.
+	deps.edgeRulesMatcher = newGatewaydEdgeRules(&fakeEdgeRuleStore{}, nil, nil, nil)
 	deps.newSrv = func(addr string, handler http.Handler) *http.Server {
 		return &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	}

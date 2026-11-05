@@ -11,7 +11,7 @@ T = TypeVar("T", bound="RotateAppSecretRequest")
 
 @_attrs_define
 class RotateAppSecretRequest:
-    """Rotate a secret: new plaintext value (ADR-089 PR-B). Same wire
+    """Rotate a secret: new plaintext value. Same wire
     shape as `PutAppSecretRequest`; the rotate verb is distinct so
     the server can emit the `secret.rotated` audit kind (vs
     `secret.set` on PUT). Byte cap is the per-plan

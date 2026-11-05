@@ -12,9 +12,9 @@ T = TypeVar("T", bound="UploadStartResponse")
 
 @_attrs_define
 class UploadStartResponse:
-    """Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go)
-    flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-
-    decided (8 MiB default; 16 MiB for Scale).
+    """Body of POST /v1/uploads response. The session row persists for 24h; the reaper flips `status='open'` rows whose
+    `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for
+    Scale).
 
     """
 

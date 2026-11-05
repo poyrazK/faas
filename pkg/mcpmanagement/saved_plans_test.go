@@ -29,7 +29,7 @@ func checkedSavedReview(t *testing.T, result any, err error) savedPlanReview {
 
 func savedAppReview(t *testing.T, m *management, args getActionArgs) savedPlanReview {
 	t.Helper()
-	result, err := m.getPlan(t.Context(), args)
+	result, err := m.getSavedPlan(t.Context(), args)
 	return checkedSavedReview(t, result, err)
 }
 
@@ -82,7 +82,7 @@ func TestSavedPlanMCPOriginalDeployAndRollout(t *testing.T) {
 				f.app.RAMMB++
 				f.sourceHead = strings.Repeat("b", 40)
 				f.mu.Unlock()
-				out := callTool(t, ctx, cs, "gregale_get_plan", getActionArgs{App: "alpha", PlanID: id}, false)
+				out := callTool(t, ctx, cs, "gregale_get_saved_plan", getActionArgs{App: "alpha", PlanID: id}, false)
 				p := assertSavedReview(t, out, id)
 				if !bytes.Equal(original["expires_at"], p["expires_at"]) {
 					t.Fatal("review renewed the original expiry")
@@ -96,7 +96,7 @@ func TestSavedPlanMCPOriginalDeployAndRollout(t *testing.T) {
 				}
 				history := callTool(t, ctx, cs, "gregale_get_action", getActionArgs{App: "alpha", PlanID: id}, false)
 				var view actionView
-				if json.Unmarshal(history["action"], &view) != nil || view.Review == nil || view.Review.Tool != "gregale_get_plan" {
+				if json.Unmarshal(history["action"], &view) != nil || view.Review == nil || view.Review.Tool != "gregale_get_saved_plan" {
 					t.Fatal("history did not provide a review call")
 				}
 				callTool(t, ctx, cs, view.Review.Tool, view.Review.Arguments, false)
@@ -119,7 +119,7 @@ func TestSavedPlanMCPBudgetReadOnly(t *testing.T) {
 			cs, ctx := connectConfiguredTestServer(t, b, opts, protocol)
 			original := callTool(t, ctx, cs, "gregale_plan_route_budgets", budgetArgs(), false)
 			id := planID(t, original)
-			out := callTool(t, ctx, cs, "gregale_get_plan", budgetHistorySelector(id), false)
+			out := callTool(t, ctx, cs, "gregale_get_saved_plan", budgetHistorySelector(id), false)
 			p := assertSavedReview(t, out, id)
 			var budget struct {
 				Proposed api.SetEnvironmentRouteBudgetsRequest `json:"proposed"`
@@ -127,7 +127,7 @@ func TestSavedPlanMCPBudgetReadOnly(t *testing.T) {
 			if json.Unmarshal(p["route_budgets"], &budget) != nil || budget.Proposed.RequestID != "" || budget.Proposed.ExpectedAppRevision == nil || *budget.Proposed.ExpectedAppRevision != 0 || len(budget.Proposed.Routes) != 1 || budget.Proposed.Routes[0].Path != "/checkout" {
 				t.Fatal("review lost the exact budget proposal or exposed its replay key")
 			}
-			callTool(t, ctx, cs, "gregale_get_plan", getActionArgs{App: "alpha", PlanID: id}, true)
+			callTool(t, ctx, cs, "gregale_get_saved_plan", getActionArgs{App: "alpha", PlanID: id}, true)
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			if f.writes != 0 {
@@ -176,7 +176,7 @@ func TestSavedPlanEncryptedRestartAndExpiry(t *testing.T) {
 			store, path, key := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "saved-review"
 			client := api.NewClient(b.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +203,7 @@ func TestSavedPlanEncryptedRestartAndExpiry(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = next.Close() })
 			opts.planStore, opts.AllowWrites = next, false
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +212,7 @@ func TestSavedPlanEncryptedRestartAndExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			if expired {
-				if _, err := restored.getPlan(t.Context(), budgetHistorySelector(id)); err == nil {
+				if _, err := restored.getSavedPlan(t.Context(), budgetHistorySelector(id)); err == nil {
 					t.Fatal("expired private proposal was exposed")
 				}
 				if actionDetail(t, restored, budgetHistorySelector(id)).Action.Review != nil {
@@ -232,11 +232,11 @@ func TestSavedPlanEncryptedRestartAndExpiry(t *testing.T) {
 				t.Fatal("reading review rewrote the durable snapshot")
 			}
 			opts.planNamespace = "another-grant"
-			_, other, err := newManagementServer(client, opts)
+			_, other, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := other.getPlan(t.Context(), budgetHistorySelector(id)); err == nil {
+			if _, err := other.getSavedPlan(t.Context(), budgetHistorySelector(id)); err == nil {
 				t.Fatal("another grant inherited private review material")
 			}
 			f.mu.Lock()
@@ -254,12 +254,12 @@ func TestSavedPlanInFlightGuards(t *testing.T) {
 			f, b, opts := newBudgetFixture(t)
 			store, _, _ := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "guard-review"
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
 			id := budgetHistoryPlan(t, m)
-			result, err := m.getPlan(t.Context(), budgetHistorySelector(id))
+			result, err := m.getSavedPlan(t.Context(), budgetHistorySelector(id))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -1,4 +1,4 @@
-// adr:683
+// adr:683, 20261024100000
 package sched
 
 import (
@@ -78,14 +78,17 @@ func TestImageHealthcheckSpecProjection(t *testing.T) {
 			t.Fatalf("profile %s requires=%v want=%v", tc.raw, got, tc.want)
 		}
 	}
-	// A built service requires the check only when its profile froze a Compose
-	// healthcheck (ADR-20261019195000); a stray receipt alone never does.
+	// A built service follows imaged's verdict whether the HEALTHCHECK came
+	// from its Dockerfile or a frozen Compose override (ADR-20261024100000).
+	// Without a verdict, or with a malformed profile, it keeps ordinary
+	// readiness, unlike an image deployment.
 	const captured = `"image_healthcheck":{"version":"v1","override":{"test":["CMD","/check"]}}`
 	for _, tc := range []struct {
 		raw  string
 		want bool
 	}{
-		{`{"version":"v1","image_healthcheck_required":true}`, false}, {`{bad`, false},
+		{`{"version":"v1","image_healthcheck_required":true}`, true}, {`{bad`, false}, {`{"version":"v1"}`, false},
+		{`{"version":"v1","image_healthcheck_required":false}`, false},
 		{`{"version":"v1",` + captured + `,"image_healthcheck_required":true}`, true},
 		{`{"version":"v1",` + captured + `,"image_healthcheck_required":false}`, false},
 	} {

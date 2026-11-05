@@ -54,7 +54,26 @@ type CallbackOutboxConfig struct {
 	RetryInterval time.Duration
 	// MaxRetryInterval caps persisted callback retry delays and Retry-After hints.
 	MaxRetryInterval time.Duration
+	// MaxEndpointBytes caps one endpoint's share of the pending backlog. The
+	// spool is node-wide; without a share, one endpoint whose callback stays
+	// slow fills it and every other tenant's callbacks on the node fail with
+	// ErrCallbackOutboxFull. Zero means MaxBytes/callbackOutboxEndpointShare.
+	MaxEndpointBytes int64
+	// MaxAccountBytes caps the share of all of one account's endpoints
+	// together, so an account cannot fill the spool by spreading its slow
+	// callbacks over several endpoints. Zero means
+	// MaxBytes/callbackOutboxAccountShare.
+	MaxAccountBytes int64
 }
+
+// callbackOutboxEndpointShare is the default number of endpoints that can
+// each fill their share before the node-wide spool is full.
+const callbackOutboxEndpointShare = 8
+
+// callbackOutboxAccountShare is the default number of accounts that can each
+// fill their share before the node-wide spool is full. An account with one
+// endpoint keeps the whole endpoint share.
+const callbackOutboxAccountShare = 8
 
 // CallbackOutboxStats is a point-in-time view of the pending callback backlog,
 // replay progress, and retained dead letters. The queue is intentionally
@@ -255,6 +274,10 @@ type CallbackOutbox struct {
 	root                 string
 	deadRoot             string
 	maxBytes             int64
+	maxEndpointBytes     int64
+	endpointBytes        map[string]int64
+	maxAccountBytes      int64
+	accountBytes         map[string]int64
 	deadMaxBytes         int64
 	maxAttempts          int
 	replayWorkers        int
@@ -276,6 +299,40 @@ type CallbackOutbox struct {
 	pendingAge           callbackPendingAgeHeap
 	deadIDs              map[string]struct{}
 	callbackAuthTokens   map[string]string
+	// writing holds events whose file is being written without the lock.
+	writing map[string]struct{}
+	// replaying counts each endpoint's replay deliveries in flight.
+	replaying map[string]int
+}
+
+// fitsLocked reports whether size more bytes for endpointID fit both the
+// node-wide spool and the endpoint's share of it.
+// fitsLocked reports whether size more bytes fit the spool, the endpoint's
+// share and the account's share. Records from before events carried an
+// account (empty AccountID) are held to the endpoint share only.
+func (q *CallbackOutbox) fitsLocked(event Event, size int64) bool {
+	if q.bytes+size > q.maxBytes {
+		return false
+	}
+	if q.maxEndpointBytes > 0 && q.endpointBytes[event.EndpointID]+size > q.maxEndpointBytes {
+		return false
+	}
+	return event.AccountID == "" || q.maxAccountBytes <= 0 || q.accountBytes[event.AccountID]+size <= q.maxAccountBytes
+}
+
+// chargeLocked adds delta to the pending total and to the item's endpoint
+// and account.
+func (q *CallbackOutbox) chargeLocked(item *callbackOutboxItem, delta int64) {
+	q.bytes += delta
+	endpointID := item.record.Event.EndpointID
+	if q.endpointBytes[endpointID] += delta; q.endpointBytes[endpointID] <= 0 {
+		delete(q.endpointBytes, endpointID)
+	}
+	if accountID := item.record.Event.AccountID; accountID != "" {
+		if q.accountBytes[accountID] += delta; q.accountBytes[accountID] <= 0 {
+			delete(q.accountBytes, accountID)
+		}
+	}
 }
 
 // NewCallbackOutbox opens or creates a node-local callback spool.
@@ -285,6 +342,12 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 	}
 	if cfg.MaxBytes <= 0 {
 		cfg.MaxBytes = DefaultCallbackOutboxMaxBytes
+	}
+	if cfg.MaxEndpointBytes <= 0 || cfg.MaxEndpointBytes > cfg.MaxBytes {
+		cfg.MaxEndpointBytes = cfg.MaxBytes / callbackOutboxEndpointShare
+	}
+	if cfg.MaxAccountBytes <= 0 || cfg.MaxAccountBytes > cfg.MaxBytes {
+		cfg.MaxAccountBytes = max(cfg.MaxBytes/callbackOutboxAccountShare, cfg.MaxEndpointBytes)
 	}
 	if cfg.DeadLetterMaxBytes <= 0 {
 		cfg.DeadLetterMaxBytes = DefaultCallbackDeadLetterMaxBytes
@@ -321,6 +384,10 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		root:               cfg.Root,
 		deadRoot:           deadRoot,
 		maxBytes:           cfg.MaxBytes,
+		maxEndpointBytes:   cfg.MaxEndpointBytes,
+		endpointBytes:      make(map[string]int64),
+		maxAccountBytes:    cfg.MaxAccountBytes,
+		accountBytes:       make(map[string]int64),
 		deadMaxBytes:       cfg.DeadLetterMaxBytes,
 		maxAttempts:        cfg.MaxAttempts,
 		replayWorkers:      cfg.ReplayWorkers,
@@ -331,6 +398,8 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		connections:        make(map[string]*callbackConnectionQueue),
 		deadIDs:            make(map[string]struct{}),
 		callbackAuthTokens: make(map[string]string),
+		writing:            make(map[string]struct{}),
+		replaying:          make(map[string]int),
 	}
 	if err := q.load(); err != nil {
 		return nil, err
@@ -383,7 +452,7 @@ func (q *CallbackOutbox) load() error {
 		}
 		q.items[id] = item
 		heap.Push(&q.pendingAge, item)
-		q.bytes += info.Size()
+		q.chargeLocked(item, info.Size())
 	}
 	q.rebuildConnectionIndexLocked()
 	deadEntries, err := os.ReadDir(q.deadRoot)
@@ -488,21 +557,37 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("realtime: encode callback outbox item: %w", err)
 	}
-	if q.bytes+int64(len(payload)) > q.maxBytes {
+	if !q.fitsLocked(event, int64(len(payload))) {
 		return false, ErrCallbackOutboxFull
 	}
-	path := filepath.Join(q.root, event.ID+".json")
-	if err := writeCallbackOutboxFile(path, payload); err != nil {
-		return false, fmt.Errorf("realtime: persist callback outbox item: %w", err)
+	if _, writing := q.writing[event.ID]; writing {
+		return false, nil
 	}
+	path := filepath.Join(q.root, event.ID+".json")
 	item := &callbackOutboxItem{
 		record: record, path: path, size: int64(len(payload)), enqueuedAt: record.EnqueuedAt,
 		readyIndex: -1, retryIndex: -1,
 	}
+	// The write and its fsyncs run without the lock, so one connection's
+	// disk wait does not hold every other connection's enqueue, claim and
+	// ack (ADR-1323, amendment of 2026-11-03). The bytes are reserved first,
+	// and the item joins the queue only once it is on disk.
+	q.chargeLocked(item, item.size)
+	if q.writing == nil {
+		q.writing = make(map[string]struct{})
+	}
+	q.writing[event.ID] = struct{}{}
+	q.mu.Unlock()
+	err = writeCallbackOutboxFile(path, payload)
+	q.mu.Lock()
+	delete(q.writing, event.ID)
+	if err != nil {
+		q.chargeLocked(item, -item.size)
+		return false, fmt.Errorf("realtime: persist callback outbox item: %w", err)
+	}
 	q.items[event.ID] = item
 	heap.Push(&q.pendingAge, item)
 	q.addConnectionItemLocked(item)
-	q.bytes += int64(len(payload))
 	queue := q.connections[item.connectionKey]
 	if queue.inFlightID != "" || queue.head != item {
 		// The replay loop will deliver this after earlier events for the
@@ -759,6 +844,69 @@ func (q *CallbackOutbox) ClaimNext() (Event, bool, error) {
 	return Event{}, false, nil
 }
 
+// callbackReplayEndpointShare is the share of replay workers one endpoint
+// may hold: a quarter of them, at least one. An endpoint whose callback hangs
+// for the full timeout then leaves the rest to other endpoints' retries
+// (ADR-1323, amendment of 2026-11-03).
+func (q *CallbackOutbox) replayEndpointShare() int {
+	return max(1, q.replayWorkers/4)
+}
+
+// callbackReplayScanMax bounds the ready events one replay claim passes over
+// because their endpoint holds its share.
+const callbackReplayScanMax = 256
+
+// claimNextReplay is ClaimNext for the replay workers: while another
+// endpoint has an event ready, it passes over events whose endpoint already
+// holds its share of replay workers. replayDone returns the share.
+func (q *CallbackOutbox) claimNextReplay() (Event, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.promoteDueLocked(time.Now().UTC())
+	if q.replaying == nil {
+		q.replaying = make(map[string]int)
+	}
+	share := q.replayEndpointShare()
+	var skipped []*callbackOutboxItem
+	defer func() {
+		for _, item := range skipped {
+			heap.Push(&q.ready, item)
+		}
+	}()
+	for q.ready.Len() > 0 && len(skipped) < callbackReplayScanMax {
+		item := heap.Pop(&q.ready).(*callbackOutboxItem)
+		queue := q.connections[item.connectionKey]
+		if queue == nil || queue.head != item || queue.inFlightID != "" || q.items[item.record.Event.ID] != item {
+			continue
+		}
+		endpointID := item.record.Event.EndpointID
+		if q.replaying[endpointID] >= share {
+			skipped = append(skipped, item)
+			continue
+		}
+		q.replaying[endpointID]++
+		return q.claimLocked(item), true
+	}
+	// With no other endpoint's event ready, the share does not hold workers
+	// idle: the oldest passed-over event is claimed after all, as long as a
+	// quarter of the workers stay free for events that arrive later.
+	if len(skipped) > 0 && q.ready.Len() == 0 && q.replaying[skipped[0].record.Event.EndpointID] < q.replayWorkers-q.replayWorkers/4 {
+		item := skipped[0]
+		skipped = skipped[1:]
+		q.replaying[item.record.Event.EndpointID]++
+		return q.claimLocked(item), true
+	}
+	return Event{}, false
+}
+
+func (q *CallbackOutbox) replayDone(endpointID string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.replaying[endpointID]--; q.replaying[endpointID] <= 0 {
+		delete(q.replaying, endpointID)
+	}
+}
+
 // Ack removes a successfully delivered event from the durable spool.
 func (q *CallbackOutbox) Ack(id string) error {
 	return q.ack(id, false)
@@ -787,7 +935,7 @@ func (q *CallbackOutbox) ack(id string, replay bool) error {
 	if item.pendingAgeIndex >= 0 {
 		heap.Remove(&q.pendingAge, item.pendingAgeIndex)
 	}
-	q.bytes -= item.size
+	q.chargeLocked(item, -item.size)
 	delete(q.items, id)
 	delete(q.inFlight, id)
 	q.removeConnectionItemLocked(item)
@@ -811,12 +959,13 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 		return ErrCallbackOutboxItem
 	}
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	item, ok := q.items[id]
 	if !ok {
+		q.mu.Unlock()
 		return ErrCallbackOutboxItem
 	}
 	if _, claimed := q.inFlight[id]; !claimed {
+		q.mu.Unlock()
 		return ErrCallbackOutboxItem
 	}
 	item.record.Attempts++
@@ -825,48 +974,63 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 	payload, err := json.Marshal(item.record)
 	if err != nil {
 		q.releaseLocked(id)
+		q.mu.Unlock()
 		return fmt.Errorf("realtime: encode failed callback outbox item: %w", err)
 	}
-	if item.record.Attempts >= q.maxAttempts {
-		if err := writeCallbackOutboxFile(item.path, payload); err != nil {
+	dead := item.record.Attempts >= q.maxAttempts
+	q.mu.Unlock()
+	// The item stays claimed, so nothing else touches its file while it is
+	// rewritten without the lock (ADR-1323, amendment of 2026-11-03).
+	if !dead {
+		err := writeCallbackOutboxFile(item.path, payload)
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		if err != nil {
 			q.releaseLocked(id)
-			return fmt.Errorf("realtime: persist callback dead letter: %w", err)
+			return fmt.Errorf("realtime: persist callback retry: %w", err)
 		}
-		modified := time.Now().UTC()
-		if info, err := os.Stat(item.path); err == nil {
-			modified = info.ModTime()
-		}
-		deadPath := filepath.Join(q.deadRoot, id+".json")
-		if err := os.Rename(item.path, deadPath); err != nil {
-			q.releaseLocked(id)
-			return fmt.Errorf("realtime: move callback dead letter: %w", err)
-		}
-		q.bytes -= item.size
-		q.deadBytes += int64(len(payload))
-		heap.Push(&q.dead, callbackDeadLetter{id: id, size: int64(len(payload)), modified: modified})
-		q.deadIDs[id] = struct{}{}
-		if item.pendingAgeIndex >= 0 {
-			heap.Remove(&q.pendingAge, item.pendingAgeIndex)
-		}
-		delete(q.items, id)
-		delete(q.inFlight, id)
-		q.removeConnectionItemLocked(item)
-		if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
-			return fmt.Errorf("realtime: sync callback dead letter: %w", err)
-		}
-		if err := syncCallbackOutboxDir(q.root); err != nil {
-			return fmt.Errorf("realtime: sync callback outbox after dead-letter move: %w", err)
-		}
-		return q.pruneDeadLetters()
+		q.chargeLocked(item, int64(len(payload))-item.size)
+		item.size = int64(len(payload))
+		q.releaseLocked(id)
+		return nil
 	}
 	if err := writeCallbackOutboxFile(item.path, payload); err != nil {
+		q.mu.Lock()
 		q.releaseLocked(id)
-		return fmt.Errorf("realtime: persist callback retry: %w", err)
+		q.mu.Unlock()
+		return fmt.Errorf("realtime: persist callback dead letter: %w", err)
 	}
-	q.bytes += int64(len(payload)) - item.size
-	item.size = int64(len(payload))
-	q.releaseLocked(id)
-	return nil
+	modified := time.Now().UTC()
+	if info, err := os.Stat(item.path); err == nil {
+		modified = info.ModTime()
+	}
+	deadPath := filepath.Join(q.deadRoot, id+".json")
+	if err := os.Rename(item.path, deadPath); err != nil {
+		q.mu.Lock()
+		q.releaseLocked(id)
+		q.mu.Unlock()
+		return fmt.Errorf("realtime: move callback dead letter: %w", err)
+	}
+	q.mu.Lock()
+	q.chargeLocked(item, -item.size)
+	q.deadBytes += int64(len(payload))
+	heap.Push(&q.dead, callbackDeadLetter{id: id, size: int64(len(payload)), modified: modified})
+	q.deadIDs[id] = struct{}{}
+	if item.pendingAgeIndex >= 0 {
+		heap.Remove(&q.pendingAge, item.pendingAgeIndex)
+	}
+	delete(q.items, id)
+	delete(q.inFlight, id)
+	q.removeConnectionItemLocked(item)
+	pruneErr := q.pruneDeadLetters()
+	q.mu.Unlock()
+	if err := syncCallbackOutboxDir(q.deadRoot); err != nil {
+		return fmt.Errorf("realtime: sync callback dead letter: %w", err)
+	}
+	if err := syncCallbackOutboxDir(q.root); err != nil {
+		return fmt.Errorf("realtime: sync callback outbox after dead-letter move: %w", err)
+	}
+	return pruneErr
 }
 
 func callbackOutboxRetryDelay(base, maximum time.Duration, attempt int, retryAfter time.Duration) time.Duration {
@@ -1025,7 +1189,7 @@ func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
 	if err != nil {
 		return fmt.Errorf("realtime: encode callback dead-letter replay %q: %w", id, err)
 	}
-	if q.bytes+int64(len(payload)) > q.maxBytes {
+	if !q.fitsLocked(record.Event, int64(len(payload))) {
 		return ErrCallbackOutboxFull
 	}
 	if err := writeCallbackOutboxFile(deadPath, payload); err != nil {
@@ -1044,7 +1208,7 @@ func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
 	q.items[id] = item
 	heap.Push(&q.pendingAge, item)
 	q.addConnectionItemLocked(item)
-	q.bytes += item.size
+	q.chargeLocked(item, item.size)
 	var syncErr error
 	if err := syncCallbackOutboxDir(q.root); err != nil {
 		syncErr = errors.Join(syncErr, fmt.Errorf("realtime: sync callback outbox after replay: %w", err))
@@ -1230,13 +1394,31 @@ func (q *CallbackOutbox) drainWorker(ctx context.Context, deliver func(context.C
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		event, ok, err := q.ClaimNext()
-		if err != nil {
+		event, ok := q.claimNextReplay()
+		if !ok {
+			// Wait here instead of ending the pass: a pass waits for all of
+			// its workers, and one held by a hanging callback would stop the
+			// others claiming until it returned.
+			timer := time.NewTimer(q.retryInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		if err := q.replayOne(ctx, event, deliver); err != nil {
 			return err
 		}
-		if !ok {
-			return nil
-		}
+	}
+}
+
+// replayOne delivers one claimed event and returns its endpoint's replay
+// share.
+func (q *CallbackOutbox) replayOne(ctx context.Context, event Event, deliver func(context.Context, Event) error) error {
+	defer q.replayDone(event.EndpointID)
+	{
 		if ctx.Err() != nil {
 			q.Release(event.ID)
 			return ctx.Err()
@@ -1244,21 +1426,19 @@ func (q *CallbackOutbox) drainWorker(ctx context.Context, deliver func(context.C
 		q.mu.Lock()
 		q.replayAttempts++
 		q.mu.Unlock()
-		err = deliver(ctx, event)
+		err := deliver(ctx, event)
 		if err == nil {
 			if ackErr := q.ackReplay(event.ID); ackErr != nil {
 				q.Release(event.ID)
 				return ackErr
 			}
-			continue
+			return nil
 		}
 		if ctx.Err() != nil {
 			q.Release(event.ID)
 			return ctx.Err()
 		}
-		if failErr := q.FailWithRetryAfter(event.ID, callbackRetryAfter(err)); failErr != nil {
-			return failErr
-		}
+		return q.FailWithRetryAfter(event.ID, callbackRetryAfter(err))
 	}
 }
 

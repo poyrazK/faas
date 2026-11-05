@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -58,6 +59,12 @@ func TestDeploySettingsGuardPGBlocksNewDeploymentUntilCommit(t *testing.T) {
 			ImageDigest: "sha256:" + strings.Repeat("b", 64)})
 		created <- err
 	}()
+	// Deployment creation takes the account traffic lock with NOWAIT and
+	// retries every api.TrafficPolicyMutationLockRetry (ADR-570), so it never
+	// shows as a Postgres lock wait. Holding back for many retries while the
+	// guarded update keeps its transaction open is the blocking evidence; an
+	// apps-row lock wait, the older path, counts too.
+	heldBack := time.Now().Add(40 * api.TrafficPolicyMutationLockRetry)
 	for {
 		var waiting bool
 		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
@@ -65,7 +72,7 @@ func TestDeploySettingsGuardPGBlocksNewDeploymentUntilCommit(t *testing.T) {
 			AND query LIKE 'select 1 from apps where id =%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
-		if waiting {
+		if waiting || time.Now().After(heldBack) {
 			break
 		}
 		select {

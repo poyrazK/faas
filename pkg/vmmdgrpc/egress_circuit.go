@@ -4,12 +4,14 @@ package vmmdgrpc
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"time"
-
-	"google.golang.org/grpc/codes"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -23,55 +25,94 @@ type egressCircuitUpdater interface {
 	UpdateEgressCircuit(ctx context.Context, appID string, targets []netns.EgressCircuitTarget) error
 }
 
+type egressCircuitRevisionUpdater interface {
+	UpdateEgressCircuitRevision(context.Context, string, netns.EgressCircuitSnapshot) (int64, error)
+}
+
 // UpdateEgressCircuit makes the open-circuit set of every live instance of an
 // app exactly the supplied list. Whole-set semantics: an empty list closes
 // every circuit. See the RPC docstring in vmmd.proto for why this is not a
 // delta.
-func (s *Server) UpdateEgressCircuit(ctx context.Context, req *vmmdpb.UpdateEgressCircuitRequest) (*vmmdpb.UpdateEgressCircuitAck, error) {
+func (s *Server) UpdateEgressCircuit(ctx context.Context, req *vmmdpb.UpdateEgressCircuitRequest) (_ *vmmdpb.UpdateEgressCircuitAck, returnErr error) {
 	const op = "UpdateEgressCircuit"
 	start := time.Now()
-	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	defer func() { s.ops.Observe(op, time.Since(start), returnErr) }()
 
 	if req.GetAppId() == "" {
-		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument),
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(http.StatusBadRequest,
 			api.CodeValidation, "Missing app_id", "app_id is required").
 			WithDocs(wire.DocsBaseURL + "/vmmd#update-egress-circuit")))
 	}
 	updater, ok := s.vmm.(egressCircuitUpdater)
 	if !ok {
-		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable),
-			"egress_circuit_unavailable", "Egress circuit updates unavailable",
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeEgressCircuitUnavailable, "Egress circuit updates unavailable",
 			"vmmd egress-circuit live update is not wired")))
 	}
-	targets := toEgressCircuitTargets(req.GetCircuits())
-	if err := updater.UpdateEgressCircuit(ctx, req.GetAppId(), targets); err != nil {
-		return nil, grpcerr.ToStatus(toProblem(err))
+	targets, err := toEgressCircuitTargets(req.GetCircuits())
+	if err != nil || req.GetRevision() < 0 {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid circuit policy", "every target and the policy revision must be valid")))
 	}
-	return &vmmdpb.UpdateEgressCircuitAck{}, nil
+	revision := req.GetRevision()
+	if versioned, ok := s.vmm.(egressCircuitRevisionUpdater); ok {
+		revision, err = versioned.UpdateEgressCircuitRevision(ctx, req.GetAppId(), netns.EgressCircuitSnapshot{Revision: revision, Targets: targets})
+	} else if revision != 0 {
+		err = fcvm.ErrEgressCircuitRevision
+	} else {
+		err = updater.UpdateEgressCircuit(ctx, req.GetAppId(), targets)
+	}
+	if err := egressCircuitUpdateError(err); err != nil {
+		return nil, err
+	}
+	return &vmmdpb.UpdateEgressCircuitAck{Revision: revision}, nil
 }
 
-// toEgressCircuitTargets converts the wire form, SKIPPING anything that would
-// not render into a well-formed nftables element.
-//
-// Skipping rather than erroring is deliberate. One malformed element fails the
-// whole nft batch, which would leave the tenant's firewall in whatever state
-// the partial batch produced; dropping the bad entry still applies every good
-// circuit. A rejected request would instead leave every circuit unapplied,
-// which fails in the direction of "dependency hangs come back".
-func toEgressCircuitTargets(in []*vmmdpb.EgressCircuitTarget) []netns.EgressCircuitTarget {
-	if len(in) == 0 {
+func egressCircuitUpdateError(err error) error {
+	if errors.Is(err, fcvm.ErrEgressCircuitDisabled) {
+		return grpcerr.ToStatus(toProblem(api.NewProblem(http.StatusServiceUnavailable, api.CodeEgressCircuitDisabled,
+			"Egress circuit enforcement disabled", "enable FAAS_EGRESS_CIRCUIT_BREAKER on this compute node")))
+	}
+	if errors.Is(err, fcvm.ErrEgressCircuitRevision) {
+		return grpcerr.ToStatus(toProblem(api.NewProblem(http.StatusUnprocessableEntity, api.CodeEgressCircuitRevision,
+			"Invalid circuit revision", "a committed, consistent desired-policy revision is required")))
+	}
+	return grpcerr.ToStatus(toProblem(err))
+}
+
+func (s *Server) egressCircuitEnforcement(instance string) *vmmdpb.EgressCircuitEnforcement {
+	provider, ok := s.vmm.(interface {
+		EgressCircuitStatus(string) (fcvm.EgressCircuitStatus, bool)
+	})
+	if !ok {
 		return nil
+	}
+	state, present := provider.EgressCircuitStatus(instance)
+	if !present {
+		return nil
+	}
+	return &vmmdpb.EgressCircuitEnforcement{
+		Enabled: state.Enabled, Applied: state.Applied,
+		DesiredRevision: state.DesiredRevision, AppliedRevision: state.AppliedRevision,
+		TargetCount: int32(state.TargetCount),
+	}
+}
+
+// Reject a malformed complete-set update before mutating any namespace.
+func toEgressCircuitTargets(in []*vmmdpb.EgressCircuitTarget) ([]netns.EgressCircuitTarget, error) {
+	if len(in) > api.EgressCircuitMaxTargets {
+		return nil, fmt.Errorf("too many egress circuit targets")
 	}
 	out := make([]netns.EgressCircuitTarget, 0, len(in))
 	for _, t := range in {
 		if t == nil {
-			continue
+			return nil, fmt.Errorf("nil egress circuit target")
 		}
 		target, err := netns.ParseEgressCircuitTarget(t.GetAddr(), int(t.GetPort()))
 		if err != nil {
-			continue
+			return nil, err
 		}
 		out = append(out, target)
 	}
-	return out
+	return netns.CanonicalEgressCircuitTargets(out)
 }

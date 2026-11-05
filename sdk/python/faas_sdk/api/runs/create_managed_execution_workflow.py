@@ -104,7 +104,7 @@ def sync_detailed(
     and admits each step as a separate disposable Run after its dependencies
     succeed. Independent steps may run in parallel up to the submitted
     workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and apid
+    owned by the control plane and survives CLI disconnects and the API
     restarts. Source and input are never returned; the encrypted plan is
     erased when the workflow reaches a terminal state. Requires
     `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
@@ -152,7 +152,7 @@ def sync(
     and admits each step as a separate disposable Run after its dependencies
     succeed. Independent steps may run in parallel up to the submitted
     workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and apid
+    owned by the control plane and survives CLI disconnects and the API
     restarts. Source and input are never returned; the encrypted plan is
     erased when the workflow reaches a terminal state. Requires
     `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
@@ -195,7 +195,7 @@ async def asyncio_detailed(
     and admits each step as a separate disposable Run after its dependencies
     succeed. Independent steps may run in parallel up to the submitted
     workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and apid
+    owned by the control plane and survives CLI disconnects and the API
     restarts. Source and input are never returned; the encrypted plan is
     erased when the workflow reaches a terminal state. Requires
     `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
@@ -241,7 +241,7 @@ async def asyncio(
     and admits each step as a separate disposable Run after its dependencies
     succeed. Independent steps may run in parallel up to the submitted
     workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and apid
+    owned by the control plane and survives CLI disconnects and the API
     restarts. Source and input are never returned; the encrypted plan is
     erased when the workflow reaches a terminal state. Requires
     `runs:write`, `deploy:write`, or `admin` and an enabled Runs control

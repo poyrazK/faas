@@ -22,7 +22,7 @@ func cmdWorkflowSchedulePreview(args []string) int {
 		return 1
 	}
 	if *app == "" || *workflow == "" {
-		PrintUsage(os.Stderr, "usage: gregale workflows schedules preview --app <slug> --workflow <name> [--at <RFC3339>] [--since <RFC3339>] [--count <1..20>]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow schedule simulate --app <slug> --workflow <name> [--at <RFC3339>] [--since <RFC3339>] [--count <1..20>]", "workflows")
 		return 1
 	}
 	options := api.WorkflowSchedulePreviewOptions{Count: *count}
@@ -48,7 +48,7 @@ func cmdWorkflowSchedulePreview(args []string) int {
 	}
 	preview, err := client.GetWorkflowSchedulePreview(context.Background(), *app, *workflow, options)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not preview workflow schedule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(preview))

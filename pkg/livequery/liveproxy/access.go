@@ -1,14 +1,15 @@
 package liveproxy
 
 import (
+	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 	"github.com/onebox-faas/faas/pkg/livequery/rest"
 )
@@ -34,7 +35,7 @@ func keylessKind(f liveproto.ClientFrame) string {
 // admitKeyless checks an anonymous or server-key read of read (in schema,
 // "" for the Data API's default) and turns f into the hub's frame. A
 // renewal passes its subscription's read, so it is checked again.
-func admitKeyless(route Route, f *liveproto.ClientFrame, read, schema string, now time.Time) (string, string) {
+func admitKeyless(ctx context.Context, route Route, f *liveproto.ClientFrame, read, schema string, now time.Time) (string, string) {
 	access := route.Access
 	if access == nil || len(access.Schemas) == 0 {
 		return liveproto.CodeForbidden, "the app's Data API has not reported its access settings; turn usage reporting on and restart it"
@@ -58,7 +59,7 @@ func admitKeyless(route Route, f *liveproto.ClientFrame, read, schema string, no
 		}
 		claims["gregale_access"] = liveproto.AccessAnonymous
 	} else {
-		key, ok := matchServerKey(access.ServerKeys, f.ServerKey)
+		key, ok := matchServerKey(ctx, access.ServerKeys, f.ServerKey)
 		if !ok {
 			return liveproto.CodeSealRejected, "the server key was not accepted"
 		}
@@ -90,6 +91,33 @@ func admitKeyless(route Route, f *liveproto.ClientFrame, read, schema string, no
 	return "", ""
 }
 
+// dataAPIDefaultSchema is the schema the hub reads when a frame names none
+// (liveserver's defaultDataAPISchema), the Data API's own default.
+const dataAPIDefaultSchema = "api"
+
+// admitTokenSchema holds a read with a user token to the schemas the app's
+// Data API exposes, as admitKeyless does. The binding login may hold grants
+// on a schema the Data API keeps unexposed, such as base tables behind
+// security-invoker views; a live read naming that schema would read past the
+// boundary REST keeps. Until the Data API reports its settings, only its
+// default schema is read.
+func admitTokenSchema(route Route, f *liveproto.ClientFrame) (string, string) {
+	access := route.Access
+	if access == nil || len(access.Schemas) == 0 {
+		if f.Schema != "" && f.Schema != dataAPIDefaultSchema {
+			return liveproto.CodeForbidden, "the app's Data API has not reported which schemas it exposes; live reads use its default schema until it does"
+		}
+		return "", ""
+	}
+	if f.Schema == "" {
+		f.Schema = access.Schemas[0]
+	}
+	if !slices.Contains(access.Schemas, f.Schema) {
+		return liveproto.CodeForbidden, "the Data API does not expose that schema"
+	}
+	return "", ""
+}
+
 // readRelations lists the relation a Data API read names and every relation
 // it embeds.
 func readRelations(read string) ([]string, error) {
@@ -112,13 +140,15 @@ func readRelations(read string) ([]string, error) {
 }
 
 // matchServerKey finds the slot whose hash matches key, comparing every slot.
-func matchServerKey(keys []api.DataAPIServerKey, key string) (api.DataAPIServerKey, bool) {
+// A stored hash may be keyed under the data-api ring, which realtimed does
+// not hold: credhash.Match asks apid (ADR 20261029202403 amendment 1).
+func matchServerKey(ctx context.Context, keys []api.DataAPIServerKey, key string) (api.DataAPIServerKey, bool) {
 	sum := sha256.Sum256([]byte(key))
 	var match api.DataAPIServerKey
 	found := false
 	for _, k := range keys {
 		want, err := hex.DecodeString(k.SHA256)
-		if err == nil && len(want) == len(sum) && subtle.ConstantTimeCompare(sum[:], want) == 1 && !found {
+		if err == nil && credhash.Match(ctx, credhash.FamilyDataAPI, api.DataAPIServerKeyCredentialTag, sum[:], want) && !found {
 			match, found = k, true
 		}
 	}

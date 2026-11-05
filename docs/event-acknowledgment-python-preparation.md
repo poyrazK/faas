@@ -17,7 +17,7 @@ schema installation or service is added.
 ## Prepare and complete
 
 ```python
-from faas_sdk import EventAcknowledgmentPreparedOptions
+from faas_sdk.preview import EventAcknowledgmentPreparedOptions
 
 def connection_scope():
     # Fresh exclusive idle autocommit async connection scope for each call.

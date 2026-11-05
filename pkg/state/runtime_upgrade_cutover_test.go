@@ -170,17 +170,23 @@ func TestRuntimeUpgradeCutoverTrafficWritersCannotBypass(t *testing.T) {
 	runtimeReleaseStores(t, func(t *testing.T, s state.Store, releases state.RuntimeReleaseStore) {
 		_, serving, candidate, _ := runtimeUpgradeCutoverFixture(t, s, releases)
 		for _, tc := range []struct {
-			name string
-			id   string
-			pct  int
+			name     string
+			id       string
+			pct      int
+			indirect bool
 		}{
-			{"direct promotion", candidate.ID, 100},
-			{"direct split", candidate.ID, 25},
-			{"indirect redistribution", serving.ID, 0},
-			{"indirect split", serving.ID, 75},
+			{"direct promotion", candidate.ID, 100, false},
+			{"direct split", candidate.ID, 25, false},
+			{"indirect redistribution", serving.ID, 0, true},
+			{"indirect split", serving.ID, 75, true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				if _, err := s.UpdateDeploymentTraffic(t.Context(), tc.id, tc.pct); !errors.Is(err, state.ErrConflict) {
+				_, err := s.UpdateDeploymentTraffic(t.Context(), tc.id, tc.pct)
+				// The dark candidate has never served, so an indirect write
+				// stops at the hold on unnamed staged releases before the
+				// cutover fence; either refusal leaves traffic unchanged.
+				refused := errors.Is(err, state.ErrConflict) || tc.indirect && errors.Is(err, state.ErrTrafficResidualUnassigned)
+				if !refused {
 					t.Fatal("generic traffic bypass", err)
 				}
 				assertRuntimeUpgradeTraffic(t, s, serving, candidate, false)

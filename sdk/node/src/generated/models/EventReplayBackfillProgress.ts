@@ -24,5 +24,9 @@ export type EventReplayBackfillProgress = {
   skipped_unknown: number;
   skipped_existing: number;
   skipped_unsettled: number;
+  /**
+   * Deliveries the job dropped undelivered when it ended early.
+   */
+  cancelled?: number;
 };
 

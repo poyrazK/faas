@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,7 +82,8 @@ func TestGatewayAWSGoSDKCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteObjects through AWS SDK: %v", err)
 	}
-	if strings.Join(provider.deleted, ",") != "sdk.txt,old.txt" {
+	// Bulk entries reach the provider concurrently (ADR-20261025115958).
+	if slices.Sort(provider.deleted); strings.Join(provider.deleted, ",") != "old.txt,sdk.txt" {
 		t.Fatalf("deleted keys = %v", provider.deleted)
 	}
 	if len(customerHeaders) != 2 || !hasSDKIntegrityHeader(customerHeaders[1]) {
@@ -190,6 +192,22 @@ func TestGatewayAWSGoSDKDefaultChecksumRead(t *testing.T) {
 	_ = out.Body.Close()
 	if e != nil || string(body) != payload || aws.ToString(out.ChecksumCRC32) != checksum || !sawMode {
 		t.Fatalf("body=%q err=%v checksum=%v mode=%v", body, e, out.ChecksumCRC32, sawMode)
+	}
+}
+
+// The AWS CLI's CRT transfer client sends a lowercase checksum mode on its
+// HEAD and ranged GETs; S3 matches the value case-insensitively.
+func TestGatewayLowercaseChecksumModeRead(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": {"4"}}, Body: io.NopCloser(strings.NewReader("data")), Request: r}, nil
+	})
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		request := signedGatewayRequest(t, method, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=enabled", nil, "UNSIGNED-PAYLOAD")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s response = %d %s presigns=%v", method, recorder.Code, recorder.Body.String(), provider.presignRequests)
+		}
 	}
 }
 

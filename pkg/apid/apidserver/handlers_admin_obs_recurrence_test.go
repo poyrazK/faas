@@ -20,7 +20,7 @@ import (
 func TestObsAlertRecurrenceReadOnlyAndErrors(t *testing.T) {
 	e := gapEnv(t)
 	path := operatorobs.AlertRecurrencePath
-	rec := e.Do(t, "GET", path, nil, nil)
+	rec := e.DoOperator(t, "GET", path, nil, nil)
 	var out api.ObsAlertRecurrence
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.Totals != nil || out.Items == nil || out.Collection.CollectionState != "disabled" {
 		t.Fatalf("unknown: %d %s", rec.Code, rec.Body)
@@ -35,7 +35,7 @@ func TestObsAlertRecurrenceReadOnlyAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec = e.Do(t, "GET", path+"?since="+now.Add(-time.Hour).Format(time.RFC3339), nil, nil)
+	rec = e.DoOperator(t, "GET", path+"?since="+now.Add(-time.Hour).Format(time.RFC3339), nil, nil)
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.Totals == nil || out.Totals.Series != 1 || out.Totals.Metrics.Episodes != 1 || out.Totals.Metrics.UnknownObservation != 1 || out.Totals.Metrics.RepeatActivations != 0 || out.Items[0].RecentEpisodes[0].EpisodeID != episode.ID || out.Totals.Metrics.Duration.P50Seconds != nil {
 		t.Fatalf("recurrence: %d %s", rec.Code, rec.Body)
 	}
@@ -47,17 +47,17 @@ func TestObsAlertRecurrenceReadOnlyAndErrors(t *testing.T) {
 		t.Fatal("read changed episode or collection")
 	}
 	for _, q := range []string{"?", "?limit=1", "?since=", "?since=bad", "?since=2000-01-01T00:00:00Z", "?since=2999-01-01T00:00:00Z", "?since=&since=", "?since=%zz", "?since=x;other=y"} {
-		if rec := e.Do(t, "GET", path+q, nil, nil); rec.Code != 400 {
+		if rec := e.DoOperator(t, "GET", path+q, nil, nil); rec.Code != 400 {
 			t.Fatalf("bad query %s: %d %s", q, rec.Code, rec.Body)
 		}
 	}
 	*(*e.S()).Store() = statetest.NewStore(&obsRecurrenceFailure{Store: store})
-	rec = e.Do(t, "GET", path, nil, nil)
+	rec = e.DoOperator(t, "GET", path, nil, nil)
 	if rec.Code != 503 || strings.Contains(rec.Body.String(), "private recurrence") || strings.Contains(rec.Body.String(), "repeat_activations") {
 		t.Fatalf("failure: %d %s", rec.Code, rec.Body)
 	}
 	*(*e.S()).Store() = statetest.NewStore(&obsRecurrenceFailure{Store: store, bound: true})
-	rec = e.Do(t, "GET", path, nil, nil)
+	rec = e.DoOperator(t, "GET", path, nil, nil)
 	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "narrow since") || !strings.Contains(rec.Body.String(), "1000") {
 		t.Fatalf("bounded: %d %s", rec.Code, rec.Body)
 	}

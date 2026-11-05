@@ -1,6 +1,8 @@
 # Build artifacts. No trailing slash: a bin symlink or file must stay out of
 # the tree too (#4880 committed bin -> /tmp/..., which broke make build).
 /bin
+# make sbom output (issue #295)
+/sbom/
 /scenario-restart-native-evidence/
 /start-native-evidence/
 *.test
@@ -80,3 +82,6 @@ __pycache__/
 deploy/cloudflare/*/wrangler.toml
 # Local owned-object-storage development data; never commit object bytes.
 /object-data/
+
+# Customer journey suite reports (scripts/e2e-journeys.sh)
+/.e2e-journeys/

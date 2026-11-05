@@ -17,11 +17,11 @@ jobs:
       STAGING_CONFIG_JSON: ${{ vars.GREGALE_DATA_API_STAGING_CONFIG_JSON }}
       FAAS_DATA_API_EVIDENCE: ${{ github.workspace }}/data-api-staging-evidence.json
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
       - name: Write staging designation
@@ -34,7 +34,7 @@ jobs:
         run: make data-api-staging-canary
       - name: Upload canary evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: data-api-staging-${{ github.sha }}
           path: data-api-staging-evidence.json

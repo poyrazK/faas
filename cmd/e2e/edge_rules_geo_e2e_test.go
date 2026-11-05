@@ -71,7 +71,7 @@ func TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-geo.apps.test.example"
+	synthHost := "edgectl-geo.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -151,7 +151,7 @@ func TestEdgeRulesGeo_E2E_FreeQuotaRejected(t *testing.T) {
 	}
 
 	// First create: under cap → 201.
-	host1 := "free-geo-1.apps.test.example"
+	host1 := "free-geo-1.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, host1, slug)
 
@@ -167,7 +167,7 @@ func TestEdgeRulesGeo_E2E_FreeQuotaRejected(t *testing.T) {
 	}
 
 	// Second create: at cap → 403 with the per-kind code.
-	host2 := "free-geo-2.apps.test.example"
+	host2 := "free-geo-2.edge-e2e.example"
 	body2, _ := json.Marshal(api.CreateEdgeRuleRequest{
 		MatchHost: host2,
 		MatchPath: "/*",

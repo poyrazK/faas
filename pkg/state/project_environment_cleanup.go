@@ -22,7 +22,10 @@ func (r ProjectEnvironmentCleanupResources) ValidateForEnvironment(slug string) 
 		return ErrInvalidArgument
 	}
 	for _, resource := range r.Postgres {
-		if resource.AppID == "" || resource.Scope != slug || resource.BindingID == "" || resource.DatabaseID == "" {
+		// A stage copy unbound before deletion has no app or binding left;
+		// only deleting the clone database itself is a valid unbound cleanup.
+		unbound := resource.BindingID == "" && resource.DeleteDatabase
+		if (resource.AppID == "" || resource.BindingID == "") && !unbound || resource.Scope != slug || resource.DatabaseID == "" {
 			return ErrInvalidArgument
 		}
 		if resource.DeleteDatabase && (resource.DatabaseName == "" || resource.RestoreSourceDatabaseID == "") {
@@ -47,6 +50,11 @@ type ProjectEnvironmentPostgresCleanupResource struct {
 	DatabaseName            string `json:"database_name,omitempty"`
 	RestoreSourceDatabaseID string `json:"restore_source_database_id,omitempty"`
 	DeleteDatabase          bool   `json:"delete_database,omitempty"`
+	// CloneOperationID names the full environment clone that restored the
+	// database for this stage (ADR-20261024224230). Such a database is not
+	// customer-visible once its stage is gone, so cleanup reaches it through
+	// the clone.
+	CloneOperationID string `json:"clone_operation_id,omitempty"`
 }
 
 type ProjectEnvironmentObjectStorageCleanupResource struct {

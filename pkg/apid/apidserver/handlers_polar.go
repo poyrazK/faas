@@ -2,7 +2,9 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -11,12 +13,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // polarWebhook accepts Polar Standard Webhooks deliveries. The provider
 // verifies the signature and translates Polar's subscription/order payloads
 // into billing.Event before this handler touches account state.
 func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
+	rec := &webhookOutcomeWriter{ResponseWriter: w, status: http.StatusOK}
+	w = rec
+	defer rec.observe(s.ops, "polar_webhook", time.Now())
 	if s.billingProvider == nil || providerName(s.billingProvider) != "polar" {
 		s.log.Error("polar_webhook.no_provider", "provider", providerName(s.billingProvider), "err", "Polar is not the active billing provider")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
@@ -42,16 +48,22 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	acct, err := s.lookupAccountByPolarID(r.Context(), ev.CustomerID)
 	if err != nil {
-		// Keep known billing events and invoice projections retryable rather
-		// than silently discarding an entitlement transition. Unknown no-op
-		// events are safe to acknowledge because there is no local side
-		// effect to recover.
-		if ev.Type != billing.EventUnknown || ev.Invoice != nil {
-			s.log.Warn("polar_webhook.unknown_customer", "customer_id", ev.CustomerID, "event_type", ev.Type.Name())
+		// A failed lookup stays retryable. A customer no account is bound to
+		// (or a delivery without one) is acknowledged: redelivery cannot
+		// change the answer, and Polar disables an endpoint after 10
+		// consecutive failed deliveries, which would stop every account's
+		// webhooks. Subscription reconciliation repairs an account whose
+		// binding lands later (ADR-20261029094512).
+		if ev.CustomerID != "" && !errors.Is(err, state.ErrNotFound) {
+			s.log.Warn("polar_webhook.customer_lookup_failed", "customer_id", ev.CustomerID, "event_type", ev.Type.Name(), "err", err)
 			api.WriteProblem(w, api.ErrCapacity("billing webhook customer binding unavailable"))
 			return
 		}
-		s.log.Info("polar_webhook.unknown_customer_noop", "customer_id", ev.CustomerID, "event_type", ev.Type.Name())
+		level := slog.LevelInfo
+		if ev.Type != billing.EventUnknown || ev.Invoice != nil {
+			level = slog.LevelWarn
+		}
+		s.log.Log(r.Context(), level, "polar_webhook.unknown_customer", "customer_id", ev.CustomerID, "event_type", ev.Type.Name())
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -62,6 +74,17 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderPolar), acct, ev.PlanID, ev.Invoice); err != nil {
 		s.log.Error("polar webhook invoice persistence failed", "event_id", logsanitize.Field(ev.EventID), "err", err)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
+		return
+	}
+	ev, stale := s.freshBillingEvent(r.Context(), ev)
+	if stale {
+		acctID := acct.ID
+		s.audit.Emit(r.Context(), "billing.webhook_stale_ignored", &acctID, map[string]any{
+			"provider":    webhookdedupe.ProviderPolar,
+			"event_type":  ev.Type.Name(),
+			"delivery_id": logsanitize.Field(ev.EventID),
+		})
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	if s.handleSubscriptionEndedOutbox(w, r, "polar", ev, acct) {
@@ -164,4 +187,41 @@ func (s *server) startPolarInvoicePDF(ctx context.Context, ev billing.Event) {
 			s.requestPolarInvoicePDFAsync(ctx, requester, ev.Invoice.ProviderInvoiceID, ev.EventID)
 		}
 	}
+}
+
+// webhookOutcomeWriter records the status a provider webhook handler answered
+// with. Polar disables an endpoint after ten consecutive non-2xx deliveries,
+// so each answer is counted as apid_ops_total{op,code} with code ok (2xx),
+// rejected (4xx) or unavailable (5xx), and FaasPolarWebhookFailing fires
+// before Polar gives up on the endpoint (ADR-20261029180000).
+type webhookOutcomeWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *webhookOutcomeWriter) WriteHeader(status int) {
+	if !w.wroteHeader {
+		w.status, w.wroteHeader = status, true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *webhookOutcomeWriter) Write(b []byte) (int, error) {
+	w.wroteHeader = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *webhookOutcomeWriter) observe(ops *wire.OpsMetrics, op string, start time.Time) {
+	if ops == nil {
+		return
+	}
+	code := "ok"
+	switch {
+	case w.status >= http.StatusInternalServerError:
+		code = "unavailable"
+	case w.status >= http.StatusBadRequest:
+		code = "rejected"
+	}
+	ops.ObserveCode(op, code, time.Since(start))
 }

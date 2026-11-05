@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -169,21 +170,7 @@ func previewScalingPolicyFromManifest(cwd string) *api.ScalingPolicy {
 	if err != nil || !ok || m == nil {
 		return nil
 	}
-	if m.Worker != nil && m.Worker.Scale.Metric != "" {
-		return &api.ScalingPolicy{
-			MinInstances: m.Worker.Scale.Min,
-			MaxInstances: m.Worker.Scale.Max,
-			Target: &api.ScalingTarget{
-				Metric: m.Worker.Scale.Metric,
-				Name:   m.Worker.Scale.Name,
-				Value:  m.Worker.Scale.Target,
-			},
-		}
-	}
-	if m.Scaling == nil {
-		return nil
-	}
-	return m.Scaling.ToAPI()
+	return m.ScalingPolicyRequest()
 }
 
 // buildPreviewBuildPlan projects the same source signals used by the deploy
@@ -261,6 +248,12 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 
 	// 1. Baseline snapshot.
 	baseline, baselineErr := buildBaseline(ctx, client, opts.Slug)
+	// A deploy token has deploy:write but not the apps:read the env and
+	// edge-rule reads need; apid's diff admits it and compares the same
+	// baseline (rc.318 field report).
+	if isScopeRefusal(baselineErr) {
+		return runServerDiff(ctx, client, opts)
+	}
 	if baselineErr != nil && !opts.Lenient {
 		return printErr("Could not read baseline", baselineErr)
 	}
@@ -481,7 +474,30 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 	if !opts.NoTriggers {
 		p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
 	}
+	p.Companions, p.CompanionsKnown = previewCompanionsFromManifest(opts.Cwd)
 	return p
+}
+
+// previewCompanionsFromManifest returns the companions the deploy would send
+// from cwd's gregale.yaml: none when there is no manifest, as the deploy
+// itself sends none (Hunt 14 H14-53). ok is false when the preview cannot
+// tell, so the diff leaves companions out rather than guess.
+func previewCompanionsFromManifest(cwd string) ([]api.DeploymentCompanion, bool) {
+	if cwd == "" {
+		return nil, false
+	}
+	m, found, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return nil, false
+	}
+	if !found || m == nil {
+		return nil, true
+	}
+	companions, err := m.ToSidecars()
+	if err != nil {
+		return nil, false
+	}
+	return companions.Summaries(), true
 }
 
 // previewCronsFromManifest projects the deploy manifest's cron triggers into
@@ -560,6 +576,13 @@ func accountCronCount(ctx context.Context, client *api.Client, excludeSlug strin
 		return 0
 	}
 	return len(rows)
+}
+
+// isScopeRefusal matches the 403 a credential without the route's scope
+// gets.
+func isScopeRefusal(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.Problem.Status == http.StatusForbidden && ae.Problem.Code == api.CodeForbidden
 }
 
 // isNotFound matches the apid handler's 404 shape — used so a

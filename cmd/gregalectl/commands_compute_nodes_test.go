@@ -48,7 +48,17 @@ func TestMain(m *testing.M) {
 	_ = os.Unsetenv("NO_COLOR")
 	noColorCached.Store(false)
 	noColorVal = false
+	// obs reads prefer the operator session, so no test may find the
+	// developer's own: point the session file at an empty directory.
+	// Tests that need a session install one with t.Setenv.
+	sessionDir, err := os.MkdirTemp("", "gregalectl-test-session-")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv(operatorSessionFile, filepath.Join(sessionDir, "operator-session.json"))
+	_ = os.Unsetenv(operatorSessionEnv)
 	code := m.Run()
+	_ = os.RemoveAll(sessionDir)
 	if hadNoColor {
 		_ = os.Setenv("NO_COLOR", previousNoColor)
 	} else {

@@ -9,7 +9,7 @@ export type CreateAPIConsumerRequest = {
   external_ref: string;
   name: string;
   /**
-   * Starts the consumer's one free trial at the next UTC minute for this many days (ADR-1314).
+   * Starts the consumer's one free trial at the next UTC minute for this many days.
    */
   trial_days?: number;
 };

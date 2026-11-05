@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from faas_sdk.models import RequestAnalyticsDependency, RequestAnalyticsRoute
+from faas_sdk.preview.models import RequestAnalyticsDependency, RequestAnalyticsRoute
 
 
 def test_request_analytics_dependency_round_trips_deployment_regression() -> None:

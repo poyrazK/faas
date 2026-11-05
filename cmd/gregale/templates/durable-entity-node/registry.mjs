@@ -1,4 +1,4 @@
-import {createDurableEntityRegistry} from '@gregale/sdk-node/durable-entities/runtime';
+import {createDurableEntityRegistry} from '@gregale/sdk-node/preview/durable-entities/runtime';
 import {readFile} from 'node:fs/promises';
 
 const project = JSON.parse(await readFile(new URL('gregale.entities.json', import.meta.url), 'utf8'));

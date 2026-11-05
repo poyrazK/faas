@@ -1,12 +1,15 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -25,9 +28,9 @@ import (
 //      status via the future GET /v1/cron-fire-now-requests/{id}
 //      surface or watches `GET /v1/crons/{id}/runs` for the audit row.
 //
-// The handler does NOT validate enabled — schedd's RunCronNow
-// re-checks enabled on claim (a cron disabled between INSERT and
-// claim surfaces as ErrCronDisabled in the row, not at the API).
+// The handler refuses a disabled cron (409); schedd's RunCronNow still
+// re-checks enabled on claim, so a cron disabled between INSERT and
+// claim surfaces as ErrCronDisabled in the row.
 // Same pattern for ErrAccountSuspended and ErrNoCapacity — the
 // failure is stamped onto the row in schedd's process and the
 // customer reads it from the row's terminal state.
@@ -38,6 +41,7 @@ import (
 //	cron not found            → 404 not_found
 //	cron on another account   → 404 not_found (byte-identical body)
 //	rate limited              → 429 (authLimited)
+//	cron has 5 active runs    → 429 cron_fire_now_busy (ADR-20261026201726)
 //	no dispatch capacity      → N/A at API (schedd stamps the row)
 //	server error              → 500 (existing ErrInternal)
 
@@ -84,11 +88,20 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
+	if prob := s.cronRunRefusal(ctx, app, c); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 
 	// Insert the durable record. Status starts at 'pending'. The
 	// id is returned to the customer so they can correlate the
 	// audit-event stream with their request.
-	requestID, err := s.store.InsertFireNowRequest(ctx, c.ID, acct.ID)
+	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
+	var capErr *state.FireNowCapError
+	if errors.As(err, &capErr) {
+		api.WriteProblem(w, api.ErrCronFireNowBusy(capErr.Limit, capErr.Observed))
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not enqueue fire-now"))
 		return
@@ -115,4 +128,46 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		CronID:    c.ID,
 		Status:    "pending",
 	})
+}
+
+// cronRunRefusal refuses a manual run the scheduler would not start: a
+// disabled or suspended cron, a cron over its owner's plan, or an app a
+// compute budget holds, whose run would wait unstarted until the hold lifts
+// (crons audit 2026-11-03).
+func (s *server) cronRunRefusal(ctx context.Context, app state.App, c state.Cron) *api.Problem {
+	switch {
+	case !c.Enabled:
+		return api.ErrCronDisabledRun()
+	case c.SuspendedReason != "":
+		return api.ErrCronSuspendedRun(c.SuspendedReason)
+	}
+	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
+		return prob
+	}
+	if cronrun.BudgetHeld(ctx, s.store, app, time.Now().UTC()) {
+		return cronrun.BudgetHeldProblem()
+	}
+	return nil
+}
+
+// cronRunOverPlan refuses a manual run of a cron that the owner's current plan
+// does not let fire (cronrun.OverPlan). A store that cannot rank crons admits.
+func (s *server) cronRunOverPlan(ctx context.Context, app state.App, c state.Cron) *api.Problem {
+	store, ok := s.store.(cronrun.Store)
+	if !ok {
+		return nil
+	}
+	return cronrun.OverPlan(ctx, store, app, c)
+}
+
+// insertCronFireNowRequest records one manual run. A cron holds at most
+// api.CronFireNowActivePerCron manual runs waiting or running, so a burst of
+// requests cannot queue unbounded work for the owning scheduler
+// (ADR-20261026201726). At the cap it returns *state.FireNowCapError.
+func (s *server) insertCronFireNowRequest(ctx context.Context, cronID, accountID string) (string, error) {
+	if capped, ok := s.store.(state.CronFireNowInvocationStore); ok {
+		return capped.InsertFireNowRequestUnderCap(ctx, cronID, accountID,
+			api.CronFireNowActivePerCron, time.Now().Add(-api.CronFireNowActiveWindow))
+	}
+	return s.store.InsertFireNowRequest(ctx, cronID, accountID)
 }

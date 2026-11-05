@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -68,34 +69,46 @@ func cmdAccount(args []string) int {
 }
 
 func unknownAccountSubcommand(parent cliCommand, name string) int {
-	sug, _ := suggestSubcommand(name, parent)
-	fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", name)
-	maybeSuggestSub(sug)
-	return 1
+	printCommandValidation(os.Stderr, "gregale account: unknown subcommand %q\n", name)
+	return unknownSubcommandChoices(os.Stderr, "account", parent, name)
 }
 
 // cmdAccountExport downloads the GDPR export bundle. Default output
 // is gregale-account-export.json in the cwd; -o picks another path.
 // --no-secrets drops the ciphertext slice (the bundle still lists the
-// apps + keys + usage without revealing the sealed envelope).
+// apps + keys + usage without revealing the sealed envelope). An existing
+// file is replaced only with --force, and --json prints a receipt instead
+// of the prose line (CLI audit 2026-10-31: both used to happen silently).
 func cmdAccountExport(args []string) int {
 	fs := newFlagSet("account export", flag.ContinueOnError)
 	out := fs.String("o", "gregale-account-export.json", "output file")
 	noSecrets := fs.Bool("no-secrets", false, "exclude ciphertext slice")
+	force := fs.Bool("force", false, "replace an existing output file")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	abs, err := filepath.Abs(*out)
+	if err != nil {
+		return printErr("Invalid output path", err)
+	}
+	if _, err := os.Lstat(abs); err == nil && !*force {
+		return printErr("Output file exists", fmt.Errorf("%s already exists; pass --force to replace it or -o to choose another path", abs))
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return printErr("Invalid output path", err)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := ExportAccountFile(client, context.Background(), *out, !*noSecrets); err != nil {
+	if err := ExportAccountFile(client, context.Background(), abs, !*noSecrets); err != nil {
 		return printErr("Export failed", err)
 	}
-	abs, _ := filepath.Abs(*out)
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"path": abs, "secrets_included": !*noSecrets}))
+	}
 	PrintOK(osStdout, "Exported account data to %s", abs)
 	return 0
 }
@@ -109,13 +122,18 @@ func cmdAccountDelete(args []string) int {
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "quiet", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
+	// ADR-20261024150500 dark launch: a hidden flag. It parses, but stays out
+	// of help, completions, man pages and the generated reference until
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS admits every account;
+	// apid ignores it for an unlisted account.
+	includeDatabases := fs.Bool("include-postgres-databases", false, "also delete your managed PostgreSQL databases when the grace period ends")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "account deletion"); code != 0 {
 		return code
 	}
 	client, err := authedClient()
@@ -126,6 +144,9 @@ func cmdAccountDelete(args []string) int {
 		fmt.Fprintf(os.Stderr,
 			"This will schedule your account for permanent deletion in 30 days. "+
 				"You can cancel with `gregale account restore` before the deadline.\n")
+		if *includeDatabases {
+			fmt.Fprintf(os.Stderr, "Your managed PostgreSQL databases will be deleted with the account when the 30 days end.\n")
+		}
 		if !requireTyped("delete my account") {
 			return 1
 		}
@@ -136,9 +157,13 @@ func cmdAccountDelete(args []string) int {
 	nonce := make([]byte, 16)
 	_, _ = rand.Read(nonce)
 	key := "cli-delete-" + hex.EncodeToString(nonce)
-	resp, err := client.DeleteAccount(context.Background(), key)
+	deleteAccount := client.DeleteAccount
+	if *includeDatabases {
+		deleteAccount = client.DeleteAccountIncludingManagedPostgres
+	}
+	resp, err := deleteAccount(context.Background(), key)
 	if err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete account", err)
 	}
 	PrintOK(osStdout, "Account scheduled for deletion")
 	fmt.Printf("  status:       %s\n", resp.Status)
@@ -208,7 +233,7 @@ func cmdAccountDPA(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale account dpa [-o FILE]", "account")
+		PrintUsage(os.Stderr, "usage: gregale account dpa get [-o FILE]", "account")
 		return 1
 	}
 	// DPA route is unauth-friendly on the server (it's also reachable

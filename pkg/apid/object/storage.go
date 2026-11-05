@@ -154,7 +154,27 @@ func (s *Service) ObjectStorageEnabled() bool {
 }
 
 func (s *Service) ObjectStorageProvisioningReady() bool {
-	return s.ObjectStorageEnabled() && s.Host.ObjectStorage().CanProvisionAllRegions()
+	if !s.ObjectStorageEnabled() || !s.Host.ObjectStorage().CanProvisionAllRegions() {
+		return false
+	}
+	return !s.providerRefusingCredentials()
+}
+
+// providerRefusingCredentials reports a default backend whose provider last
+// refused this installation's credentials (providerHealth).
+func (s *Service) providerRefusingCredentials() bool {
+	registry := s.Host.ObjectStorage()
+	if registry == nil {
+		return false
+	}
+	var backends []string
+	for _, region := range registry.Regions() {
+		placements, _ := registry.Placements(region)
+		for _, backend := range placements {
+			backends = append(backends, backend.ID)
+		}
+	}
+	return s.health.anyFailing(backends, time.Now())
 }
 
 // BucketView deliberately excludes operator placement, credentials and leases.
@@ -169,17 +189,26 @@ func viewBucket(b state.ObjectBucket) BucketView {
 // objectstorage.ErrUnavailable for callers that test the broad class.
 var ErrObjectStorageDisabled = fmt.Errorf("%w: not enabled on this installation", objectstorage.ErrUnavailable)
 
+// ErrObjectStorageProviderRefused marks a provider that is refusing this
+// installation's credentials. A create is refused before any bucket row is
+// reserved, instead of leaving it stuck in provisioning (Hunt 14 H14-14).
+var ErrObjectStorageProviderRefused = fmt.Errorf("%w: the storage provider is refusing this installation's credentials", objectstorage.ErrUnavailable)
+
 func BucketProblem(w http.ResponseWriter, err error) {
 	status, code, detail := 503, "object_storage_unavailable", "Object storage is unavailable; retry later."
 	switch {
 	case errors.Is(err, ErrObjectStorageDisabled):
 		detail = "Object storage is not enabled on this Gregale installation; `gregale capabilities` shows feature availability."
+	case errors.Is(err, ErrObjectStorageProviderRefused):
+		detail = "Object storage is unavailable on this Gregale installation: its storage provider is refusing the platform's credentials. No bucket was created; `gregale capabilities` shows it as unavailable until an operator fixes the credentials."
 	case errors.Is(err, state.ErrObjectBucketWriteFenced):
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectBudget):
 		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
+	case errors.Is(err, state.ErrObjectStorageRegionFull):
+		status, code, detail = 503, "object_storage_region_full", "Gregale has no room for new buckets in this region right now, and its operators are alerted. No bucket was created and existing buckets are unaffected; retry later."
 	case errors.Is(err, state.ErrObjectCapacity):
 		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):
@@ -206,7 +235,7 @@ func BucketProblem(w http.ResponseWriter, err error) {
 	if errors.As(err, &limit) {
 		problem.Limit, problem.Observed = &limit.Limit, &limit.Observed
 		problem.Detail = detail + " Limit: " + limit.Kind + "."
-		problem.DocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#accounting-and-safety-budgets"
+		problem.DocsURL = api.ObjectStorageLimitsDocsURL
 	}
 	api.WriteProblem(w, problem)
 }
@@ -322,6 +351,10 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
+	if s.providerRefusingCredentials() {
+		BucketProblem(w, ErrObjectStorageProviderRefused)
+		return
+	}
 	if req.Public && !s.Host.ObjectStorage().Accounting.Valid() {
 		// Public mounts are an anonymous data plane. Do not create one when
 		// the operator has not supplied the same fresh usage policy that gates
@@ -368,18 +401,30 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 			return old, nil
 		}
 	}
+	// The reservation enforces the limit under its lock; checking here first
+	// names the limit instead of a bare conflict.
+	if live := liveBucketCount(items); live >= s.Host.ObjectStorage().MaxBucketsPerApp {
+		return state.ObjectBucket{}, &state.ObjectStorageLimitError{Kind: "max_buckets_per_app", Limit: int64(s.Host.ObjectStorage().MaxBucketsPerApp), Observed: int64(live) + 1, Cause: state.ErrConflict}
+	}
 	if req.Region == "" {
 		req.Region = s.Host.ObjectStorage().DefaultRegion
 	}
 	if !s.Host.ObjectStorage().CanProvisionAllRegions() {
 		return state.ObjectBucket{}, state.ErrObjectUsageStale
 	}
-	backend, err := s.Host.ObjectStorage().Default(req.Region)
-	if err != nil {
-		return state.ObjectBucket{}, err
-	}
 	id := uuid.NewString()
-	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.Host.ObjectStorage().MaxBucketsPerApp)
+	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
+	var b state.ObjectBucket
+	if s.Host.ObjectStorage().PlacementLimited(req.Region) {
+		b, err = s.reservePlacedBucket(ctx, st, want)
+	} else {
+		var backend objectstorage.Backend
+		if backend, err = s.Host.ObjectStorage().Default(req.Region); err != nil {
+			return state.ObjectBucket{}, err
+		}
+		want.BackendID, want.BackendFingerprint = backend.ID, backend.Fingerprint
+		b, err = st.ReserveObjectBucket(ctx, want, s.Host.ObjectStorage().MaxBucketsPerApp)
+	}
 	if err == nil && b.Region != req.Region {
 		return b, state.ErrConflict
 	}
@@ -467,36 +512,6 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 		BucketProblem(w, err)
 		return
 	}
-	var bindingsToRevoke []state.ObjectS3Credential
-	if bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore); ok {
-		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
-		if err != nil {
-			BucketProblem(w, err)
-			return
-		}
-		for _, credential := range credentials {
-			if credential.ManagedAppID == b.AppID {
-				bindingsToRevoke = append(bindingsToRevoke, credential)
-			}
-		}
-	}
-	if len(bindingsToRevoke) > 0 {
-		bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
-		if !ok {
-			BucketProblem(w, objectstorage.ErrUnavailable)
-			return
-		}
-		for _, credential := range bindingsToRevoke {
-			changed, err := bindings.RevokeObjectS3ComputeBinding(r.Context(), acct.ID, b.ID, credential.ID)
-			if err != nil {
-				BucketProblem(w, err)
-				return
-			}
-			if changed {
-				s.Host.NotifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
-			}
-		}
-	}
 	token := uuid.NewString()
 	b, err := st.ClaimObjectBucket(r.Context(), b.AccountID, b.AppID, b.ID, token, "deleting")
 	if err != nil {
@@ -511,11 +526,40 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// revokeDeletedBucketBindings revokes the owning app's compute bindings once
+// the provider has deleted the bucket. Deletion used to revoke them before the
+// claim; a claim refused for an open multipart upload, a pending write or a
+// fence then left a ready bucket whose app had lost its credentials. Running
+// it here, after the provider proved the bucket gone, means a refused or
+// retried deletion never strands the app, and every retry repeats it.
+func (s *Service) revokeDeletedBucketBindings(ctx context.Context, b state.ObjectBucket) error {
+	bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
+	if !ok {
+		return nil
+	}
+	credentials, err := bindings.ListObjectS3Credentials(ctx, b.AccountID, b.ID)
+	if err != nil {
+		return err
+	}
+	for _, credential := range credentials {
+		if credential.ManagedAppID != b.AppID {
+			continue
+		}
+		changed, err := bindings.RevokeObjectS3ComputeBinding(ctx, b.AccountID, b.ID, credential.ID)
+		if err != nil {
+			return err
+		}
+		if changed {
+			s.Host.NotifyRuntimeConfigChange(ctx, db.NotifySecretRotated, state.Account{ID: b.AccountID}, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
+		}
+	}
+	return nil
+}
+
 // customerBucketHasData reports whether a bucket the customer must empty
 // still holds objects or retained versions. Deletion revokes the app's compute
-// bindings before the provider is asked; when the provider then refused a
-// non-empty bucket, the bucket returned to ready with its bindings gone and the
-// app lost access to data that still existed (hunt #9). Owned buckets are
+// bindings once the provider deletes the bucket; checking first keeps a
+// non-empty bucket from being claimed at all (hunt #9). Owned buckets are
 // emptied by the deletion itself and are not checked.
 func (s *Service) customerBucketHasData(ctx context.Context, b state.ObjectBucket) (bool, error) {
 	if b.State != "ready" {
@@ -736,8 +780,20 @@ func (s *Service) DeleteBucketAccessGrant(w http.ResponseWriter, r *http.Request
 		BucketProblem(w, err)
 		return
 	}
-	s.Host.EmitAudit(r.Context(), "object_storage.access_grant_deleted", &acct.ID, map[string]any{
+	s.emitRevocation(r.Context(), "object_storage.access_grant_deleted", acct.ID, map[string]any{
 		"app_id": bucket.AppID, "bucket_id": bucket.ID, "key_id": keyID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// liveBucketCount counts the buckets toward max_buckets_per_app, as the
+// reservation does: every bucket not yet deleted.
+func liveBucketCount(items []state.ObjectBucket) int {
+	n := 0
+	for _, b := range items {
+		if b.State != "deleted" {
+			n++
+		}
+	}
+	return n
 }

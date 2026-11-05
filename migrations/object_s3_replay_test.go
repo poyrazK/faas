@@ -48,6 +48,8 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	// are append-only, so replaying the S3 set restores its own versions; put
 	// the current ones back before comparing everything else exactly.
 	laterFunctions := []string{
+		"assert_object_copy_source_authority(uuid,uuid,text,uuid,text,uuid)", // per-key copy deletion (20261026174634100)
+		"fence_object_deletion()", // per-key deletion fences (20261025120158599)
 		"fence_object_lifecycle_deletion()",
 		"fence_object_lifecycle_multipart()",
 		"object_url_issuer_live(uuid,uuid,uuid,text,timestamp with time zone)",
@@ -80,6 +82,14 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	}
 	for _, definition := range currentFunctions {
 		if _, err := pool.Exec(ctx, definition); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Later migrations drop these; replaying the S3 set recreates them.
+	for _, index := range []string{
+		"object_deletions_active_bucket", // per-key deletion fences (20261025120158599)
+	} {
+		if _, err := pool.Exec(ctx, `DROP INDEX IF EXISTS `+index); err != nil {
 			t.Fatal(err)
 		}
 	}

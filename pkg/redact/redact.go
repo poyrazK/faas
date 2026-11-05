@@ -26,7 +26,9 @@ package redact
 
 import (
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
@@ -63,15 +65,22 @@ func New(cap int) *Redactor {
 		cap = 4096
 	}
 	return &Redactor{
-		patterns: defaultPatterns(),
+		patterns: sharedDefaultPatterns(),
 		cap:      cap,
 	}
 }
 
+// sharedDefaultPatterns compiles the canonical pattern set once. Redactors
+// only read it and *regexp.Regexp is safe for concurrent use. Callers such as
+// issue grouping build a Redactor per ingested value, and compiling a dozen
+// regexes each time dominated that path.
+var sharedDefaultPatterns = sync.OnceValue(defaultPatterns)
+
 // Default returns the canonical ADR-096 pattern set. Exposed so
 // the wire-side grep tripwire (handlers_app_errors_security_test.go)
 // can re-check the output against the same regexes the writer used.
-func Default() []Pattern { return defaultPatterns() }
+// The slice is a copy, so a caller cannot change what New uses.
+func Default() []Pattern { return slices.Clone(sharedDefaultPatterns()) }
 
 // Apply redacts every PII / secret match in s, truncating s to
 // the configured cap first. Returns the redacted string and the

@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
 const (
@@ -18,7 +20,11 @@ const (
 	// ADR-1343 §5: the app edge on each compute node, when the cell runs it.
 	gatewaydPublicEdgeMetricsDiscoveryPath = "/v1/internal/metrics/gatewayd-public-edge-targets"
 	cloudflaredMetricsDiscoveryPath        = "/v1/internal/metrics/cloudflared-targets"
-	maxMetricsDiscoveryTargets             = 1000
+	// ADR-20261031122757 §2: the S3 gateway on each compute node, when the
+	// cell runs it, and its s3 tunnel connector.
+	s3GatewayComputeMetricsDiscoveryPath = "/v1/internal/metrics/s3-gatewayd-compute-targets"
+	cloudflaredS3MetricsDiscoveryPath    = "/v1/internal/metrics/cloudflared-s3-targets"
+	maxMetricsDiscoveryTargets           = 1000
 )
 
 // metricsDiscoveryHandler is mounted only on apid's loopback metrics server.
@@ -36,6 +42,8 @@ func (s *server) metricsDiscoveryHandler() http.Handler {
 	mux.HandleFunc("GET "+scheddMetricsDiscoveryPath, s.scheddMetricsDiscovery)
 	mux.HandleFunc("GET "+gatewaydPublicEdgeMetricsDiscoveryPath, s.gatewaydPublicEdgeMetricsDiscovery)
 	mux.HandleFunc("GET "+cloudflaredMetricsDiscoveryPath, s.cloudflaredMetricsDiscovery)
+	mux.HandleFunc("GET "+s3GatewayComputeMetricsDiscoveryPath, s.s3GatewayComputeMetricsDiscovery)
+	mux.HandleFunc("GET "+cloudflaredS3MetricsDiscoveryPath, s.cloudflaredS3MetricsDiscovery)
 	return mux
 }
 
@@ -101,11 +109,24 @@ func (s *server) scheddMetricsDiscovery(w http.ResponseWriter, r *http.Request) 
 // on its metrics port. Prometheus queries them only when the cell runs the
 // edge, so a node without it is never probed.
 func (s *server) gatewaydPublicEdgeMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
-	s.metricsDiscovery(w, r, "gatewayd-public-edge", daemonMetricsTarget("9092"))
+	s.metricsDiscovery(w, r, "gatewayd-public-edge", daemonMetricsTarget(daemonunitspec.ComputeEdgeControlPort))
 }
 
 func (s *server) cloudflaredMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
 	s.metricsDiscovery(w, r, "cloudflared", daemonMetricsTarget("20241"))
+}
+
+// s3GatewayComputeMetricsDiscovery and cloudflaredS3MetricsDiscovery serve
+// the S3 gateway on every active compute node (ADR-20261031122757 §2):
+// s3-gatewayd in compute mode on its control port, and the node's s3 tunnel
+// connector on its metrics port. Prometheus queries them only when the cell
+// runs the gateway on its compute nodes.
+func (s *server) s3GatewayComputeMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "s3-gatewayd-compute", daemonMetricsTarget(daemonunitspec.ComputeObjectGatewayControlPort))
+}
+
+func (s *server) cloudflaredS3MetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "cloudflared-s3", daemonMetricsTarget(daemonunitspec.ComputeObjectGatewayConnectorMetricsPort))
 }
 
 func (s *server) metricsDiscovery(w http.ResponseWriter, r *http.Request, job string, targetFn func(string) (string, bool)) {

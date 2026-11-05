@@ -16,6 +16,10 @@ const (
 	debugRunningEventKind        = "debug.running_reason"
 	debugRunningSchemaVersion    = 1
 	runningReasonMinEmitInterval = 15 * time.Second
+	// runningReasonRefreshInterval re-emits an unchanged explanation so the
+	// debugger's evidence (last activity, request attribution, connections)
+	// stays recent without an event per tick (ADR 20261102205122).
+	runningReasonRefreshInterval = 5 * time.Minute
 	debugRunningFlowTopologyMax  = 32
 )
 
@@ -147,7 +151,7 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 		if workload != "" {
 			g.workloadClasses[workload]++
 		}
-		if in.WorkloadClass == state.WorkloadClassWorker || mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeService) || mode == string(state.InstanceModeJob) || mode == string(state.InstanceModeMirror) {
+		if in.WorkloadClass == state.WorkloadClassWorker || mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeService) || mode == string(state.InstanceModeJob) || mode == string(state.InstanceModeMirror) || mode == string(state.InstanceModeFork) {
 			g.workloadModes[mode]++
 		}
 		if anchor := scaleInCooldownAnchor(in); anchor != nil && in.ScaleInCooldownS > 0 {
@@ -424,9 +428,21 @@ func runningObservationEvent(obs runningReasonObservation, observedAt time.Time,
 	}
 }
 
+// runningEventFingerprint is what an explanation must change for a new event:
+// the running count, floors, idle timeout and each cause's kind and instance
+// count. The evidence inside a cause (last activity, idle deadline, request
+// attribution, connection and tail counts, flow endpoints) moves with every
+// request, so it is left out; runningReasonRefreshInterval keeps it recent
+// (ADR 20261102205122).
 func runningEventFingerprint(event runningReasonEvent) string {
 	event.ObservedAt = ""
 	event.SchemaVersion = 0
+	causes := make([]api.DebugRunningCause, len(event.Causes))
+	for i, cause := range event.Causes {
+		causes[i] = api.DebugRunningCause{Code: cause.Code, InstanceCount: cause.InstanceCount,
+			Mode: cause.Mode, WorkloadClass: cause.WorkloadClass, FlowTopologyDegraded: cause.FlowTopologyDegraded}
+	}
+	event.Causes = causes
 	data, _ := json.Marshal(event)
 	return string(data)
 }
@@ -461,7 +477,7 @@ func (l *Loop) recordRunningReasonObservations(ctx context.Context, apps []state
 		event := runningObservationEvent(obs, now, accounts[appID])
 		fp := runningEventFingerprint(event)
 		state := l.runningReasonStates[appID]
-		if fp == state.emittedFingerprint {
+		if fp == state.emittedFingerprint && now.Sub(state.lastEmit) < runningReasonRefreshInterval {
 			state.pendingFingerprint = ""
 			state.pending = runningReasonEvent{}
 			l.runningReasonStates[appID] = state

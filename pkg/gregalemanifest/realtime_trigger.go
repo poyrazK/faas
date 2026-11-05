@@ -11,7 +11,27 @@ import (
 // trigger-level delivery settings that would compete with it are rejected.
 func (t Trigger) validateRealtime(idx int) error {
 	var c api.RealtimeTriggerConfig
-	if err := decodeInto(t.Config, &c); err != nil {
+	cfg := t.Config
+	// An endpoint declared in this manifest may be named by slug
+	// (ADR-20261019102657); the deploy resolves it to its ID, and
+	// Manifest.validateRealtime checks that it is declared.
+	if ref, ok := t.Config["endpoint"]; ok {
+		slug, isString := ref.(string)
+		if !isString || api.ValidateRealtimeEndpointSlug(slug) != nil {
+			return fmt.Errorf("trigger[%d]: realtime endpoint must be the slug of an endpoint in realtime.endpoints", idx)
+		}
+		if _, both := t.Config["endpoint_id"]; both {
+			return fmt.Errorf("trigger[%d]: set endpoint or endpoint_id, not both", idx)
+		}
+		cfg = make(map[string]any, len(t.Config))
+		for k, v := range t.Config {
+			if k != "endpoint" {
+				cfg[k] = v
+			}
+		}
+		cfg["endpoint_id"] = "00000000-0000-0000-0000-000000000000"
+	}
+	if err := decodeInto(cfg, &c); err != nil {
 		return fmt.Errorf("trigger[%d]: bad realtime config: %w", idx, err)
 	}
 	if err := c.Validate(); err != nil {

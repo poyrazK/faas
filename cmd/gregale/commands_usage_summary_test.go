@@ -251,6 +251,41 @@ func TestRenderUsageSummary_PinsColumnLayout(t *testing.T) {
 	}
 }
 
+// TestRenderUsageSummary_QuietPaused pins the unbilled quiet pause line
+// (ADR-20261023171905): beside Used, marked not billed, and absent while
+// zero so accounts without unbilled pause see the block unchanged.
+func TestRenderUsageSummary_QuietPaused(t *testing.T) {
+	tests := []struct {
+		name   string
+		paused float64
+		want   string
+	}{
+		{name: "released", paused: 0.512, want: "Quiet paused: 0.512 GB-hours (not billed)"},
+		{name: "none", paused: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			main.RenderUsageSummary(&buf, api.UsageSummaryResponse{
+				Month: "2026-10", UsedGBHours: 1.5, IncludedGBHours: 20, QuietPausedGBHours: tt.paused,
+			})
+			got := buf.String()
+			if tt.want == "" {
+				if strings.Contains(got, "Quiet paused") {
+					t.Fatalf("rendered a quiet paused line for zero paused time:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("rendered output missing %q\nfull: %s", tt.want, got)
+			}
+			if strings.Index(got, "Quiet paused") < strings.Index(got, "Overage cost") {
+				t.Fatalf("quiet paused line precedes the billing lines:\n%s", got)
+			}
+		})
+	}
+}
+
 // --- dispatcher (back-compat) ----------------------------------------------
 
 // TestCmdUsage_NoPositional_DispatchesToList pins the default branch:
@@ -268,7 +303,7 @@ func TestCmdUsage_NoPositional_DispatchesToList(t *testing.T) {
 				AppID: "a1", Requests: 1, MBSeconds: 1, IncludedGBHours: 5,
 			}})
 		case "/v1/usage/summary":
-			t.Errorf("dispatcher reached /v1/usage/summary for bare `gregale usage`; want /v1/usage")
+			t.Errorf("dispatcher reached /v1/usage/summary for bare `gregale billing usage`; want /v1/usage")
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -365,7 +400,7 @@ func TestCmdUsage_SummarySubcommand_DispatchesToSummary(t *testing.T) {
 				OverageGBHours: 0, OverageCents: 0,
 			})
 		case "/v1/usage":
-			t.Errorf("dispatcher reached /v1/usage for `gregale usage summary`; want /v1/usage/summary")
+			t.Errorf("dispatcher reached /v1/usage for `gregale billing usage summary`; want /v1/usage/summary")
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -385,11 +420,13 @@ func TestCmdUsage_SummarySubcommand_DispatchesToSummary(t *testing.T) {
 
 // --- run() dispatch --------------------------------------------------------
 
-// TestCmdUsageList_HumanEgressColumn pins the ADR-046 egress column
+// TestCmdUsageList_HumanEgressColumn pins the ADR-046 traffic column
 // on the per-app usage list. When TXBytes or NetTxBytes is non-zero
-// the human-mode line gains a trailing `· egress X.XXX GB (tx A.AA
-// / net B.BB)` segment. When both are zero the original 4-field
-// line is preserved (no trailing noise on a fresh account).
+// the human-mode line gains a trailing `· responses A.AA GB · outbound
+// B.BB GB` segment. When both are zero the original 4-field line is
+// preserved (no trailing noise on a fresh account). Hunt 14 H14-95: the
+// old "egress X GB (tx … / net …)" printed net as egress, which showed
+// 0.000 GB for an app that served 0.69 GB of responses over the bridge.
 func TestCmdUsageList_HumanEgressColumn(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -401,19 +438,17 @@ func TestCmdUsageList_HumanEgressColumn(t *testing.T) {
 			name: "zero egress omits column",
 			tx:   0, net: 0,
 			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "App — requests"},
-			// The header row says "egress" once; the row should NOT
-			// contain a per-row egress column. The combined marker
-			// "egress X.XXX GB" only appears when a row has a
-			// non-zero egress cell.
-			wantNot: []string{"egress 0.000 GB"},
+			// The header names the traffic column once; a row prints
+			// it only when a counter is non-zero.
+			wantNot: []string{"responses 0.00 GB"},
 		},
 		{
-			// 2.0 GiB net is canonical egress; 1.5 GiB tx is its diagnostic
-			// payload subset and remains visible only in the split.
+			// Both counters are labelled; neither is called egress.
 			// Conversion: float64(bytes) / (1024*1024*1024).
 			name: "non-zero egress prints column",
 			tx:   1610612736, net: 2147483648,
-			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "egress 2.000 GB", "tx 1.50", "net 2.00"},
+			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "traffic (not billed)", "responses 1.50 GB · outbound 2.00 GB"},
+			wantNot: []string{"egress", "(tx "},
 		},
 	}
 	for _, tc := range cases {

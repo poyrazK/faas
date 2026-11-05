@@ -49,6 +49,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 409:
         response_409 = Problem.from_dict(response.json())
 
@@ -94,7 +99,8 @@ def sync_detailed(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (PR 3 backfill / migration 00099).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -102,7 +108,7 @@ def sync_detailed(
             (lowercase alphanumeric + dashes, 3..32 chars); name is
             trimmed-non-empty, capped at 256 chars. Personal orgs
             cannot be created via this endpoint — every account
-            already owns an immutable personal org (PR 3 backfill).
+            already owns an immutable personal org (backfill).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,7 +143,8 @@ def sync(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (PR 3 backfill / migration 00099).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -145,7 +152,7 @@ def sync(
             (lowercase alphanumeric + dashes, 3..32 chars); name is
             trimmed-non-empty, capped at 256 chars. Personal orgs
             cannot be created via this endpoint — every account
-            already owns an immutable personal org (PR 3 backfill).
+            already owns an immutable personal org (backfill).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,7 +182,8 @@ async def asyncio_detailed(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (PR 3 backfill / migration 00099).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -183,7 +191,7 @@ async def asyncio_detailed(
             (lowercase alphanumeric + dashes, 3..32 chars); name is
             trimmed-non-empty, capped at 256 chars. Personal orgs
             cannot be created via this endpoint — every account
-            already owns an immutable personal org (PR 3 backfill).
+            already owns an immutable personal org (backfill).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,7 +224,8 @@ async def asyncio(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (PR 3 backfill / migration 00099).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -224,7 +233,7 @@ async def asyncio(
             (lowercase alphanumeric + dashes, 3..32 chars); name is
             trimmed-non-empty, capped at 256 chars. Personal orgs
             cannot be created via this endpoint — every account
-            already owns an immutable personal org (PR 3 backfill).
+            already owns an immutable personal org (backfill).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

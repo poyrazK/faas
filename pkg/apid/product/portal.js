@@ -22,6 +22,7 @@
   const allowed = permission => view?.access?.permissions?.[permission] === true;
   const work = new Map(), inputs = new Map(), cards = new Map();
   let planControls, teamControls, guidanceControls, helpControls, notificationControls, activityControls, historyControls, historyPageSize, historyCursorMax, runControls, emailControls, activityPageSize, activityCursorMax, notificationPageSize, helpTextMax, helpPageSize, recoveryMaxBytes, refreshRequest = 0;
+  let signupControls, paymentControls;
   let billingRequest = 0, billingCursor = '', billingPeriod = '';
   let resultRequest = 0;
   function clearResult() { resultRequest++; $('result').hidden = true; $('result').replaceChildren(); }
@@ -116,7 +117,7 @@
     const body = await (blob ? response.blob() : response.json()); current(generation); return body;
   }
   function clear() {
-    epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); emailControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController();
+    epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); emailControls?.reset(); signupControls?.reset(); paymentControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController();
     runControls?.reset(); view = undefined; receipts = undefined; organization = ''; work.clear(); inputs.clear(); cards.clear(); $('sign-in').disabled = false;
     $('workspace').hidden = true; $('login').hidden = false;
     for (const id of ['features', 'usage', 'work', 'organization']) $(id).replaceChildren();
@@ -125,12 +126,18 @@
   async function connect() {
     const generation = epoch, data = await api(`${base()}/workspaces`); current(generation);
     recoveryMaxBytes = data.receipt_max_bytes; helpTextMax = data.help_text_max_bytes; helpPageSize = data.help_page_size; notificationPageSize = data.notification_page_size; historyPageSize = data.work_history_page_size; historyCursorMax = data.work_history_cursor_max_bytes; activityPageSize = data.activity_page_size; activityCursorMax = data.activity_cursor_max_bytes;
-    if (!data.workspaces.length) throw new Error('Your account has no customer workspace for this product. Contact your product team.');
+    if (!data.workspaces.length) {
+      // A product that offers signup lets the user create their first workspace (ADR-20261022100735).
+      if (await signupControls.choose()) { current(generation); return; }
+      throw new Error('Your account has no customer workspace for this product. Contact your product team.');
+    }
+    signupControls.reset();
     receipts = new Receipts({ storage: localStorage, locks: navigator.locks, crypto, maxBytes: data.receipt_max_bytes, maxEntries: data.receipt_max_entries, replaySeconds: data.replay_seconds });
     $('organization').replaceChildren();
     for (const workspace of data.workspaces) { const option = node('option', workspace.name); option.value = workspace.organization_id; $('organization').append(option); }
-    organization = data.workspaces[0].organization_id; $('organization').value = organization;
-    await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); schedule(generation);
+    const wanted = [signupControls.workspace(), paymentControls.workspace()].find(id => data.workspaces.some(workspace => workspace.organization_id === id));
+    organization = wanted || data.workspaces[0].organization_id; $('organization').value = organization;
+    await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); await paymentControls.connect(); schedule(generation);
   }
   async function refresh(forms = false, generation = epoch) {
     const request = ++refreshRequest;
@@ -152,12 +159,12 @@
     $('login').hidden = true; $('workspace').hidden = false;
     $('plan').textContent = view.catalog.spec.plans[view.customer.plan].label;
     $('account-status').textContent = view.customer.suspended ? 'New runs are paused. Contact your product team.' : 'Your workspace is active.';
-    renderOverdueHold();
+    renderOverdueHold(); renderTrialConversion();
     updateFeatureTerms();
     $('features-section').hidden = !allowed('run_work'); $('work-section').hidden = !allowed('view_work');
     $('usage-section').hidden = !allowed('view_billing'); $('billing-section').hidden = !allowed('view_billing'); $('billing-details-section').hidden = !allowed('manage_billing');
     planControls?.sync(); teamControls?.sync();
-    guidanceControls?.sync(); helpControls?.sync(); notificationControls?.sync(); activityControls?.sync(); historyControls?.sync(); emailControls?.sync();
+    guidanceControls?.sync(); helpControls?.sync(); notificationControls?.sync(); activityControls?.sync(); historyControls?.sync(); emailControls?.sync(); paymentControls?.sync();
     const permissions = [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team'], ['manage_billing', 'Manage billing details']].filter(([key]) => allowed(key)).map(([, label]) => label);
     $('access-status').textContent = `${view.access?.role || 'Workspace role'} · ${permissions.join(' · ')}`;
     $('period').textContent = view.usage ? `${view.usage.period} · ${view.usage.currency}` : '';
@@ -201,6 +208,24 @@
     try { link = new URL(hold.hosted_invoice_url); } catch { link = null; }
     if (link?.protocol === 'https:') { const a = node('a', 'View and pay invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; status.append(a); }
   }
+  // A plan that requires a card keeps the workspace after its trial only with
+  // one on file; otherwise the plan's fallback follows. Between the trial's
+  // end and that move, new runs wait for a card (ADR-20261022180921).
+  function awaitingCard() {
+    const plan = view.catalog.spec.plans[view.customer.plan], ends = Date.parse(view.customer.trial_ends_at || '');
+    return Boolean(plan?.requires_payment_method) && Number.isFinite(ends) && ends <= Date.now() && !view.customer.trial_resolved_at && !view.customer.payment_method_at;
+  }
+  function renderTrialConversion() {
+    const customer = view.customer, plan = view.catalog.spec.plans[customer.plan], status = $('trial-status'), ending = trialUntil(), held = awaitingCard();
+    status.replaceChildren(); status.hidden = !plan?.requires_payment_method || Boolean(customer.payment_method_at) || !ending && !held;
+    if (status.hidden) return;
+    const fallback = view.catalog.spec.plans[plan.fallback_plan]?.label || 'free';
+    status.append(node('span', held ? `Your trial ended ${customer.trial_ends_at.slice(0, 10)}. New runs wait for a card on file; without one, your workspace moves to the ${fallback} plan shortly. `
+      : `Your trial ends ${ending}. Add a card to keep the ${plan.label} plan; without one, your workspace moves to the ${fallback} plan. `));
+    if (!allowed('manage_billing')) { status.append(node('span', 'Ask a workspace member who manages billing to add one.')); return; }
+    if ($('payment-section').hidden) { status.append(node('span', 'Contact your product team to set up payment.')); return; }
+    const link = node('a', 'Add a card'); link.href = '#payment-title'; status.append(link);
+  }
   // Included starts come first at no charge; later ones cost the unit price
   // up to the monthly limit (ADR-20261021154511).
   function includedLeft(name, grant, remaining) {
@@ -228,7 +253,7 @@
       if (!grant) { card.button.disabled = true; card.info.textContent = 'This feature is no longer included in your plan.'; continue; }
       const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
       card.info.textContent = featureTerms(name, grant, remaining);
-      card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || Boolean(view.overdue_hold) || view.bindings[name]?.available !== true || remaining === 0);
+      card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || Boolean(view.overdue_hold) || awaitingCard() || view.bindings[name]?.available !== true || remaining === 0);
     }
   }
   function renderFeatures() {
@@ -241,7 +266,7 @@
       let saved; try { saved = receipts.load(scope(name)); } catch (error) { message(error.message); }
       const pending = saved && !saved.operationID, input = inputForm(binding?.input_schema, inputs.get(name));
       const button = node('button', pending ? 'Check / retry saved request' : 'Run feature'); button.type = 'submit';
-      button.disabled = !pending && (view.customer.suspended || Boolean(view.overdue_hold) || binding?.available !== true || remaining === 0);
+      button.disabled = !pending && (view.customer.suspended || Boolean(view.overdue_hold) || awaitingCard() || binding?.available !== true || remaining === 0);
       const info = node('p', featureTerms(name, grant, remaining));
       const cardState = { info, button, pending, busy: false }; cards.set(name, cardState); card.append(node('h3', feature.label), info);
       if (pending) card.append(node('p', 'A saved submission needs confirmation. Enter the original details if it has not been accepted.'));
@@ -381,6 +406,12 @@
     openBilling: async period => { $('billing-period').value = period; await loadBilling(); $('billing-section').scrollIntoView?.({ block: 'start' }); },
     denied: () => { clear(); message('Your workspace access changed. Sign in again to continue.'); } });
   emailControls = new GregaleProductEmail({ $, api: (path, options) => api(path, options, false, options?.method !== 'PUT'), base, view: () => view, epoch: () => epoch, current });
+  signupControls = new GregaleProductSignup({ $, raw, problem, api, base, app: () => app, epoch: () => epoch, current, amount, message, storage: localStorage, crypto, confirm: text => window.confirm(text), reconnect: () => connect() });
+  paymentControls = new GregaleProductPayment({ $, api, base, view: () => view, allowed, organization: () => organization, epoch: () => epoch, current,
+    href: () => location.href, replaceURL: url => history.replaceState(null, '', url), navigate: url => location.assign(url),
+    // Reading or saving the card records it on the workspace's plan; refresh
+    // the plan when that changed what it shows.
+    rendered: async onFile => { if (!view) return; if (onFile === Boolean(view.customer.payment_method_at)) renderTrialConversion(); else await refresh(); } });
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('gregale.product.session') : null;
   if (channel) channel.onmessage = event => { if (event.data?.app === app) { clear(); message('Your customer session changed in another tab. Sign in to continue.'); } };
   const updateRecoveryLink = () => {
@@ -409,8 +440,8 @@
   };
   $('refresh').onclick = () => { const generation = epoch; return refresh(true).catch(error => { if (generation === epoch) message(error.message); }); };
   $('organization').onchange = async () => {
-    const selected = $('organization').value; epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); runControls?.reset(); emailControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController(); organization = selected; inputs.clear(); work.clear(); cards.clear(); view = undefined; $('result').hidden = true; $('result').textContent = '';
-    const generation = epoch; try { await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); schedule(generation); } catch (error) { if (generation === epoch) { clear(); message(error.message); } }
+    const selected = $('organization').value; epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); runControls?.reset(); emailControls?.reset(); paymentControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController(); organization = selected; inputs.clear(); work.clear(); cards.clear(); view = undefined; $('result').hidden = true; $('result').textContent = '';
+    const generation = epoch; try { await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); await paymentControls.connect(); schedule(generation); } catch (error) { if (generation === epoch) { clear(); message(error.message); } }
   };
   $('disconnect').onclick = async () => {
     const sessionBase = base(), sessionApp = app; clear(); const generation = epoch;

@@ -32,3 +32,7 @@ func (h edgeRulesHost) EmitAudit(ctx context.Context, kind string, accountID *st
 func (h edgeRulesHost) Notifier() edgerules.Notifier { return h.s.notif }
 
 func (h edgeRulesHost) PromQL() *promql.Client { return h.s.promqlClient }
+
+func (h edgeRulesHost) PlatformFlagEnabled(flagKey string, acct state.Account) bool {
+	return h.s.platformFlagEnabled(flagKey, acct)
+}

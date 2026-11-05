@@ -11,6 +11,10 @@ import (
 )
 
 func (s *Service) loadRealtimePublisherAdmin(w http.ResponseWriter, r *http.Request, acct state.Account) (state.ManagedRealtimeEndpoint, state.RealtimePublisherCredentialStore, bool) {
+	if !s.PreviewVisible(acct.ID) {
+		httpkit.NoSuchRoute(w)
+		return state.ManagedRealtimeEndpoint{}, nil, false
+	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
 	if !ok {
 		return ep, nil, false

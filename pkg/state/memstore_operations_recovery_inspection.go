@@ -61,11 +61,7 @@ func (m *MemStore) operationRecoverySnapshotLocked(accountID, id string) (operat
 			s.runningAttempt = true
 		}
 	}
-	for _, other := range m.workflowRuns {
-		if other.AppID == op.AppID && workflowGuardRunActive(other.Status) {
-			s.activeRuns++
-		}
-	}
+	s.activeRuns = m.workflowAdmissionLocked(op.AppID, s.plan.WorkflowMaxParkedRuns())
 	return s, nil
 }
 

@@ -64,6 +64,59 @@ groups:
             `journalctl -u faas-cp-state-backup.service`.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/ControlPlaneStateBackup.md"
 
+      # ADR-20261026163015: audit log tamper evidence. faas-audit-anchor
+      # seals audit_log into a MAC-chained anchor every 15 minutes and
+      # re-verifies the last 48 hours; faas-audit-verify re-verifies the
+      # whole chain daily. Both write their outcome to the textfile
+      # collector only when the run completes.
+      - alert: FaasAuditLogTampered
+        expr: max by (instance) (faas_audit_anchor_recent_findings) > 0 or max by (instance) (faas_audit_verify_findings) > 0
+        for: 0m
+        labels:
+          severity: page
+          family: audit_anchor
+        annotations:
+          summary: "Audit log rows or anchors no longer match their seals on {{ $labels.instance }}"
+          description: |
+            An audit log verification found anchors that do not verify: sealed
+            rows were rewritten, erased or added, or anchors were altered.
+            Treat it as a security incident. `journalctl -u faas-audit-anchor.service
+            -u faas-audit-verify.service | grep 'audit anchor finding'` lists them.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"
+
+      - alert: FaasAuditAnchorErased
+        # The newest anchor's seq went down: anchors were deleted, or the
+        # database was restored to an earlier point.
+        expr: faas_audit_anchor_seq < max_over_time(faas_audit_anchor_seq[7d] offset 1m)
+        for: 0m
+        labels:
+          severity: page
+          family: audit_anchor
+        annotations:
+          summary: "The newest audit log anchors disappeared on {{ $labels.instance }}"
+          description: |
+            faas_audit_anchor_seq fell to {{ $value }}, below its 7-day maximum.
+            Unless the control-plane database was just restored, the newest
+            anchors were deleted, probably with the audit rows they sealed.
+            Compare with the "audit anchor sealed" lines in Loki.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"
+
+      - alert: FaasAuditAnchorStale
+        expr: time() - faas_audit_anchor_last_success_timestamp_seconds > 3600 or time() - faas_audit_verify_last_success_timestamp_seconds > 93600
+        for: 15m
+        labels:
+          severity: warn
+          family: audit_anchor
+        annotations:
+          summary: "The audit log is not being sealed or verified on {{ $labels.instance }}"
+          description: |
+            No audit anchor run completed in the last hour, or no full
+            verification in the last 26 hours. New audit rows are unsealed
+            meanwhile. A run that refuses to extend a chain whose newest anchor
+            does not verify, or that was sealed under another key, also stops
+            here. Check `journalctl -u faas-audit-anchor.service -u faas-audit-verify.service`.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/AuditLogAnchors.md"
+
       - alert: PgWalPruneStale
         expr: apid_pg_wal_prune_last_success_timestamp_seconds == 0 or time() - apid_pg_wal_prune_last_success_timestamp_seconds > 7200
         for: 15m

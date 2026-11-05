@@ -20,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 // Version is stamped at build time via -ldflags "-X .../pkg/wire.Version=...".
@@ -77,11 +78,15 @@ func RegisterDefaultOps(ops *OpsMetrics) {
 	// ADR-190: the per-daemon LISTEN hub reports reconnects and
 	// dropped fan-outs through this registry; installing it here
 	// means every daemon gets the counters without extra wiring.
+	// ADR 20261024014500: secretbox reports every decryption here, so
+	// every daemon that opens sealed values counts them.
 	if ops == nil {
 		db.SetNotifyHubObserver(nil)
+		secretbox.SetUnsealObserver(nil)
 		return
 	}
 	db.SetNotifyHubObserver(ops)
+	secretbox.SetUnsealObserver(ops)
 }
 
 // BootStamps records the daemon's boot-time metrics (issue #573 /
@@ -140,6 +145,10 @@ func BootStamps(ctx context.Context, name string, ops *OpsMetrics) {
 	// moment of shutdown" rather than a zero).
 	go recordUptimeWithOps(ctx, name, time.Now(), ops)
 	startOTLPMetrics(ctx, name, ops)
+
+	// ADR-20261023200002: root-only pprof on @faas-debug/<name>, so a leaking
+	// or spinning daemon can be profiled in place. Never fails the daemon.
+	startDebugProfiling(ctx, name, Logger())
 }
 
 // startOTLPMetrics binds the optional OTLP metrics exporter to the same

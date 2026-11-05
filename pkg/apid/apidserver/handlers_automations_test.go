@@ -322,3 +322,33 @@ func TestAutomationWriteScope(t *testing.T) {
 		t.Fatalf("read key wrote draft=%d %s", response.Code, response.Body.String())
 	}
 }
+
+// adr: 20261027090010 — an automation may run an agent only while the agents
+// capability is released to its account; elsewhere an agent step is refused
+// like any invalid step target.
+func TestAutomationAgentStepFollowsAgentsCapability(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithWorkflowRuntimeEnabled(true)
+	installAgentGate(t, *e.S(), "automations")
+	app := seedWorkflowApp(t, e, "agent-step-api")
+	base := "/v1/apps/" + app.Slug + "/automations"
+	spec := api.WorkflowSpec{Name: "triage", Steps: []api.WorkflowStepSpec{{Name: "review", Agent: "pr-triage"}}}
+	var valid api.ValidateAutomationResponse
+	response := e.Do(t, "POST", base+":validate", api.ValidateAutomationRequest{Definition: spec}, nil)
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &valid) != nil || valid.Valid ||
+		strings.Contains(response.Body.String(), "agent") {
+		t.Fatalf("validate with agents off: %d %s", response.Code, response.Body)
+	}
+	if response := e.Do(t, "PUT", base+"/triage", api.SaveAutomationDraftRequest{Definition: spec}, nil); response.Code == http.StatusOK {
+		t.Fatalf("save with agents off: %d %s", response.Code, response.Body)
+	}
+	releaseAgentsTo(t, *e.S(), (*e.Acct()).ID)
+	response = e.Do(t, "POST", base+":validate", api.ValidateAutomationRequest{Definition: spec}, nil)
+	valid = api.ValidateAutomationResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &valid) != nil || !valid.Valid {
+		t.Fatalf("validate with agents released: %d %s", response.Code, response.Body)
+	}
+	if response := e.Do(t, "PUT", base+"/triage", api.SaveAutomationDraftRequest{Definition: spec}, nil); response.Code != http.StatusOK {
+		t.Fatalf("save with agents released: %d %s", response.Code, response.Body)
+	}
+}

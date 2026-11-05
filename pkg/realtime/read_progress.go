@@ -54,7 +54,7 @@ func (m *Manager) resumeReadProgress(ctx context.Context, c *connection, frame r
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "read_error", Channel: frame.Channel, Inbox: inbox, Code: "invalid_read_progress"})
 		return
 	}
-	if limited {
+	if limited || (advance && !m.allowEphemeralRelay(c)) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "read_error", Channel: frame.Channel, Inbox: inbox, Code: "read_rate_limited"})
 		return
 	}
@@ -104,14 +104,7 @@ func (m *Manager) resumeReadProgress(ctx context.Context, c *connection, frame r
 func (m *Manager) broadcastInboxRead(ctx context.Context, ep string, frame EphemeralFrame) {
 	m.mu.RLock()
 	var recipients []*connection
-	for _, c := range m.conns {
-		if c.info.EndpointID != ep {
-			continue
-		}
-		key, err := state.ManagedRealtimeReadPrincipalKey(c.info.Principal)
-		if err != nil || key != frame.MemberID {
-			continue
-		}
+	for c := range m.readerConns[readerKey{endpointID: ep, principal: frame.MemberID}] {
 		c.mu.RLock()
 		active := c.inboxSub != nil && c.readReceipts
 		c.mu.RUnlock()
@@ -122,6 +115,45 @@ func (m *Manager) broadcastInboxRead(ctx context.Context, ep string, frame Ephem
 	m.mu.RUnlock()
 	for _, c := range recipients {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "read_receipt", Inbox: true, MemberID: frame.MemberID, Sequence: frame.Sequence, Unread: frame.Unread, LatestSequence: frame.LatestSequence, OldestSequence: frame.OldestSequence, HistoryUnavailable: frame.HistoryUnavailable, UpdatedAt: frame.UpdatedAt})
+	}
+}
+
+// readerKey is an endpoint and a principal's read key.
+type readerKey struct {
+	endpointID string
+	principal  string
+}
+
+// readerKeyFor is a connection's reader key; zero when its principal has
+// no read key.
+func readerKeyFor(endpointID, principal string) readerKey {
+	key, err := state.ManagedRealtimeReadPrincipalKey(principal)
+	if err != nil {
+		return readerKey{}
+	}
+	return readerKey{endpointID: endpointID, principal: key}
+}
+
+func (m *Manager) indexReaderLocked(c *connection) {
+	if c.readerKey.principal == "" {
+		return
+	}
+	if m.readerConns == nil {
+		m.readerConns = make(map[readerKey]map[*connection]struct{})
+	}
+	conns := m.readerConns[c.readerKey]
+	if conns == nil {
+		conns = make(map[*connection]struct{})
+		m.readerConns[c.readerKey] = conns
+	}
+	conns[c] = struct{}{}
+}
+
+func (m *Manager) unindexReaderLocked(c *connection) {
+	conns := m.readerConns[c.readerKey]
+	delete(conns, c)
+	if len(conns) == 0 {
+		delete(m.readerConns, c.readerKey)
 	}
 }
 

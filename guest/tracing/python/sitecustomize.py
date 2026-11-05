@@ -37,6 +37,35 @@ def _app_owns_sdk():
         return False
 
 
+def _keep_console_logging():
+    # ADR-213 runtime adapter: the SDK exports logging records through a
+    # handler on the root logger. A root handler turns off logging's
+    # last-resort stderr output and the implicit basicConfig() behind
+    # logging.warning(), and stops libraries such as werkzeug adding their own
+    # console handler, so an app that never configures logging would lose
+    # those lines from its runtime logs. Move the handler off the root logger
+    # and hand it every record a logger handles instead.
+    import logging
+
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    root = logging.getLogger()
+    exporters = [h for h in root.handlers if isinstance(h, LoggingHandler)]
+    if not exporters:
+        return
+    for handler in exporters:
+        root.removeHandler(handler)
+    call_handlers = logging.Logger.callHandlers
+
+    def _call_handlers(self, record):
+        call_handlers(self, record)
+        for handler in exporters:
+            if record.levelno >= handler.level:
+                handler.handle(record)
+
+    logging.Logger.callHandlers = _call_handlers
+
+
 _load_customer_sitecustomize()
 
 if os.getenv("FAAS_TRACING_ENABLED") == "1" and not _app_owns_sdk():
@@ -58,5 +87,6 @@ if os.getenv("FAAS_TRACING_ENABLED") == "1" and not _app_owns_sdk():
         from opentelemetry.instrumentation.auto_instrumentation import initialize
 
         initialize()
+        _keep_console_logging()
     except Exception:  # noqa: BLE001 - diagnostics never prevent serving
         pass

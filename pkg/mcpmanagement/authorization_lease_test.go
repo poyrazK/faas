@@ -28,6 +28,9 @@ type leaseFixture struct {
 
 func connectLeaseFixture(t *testing.T, backend *httptest.Server, opts Options, version string) *leaseFixture {
 	t.Helper()
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
 	opts.APIBase = backend.URL
 	native := api.NewClient(backend.URL, testToken)
 	server, manager, err := newManagementServer(native, opts)
@@ -41,7 +44,7 @@ func connectLeaseFixture(t *testing.T, backend *httptest.Server, opts Options, v
 		t.Fatal(err)
 	}
 	token := "gmcp_at_authorization_fixture"
-	grant := &oauthGrant{id: "lease-grant", accountID: "account-one", server: server, management: manager, client: native, accessExpires: time.Now().Add(time.Hour), expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
+	grant := &oauthGrant{id: "lease-grant", accountID: "account-one", approved: true, lastUsed: time.Now(), server: server, management: manager, client: native, accessExpires: time.Now().Add(time.Hour), expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
 	remote := &remoteServer{opts: HTTPOptions{APIBase: backend.URL, Timeout: time.Second}, host: origin.Host, origin: origin.String(), access: map[string]*oauthGrant{tokenHash(token): grant}, grants: map[string]*oauthGrant{grant.id: grant}, refresh: map[string]*oauthGrant{}}
 	endpoint.Config.Handler = remote.handler()
 	endpoint.Start()
@@ -345,7 +348,7 @@ func testAuthorizationLeaseMutationExpiryKeepsDurableRetryKey(t *testing.T) {
 	})
 	var leaseUntil atomic.Int64
 	leaseUntil.Store(time.Now().Add(time.Hour).UnixNano())
-	opts := Options{APIBase: native.BaseURL(), AllowWrites: true, planStore: store, planNamespace: "authorization-lease-fixture"}
+	opts := Options{APIBase: native.BaseURL(), AllowWrites: true, Toolsets: []string{ToolsetAll}, planStore: store, planNamespace: "authorization-lease-fixture"}
 	connect := func() (*mcp.ClientSession, *management) {
 		t.Helper()
 		s, manager, err := newManagementServer(native, opts)

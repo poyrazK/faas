@@ -3,6 +3,7 @@ package meter
 import (
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 )
 
@@ -84,6 +85,11 @@ type Config struct {
 	// SampleInterval is how often the sampler rolls one minute of usage.
 	// Zero means the production default (60 s).
 	SampleInterval time.Duration
+	// QuietPauseUnbilled (ADR-20261023171905) is off, shadow or on: whether
+	// billed residency subtracts the quiet-paused seconds schedd's pause
+	// ledger proves. Shadow only counts them. Empty is off;
+	// FAAS_QUIET_PAUSE_UNBILLED overrides it.
+	QuietPauseUnbilled string `toml:"quiet_pause_unbilled"`
 	// QuotaInterval is how often the quota loop walks every account.
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration
@@ -241,6 +247,9 @@ func (c *Config) Defaults() {
 	if c.BillingLookback == 0 {
 		c.BillingLookback = 30 * 24 * time.Hour
 	}
+	// The replay must reach past the catch-up window, or an hour that becomes
+	// final by age after a long outage is never delivered (ADR-20261030120000).
+	c.BillingLookback = max(c.BillingLookback, api.MeterUsageFinalAfter+24*time.Hour)
 	if c.DunningInterval == 0 {
 		c.DunningInterval = time.Hour
 	}

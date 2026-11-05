@@ -27,6 +27,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,6 +118,8 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 		{"latency_p99_ms", []string{"histogram_quantile(0.99", "or vector(0)"}},
 		{"cold_start_pct", []string{"gateway_cold_boot_total", "or vector(0)"}},
 		{"queue_depth", []string{"gateway_queue_depth", "or vector(0)"}},
+		{"queue_backlog", []string{`max(schedd_queue_depth{app=`, "or vector(0)"}},
+		{"queue_oldest_age_seconds", []string{`max(schedd_queue_oldest_age_seconds{app=`, "or vector(0)"}},
 		{"pre_auth_target_threshold", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome="target_threshold"`, `[5m]`, "or vector(0)"}},
 		{"pre_auth_pressure", []string{`gateway_pre_auth_rate_limit_total`, `outcome=~"blocked|route_blocked|would_block|route_would_block"`, `[5m]`, "or vector(0)"}},
 		{"edge_validation_failures", []string{`gateway_validate_failures_total{app_id=`, `[5m]`, "or vector(0)"}},
@@ -240,8 +244,13 @@ func TestErrorBudgetRemainingPct(t *testing.T) {
 }
 
 func TestAppMetrics_FetchUsesClosedClassPopulation(t *testing.T) {
-	var queries []string
+	var (
+		mu      sync.Mutex
+		queries []string
+	)
 	stub := &stubPromQL{fn: func(query string) (float64, error) {
+		mu.Lock() // Fetch queries concurrently.
+		defer mu.Unlock()
 		queries = append(queries, query)
 		return 1, nil
 	}}
@@ -340,12 +349,12 @@ func TestAppMetrics_Fetch_NaNGuard_Float(t *testing.T) {
 // so every histogram query must turn an idle window into vector(0) before the
 // response reaches Go.
 func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
-	var histogramQueries int
+	var histogramQueries atomic.Int32 // Fetch queries concurrently.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
 		value := "0"
 		if strings.Contains(query, "histogram_quantile") {
-			histogramQueries++
+			histogramQueries.Add(1)
 			if !strings.Contains(query, "_count") || !strings.Contains(query, "or vector(0)") {
 				value = "NaN"
 			}
@@ -360,8 +369,8 @@ func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
 	if src != appmetrics.SourcePrometheus {
 		t.Fatalf("src = %q, want %q", src, appmetrics.SourcePrometheus)
 	}
-	if histogramQueries != 4 {
-		t.Fatalf("histogram queries = %d, want 4", histogramQueries)
+	if n := histogramQueries.Load(); n != 4 {
+		t.Fatalf("histogram queries = %d, want 4", n)
 	}
 	if resp.LatencyP50MS != 0 || resp.LatencyP95MS != 0 || resp.LatencyP99MS != 0 || resp.WakeP95MS != 0 {
 		t.Fatalf("idle histogram values must be zero: %+v", resp)
@@ -814,5 +823,31 @@ func TestAppMetrics_Fetch_IdleWindowIsNotDegraded(t *testing.T) {
 	}
 	if resp.RequestCount != 0 || resp.ErrorRatePct != 0 || resp.ColdStartPct != 0 {
 		t.Fatalf("idle window = %+v, want zero counts and rates", resp)
+	}
+}
+
+// The fleet wake p95 comes with the wake count it was computed from, so a
+// p95 of 4 wakes is not quoted as fact (Hunt 12 H12-40).
+func TestAppMetrics_FetchReportsWakeSamples(t *testing.T) {
+	log, _ := captureLog(t)
+	stub := &stubPromQL{fn: func(q string) (float64, error) {
+		if strings.HasPrefix(q, "sum(increase(gateway_wake_latency_seconds_count[") {
+			return 4.0167, nil
+		}
+		return 42, nil
+	}}
+	resp, _ := appmetrics.Fetch(context.Background(), stub, log, "app-1", "1h")
+	if resp.WakeSamples == nil || *resp.WakeSamples != 4 {
+		t.Fatalf("WakeSamples = %v, want 4", resp.WakeSamples)
+	}
+	failing := &stubPromQL{fn: func(q string) (float64, error) {
+		if strings.HasPrefix(q, "sum(increase(gateway_wake_latency_seconds_count[") {
+			return 0, errors.New("prometheus down")
+		}
+		return 42, nil
+	}}
+	resp, src := appmetrics.Fetch(context.Background(), failing, log, "app-1", "1h")
+	if resp.WakeSamples != nil || src != appmetrics.SourcePrometheus || resp.WakeP95MS != 42 {
+		t.Fatalf("count failure: samples=%v src=%q p95=%v; want nil, prometheus, 42", resp.WakeSamples, src, resp.WakeP95MS)
 	}
 }

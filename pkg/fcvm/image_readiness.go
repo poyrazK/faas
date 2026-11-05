@@ -27,10 +27,15 @@ func (v *JailerVMM) waitApplicationReady(ctx context.Context, l Lease, path stri
 	} else {
 		err = v.waitReadyWithProbe(ctx, l, path, grpc, service, startupS)
 	}
-	if err != nil || !required {
-		return err
+	if err == nil && required {
+		err = v.WaitImageHealthcheck(ctx, l, startupS)
 	}
-	return v.WaitImageHealthcheck(ctx, l, startupS)
+	if err != nil {
+		if oom := v.startupOOMProblem(l); oom != nil {
+			return oom
+		}
+	}
+	return err
 }
 
 // WaitImageHealthcheck executes a fresh challenge on this VM's private vsock

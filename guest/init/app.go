@@ -192,16 +192,18 @@ func StampOverridePortEnv(env []string, port int) []string {
 }
 
 // StampDefaultHomeEnv gives the workload a writable HOME when neither the
-// image nor the customer set one. Apps run as uid 1000 with a read-only "/",
-// so tools that write under ~ (mise, npm, pip, git) failed with EACCES; every
-// Railpack Node app logged "mise WARN tracking config: failed create_dir_all:
+// image nor the customer set one: imageHome, the workload user's passwd home
+// when the user can write there, as Docker does (ADR-20261025111339), else
+// /tmp. Apps run as uid 1000 with a read-only "/", so tools that write under
+// ~ (mise, npm, pip, git) failed with EACCES; every Railpack Node app logged
+// "mise WARN tracking config: failed create_dir_all:
 // /.local/state/mise/tracked-configs: Permission denied" at startup
 // (production-us hunt #8). /tmp is the guest's world-writable tmpfs.
 //
 // The kernel starts PID 1 with HOME=/ and guest-init passes its own
 // environment through, so "/" counts as unset: it is the kernel default, not
 // an image or customer choice, and it is read-only for the workload user.
-func StampDefaultHomeEnv(env []string) []string {
+func StampDefaultHomeEnv(env []string, imageHome string) []string {
 	home := ""
 	for _, kv := range env {
 		if k, v, ok := cut(kv); ok && k == "HOME" {
@@ -211,7 +213,10 @@ func StampDefaultHomeEnv(env []string) []string {
 	if home != "" && home != "/" {
 		return env
 	}
-	return append(env, "HOME="+defaultWorkloadHome)
+	if imageHome == "" {
+		imageHome = defaultWorkloadHome
+	}
+	return append(env, "HOME="+imageHome)
 }
 
 const defaultWorkloadHome = "/tmp"

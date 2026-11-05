@@ -225,6 +225,11 @@ func prepareNode(ctx context.Context, opts deployPrepareOptions) (prepareNodeRep
 	if err != nil {
 		return report, err
 	}
+	// Every host verifies releases and platform base provenance with this
+	// binary, so only the pinned build is staged.
+	if err := releaseinstall.CheckCosignBinary(cosignPath, pinnedCosignSHA256); err != nil {
+		return report, err
+	}
 	releaseStarted := time.Now()
 	release, err := prepareReleaseAssets(ctx, prepareReleaseOptions{
 		Repo: opts.ReleaseRepo, Tag: opts.ReleaseTag, CacheDir: opts.CacheDir,
@@ -642,6 +647,10 @@ func verifyPrepareChecksums(paths map[string]string) error {
 	}
 	return nil
 }
+
+// pinnedCosignSHA256 is the cosign build deploy prepare and deploy join accept.
+// It is a variable only so tests can stand in a fake binary.
+var pinnedCosignSHA256 = releaseinstall.PinnedCosignSHA256
 
 func resolvePrepareCosignBinary(explicit string) (string, error) {
 	candidate := strings.TrimSpace(explicit)

@@ -28,7 +28,7 @@ func (s *PgStore) GetIssueSlackAccountLink(ctx context.Context, app, owner, acto
 		if !slackLinkToken.MatchString(token) {
 			return out, ErrInvalidArgument
 		}
-		ch, err := q.IssueSlackChallengeByToken(ctx, s.pool, sqlc.IssueSlackChallengeByTokenParams{AppID: issueUUID(app), Token: token})
+		ch, err := q.IssueSlackChallengeByToken(ctx, s.pool, sqlc.IssueSlackChallengeByTokenParams{AppID: issueUUID(app), Token: slackLinkTokenHash(token)})
 		if err != nil {
 			return out, mapErr(err)
 		}
@@ -65,7 +65,7 @@ func (s *PgStore) ConfirmIssueSlackAccountLink(ctx context.Context, app, owner, 
 	if scope.State != "open" {
 		return applicationTriageConflict()
 	}
-	ch, err := q.IssueSlackChallengeByToken(ctx, tx, sqlc.IssueSlackChallengeByTokenParams{AppID: a.ID, Token: token})
+	ch, err := q.IssueSlackChallengeByToken(ctx, tx, sqlc.IssueSlackChallengeByTokenParams{AppID: a.ID, Token: slackLinkTokenHash(token)})
 	if err != nil {
 		return mapErr(err)
 	}
@@ -92,7 +92,7 @@ func (s *PgStore) ConfirmIssueSlackAccountLink(ctx context.Context, app, owner, 
 	if err != nil || changed != 1 {
 		return api.NewProblem(409, "issue_slack_link_changed", "Slack account link changed", "unlink an existing identity before linking a different account")
 	}
-	if err = q.IssueSlackChallengeConsume(ctx, tx, token); err != nil {
+	if err = q.IssueSlackChallengeConsume(ctx, tx, slackLinkTokenHash(token)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

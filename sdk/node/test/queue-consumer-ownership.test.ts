@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, TriggersService, isFaasError } from '../src/index.js';
+import { FaaSClient, TriggersService, isFaasError } from '../src/preview.js';
 
 test('trigger controls return updated state and preserve binding ownership conflicts', async () => {
   const client = new FaaSClient('https://api.example.test', {

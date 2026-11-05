@@ -38,6 +38,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -52,8 +53,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
+
+// readFileHeader returns up to n leading bytes of a customer file, or nil
+// when it cannot be read; callers treat nil as "no signature".
+func readFileHeader(path string, n int) []byte {
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, n)
+	read, _ := io.ReadFull(f, buf)
+	return buf[:read]
+}
 
 // doctorCheck is the result of one customer-doctor check. The
 // shape mirrors commands_inspect.go's per-leaf Finding so a future
@@ -148,9 +163,9 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 //	--json           machine output (default: human prose)
 //
 // Auth is NOT required — the customer-developer is scanning their
-// own cwd before they even login. Cross-referencing with a running
-// app's declared env is a future addition (TODO — needs a
-// pkg/client.ListEnv sibling).
+// own cwd before they even login. When logged in and an app is known
+// (--app or the linked project), its env and secret names count as
+// declared for the env-required check.
 //
 // Exit codes:
 //
@@ -165,6 +180,10 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	setFlagOutput(fs, osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
+	// deploy and scan take --path; doctor answered "unknown flag --path"
+	// (Hunt 14 H14-25). A positional directory still works.
+	pathFlag := fs.String("path", "", "source directory (default: current directory)")
+	appFlag := fs.String("app", "", "app whose env and secret names count as declared (defaults to linked context)")
 	imageFlags := registerDoctorImageFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -177,7 +196,13 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
 	}
 	path := "."
-	if fs.NArg() > 0 {
+	switch {
+	case *pathFlag != "" && fs.NArg() > 0 && fs.Arg(0) != *pathFlag:
+		PrintUsage(osStderr, "pass the directory once: --path and the positional DIR name different directories\n"+doctorUsage, "doctor")
+		return 1
+	case *pathFlag != "":
+		path = *pathFlag
+	case fs.NArg() > 0:
 		path = fs.Arg(0)
 	}
 	abs, err := filepath.Abs(path)
@@ -187,7 +212,8 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
-	report := runDoctorChecks(abs)
+	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
+	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
 	// exit semantics stay in sync with `gregale deploy --doctor-strict`
@@ -202,7 +228,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 		_ = writeJSON(report)
 		return exit
 	}
-	renderDoctorHuman(osStdout, report)
+	renderDoctorHumanExit(osStdout, report, exit != 0)
 	return exit
 }
 
@@ -216,6 +242,12 @@ func runDoctorChecks(path string) doctorReport {
 }
 
 func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
+	return runDoctorChecksForApp(path, deploymentShape, nil)
+}
+
+// runDoctorChecksForApp is runDoctorChecksForShape with the app's env and
+// secret names for the env-required check; nil means they were not read.
+func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorAppEnv) doctorReport {
 	rep := doctorReport{Path: path}
 	// Framework profiles describe app-shaped deployments. A single
 	// handler.* tree is a valid zero-config function and should not be
@@ -228,7 +260,7 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep.Checks = append(rep.Checks, doctorCheckPortBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
-	rep.Checks = append(rep.Checks, doctorCheckEnvRequired(path))
+	rep.Checks = append(rep.Checks, doctorCheckEnvRequiredForApp(path, appEnv))
 	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path))
 	if check, present := doctorCheckDurableEntities(path); present {
 		rep.Checks = append(rep.Checks, check)
@@ -242,6 +274,30 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep.Checks = append(rep.Checks, doctorCheckDepInstall())
 	rep.Checks = append(rep.Checks, doctorCheckStartupTimeout())
 	return rep
+}
+
+// withSourceCheck adds the source finding to standalone doctor. Deploy
+// refuses a directory with no app marker or function handler; a Compose root
+// deploys with --project instead, and deploy preflights check their own shape.
+func withSourceCheck(report doctorReport, dir string) doctorReport {
+	if detectShape(dir) != shapeUnknown || composeFileIn(dir) != "" {
+		return report
+	}
+	report.Checks = append([]doctorCheck{doctorCheckNoSource()}, report.Checks...)
+	return report
+}
+
+// doctorCheckNoSource reports a directory deploy would refuse: no app marker
+// and no function handler. doctor used to pass every local check there and
+// end with "No local findings" (Hunt 14 H14-61).
+func doctorCheckNoSource() doctorCheck {
+	return doctorCheck{
+		Name:   "source",
+		Status: "error",
+		Code:   "no_deployable_source",
+		Hint:   "No app or function source was found in this directory, so gregale deploy would refuse it.",
+		Fix:    "add package.json, requirements.txt / pyproject.toml / Pipfile / setup.py, go.mod or a Dockerfile at the root for an app, or a single handler.{js,ts,py,go} for a function; or point doctor at the source with --path",
+	}
 }
 
 // hardCodedPortBindRegex covers common Node, Go, and Python listener forms.
@@ -295,7 +351,7 @@ var loopbackBindRegex = regexp.MustCompile(
 // though the readiness probe passes. Detected here → customer
 // gets the fix BEFORE the failed wake.
 func doctorCheckLoopbackBind(path string) doctorCheck {
-	sources := scanSource(path, loopbackBindRegex, 5)
+	sources := scanLoopbackBinds(path, 5)
 	if len(sources) == 0 {
 		return doctorCheck{Name: "loopback-bind", Status: "ok"}
 	}
@@ -360,23 +416,44 @@ var platformInjectedEnvVars = map[string]struct{}{
 	"PYTHON_VERSION":         {},
 }
 
-// doctorCheckEnvRequired scans source for env-var references and
-// flags any not declared in `.gregale/env.json` (the apid
-// persistence shape). Cross-referencing with a running app's
-// declared env (via pkg/client ListEnv) is a future addition.
-func doctorCheckEnvRequired(path string) doctorCheck {
+// platformProvidedEnvVar reports a variable the platform supplies, so a
+// source reference to it is never missing configuration. It follows apid's
+// rule (projectsetup.PlatformProvidedEnvKey): PORT, the GREGALE_ and FAAS_
+// namespaces and the identity keys, plus the runtime basics above. FAAS_ is
+// stamped by guest-init over customer values (Hunt 14 H14-52); GREGALE_
+// carries platform settings such as GREGALE_SERVICE_CA_BUNDLE and service
+// URLs (CLI audit 2026-10-31).
+func platformProvidedEnvVar(name string) bool {
+	if _, ok := platformInjectedEnvVars[name]; ok {
+		return true
+	}
+	return name == "PORT" || strings.HasPrefix(name, "GREGALE_") || strings.HasPrefix(name, "FAAS_") || api.IsPlatformIdentityEnvKey(name)
+}
+
+// doctorCheckEnvRequiredForApp scans source for env-var references and flags
+// any not declared in `.env`, `.gregale/env.json` or, when app was read, the
+// app's env and secret names. Without the app (nil or unchecked) the local
+// files may be incomplete, so a finding is a warning. A reference still missing after that comparison is an error; one
+// missing only from the local files is a warning, because values set with
+// `env set` or `secrets set` never appear there (CLI audit 2026-10-31).
+func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv) doctorCheck {
 	refs := scanEnvRefs(path, envVarRefRegex)
 	if len(refs) == 0 {
 		return doctorCheck{Name: "env-required", Status: "ok"}
 	}
 	declared := loadDeclaredEnv(path)
+	if app.checked() {
+		for name := range app.Names {
+			declared[name] = true
+		}
+	}
 	optional := loadOptionalEnv(path)
 	for _, r := range scanOptionalEnvRefs(path, envVarRefRegex) {
 		optional[r] = true
 	}
 	missing := []string{}
 	for _, r := range refs {
-		if _, ok := platformInjectedEnvVars[r]; ok {
+		if platformProvidedEnvVar(r) {
 			continue
 		}
 		if _, ok := declared[r]; !ok {
@@ -390,7 +467,7 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 		return doctorCheck{Name: "env-required", Status: "ok"}
 	}
 	p := whycopy.Decorate(&api.Problem{}, api.CodeEnvVarMissing, missing[0])
-	return doctorCheck{
+	check := doctorCheck{
 		Name:    "env-required",
 		Status:  "error",
 		Code:    api.CodeEnvVarMissing,
@@ -399,6 +476,12 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 		Fix:     p.Fix,
 		Sources: missing,
 	}
+	if !app.checked() {
+		check.Status = "warn"
+		check.Hint = "your code references env vars missing from .env and .gregale/env.json; " + app.uncheckedReason()
+		check.Why = strings.TrimSpace(check.Why + " Only the local .env and .gregale/env.json were read, so values set with `gregale env set` or `gregale secrets set` are not counted.")
+	}
+	return check
 }
 
 // doctorCheckStatelessOnly mirrors the G13 stateless-only platform
@@ -459,7 +542,25 @@ func scanSourceExtensions(root string, re *regexp.Regexp, maxHits int, extension
 	return scanSourceFiltered(root, re, maxHits, allowed)
 }
 
+// localOnlyMarker on a listener line declares it deliberately local, such as
+// the data-api template's development server in dev.mjs, which `doctor`
+// reported as app_loopback_bound although the deployed server.mjs binds
+// 0.0.0.0 (Hunt 14 H14-92). Only the loopback scan honours it.
+const localOnlyMarker = "gregale:local-only"
+
+// scanLoopbackBinds is scanSource for loopbackBindRegex, skipping lines that
+// carry localOnlyMarker.
+func scanLoopbackBinds(root string, maxHits int) []string {
+	return scanSourceSkipping(root, loopbackBindRegex, maxHits, nil, localOnlyMarker)
+}
+
 func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}) []string {
+	return scanSourceSkipping(root, re, maxHits, extensions, "")
+}
+
+// scanSourceSkipping is scanSourceFiltered that also ignores lines containing
+// skip, when skip is not empty.
+func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}, skip string) []string {
 	out := []string{}
 	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -507,7 +608,7 @@ func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions 
 		for scanner.Scan() {
 			lineNumber++
 			line := scanner.Text()
-			if !envRefCommentOnlyLine(line) && re.MatchString(line) {
+			if !envRefCommentOnlyLine(line) && re.MatchString(line) && (skip == "" || !strings.Contains(line, skip)) {
 				out = append(out, fmt.Sprintf("%s:%d", p, lineNumber))
 				break
 			}
@@ -858,10 +959,10 @@ func isDeclaredEnvKey(k string) bool {
 	return true
 }
 
-// scanStatelessShape scans for Dockerfile VOLUME lines, data/ or
-// db/ top-level dirs, and stateful base-image references. The
-// base-image list is a curated 6-entry set; full image
-// classification is a build-VM concern.
+// scanStatelessShape scans for Dockerfile VOLUME lines and for database
+// files under a top-level data/ or db/ directory, the same rule apid
+// applies at accept time (pkg/statelessshape). Migrations and other
+// source in those directories are fine.
 func scanStatelessShape(path string) []string {
 	out := []string{}
 	_ = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
@@ -872,14 +973,14 @@ func scanStatelessShape(path string) []string {
 			return err
 		}
 		if info.IsDir() {
-			name := info.Name()
-			if name == "data" || name == "db" || name == "var" {
-				// Only top-level dirs (parent == path).
-				if filepath.Dir(p) == path {
-					out = append(out, p)
-				}
-			}
 			return nil
+		}
+		if rel, relErr := filepath.Rel(path, p); relErr == nil && info.Mode().IsRegular() {
+			rel = filepath.ToSlash(rel)
+			if statelessshape.StateDirOf(rel) != "" && statelessshape.DatabaseFile(rel, readFileHeader(p, statelessshape.HeaderBytes)) {
+				out = append(out, p)
+				return nil
+			}
 		}
 		if filepath.Base(p) == "Dockerfile" {
 			//nolint:forbidigo // filepath.Walk has already resolved p; Dockerfile contents are read-only line-by-line to detect VOLUME directives. Same security discipline as openCustomerFile: no follow on symlinks, no exec.
@@ -908,6 +1009,12 @@ func scanStatelessShape(path string) []string {
 // no glyph). Skipped checks carry their reason so the summary never
 // implies that an unperformed check passed.
 func renderDoctorHuman(w io.Writer, rep doctorReport) {
+	renderDoctorHumanExit(w, rep, rep.HasErrors())
+}
+
+// renderDoctorHumanExit renders the report; failing says the command exits 1
+// on it, so the footer does not suggest --strict to make it fail.
+func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 	renderDoctorReadiness(w, rep)
 	if rep.Image != nil {
 		renderDoctorImage(w, rep.Image)
@@ -921,7 +1028,13 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 			if rep.Profile.StartCommand != "" {
 				_, _ = fmt.Fprintf(w, " · start=%s", rep.Profile.StartCommand)
 			}
-			_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+			// A worker: manifest has no listener; the framework's default
+			// port and health path described it as HTTP (Hunt 14 H14-42).
+			if manifestDeployExecutionMode(rep.Path) == api.ExecutionModeWorker {
+				_, _ = fmt.Fprintln(w, " · worker (no HTTP listener)")
+			} else {
+				_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+			}
 		}
 	}
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
@@ -982,6 +1095,9 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 		} else {
 			_, _ = fmt.Fprintln(w, "All checks passed. Run `gregale deploy` to ship.")
 		}
+	} else if failing {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy.")
 	} else {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy, or run with --strict to fail in CI.")

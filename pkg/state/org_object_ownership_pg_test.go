@@ -33,6 +33,10 @@ func TestPostgresOrgObjectAdoptionBillingConflict(t *testing.T) {
 	orgObjectAdoptionBillingConflict(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
 
+func TestPostgresOrgObjectAdoptionCreditsStorageCharges(t *testing.T) {
+	orgObjectAdoptionCreditsStorageCharges(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+}
+
 func TestPostgresOrgObjectOwnershipBackfill(t *testing.T) {
 	for _, scenario := range []string{"retained roots and history", "mixed bucket root", "mixed app binding", "finalized current period"} {
 		t.Run(scenario, func(t *testing.T) {

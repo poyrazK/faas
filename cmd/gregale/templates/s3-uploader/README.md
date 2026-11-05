@@ -39,21 +39,21 @@ If you prefer to set secrets through the app API, reserve the app first:
 
 ```sh
 gregale deploy --create-only --template s3-uploader --name <slug>
-gregale secrets set --app <slug> S3_BUCKET=my-bucket S3_REGION=us-east-1 S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
+gregale env set --app <slug> S3_BUCKET=my-bucket S3_REGION=us-east-1 S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
 cd <this-directory> && gregale deploy
 ```
 
 ## Rotate or update secrets
 
 ```sh
-gregale secrets set --app <slug> S3_BUCKET=my-bucket S3_REGION=us-east-1 S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
+gregale env set --app <slug> S3_BUCKET=my-bucket S3_REGION=us-east-1 S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
 # For R2 / B2, also:
-gregale secrets set --app <slug> S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+gregale env set --app <slug> S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
 ```
 
 If any of `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`,
 `S3_SECRET_ACCESS_KEY` are missing, the handler exits at startup with
-the exact `gregale secrets set` command — see the `Missing required env
+the exact `gregale env set` command — see the `Missing required env
 vars` console output.
 
 ## Deploy

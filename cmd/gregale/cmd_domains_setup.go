@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const domainsSetupUsage = "usage: gregale domains setup <domain> --app SLUG [--environment SLUG] [--timeout 10m] [--poll-interval 10s]"
+const domainsSetupUsage = "usage: gregale domain setup <domain> --app SLUG [--env SLUG] [--timeout 10m] [--poll-interval 10s]"
 
 func cmdDomainsSetup(args []string) int {
 	if hasHelpFlag(args) {
@@ -76,7 +76,7 @@ func cmdDomainsSetup(args []string) int {
 		cancel()
 		return printErr("Domain already bound elsewhere", errors.New("the existing app or environment does not match; inspect domains show before changing the binding"))
 	}
-	if !found {
+	if !found || binding.VerificationExpiredAt(time.Now()) {
 		binding, err = client.CreateDomain(requestCtx, api.CreateCustomDomainRequest{Domain: domain, AppID: *slug, Environment: *environment})
 	}
 	cancel()
@@ -121,6 +121,9 @@ func cmdDomainsSetup(args []string) int {
 		}
 		if binding.Domain != domain || binding.AppID != app.ID || binding.Environment != *environment {
 			return printErr("Domain binding changed", errors.New("the domain now points to a different app or environment; inspect domains show"))
+		}
+		if binding.VerificationExpiredAt(time.Now()) {
+			return printErr("Verification claim expired", errors.New("run "+resume+" to obtain a new TXT proof"))
 		}
 		if domainSetupReady(binding) {
 			break

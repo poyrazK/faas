@@ -12,22 +12,22 @@ import (
 )
 
 const issueFrequencyCount = `-- name: IssueFrequencyCount :one
-SELECT count(*) FROM issue_events e
-WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
-AND e.occurred_at > $2 AND e.occurred_at <= $3
+SELECT COALESCE(sum(issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,false,true)),0)::bigint FROM issue_events e
+WHERE e.issue_id IN (SELECT $3::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$3)
+AND e.occurred_at >= $1::timestamptz - interval '1 second' AND e.occurred_at <= $2::timestamptz + interval '1 second'
 `
 
 type IssueFrequencyCountParams struct {
-	IssueID pgtype.UUID
 	Since   pgtype.Timestamptz
 	Until   pgtype.Timestamptz
+	IssueID pgtype.UUID
 }
 
 func (q *Queries) IssueFrequencyCount(ctx context.Context, db DBTX, arg IssueFrequencyCountParams) (int64, error) {
-	row := db.QueryRow(ctx, issueFrequencyCount, arg.IssueID, arg.Since, arg.Until)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	row := db.QueryRow(ctx, issueFrequencyCount, arg.Since, arg.Until, arg.IssueID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const issueFrequencyLastAlert = `-- name: IssueFrequencyLastAlert :one

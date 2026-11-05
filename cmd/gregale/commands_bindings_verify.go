@@ -196,7 +196,7 @@ func cmdBindingsVerify(args []string) int {
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [--dry-run] [--require-complete] [--deployment ID|vN] [--queue-publish] [--object-storage-write] [flags] | gregale bindings verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale app binding verify <app> <service> [--release ID|vN] [flags] | gregale app binding verify <app> --all [--dry-run] [--require-complete] [--release ID|vN] [--queue-publish] [--object-storage-write] [flags] | gregale app binding verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale app binding verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale app binding verify <app> --object-storage <PREFIX> [flags] | gregale app binding verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
 }
 
 func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
@@ -204,13 +204,13 @@ func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeCl
 	if err != nil {
 		return printErr("Could not load app bindings", err)
 	}
-	bound := false
+	bound, database := false, ""
 	for _, item := range inventory.Bindings {
 		if item.Type == api.BindingTypePostgres && item.Binding == environmentKey && item.Scope == inventory.VerificationScope {
 			if item.Access == "migration" {
 				return printErr("Migration bindings are restricted to release tasks", fmt.Errorf("verify this connection through the deployment release command"))
 			}
-			bound = true
+			bound, database = true, item.Name
 			break
 		}
 	}
@@ -228,6 +228,9 @@ func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeCl
 	if exitCode == 0 && bindingProbeDeploymentChanged(inventory, task) {
 		report.Error = "live deployment changed during verification; run verification again"
 		exitCode = 1
+	}
+	if exitCode == 0 {
+		report.Connections = postgresBindingConnections(ctx, client, slug, database, report.PoolMax)
 	}
 	if jsonOutput {
 		if err := writeJSON(report); err != nil {
@@ -290,6 +293,7 @@ func executePostgresBindingProbe(ctx context.Context, client serviceBindingProbe
 			report.Error = "task did not return a valid PostgreSQL canary report"
 		} else {
 			report = taskReport
+			report.Connections = nil // the CLI's own comparison, never the guest's
 			if report.EnvironmentKey != environmentKey {
 				report.Error = "canary report does not match the selected PostgreSQL key"
 			}
@@ -336,15 +340,16 @@ func bindingProbeDeploymentChanged(inventory api.AppBindingInventory, task api.A
 func renderPostgresBindingProbeReport(app string, report api.PostgresBindingProbeReport, task api.AppTaskResponse) {
 	_, _ = fmt.Fprintf(osStdout, "PostgreSQL binding canary: %s → %s\n", app, report.EnvironmentKey)
 	_, _ = fmt.Fprintf(osStdout, "Task: %s (deployment=%s)\n", task.ID, task.DeploymentID)
-	for _, row := range []struct {
-		name  string
-		check api.PostgresBindingProbeCheck
-	}{
+	rows := []postgresProbeRow{
 		{name: "Environment", check: report.Environment},
 		{name: "Configuration", check: report.Configuration},
 		{name: "Connection", check: report.Connection},
 		{name: "Query", check: report.Query},
-	} {
+	}
+	if c := report.Connections; c != nil {
+		rows = append(rows, postgresProbeRow{name: "Connections", check: api.PostgresBindingProbeCheck{Status: c.Status, Detail: c.Detail}})
+	}
+	for _, row := range rows {
 		label := strings.ToUpper(strings.ReplaceAll(row.check.Status, "_", " "))
 		if label == "" {
 			label = "NOT CHECKED"

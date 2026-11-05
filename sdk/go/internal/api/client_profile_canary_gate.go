@@ -5,7 +5,7 @@ import (
 	"net/url"
 )
 
-func (c *Client) GetProfileCanaryGate(ctx context.Context, id string) (ProfileCanaryGateDecision, error) {
+func (c *PreviewClient) GetProfileCanaryGate(ctx context.Context, id string) (ProfileCanaryGateDecision, error) {
 	var out ProfileCanaryGateDecision
 	err := c.do(ctx, "GET", "/v1/deployments/"+url.PathEscape(id)+"/canary/profile-gate", nil, &out)
 	return out, err

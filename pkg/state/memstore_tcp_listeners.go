@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (m *MemStore) CreateTCPListener(_ context.Context, in TCPListener) (TCPListener, error) {
@@ -70,7 +72,7 @@ func (m *MemStore) TCPListenerByPublicPort(_ context.Context, publicPort int) (T
 	defer m.mu.Unlock()
 	for _, listener := range m.tcpListeners {
 		app, exists := m.apps[listener.AppID]
-		if listener.PublicPort == publicPort && listener.Enabled && exists && app.Status != AppDeleted && app.AccountID == listener.AccountID {
+		if listener.PublicPort == publicPort && listener.Enabled && exists && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && !api.IsInternalWorkloadPort(app.Manifest.Ports, api.WorkloadPortTCP, listener.GuestPort) {
 			return listener, nil
 		}
 	}
@@ -103,7 +105,7 @@ func (m *MemStore) ListEnabledTCPListeners(_ context.Context) ([]TCPListener, er
 	listeners := make([]TCPListener, 0)
 	for _, listener := range m.tcpListeners {
 		app, exists := m.apps[listener.AppID]
-		if listener.Enabled && exists && app.Status != AppDeleted && app.AccountID == listener.AccountID {
+		if listener.Enabled && exists && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && !api.IsInternalWorkloadPort(app.Manifest.Ports, api.WorkloadPortTCP, listener.GuestPort) {
 			listeners = append(listeners, listener)
 		}
 	}

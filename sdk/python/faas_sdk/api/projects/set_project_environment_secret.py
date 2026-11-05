@@ -108,8 +108,8 @@ def sync_detailed(
 ) -> Response[Problem | ProjectEnvironmentSharedSecretResponse]:
     """Set a secret shared by every service of a project environment.
 
-     Seals the value for the fleet and stores it once for the environment
-    (ADR-1139). Each service receives it at its next boot unless it sets
+     Seals the value for the fleet and stores it once for the environment. Each service receives it at
+    its next boot unless it sets
     the same key itself; services' snapshots in the environment are
     invalidated. Platform identity keys are rejected.
 
@@ -152,8 +152,8 @@ def sync(
 ) -> Problem | ProjectEnvironmentSharedSecretResponse | None:
     """Set a secret shared by every service of a project environment.
 
-     Seals the value for the fleet and stores it once for the environment
-    (ADR-1139). Each service receives it at its next boot unless it sets
+     Seals the value for the fleet and stores it once for the environment. Each service receives it at
+    its next boot unless it sets
     the same key itself; services' snapshots in the environment are
     invalidated. Platform identity keys are rejected.
 
@@ -191,8 +191,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProjectEnvironmentSharedSecretResponse]:
     """Set a secret shared by every service of a project environment.
 
-     Seals the value for the fleet and stores it once for the environment
-    (ADR-1139). Each service receives it at its next boot unless it sets
+     Seals the value for the fleet and stores it once for the environment. Each service receives it at
+    its next boot unless it sets
     the same key itself; services' snapshots in the environment are
     invalidated. Platform identity keys are rejected.
 
@@ -233,8 +233,8 @@ async def asyncio(
 ) -> Problem | ProjectEnvironmentSharedSecretResponse | None:
     """Set a secret shared by every service of a project environment.
 
-     Seals the value for the fleet and stores it once for the environment
-    (ADR-1139). Each service receives it at its next boot unless it sets
+     Seals the value for the fleet and stores it once for the environment. Each service receives it at
+    its next boot unless it sets
     the same key itself; services' snapshots in the environment are
     invalidated. Platform identity keys are rejected.
 

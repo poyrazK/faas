@@ -16,8 +16,7 @@ T = TypeVar("T", bound="EnvDiffResponse")
 
 @_attrs_define
 class EnvDiffResponse:
-    """Top-level response shape for GET /v1/apps/{slug}/env-diff
-    (ADR-117 PR-C). The matrix is always full (no `?scope=`
+    """Top-level response shape for GET /v1/apps/{slug}/env-diff. The matrix is always full (no `?scope=`
     filter in v1). Rows are sorted ASC by key; scopes are
     sorted ASC. Bounded payload: row count <= SecretCountMax +
     EnvCountMax (200 on Scale), column count = customer's

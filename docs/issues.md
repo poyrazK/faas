@@ -9,19 +9,19 @@ preview feature on Hobby, Pro, and Scale.
 Create an issue reporting token for the exact deployment that runs the code:
 
 ```sh
-gregale issues create-token --app exports --deployment DEPLOYMENT_ID --name production --expires-in 24h
+gregale debug issue token create --app exports --release DEPLOYMENT_ID --name production --expires-in 24h
 ```
 
 Store the returned `g_issue_…` token as an application secret. It is shown once;
 listing tokens returns metadata. Rotate tokens on deployment and revoke old ones
-with `gregale issues revoke-token TOKEN_ID --app exports`. Tokens can expire at
+with `gregale debug issue token revoke TOKEN_ID --app exports`. Tokens can expire at
 most 90 days after creation. The optional `--environment` must match a project
 release environment; `application` is the default namespace for standalone apps.
 
 Node:
 
 ```ts
-import { createIssueReporter } from '@gregale/sdk-node';
+import { createIssueReporter } from '@gregale/sdk-node/preview';
 
 const issues = createIssueReporter({
   baseURL: process.env.GREGALE_API_URL!,
@@ -41,7 +41,7 @@ await issues.close();
 Python:
 
 ```python
-from faas_sdk import IssueReporter
+from faas_sdk.preview import IssueReporter
 
 issues = IssueReporter(api_url, "exports", reporting_token)
 try:
@@ -56,7 +56,7 @@ Go:
 
 ```go
 // Imports include context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
-issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 	BaseURL: os.Getenv("GREGALE_API_URL"),
 	App:     "exports",
 	Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
@@ -71,7 +71,7 @@ defer func() {
 }()
 
 if err := generateExport(); err != nil {
-	issues.CaptureException(err, faas.IssueContext{
+	issues.CaptureException(err, preview.IssueContext{
 		RequestID: requestID,
 		TraceID:   traceID,
 		Route:     "/exports",
@@ -80,7 +80,7 @@ if err := generateExport(); err != nil {
 }
 ```
 
-For worker panics, `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+For worker panics, `defer issues.RecoverAndRepanic(preview.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
 captures the panic best-effort and re-panics with the original value. Standard Go errors do not
 carry creation-time stacks, so the helper records the current goroutine's stack
 at the capture call. No locals, request bodies, or arbitrary context fields are
@@ -91,8 +91,17 @@ hooks and fatal-exception behavior. Explicit wrappers capture then rethrow the
 original exception. Delivery uses a bounded in-memory queue, timeouts, and stable
 event IDs for retries. Process crashes can lose queued events. HTTP 429 and 5xx
 are retried; invalid or revoked credentials cause drops visible in reporter
-statistics. Report handled exceptions explicitly. Worker code can supply
+statistics. Flush and close report failure if any event was dropped during the
+reporter's lifetime, even after its queue drains. In Go, this is
+`preview.ErrIssueReporterDropped`; Node and Python return `false`. Report handled
+exceptions explicitly. Worker code can supply
 `source_kind: "worker"` and `invocation_id` to link an app-scoped async execution.
+The reporters omit malformed correlation IDs and bound evidence to the 64 KiB
+request limit without changing grouping evidence based on optional context. The
+Node reporter's `close(timeoutMs)`
+retries queued events within the deadline, then returns `false` and aborts an
+in-flight request if the deadline expires; inspect its queue and drop statistics
+for incomplete delivery.
 
 The REST endpoint is `POST /v1/apps/{slug}/issue-events`. Its credential supplies
 account/app/deployment/environment; callers cannot override those identities.
@@ -115,10 +124,30 @@ message, and stacktrace attributes are supported. Optional `gregale.request_id`,
 or an explicit UUID. Unrelated logs/spans/resource tags are ignored.
 
 Trace and span IDs follow the [OTLP JSON encoding specification](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding). Unknown protocol fields are ignored.
+Invalid or all-zero optional log trace and span IDs are treated as absent; span
+identifiers in trace exports remain subject to trace validation.
 
-Event IDs are deterministic across exporter retries. The full batch is validated
-before ingestion; retrying after a partial database failure is safe. Each export
-is capped at 64 KiB and 32 exception events. Configure an exception log exporter
+Event IDs are deterministic across retries of the same export. Identical records
+within an export receive distinct IDs. When separately exported records can have
+identical timestamps and exception fields, set `gregale.issue.event_id` to a
+stable, unique UUID for each occurrence; without it the receiver cannot distinguish
+an independently sent identical record from a retry. Batch order and composition
+must remain unchanged across retries when relying on generated IDs. Permanently
+invalid records are reported in OTLP `partialSuccess` while valid records are
+stored; all exception events within a span are accepted or rejected together.
+Transient failures return a retryable response. Earlier accepted records may
+already be stored, and an unchanged export retry safely deduplicates them.
+Partial rejections increment the issue-ingestion outcome counters; `invalid`
+counts rejected log records or spans, while quota and conflict outcomes retain
+their existing labels.
+When a batch encounters unavailable source maps or reaches a temporary event or
+rate quota after making progress, independent log records and spans are attempted
+separately. If no new occurrence can fit at the start, the exporter receives a
+retryable response immediately. Retry the unchanged batch as capacity or artifacts
+become available.
+Exception events within a single span remain atomic and must fit together within
+the available quota.
+Each export is capped at 64 KiB and 32 exception events. Configure an exception log exporter
 or independent reporting helper when trace sampling would omit failures: a
 server cannot recover an exception that instrumentation never exported.
 
@@ -127,18 +156,18 @@ server cannot recover an exception that instrumentation never exported.
 Open an app's **Issues** page, or use:
 
 ```sh
-gregale issues list --app exports --state open
-gregale issues list --app exports --assignee me
-gregale issues list --app exports --assignee unassigned
-gregale issues list --app exports --sort impact
-gregale issues list --app exports --sort impact --min-customers 3
-gregale issues get ISSUE_ID --app exports
-gregale issues assign ISSUE_ID --app exports --assignee ACCOUNT_ID
-gregale issues resolve ISSUE_ID --app exports --deployment FIXED_DEPLOYMENT_ID
-gregale issues reopen ISSUE_ID --app exports
-gregale issues ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
-gregale issues merge SOURCE_ISSUE_ID --app exports --target DESTINATION_ISSUE_ID
-gregale issues split CANONICAL_ISSUE_ID --app exports --member ORIGINAL_ISSUE_ID
+gregale debug issue list --app exports --state open
+gregale debug issue list --app exports --assignee me
+gregale debug issue list --app exports --assignee unassigned
+gregale debug issue list --app exports --sort impact
+gregale debug issue list --app exports --sort impact --min-customers 3
+gregale debug issue get ISSUE_ID --app exports
+gregale debug issue assign ISSUE_ID --app exports --assignee ACCOUNT_ID
+gregale debug issue resolve ISSUE_ID --app exports --release FIXED_DEPLOYMENT_ID
+gregale debug issue reopen ISSUE_ID --app exports
+gregale debug issue ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
+gregale debug issue merge SOURCE_ISSUE_ID --app exports --target DESTINATION_ISSUE_ID
+gregale debug issue split CANONICAL_ISSUE_ID --app exports --member ORIGINAL_ISSUE_ID
 ```
 
 Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
@@ -162,8 +191,8 @@ Read the configured rules or replace the complete policy (an empty rules array
 disables routing):
 
 ```sh
-gregale issues ownership-rules --app exports
-gregale issues ownership-rules --app exports --rules-file issue-routing.json
+gregale debug issue ownership-rules --app exports
+gregale debug issue ownership-rules --app exports --rules-file issue-routing.json
 ```
 
 The `GET /v1/apps/{slug}/issue-ownership-rules` endpoint reads the policy, and
@@ -196,16 +225,19 @@ To notify a configured app webhook when an issue becomes customer-impacting,
 set a rolling 24-hour threshold:
 
 ```sh
-gregale issues impact-alert --app exports                 # read current policy
-gregale issues impact-alert --app exports --min-customers 5
-gregale issues impact-alert --app exports --min-customers 0 # disable
+gregale debug issue impact-alert --app exports                 # read current policy
+gregale debug issue impact-alert --app exports --min-customers 5
+gregale debug issue impact-alert --app exports --min-customers 0 # disable
 ```
 
 The policy fires when verified distinct customer impact moves from below the
 configured threshold to at or above it. It uses the same tenant-first verified
 identity as the inbox; unattributed occurrences do not count. A later request
 telemetry enrichment can trigger the transition when it supplies the identity
-that crosses the threshold. Changing a policy does not backfill alerts for
+that crosses the threshold. Gregale retries that enrichment for one hour after
+it accepts an occurrence; if a backlog delays the first check beyond that window,
+one further maintenance interval is allowed. An occurrence with no request, trace or invocation ID
+stays unattributed. Changing a policy does not backfill alerts for
 issues already above the new threshold. The transition appears in issue
 activity and emits `issue.impact_threshold_reached`; subscribe an app webhook
 to that event to receive it. Delivery uses Gregale's durable outbox and retry
@@ -224,7 +256,23 @@ Issue identity survives deployments. Grouping removes line numbers and known
 container/build roots but preserves source directories and function names.
 Use an explicit fingerprint for unsupported or unstable stack representations.
 HTTP 5xx observations are a separate source from instrumented exceptions and
-may produce a separate issue for the same incident.
+may produce a separate issue for the same incident. Updated gateways assign a
+unique ID to each emitted record, independent of a caller-supplied request ID.
+Older gateways retain their previous request-ID-based deduplication until they
+are upgraded. New gateways keep per-millisecond counts in folded 5xx records,
+so issue windows and alerts can count failures on the correct side of a time
+boundary. The millisecond buckets cover one UTC second per record. Older gateway
+records do not contain that timing evidence, and windows crossing their batch
+boundaries remain approximate. Apply the schema and upgrade all apid writers
+before upgrading gateways if precise timing is required: an older apid ignores
+the new bucket field, and those timestamps cannot be recovered later.
+If recording an HTTP Issue fails transiently, apid retries the Issue independently
+of the legacy error count. Initial attempts allow 128 concurrent records, at most 8 per app. Up to 1,024
+additional records can wait for an initial attempt, at most 128 per app. Retries
+remain in memory for up to an hour; a full queue, expiry, or process restart can
+still lose records.
+The `retry_recovered`, `retry_dropped`, and `retry_skipped` ingestion outcomes
+expose recovery, exhaustion, and events no longer eligible for ingestion.
 
 ### Opt-in failure-site grouping
 
@@ -252,12 +300,12 @@ issues.capture_exception(error, error_code="INVALID_DATE")
 ```
 
 ```go
-issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
     BaseURL: apiURL, App: "exports", Token: reportingToken,
     GroupingStrategy: "failure-site-v1",
 })
 // Handle err before using the reporter.
-issues.CaptureException(errToReport, faas.IssueContext{ErrorCode: "INVALID_DATE"})
+issues.CaptureException(errToReport, preview.IssueContext{ErrorCode: "INVALID_DATE"})
 ```
 
 Use stable, low-cardinality application codes, rather than customer IDs or
@@ -302,7 +350,7 @@ no map URLs itself:
 
 ```ts
 import { readFileSync } from 'node:fs';
-import { createIssueReporter } from '@gregale/sdk-node';
+import { createIssueReporter } from '@gregale/sdk-node/preview';
 
 const issues = createIssueReporter({
   baseURL: apiURL, app: 'exports', token: reportingToken,
@@ -408,9 +456,9 @@ file is rejected.
 Publish a portable build manifest using an owner API key with deploy-write scope:
 
 ```sh
-gregale issues source-maps publish --app exports --deployment DEPLOYMENT_ID \
+gregale debug issue source-map publish --app exports --deployment DEPLOYMENT_ID \
   --directory /app/dist --manifest-file dist/.gregale-issue-maps.json
-gregale issues source-maps status --app exports --deployment DEPLOYMENT_ID
+gregale debug issue source-map get --app exports --deployment DEPLOYMENT_ID
 ```
 
 The REST equivalent is `PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps`
@@ -430,13 +478,18 @@ and the existing grouping-strategy attribute. Trace and log exports are supporte
 No map URL or source file is fetched.
 
 The reporting credential selects the artifact-owning deployment. Missing or
-retired artifacts reject new opted-in captures with
-`409 issue_source_maps_unavailable`; publish before enabling exporters. Different
+retired artifacts defer new opted-in captures with
+`503 issue_source_maps_unavailable` and `Retry-After: 60`; publish or restore the
+artifacts to resume delivery. Reporter queues are bounded and may still drop events
+if artifacts remain unavailable. Publish before enabling exporters. Different
 canonical manifests conflict for the same deployment. Bundle digests are producer
 claims: the server does not independently fetch deployment bundles or attest map
 correctness. The Node startup loader separately verifies local bundle bytes.
 
 Mapped outer and cause frames pass through normal sanitization before grouping.
+Each mapped file and function is limited to 512 bytes in its JSON representation,
+including escaping; unusually long or heavily escaped mapped names can therefore
+group differently from occurrences recorded before this bound was introduced.
 Unmapped lines and segments keep generated locations. Raw stacks remain generated.
 Retained occurrences expose read-only `symbolication` evidence containing the
 manifest digest and mapped/unmapped application-frame counts; columns do not affect
@@ -445,10 +498,12 @@ identity. Existing grouping explanations continue verifying saved fingerprints.
 At most 32 ready deployment sets per app are retained, each subject to the existing
 map count, byte, symbol, and decoded-entry bounds. Upload bodies are capped at
 4 MiB plus 64 KiB. Retire an obsolete set with
-`gregale issues source-maps retire --app exports --deployment DEPLOYMENT_ID`
+`gregale debug issue source-map retire --app exports --deployment DEPLOYMENT_ID`
 or `DELETE` on the artifact path. Retirement removes mapping blobs and frees ready-set
 capacity while preserving the immutable digest. The identical canonical manifest
-can be restored; different mapping metadata cannot replace it. Retained exact event
+can be restored; different mapping metadata cannot replace it. Compiled maps use
+a process-local cache bounded by entry count and estimated memory; each event
+still checks publication status, and a batch reuses its own compiled map. Retained exact event
 retries keep their original occurrence even after retirement. App or deployment
 deletion cascades artifacts. Existing occurrences retain their mapped evidence;
 source contents and producer extensions are never persisted in artifact storage.
@@ -489,7 +544,7 @@ publication interruptions retry the same completion without another build or
 deployment; a lost image notification is recovered by the existing durable poll.
 Process death before that commit follows the existing build-reaper behavior.
 
-Inspect readiness with `gregale issues source-maps status --app APP --deployment ID`.
+Inspect readiness with `gregale debug issue source-map get --app APP --deployment ID`.
 The existing 32-ready-deployment cap and immutable-manifest conflicts still
 apply; retire obsolete sets to free capacity. Do not also use the prebuilt CLI
 publication flags for the same deployment. Automatic publication does not enable
@@ -638,8 +693,32 @@ mutations require deploy-write permission and completed MFA for session users.
 The dashboard uses scoped CSRF tokens for each action.
 
 Customer counts use verified platform identity in a selected window (24 hours by
-default). Missing identity is displayed as unattributed. Late request telemetry
-can enrich an occurrence during maintenance. Counts cover accepted, retained
+default). A consumer observed together with a platform tenant in the selected
+window counts under the tenant, including its consumer-only occurrences. If a
+consumer is linked to multiple observed tenants, those tenants each count once;
+consumer-only occurrences do not create another customer. Consumers without an
+observed tenant link count separately. Missing identity is displayed as
+unattributed. Late request telemetry
+can enrich an occurrence during maintenance, including adding a missing identity
+component when other evidence corroborates the identity already retained. Request
+audit matches must be unique and fall within five minutes of the occurrence;
+when the event provides a trace ID, the audit record must carry the same ID.
+Public request IDs can be supplied by clients,
+so time and trace matching do not provide a cryptographic identity guarantee.
+Anonymous audit evidence is not promoted using a conflicting trace hint.
+When trusted attribution sources conflict during ingestion or enrichment, the
+occurrence is retained without a verified customer identity. If a partial
+identity was recorded earlier, conflicting evidence removes it from future impact
+counts; previously delivered alerts are not retracted.
+Partial identities receive an initial check after the next maintenance interval;
+afterward, partial and complete identities are rechecked at most every 30 minutes
+while the attribution window is open. A backlog can delay checks. Conflicting late
+evidence removes the verified identity.
+Current public gateways replace client request IDs
+longer than 128 bytes with a generated ID, returned in the response header and
+used for downstream correlation; older gateways may retain oversized IDs until
+upgraded.
+Counts cover accepted, retained
 events; sampling, absent instrumentation, expired data, and rejected events
 limit coverage. Stack traces and request/trace/worker links are evidence, not
 proof of a generated causal explanation.
@@ -750,9 +829,9 @@ is per canonical issue across all teams/channels, and starts only when a lifecyc
 alert enters the queue. Missing routes, full queues and previews consume nothing.
 
 ```sh
-gregale issues lifecycle-alerts get --app payments
-gregale issues lifecycle-alerts preview --app payments --issue ISSUE_UUID --event regressed --environments production --cooldown-seconds 1800
-gregale issues lifecycle-alerts save --app payments --expected-revision 0 --environments production --cooldown-seconds 1800
+gregale debug issue lifecycle-alert get --app payments
+gregale debug issue lifecycle-alert preview --app payments --issue ISSUE_UUID --event regressed --environments production --cooldown-seconds 1800
+gregale debug issue lifecycle-alert set --app payments --expected-revision 0 --environments production --cooldown-seconds 1800
 ```
 
 `GET|PUT /v1/apps/{slug}/issue-lifecycle-alert-policy` reads or replaces the policy.
@@ -783,10 +862,10 @@ For example, notify when a production issue records at least 20 accepted events 
 three verified customers in ten minutes:
 
 ```sh
-gregale issues compound-alerts get --app payments
-gregale issues compound-alerts save --app payments --expected-revision 0 --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
-gregale issues compound-alerts preview --app payments --issue ISSUE_UUID --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
-gregale issues compound-alerts remove --app payments --expected-revision 1 --key production-impact
+gregale debug issue compound-alert get --app payments
+gregale debug issue compound-alert set --app payments --expected-revision 0 --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale debug issue compound-alert preview --app payments --issue ISSUE_UUID --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale debug issue compound-alert delete --app payments --expected-revision 1 --key production-impact
 ```
 
 The dashboard's **Compound alerts** page supports editing, removing and previewing
@@ -805,9 +884,9 @@ or team route, queue capacity and sender checks.
 
 Both counts use retained accepted occurrences in `(now-window, now]`, including
 merged members. Distinct customers use authoritative platform tenant/consumer
-attribution; reported hints do not count. Attribution learned after capture
-contributes on the next eligible capture. A new unique event inside the window
-triggers evaluation. Active ignores and snoozes suppress compound admission.
+attribution; reported hints do not count. A new unique event inside the window
+or a later successful attribution triggers evaluation. Active ignores and snoozes
+suppress compound admission.
 Cooldown expiry, policy edits, delayed/future captures outside the window and
 capture retries do not trigger notifications by themselves. A regression starts
 a new response incident before evaluating its compound rules.
@@ -865,18 +944,63 @@ period does not retroactively notify about suppressed customer-impact crossings.
 
 Each canonical group supports up to 20 tracker links. Native GitHub creation retains at most 100 request receipts per original issue; existing request IDs can retry at that limit.
 
-Payloads are at most 64 KiB, with 32 frames, a 2 KiB message and 16 KiB stack.
+Input payloads are at most 64 KiB, with 32 frames, a 2 KiB message and 16 KiB stack.
+Retained normalized and source-mapped evidence is separately capped at 512 KiB;
+PostgreSQL allows 1 MiB for its expanded JSONB text representation.
 Accepted timestamps must fall inside retention and within five minutes of the
-server's clock. Limits are enforced transactionally across API replicas. Storage
-quotas return 409 and minute limits return 429 with `Retry-After: 60`; limit
-problems include the bound, attempted count, and documentation URL.
+server's clock. Future timestamps within that allowance are stored at receipt
+time, so alert windows can evaluate them immediately. Limits are enforced
+transactionally across API replicas. The retained-event cap and minute limits
+return 429 with `Retry-After: 60`;
+other storage quotas return 409. The Node, Python and Go reporters retry 429
+responses and 503 responses, honoring any `Retry-After` delay up to one day. Queues remain bounded and
+in memory: a long period at capacity can still cause overflow or shutdown loss.
+Limit problems include the bound, attempted count, and documentation URL. The
+first new write per app after the retained-event counter migration initializes
+the counter with a one-time scan; subsequent writes use database-maintained
+counts and perform bounded expired-event cleanup.
 Resolved, ignored, and linked original identities still count toward the issues-per-app limit because
-their identity and release history are retained.
+their identity and release history are retained. To reclaim capacity, an authorized app writer can call
+`DELETE /v1/apps/{slug}/issues/{issue_id}`. Deletion permanently removes the
+selected standalone issue, retained occurrences, release history, activity,
+and attached issue metadata. Split linked groups and remove derived branches
+first. Finish or recover native ticket creation and attach confirmed tickets
+before deletion. An unconfirmed dispatch blocks deletion by default. After its
+dispatch lease expires, an authorized user may explicitly pass
+`abandon_unconfirmed_tickets=true` to the delete API. The provider may still have
+created a ticket, and deletion removes its recovery receipt; record the request ID
+and investigate the provider first. Confirmed unattached tickets still block
+deletion. A later occurrence creates a fresh identity; retries of deleted
+occurrences are no longer deduplicated against the removed history.
+
+Automatic HTTP errors may combine repeated failures into one stored record.
+Its `occurrence_count` weights issue, release, and frequency totals. The record's
+timestamp and identity describe only the sampled request; the other represented
+failures remain unattributed. New gateway batches retain per-millisecond counts;
+older batches retain only the sampled time. Event storage and rate quotas count
+stored records.
+
+During a rolling upgrade or rollback, an older apid can still process a folded
+HTTP record without preserving its weight. Treat HTTP issue totals and
+frequency alerts spanning that interval as lower bounds. For retained windows,
+`unknown_http_batches` counts records whose HTTP weight is unknown, and an
+occurrence's `occurrence_count_exact` is false when its weight was not saved.
+These identify incomplete coverage, not the number of missing failures. Older
+writers may also have discarded entire count-only batches; those batches cannot
+be detected from retained records, so a zero marker does not prove completeness.
+Lifetime totals may remain lower bounds after detailed events expire. Complete the apid
+upgrade before relying on weighted counts. The original per-record weights
+cannot be reconstructed from retained issue events. Rolling back the schema
+is blocked while weighted events remain, to avoid discarding known weights.
 
 Maintenance runs every minute with bounded batches. Detailed occurrences expire
 even when traffic stops. Aggregate issue/release totals and activity survive.
 Expired tokens are removed; app deletion cascades all issue records. A Free
 downgrade gates reporting and removes detailed occurrences on maintenance.
+After upgrading the apid writers, a separate bounded review revisits previously
+attributed events. Conflicting retained evidence revokes an identity; missing
+or expired evidence alone does not. Finish the rolling upgrade before relying
+on this review, since older writers do not enforce the newer correlation checks.
 
 ## Privacy and reproduction
 
@@ -885,7 +1009,9 @@ locals, request bodies, headers, cookies, or environment variables. Gregale
 redacts known patterns before persistence and reports applied redactions; pattern
 matching does not recognize every possible sensitive value.
 
-Debugger links resolve only scoped, unambiguous retained request telemetry.
+Debugger links resolve only scoped, unambiguous retained request telemetry. A
+request ID can resolve through a unique retained journal entry with a trace ID;
+without an exact retained trace, the link remains absent.
 Missing evidence is shown explicitly. Request telemetry does not retain bodies,
 so issue metadata cannot automatically reproduce an exception. Use the existing
 sanitized replay corpus and a private environment with appropriate secrets and
@@ -921,10 +1047,10 @@ export GREGALE_ISSUES_SMOKE_DEPLOYMENT_A=DEPLOYMENT_UUID_A
 export GREGALE_ISSUES_SMOKE_DEPLOYMENT_B=DEPLOYMENT_UUID_B
 export FAAS_TOKEN='your-Gregale-API-key-with-issue-read-access'
 
-FAAS_API="$GREGALE_API_URL" gregale issues create-token --app "$GREGALE_APP" \
+FAAS_API="$GREGALE_API_URL" gregale debug issue token create --app "$GREGALE_APP" \
   --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_A" \
   --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-a --expires-in 24h
-FAAS_API="$GREGALE_API_URL" gregale issues create-token --app "$GREGALE_APP" \
+FAAS_API="$GREGALE_API_URL" gregale debug issue token create --app "$GREGALE_APP" \
   --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_B" \
   --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-b --expires-in 24h
 
@@ -1136,7 +1262,7 @@ and [ADR-1744](adr/1744-issue-grouping-previews-and-baselines.md).
 Create a collector for each request or job; add only messages appropriate to retain as issue evidence:
 
 ```typescript
-import { createIssueContext } from '@gregale/sdk-node';
+import { createIssueContext } from '@gregale/sdk-node/preview';
 const context = createIssueContext();
 context.setTag('component', 'payments');
 context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
@@ -1144,10 +1270,13 @@ reporter.captureException(error, context.snapshot());
 ```
 
 Capture freezes the evidence for retries. The collector keeps the latest 16 entries, with messages bounded to 256 UTF-8 bytes. The server sanitizes messages and discards entries older than one hour relative to the exception. The dashboard displays reported breadcrumbs, tags, and dropped counts. These are reported observations, not a complete request history.
+The reporters discard invalid breadcrumbs, including timestamps more than five
+minutes after the exception, and include them in the dropped count, so malformed
+optional context does not discard the exception.
 
 Allowed operational tag keys are `component`, `operation`, `feature_flag`, `feature_variant`, `dependency`, `region`, `job_type`, `workflow`, `state`, `error_class`, `release_channel`, and `runtime`. Values are sanitized to 128 UTF-8 bytes; unknown keys are discarded. Tags never establish verified customer identity and do not change grouping.
 
-Use `gregale issues list --app payments --tag component=payments`, or the list API's `tag=component%3Dpayments` query, to find groups with matching retained occurrences in a fixed 24-hour window. Pagination preserves the filter and window. Impact and event totals still describe the whole issue, rather than the filtered tag segment.
+Use `gregale debug issue list --app payments --tag component=payments`, or the list API's `tag=component%3Dpayments` query, to find groups with matching retained occurrences in a fixed 24-hour window. Pagination preserves the filter and window. Impact and event totals still describe the whole issue, rather than the filtered tag segment.
 
 OTLP exception records can report tags as string attributes named `gregale.issue.tag.<key>`, breadcrumbs as a JSON array in the string attribute `gregale.issue.breadcrumbs`, and a decimal counter in `gregale.issue.breadcrumbs_dropped`. The same server validation and sanitation apply.
 
@@ -1156,7 +1285,7 @@ OTLP exception records can report tags as string attributes named `gregale.issue
 Choose two deployments in the Issues dashboard, or run:
 
 ```sh
-gregale issues compare-releases --app payments --baseline BASELINE_UUID --candidate CANDIDATE_UUID --environment application
+gregale debug issue releases compare --app payments --baseline BASELINE_UUID --candidate CANDIDATE_UUID --environment application
 ```
 
 `GET /v1/apps/{slug}/issue-release-comparison?baseline=UUID&candidate=UUID&environment=application` compares the same last-24-hour window in one database snapshot. Both deployments must belong to the app. It reports weighted observed requests, HTTP 5xx responses and their observed rate, retained issue events, distinct current issue groups, groups with recorded creation/regression activity, verified distinct customers, and unattributed events. The rate delta is candidate minus baseline as a fraction; dashboard/CLI display percentage points.
@@ -1168,8 +1297,8 @@ No observed requests means **unknown** health: the rate and any dependent delta 
 Select issues in the dashboard and apply assign, resolve, ignore, or reopen. CLI selection is explicit:
 
 ```sh
-gregale issues bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action assign --assignee ACCOUNT_UUID
-gregale issues bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action resolve --deployment FIXED_DEPLOYMENT_UUID
+gregale debug issue bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action assign --assignee ACCOUNT_UUID
+gregale debug issue bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action resolve --deployment FIXED_DEPLOYMENT_UUID
 ```
 
 `POST /v1/apps/{slug}/issues/bulk-actions` accepts `{ "issue_ids": ["UUID", "UUID"], "action": { "action": "reopen" } }`. It supports 1–50 distinct nonzero UUIDs. Merged aliases update once and return one canonical issue in `items`. The complete batch commits together; a missing issue, disallowed assignee, or deployment outside an issue's environment rolls everything back. Each changed group retains its existing lifecycle activity and webhook behavior. Unchanged state is a no-op. Regrouping is excluded. Use the standard `Idempotency-Key` header when retrying API mutations. Permissions, session MFA, and dashboard CSRF match individual triage.
@@ -1181,10 +1310,10 @@ Go exposes `CompareIssueReleases` and `BulkActOnIssues`; generated Node and Pyth
 Filter the Issues inbox, then use **Save or replace current filters** to save a named view. Views are shared with people who can read that app's Issues; they confer no new access. Dashboard links use a stable key and always load the latest definition. A `me` owner filter resolves for each authenticated reader. Views remain live as issues change and do not snapshot results.
 
 ```sh
-gregale issues views save --app payments --key my-payments --name "My payments" --state open --assignee me --sort impact --tag component=payments
-gregale issues views list --app payments
-gregale issues views apply --app payments --key my-payments
-gregale issues views delete --app payments --key my-payments
+gregale debug issue views save --app payments --key my-payments --name "My payments" --state open --assignee me --sort impact --tag component=payments
+gregale debug issue views list --app payments
+gregale debug issue views apply --app payments --key my-payments
+gregale debug issue views delete --app payments --key my-payments
 ```
 
 `GET /v1/apps/{slug}/issue-saved-views` lists shared views. `GET`, `PUT`, and `DELETE /v1/apps/{slug}/issue-saved-views/{view_key}` read, replace, and delete a definition. PUT accepts `{ "name": "My payments", "filters": { "state": "open", "assignee": "me", "sort": "impact", "tag": "component=payments" } }`. Saving an existing key replaces its definition and preserves its creation timestamp. Delete returns 204 without changing issues. Go also provides `ListIssuesForSavedView`, which reads the latest definition before listing.
@@ -1218,12 +1347,12 @@ The migration refuses rollback while saved views or source/tag matchers are in u
 Issue teams have members and a shared inbox within an app. Members must already be the app owner or active organization members; team membership grants no additional app access. Create or update a roster in the dashboard's **Issue teams** section or with the CLI:
 
 ```sh
-gregale issues teams save --app my-api --key payments --name Payments --members ACCOUNT_UUID,ACCOUNT_UUID
-gregale issues teams get --app my-api --key payments
-gregale issues teams inbox --app my-api --key payments
-gregale issues assign ISSUE_UUID --app my-api --team TEAM_UUID
-gregale issues bulk --app my-api --issues ISSUE_UUID,ISSUE_UUID --action assign --team TEAM_UUID
-gregale issues views save --app my-api --key payments-open --name 'Payments open' --team TEAM_UUID --state open
+gregale debug issue teams save --app my-api --key payments --name Payments --members ACCOUNT_UUID,ACCOUNT_UUID
+gregale debug issue teams get --app my-api --key payments
+gregale debug issue teams inbox --app my-api --key payments
+gregale debug issue assign ISSUE_UUID --app my-api --team TEAM_UUID
+gregale debug issue bulk --app my-api --issues ISSUE_UUID,ISSUE_UUID --action assign --team TEAM_UUID
+gregale debug issue views save --app my-api --key payments-open --name 'Payments open' --team TEAM_UUID --state open
 ```
 
 Use `--team TEAM_UUID` on `issues list` for team filtering in any lifecycle state. Team and account filters are mutually exclusive. Assign one account or one team; omit both to unassign. Team inbox links show open groups. Team updates preserve its UUID and existing assignments. Deletion requires removing its issue assignments and routing rules first. Up to 20 teams per app, each with 1–50 distinct eligible members. The API provides `GET /v1/apps/{slug}/issue-teams` and `GET|PUT|DELETE /v1/apps/{slug}/issue-teams/{team_key}`; PUT accepts `name` and `member_account_ids`. Writes require deploy-write and session MFA. `assignee_team_id` is accepted by ownership rules and single/bulk assignment actions.
@@ -1245,8 +1374,8 @@ An explicit `{"account_id":"ACCOUNT_UUID"}` target is also accepted. Bindings ig
 ```
 
 ```sh
-gregale issues codeowners preview --file CODEOWNERS --bindings-file owners.json --source-root /app
-gregale issues codeowners apply --app my-api --file CODEOWNERS --bindings-file owners.json --source-root /app --replace
+gregale debug issue codeowners preview --file CODEOWNERS --bindings-file owners.json --source-root /app
+gregale debug issue codeowners apply --app my-api --file CODEOWNERS --bindings-file owners.json --source-root /app --replace
 ```
 
 Preview is offline and emits the ordered routing policy plus original line numbers. Apply explicitly replaces the complete policy; existing issues keep their ownership. Last matching lines win. On a line with multiple owners, all owners must have bindings and the first owner becomes the assignment target. This importer supports root defaults (`*`, `/`, `/**`) and literal root-anchored paths such as `/src/payments/` or `src/payments/`. It rejects unsupported globs, bare filenames, ownerless rules, URLs and traversal instead of silently dropping lines. Limits are 256 KiB, 4096 lines, 256 bindings and 50 routing rules. No repository fetch or automatic provider synchronization occurs.
@@ -1410,9 +1539,9 @@ native escalation and Slack handling actions are described below; workspace OAut
 Issue detail pages can link an existing GitHub or Linear issue, update its optional title, or remove the reference. Gregale stores the destination and actor history; it does not contact the provider, create a ticket, or synchronize status.
 
 ```sh
-gregale issues links save --app my-api --issue ISSUE_UUID --url https://github.com/owner/repo/issues/42 --title 'Fix checkout'
-gregale issues links list --app my-api --issue ISSUE_UUID
-gregale issues links delete --app my-api --issue ISSUE_UUID --link LINK_UUID
+gregale debug issue links save --app my-api --issue ISSUE_UUID --url https://github.com/owner/repo/issues/42 --title 'Fix checkout'
+gregale debug issue links list --app my-api --issue ISSUE_UUID
+gregale debug issue links delete --app my-api --issue ISSUE_UUID --link LINK_UUID
 ```
 
 The API exposes `GET|POST /v1/apps/{slug}/issues/{issue_id}/tracker-links` and `DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}`. POST accepts `url` and optional `title`, returning the stored reference. Go, Node and Python clients provide `ListIssueTrackerLinks`, `PutIssueTrackerLink` and `DeleteIssueTrackerLink` (using each language's naming conventions). GET accepts `cursor` and returns `items` with an optional `next_cursor`.
@@ -1428,8 +1557,8 @@ The CLI can create a provider ticket and attach its canonical URL to a Gregale i
 Choose one request UUID v4 and keep it unchanged for every retry (Linear requires v4):
 
 ```sh
-gregale issues tickets create --app my-api --issue ISSUE_UUID --provider github --target owner/repo --title 'Fix checkout' --request-id REQUEST_UUID
-gregale issues tickets create --app my-api --issue ISSUE_UUID --provider linear --target LINEAR_TEAM_UUID --title 'Fix checkout' --request-id REQUEST_UUID
+gregale debug issue tickets create --app my-api --issue ISSUE_UUID --provider github --target owner/repo --title 'Fix checkout' --request-id REQUEST_UUID
+gregale debug issue tickets create --app my-api --issue ISSUE_UUID --provider linear --target LINEAR_TEAM_UUID --title 'Fix checkout' --request-id REQUEST_UUID
 ```
 
 `--description TEXT` is optional. The default contains only the app slug and requested Gregale issue UUID; no stacks, tags, request context or customer identities are copied automatically. Titles are limited to 256 UTF-8 bytes and descriptions to 16 KiB. Each ticket includes a stable operation marker. Provider requests use fixed HTTPS API origins, do not follow redirects and time out after 15 seconds. Provider response bodies and credentials are omitted from errors.
@@ -1443,9 +1572,9 @@ If a timeout, server error or crash leaves creation uncertain, the CLI stops rat
 Preview or apply lifecycle synchronization for one stored tracker reference:
 
 ```sh
-gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push
-gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --apply
-gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction pull --apply --deployment FIXING_DEPLOYMENT_UUID
+gregale debug issue tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push
+gregale debug issue tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --apply
+gregale debug issue tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction pull --apply --deployment FIXING_DEPLOYMENT_UUID
 ```
 
 `push` uses Gregale as authority; `pull` uses the provider. Commands preview by default and write only with `--apply`. GitHub open/closed-completed maps to Gregale open/resolved. Linear backlog, unstarted and started types map to open; completed maps to resolved. Ignored Gregale issues, GitHub not-planned closures, unfamiliar statuses and canceled or archived Linear issues require manual triage. Pulling a resolution requires `--deployment UUID` unless Gregale is already resolved. Pulling an open state reopens Gregale through its normal lifecycle API. Existing release attribution, regression handling, activity and notifications apply.
@@ -1459,9 +1588,9 @@ The CLI finds the link through paginated issue-group references, checks exact pr
 App owners can use the existing connected GitHub App installation for status synchronization without a local GitHub token:
 
 ```sh
-gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --native
-gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --native --apply
-gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction pull --native --apply --deployment FIXING_DEPLOYMENT_UUID
+gregale debug issue tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --native
+gregale debug issue tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --native --apply
+gregale debug issue tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction pull --native --apply --deployment FIXING_DEPLOYMENT_UUID
 ```
 
 Connect GitHub and bind the app repository through the existing app connection settings. The GitHub App needs Issues read permission for preview and write permission for push. The linked ticket must belong to that bound repository. The API verifies the caller-owned installation, the bound repository's pinned ID and current visibility, and the reference's current issue-group membership. Older bindings without repository identity need rebinding. Shared-app members do not inherit another account's GitHub grant. Removing access, rebinding the repository or moving/unlinking the reference stops the operation.
@@ -1475,29 +1604,31 @@ Native mode cannot be combined with `--token-env`; `--linear-state` applies only
 After connecting the app owner's GitHub installation and binding the app repository as described above, create a ticket using the server connection:
 
 ```sh
-gregale issues tickets create --app my-api --issue ISSUE_UUID \
+gregale debug issue tickets create --app my-api --issue ISSUE_UUID \
   --provider github --target OWNER/REPO --title 'Fix checkout failure' \
   --request-id REQUEST_UUID --native
 ```
 
-The installation needs GitHub Issues write permission. Native mode requires Issues entitlement and deploy-write; session callers also require MFA. It rejects `--token-env` and `--journal-dir` and does not read a local GitHub credential. Keep the request UUID and all content unchanged on retries. Receipts survive CLI host changes and apid restarts; a different title, description, repository or connection binding conflicts with the original request. At most 100 receipts are retained per original issue until issue/app/account deletion; retries of existing IDs remain available at the limit.
+The installation needs GitHub Issues write permission. Native mode requires Issues entitlement and deploy-write; session callers also require MFA. It rejects `--token-env` and `--journal-dir` and does not read a local GitHub credential. Keep the request UUID and all content unchanged on retries. Receipts survive CLI host changes and apid restarts; a different title, description, repository or connection binding conflicts with the original request. At most 100 unresolved requests are allowed per original issue. Linked receipts and explicit provider rejections remain durable for idempotency but do not consume an unresolved slot. Receipt history remains until issue/app/account deletion; retries of existing IDs remain available at the limit.
 
 If the provider outcome is unconfirmed, the server refuses another create. After the 15-second dispatch window, find the ticket carrying `<!-- gregale-issue-operation: REQUEST_UUID -->` and retry with the same inputs plus `--recover-url https://github.com/OWNER/REPO/issues/NUMBER`. Gregale verifies that marker and repository before attachment. A missing ticket does not prove a create is safe to repeat.
 
 A `created` result means GitHub accepted the ticket but Gregale attachment needs retry; the CLI exits unsuccessfully and prints the confirmed URL. Repeat identical inputs to resume attachment. A `linked` receipt is retained even if the link is subsequently removed, so retrying never creates another ticket. Existing link quota, group lookup and audit rules apply; a full group may leave the external ticket awaiting attachment.
 
-The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation is described below; automatic GitHub push is described below. See [ADR-1467](adr/1467-native-github-ticket-creation.md).
+After an app rename, new receipts continue to match the stable app ID. For an older receipt, provide `--original-app-slug OLD_SLUG` (or `original_app_slug` in the API) and preserve the original description. For a confirmed `created` receipt, manually attaching its exact ticket URL also reconciles it when the original connection is unavailable. Unconfirmed dispatches still require provider verification.
+
+The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description`, `recovery_url` and `original_app_slug`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation is described below; automatic GitHub push is described below. See [ADR-1467](adr/1467-native-github-ticket-creation.md).
 
 ## Automatic native GitHub lifecycle sync
 
 Enable automatic pushes for one stored GitHub reference after its lifecycle is aligned with Gregale:
 
 ```sh
-gregale issues tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID
+gregale debug issue tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID
 # Explicitly delegate future lifecycle pushes:
-gregale issues tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID --enable
+gregale debug issue tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID --enable
 # Stop future automatic pushes:
-gregale issues tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID --disable
+gregale debug issue tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID --disable
 ```
 
 Policies are disabled by default. Configuration requires the app owner, Issues entitlement and deploy-write; session callers also need MFA. Inspection requires app read access. Enable uses a fresh native GitHub snapshot and policy revision; if the provider and Gregale states differ, use explicit `issues tickets sync --native` to align them first. No local GitHub credential is used.
@@ -1517,11 +1648,11 @@ The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/au
 Store a verified Linear personal API key for the app owner:
 
 ```sh
-gregale issues tickets linear-connection --app payments --connect --team <LINEAR_TEAM_UUID>
+gregale debug issue tickets linear-connection --app payments --connect --team <LINEAR_TEAM_UUID>
 # Reads GREGALE_LINEAR_TOKEN; --token-env NAME selects another environment variable.
-gregale issues tickets linear-connection --app payments
+gregale debug issue tickets linear-connection --app payments
 # Erase the server credential without requiring Linear access:
-gregale issues tickets linear-connection --app payments --disconnect
+gregale debug issue tickets linear-connection --app payments --disconnect
 ```
 
 Connecting requires the app owner, deploy-write, Issues entitlement and an account
@@ -1544,7 +1675,7 @@ See [ADR-1470](adr/1470-durable-linear-issue-connections.md).
 After connecting the app's Linear team, create a ticket without a local provider key:
 
 ```sh
-gregale issues tickets create --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets create --app payments --issue <ISSUE_UUID> \
   --provider linear --target <CONNECTED_TEAM_UUID> --title 'Fix checkout failures' \
   --request-id <UUID_V4> --native
 ```
@@ -1567,12 +1698,12 @@ workspace/viewer/team or request inputs conflict with the existing receipt.
 
 Confirmed provider evidence is saved before reference attachment. A `created`
 result means the ticket exists but linking needs retry; `linked` means attachment
-is confirmed. Native GitHub and Linear operations share the 100 retained receipt
-limit per original Gregale issue. A provider write already dispatched cannot be
+is confirmed. Native GitHub and Linear operations share the 100 unresolved-request
+limit per original Gregale issue; linked and explicitly rejected receipts remain durable but do not consume a slot. A provider write already dispatched cannot be
 recalled by disconnect or a concurrent edit.
 
 POST `/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets` accepts `request_id`,
-`team_id`, `title`, optional `description`, `recover` and `recovery_url`. Go exposes
+`team_id`, `title`, optional `description`, `recover`, `recovery_url` and `original_app_slug`. Go exposes
 `CreateNativeLinearIssueTicket`, Node uses `AppsService.createNativeLinearIssueTicket`,
 and Python exposes `faas_sdk.api.apps.create_native_linear_issue_ticket`. This uses
 the stored personal API key; Native Linear lifecycle sync is described below; OAuth remains separate work. See [ADR-1471](adr/1471-native-linear-ticket-creation.md).
@@ -1583,14 +1714,14 @@ Use the connected owner's Linear team for a stored Linear reference:
 
 ```sh
 # Preview without a local Linear key:
-gregale issues tickets sync --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets sync --app payments --issue <ISSUE_UUID> \
   --link <LINEAR_REFERENCE_UUID> --direction push --native
 # Apply using an explicitly selected same-team workflow state:
-gregale issues tickets sync --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets sync --app payments --issue <ISSUE_UUID> \
   --link <LINEAR_REFERENCE_UUID> --direction push --native --apply \
   --linear-state <WORKFLOW_STATE_UUID>
 # Pull a Linear resolution into a fixing Gregale deployment:
-gregale issues tickets sync --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets sync --app payments --issue <ISSUE_UUID> \
   --link <LINEAR_REFERENCE_UUID> --direction pull --native --apply \
   --deployment <FIXING_DEPLOYMENT_UUID>
 ```
@@ -1626,15 +1757,15 @@ Connect a Linear team and store a Linear reference first. Align the ticket with
 Gregale using explicit native sync, then select the open and completed workflows:
 
 ```sh
-gregale issues tickets auto-sync --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets auto-sync --app payments --issue <ISSUE_UUID> \
   --link <LINEAR_REFERENCE_UUID> --provider linear --enable \
   --linear-open-state <OPEN_WORKFLOW_UUID> \
   --linear-resolved-state <COMPLETED_WORKFLOW_UUID>
 # Inspect the policy and latest outcome:
-gregale issues tickets auto-sync --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets auto-sync --app payments --issue <ISSUE_UUID> \
   --link <LINEAR_REFERENCE_UUID> --provider linear
 # Disable even when the Linear connection is disconnected:
-gregale issues tickets auto-sync --app payments --issue <ISSUE_UUID> \
+gregale debug issue tickets auto-sync --app payments --issue <ISSUE_UUID> \
   --link <LINEAR_REFERENCE_UUID> --provider linear --disable
 ```
 
@@ -1723,7 +1854,7 @@ scoped to the connected team. Use the signing secret displayed by Linear:
 
 ```sh
 # Supply both values through your existing environment/secret manager:
-gregale issues tickets linear-connection --app payments --connect \
+gregale debug issue tickets linear-connection --app payments --connect \
   --team <TEAM_UUID> --token-env GREGALE_LINEAR_TOKEN \
   --webhook-secret-env GREGALE_LINEAR_WEBHOOK_SECRET
 ```
@@ -1906,7 +2037,7 @@ Choose a direction in **Review tracker sync** after aligning both lifecycles:
 - **Both** supports both behaviors. An isolated local lifecycle edit can push when
   the provider still matches its baseline. Edits on both sides pause for review.
 
-The CLI uses `gregale issues tickets auto-sync --app SLUG --issue UUID --link UUID
+The CLI uses `gregale debug issue tickets auto-sync --app SLUG --issue UUID --link UUID
 --enable --direction inbound` (or `both`). Linear also needs `--provider linear`
 and the selected `--linear-open-state` and `--linear-resolved-state` workflow UUIDs.
 The API accepts the same `direction` on the existing auto-sync policy update.

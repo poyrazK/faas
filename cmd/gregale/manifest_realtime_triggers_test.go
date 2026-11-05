@@ -166,7 +166,7 @@ func TestReconcileManifestRealtimeTriggers(t *testing.T) {
 			before := client.snapshot()
 			txn := &manifestCronTransaction{}
 			m := &gregalemanifest.Manifest{Triggers: tc.triggers}
-			if err := reconcileManifestRealtimeTriggers(t.Context(), client, "orders-fn", m, txn); err != nil {
+			if err := reconcileManifestRealtimeTriggers(t.Context(), client, "orders-fn", m, txn, nil); err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(client.calls, tc.wantCalls) {
@@ -216,7 +216,7 @@ func TestReconcileManifestRealtimeTriggerDelivery(t *testing.T) {
 	want := realtimeManifestTrigger("orders-fn", "orders", "billing", 0)
 	want.Delivery, want.BatchSizeMax = api.TriggerDeliveryBatch, 8
 	txn := &manifestCronTransaction{}
-	if err := reconcileManifestRealtimeTriggers(t.Context(), client, "orders-fn", &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{want}}, txn); err != nil {
+	if err := reconcileManifestRealtimeTriggers(t.Context(), client, "orders-fn", &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{want}}, txn, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := client.triggers["e1"]

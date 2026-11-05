@@ -14,7 +14,7 @@ import {randomUUID} from 'node:crypto';
 import {
   durableSessionLifecycleFrame, decodeDurableSessionStatus,
   decodeDurableSessionLifecycleAcknowledgement,
-} from '@gregale/sdk-node/durable-entities/session';
+} from '@gregale/sdk-node/preview/durable-entities/session';
 
 const query = durableSessionLifecycleFrame({
   kind: 'status', session_id: sessionId, query_id: randomUUID(),

@@ -88,6 +88,9 @@ type EventReceiptCancellation struct {
 }
 
 type EventReceiptRecipient struct {
+	// deliveryID is the delivery this recipient routed to
+	// (PublishedEventDeliveryID); empty means the original identity.
+	deliveryID                                     string
 	Position                                       int64
 	SubscriptionID, AppID, AppSlug                 string
 	Origin, BackfillJobID                          string
@@ -111,9 +114,9 @@ func receiptLimit(limit int) int {
 	return min(limit, EventReceiptMaxRecipients)
 }
 
-func receiptRetention(receipt *EventReceipt) {
+func receiptRetention(receipt *EventReceipt, retention time.Duration) {
 	if receipt.RoutingSettledAt != nil {
-		until := receipt.RoutingSettledAt.Add(PublishedEventIdentityRetention)
+		until := receipt.RoutingSettledAt.Add(retention)
 		receipt.RetainUntil = &until
 	}
 }
@@ -148,7 +151,11 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 	if err := json.Unmarshal(meta.BackfillRoutingSummary, &receipt.BackfillRoutingSummary); err != nil {
 		return EventReceipt{}, fmt.Errorf("decode backfill receipt summary: %w", err)
 	}
-	receiptRetention(&receipt)
+	retention, err := eventSettledRetention(ctx, q, tx, accountID)
+	if err != nil {
+		return EventReceipt{}, err
+	}
+	receiptRetention(&receipt, retention)
 	limit = receiptLimit(limit)
 	rows, err := q.EventReceiptRecipients(ctx, tx, sqlc.EventReceiptRecipientsParams{OutboxID: meta.ID, AccountID: meta.AccountID, AfterPosition: cursor.Position, PageLimit: int32(limit + 1)})
 	if err != nil {
@@ -188,8 +195,9 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 			deferrals := int(row.GenerationCapacityDeferrals)
 			entry.Routing.GenerationCapacityDeferrals = &deferrals
 		}
+		entry.deliveryID = PublishedEventDeliveryID(progress, meta.InvocationAccountID, source, eventID, recipient.ID)
 		receipt.Recipients = append(receipt.Recipients, entry)
-		ids = append(ids, mustPgUUID(PublishedEventInvocationID(meta.InvocationAccountID, source, eventID, recipient.ID)))
+		ids = append(ids, mustPgUUID(entry.deliveryID))
 	}
 	if err := enrichPgEventReceipt(ctx, q, tx, &receipt, accountID, ids); err != nil {
 		return EventReceipt{}, err
@@ -235,7 +243,10 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 		if entry.WorkflowName != "" {
 			continue
 		}
-		id := PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
+		id := entry.deliveryID
+		if id == "" {
+			id = PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
+		}
 		if invocation, ok := byID[id]; ok && uuidFromPgtype(invocation.AppID).String() == entry.AppID {
 			entry.Execution = receiptExecution(id, invocation.State, int(invocation.Attempts), invocation.ReplayGeneration, timeFromPgtype(invocation.DueAt), timeFromPgtype(invocation.CreatedAt), timestamptzToTimePtr(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
@@ -330,7 +341,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 		at := work.DeliveredAt
 		receipt.RoutingSettledAt = &at
 	}
-	receiptRetention(&receipt)
+	receiptRetention(&receipt, m.eventSettledRetentionLocked(canonicalMemUUID(accountID)))
 	limit = receiptLimit(limit)
 	for i, recipient := range work.RecipientSnapshot {
 		progress := work.RecipientProgress[recipient.ID]
@@ -416,7 +427,8 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			receipt.Recipients = append(receipt.Recipients, entry)
 			continue
 		}
-		id := PublishedEventInvocationID(invocationAccountID, source, eventID, recipient.ID)
+		id := PublishedEventDeliveryID(progress, invocationAccountID, source, eventID, recipient.ID)
+		entry.deliveryID = id
 		if invocation, ok := m.invocations[id]; ok && owned && sameMemUUID(invocation.AccountID, accountID) && sameMemUUID(invocation.AppID, recipient.AppID) && !invocation.CreatedAt.Before(work.CreatedAt) {
 			entry.Execution = receiptExecution(id, string(invocation.State), invocation.Attempts, invocation.ReplayGeneration, invocation.DueAt, invocation.CreatedAt, cloneEventReceiptTime(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {

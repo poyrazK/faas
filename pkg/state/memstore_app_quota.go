@@ -1,6 +1,10 @@
 package state
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // resolveAppQuotaLocked mirrors PostgreSQL's persisted tenant resolution.
 // The caller holds m.mu across resolution, counting and insertion/restoration.
@@ -36,8 +40,14 @@ func (m *MemStore) resolveAppQuotaLocked(app *App, limits api.Limits) (api.Limit
 }
 
 func (m *MemStore) countAppQuotaLocked(app App, personal bool, kind QuotaErrorKind) int {
+	return countAppQuotaIn(app, personal, kind, m.apps)
+}
+
+// countAppQuotaIn counts against a proposed app map, so staged batches are
+// checked with the same tenant rules before they are published.
+func countAppQuotaIn(app App, personal bool, kind QuotaErrorKind, apps map[string]App) int {
 	observed := 0
-	for _, existing := range m.apps {
+	for _, existing := range apps {
 		matches := app.OrgID != "" && existing.OrgID == app.OrgID || personal && existing.OrgID == "" && existing.AccountID == app.AccountID
 		if !matches || existing.Status != AppActive && existing.Status != AppEvictedCold {
 			continue
@@ -55,12 +65,19 @@ func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 }
 
 func (m *MemStore) checkAppQuotaDeltaLocked(app App, limits api.Limits, delta int) error {
+	return m.checkAppQuotaDeltaInLocked(app, limits, delta, m.apps)
+}
+
+func (m *MemStore) checkAppQuotaDeltaInLocked(app App, limits api.Limits, delta int, apps map[string]App) error {
 	limits, personal, err := m.resolveAppQuotaLocked(&app, limits)
 	if err != nil {
 		return err
 	}
 	limit, kind := appQuotaLimit(app, limits)
-	observed := m.countAppQuotaLocked(app, personal, kind)
+	if kind == QuotaErrorKindPreviewApps {
+		return checkPreviewEnvironmentQuotaIn(app, limits, personal, delta, apps)
+	}
+	observed := countAppQuotaIn(app, personal, kind, apps)
 	if observed+delta > limit {
 		if delta != 1 {
 			observed += delta
@@ -68,6 +85,39 @@ func (m *MemStore) checkAppQuotaDeltaLocked(app App, limits api.Limits, delta in
 		return &QuotaError{Kind: kind, Plan: limits.Plan, Limit: limit, Observed: observed}
 	}
 	return nil
+}
+
+// checkPreviewEnvironmentQuotaIn mirrors checkPreviewEnvironmentQuotaTx over
+// a proposed app map.
+func checkPreviewEnvironmentQuotaIn(app App, limits api.Limits, personal bool, delta int, apps map[string]App) error {
+	if delta <= 0 || app.PreviewPrState != "" && app.PreviewPrState != PreviewPrStateOpen {
+		return nil
+	}
+	members := 0
+	environments := make(map[string]struct{})
+	for _, existing := range apps {
+		if existing.Status != AppActive && existing.Status != AppEvictedCold || !IsPRPreviewApp(existing) ||
+			existing.PreviewPrState != "" && existing.PreviewPrState != PreviewPrStateOpen {
+			continue
+		}
+		if app.ProjectID != "" && existing.ID != app.ID && existing.AccountID == app.AccountID &&
+			existing.ProjectID == app.ProjectID && existing.PreviewPrNumber == app.PreviewPrNumber {
+			members++
+		}
+		if app.OrgID != "" && existing.OrgID == app.OrgID || personal && existing.OrgID == "" && existing.AccountID == app.AccountID {
+			environments[previewEnvironmentKey(existing)] = struct{}{}
+		}
+	}
+	return previewEnvironmentQuotaError(app, limits, members, len(environments), delta)
+}
+
+// previewEnvironmentKey matches CountOpenPreviewEnvironments' grouping.
+func previewEnvironmentKey(app App) string {
+	owner := app.ProjectID
+	if owner == "" {
+		owner = app.ID
+	}
+	return owner + "/" + strconv.Itoa(app.PreviewPrNumber)
 }
 
 func (m *MemStore) hasLegacySharedAppsLocked(accountID string) bool {

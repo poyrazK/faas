@@ -12,19 +12,19 @@ independent. The next poll refreshes both.
 
 ```go
 result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, subscriptionID,
-    faas.EventDeliveryHealthWatchOptions{
+    preview.EventDeliveryHealthWatchOptions{
         Window:   "5m",
         Interval: 5 * time.Second,
         Timeout:  10 * time.Minute,
         MaxAge:   30 * time.Second,
-        RateRisk: &faas.EventDeliveryRateRiskOptions{
+        RateRisk: &preview.EventDeliveryRateRiskOptions{
             ThrottledGrowth: 1,
             DeadlineRisk:    1,
             DeadlineWithin:  5 * time.Minute,
             Sustain:         time.Minute,
             RecoverySustain: 2 * time.Minute,
         },
-        OnProgress: func(progress faas.EventDeliveryHealthWatchResult) error {
+        OnProgress: func(progress preview.EventDeliveryHealthWatchResult) error {
             // Inspect RateEvidence and Conditions; handle progress.Alerts.
             return nil
         },

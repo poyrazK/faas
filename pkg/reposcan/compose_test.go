@@ -72,8 +72,10 @@ services:
 			if s.commandShell {
 				t.Error("api sequence command marked as shell form")
 			}
-			if len(s.ports) != 1 || s.ports[0] != 8080 {
-				t.Errorf("api ports = %v, want [8080]", s.ports)
+			// The container side of "8080:80" is the port the service
+			// listens on (ADR-20261103112845).
+			if len(s.ports) != 1 || s.ports[0] != 80 {
+				t.Errorf("api ports = %v, want [80]", s.ports)
 			}
 			if !equalSet(s.envKeys, []string{"RAILS_ENV", "DATABASE_URL"}) {
 				t.Errorf("api envKeys = %v, want {RAILS_ENV,DATABASE_URL}", s.envKeys)
@@ -478,6 +480,42 @@ func TestDetectCompose_RejectsUnknownServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestScanCompose_TopLevelServicePolicyIsTheProjectDefault(t *testing.T) {
+	t.Parallel()
+	result, err := Scan(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`x-gregale-service-policy: ${POLICY:-project}
+services:
+  api:
+    build: ./api
+  web:
+    build: ./web
+    x-gregale-service-policy: declared
+  db:
+    image: postgres:17
+`)},
+		"api/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+		"web/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := map[string]ServiceBindingPolicy{}
+	for _, w := range result.Workloads {
+		policies[w.Name] = w.ServiceBindingPolicy
+	}
+	if policies["api"] != ServiceBindingPolicyProject || policies["web"] != ServiceBindingPolicyDeclared || len(policies) != 2 {
+		t.Fatalf("policies = %v, want api project (top level) and web declared (its own)", policies)
+	}
+
+	_, err = Scan(fstest.MapFS{
+		"compose.yaml":   &fstest.MapFile{Data: []byte("x-gregale-service-policy: open\nservices:\n  api:\n    build: ./api\n")},
+		"api/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must be project, declared or account") {
+		t.Fatalf("Scan error = %v, want closed validation of the top-level policy", err)
+	}
+}
+
 func TestScanCompose_AcceptsProjectServiceBindingPolicy(t *testing.T) {
 	t.Parallel()
 	result, err := Scan(fstest.MapFS{
@@ -594,7 +632,7 @@ func TestDetectCompose_InterpolationFromDotEnv(t *testing.T) {
   api:
     build: ${API_CONTEXT:-./fallback}
     command: ["node", "server.js", "${MODE:+--production}", "$$HOME"]
-    ports: ["${API_PORT:-8080}:8080"]
+    ports: ["8080:${API_PORT:-8080}"]
 `)},
 	}
 	seeds, _, _, err := detectCompose(fsys)

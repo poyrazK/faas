@@ -198,7 +198,7 @@ func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 		if environment == api.DefaultEnvScope {
 			environment = ""
 		}
-		view.Review = &savedPlanReference{Tool: "gregale_get_plan", Arguments: getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}}
+		view.Review = &savedPlanReference{Tool: "gregale_get_saved_plan", Arguments: getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}}
 		view.Recovery = m.recoveryLinks(getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}, false)
 	}
 	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action", "workload_rollout": "gregale_apply_workload_rollout", "service_abort": "gregale_apply_service_abort", "route_budgets": "gregale_apply_route_budgets"}[entry.Action]

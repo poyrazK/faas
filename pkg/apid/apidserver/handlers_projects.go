@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -176,14 +177,62 @@ func (s *server) projectDeletePreview(r *http.Request, acct state.Account, proje
 	return preview, nil
 }
 
+// projectStagesRemainProblem refuses deleting a project that still has stage
+// environments. Deleting the project row cascades its environments without
+// the managed-resource cleanup environment deletion runs, so stage databases,
+// buckets and credentials would be left behind.
+func (s *server) projectStagesRemainProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {
+	environments, err := s.store.ListProjectEnvironments(r.Context(), acct.ID, project.ID)
+	if err != nil {
+		return api.ErrCapacity("could not inspect project environments")
+	}
+	var stages []string
+	for _, environment := range environments {
+		if !state.IsProductionScope(environment.Slug) {
+			stages = append(stages, environment.Slug)
+		}
+	}
+	if len(stages) > 0 {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has stage environments",
+			"delete its stage environments first, which removes their managed resources: "+strings.Join(stages, ", "))
+	}
+	// An unfinished full clone may hold restored databases before its target
+	// environment exists; the cascade would orphan them.
+	if clones, ok := s.store.(state.ProjectEnvironmentCloneActivityStore); ok {
+		unfinished, err := clones.UnfinishedProjectEnvironmentClonesForProject(r.Context(), project.ID)
+		if err != nil {
+			return api.ErrCapacity("could not inspect project environment clones")
+		}
+		if unfinished > 0 {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has a running environment clone",
+				"wait until its full environment clones are ready or compensated, then delete their stages")
+		}
+	}
+	return nil
+}
+
 func (s *server) deleteProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, ok := s.loadProject(w, r, acct)
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteProject(r.Context(), project.ID); err != nil {
+	if problem := s.projectStagesRemainProblem(r, acct, project); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	checked, ok := s.store.(state.CheckedProjectDeleteStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("guarded project deletion is unavailable"))
+		return
+	}
+	if err := checked.DeleteProjectIfNoStages(r.Context(), acct.ID, project.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectNotFound(project.Slug))
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Project deletion is blocked",
+				"project resources changed; inspect its environments and running clones before deleting"))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not delete project"))
@@ -209,6 +258,19 @@ func (s *server) loadProject(w http.ResponseWriter, r *http.Request, acct state.
 	return project, true
 }
 
+// projectWorkloadDependencies are the services an app's declared bindings
+// name: its Compose depends_on within the project (ADR-20261026193018).
+func projectWorkloadDependencies(app state.App) []string {
+	var out []string
+	for _, binding := range app.Manifest.ServiceBindings {
+		if service := binding.Service; service != "" && !slices.Contains(out, service) {
+			out = append(out, service)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *server) projectResponse(r *http.Request, acct state.Account, project state.Project) (api.ProjectResponse, *api.Problem) {
 	apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 	if err != nil {
@@ -225,7 +287,8 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 	}
 	var latest time.Time
 	for _, app := range apps {
-		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status)}
+		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status),
+			DependsOn: projectWorkloadDependencies(app)}
 		deployment, deployErr := s.store.LatestDeployment(r.Context(), app.ID)
 		if deployErr == nil {
 			workload.DeploymentStatus = string(deployment.Status)
@@ -511,7 +574,7 @@ func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug strin
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Environment already exists", "the project already has an environment with this slug"))
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not create project environment")))
 	}
 }
 
@@ -534,6 +597,9 @@ func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, r.PathValue("environment")))
+		} else if errors.Is(err, state.ErrProjectEnvironmentCloneUnfinished) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Environment clone unfinished",
+				"the environment is still being cloned; protect it once its clone is ready"))
 		} else {
 			api.WriteProblem(w, api.ErrCapacity("could not update project environment"))
 		}

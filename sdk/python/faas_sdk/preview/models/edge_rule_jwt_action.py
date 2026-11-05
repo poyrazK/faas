@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.edge_rule_jwt_action_algorithms_item import (
+    EdgeRuleJWTActionAlgorithmsItem,
+    check_edge_rule_jwt_action_algorithms_item,
+)
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
+    from ..models.mcp_resource_policy import MCPResourcePolicy
+
+
+T = TypeVar("T", bound="EdgeRuleJWTAction")
+
+
+@_attrs_define
+class EdgeRuleJWTAction:
+    """Validates an inbound Bearer JWT against a JWKS endpoint. The
+    algorithm allowlist is asymmetric-only and the selected JWK's
+    `alg` metadata must match the JWT header; a JWK with `use=enc`
+    is rejected (RFC 8725 §3.1, RFC 7517).
+
+    """
+
+    issuer: str
+    jwks_url: str
+    algorithms: list[EdgeRuleJWTActionAlgorithmsItem]
+    audience: list[str] | Unset = UNSET
+    required_claims: EdgeRuleJWTActionRequiredClaims | Unset = UNSET
+    mcp: MCPResourcePolicy | Unset = UNSET
+    """Opt-in MCP resource-server policy on a JWT edge rule. Requires a
+    canonical HTTPS resource, matching JWT audience, match_path=/**,
+    and no method or header selectors. The gateway serves OAuth resource
+    metadata, rejects expired credentials, and enforces JSON-RPC execution
+    scopes. Catalog filtering and task ownership remain application duties.
+    """
+    platform_tenant_external_ref_claim: str | Unset = UNSET
+    """Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the
+    app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are
+    rejected before the request reaches the guest."""
+    require_exp: bool | Unset = UNSET
+    """Reject tokens that carry no `exp` claim. Defaults to true when omitted, because a token minted without `exp`
+    never expires; set false to accept such tokens (`exp` is then validated only when present). Rules saved before
+    this default keep their saved value, and responses show the field only when it is true."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        issuer = self.issuer
+
+        jwks_url = self.jwks_url
+
+        algorithms = []
+        for algorithms_item_data in self.algorithms:
+            algorithms_item: str = algorithms_item_data
+            algorithms.append(algorithms_item)
+
+        audience: list[str] | Unset = UNSET
+        if not isinstance(self.audience, Unset):
+            audience = self.audience
+
+        required_claims: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.required_claims, Unset):
+            required_claims = self.required_claims.to_dict()
+
+        mcp: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.mcp, Unset):
+            mcp = self.mcp.to_dict()
+
+        platform_tenant_external_ref_claim = self.platform_tenant_external_ref_claim
+
+        require_exp = self.require_exp
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "issuer": issuer,
+                "jwks_url": jwks_url,
+                "algorithms": algorithms,
+            }
+        )
+        if audience is not UNSET:
+            field_dict["audience"] = audience
+        if required_claims is not UNSET:
+            field_dict["required_claims"] = required_claims
+        if mcp is not UNSET:
+            field_dict["mcp"] = mcp
+        if platform_tenant_external_ref_claim is not UNSET:
+            field_dict["platform_tenant_external_ref_claim"] = platform_tenant_external_ref_claim
+        if require_exp is not UNSET:
+            field_dict["require_exp"] = require_exp
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
+        from ..models.mcp_resource_policy import MCPResourcePolicy
+
+        d = dict(src_dict)
+        issuer = d.pop("issuer")
+
+        jwks_url = d.pop("jwks_url")
+
+        algorithms = []
+        _algorithms = d.pop("algorithms")
+        for algorithms_item_data in _algorithms:
+            algorithms_item = check_edge_rule_jwt_action_algorithms_item(algorithms_item_data)
+
+            algorithms.append(algorithms_item)
+
+        audience = cast(list[str], d.pop("audience", UNSET))
+
+        _required_claims = d.pop("required_claims", UNSET)
+        required_claims: EdgeRuleJWTActionRequiredClaims | Unset
+        if isinstance(_required_claims, Unset):
+            required_claims = UNSET
+        else:
+            required_claims = EdgeRuleJWTActionRequiredClaims.from_dict(_required_claims)
+
+        _mcp = d.pop("mcp", UNSET)
+        mcp: MCPResourcePolicy | Unset
+        if isinstance(_mcp, Unset):
+            mcp = UNSET
+        else:
+            mcp = MCPResourcePolicy.from_dict(_mcp)
+
+        platform_tenant_external_ref_claim = d.pop("platform_tenant_external_ref_claim", UNSET)
+
+        require_exp = d.pop("require_exp", UNSET)
+
+        edge_rule_jwt_action = cls(
+            issuer=issuer,
+            jwks_url=jwks_url,
+            algorithms=algorithms,
+            audience=audience,
+            required_claims=required_claims,
+            mcp=mcp,
+            platform_tenant_external_ref_claim=platform_tenant_external_ref_claim,
+            require_exp=require_exp,
+        )
+
+        edge_rule_jwt_action.additional_properties = d
+        return edge_rule_jwt_action
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

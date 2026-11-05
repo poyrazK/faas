@@ -9,7 +9,7 @@
  * cors_preset_update_requires_field). The same partial
  * grammar check that fires on CreateCorsPresetRequest
  * (CorsOriginPattern, *+credentials footgun) fires here
- * on the partial payload; the apid handler additionally
+ * on the partial payload; the API handler additionally
  * re-validates against the merged post-update shape so a
  * PATCH that flips AllowCredentials to true while leaving
  * AllowOrigins=["*"] is rejected.

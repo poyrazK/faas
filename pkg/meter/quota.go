@@ -43,6 +43,9 @@ type QuotaAction struct {
 	Action    string // "" | "warn" | "stop"
 	UsedGB    float64
 	QuotaGB   int
+	// EgressStop is true when the stop is the month's egress ceiling rather
+	// than the compute allowance (ADR-20261103131742).
+	EgressStop bool
 }
 
 // EnforceQuota is the per-tick decision the meterd quota loop runs once
@@ -91,6 +94,11 @@ type QuotaParams struct {
 	Log              *slog.Logger
 	WarningRequested func() bool
 	WarningCommands  QuotaWarningCommands
+	// EgressBytes is the subject's application egress this month and
+	// EgressCeilingBytes the ceiling it stops at; zero means no ceiling
+	// applies (ADR-20261103131742).
+	EgressBytes        int64
+	EgressCeilingBytes int64
 }
 
 // Enforce keeps the existing quota/parking ladder; only paid warning issuance
@@ -98,21 +106,48 @@ type QuotaParams struct {
 func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB float64, at time.Time) (QuotaAction, error) {
 	store, notif, schedd, mailer, log := p.Store, p.Notif, p.Parker, p.Mailer, p.Log
 	res := CheckQuota(account.Plan, usedGB)
+	if account.Plan.IsPaid() && usedGB >= float64(smallestPaidAllowanceGB()) {
+		// A paid month bills overage above the allowance its recorded plans
+		// grant (ADR-1162, time-weighted by ADR-20261030093512), so it warns
+		// above that allowance too (ADR-20261030120000). After an upgrade the
+		// allowance can sit below the current plan's, so the history is read
+		// from the smallest paid allowance on. Free keeps its own allowance:
+		// its hard stop is what the financial model prices, whatever plan the
+		// month began on.
+		quota, err := monthQuotaGB(ctx, store, account, at)
+		if err != nil {
+			return QuotaAction{AccountID: account.ID, Plan: account.Plan}, err
+		}
+		res = checkQuotaAgainst(account.Plan, usedGB, quota)
+	}
+	// ADR-20261103131742: egress the plan does not bill is capped at the
+	// plan's monthly egress. Past it the subject stops like a Free account
+	// past its compute allowance, until the month ends or the plan grows.
+	egressStop := res.Action != "stop" && p.EgressCeilingBytes > 0 && p.EgressBytes >= p.EgressCeilingBytes
+	if egressStop {
+		res.Action = "stop"
+	}
 	act := QuotaAction{
 		AccountID: account.ID, Plan: account.Plan,
-		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB,
+		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB, EgressStop: egressStop,
 	}
 	switch res.Action {
 	case "stop":
-		// Free hard stop. Flip the account, fan out, park instances. Only
-		// an active account is suspended, and the suspension is recorded
-		// as a quota stop so the next month (or an upgrade) lifts it.
+		// Free hard stop, or the egress ceiling. Flip the account, fan out,
+		// park instances. Only an active account is suspended, and the
+		// suspension is recorded as a quota stop so the next month (or an
+		// upgrade) lifts it.
 		transitioned, err := store.SuspendAccountForFreeQuota(ctx, account.ID)
 		if err != nil {
 			return act, fmt.Errorf("meter: suspend %s: %w", account.ID, err)
 		}
+		parkReason, reason := "quota_exceeded_free", "compute"
+		if egressStop {
+			parkReason, reason = "quota_exceeded_egress", "egress"
+		}
 		if transitioned {
-			log.Info("meter: free-tier hard stop", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
+			log.Info("meter: quota hard stop", "account", account.ID, "plan", account.Plan, "reason", reason,
+				"used_gb", usedGB, "quota_gb", res.QuotaGB, "egress_bytes", p.EgressBytes, "egress_ceiling_bytes", p.EgressCeilingBytes)
 		}
 		if transitioned {
 			notifyAccountAppLifecycle(ctx, store, notif, account.ID, "account_suspended", log)
@@ -125,15 +160,20 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 			if !state.State(in.State).CountsForRAM() {
 				continue
 			}
-			if err := schedd.ParkInstance(ctx, in.ID, "quota_exceeded_free", ""); err != nil {
+			if err := schedd.ParkInstance(ctx, in.ID, parkReason, ""); err != nil {
 				log.Warn("meter: park instance failed", "instance", in.ID, "err", err)
 				continue
 			}
 		}
-		payload, _ := json.Marshal(map[string]any{
+		fields := map[string]any{
 			"account_id": account.ID, "used_gb": usedGB,
 			"quota_gb": res.QuotaGB, "at": at.UTC().Format(time.RFC3339Nano),
-		})
+			"reason": reason,
+		}
+		if egressStop {
+			fields["egress_bytes"], fields["egress_ceiling_bytes"] = p.EgressBytes, p.EgressCeilingBytes
+		}
+		payload, _ := json.Marshal(fields)
 		if err := notif.Notify(ctx, db.NotifyBillingPastDue, string(payload)); err != nil {
 			log.Warn("meter: notify billing_past_due", "err", err)
 		}
@@ -240,4 +280,32 @@ func notifyAccountAppLifecycle(ctx context.Context, store state.Store, notif Not
 			log.Warn("meter: account lifecycle notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
 		}
 	}
+}
+
+// smallestPaidAllowanceGB is the lowest monthly allowance of any paid plan, a
+// floor for any month a paid account's plans grant.
+func smallestPaidAllowanceGB() int {
+	smallest := 0
+	for _, plan := range api.Plans {
+		if q := plan.PlanIncludedGBHours(); plan.IsPaid() && (smallest == 0 || q < smallest) {
+			smallest = q
+		}
+	}
+	return smallest
+}
+
+// monthQuotaGB is a paid account's quota ladder allowance in GB-RAM-hours:
+// the compute allowance the month's recorded plans grant, computed exactly as
+// the provider pusher removes it (state.MonthComputeIncludedMBSeconds). Stores
+// without plan history keep the current plan's.
+func monthQuotaGB(ctx context.Context, store state.Store, account state.Account, at time.Time) (int, error) {
+	history, ok := store.(state.FinancialStore)
+	if !ok {
+		return account.Plan.PlanIncludedGBHours(), nil
+	}
+	snapshots, err := history.ListFinancialPriceSnapshots(ctx, account.ID, AccountMonthKey(at))
+	if err != nil {
+		return 0, fmt.Errorf("meter: quota plan history for %s: %w", account.ID, err)
+	}
+	return int(state.MonthComputeIncludedMBSeconds(account.Plan, snapshots, at) / api.SecondsPerGBHour), nil
 }

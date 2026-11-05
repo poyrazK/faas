@@ -13,9 +13,12 @@ import (
 )
 
 type BindingServiceOptions struct {
-	LeaseDuration       time.Duration
-	ProviderTimeout     time.Duration
-	RetryInterval       time.Duration
+	LeaseDuration   time.Duration
+	ProviderTimeout time.Duration
+	RetryInterval   time.Duration
+	// ProvisioningEnabled gates every binding operation. A binding works on a
+	// database that already exists, so production passes the operations gate
+	// here, not the new-database gate (ADR-20261103091657).
 	ProvisioningEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains
@@ -294,11 +297,50 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
+	return s.deleteBinding(ctx, accountID, binding)
+}
+
+// DeleteEnvironmentCloneTargetBinding revokes a binding on a database a full
+// environment clone restored for its stage (ADR-20261024224230). Once that
+// stage is deleted the database is no longer customer-visible, so the clone's
+// operation names it instead.
+func (s *BindingService) DeleteEnvironmentCloneTargetBinding(ctx context.Context, accountID, bindingID, operationID string) (Binding, error) {
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return Binding{}, ErrConflict
+	}
+	return s.deleteBinding(ctx, accountID, binding)
+}
+
+// ListEnvironmentCloneTargetBindings lists every binding of a database a full
+// environment clone restored, whether or not its stage still exists.
+func (s *BindingService) ListEnvironmentCloneTargetBindings(ctx context.Context, accountID, databaseID, operationID string) ([]Binding, error) {
+	if accountID == "" || databaseID == "" {
+		return nil, ErrInvalid
+	}
+	database, err := s.databases.Get(ctx, accountID, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return nil, ErrConflict
+	}
+	return s.bindings.ListBindings(ctx, accountID, databaseID)
+}
+
+func (s *BindingService) deleteBinding(ctx context.Context, accountID string, binding Binding) (Binding, error) {
 	if binding.State == BindingStateDeleted {
 		return binding, nil
 	}
 	now := s.now()
-	binding, err = s.bindings.ClaimBinding(ctx, accountID, bindingID, s.newLeaseToken(), BindingStateDeleting, now, now.Add(s.leaseDuration))
+	binding, err := s.bindings.ClaimBinding(ctx, accountID, binding.ID, s.newLeaseToken(), BindingStateDeleting, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Binding{}, err
 	}
@@ -340,6 +382,38 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateDeleting, "secret_delete_failed", normalized, delay)
 	}
 	return s.finishDelete(ctx, binding)
+}
+
+// revokeRetiredCredentials revokes every provider credential generation of
+// a binding a rollback database switch deleted (ADR-20261023181931). A
+// database that no longer exists took its credentials with it.
+func (s *BindingService) revokeRetiredCredentials(ctx context.Context, binding Binding) error {
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if database.ProviderResourceID == "" {
+		return nil
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return ErrUnavailable
+	}
+	for _, generation := range []int64{binding.CredentialGeneration, binding.RotationPreviousGeneration} {
+		if generation < 1 {
+			continue
+		}
+		providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
+		err := backend.Provider.RevokeCredentials(providerContext, bindingCredentialRequestForGeneration(binding, databaseDataResource(database), generation))
+		cancel()
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return normalizeProviderError(err)
+		}
+	}
+	return nil
 }
 
 // ReconcileRotationCleanup retires the old provider identity only after the

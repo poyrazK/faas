@@ -135,3 +135,42 @@ func TestNativePromotionDestroyJoinsAndRefusesLateSuccess(t *testing.T) {
 		t.Fatal("cancelled promotion leaked native VM")
 	}
 }
+
+// A guest this process adopted carries a parent its predecessor issued
+// (ADR-595 extension): a fresh grant naming this process promotes it only
+// with the adoption's hold, and the promotion receipt then names this
+// process, so the hold ends.
+func TestNativePromotionOfAnAdoptedGuest(t *testing.T) {
+	v := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, v)
+	p := nativePromotionFixture(t, m)
+	defer m.Destroy(t.Context(), p.Binding.InstanceID)
+	id, issuer := p.Binding.InstanceID, p.Parent.Binding.Incarnation
+	m.mu.Lock()
+	// The successor process: it has admitted nothing itself yet.
+	m.runtimeAdmissionIncarnation = uuid.NewString()
+	m.runtimeAdmissionTokens, m.runtimeAdmissionInstances, m.runtimeAdmissionFlights = nil, nil, nil
+	successor := m.runtimeAdmissionIncarnation
+	m.mu.Unlock()
+	fresh := p
+	fresh.Binding.Token, fresh.Binding.Incarnation = uuid.NewString(), successor
+	fresh.Binding.PayloadHash, _ = runtimeadmission.HashPromotionPayload(fresh.ToProto())
+	if _, _, err := m.PromoteAdmitted(t.Context(), fresh); err == nil || len(v.resumed) != 0 {
+		t.Fatalf("promoted a predecessor's receipt without the adoption's hold: %v", err)
+	}
+	m.mu.Lock()
+	m.live[id].admissionHeldFrom = issuer
+	m.mu.Unlock()
+	other := p.Parent
+	other.CompletedAtUnixNano++
+	if m.AdmissionHeldFrom(id, p.Parent) != issuer || m.AdmissionHeldFrom(id, other) != "" || m.AdmissionHeldFrom(uuid.NewString(), p.Parent) != "" {
+		t.Fatal("hold not limited to the adopted receipt")
+	}
+	inst, r, err := m.PromoteAdmitted(t.Context(), fresh)
+	if err != nil || inst.Paused || r.Binding.Incarnation != successor || len(v.resumed) != 1 {
+		t.Fatalf("adopted promotion: %+v %v", r, err)
+	}
+	if m.AdmissionHeldFrom(id, p.Parent) != "" || inst.admissionHeldFrom != "" {
+		t.Fatal("the hold outlived the promotion receipt")
+	}
+}

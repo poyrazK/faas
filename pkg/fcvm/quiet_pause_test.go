@@ -234,17 +234,54 @@ func TestQuietResumeFailureKeepsInstancePaused(t *testing.T) {
 	}
 }
 
+// A failed PauseVM may still have paused the guest (a late timeout, or the
+// API client resending after a transport error), so vmmd resumes it at once
+// and only then treats it as running.
 func TestQuietPauseFailureKeepsInstanceRunning(t *testing.T) {
 	act := newFakeQuietActivity()
 	v := &pausingVMM{fakeVMM: &fakeVMM{}, pauseErr: errors.New("boom")}
 	m := newQuietManager(t, v, act)
 	act.set("q", 0, time.Now().Add(-time.Minute))
+	_, epoch0 := m.QuietGate("q")
 	m.quietPausePass(t.Context(), time.Now())
-	if paused, _ := m.QuietPauseState("q"); paused {
-		t.Fatal("instance marked paused after PauseVM failed")
+	if v.resumes() != 1 {
+		t.Fatalf("resumes after a failed pause = %d, want 1", v.resumes())
 	}
-	if err := m.QuietResume(t.Context(), "q"); err != nil || v.resumes() != 0 {
+	if paused, epoch1 := m.QuietGate("q"); paused || epoch1 == epoch0 {
+		t.Fatalf("after a failed pause: paused=%v epoch %d -> %d; want running, epoch moved for probes", paused, epoch0, epoch1)
+	}
+	if err := m.QuietResume(t.Context(), "q"); err != nil || v.resumes() != 1 {
 		t.Fatalf("QuietResume after a failed pause: err=%v resumes=%d", err, v.resumes())
+	}
+}
+
+// When the resume after a failed pause fails too, the guest may be paused:
+// it stays marked paused so the next request resumes it first, and its
+// report carries no pause start, so the ledger never counts it unbilled.
+func TestQuietPauseFailureWithFailedResumeStaysPaused(t *testing.T) {
+	act := newFakeQuietActivity()
+	v := &pausingVMM{fakeVMM: &fakeVMM{}, pauseErr: errors.New("boom")}
+	m := newQuietManager(t, v, act)
+	v.fakeVMM.mu.Lock()
+	v.fakeVMM.resumeErr = errors.New("resume boom")
+	v.fakeVMM.mu.Unlock()
+	act.set("q", 0, time.Now().Add(-time.Minute))
+	m.quietPausePass(t.Context(), time.Now())
+	if r := m.QuietPauseReport("q"); !r.Paused || !r.Since.IsZero() {
+		t.Fatalf("report after a failed pause and resume = %+v, want paused with no start", r)
+	}
+	m.quietPausePass(t.Context(), time.Now())
+	if v.pauses() != 1 {
+		t.Fatalf("pauses = %d, want 1: an instance marked paused is not paused again", v.pauses())
+	}
+	v.fakeVMM.mu.Lock()
+	v.fakeVMM.resumeErr = nil
+	v.fakeVMM.mu.Unlock()
+	if err := m.QuietResume(t.Context(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if r := m.QuietPauseReport("q"); r.Paused || !r.LastStarted.IsZero() || r.PausedTotal != 0 {
+		t.Fatalf("report after the next resume = %+v, want running and no completed pause", r)
 	}
 }
 

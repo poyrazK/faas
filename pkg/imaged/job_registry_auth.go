@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -16,7 +15,8 @@ import (
 // source image registry. Job credentials use the same namespace and key
 // rotation path as app credentials, but are scoped by (account, job, host).
 func (h *Handler) resolveJobRegistryAuth(ctx context.Context, job state.Job, host string) (*oci.BasicAuth, error) {
-	if h.secretboxIdentity == nil || host == "" {
+	identities := h.registryCredentialIdentities()
+	if len(identities) == 0 || host == "" {
 		return nil, nil
 	}
 	store, ok := h.store.(state.JobRegistryCredentialStore)
@@ -29,10 +29,6 @@ func (h *Handler) resolveJobRegistryAuth(ctx context.Context, job state.Job, hos
 			return nil, nil
 		}
 		return nil, fmt.Errorf("imaged: lookup job registry credential for %s: %w", logsanitize.Field(host), err)
-	}
-	identities := h.secretboxIdentities
-	if len(identities) == 0 && h.secretboxIdentity != nil {
-		identities = []*age.X25519Identity{h.secretboxIdentity}
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {

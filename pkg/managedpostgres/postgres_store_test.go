@@ -305,26 +305,57 @@ func TestPostgresStoreDeleteClaimSerializesRestoreReservation(t *testing.T) {
 			deleteResult <- claimErr
 		}()
 		close(started)
+		// A restore copy no longer refuses the delete (ADR-20261103091657),
+		// so the delete always wins; the lock still decides whether the
+		// restore committed before it or saw the source deleting.
 		restoreErr, deleteErr := <-restoreResult, <-deleteResult
-		if (restoreErr == nil) == (deleteErr == nil) {
-			t.Fatalf("race %d must have exactly one winner: restore=%v delete=%v", index, restoreErr, deleteErr)
+		if deleteErr != nil {
+			t.Fatalf("race %d delete error = %v", index, deleteErr)
 		}
 		if restoreErr != nil && !errors.Is(restoreErr, ErrConflict) {
 			t.Fatalf("race %d restore error = %v, want ErrConflict", index, restoreErr)
 		}
-		if deleteErr != nil && !errors.Is(deleteErr, ErrConflict) {
-			t.Fatalf("race %d delete error = %v, want ErrConflict", index, deleteErr)
-		}
 		current, err := store.Get(raceCtx, accountID, source.ID)
-		if err != nil {
-			t.Fatalf("race %d get source: %v", index, err)
+		if err != nil || current.State != StateDeleting {
+			t.Fatalf("race %d source = %s, %v; want deleting", index, current.State, err)
 		}
-		if restoreErr == nil && current.State != StateReady {
-			t.Fatalf("race %d restore won with source state %s", index, current.State)
+		copies, err := store.HasRestoreCopies(raceCtx, source.ID)
+		if err != nil || copies != (restoreErr == nil) {
+			t.Fatalf("race %d copies = %v, %v with restore error %v", index, copies, err, restoreErr)
 		}
-		if deleteErr == nil && current.State != StateDeleting {
-			t.Fatalf("race %d delete won with source state %s", index, current.State)
-		}
+	}
+}
+
+// adr: 20261103091657
+func TestPostgresStoreKeptSourceFreesItsDatabase(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 9, 22, 14, 0, 0, 0, time.UTC)
+	source := postgresReadyDatabase(t, store, accountID, "kept-source", at)
+	copyDatabase := postgresTestDatabase(accountID, "kept-copy", at.Add(time.Second))
+	copyDatabase.RestoreSourceDatabaseID = source.ID
+	copyDatabase.RestoreSourceResourceID = source.ProviderResourceID
+	copyDatabase.RestorePointInTime = at.Add(-time.Hour)
+	if _, _, err := store.Reserve(ctx, copyDatabase, 100); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, accountID); err != nil || count != 2 {
+		t.Fatalf("count before the delete = %d, %v; want 2", count, err)
+	}
+	purgeAfter := at.Add(7 * 24 * time.Hour)
+	if _, err := store.ClaimScheduledDelete(ctx, accountID, source.ID, uuid.NewString(), at.Add(2*time.Second), at.Add(time.Minute), purgeAfter); err != nil {
+		t.Fatalf("a source with a copy refused its scheduled delete: %v", err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, accountID); err != nil || count != 2 {
+		t.Fatalf("count during the undo window = %d, %v; want 2", count, err)
+	}
+	if _, err := store.ClaimDelete(ctx, accountID, source.ID, uuid.NewString(), purgeAfter, purgeAfter.Add(time.Minute)); err != nil {
+		t.Fatalf("purge claim: %v", err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, accountID); err != nil || count != 1 {
+		t.Fatalf("count with the source kept = %d, %v; want 1", count, err)
+	}
+	if copies, err := store.HasRestoreCopies(ctx, source.ID); err != nil || !copies {
+		t.Fatalf("copies = %v, %v; want true", copies, err)
 	}
 }
 
@@ -637,6 +668,79 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 	}
 }
 
+// ReserveBinding takes the target lock and then key-shares the app row. A
+// customer secret write that locked the app row first deadlocked with it, so
+// the write must wait on the target lock before locking the app.
+func TestCustomerSecretWriteTakesTargetLockBeforeAppRow(t *testing.T) {
+	_, pool, ctx, accountID := postgresStoreFixture(t)
+	stateStore := state.NewPgStore(pool)
+	app, err := stateStore.CreateApp(ctx, state.App{
+		AccountID: accountID,
+		Slug:      "target-order-" + uuid.NewString(),
+		Type:      state.AppTypeApp,
+		RAMMB:     256,
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	target := testBinding(accountID, uuid.NewString(), app.ID, uuid.NewString(), time.Now())
+
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin target holder: %v", err)
+	}
+	defer func() { _ = holder.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_xact_lock(managed_secret_target_lock_key($1, $2, $3))`,
+		app.ID, target.Scope, target.EnvironmentKey); err != nil {
+		t.Fatalf("hold target lock: %v", err)
+	}
+
+	written := make(chan error, 1)
+	go func() {
+		written <- stateStore.UpsertAppSecretInScope(ctx, accountID, app.ID, target.Scope, target.EnvironmentKey, []byte("customer-ciphertext"))
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database
+			WHERE d.datname = current_database() AND l.locktype = 'advisory' AND NOT l.granted)`).Scan(&waiting); err != nil {
+			t.Fatalf("read lock waits: %v", err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-written:
+			t.Fatalf("secret write finished while the target lock was held: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("secret write never waited on the target lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The waiting write must not hold the app row: a binding reservation
+	// queued behind it would need this key-share lock next.
+	keyShare, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin key share: %v", err)
+	}
+	defer func() { _ = keyShare.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := keyShare.Exec(ctx, `SELECT id FROM apps WHERE id = $1 FOR KEY SHARE NOWAIT`, app.ID); err != nil {
+		t.Fatalf("app row locked while the secret write waits on the target lock: %v", err)
+	}
+	if err := keyShare.Commit(ctx); err != nil {
+		t.Fatalf("commit key share: %v", err)
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatalf("release target lock: %v", err)
+	}
+	if err := <-written; err != nil {
+		t.Fatalf("secret write after target release: %v", err)
+	}
+}
+
 type postgresBindingCredentialSink struct {
 	store *state.PgStore
 }
@@ -875,5 +979,36 @@ func TestPostgresStoreListUsageDatabasesPagesByKeyset(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("ready database %s never listed", id)
 		}
+	}
+}
+
+// adr: 20261028103115 — the fleet totals count reservations and sum only the
+// current UTC month's provider cost across every database.
+func TestPostgresStoreFleetTotalsCountDatabasesAndMonthCost(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 9, 5, 20, 0, 0, 0, time.UTC)
+	first := postgresReadyDatabase(t, store, accountID, "fleet-one", at)
+	second := postgresReadyDatabase(t, store, accountID, "fleet-two", at)
+	insert := func(database Database, from time.Time, cost int64) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_usage(account_id,database_id,backend_id,backend_fingerprint,window_from,window_to,observed_at,meter,quantity,cost_millicents)
+			VALUES($1,$2,$3,$4,$5,$6,$6,'compute_unit_seconds',1,$7)`, accountID, database.ID, database.BackendID, database.BackendFingerprint, from, from.Add(time.Hour), cost); err != nil {
+			t.Fatalf("insert usage: %v", err)
+		}
+	}
+	month := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	insert(first, month.Add(-time.Hour), 10_000)
+	insert(first, month, 300)
+	insert(second, month.Add(48*time.Hour), 200)
+	insert(second, month.AddDate(0, 1, 0), 7_000)
+	totals, err := store.FleetTotals(ctx, at)
+	if err != nil {
+		t.Fatalf("FleetTotals: %v", err)
+	}
+	if totals.CostMillicents != 500 || totals.Databases < 2 {
+		t.Fatalf("fleet totals = %+v, want this month's 500 millicents and both databases", totals)
+	}
+	if _, err := store.FleetTotals(ctx, time.Time{}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero period = %v, want ErrInvalid", err)
 	}
 }

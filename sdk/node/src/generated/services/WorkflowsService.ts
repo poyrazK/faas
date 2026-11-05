@@ -1057,7 +1057,7 @@ export class WorkflowsService {
   }
   /**
    * Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
-   * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before publication retain their captured definition.
+   * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires workflows to be enabled on the platform. Events accepted before publication retain their captured definition.
    * @returns AutomationResponse publishAutomation result.
    * @throws ApiError
    */
@@ -1277,8 +1277,8 @@ export class WorkflowsService {
    * Returns schedules from the default-scope live deployment, their next
    * nominal fire time and the most recent durable admission outcome.
    * When scheduling is unavailable, unavailable_reason explains why and
-   * next_fire_at is omitted. Runtime availability reflects apid configuration;
-   * operators must enable the same workflow gate on schedd.
+   * next_fire_at is omitted. Runtime availability reflects the API configuration;
+   * operators must enable the same workflow gate on the scheduler.
    * Disabling or redeploying a schedule does not cancel existing runs.
    * No live default deployment returns an empty schedules array.
    *
@@ -1754,7 +1754,7 @@ export class WorkflowsService {
   }
   /**
    * Deliver an external event to this tenant's waiting workflow run.
-   * Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+   * Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404. A matching retained event may be retried after the run finishes; reusing its key with different content conflicts.
    * @returns InjectWorkflowEventResponse The run accepted the event for processing.
    * @throws ApiError
    */
@@ -1769,9 +1769,7 @@ export class WorkflowsService {
     id: string,
     requestBody: InjectWorkflowEventRequest,
     /**
-     * Idempotency key for the POST. Stored for 24h. On replay the server
-     * returns the original response with `Idempotent-Replayed: true`.
-     *
+     * Preserve this key and event content when retrying a retained tenant workflow event.
      */
     idempotencyKey?: string,
   }): CancelablePromise<InjectWorkflowEventResponse> {
@@ -1791,7 +1789,7 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
-        409: `code: workflow_not_running — only active runs accept events.`,
+        409: `code: workflow_not_running for a new event on an inactive tenant run, or conflict when a retained event key has different content.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -2430,18 +2428,24 @@ export class WorkflowsService {
   }
   /**
    * Deliver an external event to a waiting workflow run.
+   * A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
    * @returns InjectWorkflowEventResponse The event was recorded.
    * @throws ApiError
    */
   public static injectWorkflowEvent({
     id,
     requestBody,
+    idempotencyKey,
   }: {
     /**
      * Workflow-run identifier that receives the event.
      */
     id: string,
     requestBody: InjectWorkflowEventRequest,
+    /**
+     * Reuse the same key and event content to retry while the event is retained.
+     */
+    idempotencyKey?: string,
   }): CancelablePromise<InjectWorkflowEventResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -2449,13 +2453,16 @@ export class WorkflowsService {
       path: {
         'id': id,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
-        409: `code: workflow_not_running — only running or awaiting_event runs accept events.`,
+        409: `code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

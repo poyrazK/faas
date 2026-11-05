@@ -3,6 +3,7 @@
 Date: 2026-10-19
 Status: Accepted
 Amends: ADR-682 (Compose healthchecks applied to prebuilt images only)
+Amended by: ADR-20261024100000 (a Dockerfile HEALTHCHECK alone is enforced)
 Related: ADR-683 (image healthcheck readiness), ADR-684 (image healthcheck runtime recovery), ADR-1337 (Compose key reporting)
 
 ## Context
@@ -44,8 +45,9 @@ is for a prebuilt image.
 
 - Built Compose services get the readiness gate and recovery their file
   describes. A failing check now blocks promotion instead of being ignored.
-- A stage retry builds a new deployment without the failed one's inferred
-  profile, so it runs without the override; a fresh deploy freezes it again.
+- A stage retry copies the failed deployment's inferred profile, so it keeps
+  the frozen override along with the Dockerfile path and build options.
+  (An earlier revision of this record said retries lost it; they do not.)
 - An older scheduler reads the verdict only for image deployments, so during
   rollout a built service's check reaches the guest but is not enforced, which
   is today's behavior.

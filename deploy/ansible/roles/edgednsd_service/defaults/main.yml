@@ -1,0 +1,47 @@
+---
+# edgednsd_service (ADR-20261102081618 §3). The manifest's public_edge.dns
+# turns it on (faas_edgednsd_managed in bootstrap.yml) and renders the names
+# and the node addresses.
+faas_edgednsd_enabled: true
+# The zone's Cloudflare token, with Zone > DNS: Edit and nothing else. CD
+# stages it from the EDGEDNSD_CF_TOKEN secret (scripts/ci/edgednsd_vars.sh);
+# a workstation converge may name a file on the controller instead.
+faas_edgednsd_cf_token: ""
+faas_edgednsd_cf_token_src: ""
+# Optional env file on the controller, e.g. a DATABASE_URL for another login.
+# Without it edgednsd logs in like the other control-plane daemons, by peer
+# authentication as faas over the local socket.
+faas_edgednsd_env_src: ""
+# "<zone id>:<host>[:proxied|:dns-only]" per managed name, e.g. a pilot host,
+# later the app wildcard. Proxied unless the entry says dns-only
+# (ADR-20261103163954 §1).
+faas_edgednsd_names: []
+# "<registry node name>=<public address>" per compute node.
+faas_edgednsd_node_addresses: []
+# edgednsd logs and counts the changes it would make until this is false.
+faas_edgednsd_dry_run: true
+faas_edgednsd_metrics_listen: "127.0.0.1:9113"
+
+# The apps domains' publicly trusted certificate (ADR-20261103163954 §3).
+# Empty orders none. edgednsd orders it from Let's Encrypt with the DNS-01
+# challenge in the zone with id faas_edgednsd_certificate_zone_id, through the
+# same token, and stores it with its key sealed to the edge-tls seal domain,
+# whose recipient the seal_domains role stages at
+# /etc/faas/secrets/domains/edge-tls.age.pub. The role creates the ACME
+# account key once and keeps it: that account ordered, and can revoke, every
+# stored certificate.
+faas_edgednsd_certificate_names: []
+faas_edgednsd_certificate_zone_id: ""
+# letsencrypt-staging until the path is proven, then letsencrypt.
+faas_edgednsd_acme_ca: letsencrypt-staging
+faas_edgednsd_acme_email: ""
+
+# The Certificate Transparency watch (ADR-20261103163954 §3): edgednsd reads
+# the unexpired certificates for faas_edgednsd_ct_domain and every name under
+# it from Cert Spotter and pages on any it did not issue, except those whose
+# every name is in faas_edgednsd_ct_allow_names (the CDN's own certificate for
+# the zone, a hosted site's). Empty watches nothing.
+faas_edgednsd_ct_domain: ""
+faas_edgednsd_ct_allow_names: []
+# Set by the role when /etc/faas/secrets/edgednsd/certspotter-api-key exists.
+faas_edgednsd_ct_api_key_staged: false

@@ -317,14 +317,29 @@ type StatsReader interface {
 	SnapshotAll() []instancestats.InstanceStat
 }
 
+// DepartedStatsReader is the optional StatsReader surface that keeps the last
+// row of an instance that left the snapshot (instancestats.Reader). Its final
+// network counters reach meterd through ListInstanceStats, so the bytes an
+// instance sent since meterd's last read are still metered after it parks
+// (ADR-20261103121407).
+type DepartedStatsReader interface {
+	SnapshotDeparted() []instancestats.InstanceStat
+}
+
 // Server implements scheddpb.ScheddServer.
 type Server struct {
 	scheddpb.UnimplementedScheddServer
 
+	// databases is the database scheduler (ADR-1027); nil keeps the
+	// database RPCs UNIMPLEMENTED.
+	databases DatabaseScheduler
+
 	engine SchedAPI
 	stats  StatsReader
-	ops    *wire.OpsMetrics
-	log    *slog.Logger
+	// agentRuns serves RunAgent (ADR-20261027090010 §6); nil answers Unimplemented.
+	agentRuns AgentRunRunner
+	ops       *wire.OpsMetrics
+	log       *slog.Logger
 	// owner is the durable Phase 2 / Gate A shard key this schedd
 	// serves. Empty for the legacy single-box posture. Set via
 	// (*Server).WithOwner at wiring time (cmd/schedd resolves it
@@ -564,7 +579,16 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	if req.GetBurstContinuation() {
 		engineCtx = sched.WithBurstContinuation(engineCtx)
 	}
-	res, err := s.engine.AdmitInstance(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
+	// Request traffic un-parks an explicitly parked app through the
+	// EnsureWake lifecycle claim; plain admission left it evicted_cold and
+	// the reaper destroyed the waking VM.
+	admit := s.engine.AdmitInstance
+	if traffic, ok := s.engine.(interface {
+		AdmitTrafficInstance(context.Context, string, string, string, string) (sched.WakeResult, error)
+	}); ok {
+		admit = traffic.AdmitTrafficInstance
+	}
+	res, err := admit(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
@@ -600,6 +624,9 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 // legacy wire — this method is additive per ADR-016.
 func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
 	const op = "EnsureWake"
+	// The pre-wake clock starts before authorization so wake.boot_started
+	// accounts for the whole RPC up to Engine.Wake.
+	ctx = sched.WithEnsureWakeRPCStarted(ctx, time.Now())
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
@@ -1420,6 +1447,26 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
+		if v := msg.GetInstanceBridgeResidentBytes(); v != nil {
+			if provider, ok := s.engine.(interface {
+				InstanceBridgeSink() sched.InstanceBridgeSink
+			}); ok {
+				if sink := provider.InstanceBridgeSink(); sink != nil {
+					sink(report.NodeID, time.Now(), v.GetValue())
+				}
+			}
+		}
+		// ADR 20261030100950: the node's CPU pressure readings, kept only
+		// when vmmd sent both.
+		if p, b := msg.GetTenantCpuPressureSomeAvg10(), msg.GetHostCpuBusyPercent(); p != nil && b != nil {
+			if provider, ok := s.engine.(interface {
+				CPUPressureSink() sched.CPUPressureSink
+			}); ok {
+				if sink := provider.CPUPressureSink(); sink != nil {
+					sink(report.NodeID, time.Now(), sched.NodeCPUPressure{SomeAvg10: p.GetValue(), BusyPercent: b.GetValue()})
+				}
+			}
+		}
 		// Only separately signed process inventories can drive destructive
 		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {
@@ -1492,6 +1539,8 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 		if value := row.GetLastRequestAt(); value != nil {
 			item.LastRequestAt = value.AsTime()
 		}
+		item.QuietPause = sched.QuietPauseRecordFromProto(row.GetQuietPausedSince(),
+			row.GetQuietLastPauseStartedAt(), row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal())
 		if value := row.GetNetTxBytes(); value != nil {
 			v := value.GetValue()
 			item.NetTxBytes = &v
@@ -1585,24 +1634,23 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 		// the CPU rate-and-accumulator hot path on the schedd
 		// side in isolation from the rest of the RPC.
 		cpuStart := time.Now()
-		for _, r := range s.stats.SnapshotAll() {
-			row := &scheddpb.InstanceStatsRow{
-				InstanceId:    r.InstanceID,
-				AppId:         r.AppID,
-				NodeId:        r.NodeID,
-				CpuUsec:       r.CPUUsageUsec,
-				CpuValid:      uint32(r.CPU),
-				NetTxBytes:    r.TXBytes,
-				TxValid:       uint32(r.TX),
-				NetRxBytes:    r.RXBytes,
-				RxValid:       uint32(r.RX),
-				SidecarRamMbs: int32SliceToProto(r.SidecarMBs),
+		live := s.stats.SnapshotAll()
+		seen := make(map[string]struct{}, len(live))
+		for _, r := range live {
+			seen[r.InstanceID] = struct{}{}
+			rows = append(rows, instanceStatsRowProto(r))
+		}
+		// A departed instance carries only its final network counters: CPU
+		// and disk are marked unknown so no reader takes it for a live VM.
+		if departed, ok := s.stats.(DepartedStatsReader); ok {
+			for _, r := range departed.SnapshotDeparted() {
+				if _, live := seen[r.InstanceID]; live {
+					continue
+				}
+				r.CPU = instancestats.Unknown
+				r.DiskValid = false
+				rows = append(rows, instanceStatsRowProto(r))
 			}
-			if r.DiskValid {
-				row.DiskUsedBytes = wrapperspb.Int64(r.DiskUsedBytes)
-				row.DiskCapacityBytes = wrapperspb.Int64(r.DiskCapacityBytes)
-			}
-			rows = append(rows, row)
 		}
 		if h := s.ops.CPUStatsCollectDuration(); h != nil {
 			h.Observe(time.Since(cpuStart).Seconds())
@@ -1610,6 +1658,26 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &scheddpb.ListInstanceStatsResponse{Rows: rows}, nil
+}
+
+func instanceStatsRowProto(r instancestats.InstanceStat) *scheddpb.InstanceStatsRow {
+	row := &scheddpb.InstanceStatsRow{
+		InstanceId:    r.InstanceID,
+		AppId:         r.AppID,
+		NodeId:        r.NodeID,
+		CpuUsec:       r.CPUUsageUsec,
+		CpuValid:      uint32(r.CPU),
+		NetTxBytes:    r.TXBytes,
+		TxValid:       uint32(r.TX),
+		NetRxBytes:    r.RXBytes,
+		RxValid:       uint32(r.RX),
+		SidecarRamMbs: int32SliceToProto(r.SidecarMBs),
+	}
+	if r.DiskValid {
+		row.DiskUsedBytes = wrapperspb.Int64(r.DiskUsedBytes)
+		row.DiskCapacityBytes = wrapperspb.Int64(r.DiskCapacityBytes)
+	}
+	return row
 }
 
 // mapMethod translates the engine's vmmd-side WakeMethod to the schedd wire

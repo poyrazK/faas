@@ -37,6 +37,9 @@ type resolvedProjectManifest struct {
 	PostgresBindings   []resolvedManagedPostgresBinding
 	AsyncRoutes        []gregalemanifest.AsyncRoute
 	AsyncRoutesPresent bool
+	// Routes carry the same presence distinction (ADR-20261021223225).
+	Routes        []gregalemanifest.PathRoute
+	RoutesPresent bool
 }
 
 // loadAndResolveProjectManifest validates the manifest and resolves every
@@ -68,7 +71,7 @@ func (s *server) loadAndResolveProjectManifest(
 			return resolvedProjectManifest{}, p
 		}
 	}
-	if prob := validateManifestAgainstPlan(manifest, acct.Plan); prob != nil {
+	if prob := validateManifestAgainstPlan(manifest, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 		return resolvedProjectManifest{}, prob
 	}
 	if err := manifest.ValidateForPlan(acct.Plan); err != nil {
@@ -83,6 +86,8 @@ func (s *server) loadAndResolveProjectManifest(
 		PostgresBindings:   bindings,
 		AsyncRoutes:        manifest.AsyncRoutes,
 		AsyncRoutesPresent: manifest.AsyncRoutes != nil,
+		Routes:             manifest.Routes,
+		RoutesPresent:      manifest.Routes != nil,
 	}, nil
 }
 
@@ -167,10 +172,14 @@ func (s *server) resolveManifestPostgresBindings(
 		}
 		environmentKey := dependency.EffectiveEnvironmentKey()
 		access := managedpostgres.CredentialAccess(dependency.EffectiveAccess())
+		subject := platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}
 		// Application Auth is a dark launch: without it the mode is unknown.
-		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}) {
+		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(subject) {
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access))
+		}
+		if problem := s.dataAPIAccessProblem(subject, access, fmt.Sprintf(`database[%d]: access "data_api"`, i)); problem != nil {
+			return nil, problem
 		}
 		targetKey := strings.Join([]string{appSlug, scope, environmentKey}, "\x00")
 		if _, duplicate := seenTargets[targetKey]; duplicate {
@@ -288,6 +297,10 @@ func managedPostgresManifestProblem(err error, detail string) *api.Problem {
 		status, code, title = http.StatusBadRequest, "managed_postgres_invalid", "Invalid managed PostgreSQL request"
 	case errors.Is(err, managedpostgres.ErrUnsupported):
 		status, code, title = http.StatusUnprocessableEntity, "managed_postgres_unsupported", "Managed PostgreSQL feature unsupported"
+	case errors.Is(err, managedpostgres.ErrNotInPlan):
+		status, code, title = http.StatusForbidden, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+		status, code, title = http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 	}
 	if detail == "" {
 		detail = "The managed PostgreSQL operation could not be completed."

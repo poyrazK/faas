@@ -36,7 +36,7 @@ auth_query = SELECT usename, passwd FROM pg_shadow WHERE usename = $1
 # no database password of its own.
 auth_user = {{ faas_pgbouncer_db_role }}
 
-# Prepared statements: pkg/db switches the pooled path to QueryExecModeExec
+# Prepared statements: pkg/db switches the pooled path to QueryExecModeCacheDescribe
 # when FAAS_DATABASE_URL_DIRECT is set, so no named statements cross a pooled
 # transaction. This stays 0 deliberately — relying on pgbouncer to track them
 # would make correctness depend on the pooler's version, and the client-side
@@ -47,6 +47,11 @@ max_prepared_statements = 0
 # own request budget; a queued forever connection surfaces as an unexplained
 # timeout rather than a capacity refusal.
 query_wait_timeout = 10
+
+# A client idle inside a transaction holds a server connection and its row
+# locks. Daemon sessions that bypass the pooler carry the same bound as
+# idle_in_transaction_session_timeout (pkg/db DaemonIdleInTransactionSessionTimeout).
+idle_transaction_timeout = 120
 
 # LISTEN would break under transaction pooling. Nothing should reach this
 # pooler with a LISTEN — pkg/db routes it to FAAS_DATABASE_URL_DIRECT and

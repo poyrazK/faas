@@ -16,7 +16,9 @@ func validateBoundQueueEnvironment(ctx context.Context, store invocationAppReade
 	if !invocationBoundQueueShape(inv) {
 		return false, nil
 	}
-	history, ok := store.(QueueBindingHistoryStore)
+	history, ok := store.(interface {
+		QueueBindingHistoryByID(context.Context, string, string, string) (QueueBinding, error)
+	})
 	if !ok {
 		return false, ErrInvocationEnvironmentWorkIsolation
 	}

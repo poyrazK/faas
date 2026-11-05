@@ -85,6 +85,17 @@ func TestPgAdmissionFunctionsRaceWithTheStatementPath(t *testing.T) {
 	}
 }
 
+// ADR-909 amendment 1: both admission paths honour a placement binding's
+// reservation allowance and clamp it the same way.
+func TestPgAdmissionReservationAllowance(t *testing.T) {
+	store, _ := lifecycleCompletionPGStore(t)
+	if !state.AdmissionFunctionsUsable(t.Context(), store) {
+		t.Fatal("migrated database lacks the admission functions")
+	}
+	t.Run("function", func(t *testing.T) { checkReservationAllowance(t, store) })
+	t.Run("statements", func(t *testing.T) { checkReservationAllowance(t, state.StatementAdmissionStore(store)) })
+}
+
 // Every refusal the transaction makes, the function makes with the same
 // error, and neither leaves an instance behind.
 func TestPgAdmissionFunctionsRefuseLikeTheStatements(t *testing.T) {

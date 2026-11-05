@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
-from faas_sdk import AsyncEventAcknowledgmentWorker, EventAcknowledgmentWorkerCancelled
+from faas_sdk.preview import AsyncEventAcknowledgmentWorker, EventAcknowledgmentWorkerCancelled
 
 _HEADERS = frozenset(
     (

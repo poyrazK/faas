@@ -158,7 +158,11 @@ func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (O
 		return e.status, e.observedCents, e.capCents, nil
 	}
 	c.mu.RUnlock()
+	return c.load(ctx, accountID, now)
+}
 
+// load reads accountID's cap status from the store and caches it.
+func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now time.Time) (OverageStatus, int64, int64, error) {
 	// Slow path: re-read from the store. GetAccountOverageCapCents +
 	// CurrentMonthOverageCents is two round-trips; for the one-box
 	// FaaS scale both are bounded (~1ms each), so we do not batch.
@@ -201,11 +205,19 @@ func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (O
 			exp:           now.Add(c.ttl),
 		}
 		c.mu.Unlock()
-		return OverageOK, capCents, 0, err
+		return OverageOK, 0, capCents, err
 	}
 	status := OverageOK
 	if obsCents >= capCents {
 		status = OverageReached
+	} else if holds, ok := c.store.(state.SpendCapHoldStore); ok {
+		// Compute alone is under the cap, but the cap also bounds live
+		// secondary meters (egress) that only meterd prices. Its hold counts
+		// while the cap and month it was computed for still apply
+		// (ADR-20261026120843). A read failure fails open like the reads above.
+		if hold, found, holdErr := holds.GetSpendCapHold(ctx, accountID); holdErr == nil && found && hold.Holds(capCents, now) {
+			status, obsCents = OverageReached, max(obsCents, hold.ObservedCents)
+		}
 	}
 	c.mu.Lock()
 	c.cache[accountID] = overageEntry{

@@ -50,7 +50,7 @@ func TestEdgeRulesIP_E2E(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-ip.apps.test.example"
+	synthHost := "edgectl-ip.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)

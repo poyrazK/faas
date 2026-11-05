@@ -18,6 +18,8 @@
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug dependencies <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
+//	gregale debug status <slug> [--since <dur>]
+//	gregale debug rollout <slug> [--deployment-id UUID]
 //	gregale debug bundle <slug> <request-id-or-row-id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
@@ -49,9 +51,59 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// debugCmdUsage is the canonical usage text. Mirrors the shape of
-// commands_invocations.go's PrintUsage strings.
-const debugCmdUsage = "usage: gregale debug <requests|coverage|dependencies|running|regressions|compare|bundle> ..."
+// debugHelpLines are the `debug --help` rows; the first word names the
+// subcommand whose capability decides whether the row is shown.
+var debugHelpLines = []string{
+	"  status            one summary: health, release, regressions, recent failures",
+	"  rollout           explain a rolled-back or held release with request evidence",
+	"  requests list     list recent request telemetry",
+	"  requests watch    watch request telemetry for new or changed rows",
+	"  requests export   export metadata-only request telemetry",
+	"  requests get      show one request's metadata",
+	"  requests show     show request timeline and evidence",
+	"  requests evidence show request evidence and explanation",
+	"  requests explain  synthesize root-cause findings and next actions",
+	"  requests trace    show the linked OTel span tree",
+	"  requests replay   queue a request replay",
+	"  requests inspect  select a request and render the complete investigation",
+	"  coverage          show observed debugger signal coverage",
+	"  running           explain why an app is still running",
+	"  regressions       list detected regressions (use --all for every app)",
+	"  regressions watch watch live regression events (--poll for polling)",
+	"  regressions acknowledge|dismiss|resolve|reopen change regression triage state",
+	"  compare           compare two deployments",
+	"  bundle            export a redacted incident bundle with coverage",
+	"  profiles          CPU profiles and deployment comparison",
+	"  capture           capture CPU or heap profiles from a running instance now",
+	"  captures          list or show on-demand profile captures",
+	"  capture-diff      compare a capture with an earlier one to see what grew",
+	"  dependencies      show historical dependency latency and regressions",
+}
+
+// debugUsage leaves out the subcommands whose capability is hidden for the
+// account: `debug requests`, `compare` and `bundle` belong to the
+// production-debugger preview, hidden on production-us rc.297, and answered
+// only "no such API route" (Hunt 14 H14-89).
+func debugUsage(help bool) string {
+	view := discoveryCapabilityView()
+	var shown []string
+	for _, sub := range []string{"status", "rollout", "requests", "coverage", "dependencies", "running", "regressions", "compare", "bundle"} {
+		if !view.hidesPath("debug " + sub) {
+			shown = append(shown, sub)
+		}
+	}
+	usage := "usage: gregale debug <" + strings.Join(shown, "|") + "> ..."
+	if !help {
+		return usage
+	}
+	lines := []string{usage, ""}
+	for _, line := range debugHelpLines {
+		if fields := strings.Fields(line); len(fields) > 0 && !view.hidesPath("debug "+fields[0]) {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|inspect|replay> ..."
 
@@ -62,14 +114,11 @@ const debugCmdDocsTopic = "debug"
 
 func cmdDebug(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, debugCmdUsage, debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugUsage(false), debugCmdDocsTopic)
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
-		_, _ = fmt.Fprintln(os.Stderr, "  requests inspect  select a request and render the complete investigation")
-		_, _ = fmt.Fprintln(os.Stderr, "  profiles          CPU profiles and deployment comparison")
-		_, _ = fmt.Fprintln(os.Stderr, "  dependencies      show historical dependency latency and regressions")
+		PrintUsage(os.Stderr, debugUsage(true), debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -77,12 +126,22 @@ func cmdDebug(args []string) int {
 		return cmdDebugRequests(args[1:])
 	case "profiles":
 		return cmdDebugProfiles(args[1:])
+	case "capture":
+		return cmdDebugCapture(args[1:])
+	case "captures":
+		return cmdDebugCaptures(args[1:])
+	case "capture-diff":
+		return cmdDebugCaptureDiff(args[1:])
 	case "coverage":
 		return cmdDebugCoverage(args[1:])
 	case "dependencies":
 		return cmdDebugDependencies(args[1:])
 	case "running":
 		return cmdDebugRunning(args[1:])
+	case "status":
+		return cmdDebugStatus(args[1:])
+	case "rollout":
+		return cmdDebugRollout(args[1:])
 	case "regressions":
 		return cmdDebugRegressions(args[1:])
 	case "compare":
@@ -91,7 +150,7 @@ func cmdDebug(args []string) int {
 		return cmdDebugBundle(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown debug subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "debug", nestedCliCommand("debug"), args[0])
 }
 
 // cmdDebugCoverage renders the observed debugger signal coverage for a slug.
@@ -183,8 +242,7 @@ func cmdDebugRequests(args []string) int {
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
-	printCommandValidation(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
-	return 1
+	return printUnknownSubcommand(os.Stderr, "debug requests", cliCommand{Name: "debug", Subcommands: debugRequestsCLISubcommand().Subcommands}, args[0])
 }
 
 // debugRequestRefArgs accepts `<slug> <request-id>` or `--app <slug>
@@ -265,7 +323,7 @@ func cmdDebugRequestsEvidence(args []string) int {
 func cmdDebugRequestsList(args []string) int {
 	fs := newFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
 	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
 	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
@@ -285,7 +343,7 @@ func cmdDebugRequestsList(args []string) int {
 	}
 	positional, mergeErr := mergeAppFlag(positional, *app, 1)
 	if mergeErr != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--release UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
@@ -333,7 +391,7 @@ func cmdDebugRequestsList(args []string) int {
 func cmdDebugRequestsExport(args []string) int {
 	fs := newFlagSet("debug requests export", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	format := fs.String("format", "ndjson", "export format (ndjson or csv)")
 	limit := fs.Int("limit", 10000, "max rows (1..10000)")
 	output := fs.String("output", "", "write to PATH instead of stdout (use - for stdout)")
@@ -518,7 +576,7 @@ func renderDebugReplayQueued(w io.Writer, resp api.DebugReplayResponse) {
 	if resp.MirrorDeploymentID != "" {
 		_, _ = fmt.Fprintf(w, "Target:        %s\n", resp.MirrorDeploymentID)
 	}
-	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocations get %s\n", resp.MirrorInvocationID)
+	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocation get %s\n", resp.MirrorInvocationID)
 }
 
 func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {
@@ -731,7 +789,7 @@ func cmdDebugCompare(args []string) int {
 	fs := newFlagSet("debug compare", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	until := fs.String("until", "", "end of comparison window (RFC3339; default now)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	source := fs.String("source", "", "source deployment id")
 	mirror := fs.String("mirror", "", "mirror deployment id")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{

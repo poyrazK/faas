@@ -31,3 +31,21 @@ func TestEventDeliveryMetricsScopesAndRecovery(t *testing.T) {
 	absent.ObserveEventDeliveryCapacityDeferral("consumer")
 	absent.SetEventRoutingHealth(0, 0)
 }
+
+// A routing pass that fails every claim still completes, so routing results
+// are counted on their own; the label set stays closed.
+func TestEventRoutingOutcomesStayClosed(t *testing.T) {
+	m := NewOpsMetrics("schedd")
+	m.ObserveEventRoutingOutcome(EventRoutingClaimError)
+	m.ObserveEventRoutingOutcome(EventRoutingClaimError)
+	m.ObserveEventRoutingOutcome(EventRoutingRouted)
+	m.ObserveEventRoutingOutcome("arbitrary-outcome")
+	if got := testutil.ToFloat64(m.eventDelivery.outcomes.WithLabelValues(EventRoutingClaimError)); got != 2 {
+		t.Fatalf("claim errors=%v", got)
+	}
+	if got := testutil.CollectAndCount(m.eventDelivery.outcomes); got != 5 {
+		t.Fatalf("outcome cardinality=%d, want the five closed outcomes", got)
+	}
+	var absent *OpsMetrics
+	absent.ObserveEventRoutingOutcome(EventRoutingRouted)
+}

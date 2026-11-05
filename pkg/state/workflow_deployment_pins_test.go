@@ -37,7 +37,7 @@ func TestWorkflowDeploymentPinRoutingRetentionAndIdempotency(t *testing.T) {
 			t.Fatal(err)
 		}
 		run := &WorkflowRun{AppID: app.ID, DeploymentID: dep.ID, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
-		if _, replay, err := store.CreateWorkflowRunAdmittedWithIdempotencyKey(ctx, run, 10, "pin", fingerprint[:]); err != nil || replay {
+		if _, replay, err := store.CreateWorkflowRunAdmittedWithIdempotencyKey(ctx, run, 10, 0, "pin", fingerprint[:]); err != nil || replay {
 			t.Fatalf("replay=%v err=%v", replay, err)
 		}
 		replacement := replaceWorkflowDeployment(t, store, app)
@@ -49,7 +49,7 @@ func TestWorkflowDeploymentPinRoutingRetentionAndIdempotency(t *testing.T) {
 			t.Fatalf("retained=%+v err=%v", retained, err)
 		}
 		replay := &WorkflowRun{AppID: app.ID, DeploymentID: replacement.ID, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{}`)}
-		if _, yes, err := store.CreateWorkflowRunAdmittedWithIdempotencyKey(ctx, replay, 10, "pin", fingerprint[:]); err != nil || !yes || replay.DeploymentID != dep.ID {
+		if _, yes, err := store.CreateWorkflowRunAdmittedWithIdempotencyKey(ctx, replay, 10, 0, "pin", fingerprint[:]); err != nil || !yes || replay.DeploymentID != dep.ID {
 			t.Fatalf("replay=%+v yes=%v err=%v", replay, yes, err)
 		}
 		if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusRunning, nil, nil); err != nil {
@@ -109,6 +109,11 @@ func TestWorkflowDeploymentPinRoutingRetentionAndIdempotency(t *testing.T) {
 		retained, _ = store.DeploymentByID(ctx, dep.ID)
 		if retained.Status != DeploySuperseded {
 			t.Fatalf("unreferenced code leaked: %+v", retained)
+		}
+		// The release leaves the rollback window, which keeps a recent
+		// superseded release's layers (Hunt 21 H21-1).
+		for range api.SnapshotRollbackRetentionDeployments - 1 {
+			replaceWorkflowDeployment(t, store, app)
 		}
 		if _, claimed, err := store.(LayerArtifactRetentionStore).ClaimLayerArtifactDeletion(ctx, key); err != nil || !claimed {
 			t.Fatalf("artifact not released: claimed=%v err=%v", claimed, err)

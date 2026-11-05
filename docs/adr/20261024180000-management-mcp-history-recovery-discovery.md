@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-10-24. Extends ADR-20261024140000 and ADR-20261024160000.
+Accepted — 2026-10-24. Extends ADR-20261105000511 and ADR-20261024160000.
 
 ## Context
 

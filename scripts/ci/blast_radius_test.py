@@ -126,6 +126,30 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(rep["binaries"]["meterd"]["reasons"], ["pkg/api/api.go", "a", "b"])
         self.assertEqual(rep["binaries"]["meterd"]["reason_count"], 4)
 
+    def test_broken_merge_base_counts_every_built_binary_as_changed(self):
+        # Two merged PRs left main uncompilable; the PR that repairs it must
+        # still get a report, not a build error at the merge base.
+        base = FakeTree({"apid": APID, "meterd": APID}, FILES, sha="a" * 40)
+        head = FakeTree({"apid": APID}, FILES, sha="c" * 40)
+
+        def fake_build(side, names, out):
+            if side is base:
+                raise RuntimeError("go build at aaaaaaaaaaaa: routes.go:179:2: duplicate key\nmore")
+            return {n: ("f", "c") for n in names}
+        code, err = br.measure_code(base, head, ["apid", "meterd"], "out", fake_build)
+        self.assertEqual(code, {"apid": "changed", "meterd": "removed"})
+        self.assertEqual(err, "go build at aaaaaaaaaaaa: routes.go:179:2: duplicate key")
+        rep = sample_report(code)
+        rep["base_build_error"] = err
+        self.assertIn("The merge base does not build", br.markdown(rep))
+
+        def head_broken(side, names, out):
+            if side is head:
+                raise RuntimeError("go build at cccccccccccc: broken head")
+            return {n: ("f", "c") for n in names}
+        with self.assertRaisesRegex(RuntimeError, "broken head"):
+            br.measure_code(base, head, ["apid"], "out", head_broken)
+
     def test_assemble_without_builds(self):
         rep = sample_report(None)
         self.assertIsNone(rep["code"])

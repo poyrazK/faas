@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -84,7 +85,9 @@ func (s *PgStore) ClaimLayerArtifactDeletion(ctx context.Context, key string) (L
 		return row, false, mapErr(err)
 	}
 	if row.State == LayerArtifactRetained {
-		referenced, err := q.LayerArtifactHasReferences(ctx, tx, key)
+		referenced, err := q.LayerArtifactHasReferences(ctx, tx, sqlc.LayerArtifactHasReferencesParams{
+			StorageKey: key, RollbackGenerations: int32(api.SnapshotRollbackRetentionDeployments),
+		})
 		if err != nil {
 			return row, false, mapErr(err)
 		}

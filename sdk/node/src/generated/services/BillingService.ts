@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppCostsResponse } from '../models/AppCostsResponse.js';
 import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
@@ -130,6 +131,53 @@ export class BillingService {
     });
   }
   /**
+   * Read retained usage costs attributed to one application.
+   * Requires usage:read and current application access. App-agent credentials may
+   * opt into usage:read for their bound app; account billing remains inaccessible.
+   * Uses the native billing subject and the canonical allocation of included
+   * usage. Excludes other applications, account totals, invoices, forecasts,
+   * and account-wide unpriced or nonbillable quantities. Sampling windows remain
+   * explicit; per-app quantity coverage and a complete bill estimate are unknown.
+   * All monetary amounts use integer millicents. This endpoint has no writes.
+   *
+   * @returns AppCostsResponse Application allocations and source-window coverage, without account financial details.
+   * @throws ApiError
+   */
+  public static getAppCosts({
+    slug,
+    month,
+  }: {
+    /**
+     * Application slug whose retained allocations are requested.
+     */
+    slug: string,
+    /**
+     * UTC month for this application's retained cost allocations; omit for the current month.
+     */
+    month?: string,
+  }): CancelablePromise<AppCostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/costs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Read attributable usage costs and historical price contracts.
    * Requires usage:read and session MFA. Uses retained account-owned evidence
    * and immutable price versions. Applies a single shared monthly allowance;
@@ -164,7 +212,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -202,7 +250,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -223,7 +271,7 @@ export class BillingService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -266,7 +314,7 @@ export class BillingService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -298,7 +346,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -348,7 +396,7 @@ export class BillingService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `financial_budget_activation_unavailable; the existing policy revision is unchanged.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -393,7 +441,7 @@ export class BillingService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -439,7 +487,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -448,7 +496,7 @@ export class BillingService {
   }
   /**
    * List the notification channels a budget's threshold alerts also go to.
-   * Requires usage:read and session MFA (ADR-20261019193500). Each channel
+   * Requires usage:read and session MFA. Each channel
    * reports its latest delivery outcome. Alerts always go to the account
    * email; channels are in addition to it. Deleted or foreign policies
    * return 404.
@@ -475,7 +523,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -484,7 +532,7 @@ export class BillingService {
   }
   /**
    * Replace the notification channels a budget's threshold alerts also go to.
-   * Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+   * Requires admin scope, session MFA and Idempotency-Key.
    * Every id must be one of the account's notification channels, at most 5,
    * without duplicates. Each threshold alert is delivered once per channel
    * and retried with backoff for up to 12 attempts. A channel added later
@@ -527,7 +575,7 @@ export class BillingService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -567,7 +615,7 @@ export class BillingService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -645,7 +693,10 @@ export class BillingService {
    * Get the authenticated customer's billing status.
    * Returns a provider-independent deployment and account billing
    * projection. This customer endpoint requires usage:read and never
-   * calls an operator catalog surface.
+   * calls an operator catalog surface. A scheduled cancellation
+   * (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+   * `scheduled_plan_at`) is reported before it applies; asking for the
+   * current plan with PATCH /v1/account/plan undoes it.
    *
    * @returns BillingStatusResponse Current deployment billing mode and customer attachment status.
    * @throws ApiError
@@ -672,10 +723,12 @@ export class BillingService {
    * download receipts, cancel). When the active provider exposes
    * customer sessions, the server creates a short-lived authenticated
    * portal URL. Otherwise it renders the operator's
-   * `FAAS_BILLING_PORTAL_URL` template.
+   * `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+   * that can cancel the subscription and replace the card, so the route
+   * takes an admin credential, MFA, a verified email and, for a dashboard
+   * session, a step-up within the last 5 minutes.
    *
-   * The response also carries a `payment_method` block (issue
-   * #242) — the card-on-file summary (brand, last-4, expiry).
+   * The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
    * The CLI's `faas billing payment-method` renders from this
    * field; the dashboard's billing page does the same. The
    * field is omitempty so no-card-on-file responses stay clean.
@@ -719,6 +772,7 @@ export class BillingService {
         404: `No open charge to retry — the account is in good standing, or the operator has not configured a billing provider.`,
         501: `The provider has no direct saved-card retry API; use the billing portal URL in the response.`,
         502: `Provider-side failure. The CLI surfaces this as 'retry failed'.`,
+        503: `Provider-side failure. The CLI surfaces this as 'retry failed'. Sent as 503 by the public edge.`,
       },
     });
   }
@@ -744,6 +798,7 @@ export class BillingService {
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         409: `Already cancelled. CLI renders a friendly hint.`,
         502: `Provider-side failure.`,
+        503: `Provider-side failure. Sent as 503 by the public edge.`,
       },
     });
   }

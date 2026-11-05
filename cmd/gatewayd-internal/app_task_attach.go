@@ -23,7 +23,9 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 const (
@@ -45,6 +47,9 @@ type AppTaskAttachHandler struct {
 	Targets appTaskAttachTargets
 	Nodes   appTaskAttachNodes
 	Log     *slog.Logger
+	// Traffic enrolls the session under its owner's security scopes
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	Traffic *trafficrevocation.Registry
 	// PingInterval keeps idle sessions alive through proxies; tests shorten it.
 	PingInterval time.Duration
 }
@@ -85,7 +90,7 @@ func (h *AppTaskAttachHandler) attach(w http.ResponseWriter, r *http.Request, ac
 		writeAttachNotReady(w)
 		return
 	}
-	h.open(w, r, target.NodeID, target.TaskID, token)
+	h.open(w, r, target.NodeID, target.TaskID, token, acct.ID, app.ID)
 }
 
 // attachToken returns the request's one attach token, or answers 401.
@@ -107,16 +112,24 @@ func writeAttachNotReady(w http.ResponseWriter) {
 
 // open presents the token to the node's vmmd for instance and, once vmmd
 // confirms the attach, upgrades to the WebSocket and relays the session.
-func (h *AppTaskAttachHandler) open(w http.ResponseWriter, r *http.Request, nodeID, instance, token string) {
+// The session is enrolled under accountID and appID (when set) before vmmd
+// spends the token.
+func (h *AppTaskAttachHandler) open(w http.ResponseWriter, r *http.Request, nodeID, instance, token, accountID, appID string) {
 	rows, cols := attachTerminalSize(r)
+	upgradeHeader := http.Header{}
+	requestCtx, release, ok := admitPlatformTraffic(r.Context(), w, r, h.Traffic, upgradeHeader, accountID, appID)
+	if !ok {
+		return
+	}
+	defer release()
 
-	requestCtx := r.Context()
 	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
 	defer cancel()
 	// The upgraded session owns its normal disconnect lifecycle, but must
-	// still terminate when its organization authorization is revoked.
+	// still terminate when its organization authorization or its security
+	// scopes are revoked.
 	stopRevocation := context.AfterFunc(requestCtx, func() {
-		if errors.Is(context.Cause(requestCtx), state.ErrOrgAccessRevoked) {
+		if errors.Is(context.Cause(requestCtx), state.ErrOrgAccessRevoked) || gateway.TrafficRevocation(requestCtx) != nil {
 			cancel()
 		}
 	})
@@ -146,7 +159,7 @@ func (h *AppTaskAttachHandler) open(w http.ResponseWriter, r *http.Request, node
 	}
 
 	upgrader := websocket.Upgrader{Subprotocols: []string{api.AppTaskAttachSubprotocol}}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(w, r, upgradeHeader)
 	if err != nil {
 		return
 	}

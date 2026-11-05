@@ -257,6 +257,9 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		return resp, appmetrics.SourceDegradedPrefix + "account app scope unavailable"
 	}
 	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err == nil {
+		apps, err = accountViewApps(ctx, s.store, acct, apps)
+	}
 	if err != nil {
 		return resp, appmetrics.SourceDegradedPrefix + "account app scope unavailable"
 	}

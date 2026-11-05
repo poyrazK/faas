@@ -210,8 +210,8 @@ func (s *Signer) Verify(unix int64, deliveryID string, body []byte, gotHex strin
 
 // Target is the destination URL for a single delivery. URL is
 // pre-validated by the handler (PR 3) via oci.EgressIPAllowed; the
-// dispatcher runs the dial-time check via oci.NewEgressHTTPClient
-// (default HTTPClient).
+// dispatcher runs the dial-time check via SharedHTTPClient (default
+// HTTPClient).
 //
 // Signer is the per-rule HMAC key. Construct once per (account,
 // rule, secret version) — the secret lifetime equals the
@@ -223,7 +223,21 @@ func (s *Signer) Verify(unix int64, deliveryID string, body []byte, gotHex strin
 type Target struct {
 	URL    string
 	Signer *Signer
+	// PreviousSigner holds the secret a rotation replaced while its
+	// overlap window lasts (ADR-20261101093517). The webhook header set
+	// then carries a second signature, made with it, in
+	// HeaderWebhookSignaturePrevious, so a receiver still holding the old
+	// secret verifies the delivery. nil (the usual case) sends none.
+	PreviousSigner *Signer
 }
+
+// HeaderWebhookSignaturePrevious carries the signature made with the
+// previous secret during a rotation overlap (ADR-20261101093517). It is a
+// separate header, not a second value in X-Faas-Webhook-Signature, so a
+// receiver that checks only that header with the new secret is unaffected.
+// Only the webhook header set sends it; the alert wire never rotates with
+// overlap.
+const HeaderWebhookSignaturePrevious = "X-Faas-Webhook-Signature-Previous"
 
 // Event is the JSON payload posted to the customer. Payload is the
 // rule-specific body (threshold value, current value, app slug).
@@ -280,8 +294,8 @@ type Result struct {
 // DispatcherOptions configures a Dispatcher. Zero-valued fields
 // resolve to the package defaults (DefaultMaxAttempts = 5,
 // DefaultBaseBackoff = 2s, DefaultPerAttempt = 10s). HTTPClient is
-// optional; nil resolves to oci.NewEgressHTTPClient so the dial-time
-// SSRF guard is on by default. Sleeper is injectable so tests don't
+// optional; nil resolves to SharedHTTPClient so the dial-time SSRF
+// guard is on by default and deliveries share one connection pool. Sleeper is injectable so tests don't
 // wait real backoff; nil uses a context-cancelable timer. An injected
 // Sleeper must return promptly; cancellation is checked before and
 // after calling it. Logger is optional; nil resolves to slog.Default().
@@ -315,11 +329,11 @@ type DispatcherOptions struct {
 // per (account, rule, secret version); PR 4 calls Dispatch on every
 // alert fire.
 //
-// Dispatcher is NOT safe for concurrent use of Dispatch. The
-// per-target Signer lives on Target, but the per-call body
-// marshalling and the retry loop share d.opts — a caller that
-// fires multiple deliveries in parallel should construct one
-// Dispatcher per delivery stream (or serialise at the caller).
+// Dispatch is safe for concurrent use: the per-target Signer lives on
+// Target, and the body marshalling and retry loop only read d.opts. A
+// caller-supplied Sleeper or Now must itself be safe for concurrent use.
+// The alert evaluator dispatches for several accounts at once
+// (ADR-20261028101615).
 type Dispatcher struct {
 	opts DispatcherOptions
 	// headerNames is the (signature, id, timestamp, attempt) tuple
@@ -338,8 +352,9 @@ type Dispatcher struct {
 // it wants fewer retries.
 //
 // HTTPClient ownership: when the caller passes nil the dispatcher
-// builds one via oci.NewEgressHTTPClient() (the SSRF-guarded client
-// has no timeout) and applies PerAttempt as the client-level Timeout.
+// sends through SharedHTTPClient() (the process-wide SSRF-guarded
+// client, which has no timeout) and applies PerAttempt as the
+// Timeout of its own copy, leaving the shared client untouched.
 // When the caller passes their own *http.Client the dispatcher does
 // NOT mutate it — the caller's Timeout (and Transport) stay as-is.
 // PR 3 callers that want the SSRF guard AND a custom timeout should
@@ -360,18 +375,16 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	}
 	callerHTTPClient := opts.HTTPClient != nil
 	if opts.HTTPClient == nil {
-		// Test-only escape hatch: cmd/e2e/meterd_alerts_e2e_test.go
-		// sets FAAS_EGRESS_ALLOW_LOOPBACK=1 BEFORE spawning meterd so
-		// the dispatcher can POST to an httptest.NewServer bound on
-		// 127.0.0.1. The flag is read fresh on every dispatcher
-		// construction (NewDispatcher is called once at meterd boot
-		// today, so this is a no-op cost). Production daemons must
-		// NOT export this env var — see oci.NewEgressHTTPClientAllowLoopback.
-		if hc := oci.NewEgressHTTPClientAllowLoopback(); hc != nil {
-			opts.HTTPClient = hc
-		} else {
-			opts.HTTPClient = oci.NewEgressHTTPClient()
-		}
+		// One SSRF-guarded client per process, shared by every
+		// dispatcher (see SharedHTTPClient): schedd and apid build a
+		// Dispatcher per delivery or per request, and a fresh transport
+		// each time stranded one keep-alive connection per call.
+		// cmd/e2e/meterd_alerts_e2e_test.go sets
+		// FAAS_EGRESS_ALLOW_LOOPBACK=1 before spawning meterd so the
+		// dispatcher can POST to an httptest.NewServer bound on
+		// 127.0.0.1; SharedHTTPClient reads that flag on every call.
+		// Production daemons must NOT export it.
+		opts.HTTPClient = SharedHTTPClient()
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -379,13 +392,16 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	if opts.Format == "" {
 		opts.Format = DeliveryFormatJSON
 	}
-	// Only stamp PerAttempt onto the HTTPClient when we built it
-	// ourselves (SSRF guard returns no-timeout clients). A caller-
-	// supplied *http.Client keeps its own Timeout.
+	// withoutRedirects copies the client, so the per-dispatcher Timeout
+	// below never reaches the shared client and the copy still pools
+	// through the shared Transport.
+	opts.HTTPClient = withoutRedirects(opts.HTTPClient)
+	// Only stamp PerAttempt when the dispatcher picked the client (the
+	// shared client has no Timeout). A caller-supplied *http.Client
+	// keeps its own Timeout.
 	if !callerHTTPClient {
 		opts.HTTPClient.Timeout = opts.PerAttempt
 	}
-	opts.HTTPClient = withoutRedirects(opts.HTTPClient)
 	sig, id, ts, att := opts.HeaderSet.headerNames()
 	return &Dispatcher{
 		opts:          opts,
@@ -494,13 +510,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		// Datadog authenticates with its API key and ignores Gregale
 		// signatures (ADR-752): the sealed secret is the key, sent as a
 		// header instead of an HMAC input.
-		sig, apiKey := "", ""
+		sig, prevSig, apiKey := "", "", ""
 		if d.opts.Format == DeliveryFormatDatadog {
 			apiKey = string(t.Signer.secret)
 		} else {
 			sig = t.Signer.Sign(unix, evt.ID, body)
+			if t.PreviousSigner != nil && d.opts.HeaderSet == HeaderSetWebhook {
+				prevSig = t.PreviousSigner.Sign(unix, evt.ID, body)
+			}
 		}
-		lastResult = d.attempt(ctx, t.URL, sig, apiKey, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
+		lastResult = d.attempt(ctx, t.URL, signatures{current: sig, previous: prevSig, apiKey: apiKey}, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
 		lastResult.Attempts = attempt + 1
 		if lastResult.Err == nil {
 			return lastResult
@@ -658,7 +677,13 @@ func (d *Dispatcher) logExhausted(evt Event, r Result) {
 // 408, 429, network, a body that breaks mid-read). A body larger than
 // MaxBodyBytes is truncated rather than failing the delivery, because
 // the receiver has already acted on it by the time it answers.
-func (d *Dispatcher) attempt(ctx context.Context, url, sig, apiKey string, unix int64, deliveryID string, attempt int, body []byte) Result {
+// signatures is what authenticates one attempt: an HMAC with the current
+// secret, optionally one with the previous secret, or a Datadog API key.
+type signatures struct {
+	current, previous, apiKey string
+}
+
+func (d *Dispatcher) attempt(ctx context.Context, url string, sigs signatures, unix int64, deliveryID string, attempt int, body []byte) Result {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		// Malformed URL — permanent.
@@ -668,10 +693,13 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig, apiKey string, unix 
 	if d.opts.Format == DeliveryFormatCloudEvents {
 		req.Header.Set("Content-Type", "application/cloudevents+json")
 	}
-	if apiKey != "" {
-		req.Header.Set(datadogAPIKeyHeader, apiKey)
+	if sigs.apiKey != "" {
+		req.Header.Set(datadogAPIKeyHeader, sigs.apiKey)
 	} else {
-		req.Header.Set(d.headerSig, "sha256="+sig)
+		req.Header.Set(d.headerSig, "sha256="+sigs.current)
+		if sigs.previous != "" {
+			req.Header.Set(HeaderWebhookSignaturePrevious, "sha256="+sigs.previous)
+		}
 	}
 	req.Header.Set(d.headerID, deliveryID)
 	req.Header.Set(d.headerTime, fmt.Sprintf("%d", unix))

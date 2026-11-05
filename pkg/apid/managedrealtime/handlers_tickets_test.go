@@ -3,6 +3,7 @@ package managedrealtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,7 +39,9 @@ func (h *ticketTestHost) Ops() *wire.OpsMetrics { return nil }
 func (h *ticketTestHost) EmitAudit(_ context.Context, kind string, _ *string, _ map[string]any) {
 	h.audits = append(h.audits, kind)
 }
-func (h *ticketTestHost) SecretRecipient() *age.X25519Recipient                         { return nil }
+func (h *ticketTestHost) SecretRecipients() ([]*age.X25519Recipient, error) {
+	return nil, errors.New("no recipient")
+}
 func (h *ticketTestHost) HostIdentitiesForUnseal(context.Context) []*age.X25519Identity { return nil }
 func (h *ticketTestHost) ResolveAndCheckEgress(context.Context, string) *api.Problem    { return nil }
 
@@ -60,7 +63,7 @@ func TestRevokeRealtimeTicketHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &ticketTestHost{store: store, app: app}
-	svc := &Service{Host: host, TicketsPreviewEnabled: true}
+	svc := &Service{Host: host, TicketsPreviewEnabled: true, Preview: everyonePreview(t)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", func(w http.ResponseWriter, r *http.Request) { svc.IssueRealtimeTicket(w, r, acct) })
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets", func(w http.ResponseWriter, r *http.Request) { svc.RevokeRealtimeTickets(w, r, acct) })

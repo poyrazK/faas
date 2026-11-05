@@ -25,6 +25,7 @@ class UpdateCronRequest:
 
     schedule: None | str | Unset = UNSET
     path: None | str | Unset = UNSET
+    """HTTP target path on the cron's own app; starts with a single /."""
     enabled: bool | None | Unset = UNSET
     timezone: None | str | Unset = UNSET
     """IANA timezone; an empty value resets to UTC."""
@@ -42,6 +43,10 @@ class UpdateCronRequest:
     failure_rules: FailureRules | Unset = UNSET
     """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
     outcome codes. HTTP status is not a business outcome matcher."""
+    clear_schedule_policy: bool | Unset = UNSET
+    """Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy."""
+    clear_failure_rules: bool | Unset = UNSET
+    """Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +100,10 @@ class UpdateCronRequest:
         if not isinstance(self.failure_rules, Unset):
             failure_rules = self.failure_rules.to_dict()
 
+        clear_schedule_policy = self.clear_schedule_policy
+
+        clear_failure_rules = self.clear_failure_rules
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -116,6 +125,10 @@ class UpdateCronRequest:
             field_dict["schedule_policy"] = schedule_policy
         if failure_rules is not UNSET:
             field_dict["failure_rules"] = failure_rules
+        if clear_schedule_policy is not UNSET:
+            field_dict["clear_schedule_policy"] = clear_schedule_policy
+        if clear_failure_rules is not UNSET:
+            field_dict["clear_failure_rules"] = clear_failure_rules
 
         return field_dict
 
@@ -203,6 +216,10 @@ class UpdateCronRequest:
         else:
             failure_rules = FailureRules.from_dict(_failure_rules)
 
+        clear_schedule_policy = d.pop("clear_schedule_policy", UNSET)
+
+        clear_failure_rules = d.pop("clear_failure_rules", UNSET)
+
         update_cron_request = cls(
             schedule=schedule,
             path=path,
@@ -213,6 +230,8 @@ class UpdateCronRequest:
             retry_backoff_seconds=retry_backoff_seconds,
             schedule_policy=schedule_policy,
             failure_rules=failure_rules,
+            clear_schedule_policy=clear_schedule_policy,
+            clear_failure_rules=clear_failure_rules,
         )
 
         update_cron_request.additional_properties = d

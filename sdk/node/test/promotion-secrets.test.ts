@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ProjectsService, type ProjectEnvironmentPromotionSecretPreviewRequest } from '../src/index.js';
+import { FaaSClient, ProjectsService, type ProjectEnvironmentPromotionSecretPreviewRequest } from '../src/preview.js';
 
 test('production secret preview sends immutable references in a bounded POST body', async (t) => {
   const request: ProjectEnvironmentPromotionSecretPreviewRequest = {

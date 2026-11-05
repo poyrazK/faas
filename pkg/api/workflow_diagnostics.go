@@ -58,6 +58,7 @@ func WorkflowRecoveryBlocker(code, step string) WorkflowDiagnosticBlocker {
 		"resume_limit_reached":          "This run has reached its continuation limit.",
 		"cancelled":                     "Cancelled runs cannot resume.",
 		"invalid_definition":            "The captured definition is invalid for the current plan.",
+		"code_workflow":                 "Code-first workflow runs cannot resume; start a new run.",
 		"incomplete_step_state":         "Persisted step or batch state is incomplete.",
 		"active_step":                   "A step still has an active call or wait.",
 		"handler_executed":              "A failure or timeout handler, or its continuation, has already executed.",

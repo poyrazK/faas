@@ -37,9 +37,17 @@ func (q *Queries) GetServiceWakeAhead(ctx context.Context, db DBTX, arg GetServi
 }
 
 const serviceWakeAheadEnabled = `-- name: ServiceWakeAheadEnabled :one
-SELECT COALESCE((SELECT enabled FROM app_service_wake_ahead WHERE app_id = $1), false)::boolean AS enabled
+SELECT COALESCE(
+    (SELECT enabled FROM app_service_wake_ahead WHERE app_id = $1),
+    (SELECT a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug, '') = ''
+            AND a.manifest->>'service_binding_policy' = 'project'
+       FROM apps a WHERE a.id = $1),
+    false)::boolean AS enabled
 `
 
+// An app that never set wake-ahead gets state.ServiceWakeAheadDefault: on for
+// a production project member under the project service policy
+// (ADR-20261025105812).
 func (q *Queries) ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
 	row := db.QueryRow(ctx, serviceWakeAheadEnabled, appID)
 	var enabled bool

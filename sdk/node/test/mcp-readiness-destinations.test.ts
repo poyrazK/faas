@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, McpService, type MCPReadinessNotificationAction, type MCPReadinessNotificationQueues } from '../src/index.js';
+import { FaaSClient, McpService, type MCPReadinessNotificationAction, type MCPReadinessNotificationQueues } from '../src/preview.js';
 
 test('receiver queue progress and targeted decisions cross the HTTP boundary', { timeout: 10000 }, async (t) => {
   const id = '00000000-0000-0000-0000-000000000001';

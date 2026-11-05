@@ -44,7 +44,7 @@ type debugWatchEvent struct {
 func cmdDebugRequestsWatch(args []string) int {
 	fs := newFlagSet("debug requests watch", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
 	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
 	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
@@ -62,7 +62,7 @@ func cmdDebugRequestsWatch(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests watch [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests watch [--since D] [--route P] [--release UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--limit N] [--interval D] [--once] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {

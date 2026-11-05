@@ -250,39 +250,57 @@ VALUES ($1,$2,'unreviewed','{}'::jsonb)`, f.actor.ID, f.app.ID); err != nil {
 	}
 }
 
-func TestPostgresOrgResourceUnreviewedRehearsalBlocksErasure(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
-	store := state.NewPgStore(pool)
-	f := setupOffboarding(t, store)
-	ctx := t.Context()
-	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_rehearsal_guard"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_rehearsal_guard"); err != nil {
-		t.Fatal(err)
-	}
-	id := uuid.NewString()
-	run := strings.ReplaceAll(id, "-", "")
-	// A completed fixture can be purged by the rehearsal service. Identity
-	// erasure must still retain its unreviewed company evidence.
-	if _, err := pool.Exec(ctx, `INSERT INTO scenario_postgres_fixtures
+// Rehearsal evidence follows its run and its preview app, so it no longer
+// blocks identity erasure; a fixture that still holds a database does, until
+// its cleanup finishes (ADR-20261022155043, settling ADR-202610171904).
+func TestPostgresOrgResourceRehearsalFixtureBlocksErasureOnlyWhileLive(t *testing.T) {
+	for _, tc := range []struct {
+		status  string
+		blocked bool
+	}{
+		{"complete", false},
+		{"provisioning", true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			pool := pgtest.OpenMigrated(t)
+			store := state.NewPgStore(pool)
+			f := setupOffboarding(t, store)
+			ctx := t.Context()
+			if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_rehearsal_guard"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_rehearsal_guard"); err != nil {
+				t.Fatal(err)
+			}
+			id := uuid.NewString()
+			run := strings.ReplaceAll(id, "-", "")
+			if _, err := pool.Exec(ctx, `INSERT INTO scenario_postgres_fixtures
 (id,account_id,run_id,app_id,owner_id,database_name,role_name,status,spec,expires_at,backend_sha256)
-VALUES ($1,$2,$3,$4,$1,$5,$5,'complete','{}'::jsonb,clock_timestamp()+interval '1 hour',$6)`,
-		id, f.actor.ID, run, f.app.ID, "grpg_"+run, strings.Repeat("a", 64)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
-		t.Fatalf("unreviewed rehearsal allowed erasure: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
-		t.Fatal("raw account deletion bypassed rehearsal ownership guard")
-	}
-	var exists bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE id=$1)`, id).Scan(&exists); err != nil || !exists {
-		t.Fatalf("rehearsal ownership guard discarded the fixture: %v", err)
+VALUES ($1,$2,$3,$4,$1,$5,$5,$7,'{}'::jsonb,clock_timestamp()+interval '1 hour',$6)`,
+				id, f.actor.ID, run, f.app.ID, "grpg_"+run, strings.Repeat("a", 64), tc.status); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+				t.Fatal(err)
+			}
+			err := store.MarkAccountDeletionPending(ctx, f.actor.ID)
+			if !tc.blocked {
+				if err != nil {
+					t.Fatalf("completed rehearsal evidence blocked erasure: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+				t.Fatalf("a live fixture allowed erasure: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+				t.Fatal("raw account deletion bypassed the live fixture guard")
+			}
+			var exists bool
+			if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE id=$1)`, id).Scan(&exists); err != nil || !exists {
+				t.Fatalf("erasure discarded a live fixture journal: %v", err)
+			}
+		})
 	}
 }
 
@@ -398,5 +416,60 @@ func TestPostgresOrgResourcePersonalTelemetryErasure(t *testing.T) {
 	}
 	if personalRows != 0 || companyRows != 2 {
 		t.Fatalf("personal rows=%d company rows=%d", personalRows, companyRows)
+	}
+}
+
+// Bug hunt 35: erasing a creator's account deleted the request telemetry and
+// logs of the company apps the creator had made, though the apps stay with
+// their organization. Only the personal apps' rows go with the account.
+func TestPostgresCreatorErasureKeepsCompanyAppLogsAndTelemetry(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_company_logs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_company_logs"); err != nil {
+		t.Fatal(err)
+	}
+	personal, err := store.CreateApp(ctx, state.App{AccountID: f.actor.ID, Slug: "personal-logs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []state.App{f.app, personal} {
+		if _, err := pool.Exec(ctx, `INSERT INTO request_telemetry (account_id, app_id, deployment_id, route, method, status, latency_ms)
+VALUES ($1, $2, $3, '/', 'GET', 200, 5)`, app.AccountID, app.ID, uuid.NewString()); err != nil {
+			t.Fatalf("seed request telemetry: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO log_events (occurred_at, account_id, app_id, source, message)
+VALUES (now(), $1, $2, 'runtime', 'hello')`, app.AccountID, app.ID); err != nil {
+			t.Fatalf("seed log event: %v", err)
+		}
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteAccount(ctx, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	count := func(table, appID string) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE app_id = $1`, appID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, table := range []string{"request_telemetry", "log_events"} {
+		if got := count(table, personal.ID); got != 0 {
+			t.Errorf("%s rows of the personal app after erasure = %d, want 0", table, got)
+		}
+		if got := count(table, f.app.ID); got != 1 {
+			t.Errorf("%s rows of the company app after its creator's erasure = %d, want 1", table, got)
+		}
 	}
 }

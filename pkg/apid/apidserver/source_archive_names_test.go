@@ -31,7 +31,7 @@ func TestSourceRefArchiveNameNormalization(t *testing.T) {
 				{tc.prefix + "gregale.yaml", "{}\n", tar.TypeReg},
 				{tc.prefix + "Dockerfile", "FROM scratch\n", tar.TypeReg},
 			})
-			manifest, problem := apidserver.LoadSourceRefManifest(archive, state.App{Slug: "app", Type: state.AppTypeApp, RootDir: tc.root}, api.PlanPro)
+			manifest, problem := apidserver.LoadSourceRefManifest(archive, state.App{Slug: "app", Type: state.AppTypeApp, RootDir: tc.root}, api.PlanPro, false)
 			if problem != nil || manifest == nil {
 				t.Errorf("source manifest = %+v, %+v; want selected manifest", manifest, problem)
 			}

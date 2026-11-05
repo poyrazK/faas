@@ -40,12 +40,15 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -116,15 +119,11 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// Full metal set: deploy_wake_metal_test.go uses DeployWake
 	// (no builderd) but the source-deploy path needs builderd to claim
 	// the build_queued pg_notify and spin up a builder microVM. Use All.
-	// FAAS_E2E_SHARED_RUNTIME=1 runs the chain with H10-140's shared runner
-	// base: the Node fixture (engines 22) builds on runner-node22 and its
-	// layer keeps only /app (docs/adr/20261017-shared-runtime-source-apps.md).
-	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
-	harnessEnv := commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")
-	if sharedRuntime {
-		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
-	}
-	h := e2etest.Start(t, pool, e2etest.All, harnessEnv...)
+	// The Node fixture declares Node 22, whose runner base is musl, so it
+	// keeps its own toolchain on the app's base even with the shared runtime
+	// on (ADR-20261029103512); TestSharedRuntimeRollbackMetal covers the
+	// shared runner base.
+	h := e2etest.Start(t, pool, e2etest.All, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	// Hobby defaults to require_authn=true post #695 / ADR-080. The wake
@@ -196,22 +195,8 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		if receipt.Smoke.Status != apihostingreceipt.SmokeVerified || receipt.Smoke.StatusCode < http.StatusOK || receipt.Smoke.StatusCode >= http.StatusMultipleChoices {
 			t.Fatalf("hosting smoke = %+v, want verified 2xx", receipt.Smoke)
 		}
-		if sharedRuntime {
-			if dep.RuntimeBase != "node22" {
-				t.Fatalf("deployment runtime_base = %q, want node22 (the shared runner base)", dep.RuntimeBase)
-			}
-			// Every app layer carries guest-init as /sbin/init (rootfs.Build).
-			// Beyond that the fixture's /app is a few files, while Railpack's
-			// mise Node alone is ~200 MB, so a layer within 8 MiB of
-			// guest-init held only /app.
-			guestInit, err := os.Stat(os.Getenv("FAAS_GUEST_INIT"))
-			if err != nil {
-				t.Fatalf("stat FAAS_GUEST_INIT: %v", err)
-			}
-			if limit := guestInit.Size() + 8<<20; dep.RootfsBytes <= 0 || dep.RootfsBytes > limit {
-				t.Fatalf("app layer = %d bytes, want guest-init (%d) plus an /app-only tree, at most %d", dep.RootfsBytes, guestInit.Size(), limit)
-			}
-			t.Logf("source-deployed-live: shared runtime node22, app layer %d bytes", dep.RootfsBytes)
+		if dep.RuntimeBase != "" {
+			t.Fatalf("deployment runtime_base = %q, want the app's own base: Node 22's runner base is musl", dep.RuntimeBase)
 		}
 		t.Logf("source-deployed-live: dep=%s build=%s live", dep.ID, buildID)
 	})
@@ -530,8 +515,17 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		if err := pool.QueryRow(mctx, `select stale from snapshots where id=$1`, snapshot.ID).Scan(&badStale); err != nil || !badStale {
 			t.Fatalf("failed capture was not marked stale: stale=%v err=%v", badStale, err)
 		}
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
-			t.Fatalf("park replacement: status=%d", status)
+		// Parking the replacement captures a fresh snapshot. When that outlasts
+		// apid's 5 s drain wait (6 s for 512 MB on n2), park answers a
+		// retryable 503 while the capture finishes.
+		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil)
+		if status == http.StatusServiceUnavailable {
+			t.Logf("park replacement: status=%d body=%s; retrying once", status, raw)
+			time.Sleep(5 * time.Second)
+			raw, status = doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil)
+		}
+		if status != http.StatusNoContent {
+			t.Fatalf("park replacement: status=%d body=%s", status, raw)
 		}
 		if _, err := waitForSourceAppParked(mctx, h, appID, 25*time.Second); err != nil {
 			t.Fatalf("replacement did not park: %v", err)
@@ -792,6 +786,102 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		}
 		t.Logf("auto-pick-function-from-handler-js: dep=%s app_type=%s", respEnv.ID, appType)
 	})
+
+	// -- 10. resumable-upload-redeploy ------------------------------------
+	// `gregale deploy` and `gregale start` publish source through the
+	// resumable upload API (POST /v1/uploads → PATCH → commit), not the
+	// deprecated multipart endpoint the chain above uses. Redeploy the same
+	// fixture through it and require the new deployment to go live and serve
+	// through the gateway, so the CLI's default source path is covered on a
+	// real builder microVM and wake. It runs last because the commit wake
+	// subtests above pin snapshots to the first deployment.
+	t.Run("resumable-upload-redeploy", func(t *testing.T) {
+		defer h.DumpLogs(t)
+		body, status := uploadSourceDeployment(t, h, key, "srcdeploy", sourceTar)
+		if status != http.StatusCreated {
+			t.Fatalf("upload commit: status=%d body=%s", status, body)
+		}
+		uploadDepID, uploadBuildID := parseQueuedDeployment(t, body)
+		if uploadDepID == depID {
+			t.Fatalf("upload commit returned the multipart deployment %s", depID)
+		}
+		dctx, dcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
+		defer dcancel()
+		dep, build, err := e2etest.WaitForSourceDeployment(dctx, t, pool, uploadDepID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+		if err != nil {
+			t.Fatalf("uploaded deployment %s did not reach live: %v", uploadDepID, err)
+		}
+		if build.ID != uploadBuildID || build.Status != state.BuildSucceeded || dep.AppID != appID {
+			t.Fatalf("uploaded deployment %s: build %q (%s) app %s; want build %s succeeded for app %s",
+				uploadDepID, build.ID, build.Status, dep.AppID, uploadBuildID, appID)
+		}
+		wctx, wcancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer wcancel()
+		url := gatewayAppURL(h, "srcdeploy")
+		client := h.HTTPClient()
+		if err := e2etest.WaitForHTTPReady(wctx, t, client, url, 5*time.Second); err != nil {
+			t.Fatalf("gateway not ready: %v", err)
+		}
+		served, _, code := doGetWithHostCapturingWakeID(t, client, url, "srcdeploy.apps.test.example", 30*time.Second)
+		if code != http.StatusOK || strings.TrimSpace(string(served)) != sourceDeployHelloBody {
+			t.Fatalf("uploaded deployment served status=%d body=%q, want %q", code, served, sourceDeployHelloBody)
+		}
+		t.Logf("resumable-upload-redeploy: dep=%s build=%s live and serving", uploadDepID, uploadBuildID)
+	})
+}
+
+// uploadSourceDeployment publishes source the way the CLI does by default:
+// POST /v1/uploads opens a session, PATCH appends the archive in the
+// server-chosen chunk size, and commit enqueues the deployment. It returns
+// the commit response body and status.
+func uploadSourceDeployment(t *testing.T, h *e2etest.Harness, bearer, slug string, source []byte) ([]byte, int) {
+	t.Helper()
+	sum := sha256.Sum256(source)
+	start, err := json.Marshal(map[string]any{"app_slug": slug, "total_size": len(source), "sha256_hex": hex.EncodeToString(sum[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(method, path, contentType string, body []byte, headers map[string]string) ([]byte, int) {
+		t.Helper()
+		req, err := http.NewRequest(method, h.APIDURL+path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest %s %s: %v", method, path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		resp, err := h.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		raw, _ := io.ReadAll(resp.Body)
+		return raw, resp.StatusCode
+	}
+	raw, status := send(http.MethodPost, "/v1/uploads", "application/json", start, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("upload start: status=%d body=%s", status, raw)
+	}
+	var session struct {
+		UploadID  string `json:"upload_id"`
+		ChunkSize int64  `json:"chunk_size"`
+	}
+	if err := json.Unmarshal(raw, &session); err != nil || session.UploadID == "" || session.ChunkSize <= 0 {
+		t.Fatalf("upload start response: %v body=%s", err, raw)
+	}
+	for offset := int64(0); offset < int64(len(source)); offset += session.ChunkSize {
+		end := min(offset+session.ChunkSize, int64(len(source)))
+		chunk, status := send(http.MethodPatch, "/v1/uploads/"+session.UploadID, "application/offset+octet-stream",
+			source[offset:end], map[string]string{"Upload-Offset": strconv.FormatInt(offset, 10)})
+		if status != http.StatusOK && status != http.StatusNoContent {
+			t.Fatalf("upload chunk at %d: status=%d body=%s", offset, status, chunk)
+		}
+	}
+	return send(http.MethodPost, "/v1/uploads/"+session.UploadID+"/commit", "", nil, nil)
 }
 
 // waitForSourceAppParked requires zero resident instances. An older parked row

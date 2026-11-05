@@ -1,14 +1,15 @@
 package api
 
 import (
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var stripeWorkflowCallbackEventType = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,255}$`)
-var stripeWorkflowCallbackObjectID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
-var inboundWebhookEventType = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,255}$`)
+var stripeWorkflowCallbackEventType = lazyregexp.New(`^[a-z][a-z0-9_.]{0,255}$`)
+var stripeWorkflowCallbackObjectID = lazyregexp.New(`^[A-Za-z0-9_-]{1,256}$`)
+var inboundWebhookEventType = lazyregexp.New(`^[a-z][a-z0-9_.]{0,255}$`)
 
 func ValidStripeWorkflowCallbackMatch(eventType, objectID string) bool {
 	return stripeWorkflowCallbackEventType.MatchString(eventType) &&
@@ -18,6 +19,9 @@ func ValidStripeWorkflowCallbackMatch(eventType, objectID string) bool {
 const (
 	InboundWebhookTokenPrefix           = "gwh_"
 	InboundWebhookSigningSecretMaxBytes = 256
+	// InboundWebhookSecretNamespace is the secretbox namespace an inbound
+	// webhook endpoint's signing secret is sealed under.
+	InboundWebhookSecretNamespace       = "inbound_webhook"
 	InboundWebhookGenericSecretMinBytes = 32
 	InboundWebhookNameMaxBytes          = 63
 	InboundWebhookDeliveryPathMaxBytes  = 256

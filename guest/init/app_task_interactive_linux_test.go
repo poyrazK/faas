@@ -49,7 +49,7 @@ func (o *interactiveTestOutput) waitFor(t *testing.T, want string) {
 
 func requirePTY(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat(appTaskPtsDir + "/ptmx"); err != nil {
+	if _, err := os.Stat(devptsDir + "/ptmx"); err != nil {
 		t.Skip("host has no devpts instance")
 	}
 }

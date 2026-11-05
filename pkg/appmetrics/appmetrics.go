@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -195,6 +196,14 @@ func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	case "queue_depth":
 		query = fmt.Sprintf(`sum(gateway_queue_depth{app=%q,account_id=~".+"}) or vector(0)`, appID)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "queue_backlog":
+		// schedd's durable queue gauges (ADR-20261018101500 amendment
+		// 2026-10-27), refreshed every 30 s by the schedd that owns the app.
+		query = fmt.Sprintf(`max(schedd_queue_depth{app=%q}) or vector(0)`, appID)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "queue_oldest_age_seconds":
+		query = fmt.Sprintf(`max(schedd_queue_oldest_age_seconds{app=%q}) or vector(0)`, appID)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "pre_auth_target_threshold":
 		query = fmt.Sprintf(`sum(increase(gateway_pre_auth_policy_shadow_total{app=%q,policy=~"targets_[0-9]+",outcome="target_threshold"}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
@@ -297,6 +306,15 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		return resp, SourceDegradedPrefix + "invalid app id"
 	}
 
+	// Every query below needs only the app and the window, so they run at
+	// once: one after another they cost the metrics card about fifteen
+	// Prometheus round trips. The three that mean something only with
+	// traffic (error rate, cache hit rate, cold starts) start as soon as the
+	// request count proves there is some. Results are applied in the order
+	// the queries used to run, so the first failing core query still
+	// decides the degraded source and the warnings logged are the same.
+	q := startFetchQueries(ctx, fetcher, appID, rng)
+
 	// 1. Request count.
 	// Use the request-duration histogram's closed status-class series for
 	// counts as well as latency. gateway_requests_total has a full HTTP-code
@@ -304,94 +322,74 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	// before Prometheus has scraped the new series and disappear from increase().
 	// The histogram classes are pre-instantiated when the app is resolved and
 	// cover the same Handler.observe population as durable request telemetry.
-	countQ := fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)
-	if v, err := fetcher.QueryScalar(ctx, countQ); err == nil {
-		resp.RequestCount = int64(SafeRoundNonNeg(v))
-	} else {
-		return degradedFromErr(resp, err, log, "request_count")
+	if q.count.err != nil {
+		return degradedFromErr(resp, q.count.err, log, "request_count")
 	}
+	resp.RequestCount = int64(SafeRoundNonNeg(q.count.v))
 
 	// 2-4. P50 / P95 / P99 over 2xx class only. Prometheus encodes
 	// histogram_quantile over an empty window as NaN. QueryScalar
 	// deliberately rejects non-finite samples before they reach
 	// SafeFloat, so make the idle value explicit in PromQL.
 	for _, p := range []struct {
-		q     float64
+		r     fetchResult
 		dest  *float64
 		label string
 	}{
-		{q: 0.50, dest: &resp.LatencyP50MS, label: "p50"},
-		{q: 0.95, dest: &resp.LatencyP95MS, label: "p95"},
-		{q: 0.99, dest: &resp.LatencyP99MS, label: "p99"},
+		{r: q.p50, dest: &resp.LatencyP50MS, label: "p50"},
+		{r: q.p95, dest: &resp.LatencyP95MS, label: "p95"},
+		{r: q.p99, dest: &resp.LatencyP99MS, label: "p99"},
 	} {
-		q := HistogramQuantileMSQuery(
-			p.q,
-			fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, appID, rng))
-		v, err := fetcher.QueryScalar(ctx, q)
-		if err != nil {
-			return degradedFromErr(resp, err, log, p.label)
+		if p.r.err != nil {
+			return degradedFromErr(resp, p.r.err, log, p.label)
 		}
-		*p.dest = SafeFloat(v)
+		*p.dest = SafeFloat(p.r.v)
 	}
 
-	// 5. Error rate %. A ratio over an idle window has no denominator, and
-	// PercentRatioQuery then returns no sample; an app with no requests has
-	// a zero error rate, not unavailable telemetry.
 	if resp.RequestCount > 0 {
-		if v, err := fetcher.QueryScalar(ctx, ErrorRatePctQuery(appID, rng)); err == nil {
-			resp.ErrorRatePct = SafePercent(v)
-		} else {
-			return degradedFromErr(resp, err, log, "error_rate")
+		// 5. Error rate %. A ratio over an idle window has no denominator, and
+		// PercentRatioQuery then returns no sample; an app with no requests has
+		// a zero error rate, not unavailable telemetry.
+		if q.errorRate.err != nil {
+			return degradedFromErr(resp, q.errorRate.err, log, "error_rate")
 		}
-	}
-	// 5b. Remaining API-availability error budget. This is derived from the
-	// same bounded request population as ErrorRatePct, so it adds no query or
-	// source-drift risk. No traffic is represented by an absent pointer rather
-	// than a misleading 100% budget remaining value.
-	if resp.RequestCount > 0 {
+		resp.ErrorRatePct = SafePercent(q.errorRate.v)
+		// 5b. Remaining API-availability error budget. This is derived from the
+		// same bounded request population as ErrorRatePct, so it adds no query or
+		// source-drift risk. No traffic is represented by an absent pointer rather
+		// than a misleading 100% budget remaining value.
 		remaining := ErrorBudgetRemainingPct(resp.ErrorRatePct)
 		resp.ErrorBudgetPct = &remaining
-	}
 
-	// 5c. Per-app response-cache hit rate. The historical global cache counter
-	// remains available to operators; the additive app-labelled counter is the
-	// customer-safe source for this field. Cache telemetry is optional, so a
-	// missing series or query failure leaves the field absent without degrading
-	// the otherwise healthy metrics response.
-	if resp.RequestCount > 0 {
-		cacheQ := PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_response_cache_app_total{app=%q,outcome="hit"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_response_cache_app_total{app=%q,outcome=~"hit|miss"}[%s]))`, appID, rng))
-		if v, err := fetcher.QueryScalar(ctx, cacheQ); err == nil {
-			value := SafePercent(v)
+		// 5c. Per-app response-cache hit rate. The historical global cache counter
+		// remains available to operators; the additive app-labelled counter is the
+		// customer-safe source for this field. Cache telemetry is optional, so a
+		// missing series or query failure leaves the field absent without degrading
+		// the otherwise healthy metrics response.
+		if q.cacheHitRate.err == nil {
+			value := SafePercent(q.cacheHitRate.v)
 			resp.CacheHitRatePct = &value
 		} else {
 			log.Warn("appmetrics: cache_hit_rate query unavailable", "app_id", appID)
 		}
-	}
 
-	// 6. Cold start % (idle-safe like the error rate).
-	if resp.RequestCount > 0 {
-		coldQ := PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
-		if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
-			resp.ColdStartPct = SafePercent(v)
-		} else {
-			return degradedFromErr(resp, err, log, "cold_start")
+		// 6. Cold start % (idle-safe like the error rate).
+		if q.coldStart.err != nil {
+			return degradedFromErr(resp, q.coldStart.err, log, "cold_start")
 		}
+		resp.ColdStartPct = SafePercent(q.coldStart.v)
 	}
 
 	// 7. Fleet wake p95 (the unlabeled gateway_wake_latency_seconds).
-	wakeQ := HistogramQuantileMSQuery(
-		0.95,
-		fmt.Sprintf(`sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
-		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng))
-	if v, err := fetcher.QueryScalar(ctx, wakeQ); err == nil {
-		resp.WakeP95MS = SafeFloat(v)
-	} else {
-		return degradedFromErr(resp, err, log, "wake_p95")
+	if q.wakeP95.err != nil {
+		return degradedFromErr(resp, q.wakeP95.err, log, "wake_p95")
+	}
+	resp.WakeP95MS = SafeFloat(q.wakeP95.v)
+	// The sample count is best-effort: without it clients show the p95
+	// as before (Hunt 12 H12-40).
+	if q.wakeSamples.err == nil {
+		n := int64(math.Round(SafeFloat(q.wakeSamples.v)))
+		resp.WakeSamples = &n
 	}
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
@@ -402,80 +400,121 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	// rate) since the gauge reflects current waiters, not a
 	// delta — the alert path's windowed comparison uses the same
 	// query so the gauge is the live value, not an average.
-	qDepthQ := fmt.Sprintf(`gateway_queue_depth{app=%q, account_id=~".+"}`, appID)
-	if v, err := fetcher.QueryScalar(ctx, qDepthQ); err == nil {
-		resp.QueueDepth = int64(SafeRoundNonNeg(v))
-	} else {
-		// Best-effort: a Prometheus failure here degrades the
-		// queue_depth field but does NOT flip the whole response
-		// to degraded — the rest of the per-app panel is still
-		// useful, mirroring the egress_bytes pattern below.
-		resp.QueueDepth = 0
+	// Best-effort: a Prometheus failure here degrades the
+	// queue_depth field but does NOT flip the whole response
+	// to degraded — the rest of the per-app panel is still
+	// useful, mirroring the egress_bytes pattern below.
+	if q.queueDepth.err == nil {
+		resp.QueueDepth = int64(SafeRoundNonNeg(q.queueDepth.v))
 	}
 
 	// 8. ADR-046 (step 10): per-app egress byte delta over
 	// the window. Source: the schedd Prom rollup of
-	// usage_minutes.net_tx_bytes (PR-2 wires the rollup;
-	// until then the query returns 0 / errors and the
-	// response degrades silently — the dashboard's
-	// empty-state branch handles it). Best-effort:
-	// unlike the seven core queries above, a Prometheus
-	// failure here does NOT flip the response to
-	// degraded — the rest of the per-app panel is still
-	// useful, and the egress field's "not measured"
-	// state is the correct UX (matches how the CPU
-	// `instance_cpu_seconds_total` mirrors the same
-	// additive-merge shape).
-	egressQ := fmt.Sprintf(
-		`sum(increase(schedd_egress_net_tx_bytes_total{app=%q}[%s]))`, appID, rng)
-	if v, err := fetcher.QueryScalar(ctx, egressQ); err == nil {
-		resp.EgressBytes = int64(SafeRoundNonNeg(v))
-	} else if !errors.Is(err, promql.ErrNoData) {
+	// usage_minutes.net_tx_bytes. Best-effort: unlike the
+	// core queries above, a Prometheus failure here does NOT
+	// flip the response to degraded — the rest of the per-app
+	// panel is still useful, and the egress field's "not
+	// measured" state is the correct UX.
+	if q.egressBytes.err == nil {
+		resp.EgressBytes = int64(SafeRoundNonNeg(q.egressBytes.v))
+	} else if !errors.Is(q.egressBytes.err, promql.ErrNoData) {
 		// An app that sent nothing has no series; that is zero, not a failure.
-		log.Warn("appmetrics: egress_bytes query failed", "app_id", appID, "err", err)
+		log.Warn("appmetrics: egress_bytes query failed", "app_id", appID, "err", q.egressBytes.err)
 	}
 
 	// 8b. ADR-046 PR-2 / issue #415 PR-2: gateway-side
-	// tx_bytes mirror. Source:
-	//
-	//   gateway_egress_tx_bytes_total{app}
-	//
-	// The byte counter is emitted by pkg/gateway/egressgrpc
-	// /server.go per-drain on every Sink.Record call; the
-	// cmd/gatewayd-internal/egress_grpc.go consumer reads
-	// the stream and the per-instance
-	// pkg/gateway/egresssink.EgressSink populates the
-	// counter on each raw-stream chunk. Mirrors EgressBytes
-	// (the schedd-side mirror); the two are queried in
-	// parallel so a divergence surfaces to the dashboard
-	// immediately.
-	//
-	// Best-effort: same as the schedd-side query. A failure
-	// here does NOT flip the response to "degraded" — the
-	// rest of the panel is still useful, and the missing
-	// tx_bytes field is the correct UX (matches how the
-	// CPU/RSS/memory deltas degrade when their respective
-	// Prom sources are down).
-	txBytesQ := fmt.Sprintf(
-		`sum(increase(gateway_egress_tx_bytes_total{app=%q}[%s]))`, appID, rng)
-	if v, err := fetcher.QueryScalar(ctx, txBytesQ); err == nil {
-		resp.TxBytes = int64(SafeRoundNonNeg(v))
-	} else if !errors.Is(err, promql.ErrNoData) {
+	// tx_bytes mirror (gateway_egress_tx_bytes_total{app}),
+	// emitted by pkg/gateway/egressgrpc per drain. Mirrors
+	// EgressBytes (the schedd-side mirror); the two are
+	// queried in parallel so a divergence surfaces to the
+	// dashboard immediately. Best-effort, like EgressBytes.
+	if q.txBytes.err == nil {
+		resp.TxBytes = int64(SafeRoundNonNeg(q.txBytes.v))
+	} else if !errors.Is(q.txBytes.err, promql.ErrNoData) {
 		// An app that sent nothing has no series; that is zero, not a failure.
-		log.Warn("appmetrics: tx_bytes query failed", "app_id", appID, "err", err)
+		log.Warn("appmetrics: tx_bytes query failed", "app_id", appID, "err", q.txBytes.err)
 	}
 
 	// Expose the newest underlying scrape time, rather than the HTTP response
 	// time, so callers can distinguish a complete-looking stale window from a
 	// fresh one. Test doubles retain the handler's request-time fallback.
-	if client, ok := fetcher.(*promql.Client); ok && client != nil {
-		freshnessQ := fmt.Sprintf(`max(timestamp(gateway_request_duration_seconds_count{app=%q}))`, appID)
-		if seconds, err := client.QueryScalar(ctx, freshnessQ); err == nil && seconds > 0 {
-			resp.AsOf = time.Unix(0, int64(seconds*float64(time.Second))).UTC().Format(time.RFC3339Nano)
-		}
+	if q.freshness != nil && q.freshness.err == nil && q.freshness.v > 0 {
+		resp.AsOf = time.Unix(0, int64(q.freshness.v*float64(time.Second))).UTC().Format(time.RFC3339Nano)
 	}
 
 	return resp, SourcePrometheus
+}
+
+type fetchResult struct {
+	v   float64
+	err error
+}
+
+// fetchQueries are Fetch's query results. freshness is nil when the fetcher
+// is not a *promql.Client (test doubles), and the traffic-only results stay
+// zero when the request count failed or was zero.
+type fetchQueries struct {
+	count, p50, p95, p99               fetchResult
+	errorRate, cacheHitRate, coldStart fetchResult
+	wakeP95, wakeSamples, queueDepth   fetchResult
+	egressBytes, txBytes               fetchResult
+	freshness                          *fetchResult
+}
+
+// startFetchQueries runs Fetch's queries concurrently and returns once all
+// have answered.
+func startFetchQueries(ctx context.Context, fetcher PromQL, appID, rng string) fetchQueries {
+	var (
+		out fetchQueries
+		wg  sync.WaitGroup
+	)
+	query := func(dest *fetchResult, promQL string, then func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dest.v, dest.err = fetcher.QueryScalar(ctx, promQL)
+			if then != nil {
+				then()
+			}
+		}()
+	}
+	quantile := func(q float64) string {
+		return HistogramQuantileMSQuery(
+			q,
+			fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, appID, rng))
+	}
+	// The count's goroutine starts the traffic-only queries while wg still
+	// counts it, so Wait cannot return before they are added.
+	query(&out.count, fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng), func() {
+		if out.count.err != nil || int64(SafeRoundNonNeg(out.count.v)) <= 0 {
+			return
+		}
+		query(&out.errorRate, ErrorRatePctQuery(appID, rng), nil)
+		query(&out.cacheHitRate, PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_response_cache_app_total{app=%q,outcome="hit"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_response_cache_app_total{app=%q,outcome=~"hit|miss"}[%s]))`, appID, rng)), nil)
+		query(&out.coldStart, PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)), nil)
+	})
+	query(&out.p50, quantile(0.50), nil)
+	query(&out.p95, quantile(0.95), nil)
+	query(&out.p99, quantile(0.99), nil)
+	query(&out.wakeP95, HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
+		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng)), nil)
+	query(&out.wakeSamples, fmt.Sprintf(`sum(increase(gateway_wake_latency_seconds_count[%s]))`, rng), nil)
+	query(&out.queueDepth, fmt.Sprintf(`gateway_queue_depth{app=%q, account_id=~".+"}`, appID), nil)
+	query(&out.egressBytes, fmt.Sprintf(`sum(increase(schedd_egress_net_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)
+	query(&out.txBytes, fmt.Sprintf(`sum(increase(gateway_egress_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)
+	if client, ok := fetcher.(*promql.Client); ok && client != nil {
+		out.freshness = &fetchResult{}
+		query(out.freshness, fmt.Sprintf(`max(timestamp(gateway_request_duration_seconds_count{app=%q}))`, appID), nil)
+	}
+	wg.Wait()
+	return out
 }
 
 // degradedFromErr returns the zeroed response with a

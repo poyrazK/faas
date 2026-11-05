@@ -25,3 +25,23 @@ func TestStartupTimeoutCopyNamesCustomerSetting(t *testing.T) {
 		}
 	}
 }
+
+// Hunt 14 H14-4: H12-10 capped startup deadlines at the 30 s cold-boot window,
+// but every startup-timeout explanation still told the customer to raise the
+// deadline, which the platform refuses above 30 s.
+func TestStartupGuidanceStatesTheColdBootCap(t *testing.T) {
+	entry, _ := Lookup(api.CodeAppStartupTimeout)
+	fixes := []string{entry.Fix}
+	for _, phase := range []string{"startup_phase=guest_startup", "startup_phase=handler_healthcheck", "startup_phase=image_healthcheck"} {
+		_, fix := startupFailureGuidance(phase)
+		fixes = append(fixes, fix)
+	}
+	for i, fix := range fixes {
+		if fix == "" {
+			continue
+		}
+		if strings.Contains(fix, "raise the startup deadline") || !strings.Contains(fix, "30 s") {
+			t.Errorf("guidance %d does not state the 30 s cap: %q", i, fix)
+		}
+	}
+}

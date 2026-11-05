@@ -31,7 +31,7 @@ const (
 // same 10.0.0.0/30 network inside its namespace.
 type serviceProxyCallerResolver struct {
 	list func(context.Context) ([]state.Instance, error)
-	// A fresh indexed lookup is required for the guest listener: VM network
+	// A fresh indexed lookup is required for guest DNS and HTTP listeners: VM network
 	// slots (and therefore HostIPs) can be reused immediately on teardown.
 	// A cached IP -> deployment mapping could attribute the next guest's
 	// release-graph call to the previous tenant for up to one cache TTL.

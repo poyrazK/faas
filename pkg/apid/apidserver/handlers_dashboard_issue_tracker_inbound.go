@@ -88,7 +88,7 @@ func (s *server) dashboardTrackerInboundPull(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if app.AccountID != acct.ID {
+	if !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may pull a tracker lifecycle"))
 		return
 	}
@@ -119,7 +119,8 @@ func (s *server) dashboardTrackerInboundPull(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(ctx, "issue.tracker_lifecycle_pulled", &acct.ID, map[string]any{"app_id": app.ID, "issue_id": out.ID, "link_id": row.Policy.LinkID, "state": out.State, "policy_revision": revision, "outbound_paused": true})
+		actorID := actorAccount(r, acct).ID
+		s.audit.Emit(ctx, "issue.tracker_lifecycle_pulled", &actorID, map[string]any{"app_id": app.ID, "issue_id": out.ID, "link_id": row.Policy.LinkID, "state": out.State, "policy_revision": revision, "outbound_paused": true})
 	}
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(app.Slug)+"/issues?issue="+url.QueryEscape(out.ID), http.StatusSeeOther)
 }

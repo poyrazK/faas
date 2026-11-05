@@ -140,6 +140,7 @@ func project(r state.WakeHistoryRecord) (api.WakeTimelineJSONRow, error) {
 	}
 	out.Trigger, out.TriggerClass, out.Method, out.Tier = p.Trigger, p.TriggerClass, p.Method, p.Tier
 	out.QueuedCount, out.ConcurrencyAtAdmit = p.Queued, p.Concurrency
+	applyCompletion(&out, r.CompletedData)
 	if p.Capacity != nil {
 		out.AtCapacityPresent = true
 		out.AtCapacity = *p.Capacity
@@ -154,4 +155,27 @@ func project(r state.WakeHistoryRecord) (api.WakeTimelineJSONRow, error) {
 		}
 	}
 	return out, nil
+}
+
+// applyCompletion reports the method vmmd actually ran. wake.boot_started
+// names the planned method; when a planned restore fell back to a cold boot
+// (ADR-005), only wake.boot_completed says so (Hunt 12 H12-49). The planned
+// method stays visible, and the tier becomes the cold-boot fallback it was.
+func applyCompletion(out *api.WakeTimelineJSONRow, data json.RawMessage) {
+	var c struct {
+		Method         string `json:"method"`
+		FallbackReason string `json:"restore_fallback_reason"`
+	}
+	if len(data) == 0 || json.Unmarshal(data, &c) != nil || c.Method == "" || c.Method == out.Method {
+		return
+	}
+	out.PlannedMethod, out.Method = out.Method, c.Method
+	if out.PlannedMethod == "restore" && c.Method == "cold_boot" {
+		out.Tier = "cold_boot_fallback"
+		// The closed customer-facing reason; vmmd's raw restore error never
+		// reaches a customer.
+		if c.FallbackReason == "after_restore_failed" {
+			out.RestoreFallbackReason = c.FallbackReason
+		}
+	}
 }

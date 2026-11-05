@@ -97,3 +97,15 @@ that a new instance must miss. That rule bought nothing:
 - a restored process holds the environment of the capture, so the captured
   file is the one consistent with it, and a rewrite made disk and memory
   disagree.
+
+## Amendment (2026-10-25): the session no longer mounts drive1
+
+[ADR-20261025090100](20261025090100-host-never-mounts-guest-drives.md)
+replaces the loop mount with a sandboxed e2fsprogs session: the captured
+drive is guest-written, so mounting it handed attacker-chosen ext4 metadata
+to the host kernel. The objection above, that `debugfs` is unsafe against a
+live journal, is met by replaying the journal with `e2fsck -E journal_only`
+before any edit. The one-session-per-restore rule, the skip ledger and the
+customer event are unchanged. In the operator record `pre_boot_replay_ms`
+replaces `pre_boot_mount_ms` and `pre_boot_unmount_ms`, and
+`pre_boot_check_us` now always measures the drive inspection.

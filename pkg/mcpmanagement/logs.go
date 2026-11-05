@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
@@ -47,7 +46,7 @@ func validateLogs(args logsArgs) error {
 	if args.Level != "" && !api.IsValidLogLevel(args.Level) {
 		return invalid("invalid_argument", "level must be info, warn, or error")
 	}
-	if len(args.Grep) > apislogs.MaxGrepPatternBytes || strings.ContainsAny(args.Grep, "\r\n\x00") {
+	if len(args.Grep) > api.MaxLogGrepPatternBytes || strings.ContainsAny(args.Grep, "\r\n\x00") {
 		return invalid("invalid_argument", "grep must be a single line of at most 256 bytes")
 	}
 	if args.Since != "" {
@@ -74,21 +73,39 @@ func (m *management) getLogs(ctx context.Context, args logsArgs) (any, error) {
 		return nil, err
 	}
 	defer func() { _ = body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(body, maxLogBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read log snapshot: %w", err)
+	// Stream the snapshot keeping only the newest `limit` entries. A busy
+	// app's retained lines are megabytes, and buffering the whole snapshot
+	// under a 1 MiB bound made get_logs fail for it unless the agent guessed
+	// a narrow since.
+	source := &countingReader{r: io.LimitReader(body, maxLogStreamBytes)}
+	result, err := decodeLogStream(ctx, source, limit, m.clean)
+	if source.n >= maxLogStreamBytes {
+		result.Truncated = true
 	}
-	if len(data) > maxLogBytes {
-		return nil, invalid("response_too_large", "Log snapshot exceeds the read bound; narrow the timestamp or substring filter")
-	}
-	return decodeLogs(ctx, data, limit, m.clean)
+	return result, err
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func decodeLogs(ctx context.Context, data []byte, limit int, clean func(string) string) (logSnapshot, error) {
+	return decodeLogStream(ctx, bytes.NewReader(data), limit, clean)
+}
+
+func decodeLogStream(ctx context.Context, source io.Reader, limit int, clean func(string) string) (logSnapshot, error) {
 	result := logSnapshot{Items: make([]logEntry, 0, limit)}
-	decoder := api.NewDecoder(bytes.NewReader(data))
-	// The input is already byte-bounded and buffered. Drain on early returns so
-	// the SDK parser cannot remain blocked sending a later event to its channel.
+	decoder := api.NewDecoder(source)
+	// The input is byte-bounded. Drain on early returns so the SDK parser
+	// cannot remain blocked sending a later event to its channel.
 	defer func() {
 		for range decoder.Events() {
 		}

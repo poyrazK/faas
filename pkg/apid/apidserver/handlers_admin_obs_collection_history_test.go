@@ -139,7 +139,7 @@ func TestObsAnalyticCollectionCoverageLimit(t *testing.T) {
 	store := *(*e.S()).Store()
 	*(*e.S()).Store() = statetest.NewStore(&obsAnalyticCoverageLimit{Store: store})
 	for _, path := range []string{operatorobs.AlertRecurrencePath, operatorobs.AlertResponseTimesPath} {
-		rec := e.Do(t, "GET", path, nil, nil)
+		rec := e.DoOperator(t, "GET", path, nil, nil)
 		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "narrow since") || !strings.Contains(rec.Body.String(), "100000") {
 			t.Fatalf("coverage bound %s: %d %s", path, rec.Code, rec.Body)
 		}

@@ -54,7 +54,7 @@ type EventBacklogOptions struct {
 	Limit, ConsumerLimit  int
 }
 
-func (c *Client) GetEventBacklog(ctx context.Context, options EventBacklogOptions) (EventBacklogResponse, error) {
+func (c *PreviewClient) GetEventBacklog(ctx context.Context, options EventBacklogOptions) (EventBacklogResponse, error) {
 	query := url.Values{}
 	for key, value := range map[string]string{"waiting_reason": options.WaitingReason, "app": options.App, "subscription_id": options.SubscriptionID, "consumer_kind": options.ConsumerKind, "origin": options.Origin, "state": options.State, "capacity_scope": options.CapacityScope, "after": options.After, "consumers_after": options.ConsumersAfter} {
 		if value != "" {

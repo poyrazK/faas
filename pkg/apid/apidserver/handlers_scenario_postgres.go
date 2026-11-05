@@ -35,7 +35,7 @@ func (s *server) configureRehearsalPostgres(ctx context.Context, getenv func(str
 
 func (s *server) createScenarioPostgres(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.rehearsalPostgresEnabled || s.rehearsalPostgres == nil || !s.rehearsalCommandsEnabled || !s.rehearsalNetworkEnabled || !s.rehearsalSimulationEnabled {
-		api.WriteProblem(w, api.ErrCapacity("isolated PostgreSQL rehearsal support is disabled"))
+		api.WriteProblem(w, api.ErrRehearsalNotEnabled("Isolated PostgreSQL fixtures"))
 		return
 	}
 	var req rehearsalpg.CreateRequest

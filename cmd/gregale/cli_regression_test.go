@@ -84,7 +84,9 @@ func TestCLIRegressionAutomationFailsBeforeInputOrRequests(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", testAPIKey('a'))
 	osStdin = forbiddenAutomationInput{t}
-	for _, args := range [][]string{{"login"}, {"start"}, {"account", "delete"}, {"apps", "--yes=false", "demo"}, {"triggers", "delete", "trigger-1"}, {"orgs", "rm", "demo"}, {"billing", "cancel"}, {"signup"}, {"mfa", "disable"}} {
+	// mfa disable is absent: it only prints the dashboard link that finishes
+	// in a browser, reads no input and sends no request (commands_mfa_test.go).
+	for _, args := range [][]string{{"login"}, {"start"}, {"account", "delete"}, {"apps", "--yes=false", "demo"}, {"triggers", "delete", "trigger-1"}, {"orgs", "rm", "demo"}, {"billing", "cancel"}, {"signup"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			stderr, restore := captureStderr(t)
 			var out bytes.Buffer
@@ -211,7 +213,7 @@ func TestCLIRegressionDeployRecoveryAndCancellation(t *testing.T) {
 	if err := json.Unmarshal([]byte(stderr.String()), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Recovery.IdempotencyKey != key || report.Recovery.InspectCommand != "gregale --profile staging deployments --app demo" || report.Recovery.RetryFlag != "--idempotency-key="+key {
+	if report.Recovery.IdempotencyKey != key || report.Recovery.InspectCommand != "gregale --profile staging release list --app demo" || report.Recovery.RetryFlag != "--idempotency-key="+key {
 		t.Fatalf("recovery=%+v", report.Recovery)
 	}
 	retryKey, _ := deployIdempotencyKey(key, deployIdempotencyIntent{Slug: "demo", Image: "image@sha256:abc"})
@@ -243,7 +245,7 @@ func TestCLIRegressionDeployRecoveryAndCancellation(t *testing.T) {
 		if rollout {
 			stage = "rollout"
 		}
-		if code != 130 || !receipt.Interrupted || receipt.TimedOut || receipt.ID != "d1" || receipt.WaitStage != stage || receipt.Recovery == nil || !strings.HasPrefix(receipt.ResumeCommand, "gregale --profile staging deployment wait d1") {
+		if code != 130 || !receipt.Interrupted || receipt.TimedOut || receipt.ID != "d1" || receipt.WaitStage != stage || receipt.Recovery == nil || !strings.HasPrefix(receipt.ResumeCommand, "gregale --profile staging release wait d1") {
 			t.Fatalf("exit=%d receipt=%+v stderr=%s", code, receipt, stderr.String())
 		}
 		assertOneProblem(t, stderr.String())
@@ -355,7 +357,7 @@ func TestCLIRegressionRejectedSubmissionShowsFindingsAndNoRetryAdvice(t *testing
 	defer restore()
 	rejected := &APIError{Problem: api.Problem{
 		Status: 422, Code: api.CodeSecretScanStrict, Title: "Secret-shaped values found in uploaded source",
-		Detail:         "redact secret values or move them to `gregale secrets set`",
+		Detail:         "redact secret values or move them to `gregale env set`",
 		SecretFindings: []api.SecretFinding{{File: "server.js", Line: 15, Provider: "high_entropy", Severity: "medium", Snippet: "012345…wxyz"}},
 	}}
 	if code := printDeploySubmissionError("Deploy failed", rejected, "demo", key, "submission", ""); code == 0 {

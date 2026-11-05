@@ -22,7 +22,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,8 +39,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -51,6 +56,7 @@ import (
 type githubdBridgeStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 	AccountByID(ctx context.Context, id string) (state.Account, error)
+	OrgByID(ctx context.Context, id string) (state.Org, error)
 	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error)
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
@@ -85,6 +91,31 @@ type githubdBridge struct {
 	spool       string // build-spool root for the build.log path
 	stagingRoot string // allowed prefix for SourcePath (FAAS_GITHUBD_WORK_DIR/build-sources)
 	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
+	// agentSteps reports whether an account may deploy workflow agent steps
+	// (ADR-20261027090010 §1); nil refuses them.
+	agentSteps func(state.Account) bool
+	// releasePhaseOff refuses a push that declares a release command while
+	// FAAS_RELEASE_PHASE_ENABLED is off on apid.
+	releasePhaseOff bool
+}
+
+// checkSourcePlanLimit refuses a GitHub build whose source is above the
+// account's plan limit. githubd fetches every push with Scale's limits, so
+// without it the Free and Hobby 100 MB source cap held only for CLI uploads.
+func (g *githubdBridge) checkSourcePlanLimit(ctx context.Context, accountID string, sourceBytes int64) error {
+	acct, err := g.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return status.Errorf(codes.FailedPrecondition, "EnqueueBuild: account %q has unknown plan %q", accountID, acct.Plan)
+	}
+	if maxBytes := int64(limits.SourceTarballMaxMB) << 20; sourceBytes > maxBytes {
+		return status.Errorf(codes.ResourceExhausted,
+			"EnqueueBuild: source is %d bytes, above the %s plan's %d MB source limit", sourceBytes, acct.Plan, limits.SourceTarballMaxMB)
+	}
+	return nil
 }
 
 // stagingPathAllowed reports whether sourcePath is under one of the
@@ -235,6 +266,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"EnqueueBuild: app %q is not active (status=%q)", req.AppId, app.Status)
 	}
+	if err := g.checkSourcePlanLimit(ctx, req.AccountId, req.SourceBytes); err != nil {
+		return nil, err
+	}
 
 	// Source-path allowlist (issue #432 phase 5 review follow-up):
 	// the unix-socket DAC is the only auth in v1.0 (ADR-015), but
@@ -281,16 +315,24 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
 	}
+	// Plan, billing status, holds and the deploy rate belong to the app's
+	// resource owner: the organization for an organization app, as on the API
+	// path. Checking the namespace account let a suspended organization keep
+	// deploying on push and applied the wrong plan's limits.
+	resource, err := state.AppResourceAccount(ctx, g.store, app)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: resource account lookup: %v", err)
+	}
 	// A push must not deploy for an account the API would refuse:
 	// this path had no account-status check, so suspended and
 	// deletion-pending accounts kept building on every push.
-	if acct.AbuseHeld() {
+	if resource.AbuseHeld() {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"EnqueueBuild: account %s is on an abuse hold; deploys are blocked until an operator releases it", acct.ID)
+			"EnqueueBuild: account %s is on an abuse hold; deploys are blocked until an operator releases it", resource.ResourceOwnerID())
 	}
-	if !acct.MayDeploy() {
+	if !resource.MayDeploy() {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", acct.ID, acct.Status)
+			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", resource.ResourceOwnerID(), resource.Status)
 	}
 	if !acct.EmailVerified() {
 		return nil, status.Errorf(codes.FailedPrecondition,
@@ -304,22 +346,48 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		}
 		return nil, status.Error(code, "EnqueueBuild: "+standardFailure.Detail)
 	}
-	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
+	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, resource.Plan); err != nil {
+		return nil, err
+	}
+	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
+	dockerfilePath, dockerfileBuild, buildErr := bridgeDockerfileBuild(req.SourcePath, app, manifest)
+	if buildErr != nil {
+		return nil, buildErr
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest, g.releasePhaseOff)
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
-	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
+	// PR preview builds stop at their share of the window, so a busy pull
+	// request cannot spend the deploys production needs (ADR-20261028100000).
+	// The window belongs to the app's resource owner, as on the API path.
+	limit, limitName := resource.Plan.DeploysPerHour(), "account deploy rate limit"
+	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		limit, limitName = resource.Plan.PreviewDeploysPerHour(), "PR preview share of the account deploy rate limit"
+	}
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, resource.ResourceOwnerID(), limit, timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
 	}
 	if !rate.Allowed {
 		return nil, status.Errorf(codes.ResourceExhausted,
-			"EnqueueBuild: account deploy rate limit %d reached; resets at %s",
-			rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+			"EnqueueBuild: %s %d reached; resets at %s",
+			limitName, rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+	}
+	// ADR-20261028090000: a PR preview builds with its production app's
+	// pr-preview values and secrets. The production store always implements
+	// previewconfig.Store; the narrow unit-test stubs do not.
+	if configStore, ok := g.store.(previewconfig.Store); ok && eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		synced, err := previewconfig.SyncFromParent(ctx, configStore, app)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: preview values: %v", err)
+		}
+		if synced.Skipped {
+			g.log.Warn("githubd bridge: preview values skipped; the project has an environment named pr-preview", "app_id", app.ID)
+		}
 	}
 
 	// The shared apidsource.Enqueue helper handles CreateDeployment +
@@ -395,8 +463,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ImageCommand:         app.Manifest.ProjectImageCommand,
 		ImageHealthcheck:     app.Manifest.ProjectImageHealthcheck,
 		ImageProcess:         app.Manifest.ProjectImageProcess,
-		DockerfileBuild:      app.Manifest.DockerfileBuild,
-		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
+		DockerfilePath:       dockerfilePath,
+		DockerfileBuild:      dockerfileBuild,
+		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[resource.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,
 		SourceRoot:           app.RootDir,
@@ -438,16 +507,28 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		PRNumber:   int(req.PullRequestNumber),
 		Tag:        req.Tag,
 	}
+	params.OverrideHealthcheck, params.OverrideLivenessProbe = projectReadinessOverrides(app.Manifest, resource.Plan)
+	// A push deploys the workflows its gregale.yaml declares, as a CLI deploy
+	// of the same source does (ADR-081). A PR preview does not: its scheduled
+	// workflows would run against the preview.
+	if kind != state.DeploymentKindPreview && manifest != nil {
+		params.Workflows = marshalWorkflowDefinitions(manifest.Workflows)
+	}
 	if kind == state.DeploymentKindGitHub {
 		// ADR-20261019071733: a push cannot carry an override, so a freeze
 		// refuses it; githubd reports the reason on the commit.
-		active, freezeErr := freeze.ActiveFor(ctx, g.store, acct.ID, app.ID, req.DeploymentScope, time.Now().UTC())
+		active, freezeErr := freeze.ActiveFor(ctx, g.store, app, req.DeploymentScope, time.Now().UTC())
 		if freezeErr != nil {
 			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
-		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
+		// ADR-20261019071733 amendment 9: a push does not release into a
+		// protected environment other than production.
+		if p := protectedEnvironmentReleaseProblem(ctx, g.store, app, req.DeploymentScope); p != nil {
+			return nil, status.Error(codes.FailedPrecondition, p.Detail)
+		}
+		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, resource.Plan, req.DeploymentScope, &params)
 		// ADR-20261020085706: a push to an app that requires approvals must
 		// wait in a canary; githubd reports the refusal on the commit.
 		if params.CanaryPreset == "" {
@@ -460,8 +541,20 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			}
 		}
 	}
+	ctx, _, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
+	if cronProblem != nil {
+		return nil, grpcerr.ToStatus(cronProblem)
+	}
+	spooled, err := g.spoolSource(req.SourcePath)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
+	}
+	params.SourcePath = spooled
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
+		if spooled != req.SourcePath {
+			_ = os.Remove(spooled)
+		}
 		return nil, g.asGRPC("enqueue", err)
 	}
 
@@ -482,6 +575,46 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		DeploymentId: res.DeploymentID,
 		AppId:        app.ID,
 	}, nil
+}
+
+// spoolSource copies githubd's staged archive into apid's build spool and
+// returns the copy's path. builderd reads only sources under the spool root
+// (FAAS_SPOOL_ROOT), and a split-box builder materializes them there from
+// source storage; githubd's staging tree is outside it, so a build pointed
+// at the staged file failed with "outside spool root". A source already in
+// the spool is used as it is.
+func (g *githubdBridge) spoolSource(sourcePath string) (string, error) {
+	root := filepath.Clean(g.spool)
+	if strings.HasPrefix(filepath.Clean(sourcePath), root+string(filepath.Separator)) {
+		return sourcePath, nil
+	}
+	if err := os.MkdirAll(root, 0o770); err != nil {
+		return "", fmt.Errorf("create source spool: %w", err)
+	}
+	//nolint:forbidigo // sourcePath passed the staging-root allowlist above.
+	src, err := os.Open(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("open staged source: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	dst := filepath.Join(root, randomToken(12)+".tar.gz")
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", fmt.Errorf("spool source: %w", err)
+	}
+	_, copyErr := io.Copy(out, src)
+	if closeErr := out.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil {
+		copyErr = os.Rename(tmp, dst)
+	}
+	if copyErr != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("spool source: %w", copyErr)
+	}
+	return dst, nil
 }
 
 func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Account, app state.App, req *githubdpb.EnqueueBuildRequest) *state.OrgActivity {
@@ -513,6 +646,53 @@ func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Ac
 		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment.requested",
 		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch, "phase": "requested"}),
 	}
+}
+
+// bridgeSourcePolicy gives a push the accept-time source policy a CLI upload
+// gets. The GitHub path used to skip both scans, so a repository refused by
+// `gregale deploy` still deployed on push (ADR-20261026152731). A Compose
+// image service builds nothing from the source and is skipped. A scan that
+// could not run (a 5xx problem) is Unavailable so githubd's delivery worker
+// retries it; a refused source is InvalidArgument.
+func bridgeSourcePolicy(log *slog.Logger, sourcePath string, app state.App, plan api.Plan) error {
+	if app.Manifest.ProjectImage != "" {
+		return nil
+	}
+	prob := scanSourceTarballSecretsLogged(log, sourcePath, api.MustLimitsFor(plan))
+	detail := ""
+	if prob != nil {
+		detail = "secret scan: " + secretScanProblemSummary(prob)
+	} else if prob = scanForStatefulShapeAtRoot(sourcePath, false, app.RootDir); prob != nil {
+		detail = "stateless contract: " + prob.Detail
+	}
+	if prob == nil {
+		return nil
+	}
+	code := codes.InvalidArgument
+	if prob.Status >= http.StatusInternalServerError {
+		code = codes.Unavailable
+	}
+	return status.Errorf(code, "EnqueueBuild: %s", detail)
+}
+
+// bridgeDockerfileBuild picks a push's Dockerfile build: a Compose build
+// recorded on a project app, or a gregale.yaml build: section
+// (ADR-20261026152731). Declaring both is refused rather than guessed.
+func bridgeDockerfileBuild(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (string, *api.DockerfileBuildOptions, error) {
+	if app.Manifest.ProjectImage != "" {
+		return "", app.Manifest.DockerfileBuild, nil
+	}
+	build, ok, problem := resolveSourceDockerfileBuild(sourcePath, app.RootDir, app, manifest)
+	if problem != nil {
+		return "", nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: build: %s", problem.Detail)
+	}
+	if !ok {
+		return "", app.Manifest.DockerfileBuild, nil
+	}
+	if app.Manifest.BuildDockerfile != "" || !app.Manifest.DockerfileBuild.IsZero() {
+		return "", nil, status.Error(codes.InvalidArgument, "EnqueueBuild: build: declare the Dockerfile build in the Compose file or in gregale.yaml, not both")
+	}
+	return build.path, build.options, nil
 }
 
 func (g *githubdBridge) recordDeploymentActivity(ctx context.Context, acct state.Account, app state.App, res apidsource.EnqueueResult, req *githubdpb.EnqueueBuildRequest) {
@@ -655,7 +835,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -664,5 +844,33 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		spool:       spool,
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
+		agentSteps:  agentSteps,
+
+		releasePhaseOff: releasePhaseOff,
 	})
+}
+
+// prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the
+// app, as a source deploy of the same commit does (crons audit 2026-11-01):
+// pushes ignored them. They activate when the deployment goes live. A PR
+// preview, a non-production scope and a release staged without traffic do not
+// stage crons, as on the source API. An intent whose deployment was never
+// created is left in place: it activates nothing, the app's next push
+// supersedes it, and githubd retrying the delivery prepares it again (a
+// cancelled intent would refuse that retry).
+func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, manifest *gregalemanifest.Manifest, kind state.DeploymentKind, params apidsource.EnqueueParams) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
+	production := req.DeploymentScope == "" || req.DeploymentScope == state.DefaultEnvScope
+	if kind != state.DeploymentKindGitHub || manifest == nil || staged || !production {
+		return ctx, nil, nil
+	}
+	store, ok := g.store.(state.DeploymentCronStagingStore)
+	if !ok {
+		return ctx, nil, nil
+	}
+	ctx, intent, err := deploystaging.PrepareDeliveryCrons(ctx, store, resource, app, manifest, req.DeliveryId)
+	if err != nil {
+		return ctx, nil, sourceRefManifestStoreProblem(err, resource.Plan, true)
+	}
+	return ctx, intent, nil
 }

@@ -1,70 +1,67 @@
 # FaasJobsQueueBacklog
 
-Source: Mega-1 §12 (issue #1184 Workstream A / Mega-1).
-Metric: `jobs_queue_depth{plan}` (schedd `/metrics`).
+Alert: `FaasJobsQueueBacklog` (warn, `family: job_dispatch`).
+Metric: `schedd_job_dispatch_total{result}` (schedd `/metrics`), one count per
+ready job task the once-a-second dispatch tick decided on.
 Spec: ADR-099 supplement (`docs/adr/099-supplement-jobs-mega1.md`),
 §3 — JobDispatch bucket separate from wakeBuckets so jobs can't
 starve app wakes.
 Severity: warn (no page tier per ADR-099; job runs are
 eventually-consistent, not request/response).
+Capability runbook: [FaasWorkflowsAndJobs](FaasWorkflowsAndJobs.md).
 
 ## Symptom
 
-`jobs_queue_depth{plan="Hobby"}` is rising over a 10-minute window
-while `jobs_dispatch_total{plan}` plateaus. Customers see tasks
-sitting in `status='queued'` longer than the plan's parallelism
-cap would predict.
+For 15 minutes schedd kept failing to start ready job tasks with
+`result="node_capacity"`, `"compute_unavailable"` or `"wake_error"`.
+Customers see tasks sitting in `status='queued'` with no started attempt.
+
+These results are customer limits and never fire the alert:
+`account_capacity` (`JobConcurrentPerAccount`), `quota`, `capability`
+(the `jobs` platform flag is off for the account), `spend_cap`, `budget`
+and `account_inactive`. `not_ready` counts benign races (another schedd
+claimed the task first, a retry backoff or a flexible start window).
 
 ## Verify
 
 ```bash
-curl -fsS http://127.0.0.1:9103/metrics | grep -E 'jobs_(queue_depth|dispatch_total|dispatch_rejected_total)'
-curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=jobs_queue_depth'
+curl -fsS http://127.0.0.1:9103/metrics | grep -E 'schedd_job_dispatch_total'
+curl -fsS 'http://127.0.0.1:9095/api/v1/query' \
+  --data-urlencode 'query=sum by (instance, result) (rate(schedd_job_dispatch_total[5m]))'
 ```
-
-Per-plan breakdown matters: a Hobby backlog with empty Pro/Scale
-queues means Hobby's `JobMaxParallelismPerRun=10` is exhausted
-across Hobby accounts; not a cluster-wide admission problem.
 
 ## Check
 
 ```bash
 systemctl status schedd
-journalctl -u schedd --since '-15m' --no-pager | grep -iE 'job|admit|reject|kind=job_task'
+journalctl -u schedd --since '-15m' --no-pager | grep -E 'job dispatch failed|dispatchJobsTick'
 cat /sys/fs/cgroup/faas-tenant.slice/memory.current
 # vs the 47,600 MB RAMAdmissionCeiling (CLAUDE.md hard limits)
 ```
 
-The two common root causes:
+By result:
 
-1. **Per-account concurrent cap exhausted.** Hobby allows
-   `JobConcurrentPerAccount=3`. If 3 Hobby accounts are
-   concurrently at 3/3, the 4th account's tasks queue. Operator
-   action: none — the cap is the intended fair-share
-   semantics. Investigate whether the customers involved are
-   scaling up to Pro (JobConcurrentPerAccount=8).
-2. **Node RAM ceiling.** `Σ(ram_mb + 8)` over live job
-   instances approaches 47,600 MB and admission rejects new
-   dispatches (`jobs_dispatch_rejected_total{reason="ram"}`).
-   This is the load-bearing risk identified in
-   ADR-099-supplement deviation 3. Operator action: drain
-   long-running jobs (the reaper at `pkg/sched/reaper_jobs.go`
-   enforces `task_timeout_s`); the cap will release within one
-   job timeout window.
+1. **`node_capacity`.** `Σ(ram_mb + 8)` over live instances reached the
+   admission ceiling, or no compute node is admitting. This is the
+   load-bearing risk identified in ADR-099-supplement deviation 3. Operator
+   action: add capacity through the reviewed node-join path, or drain
+   long-running jobs (the reaper at `pkg/sched/reaper_jobs.go` enforces
+   `task_timeout_s`); capacity returns within one job timeout window.
+2. **`compute_unavailable`.** The financial compute authority could not
+   decide whether the account may spend. Check the schedd journal for
+   `financial` errors and Postgres reachability; tasks retry once a minute
+   and start when it answers.
+3. **`wake_error`.** Anything else that stopped a ready task before it was
+   claimed: placement, lease, instance creation, sealed environment or
+   database errors. The schedd journal line `sched: job dispatch failed`
+   carries the run, task and error. One task failing forever usually means
+   one broken run; cancel it (Recovery step 4) and file a bug.
 
 ## Silence
 
 ```bash
 amtool silence add --alert=FaasJobsQueueBacklog --duration=2h --comment="investigating"
 ```
-
-After the silence, page the on-call for one of the following:
-
-- `jobs_dispatch_rejected_total{reason="plan"}` rising on a
-  single plan — quota misconfiguration in `pkg/api/limits.go`.
-- `jobs_dispatch_rejected_total{reason="lease"}` rising —
-  lease primitive is leaking (ADR-099 deviation 5 surface).
-  Roll back the schedd deploy, file an incident.
 
 ## Recovery
 

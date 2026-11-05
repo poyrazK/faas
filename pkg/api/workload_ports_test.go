@@ -25,6 +25,17 @@ func TestSidecarsValidatePortConflicts(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "unknown main port compares companions only",
+			mainPort: -1,
+			sidecars: Sidecars{{Name: "web", Port: 8080}},
+		},
+		{
+			name:     "unknown main port still catches companion collisions",
+			mainPort: -1,
+			sidecars: Sidecars{{Name: "a", Port: 9100}, {Name: "b", Port: 9100}},
+			wantErr:  true,
+		},
+		{
 			name:     "sidecar collision",
 			mainPort: 9000,
 			sidecars: Sidecars{{Name: "a", Port: 9100}, {Name: "b", Port: 9100}},
@@ -81,5 +92,19 @@ func TestValidateWorkloadPorts(t *testing.T) {
 				t.Fatalf("ValidateWorkloadPorts() = %v, wantErr=%v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSidecarSummariesCarryNoEnvironment(t *testing.T) {
+	got := Sidecars{{
+		Name: "proxy", Image: "registry.example/proxy@sha256:bb", Type: SidecarTypeSidecar, Port: 8081, RamMB: 128,
+		Env: map[string]string{"TOKEN": "s3cret"}, EnvSecrets: map[string]string{"DB": "secret:DB"},
+	}}.Summaries()
+	want := DeploymentCompanion{Name: "proxy", Image: "registry.example/proxy@sha256:bb", Type: string(SidecarTypeSidecar), Port: 8081, RAMMB: 128}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("Summaries() = %+v, want [%+v]", got, want)
+	}
+	if Sidecars(nil).Summaries() != nil {
+		t.Fatal("no companions should summarize to nil so the response omits the field")
 	}
 }

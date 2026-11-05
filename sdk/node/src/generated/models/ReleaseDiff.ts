@@ -9,7 +9,7 @@ import type { ReleaseDiffDependencies } from './ReleaseDiffDependencies.js';
 import type { ReleaseDiffField } from './ReleaseDiffField.js';
 import type { ReleaseDiffSide } from './ReleaseDiffSide.js';
 /**
- * What changed between two releases of one app (ADR-20261021101117).
+ * What changed between two releases of one app.
  */
 export type ReleaseDiff = {
   app: string;

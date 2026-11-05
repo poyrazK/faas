@@ -93,5 +93,5 @@ func cmdDeploymentSummaryInteractive(slug string) int {
 		PrintProgress(osStdout, "App: %s; scope: %s; release: %s", slug, scopeOrDefault(target.Scope), deploymentLabel(target))
 		return renderDeploymentSummary(summary)
 	}
-	return printErr("Release history limit reached", errors.New("use gregale deployments --app APP with pagination to inspect older releases"))
+	return printErr("Release history limit reached", errors.New("use gregale release list --app APP with pagination to inspect older releases"))
 }

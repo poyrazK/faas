@@ -82,7 +82,7 @@ func TestEventReplayPreviewHistoricalMatchingCutoffAndRetention(t *testing.T) {
 		}
 		q := state.EventReplayPreviewQuery{AppID: app, SubscriptionID: target.ID, EventReplayPreviewOptions: api.EventReplayPreviewOptions{From: from, Until: time.Now().Add(time.Hour), Limit: 1}}
 		first, err := s.PreviewEventReplay(ctx, account, q)
-		if err != nil || first.ScannedCount != 1 || first.MatchedCount != 1 || first.NextAfter == "" || first.Matches[0].EventID != "before-target" || first.Matches[0].OriginalRecipient != "not_captured" || first.Retention.HistoryComplete || first.Retention.EarliestRetainedAt == nil || first.Retention.SettledRetentionSeconds != 30*24*60*60 {
+		if err != nil || first.ScannedCount != 1 || first.MatchedCount != 1 || first.NextAfter == "" || first.Matches[0].EventID != "before-target" || first.Matches[0].OriginalRecipient != "not_captured" || first.Retention.HistoryComplete || first.Retention.EarliestRetainedAt == nil || first.Retention.SettledRetentionSeconds != 7*24*60*60 {
 			t.Fatalf("first=%+v %v", first, err)
 		}
 		after, err := s.EventReceipt(ctx, account, "billing.us", "before-target", state.EventReceiptCursor{}, 100)
@@ -98,7 +98,7 @@ func TestEventReplayPreviewHistoricalMatchingCutoffAndRetention(t *testing.T) {
 		if err := s.FinishPublishedEvent(ctx, old.ID, old.ClaimToken, nil); err != nil {
 			t.Fatal(err)
 		}
-		if n, err := s.PruneDeliveredPublishedEvents(ctx, time.Now().Add(time.Hour), 1); err != nil || n != 1 {
+		if n, err := s.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Hour), 1); err != nil || n != 1 {
 			t.Fatalf("prune=%d %v", n, err)
 		}
 		publishReplayPreviewEvent(t, s, account, "late", "billing.us", 300)

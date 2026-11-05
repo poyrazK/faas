@@ -248,13 +248,13 @@ func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture Instanc
 		return nil
 	}
 	boot, ok := m.instanceApplicationStandardBoots[m.instanceApplicationStandardBootTokens[ins.ID]]
-	if !ok || boot.Receipt == nil || boot.Binding.NodeID != ins.NodeID || boot.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] || boot.Binding.ProtocolVersion > m.computeNodeRuntimeProtocols[ins.NodeID] || boot.Binding.CapturedInputHash != capture.NativeInputHash {
+	if !ok || boot.Receipt == nil || boot.Binding.NodeID != ins.NodeID || m.effectiveStandardIncarnationLocked(ins.ID, boot.Binding.Incarnation) != m.computeNodeRuntimeIncarnations[ins.NodeID] || boot.Binding.ProtocolVersion > m.computeNodeRuntimeProtocols[ins.NodeID] || boot.Binding.CapturedInputHash != capture.NativeInputHash {
 		return ErrApplicationStandardRuntimeStale
 	}
 	r := boot.Receipt
 	if token := m.instanceApplicationStandardPromotionTokens[ins.ID]; token != "" {
 		promotion, exists := m.instanceApplicationStandardPromotions[token]
-		if !exists || promotion.Receipt == nil || !promotion.Grant.Parent.Equal(*boot.Receipt) || promotion.Grant.Binding.NodeID != ins.NodeID || promotion.Grant.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] {
+		if !exists || promotion.Receipt == nil || !promotion.Grant.Parent.Equal(*boot.Receipt) || promotion.Grant.Binding.NodeID != ins.NodeID || m.effectiveStandardIncarnationLocked(ins.ID, promotion.Grant.Binding.Incarnation) != m.computeNodeRuntimeIncarnations[ins.NodeID] {
 			return ErrApplicationStandardRuntimeStale
 		}
 		r = promotion.Receipt
@@ -275,6 +275,7 @@ func (m *MemStore) deleteNativeInstanceInputsLocked(id string) {
 	}
 	delete(m.instanceApplicationStandardAdmissions, id)
 	delete(m.instanceApplicationStandardBootTokens, id)
+	delete(m.instanceApplicationStandardRebinds, id)
 	for token, boot := range m.instanceApplicationStandardBoots {
 		if boot.Binding.InstanceID == id {
 			delete(m.instanceApplicationStandardBoots, token)

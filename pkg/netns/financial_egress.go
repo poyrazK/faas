@@ -9,14 +9,31 @@ import (
 
 const EgressBudgetTable = "faas_budget"
 
+// EgressBudgetQuotas splits financed interface bytes between the two kernel
+// gates (ADR-1748 Amendment 1). The TAP's segmentation IFB re-injects every
+// guest packet with the netdev egress hook disabled for it, so guest IP is
+// counted at the namespace's inet postrouting hook, in network bytes that
+// framing at most doubles. The peer's netdev egress chain still sees what the
+// namespace sends itself (ARP, ND, ICMP) and counts those whole frames. Root
+// veth RX therefore stays within local + 2*ip <= bytes. The local share equals
+// the refill low-water mark, so ARP alone cannot run out before a refill.
+func EgressBudgetQuotas(bytes int64) (local, ip int64) {
+	local = bytes / 4
+	return local, (bytes - local) / api.FinancialEgressFramingFactor
+}
+
 func (c Config) egressBudgetRules(bytes int64) [][]string {
 	prefix := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(args ...string) []string { return append(append([]string{}, prefix...), args...) }
+	local, ip := EgressBudgetQuotas(bytes)
 	return [][]string{
 		nft("add", "rule", "netdev", EgressBudgetTable, "egress", "jump", "lifetime"),
 		nft("add", "rule", "netdev", EgressBudgetTable, "egress", "meta", "length", "<", strconv.Itoa(api.FinancialEgressMinimumPacketBytes), "drop"),
 		nft("add", "rule", "netdev", EgressBudgetTable, "egress", "meta", "protocol", "!=", "{", "ip,ip6,arp", "}", "drop"),
-		nft("add", "rule", "netdev", EgressBudgetTable, "egress", "quota", strconv.FormatInt(bytes/api.FinancialEgressFramingFactor, 10), "bytes", "counter", "accept"),
+		nft("add", "rule", "netdev", EgressBudgetTable, "egress", "quota", strconv.FormatInt(local, 10), "bytes", "counter", "accept"),
+		nft("add", "rule", "inet", EgressBudgetTable, "gate", "jump", "lifetime"),
+		nft("add", "rule", "inet", EgressBudgetTable, "gate", "quota", strconv.FormatInt(ip, 10), "bytes", "counter", "accept"),
+		nft("add", "rule", "inet", EgressBudgetTable, "gate", "drop"),
 	}
 }
 func (c Config) EgressBudgetSetupCommands() [][]string {
@@ -28,10 +45,16 @@ func (c Config) EgressBudgetSetupCommands() [][]string {
 	cmds := [][]string{
 		nft("add", "table", "netdev", EgressBudgetTable),
 		nft("add", "chain", "netdev", EgressBudgetTable, "egress", "{", "type", "filter", "hook", "egress", "device", c.VethPeer, "priority", "0", ";", "policy", "drop", ";", "}"),
+		nft("add", "chain", "netdev", EgressBudgetTable, "lifetime"),
+		nft("add", "table", "inet", EgressBudgetTable),
+		nft("add", "chain", "inet", EgressBudgetTable, "lifetime"),
+		nft("add", "chain", "inet", EgressBudgetTable, "gate"),
+		nft("add", "chain", "inet", EgressBudgetTable, "postrouting", "{", "type", "filter", "hook", "postrouting", "priority", "0", ";", "policy", "accept", ";", "}"),
 	}
-	cmds = append(cmds, nft("add", "chain", "netdev", EgressBudgetTable, "lifetime"))
 	cmds = append(cmds, c.EgressBudgetDeadlineCommands()...)
-	return append(cmds, c.egressBudgetRules(c.EgressBudgetBytes)...)
+	cmds = append(cmds, c.egressBudgetRules(c.EgressBudgetBytes)...)
+	// Only the public peer is metered; the private side link stays outside.
+	return append(cmds, nft("add", "rule", "inet", EgressBudgetTable, "postrouting", "oifname", c.VethPeer, "jump", "gate"))
 }
 
 // Only the native attempt lock may call this, once per newly funded sequence.
@@ -40,7 +63,11 @@ func (c Config) EgressBudgetRefillCommands(bytes int64) [][]string {
 	if bytes <= 0 {
 		return nil
 	}
-	return append([][]string{{"ip", "netns", "exec", c.Netns, "nft", "flush", "chain", "netdev", EgressBudgetTable, "egress"}}, c.egressBudgetRules(bytes)...)
+	prefix := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	return append([][]string{
+		append(append([]string{}, prefix...), "flush", "chain", "netdev", EgressBudgetTable, "egress"),
+		append(append([]string{}, prefix...), "flush", "chain", "inet", EgressBudgetTable, "gate"),
+	}, c.egressBudgetRules(bytes)...)
 }
 
 // Kernel wall-clock expiry also bounds failed-kill or dead-daemon traffic to
@@ -49,9 +76,12 @@ func (c Config) EgressBudgetRefillCommands(bytes int64) [][]string {
 func (c Config) EgressBudgetDeadlineCommands() [][]string {
 	prefix := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(args ...string) []string { return append(append([]string{}, prefix...), args...) }
+	until := strconv.FormatInt(c.EgressBudgetUntil.Unix(), 10)
 	return [][]string{
 		nft("flush", "chain", "netdev", EgressBudgetTable, "lifetime"),
-		nft("add", "rule", "netdev", EgressBudgetTable, "lifetime", "meta", "time", ">=", strconv.FormatInt(c.EgressBudgetUntil.Unix(), 10), "drop"),
+		nft("add", "rule", "netdev", EgressBudgetTable, "lifetime", "meta", "time", ">=", until, "drop"),
+		nft("flush", "chain", "inet", EgressBudgetTable, "lifetime"),
+		nft("add", "rule", "inet", EgressBudgetTable, "lifetime", "meta", "time", ">=", until, "drop"),
 	}
 }
 

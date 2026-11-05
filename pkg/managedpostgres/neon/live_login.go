@@ -141,7 +141,7 @@ func (m *sqlLiveLogins) Issue(ctx context.Context, owner managedpostgres.Credent
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Serialized with binding logins, which grant the live login SET on
 	// themselves (grantLiveMembership).
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, role.schemaOwner); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, role.schemaOwner); err != nil {
 		return "", err
 	}
 	if err := initializeCredentialSchema(ctx, tx, role); err != nil {

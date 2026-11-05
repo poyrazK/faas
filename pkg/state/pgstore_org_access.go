@@ -16,7 +16,11 @@ import (
 // a membership SHARE lock before its SQL and retains it through COMMIT.
 // Removal/demotion takes an incompatible row lock, so both operations have a
 // database-defined order even when they originate in different apid processes.
-type orgAccessPool struct{ Pool *pgxpool.Pool }
+type orgAccessPool struct {
+	Pool *pgxpool.Pool
+	// Background, when set, carries contexts marked WithBackgroundWork.
+	Background *pgxpool.Pool
+}
 
 func (p *orgAccessPool) Ping(ctx context.Context) error { return p.Pool.Ping(ctx) }
 
@@ -55,7 +59,16 @@ func (p *orgAccessPool) Begin(ctx context.Context) (pgx.Tx, error) {
 }
 
 func (p *orgAccessPool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
-	tx, err := p.Pool.BeginTx(ctx, options)
+	conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+	if err != nil {
+		return nil, err
+	}
+	var tx pgx.Tx
+	if conn != nil {
+		tx, err = conn.BeginTx(ctx, options)
+	} else {
+		tx, err = p.route(ctx).BeginTx(ctx, options)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +87,18 @@ func (p *orgAccessPool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx
 		}
 	}
 	return tx, nil
+}
+
+// guardOrgAccessTx applies the request's access fence to a transaction begun
+// on a session-locked connection, which bypasses orgAccessPool.BeginTx. It
+// runs after the transaction's LOCK statements so their order is unchanged; a
+// revocation committed after the snapshot surfaces as 40001 and is retried.
+func guardOrgAccessTx(ctx context.Context, tx pgx.Tx) error {
+	fence, ok := orgAccessFrom(ctx)
+	if !ok {
+		return nil
+	}
+	return lockOrgAccess(ctx, tx, fence)
 }
 
 func checkOrgAccessSnapshot(ctx context.Context, tx pgx.Tx, f OrgAccessFence) error {
@@ -110,7 +135,14 @@ func lockOrgAccess(ctx context.Context, tx pgx.Tx, f OrgAccessFence) error {
 
 func (p *orgAccessPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if _, ok := orgAccessFrom(ctx); !ok {
-		return p.Pool.Exec(ctx, sql, args...)
+		conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+		if err != nil {
+			return pgconn.CommandTag{}, err
+		}
+		if conn != nil {
+			return conn.Exec(ctx, sql, args...)
+		}
+		return p.route(ctx).Exec(ctx, sql, args...)
 	}
 	tx, err := p.Begin(ctx)
 	if err != nil {
@@ -126,7 +158,14 @@ func (p *orgAccessPool) Exec(ctx context.Context, sql string, args ...any) (pgco
 
 func (p *orgAccessPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if _, ok := orgAccessFrom(ctx); !ok {
-		return p.Pool.QueryRow(ctx, sql, args...)
+		conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+		if err != nil {
+			return orgAccessRow{err: err}
+		}
+		if conn != nil {
+			return conn.QueryRow(ctx, sql, args...)
+		}
+		return p.route(ctx).QueryRow(ctx, sql, args...)
 	}
 	tx, err := p.Begin(ctx)
 	if err != nil {
@@ -155,7 +194,14 @@ func (r orgAccessRow) Scan(dest ...any) error {
 
 func (p *orgAccessPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if _, ok := orgAccessFrom(ctx); !ok {
-		return p.Pool.Query(ctx, sql, args...)
+		conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+		if err != nil {
+			return nil, err
+		}
+		if conn != nil {
+			return conn.Query(ctx, sql, args...)
+		}
+		return p.route(ctx).Query(ctx, sql, args...)
 	}
 	tx, err := p.Begin(ctx)
 	if err != nil {

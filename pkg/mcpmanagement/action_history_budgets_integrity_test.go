@@ -31,7 +31,7 @@ func TestBudgetActionHistoryStorageFailure(t *testing.T) {
 			t.Cleanup(backend.Close)
 			opts.APIBase, opts.planStore, opts.planNamespace = backend.URL, store, "failure-budget"
 			client := api.NewClient(backend.URL, testToken)
-			_, m, err := newManagementServer(client, opts)
+			_, m, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -65,7 +65,7 @@ func TestBudgetActionHistoryStorageFailure(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = next.Close() })
 			opts.planStore = next
-			_, restored, err := newManagementServer(client, opts)
+			_, restored, err := newHistoryTestManagementServer(client, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,7 +84,7 @@ func TestBudgetActionHistoryRejectsUnboundNativeReceipts(t *testing.T) {
 	f, backend, opts := newBudgetFixture(t)
 	store, _, _ := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "invalid-budget-receipt"
-	_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

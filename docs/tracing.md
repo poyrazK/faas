@@ -18,7 +18,8 @@ tracing:
 enabled = true
 ```
 
-The setting applies from the next deployment. Then open a request with
+The setting applies from the next deployment. Start an investigation with
+[`gregale debug status <app>`](debug-status.md), then open a request with
 `gregale debug requests get <app> <request-id>` or in the dashboard debugger;
 spans from your app appear under the request, and the evidence summary uses
 them to point at the slow dependency.
@@ -62,9 +63,30 @@ error rate at least 5 percentage points and twice above baseline:
 
 > http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
 
+## Request logs
+
+With tracing enabled, the app's own log lines are linked to the request that
+wrote them. Python's standard `logging` records and Node's pino and bunyan
+logs are exported automatically with the active trace context, and the
+request's evidence shows its last 20 lines in the dashboard and the API:
+
+```
+12:04:31.118  error  runtime  charge failed for [REDACTED:email]: card declined
+```
+
+Python sends the records your logging configuration emits (warnings and
+above unless you set a lower level), and your console output is unchanged.
+Lines are redacted (emails, card numbers, tokens and keys) and cut to 512
+characters; structured log fields are not stored. Plain `console.log` output
+and winston logs are not linked. Log lines without a request (for example at
+startup) still appear in your runtime logs as before.
+
+To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` at your own collector.
+
 ## Following a request across services
 
-`gregale trace <trace-id>` shows every retained request of one trace across
+`gregale debug trace <trace-id>` shows every retained request of one trace across
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 
@@ -109,8 +131,56 @@ loads OpenTelemetry auto-instrumentation for you:
 
 Filesystem, DNS and raw socket activity is not traced.
 
-Other apps (Go, Dockerfile builds and container images) can export spans with
-any OpenTelemetry SDK they already include. Inside the app, the standard
+### Go
+
+Go apps are compiled, so nothing can be loaded into them at start. The Go
+SDK's `tracing` package gives the same request, HTTP client and database
+spans without an OpenTelemetry dependency:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview/tracing"
+
+func main() {
+	shutdown := tracing.Start()
+	defer shutdown(context.Background())
+
+	http.DefaultTransport = tracing.Transport(http.DefaultTransport)
+	db, err := tracing.Open("pgx", os.Getenv("DATABASE_URL"), "postgresql")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /orders/{id}", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.QueryContext(r.Context(), "SELECT id FROM orders WHERE id = $1", r.PathValue("id"))
+		...
+	})
+	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
+}
+```
+
+- `tracing.Handler` records each request and continues the trace the gateway
+  started, so the spans attach to the request in the debugger. Wrap the
+  router, and the span is named after the matched route (`GET /orders/{id}`).
+- `tracing.Transport` records outgoing HTTP calls and passes the trace on in a
+  `traceparent` header. URLs are recorded without query strings or
+  credentials.
+- `tracing.Open` (or `tracing.WrapConnector` with `sql.OpenDB`) records every
+  query run with a context, for any `database/sql` driver. The last argument
+  names the database: `postgresql`, `mysql`, `sqlite` and so on.
+- `tracing.StartSpan(ctx, "name")` records your own operations.
+
+Pass the request's context to outgoing calls (`http.NewRequestWithContext`,
+`QueryContext`, `ExecContext`); a call made with `context.Background()`
+starts a new trace and does not appear under the request. For functions, wrap
+the handler you pass to `function.Serve`: `function.Serve(tracing.Handler(mux))`.
+
+The package does nothing unless `tracing.enabled` is on for the app, so the
+same binary runs unchanged locally and in tests.
+
+### Other apps
+
+Dockerfile builds, container images and Go apps that already use OpenTelemetry
+can export spans with the SDK they include. Inside the app, the standard
 OTLP/HTTP endpoint `http://127.0.0.1:4318/v1/traces` accepts them; Gregale
 sets the standard `OTEL_EXPORTER_OTLP_TRACES_*` variables so most SDKs need no
 configuration.
@@ -125,8 +195,11 @@ tracing:
   sample_ratio: 0.25
 ```
 
-Exports also count toward your plan's request telemetry rate limit; spans that
-exceed it are dropped and the app keeps serving.
+Exports have their own rate limit, the same per-minute rate as your plan's
+request telemetry, so tracing never uses up the budget your request records
+need. Spans that exceed it are dropped and the app keeps serving. An app in an
+organization that owns its resources is limited by the organization's plan,
+not the plan of whoever created the app.
 
 ## Using your own collector
 
@@ -136,6 +209,18 @@ your OpenTelemetry configuration alone, and a Python app that ships its own
 `opentelemetry-sdk` is never instrumented a second time. Your existing exporter
 keeps working; to send spans to the debugger as well, export to the public
 `/v1/otel/v1/traces` endpoint with an API key.
+
+The key needs the `admin`, `deploy:write` or `metrics:write` scope; a
+read-only key gets `403`. Spans attach to requests of the trace in apps the
+key can write to:
+
+- A key bound to an organization attaches spans to that organization's apps,
+  whoever created them, while you can deploy there (owner, admin or
+  developer).
+- Any other key attaches spans to your own apps. Apps of an organization you
+  have left, or can no longer deploy to, are skipped.
+
+The endpoint answers `404` while tracing is not enabled for your account.
 
 ## Limits and behavior
 

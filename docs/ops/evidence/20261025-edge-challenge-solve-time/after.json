@@ -1,0 +1,1002 @@
+[
+ {
+  "rate": 1,
+  "trial": 0,
+  "hashes": 69292,
+  "valid": true,
+  "wallMs": 123.5,
+  "cpuMs": 59.1,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 1,
+  "trial": 1,
+  "hashes": 15127,
+  "valid": true,
+  "wallMs": 26,
+  "cpuMs": 26.9,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 1,
+  "trial": 2,
+  "hashes": 33983,
+  "valid": true,
+  "wallMs": 162.8,
+  "cpuMs": 30.5,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 3,
+  "hashes": 30770,
+  "valid": true,
+  "wallMs": 52.1,
+  "cpuMs": 27.4,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 4,
+  "hashes": 91873,
+  "valid": true,
+  "wallMs": 159.4,
+  "cpuMs": 48,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 5,
+  "hashes": 120319,
+  "valid": true,
+  "wallMs": 68.2,
+  "cpuMs": 56.9,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 6,
+  "hashes": 2533,
+  "valid": true,
+  "wallMs": 151.2,
+  "cpuMs": 19.6,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 7,
+  "hashes": 3166,
+  "valid": true,
+  "wallMs": 23,
+  "cpuMs": 18.4,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 8,
+  "hashes": 551,
+  "valid": true,
+  "wallMs": 97.2,
+  "cpuMs": 11.7,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 9,
+  "hashes": 167529,
+  "valid": true,
+  "wallMs": 220,
+  "cpuMs": 143,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 10,
+  "hashes": 2104,
+  "valid": true,
+  "wallMs": 283.6,
+  "cpuMs": 27.7,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 11,
+  "hashes": 115084,
+  "valid": true,
+  "wallMs": 317.6,
+  "cpuMs": 61.6,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 12,
+  "hashes": 68858,
+  "valid": true,
+  "wallMs": 356.3,
+  "cpuMs": 97.5,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 13,
+  "hashes": 74416,
+  "valid": true,
+  "wallMs": 171.7,
+  "cpuMs": 42.5,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 14,
+  "hashes": 72810,
+  "valid": true,
+  "wallMs": 465.7,
+  "cpuMs": 46.4,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 15,
+  "hashes": 54642,
+  "valid": true,
+  "wallMs": 109,
+  "cpuMs": 99.6,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 16,
+  "hashes": 3471,
+  "valid": true,
+  "wallMs": 38,
+  "cpuMs": 19.8,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 17,
+  "hashes": 17030,
+  "valid": true,
+  "wallMs": 176.9,
+  "cpuMs": 25.3,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 18,
+  "hashes": 84408,
+  "valid": true,
+  "wallMs": 50,
+  "cpuMs": 54.6,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 19,
+  "hashes": 44060,
+  "valid": true,
+  "wallMs": 30,
+  "cpuMs": 34.7,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 20,
+  "hashes": 122856,
+  "valid": true,
+  "wallMs": 182.4,
+  "cpuMs": 59.2,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 21,
+  "hashes": 86812,
+  "valid": true,
+  "wallMs": 154.5,
+  "cpuMs": 47.1,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 22,
+  "hashes": 10873,
+  "valid": true,
+  "wallMs": 93.6,
+  "cpuMs": 24.8,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 23,
+  "hashes": 97917,
+  "valid": true,
+  "wallMs": 148.9,
+  "cpuMs": 51.6,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 24,
+  "hashes": 204152,
+  "valid": true,
+  "wallMs": 111.3,
+  "cpuMs": 84.8,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 25,
+  "hashes": 61733,
+  "valid": true,
+  "wallMs": 214.4,
+  "cpuMs": 51.5,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 26,
+  "hashes": 97444,
+  "valid": true,
+  "wallMs": 74.6,
+  "cpuMs": 53.7,
+  "tokenLen": 225,
+  "load1": 67.6
+ },
+ {
+  "rate": 1,
+  "trial": 27,
+  "hashes": 137305,
+  "valid": true,
+  "wallMs": 572.5,
+  "cpuMs": 67.7,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 28,
+  "hashes": 196181,
+  "valid": true,
+  "wallMs": 173.2,
+  "cpuMs": 83.2,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 29,
+  "hashes": 57341,
+  "valid": true,
+  "wallMs": 65,
+  "cpuMs": 38.4,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 30,
+  "hashes": 7261,
+  "valid": true,
+  "wallMs": 48.9,
+  "cpuMs": 22.1,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 31,
+  "hashes": 43616,
+  "valid": true,
+  "wallMs": 296.3,
+  "cpuMs": 37.8,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 32,
+  "hashes": 32131,
+  "valid": true,
+  "wallMs": 194.9,
+  "cpuMs": 29.3,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 33,
+  "hashes": 46459,
+  "valid": true,
+  "wallMs": 52.2,
+  "cpuMs": 33.8,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 34,
+  "hashes": 28859,
+  "valid": true,
+  "wallMs": 293.6,
+  "cpuMs": 29.7,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 35,
+  "hashes": 132901,
+  "valid": true,
+  "wallMs": 184.8,
+  "cpuMs": 62.2,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 36,
+  "hashes": 62523,
+  "valid": true,
+  "wallMs": 192.1,
+  "cpuMs": 44.5,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 37,
+  "hashes": 46310,
+  "valid": true,
+  "wallMs": 174,
+  "cpuMs": 37.5,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 38,
+  "hashes": 78317,
+  "valid": true,
+  "wallMs": 56.3,
+  "cpuMs": 43.1,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 1,
+  "trial": 39,
+  "hashes": 45583,
+  "valid": true,
+  "wallMs": 124.9,
+  "cpuMs": 35,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 6,
+  "trial": 0,
+  "hashes": 561,
+  "valid": true,
+  "wallMs": 256.8,
+  "cpuMs": 182.8,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 6,
+  "trial": 1,
+  "hashes": 16973,
+  "valid": true,
+  "wallMs": 98.4,
+  "cpuMs": 120.6,
+  "tokenLen": 225,
+  "load1": 75.5
+ },
+ {
+  "rate": 6,
+  "trial": 2,
+  "hashes": 53230,
+  "valid": true,
+  "wallMs": 202.6,
+  "cpuMs": 227.5,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 3,
+  "hashes": 4706,
+  "valid": true,
+  "wallMs": 227.7,
+  "cpuMs": 230,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 4,
+  "hashes": 5227,
+  "valid": true,
+  "wallMs": 439.4,
+  "cpuMs": 435.2,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 5,
+  "hashes": 21399,
+  "valid": true,
+  "wallMs": 185.8,
+  "cpuMs": 224.5,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 6,
+  "hashes": 89779,
+  "valid": true,
+  "wallMs": 310.5,
+  "cpuMs": 369.7,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 7,
+  "hashes": 163460,
+  "valid": true,
+  "wallMs": 393.5,
+  "cpuMs": 417,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 8,
+  "hashes": 25125,
+  "valid": true,
+  "wallMs": 104.2,
+  "cpuMs": 124.4,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 9,
+  "hashes": 19644,
+  "valid": true,
+  "wallMs": 92.1,
+  "cpuMs": 112,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 10,
+  "hashes": 17097,
+  "valid": true,
+  "wallMs": 91.3,
+  "cpuMs": 116.9,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 11,
+  "hashes": 63444,
+  "valid": true,
+  "wallMs": 247.1,
+  "cpuMs": 280.9,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 12,
+  "hashes": 34943,
+  "valid": true,
+  "wallMs": 124.2,
+  "cpuMs": 148.6,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 13,
+  "hashes": 38327,
+  "valid": true,
+  "wallMs": 130.7,
+  "cpuMs": 166,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 14,
+  "hashes": 113640,
+  "valid": true,
+  "wallMs": 697.9,
+  "cpuMs": 687.6,
+  "tokenLen": 225,
+  "load1": 73.5
+ },
+ {
+  "rate": 6,
+  "trial": 15,
+  "hashes": 47475,
+  "valid": true,
+  "wallMs": 360.6,
+  "cpuMs": 438.3,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 16,
+  "hashes": 54915,
+  "valid": true,
+  "wallMs": 196.4,
+  "cpuMs": 220.2,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 17,
+  "hashes": 31728,
+  "valid": true,
+  "wallMs": 130.6,
+  "cpuMs": 157.6,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 18,
+  "hashes": 13262,
+  "valid": true,
+  "wallMs": 232.8,
+  "cpuMs": 258.9,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 19,
+  "hashes": 175404,
+  "valid": true,
+  "wallMs": 403.9,
+  "cpuMs": 455.9,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 20,
+  "hashes": 112611,
+  "valid": true,
+  "wallMs": 278.2,
+  "cpuMs": 303.4,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 21,
+  "hashes": 62472,
+  "valid": true,
+  "wallMs": 182.9,
+  "cpuMs": 216.1,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 22,
+  "hashes": 14176,
+  "valid": true,
+  "wallMs": 179.2,
+  "cpuMs": 244.4,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 23,
+  "hashes": 36564,
+  "valid": true,
+  "wallMs": 192.6,
+  "cpuMs": 235.3,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 24,
+  "hashes": 69571,
+  "valid": true,
+  "wallMs": 211.6,
+  "cpuMs": 234.6,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 25,
+  "hashes": 76421,
+  "valid": true,
+  "wallMs": 230.2,
+  "cpuMs": 254.2,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 26,
+  "hashes": 11812,
+  "valid": true,
+  "wallMs": 357.6,
+  "cpuMs": 506,
+  "tokenLen": 225,
+  "load1": 71.8
+ },
+ {
+  "rate": 6,
+  "trial": 27,
+  "hashes": 15260,
+  "valid": true,
+  "wallMs": 360.1,
+  "cpuMs": 381,
+  "tokenLen": 225,
+  "load1": 72.5
+ },
+ {
+  "rate": 6,
+  "trial": 28,
+  "hashes": 44864,
+  "valid": true,
+  "wallMs": 370.5,
+  "cpuMs": 398.1,
+  "tokenLen": 225,
+  "load1": 72.5
+ },
+ {
+  "rate": 6,
+  "trial": 29,
+  "hashes": 155254,
+  "valid": true,
+  "wallMs": 405.2,
+  "cpuMs": 524.2,
+  "tokenLen": 225,
+  "load1": 72.5
+ },
+ {
+  "rate": 10,
+  "trial": 0,
+  "hashes": 16914,
+  "valid": true,
+  "wallMs": 410,
+  "cpuMs": 685.7,
+  "tokenLen": 225,
+  "load1": 72.5
+ },
+ {
+  "rate": 10,
+  "trial": 1,
+  "hashes": 123360,
+  "valid": true,
+  "wallMs": 546.3,
+  "cpuMs": 586.9,
+  "tokenLen": 225,
+  "load1": 72.5
+ },
+ {
+  "rate": 10,
+  "trial": 2,
+  "hashes": 15732,
+  "valid": true,
+  "wallMs": 230.4,
+  "cpuMs": 309.3,
+  "tokenLen": 225,
+  "load1": 72.5
+ },
+ {
+  "rate": 10,
+  "trial": 3,
+  "hashes": 99213,
+  "valid": true,
+  "wallMs": 638.8,
+  "cpuMs": 872,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 4,
+  "hashes": 86795,
+  "valid": true,
+  "wallMs": 635.6,
+  "cpuMs": 652,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 5,
+  "hashes": 172884,
+  "valid": true,
+  "wallMs": 679.3,
+  "cpuMs": 712.9,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 6,
+  "hashes": 87137,
+  "valid": true,
+  "wallMs": 391.1,
+  "cpuMs": 500.2,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 7,
+  "hashes": 32675,
+  "valid": true,
+  "wallMs": 412.8,
+  "cpuMs": 438.4,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 8,
+  "hashes": 134293,
+  "valid": true,
+  "wallMs": 581.3,
+  "cpuMs": 612.8,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 9,
+  "hashes": 38529,
+  "valid": true,
+  "wallMs": 543,
+  "cpuMs": 628.7,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 10,
+  "hashes": 2911,
+  "valid": true,
+  "wallMs": 406.8,
+  "cpuMs": 486.7,
+  "tokenLen": 225,
+  "load1": 73.6
+ },
+ {
+  "rate": 10,
+  "trial": 11,
+  "hashes": 45214,
+  "valid": true,
+  "wallMs": 324.7,
+  "cpuMs": 346.8,
+  "tokenLen": 225,
+  "load1": 74.8
+ },
+ {
+  "rate": 10,
+  "trial": 12,
+  "hashes": 73753,
+  "valid": true,
+  "wallMs": 407.3,
+  "cpuMs": 727,
+  "tokenLen": 225,
+  "load1": 74.8
+ },
+ {
+  "rate": 10,
+  "trial": 13,
+  "hashes": 461606,
+  "valid": true,
+  "wallMs": 1670.2,
+  "cpuMs": 2012.7,
+  "tokenLen": 225,
+  "load1": 74.8
+ },
+ {
+  "rate": 10,
+  "trial": 14,
+  "hashes": 115669,
+  "valid": true,
+  "wallMs": 563.4,
+  "cpuMs": 702.6,
+  "tokenLen": 225,
+  "load1": 74.8
+ },
+ {
+  "rate": 10,
+  "trial": 15,
+  "hashes": 20288,
+  "valid": true,
+  "wallMs": 260.4,
+  "cpuMs": 294,
+  "tokenLen": 225,
+  "load1": 74.8
+ },
+ {
+  "rate": 10,
+  "trial": 16,
+  "hashes": 130710,
+  "valid": true,
+  "wallMs": 531.9,
+  "cpuMs": 572.2,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 17,
+  "hashes": 989,
+  "valid": true,
+  "wallMs": 358,
+  "cpuMs": 597,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 18,
+  "hashes": 116356,
+  "valid": true,
+  "wallMs": 553.6,
+  "cpuMs": 603.7,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 19,
+  "hashes": 1454,
+  "valid": true,
+  "wallMs": 478.9,
+  "cpuMs": 486.3,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 20,
+  "hashes": 1873,
+  "valid": true,
+  "wallMs": 194.7,
+  "cpuMs": 299.5,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 21,
+  "hashes": 11886,
+  "valid": true,
+  "wallMs": 191.5,
+  "cpuMs": 443.8,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 22,
+  "hashes": 15705,
+  "valid": true,
+  "wallMs": 199.5,
+  "cpuMs": 417.2,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 23,
+  "hashes": 4756,
+  "valid": true,
+  "wallMs": 240.6,
+  "cpuMs": 277.5,
+  "tokenLen": 225,
+  "load1": 73.8
+ },
+ {
+  "rate": 10,
+  "trial": 24,
+  "hashes": 136099,
+  "valid": true,
+  "wallMs": 581.3,
+  "cpuMs": 624.9,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 10,
+  "trial": 25,
+  "hashes": 110425,
+  "valid": true,
+  "wallMs": 583.1,
+  "cpuMs": 617.2,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 10,
+  "trial": 26,
+  "hashes": 3914,
+  "valid": true,
+  "wallMs": 307.6,
+  "cpuMs": 463.9,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 10,
+  "trial": 27,
+  "hashes": 25973,
+  "valid": true,
+  "wallMs": 276,
+  "cpuMs": 296.4,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 10,
+  "trial": 28,
+  "hashes": 41642,
+  "valid": true,
+  "wallMs": 440.2,
+  "cpuMs": 505.2,
+  "tokenLen": 225,
+  "load1": 71
+ },
+ {
+  "rate": 10,
+  "trial": 29,
+  "hashes": 11090,
+  "valid": true,
+  "wallMs": 595.7,
+  "cpuMs": 622.2,
+  "tokenLen": 225,
+  "load1": 71
+ }
+]

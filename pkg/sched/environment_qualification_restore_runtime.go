@@ -102,8 +102,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID})
+	req := Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
+		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}
+	placement, err := e.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return fmt.Errorf("qualification restore placement: %w", err)
 	}
@@ -115,7 +116,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 		return err
 	}
 	wakeID := uuid.NewString()
-	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(e.nodePlacementContext(ctx, placement, req), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: wakeID, RAMMB: app.RAMMB,
 	})
 	if err != nil {
@@ -191,7 +192,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	if err := e.prepareQualificationServiceBindings(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
 		return err
 	}
-	configDigest, err := fcvm.QualificationAPIEnvSHA256(prepared.Spec.APIEnv)
+	// The restored guest attests the env it booted with, under the capture's
+	// platform instance identity (ADR 20261023093000).
+	configDigest, err := fcvm.QualificationRestoreAPIEnvSHA256(prepared.Spec.APIEnv, frame.CaptureInstanceID)
 	if err != nil {
 		return err
 	}

@@ -153,7 +153,9 @@ func TestE2E_RuntimePolicyChangesDoNotCreateDeployment(t *testing.T) {
 	if got := runtimePolicyDeploymentIDs(t, f); len(got) != 2 || got[0] != deploymentIDs[0] || got[1] != deploymentIDs[1] {
 		t.Fatalf("final deployment set = %v, want original set %v", got, deploymentIDs)
 	}
-	policyStatus := waitForRuntimePolicyStatus(t, f, 10*time.Second)
+	// schedd acknowledges a scaling revision on app_changed or, at the latest,
+	// on its periodic observation; wait out that bound, not just a notification.
+	policyStatus := waitForRuntimePolicyStatus(t, f, state.AppScalingPolicyObservationInterval+15*time.Second)
 	cpuUpdateFound := false
 	for _, update := range f.vmmd.CPULimitUpdates() {
 		if update.GetAppId() == f.app.ID && update.GetRevision() == policyStatus.CPULimit.DesiredRevision && update.GetCpuMillicores() == int32(cpu) {

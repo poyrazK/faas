@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Body for /confirm — a single 6-digit TOTP code.
+ * Body for /confirm — a TOTP code and the existing password, if set.
  */
 export type MFAConfirmRequest = {
   /**
@@ -11,10 +11,14 @@ export type MFAConfirmRequest = {
    */
   totp: string;
   /**
+   * Required when the account already has a password; authorizes the new factor.
+   */
+  current_password?: string;
+  /**
    * Dashboard CSRF token. The dashboard sets a
    * `faas_csrf` cookie on every authenticated response; the
-   * same value rides in this JSON-body field so
-   * `pkg/middleware.VerifyAuthenticated` can compare them.
+   * same value rides in this JSON-body field so the
+   * server can compare them.
    * The token is opaque to the wire (sealed session
    * reference); size matches the cookie value.
    *

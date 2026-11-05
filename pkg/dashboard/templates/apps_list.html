@@ -7,8 +7,8 @@
        pushes via the htmx SSE extension instead of a meta refresh
        poll. EventSource auto-reconnects on transient drops. -->
   <title>{{.Title}} — onebox faas</title>
-  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
-  <script src="https://unpkg.com/htmx-ext-sse@2.2.2" integrity="sha384-fw+eTlCc7suMV/1w/7fr2/PmwElUIt5i82bi+qTiLXvjRXZ2/FkiTNA/w0MhXnGI" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
+  <script src="/dashboard/assets/htmx-2.0.4.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
+  <script src="/dashboard/assets/htmx-ext-sse-2.2.2.js" integrity="sha384-fw+eTlCc7suMV/1w/7fr2/PmwElUIt5i82bi+qTiLXvjRXZ2/FkiTNA/w0MhXnGI" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
   <style nonce="{{.Nonce}}">
     :root { color-scheme: light dark; }
     body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
@@ -53,6 +53,9 @@
     .deploy-rate { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin: 0 0 1rem; padding: 0.65rem 0.8rem; border: 1px solid #ddd; border-radius: 6px; }
     .deploy-rate progress { width: 12rem; }
     .deploy-rate small { color: #6b7280; }
+    .label-filter { display: flex; gap: 0.5rem; align-items: center; margin: 0 0 1rem; }
+    .label-filter input { flex: 1; font-family: ui-monospace, Menlo, monospace; }
+    .label-filter .error { color: #991b1b; }
   </style>
 </head>
 <body hx-ext="sse" sse-connect="/v1/events">
@@ -61,10 +64,10 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/mcp">MCP operations</a>
-      <a href="/dashboard/app-costs">App costs</a>
-      <a href="/dashboard/developers">Developer environments</a>
-      <a href="/dashboard/projects">Projects</a>
+      {{if $.On "mcp-hosting"}}<a href="/dashboard/mcp">MCP operations</a>{{end}}
+      {{if $.On "app-costs"}}<a href="/dashboard/app-costs">App costs</a>{{end}}
+      {{if $.On "developer-environments"}}<a href="/dashboard/developers">Developer environments</a>{{end}}
+      {{if $.On "projects"}}<a href="/dashboard/projects">Projects</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>
@@ -72,7 +75,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done" hx-get="/dashboard/apps" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done" hx-get="/dashboard/apps{{with .Data.Selector}}?selector={{.}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     {{with .Account}}{{if gt .DeployRateLimit 0}}
@@ -82,11 +85,21 @@
         <small>{{.DeployRateRemaining}} remaining · resets <time datetime="{{.DeployRateResetsAt}}">{{.DeployRateResetsLabel}}</time></small>
       </section>
     {{end}}{{end}}
-    {{if .Data}}
-      {{$items := .Data}}
+    {{$labelsOn := .Data.LabelsOn}}
+    {{if $labelsOn}}
+      <form class="label-filter" method="get" action="/dashboard/apps" role="search">
+        <label for="label-selector">Labels</label>
+        <input id="label-selector" name="selector" value="{{.Data.Selector}}" placeholder="team=billing,tier in (web,api)" maxlength="4096" autocomplete="off">
+        <button type="submit">Filter</button>
+        {{if .Data.Selector}}<a href="/dashboard/apps">Clear</a>{{end}}
+      </form>
+      {{with .Data.SelectorError}}<p class="label-filter error" role="alert">{{.}}</p>{{end}}
+    {{end}}
+    {{if or .Data.Items .Data.Selector}}
+      {{$items := .Data.Items}}
       {{if $items}}
         <table>
-          <thead><tr><th>Slug</th><th>State</th><th>Lifecycle</th><th>Rate limit</th><th>SLO</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
+          <thead><tr><th>Slug</th>{{if $labelsOn}}<th>Labels</th>{{end}}<th>State</th><th>Lifecycle</th><th>Rate limit</th><th>SLO</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
           <tbody>
             {{range $items}}
               <tr>
@@ -99,6 +112,7 @@
                        action. */}}
                   {{if .IsPreview}}<span style="color:#888">↳</span> {{end}}<code>{{.Slug}}</code>{{if .IsPreview}} <span class="badge dim" title="preview environment">preview</span>{{end}}
                 </td>
+                {{if $labelsOn}}<td>{{template "resource-labels" .Labels}}</td>{{end}}
                 <!-- ux_spec §6.3: glyph + label render the live
                      instance state. Replaces the prior plain
                      .Status span (which only reflected the app's
@@ -140,18 +154,8 @@
             {{end}}
           </tbody>
         </table>
-      {{else}}
-        <div class="empty">
-          <h2>Deploy your first app</h2>
-          <p>From a project directory:</p>
-          <pre>gregale deploy --template=hello-node</pre>
-          <p class="muted">Or scaffold a stateless-storage starter:</p>
-          <pre>gregale init --template=s3-uploader --path=./uploader</pre>
-          <p>
-            <a class="btn-cta" href="/dashboard/apps/new">Deploy from the dashboard →</a>
-          <a class="btn" href="https://gregale.dev/docs/storage">Bring your own storage →</a>
-          </p>
-        </div>
+      {{else if not .Data.SelectorError}}
+        <p class="empty">No app matches <code>{{.Data.Selector}}</code>.</p>
       {{end}}
     {{else}}
       <div class="empty">

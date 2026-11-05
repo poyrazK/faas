@@ -9,17 +9,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestWriteProtectionClientRequests(t *testing.T) {
 	until := time.Date(2027, 1, 2, 3, 4, 5, 123000000, time.UTC)
-	p := &faas.ObjectWriteProtection{Retention: &faas.ObjectVersionRetention{Mode: "COMPLIANCE", RetainUntilDate: &until}, LegalHold: &faas.ObjectVersionLegalHold{Status: "ON"}}
+	p := &preview.ObjectWriteProtection{Retention: &preview.ObjectVersionRetention{Mode: "COMPLIANCE", RetainUntilDate: &until}, LegalHold: &preview.ObjectVersionLegalHold{Status: "ON"}}
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		var body struct {
-			Protection *faas.ObjectWriteProtection `json:"protection"`
+			Protection *preview.ObjectWriteProtection `json:"protection"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Protection == nil || body.Protection.Retention == nil || !body.Protection.Retention.RetainUntilDate.Equal(until) || body.Protection.LegalHold.Status != "ON" {
 			t.Error(body)
@@ -36,10 +38,10 @@ func TestWriteProtectionClientRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	size := int64(3)
-	if _, err = c.SignBucketObject(context.Background(), "demo", "bucket", faas.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, Protection: p}); err != nil {
+	if _, err = preview.Wrap(c).SignBucketObject(context.Background(), "demo", "bucket", preview.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, Protection: p}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.CreateObjectMultipartUpload(context.Background(), "demo", "bucket", faas.CreateObjectMultipartUploadRequest{Key: "key", SizeBytes: 3, Protection: p}); err != nil {
+	if _, err = preview.Wrap(c).CreateObjectMultipartUpload(context.Background(), "demo", "bucket", preview.CreateObjectMultipartUploadRequest{Key: "key", SizeBytes: 3, Protection: p}); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -49,12 +51,12 @@ func TestWriteProtectionClientRequests(t *testing.T) {
 
 func TestEventWriteProtectionClientRequests(t *testing.T) {
 	years := int32(1)
-	p := &faas.ObjectWriteProtection{Retention: &faas.ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &faas.ObjectRetentionPeriod{Years: &years}}, LegalHold: &faas.ObjectVersionLegalHold{Status: "ON"}}
+	p := &preview.ObjectWriteProtection{Retention: &preview.ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &preview.ObjectRetentionPeriod{Years: &years}}, LegalHold: &preview.ObjectVersionLegalHold{Status: "ON"}}
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		var body struct {
-			Protection *faas.ObjectWriteProtection `json:"protection"`
+			Protection *preview.ObjectWriteProtection `json:"protection"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Protection == nil || body.Protection.Retention == nil || body.Protection.Retention.EventHold != "ON" || body.Protection.Retention.EventHoldDuration == nil || body.Protection.Retention.EventHoldDuration.Years == nil || *body.Protection.Retention.EventHoldDuration.Years != 1 || body.Protection.LegalHold == nil || body.Protection.LegalHold.Status != "ON" {
 			t.Error(body)
@@ -71,10 +73,10 @@ func TestEventWriteProtectionClientRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	size := int64(3)
-	if _, err = c.SignBucketObject(context.Background(), "demo", "bucket", faas.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, Protection: p}); err != nil {
+	if _, err = preview.Wrap(c).SignBucketObject(context.Background(), "demo", "bucket", preview.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, Protection: p}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.CreateObjectMultipartUpload(context.Background(), "demo", "bucket", faas.CreateObjectMultipartUploadRequest{Key: "key", SizeBytes: 3, Protection: p}); err != nil {
+	if _, err = preview.Wrap(c).CreateObjectMultipartUpload(context.Background(), "demo", "bucket", preview.CreateObjectMultipartUploadRequest{Key: "key", SizeBytes: 3, Protection: p}); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {

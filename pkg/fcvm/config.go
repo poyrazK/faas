@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 // Firecracker machine config + jailer invocation builders (spec §4.4, Appendix
@@ -15,9 +16,12 @@ import (
 // VMConfig is the Firecracker configuration file (`--config-file`). JSON tags
 // match the Firecracker API schema exactly — do not rename.
 type VMConfig struct {
-	BootSource        BootSource `json:"boot-source"`
-	Drives            []Drive    `json:"drives"`
-	MachineConfig     Machine    `json:"machine-config"`
+	BootSource    BootSource `json:"boot-source"`
+	Drives        []Drive    `json:"drives"`
+	MachineConfig Machine    `json:"machine-config"`
+	// NetworkInterfaces is never nil: Firecracker 1.7 rejects a JSON null
+	// here ("expected a sequence"), so networkless execution and database
+	// VMs (ADR-1027) carry an empty list.
 	NetworkInterfaces []NetIface `json:"network-interfaces"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
@@ -83,7 +87,16 @@ type Drive struct {
 	IsRootDevice bool         `json:"is_root_device"`
 	IsReadOnly   bool         `json:"is_read_only"`
 	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
+	// CacheType is empty (Firecracker's "Unsafe") for app layers, which are
+	// disposable. Database volumes set DriveCacheWriteback (ADR-1027).
+	CacheType string `json:"cache_type,omitempty"`
 }
+
+// DriveCacheWriteback makes Firecracker advertise flush support and fsync
+// the host file on every guest flush. The default "Unsafe" ignores guest
+// flushes: acceptable for disposable app layers, data loss for a database
+// volume (ADR-1027).
+const DriveCacheWriteback = "Writeback"
 
 // RateLimiter is Firecracker's device rate limiter: token buckets on bytes
 // and on operations.
@@ -104,6 +117,10 @@ type Machine struct {
 	VcpuCount  int  `json:"vcpu_count"`
 	MemSizeMib int  `json:"mem_size_mib"`
 	Smt        bool `json:"smt"`
+	// CPUTemplate is the static Firecracker CPU template, e.g. "T2CL"
+	// (ADR-20261024225612). Empty omits the field: the guest sees the
+	// host's CPUID. JailerVMM.WithCPUTemplate sets it at boot.
+	CPUTemplate string `json:"cpu_template,omitempty"`
 }
 
 type NetIface struct {
@@ -128,6 +145,10 @@ const (
 	DriveLayer         = "layer"      // legacy alias for DriveLayerMain
 	DriveLayerMain     = "layer-main" // PR-B canonical main workload drive id
 	DriveSidecarPrefix = "layer-sidecar-"
+	// DriveAgentInput is an agent run's read-only input drive (ADR-20261027090010
+	// §3). It follows the base and the agent layer, so the guest sees it as
+	// drive 2.
+	DriveAgentInput = "agent-input"
 	// WorkloadNameMain is the reserved name on WorkloadSpec.Name / .Type
 	// for the main workload. Sidecar names must not collide with it
 	// (buildWorkloadsForColdBoot rejects "main" with a host-side
@@ -225,6 +246,17 @@ const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
 
+// DatabaseBootArgs is the kernel command line of a database VM (ADR-1027):
+// the networkless execution line, which configures no guest network, plus
+// guest-init's database-mode arguments for the given PostgreSQL major.
+func DatabaseBootArgs(major int) (string, error) {
+	mode, err := dbguest.BootArgs(major)
+	if err != nil {
+		return "", err
+	}
+	return withGuestTimer(executionBootArgs) + " " + mode, nil
+}
+
 // withGuestTimer inserts the timer profile after the console arguments.
 func withGuestTimer(args string) string {
 	return guestBootConsoleArgs + guestTimerProfile + strings.TrimPrefix(args, guestBootConsoleArgs)
@@ -272,6 +304,10 @@ type ColdBootSpec struct {
 	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
 	// (ADR-20261018101500).
 	ProvenWorker bool
+	// FunctionRunner boots a function's runner (WakeRequest.Runtime is set
+	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
+	// characterization's L7 probes, which would run the customer's handler.
+	FunctionRunner bool
 	// WorkerPushDelivery lets a worker-mode app with a push queue binding
 	// bind its private delivery port at startup (WakeRequest field).
 	WorkerPushDelivery bool
@@ -307,6 +343,11 @@ type ColdBootSpec struct {
 	// one command on the app-task vsock channel instead of starting the app.
 	// Unlike Networkless, it retains the deployment's normal network policy.
 	AppTask bool
+	// AgentInput attaches an agent run's read-only input drive (ADR-20261027090010
+	// §3), always agentrunproto.InputDriveBytes long. InputKey is the
+	// StorageBackend key of the image it holds; empty: zeros.
+	AgentInput bool
+	InputKey   string
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -446,9 +487,14 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 			})
 		}
 	}
+	if s.AgentInput {
+		drives = append(drives, Drive{DriveID: DriveAgentInput, PathOnHost: s.InputKey, IsReadOnly: true})
+	}
 	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}}
 	if s.Networkless {
-		network = nil
+		// An empty list, not nil: Firecracker's --config-file parser rejects
+		// "network-interfaces": null ("expected a sequence").
+		network = []NetIface{}
 	}
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
@@ -456,6 +502,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	}
 	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
 		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
+	}
+	if s.FunctionRunner && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},
@@ -517,6 +566,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):
 		return fmt.Errorf("fcvm: cold boot: invalid execution_mode %q", s.ExecutionMode)
+	case s.InputKey != "" && !s.AgentInput:
+		return fmt.Errorf("fcvm: cold boot: an input image needs the agent input drive")
+	case s.AgentInput && (!s.Networkless || len(s.Workloads) > 0):
+		return fmt.Errorf("fcvm: cold boot: an input drive needs a networkless single-layer guest")
 	}
 	return nil
 }
@@ -653,9 +706,19 @@ type JailerSpec struct {
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
 	MemoryMaxBytes int64
+	// MemoryHighBytes, when set, is the cgroup's memory.high: above it the
+	// kernel throttles and reclaims instead of killing. Database VMs set it
+	// below MemoryMaxBytes (ADR-1027); app VMs leave it unset.
+	MemoryHighBytes int64
 	// Networkless omits jailer's --netns argument for disposable execution
 	// guests. Ordinary app and job VMs always retain their tenant namespace.
 	Networkless bool
+	// ChrootBase overrides JailChrootBase. Database VMs use their own base
+	// so the app-VM orphan sweep never touches them (ADR-1027).
+	ChrootBase string
+	// ParentCgroup overrides the plan-derived parent cgroup (relative to
+	// the cgroup v2 mount). Database VMs live under their own slice.
+	ParentCgroup string
 }
 
 // PerInstanceScope returns the cgroup scope name the jailer will create
@@ -722,6 +785,13 @@ func JailerCommand(s JailerSpec) []string {
 	if s.IsBuilder {
 		parentCgroup = BuilderCgroupParent
 	}
+	if s.ParentCgroup != "" {
+		parentCgroup = s.ParentCgroup
+	}
+	chrootBase := JailChrootBase
+	if s.ChrootBase != "" {
+		chrootBase = s.ChrootBase
+	}
 	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
 	args := []string{
 		"jailer",
@@ -729,7 +799,7 @@ func JailerCommand(s JailerSpec) []string {
 		"--uid", fmt.Sprintf("%d", s.UID),
 		"--gid", fmt.Sprintf("%d", s.GID),
 		"--exec-file", execFile,
-		"--chroot-base-dir", JailChrootBase,
+		"--chroot-base-dir", chrootBase,
 	}
 	if !s.Networkless {
 		// Ordinary app/job VMs join their private tenant namespace. Execution
@@ -743,6 +813,9 @@ func JailerCommand(s JailerSpec) []string {
 	)
 	if s.MemoryMaxBytes > 0 {
 		args = append(args, "--cgroup", fmt.Sprintf("memory.max=%d", s.MemoryMaxBytes))
+	}
+	if s.MemoryHighBytes > 0 {
+		args = append(args, "--cgroup", fmt.Sprintf("memory.high=%d", s.MemoryHighBytes))
 	}
 	args = append(args,
 		"--",

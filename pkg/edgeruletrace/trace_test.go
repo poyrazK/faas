@@ -502,6 +502,7 @@ func TestApplyEnvironmentEdgePolicyReplacesOnlyHeadersAndCORS(t *testing.T) {
 	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
 		Project: "shop", Environment: "staging", App: "demo", Host: "staging.example.com", Path: "/",
 		Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{"X-Environment": []string{"staging"}},
 	})
 	if err != nil {
 		t.Fatalf("NormalizeInput: %v", err)
@@ -1557,7 +1558,7 @@ func TestSimulateRetryRuleUsesRuntimeDefaultsAndMethodGuard(t *testing.T) {
 	if policy == nil || policy.MaxAttempts != api.EdgeRuleRetryMaxAttempts || policy.MaxReplays != api.EdgeRuleRetryMaxAttempts-1 || policy.MaxAttemptsSource != "platform_ceiling" {
 		t.Fatalf("attempt ceiling = %#v", policy)
 	}
-	if policy.MinRemainingMS != api.EdgeRuleRetryDefaultMinRemainingMs || policy.BackoffMS != 0 || policy.BudgetPercent != api.EdgeRuleRetryDefaultBudgetPercent || policy.BudgetMinRetries != api.EdgeRuleRetryDefaultBudgetMin {
+	if policy.MinRemainingMS != 0 || policy.BackoffMS != 0 || policy.BudgetPercent != api.EdgeRuleRetryDefaultBudgetPercent || policy.BudgetMinRetries != api.EdgeRuleRetryDefaultBudgetMin {
 		t.Fatalf("retry defaults = %#v", policy)
 	}
 	if policy.MethodEligibility != "non_idempotent_disabled" || policy.IdempotencyKeyPresent {
@@ -1602,14 +1603,14 @@ func TestSimulateRetryRuleRequiresEffectiveAttemptCount(t *testing.T) {
 	if result.Rules[0].Outcome != "unavailable" || !strings.Contains(result.Rules[0].OutcomeReason, "gateway compilation would drop this rule") {
 		t.Fatalf("invalid rule preview = %#v", result.Rules[0])
 	}
-	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "unavailable" || result.Simulation.StoppedAt != "retry" {
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 0 {
 		t.Fatalf("invalid rule simulation = %#v", result.Simulation)
 	}
 }
 
 func TestSimulateBudgetRuleReportsHeaderOverrideAndPlanClamp(t *testing.T) {
 	rule := budgetTraceRule(t, "budget-rule", api.EdgeRuleBudgetAction{
-		BudgetMs: 4000, AllowOverrideHeader: "X-Tenant-Budget",
+		BudgetMs: 4000, TotalDeadlineMs: 3000, AllowOverrideHeader: "X-Tenant-Budget",
 	})
 	input := budgetTraceInput()
 	input.RequestBudgetMaxMS = 5000
@@ -1626,7 +1627,7 @@ func TestSimulateBudgetRuleReportsHeaderOverrideAndPlanClamp(t *testing.T) {
 		t.Fatalf("budget step = %#v", step)
 	}
 	policy := step.BudgetPolicy
-	if policy == nil || policy.ConfiguredMS != 4000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideHeader != "X-Tenant-Budget" || policy.OverrideStatus != "applied_clamped" {
+	if policy == nil || policy.TotalDeadlineMS != 3000 || policy.ConfiguredMS != 4000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideHeader != "X-Tenant-Budget" || policy.OverrideStatus != "applied_clamped" {
 		t.Fatalf("effective budget policy = %#v", policy)
 	}
 	if result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.BudgetPolicy == nil || result.Rules[0].ActionPreview.BudgetPolicy.BudgetMS != 5000 {
@@ -1665,7 +1666,7 @@ func TestSimulateBudgetFallbackUsesAppTimeoutAndPlanCeiling(t *testing.T) {
 		t.Fatalf("simulation = %#v", result.Simulation)
 	}
 	policy := result.Simulation.Steps[0].BudgetPolicy
-	if policy == nil || policy.ConfiguredMS != 8000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideStatus != "not_applicable" {
+	if policy == nil || policy.ConfiguredMS != 8000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "app" || policy.OverrideStatus != "not_applicable" {
 		t.Fatalf("fallback budget policy = %#v", policy)
 	}
 
@@ -1784,5 +1785,72 @@ func corsTraceRule(t *testing.T, id string, matchMethods []string, action api.Ed
 	return api.EdgeRuleResponse{
 		ID: id, Enabled: true, Kind: "cors", MatchHost: "*", MatchPath: "*",
 		MatchMethods: matchMethods, Action: encodedAction,
+	}
+}
+
+// adr: 091 — access gates match the client's path before the rewritten one,
+// so an ip rule on /api/** still applies after a rewrite takes /api away
+// (amendment 2026-11-02, review round 8).
+func TestSimulateAccessGateMatchesOriginalPathAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/api/**", Priority: 10,
+		Action: json.RawMessage(`{"rewrite":{"from":"/api","to":"/"}}`),
+	}
+	gate := api.EdgeRuleResponse{
+		ID: "api-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/api/**", Priority: 20,
+		Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/api/users", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, ClientIP: "203.0.113.9",
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite, gate})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	var ipStep *edgeruletrace.SimulationStep
+	for i := range result.Simulation.Steps {
+		if result.Simulation.Steps[i].Phase == "ip" {
+			ipStep = &result.Simulation.Steps[i]
+		}
+	}
+	if result.Simulation.FinalPath != "/users" || ipStep == nil || ipStep.RuleID != "api-ip" {
+		t.Fatalf("simulation = %#v, want the /api/** ip rule applied after the rewrite to /users", result.Simulation)
+	}
+}
+
+// adr: 091 — when both the client's path and the rewritten path have an
+// access-gate rule, the trace applies both, client path first (amendment
+// 2026-11-03, review round 9): the rewritten path's deny still blocks after
+// the client path's allow passes.
+func TestSimulateAccessGateAppliesBothPathsRulesAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/**", Priority: 10,
+		Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/internal"}}`),
+	}
+	legacy := api.EdgeRuleResponse{
+		ID: "legacy-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/legacy/**", Priority: 20,
+		Action: json.RawMessage(`{"ip":{"allow":["203.0.113.0/24"]}}`),
+	}
+	internal := api.EdgeRuleResponse{
+		ID: "internal-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/internal/**", Priority: 30,
+		Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/legacy/users", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, ClientIP: "203.0.113.9",
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite, legacy, internal})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	var ipRules []string
+	for _, step := range result.Simulation.Steps {
+		if step.Phase == "ip" {
+			ipRules = append(ipRules, step.RuleID+":"+step.Outcome)
+		}
+	}
+	if len(ipRules) != 2 || ipRules[0] != "legacy-ip:allow" || ipRules[1] != "internal-ip:block" || result.Simulation.Outcome != "blocked" {
+		t.Fatalf("ip steps = %v, outcome %q; want legacy-ip allowed then internal-ip blocking", ipRules, result.Simulation.Outcome)
 	}
 }

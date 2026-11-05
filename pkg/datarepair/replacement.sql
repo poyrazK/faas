@@ -6,11 +6,11 @@ ALTER TABLE gregale_repair.plans ADD COLUMN IF NOT EXISTS replacement_plan_id uu
 
 CREATE OR REPLACE FUNCTION gregale_repair.replace_plan(parent uuid, expected_scope jsonb,
  expected_digest text, requested_plan uuid, checks_digest text, manifest jsonb DEFAULT NULL) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
 DECLARE p gregale_repair.plans; prior gregale_repair.plans; e gregale_repair.enrollments;
  item jsonb; observed jsonb; current_row jsonb; reason text; state text; doc jsonb; fields text;
  items jsonb:='[]'; observed_bytes bigint; observed_total bigint:=0; omitted boolean;
- candidates integer; conflicts integer; unavailable integer;
+ candidates integer; conflicts integer; unavailable integer; values_match boolean;
 BEGIN
  IF requested_plan IS NULL OR requested_plan='00000000-0000-0000-0000-000000000000'::uuid OR requested_plan=parent OR
   checks_digest IS NULL OR checks_digest !~ '^[0-9a-f]{64}$' OR
@@ -40,6 +40,7 @@ BEGIN
   RAISE EXCEPTION 'repair_plan_cannot_be_replaced' USING ERRCODE='40001'; END IF;
  IF p.payload_purged_at IS NOT NULL THEN RAISE EXCEPTION 'repair_payload_purged' USING ERRCODE='55000'; END IF;
  e:=gregale_repair.check_enrollment((p.document->>'enrollment_id')::uuid);
+ IF __UNPROVEN_PLAN__ THEN RAISE EXCEPTION 'repair_legacy_capture_unproven' USING ERRCODE='22023'; END IF;
  IF e.fingerprint IS DISTINCT FROM p.document->>'schema_fingerprint' THEN
   RAISE EXCEPTION 'repair_schema_changed' USING ERRCODE='40001'; END IF;
  -- Excluded rows are copied, never queried or promoted. Reserve their frozen
@@ -50,11 +51,11 @@ BEGIN
   item:=item||jsonb_build_object('previous_status',item->>'status');
   IF item->>'status'='candidate' THEN
    SELECT string_agg(format('%L,t.%I',k,k),',' ORDER BY k) INTO fields FROM jsonb_object_keys(item->'after') k;
-   EXECUTE format('SELECT jsonb_build_object(''gregale_row_version'',t.gregale_row_version::text,%s) FROM %s t WHERE gregale_row_identity=$1',fields,e.relation)
-    INTO current_row USING (item->>'row_identity')::uuid;
+   EXECUTE format('SELECT jsonb_build_object(''gregale_row_version'',t.gregale_row_version::text,%s),gregale_repair.values_match(t.*,$2) FROM %s t WHERE gregale_row_identity=$1',fields,e.relation)
+    INTO current_row,values_match USING (item->>'row_identity')::uuid,item->'after';
    reason:=CASE WHEN current_row IS NULL THEN 'record_missing'
     WHEN current_row->>'gregale_row_version' IS DISTINCT FROM item->>'expected_version' THEN 'record_version_changed'
-    WHEN NOT current_row @> (item->'after') THEN 'recorded_values_changed' ELSE 'matches_recorded_write' END;
+    WHEN values_match IS DISTINCT FROM true THEN 'recorded_values_changed' ELSE 'matches_recorded_write' END;
    state:=CASE WHEN reason='record_missing' THEN 'unavailable' WHEN reason='matches_recorded_write' THEN 'candidate' ELSE 'conflict' END;
    SELECT jsonb_object_agg(k,current_row->k) INTO observed FROM jsonb_object_keys(item->'after') k WHERE current_row IS NOT NULL;
    observed_bytes:=coalesce(octet_length(observed::text),0);
@@ -67,7 +68,7 @@ BEGIN
  END LOOP;
  SELECT count(*) FILTER(WHERE i->>'status'='candidate'),count(*) FILTER(WHERE i->>'status'='conflict'),
   count(*) FILTER(WHERE i->>'status'='unavailable') INTO candidates,conflicts,unavailable FROM jsonb_array_elements(items) i;
- doc:=(p.document-'checks'-'replacement')||jsonb_build_object('checks_sha256',checks_digest,'items',items,
+ doc:=(p.document-'checks'-'replacement')||jsonb_build_object('value_contract_version',2,'checks_sha256',checks_digest,'items',items,
   'candidates',candidates,'conflicts',conflicts,'unavailable',unavailable,'replacement',jsonb_build_object(
    'parent_plan_id',p.id,'parent_plan_digest',p.digest,'previous_candidates',(p.document->>'candidates')::integer,
    'retained_candidates',candidates,'removed_candidates',(p.document->>'candidates')::integer-candidates,

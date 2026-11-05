@@ -188,7 +188,7 @@ func TestMemStoreCoverageDeploymentsAndBuilds(t *testing.T) {
 	if err := m.MarkDeploymentSuperseded(ctx, deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.LatestSupersededDeployment(ctx, app.ID); err != nil {
+	if _, err := m.LatestSupersededDeployment(ctx, app.ID, DefaultEnvScope); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs", "apps/rootfs", 10); err != nil {

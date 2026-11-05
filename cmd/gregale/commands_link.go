@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment <environment>] [--no-gitignore]"
-	contextUsage = "usage: gregale context [--check] [--verify [--timeout 10s]] | gregale context --local-config [--problems-only]"
+	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--env <environment>] [--no-gitignore]"
+	contextUsage = "usage: gregale config context get [--check] [--verify [--timeout 10s]] | gregale config context get --local-config [--problems-only]"
 )
 
 func cmdLink(args []string) int {
@@ -182,6 +182,9 @@ func cmdContext(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	timeoutSet := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "timeout" {
@@ -221,7 +224,7 @@ func cmdContext(args []string) int {
 			return printErr("Invalid verification endpoint", err)
 		}
 	}
-	connection := effectiveConnectionContext()
+	connection := displayConnectionContext()
 	overview := projectTargeting(context, path, configPath, connection)
 	var verification *contextVerification
 	if *verify {

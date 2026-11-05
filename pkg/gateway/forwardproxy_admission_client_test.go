@@ -37,6 +37,10 @@ func (*fakeVmmdClient) UpdateAdmittedAppEgressPolicy(context.Context, *vmmdpb.Up
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not install admitted runtime egress policies")
 }
 
+func (*fakeVmmdClient) ReconcilePrivateNetworkPeerings(context.Context, *vmmdpb.ReconcilePrivateNetworkPeeringsRequest, ...grpc.CallOption) (*vmmdpb.ReconcilePrivateNetworkPeeringsAck, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not reconcile private network peerings")
+}
+
 func (*fakeVmmdClient) MaterializeVerifiedParentExt4(context.Context, *vmmdpb.MaterializeVerifiedParentExt4Request, ...grpc.CallOption) (*vmmdpb.MaterializeVerifiedParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not materialize verified parents")
 }
@@ -73,6 +77,14 @@ func (*fakeVmmdClient) ExecuteOperatorPark(context.Context, *vmmdpb.ExecuteOpera
 
 func (*fakeVmmdClient) RetireMigrationAdoption(context.Context, *vmmdpb.RetireMigrationAdoptionRequest, ...grpc.CallOption) (*vmmdpb.RetireMigrationAdoptionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not retire migration adoptions")
+}
+
+func (*fakeVmmdClient) AdoptionReport(context.Context, *vmmdpb.AdoptionReportRequest, ...grpc.CallOption) (*vmmdpb.AdoptionReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not report vmmd restart adoption")
+}
+
+func (*fakeVmmdClient) AdoptionInventory(context.Context, *vmmdpb.AdoptionInventoryRequest, ...grpc.CallOption) (*vmmdpb.AdoptionInventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not list adoption inventory")
 }
 
 var _ vmmdpb.VmmdClient = (*fakeVmmdClient)(nil)

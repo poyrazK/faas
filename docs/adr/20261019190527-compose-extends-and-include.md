@@ -3,6 +3,7 @@
 Date: 2026-10-19
 Status: Accepted
 Amends: ADR-1337 (`extends` and top-level `include` were warned and not resolved)
+Amended by: ADR-20261025090000 (each include interpolates with its own .env)
 Related: ADR-1288 (Compose build context), ADR-20261019142544 (Compose build arguments and target)
 
 ## Context

@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/guestdisk"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -1042,6 +1043,10 @@ func newTestManager(run Runner, vmm VMM) *Manager {
 // real /sys/fs/cgroup via the same helper, because the jailer writes
 // there regardless of what cgroupRoot is set to in this package.
 func TestMain(m *testing.M) {
+	// The test binary stands in for vmmd-guestdisk in real-drive tests.
+	if len(os.Args) > 1 && os.Args[1] == "--uid" {
+		os.Exit(guestdisk.SandboxMain(os.Args[1:]))
+	}
 	runNativeLaunchHelperFixture()
 	if os.Getenv("GREGALE_NATIVE_PRODUCER_FIXTURE") == "1" {
 		os.Exit(m.Run()) // The crash fixture does not touch cgroups.
@@ -3509,11 +3514,11 @@ func TestUpdateStaticEgressIP_BuildsHostPolicy(t *testing.T) {
 	m := newTestManager(run, &fakeVMM{})
 	renderer := &fakeHostRenderer{}
 	m.SetHostRenderer(renderer)
-	perVMHostIP := netip.MustParseAddr("10.200.0.1")
+	perVMHostIP := netip.MustParseAddr("10.100.0.2")
 	customerIP := netip.MustParseAddr("203.0.113.42")
 	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
 	inst := &Instance{
-		Lease:     Lease{Instance: "i-1", UID: 20001},
+		Lease:     Lease{Instance: "i-1", UID: 20001, HostIP: perVMHostIP},
 		Net:       nc,
 		Method:    WakeColdBoot,
 		AppID:     "app-1",
@@ -3524,7 +3529,6 @@ func TestUpdateStaticEgressIP_BuildsHostPolicy(t *testing.T) {
 	m.mu.Unlock()
 	// Register the per-VM host IP (the Wake path does this on
 	// a successful AcquireStaticEgressIP).
-	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
 
 	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("UpdateStaticEgressIP: %v", err)
@@ -3575,10 +3579,10 @@ func TestUpdateStaticEgressIP_ClearPathRemovesHostRule(t *testing.T) {
 	m := newTestManager(run, &fakeVMM{})
 	renderer := &fakeHostRenderer{}
 	m.SetHostRenderer(renderer)
-	perVMHostIP := netip.MustParseAddr("10.200.0.1")
+	perVMHostIP := netip.MustParseAddr("10.100.0.2")
 	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
 	inst := &Instance{
-		Lease:     Lease{Instance: "i-1", UID: 20001},
+		Lease:     Lease{Instance: "i-1", UID: 20001, HostIP: perVMHostIP},
 		Net:       nc,
 		Method:    WakeColdBoot,
 		AppID:     "app-1",
@@ -3587,7 +3591,6 @@ func TestUpdateStaticEgressIP_ClearPathRemovesHostRule(t *testing.T) {
 	m.mu.Lock()
 	m.live["i-1"] = inst
 	m.mu.Unlock()
-	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
 	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("UpdateStaticEgressIP set: %v", err)
 	}
@@ -3603,18 +3606,18 @@ func TestUpdateStaticEgressIP_ClearPathRemovesHostRule(t *testing.T) {
 	}
 }
 
-// TestUpdateStaticEgressIP_SameIPNoOp covers the redelivery
+// TestUpdateStaticEgressIP_SameIPRepairsHostPolicy covers the redelivery
 // path. The same IP twice should not rebuild the host renderer
 // (the second call's idempotent fast-path returns early).
-func TestUpdateStaticEgressIP_SameIPNoOp(t *testing.T) {
+func TestUpdateStaticEgressIP_SameIPRepairsHostPolicy(t *testing.T) {
 	run := &fakeRunner{}
 	m := newTestManager(run, &fakeVMM{})
 	renderer := &fakeHostRenderer{}
 	m.SetHostRenderer(renderer)
-	perVMHostIP := netip.MustParseAddr("10.200.0.1")
+	perVMHostIP := netip.MustParseAddr("10.100.0.2")
 	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
 	inst := &Instance{
-		Lease:  Lease{Instance: "i-1", UID: 20001},
+		Lease:  Lease{Instance: "i-1", UID: 20001, HostIP: perVMHostIP},
 		Net:    nc,
 		Method: WakeColdBoot,
 		AppID:  "app-1",
@@ -3622,7 +3625,6 @@ func TestUpdateStaticEgressIP_SameIPNoOp(t *testing.T) {
 	m.mu.Lock()
 	m.live["i-1"] = inst
 	m.mu.Unlock()
-	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
 	// First call: set the IP, rebuild the host policy.
 	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("first UpdateStaticEgressIP: %v", err)
@@ -3633,8 +3635,8 @@ func TestUpdateStaticEgressIP_SameIPNoOp(t *testing.T) {
 	}
 	renderer.mu.Lock()
 	defer renderer.mu.Unlock()
-	if renderer.renderCalls != 1 {
-		t.Errorf("fakeHostRenderer.renderCalls = %d, want 1 (redelivery must be a no-op)", renderer.renderCalls)
+	if renderer.renderCalls != 2 {
+		t.Errorf("fakeHostRenderer.renderCalls = %d, want 2 (redelivery repairs failed renders)", renderer.renderCalls)
 	}
 }
 
@@ -3707,13 +3709,9 @@ func TestManager_ReportWorkloadOOM_NilRelayNoOp(t *testing.T) {
 
 }
 
-// TestUpdateEgressAllowlist_TransitionsWaitForRestart — adding the first
-// allowlist or clearing it changes the chain's shape (the terminal
-// allowlist drop), which the in-place patch cannot reproduce. A cleared
-// list used to delete the accept and leave the terminal drop blocking all
-// egress (H10-36); now no nft command runs and the cached allowlist still
-// names the live rules.
-func TestUpdateEgressAllowlist_TransitionsWaitForRestart(t *testing.T) {
+// Shape changes replace both policy tables atomically, including the
+// terminal allowlist drop, before the live cache reports the new value.
+func TestUpdateEgressAllowlist_TransitionsReplaceLivePolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		prior    []netip.Prefix
@@ -3743,13 +3741,13 @@ func TestUpdateEgressAllowlist_TransitionsWaitForRestart(t *testing.T) {
 			if err := m.UpdateEgressAllowlist(context.Background(), "app-tr", tc.next); err != nil {
 				t.Fatalf("UpdateEgressAllowlist: %v", err)
 			}
-			if run.ran("faas forward") {
-				t.Errorf("a transition patched the live forward chain: %v", run.commands)
+			if !run.ran("delete table ip faas") || !run.ran("add table ip faas") {
+				t.Errorf("transition did not replace the policy tables: %v", run.commands)
 			}
 			m.mu.Lock()
 			defer m.mu.Unlock()
-			if got := m.live["i-tr"].Net.EgressAllowlist; !samePrefixSet(got, tc.prior) {
-				t.Errorf("cached allowlist = %v, want the live %v", got, tc.prior)
+			if got := m.live["i-tr"].Net.EgressAllowlist; !samePrefixSet(got, tc.next) {
+				t.Errorf("cached allowlist = %v, want the live %v", got, tc.next)
 			}
 		})
 	}

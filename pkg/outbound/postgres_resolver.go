@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 // PostgresResolver loads policies from the outbound integration tables. It is
@@ -45,7 +46,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 }
 
 const integrationPolicySQL = `
-	SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
+	SELECT integration.account_id, integration.name, account.plan, account.status, integration.origin, integration.token_hash,
 	       integration.rate_per_second, integration.burst, integration.max_in_flight,
 	       integration.request_timeout_ms, integration.max_retries, integration.response_cache_ttl_seconds,
 	       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
@@ -69,7 +70,9 @@ const integrationPolicySQL = `
 	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
 	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
 	       ARRAY(SELECT tag_limit.daily_cost_limit_millicents FROM outbound_ai_tag_limits tag_limit
-	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag)
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
+	       COALESCE(integration.ai_trace_max_calls, 0), COALESCE(integration.ai_trace_max_cost_millicents, 0),
+	       COALESCE(integration.ai_trace_max_repeated_tool_calls, 0), COALESCE(integration.ai_online_eval_percent, 0)
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -115,7 +118,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var origin string
 	var accountID uuid.UUID
 	var name string
-	var plan string
+	var plan, accountStatus string
 	var providerAuthMode string
 	var credentialSource string
 	var ownerKind string
@@ -135,8 +138,10 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	var tagLimitTags []string
 	var tagLimitCosts []int64
+	var traceLimits aiTraceLimits
+	var onlineEvalPercent int
 	err := results.QueryRow().
-		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
+		Scan(&accountID, &name, &plan, &accountStatus, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
 			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
@@ -147,7 +152,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&aiAutoPromptCache,
 			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
 			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
-			&tagLimitTags, &tagLimitCosts)
+			&tagLimitTags, &tagLimitCosts, &traceLimits.calls, &traceLimits.cost, &traceLimits.repeats, &onlineEvalPercent)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -161,11 +166,13 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	if err != nil {
 		return Integration{}, fmt.Errorf("%w: invalid origin: %w", ErrInvalidIntegration, err)
 	}
-	if len(tokenHash) != sha256.Size {
+	if len(tokenHash) != sha256.Size && !credhash.Keyed(tokenHash) {
 		return Integration{}, fmt.Errorf("%w: token hash has invalid length", ErrInvalidIntegration)
 	}
 	var hash [sha256.Size]byte
-	copy(hash[:], tokenHash)
+	if len(tokenHash) == sha256.Size {
+		copy(hash[:], tokenHash)
+	}
 	var dailyRequestLimit *int64
 	if dailyRequestLimitValue > 0 {
 		maxForPlan, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
@@ -256,7 +263,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	if aiProvider == "" {
 		prices = nil
 	}
-	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, AppIDs: apps,
+	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, StoredTokenHash: append([]byte(nil), tokenHash...), AppIDs: apps,
 		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		DailyRequestLimit:              dailyRequestLimit,
@@ -273,13 +280,16 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
 		AccountPlan:       api.Plan(plan),
+		AccountStatus:     accountStatus,
 		AIContentPolicy:   contentPolicy,
 		AILogExport:       aiLogExport,
 		AIAllowUnmetered:  aiAllowUnmetered,
 		AIAutoPromptCache: aiAutoPromptCache,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
-		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
+		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue),
+		AITraceMaxCalls:      positiveLimit(traceLimits.calls), AITraceMaxCostMillicents: positiveLimit(traceLimits.cost),
+		AITraceMaxRepeatedToolCalls: positiveLimit(traceLimits.repeats), AIOnlineEvalPercent: onlineEvalPercent}
 	// ADR-1436: the integration's tag limits.
 	for index, tag := range tagLimitTags {
 		if index < len(tagLimitCosts) {

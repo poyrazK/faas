@@ -85,8 +85,8 @@ def sync_detailed(
 ) -> Response[DiffResponse | Problem]:
     """Read-only preview of what a deploy would change.
 
-     PR-1 of the deploy-diff cluster. Server-side equivalent of
-    `gregale deploy --diff` — runs the same engine (pkg/deploydiff)
+     Server-side equivalent of
+    `gregale deploy --diff` — runs the same engine
     and returns the same wire shape (DiffResponse).
 
     Read-only: no DB writes, no audit row, no deployment row. The
@@ -95,18 +95,18 @@ def sync_detailed(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
-    Schema-break detection is text-only in PR-1 (handler / entrypoint
-    / env-key changes → warn-severity Breaks). Structural OpenAPI
-    response-schema diff lands in PR-2.
+    Schema-break detection is text-only (handler / entrypoint
+    / env-key changes → warn-severity Breaks); response schemas
+    are not diffed yet.
 
     Args:
         slug (str):
-        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
+        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff. Slim
             purpose-built DTO — every field maps 1:1 to a
-            [deploydiff.Pending] entry via the apid handler's adapter.
+            [deploydiff.Pending] entry via the API handler's adapter.
             Empty / absent fields mean "no change proposed" (matches
             the engine's pointer semantics: every nested field is
             optional; null = "don't touch").
@@ -139,8 +139,8 @@ def sync(
 ) -> DiffResponse | Problem | None:
     """Read-only preview of what a deploy would change.
 
-     PR-1 of the deploy-diff cluster. Server-side equivalent of
-    `gregale deploy --diff` — runs the same engine (pkg/deploydiff)
+     Server-side equivalent of
+    `gregale deploy --diff` — runs the same engine
     and returns the same wire shape (DiffResponse).
 
     Read-only: no DB writes, no audit row, no deployment row. The
@@ -149,18 +149,18 @@ def sync(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
-    Schema-break detection is text-only in PR-1 (handler / entrypoint
-    / env-key changes → warn-severity Breaks). Structural OpenAPI
-    response-schema diff lands in PR-2.
+    Schema-break detection is text-only (handler / entrypoint
+    / env-key changes → warn-severity Breaks); response schemas
+    are not diffed yet.
 
     Args:
         slug (str):
-        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
+        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff. Slim
             purpose-built DTO — every field maps 1:1 to a
-            [deploydiff.Pending] entry via the apid handler's adapter.
+            [deploydiff.Pending] entry via the API handler's adapter.
             Empty / absent fields mean "no change proposed" (matches
             the engine's pointer semantics: every nested field is
             optional; null = "don't touch").
@@ -188,8 +188,8 @@ async def asyncio_detailed(
 ) -> Response[DiffResponse | Problem]:
     """Read-only preview of what a deploy would change.
 
-     PR-1 of the deploy-diff cluster. Server-side equivalent of
-    `gregale deploy --diff` — runs the same engine (pkg/deploydiff)
+     Server-side equivalent of
+    `gregale deploy --diff` — runs the same engine
     and returns the same wire shape (DiffResponse).
 
     Read-only: no DB writes, no audit row, no deployment row. The
@@ -198,18 +198,18 @@ async def asyncio_detailed(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
-    Schema-break detection is text-only in PR-1 (handler / entrypoint
-    / env-key changes → warn-severity Breaks). Structural OpenAPI
-    response-schema diff lands in PR-2.
+    Schema-break detection is text-only (handler / entrypoint
+    / env-key changes → warn-severity Breaks); response schemas
+    are not diffed yet.
 
     Args:
         slug (str):
-        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
+        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff. Slim
             purpose-built DTO — every field maps 1:1 to a
-            [deploydiff.Pending] entry via the apid handler's adapter.
+            [deploydiff.Pending] entry via the API handler's adapter.
             Empty / absent fields mean "no change proposed" (matches
             the engine's pointer semantics: every nested field is
             optional; null = "don't touch").
@@ -240,8 +240,8 @@ async def asyncio(
 ) -> DiffResponse | Problem | None:
     """Read-only preview of what a deploy would change.
 
-     PR-1 of the deploy-diff cluster. Server-side equivalent of
-    `gregale deploy --diff` — runs the same engine (pkg/deploydiff)
+     Server-side equivalent of
+    `gregale deploy --diff` — runs the same engine
     and returns the same wire shape (DiffResponse).
 
     Read-only: no DB writes, no audit row, no deployment row. The
@@ -250,18 +250,18 @@ async def asyncio(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
-    Schema-break detection is text-only in PR-1 (handler / entrypoint
-    / env-key changes → warn-severity Breaks). Structural OpenAPI
-    response-schema diff lands in PR-2.
+    Schema-break detection is text-only (handler / entrypoint
+    / env-key changes → warn-severity Breaks); response schemas
+    are not diffed yet.
 
     Args:
         slug (str):
-        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
+        body (DiffRequest): JSON body for POST /v1/apps/{slug}/diff. Slim
             purpose-built DTO — every field maps 1:1 to a
-            [deploydiff.Pending] entry via the apid handler's adapter.
+            [deploydiff.Pending] entry via the API handler's adapter.
             Empty / absent fields mean "no change proposed" (matches
             the engine's pointer semantics: every nested field is
             optional; null = "don't touch").

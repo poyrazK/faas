@@ -688,6 +688,14 @@ const (
 	// Payload: {"instance_id":uuid,"app_id":uuid,"kind":"liveness"|"workload_oom",
 	//           "reason":string,"peak_mb":int,"plan_mb":int}
 	NotifyInstanceFailureRelayed = "instance_failure_relayed"
+	// NotifyFrameworkReadyRelayed carries vmmd's framework-ready receipt from
+	// the schedd that hosts an instance to the schedd that owns its app, the
+	// same route as NotifyInstanceFailureRelayed (Hunt 14 H14-104). Without
+	// it the host refused the receipt, so an instance placed off its owner's
+	// node never qualified for warm or frozen capture. Advisory: a missed
+	// delivery only defers warm eligibility.
+	// Payload: {"instance_id":uuid,"app_id":uuid}
+	NotifyFrameworkReadyRelayed = "framework_ready_relayed"
 	// NotifyPrivateNetworkAttachmentChanged carries the durable cleanup
 	// event emitted when an app attachment is detached. Unlike the broad
 	// app_changed stream, this channel is replayed so a schedd restart or
@@ -804,6 +812,10 @@ const (
 	NotifySnapshotBoot             = "snapshot_boot"
 	NotifySnapshotWritten          = "snapshot_written"
 	NotifyDeploymentReady          = "deployment_ready"
+	// NotifySnapshotFanout is sent by the snapshots trigger when a snapshot
+	// gains a fan-out event. Its payload is empty: vmmd's replica worker
+	// wakes and rereads its cursor, and keeps a slow tick for retries.
+	NotifySnapshotFanout = "snapshot_fanout"
 	// NotifyAppTaskChanged is a durable terminal-state handoff. Release tasks
 	// use it to resume deployment priming only after their command succeeds;
 	// manual tasks currently have no daemon-side consumer.
@@ -833,6 +845,8 @@ const (
 	NotifyCronRunNow             = "cron_run_now"
 	NotifyAccountDeletionPending = "account_deletion_pending"
 	NotifyAccountDeleted         = "account_deleted"
+	// Security transitions wake a reread; the payload is not an allow/revoke command.
+	NotifyTrafficSecurityChanged = "traffic_security_changed"
 	// NotifyAppDelete is emitted by apid on app deletion (spec §6.2
 	// / ADR-098). schedd's app-delete subscriber consumes it and
 	// evicts any in-flight wake for the deleted app via
@@ -960,6 +974,12 @@ const (
 	//   phase of an edge-rule convergence barrier. This channel is consumed
 	//   only by the mutation request that allocated the generation.
 	NotifyEdgeRuleAck = "edge_rule_ack"
+	// NotifyEdgePenaltyBox "<rows>"
+	//   gatewayd-internal -> gatewayd-internal: a gateway appended penalty
+	//   boxes to edge_penalty_boxes (ADR-20261022105846 amendment 1). The
+	//   payload is informational; every gateway re-reads the boxes created
+	//   since its last read, and also every 15 s against notify loss.
+	NotifyEdgePenaltyBox = "edge_penalty_box"
 	// NotifyDeploymentRouteChanged {"app_id":uuid,
 	//   "deployment_id":uuid,"generation":int}
 	//   schedd -> gatewayd-internal: a readiness-gated service rollout has
@@ -1037,6 +1057,12 @@ const (
 	//   closed by this channel: apid never imports
 	//   pkg/scheddgrpc.
 	NotifyOperatorIntent = "operator_intent"
+	// NotifyProfileCapture {"capture_id":uuid}
+	//   apid → schedd (ADR-1155): a row was queued in profile_captures.
+	//   schedd's capture drain (pkg/sched/profile_capture_subscriber.go)
+	//   claims queued rows with FOR UPDATE SKIP LOCKED, so the payload is
+	//   informational and a 30s safety tick covers lost notifications.
+	NotifyProfileCapture = "profile_capture"
 	// NotifyRuntimeConfigChanged is emitted by migration 00466 after a
 	// durable operator configuration write. Daemons reconcile the row from
 	// Postgres instead of trusting the payload so missed notifications are

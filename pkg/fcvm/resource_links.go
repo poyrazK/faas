@@ -78,7 +78,7 @@ func (j *ResourceJournal) checkpointLink(instance, path string, link resourceLin
 		if err := r.validate(); err != nil {
 			return err
 		}
-		return j.persist(r)
+		return j.persist(r, false)
 	}
 	return errors.New("veth checkpoint requires asset intent")
 }

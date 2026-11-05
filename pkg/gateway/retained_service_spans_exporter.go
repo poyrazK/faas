@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -45,10 +46,13 @@ func NewRetainedServiceSpansExporter(acc *SpansAccumulator, log *slog.Logger) *R
 func (e *RetainedServiceSpansExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
 	var exportErrors []error
 	for _, span := range spans {
-		attrs := attrsToMap(span.Attributes())
-		if !retainedPlatformDependency(attrs) {
+		// Classify before building the attribute map: gatewayd-internal
+		// records every request span, and nearly none of them are
+		// platform dependencies.
+		if !retainedPlatformDependency(span.Attributes()) {
 			continue
 		}
+		attrs := attrsToMap(span.Attributes())
 
 		accountID, err := uuid.Parse(strings.TrimSpace(attrs[retainedSpanAccountIDAttribute]))
 		if err != nil {
@@ -89,19 +93,47 @@ func (e *RetainedServiceSpansExporter) ExportSpans(_ context.Context, spans []sd
 			Attributes:        attrs,
 			DBStatement:       extractDBStatement(attrs),
 		}
-		if _, err := e.acc.Add(summary.TraceID, accountID, []summarizedSpan{summary}); err != nil {
+		// The calling app merges the span into its own request rows only,
+		// not every app of the account that carries the trace (tracing
+		// tenancy T4).
+		target := SpanTarget{AccountID: accountID, AppID: retainedSpanCallerApp(attrs)}
+		if _, err := e.acc.AddForTarget(summary.TraceID, target, "", []summarizedSpan{summary}); err != nil {
 			exportErrors = append(exportErrors, err)
 		}
 	}
 	return errors.Join(exportErrors...)
 }
 
-func retainedPlatformDependency(attrs map[string]string) bool {
-	switch attrs["gregale.dependency.type"] {
+// retainedSpanCallerApp is the app that made a retained dependency call:
+// the service proxy stamps the caller its tenant authorizer confirmed, and
+// outboundd the caller it resolved from the source instance. Both are set
+// by platform code only. A span without one (an older daemon) returns the
+// zero UUID, which keeps the account-wide merge.
+func retainedSpanCallerApp(attrs map[string]string) uuid.UUID {
+	for _, key := range []string{"gregale.service.caller_app_id", "gregale.outbound.app_id"} {
+		if id, err := uuid.Parse(strings.TrimSpace(attrs[key])); err == nil {
+			return id
+		}
+	}
+	return uuid.Nil
+}
+
+func retainedPlatformDependency(attrs []attribute.KeyValue) bool {
+	// Last value wins for a repeated key, as in attrsToMap.
+	var depType, depKind string
+	for _, a := range attrs {
+		switch a.Key {
+		case "gregale.dependency.type":
+			depType = attrValueString(a.Value)
+		case "gregale.dependency.kind":
+			depKind = attrValueString(a.Value)
+		}
+	}
+	switch depType {
 	case "managed_binding":
-		return attrs["gregale.dependency.kind"] == "service_proxy"
+		return depKind == "service_proxy"
 	case "outbound_integration":
-		return attrs["gregale.dependency.kind"] == "https"
+		return depKind == "https"
 	default:
 		return false
 	}

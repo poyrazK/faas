@@ -126,11 +126,11 @@ func (s *server) storeJobRegistryCredential(ctx context.Context, acct state.Acco
 	if !exists && count >= limits.RegistryCredentialMax {
 		return state.JobRegistryCredential{}, api.ErrPlanJobRegistryCredentialQuota(limits, count)
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
+	recipients, err := registryCredentialRecipients()
+	if err != nil {
 		return state.JobRegistryCredential{}, api.ErrCapacity("host age recipient not loaded — refusing to seal")
 	}
-	ciphertext, err := secretbox.SealBytes(recipient, "registry_creds", []byte(req.Password), api.MaxRegistryPasswordBytes)
+	ciphertext, err := secretbox.SealBytesTo(recipients, "registry_creds", []byte(req.Password), api.MaxRegistryPasswordBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return state.JobRegistryCredential{}, prob

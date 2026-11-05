@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Response shape for POST /v1/admin/github-webhook-secrets
- * (PR-D / ADR-012 §7 amendment). upgraded_at is the
+ * Response shape for POST /v1/admin/github-webhook-secrets. upgraded_at is the
  * post-upsert stamp — every successful call bumps it
  * (the audit trail; an operator re-running with the same
  * secret is itself a rotation event worth recording).

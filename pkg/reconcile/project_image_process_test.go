@@ -43,11 +43,18 @@ func TestProjectImageProcessReconcile(t *testing.T) {
 		result.Changed[0].Manifest.ProjectImageProcess.Entrypoint != nil {
 		t.Fatalf("process-only change = %+v, %v", result, err)
 	}
+	// A built service keeps the overrides it still declares (ADR-20261022160000)
+	// and loses them once the declaration goes.
 	scan.Workloads[0].Image = ""
 	scan.Workloads[0].Dockerfile = "Dockerfile"
 	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
+	if err != nil || len(result.Changed) != 1 || !reflect.DeepEqual(result.Changed[0].Manifest.ProjectImageProcess, scan.Workloads[0].ImageProcess) {
+		t.Fatalf("source transition dropped the declared process: %+v, %v", result, err)
+	}
+	scan.Workloads[0].ImageProcess = nil
+	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
 	if err != nil || len(result.Changed) != 1 || result.Changed[0].Manifest.ProjectImageProcess != nil {
-		t.Fatalf("source transition kept the image process: %+v, %v", result, err)
+		t.Fatalf("removed process kept: %+v, %v", result, err)
 	}
 }
 

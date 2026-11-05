@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,22 +93,49 @@ func TestWriteMemoryMaxAppendsNewline(t *testing.T) {
 	}
 }
 
-func TestWriteAppCgroupUsesConfiguredCPU(t *testing.T) {
-	dir := withFakeCgroupRoot(t)
-	inst := "configured-cpu"
-	scope := filepath.Join(dir, ParentCgroupFor(api.PlanPro), PerInstanceScope(inst))
-	if err := os.MkdirAll(scope, 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	if err := writeAppCgroup(inst, api.PlanPro, 256, 500); err != nil {
-		t.Fatalf("writeAppCgroup: %v", err)
-	}
-	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
-	if err != nil {
-		t.Fatalf("read cpu.max: %v", err)
-	}
-	if got, want := string(body), "250000 500000\n"; got != want {
-		t.Fatalf("cpu.max = %q, want %q", got, want)
+// adr: 20261027090014 — the pre-boot fence writes the cpu.max it records: an app's
+// configured tier, or an agent run's whole vCPUs (two on Pro).
+func TestPreBootCgroupFenceWritesLeaseCPU(t *testing.T) {
+	period := api.PlanPro.CPUPeriodUS()
+	for _, tc := range []struct {
+		name  string
+		lease Lease
+		want  string
+	}{
+		{"app 500m", Lease{Instance: "configured-cpu", Plan: api.PlanPro, MemoryMaxMiB: 256, CPUMillicores: 500},
+			fmt.Sprintf("%d %d", period/2, period)},
+		{"agent run 2 vCPU", Lease{Instance: "agent-2vcpu", Plan: api.PlanPro, MemoryMaxMiB: 1024, CPUMillicores: 2000, Networkless: true},
+			fmt.Sprintf("%d %d", 2*period, period)},
+		{"app 2000m", Lease{Instance: "app-2000", Plan: api.PlanPro, MemoryMaxMiB: 256, CPUMillicores: 2000}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := withFakeCgroupRoot(t)
+			scope := filepath.Join(dir, ParentCgroupFor(tc.lease.Plan), PerInstanceScope(tc.lease.Instance))
+			if err := os.MkdirAll(scope, 0o755); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			v := &JailerVMM{}
+			err := v.applyPreBootCgroupFence(tc.lease, nil)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("fence accepted an app CPU outside the tiers")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("applyPreBootCgroupFence: %v", err)
+			}
+			body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+			if err != nil {
+				t.Fatalf("read cpu.max: %v", err)
+			}
+			if got := string(body); got != tc.want+"\n" {
+				t.Fatalf("cpu.max = %q, want %q", got, tc.want+"\n")
+			}
+			if f := v.fences[tc.lease.Instance]; f == nil || f.cpuMax != tc.want {
+				t.Fatalf("fence record = %+v, want cpu.max %q", f, tc.want)
+			}
+		})
 	}
 }
 

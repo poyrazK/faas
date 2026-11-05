@@ -70,10 +70,11 @@ func (s *server) saveIssueSlackDestination(r *http.Request, st state.IssueSlackS
 		if !issueslack.ValidBotToken(token) {
 			return api.ErrValidation("use a Slack bot token within the supported size limit")
 		}
-		if setSecretRecipient == nil || setSecretRecipient() == nil {
+		recipients, recipientErr := accountRecipients(hostSecretRecipient())
+		if recipientErr != nil {
 			return api.ErrCapacity("Slack token sealing unavailable")
 		}
-		in.TokenSealed, err = secretbox.SealBytes(setSecretRecipient(), state.IssueSlackTokenNamespace, []byte(token), api.IssueSlackTokenMaxBytes)
+		in.TokenSealed, err = secretbox.SealBytesTo(recipients, state.IssueSlackTokenNamespace, []byte(token), api.IssueSlackTokenMaxBytes)
 		if err != nil {
 			return api.ErrCapacity("could not seal Slack bot token")
 		}

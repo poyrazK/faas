@@ -13,13 +13,20 @@
 // tracing configuration. TestGuestTracingNodePreloadMetal uses a plain Node
 // app with no tracing code at all: guest-init's NODE_OPTIONS preload of the
 // pinned auto-instrumentation must produce its HTTP client span, which the
-// debugger classifies as an app_dependency.
+// debugger classifies as an app_dependency. TestGuestTracingPythonMetal does
+// the same for a plain Flask app through the sitecustomize bootstrap. Both
+// managed-runtime apps log one error line (pino, standard logging), which
+// must reach the evidence as a redacted runtime log line linked by the
+// request's trace (ADR-213 runtime adapter: bridge /v1/logs → vmmd broker →
+// apid IngestGuestLogs → log_events).
 //
 // Build tag: metal. Requires /dev/kvm + root, FAAS_TEST_KERNEL and
 // FAAS_BUILDER_BASE_PATH. On hosts without a matching Go toolchain set
-// FAAS_E2E_HELLO_SERVER_BINARY and FAAS_E2E_TRACING_SERVER_BINARY; the Node
-// scenario needs FAAS_E2E_NODE_TRACING_IMAGE_DIR (a prebuilt node:22-alpine
-// image with /opt/gregale/tracing, see e2etest.PrebuiltImage).
+// FAAS_E2E_HELLO_SERVER_BINARY, FAAS_E2E_TRACING_SERVER_BINARY and
+// FAAS_E2E_GO_TRACING_HELPER_BINARY. The Node and Python scenarios need
+// FAAS_E2E_NODE_TRACING_IMAGE_DIR and FAAS_E2E_PYTHON_TRACING_IMAGE_DIR:
+// runner-base images with /opt/gregale/tracing, built by
+// pkg/e2etest/testdata/tracingfixtures/build.py (see e2etest.PrebuiltImage).
 
 package e2e_test
 
@@ -48,6 +55,10 @@ type guestTracingScenario struct {
 	respPrefix string
 	// evidenceOK reports whether the request evidence shows the app's span.
 	evidenceOK func(detail string) bool
+	// splitBox sends the exports over apid's private mTLS listener with a
+	// node-identity vmmd leaf, as a split-box compute node does, and probes
+	// the node binding with real certificates.
+	splitBox bool
 }
 
 // adr: 958 — in-guest spans reach the debugger with no app tracing config.
@@ -60,6 +71,42 @@ func TestGuestTracingMetal(t *testing.T) {
 		},
 		respPrefix: "traced ",
 		evidenceOK: func(detail string) bool { return strings.Contains(detail, "SELECT orders") },
+	})
+}
+
+// adr: 958 — on a split-box layout the guest span reaches apid over its
+// private mTLS listener with vmmd's node-identity leaf, and apid refuses
+// frames that leaf sends for an instance its node does not run.
+func TestGuestTracingSplitBoxMetal(t *testing.T) {
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-split",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _ := e2etest.TracingImage("library/guest-tracing-split")
+			return registry.AddImage("library/guest-tracing-split", image)
+		},
+		respPrefix: "traced ",
+		evidenceOK: func(detail string) bool { return strings.Contains(detail, "SELECT orders") },
+		splitBox:   true,
+	})
+}
+
+// adr: 958 — a Go app instrumented only with the SDK's tracing package (no
+// OpenTelemetry dependency) reports its database and HTTP calls as
+// app_dependency spans on the request evidence.
+func TestGuestTracingGoHelperMetal(t *testing.T) {
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-go",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _ := e2etest.GoTracingHelperImage("library/guest-tracing-go")
+			return registry.AddImage("library/guest-tracing-go", image)
+		},
+		// The fixture echoes FAAS_TRACING_ENABLED: guest-init enabled the helper.
+		respPrefix: "helper 1",
+		evidenceOK: func(detail string) bool {
+			return strings.Contains(detail, "SELECT orders") &&
+				strings.Contains(detail, `"dependency_kind":"postgresql"`) &&
+				strings.Contains(detail, `"dependency_kind":"http"`)
+		},
 	})
 }
 
@@ -83,9 +130,48 @@ func TestGuestTracingNodePreloadMetal(t *testing.T) {
 		respPrefix: "preloaded 1",
 		evidenceOK: func(detail string) bool {
 			return strings.Contains(detail, `"dependency_type":"app_dependency"`) &&
-				strings.Contains(detail, `"dependency_kind":"http"`)
+				strings.Contains(detail, `"dependency_kind":"http"`) && hasRedactedErrorLog(detail)
 		},
 	})
+}
+
+// adr: 958 — the Python bootstrap instruments a Flask app with no tracing
+// code. adr: 213 — its logging records reach the request evidence.
+func TestGuestTracingPythonMetal(t *testing.T) {
+	dir := os.Getenv("FAAS_E2E_PYTHON_TRACING_IMAGE_DIR")
+	if dir == "" {
+		t.Skip("FAAS_E2E_PYTHON_TRACING_IMAGE_DIR unset; skipping Python bootstrap acceptance")
+	}
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-python",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _, err := e2etest.PrebuiltImage("library/guest-tracing-python", dir)
+			if err != nil {
+				t.Fatalf("prebuilt Python image: %v", err)
+			}
+			return registry.AddImage("library/guest-tracing-python", image)
+		},
+		respPrefix: "python 1",
+		evidenceOK: func(detail string) bool {
+			return strings.Contains(detail, `"name":"GET /checkout"`) && hasRedactedErrorLog(detail)
+		},
+	})
+}
+
+// hasRedactedErrorLog reports whether request evidence carries the fixtures'
+// error line as a runtime log line, with the customer email redacted.
+func hasRedactedErrorLog(detail string) bool {
+	var evidence api.DebugRequestEvidenceResponse
+	if json.Unmarshal([]byte(detail), &evidence) != nil || strings.Contains(detail, "buyer@example.com") {
+		return false
+	}
+	for _, line := range evidence.Logs {
+		if line.Source == string(state.LogEventSourceRuntime) && line.Level == "error" &&
+			line.Message == "charge failed for [REDACTED:email]: card declined" {
+			return true
+		}
+	}
+	return false
 }
 
 func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
@@ -118,12 +204,20 @@ func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
 	env := []string{
 		"FAAS_GUEST_TRACING_ENABLED=1",
 		"FAAS_OTEL_SPANS_WRITER_ENABLED=true",
-		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET=" + filepath.Join(telemetryDir, "spans.sock"),
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET=" + filepath.Join(telemetryDir, "request-telemetry.sock"),
 		// Flush spans after the gateway's 5s request-row publisher; a span
 		// that still beats its row is retried (no_row) on the next flush.
 		"FAAS_OTEL_FLUSH_INTERVAL=10s",
+	}
+	var apidEnv []string
+	var split *splitBoxIngest
+	if sc.splitBox {
+		split = newSplitBoxIngest(t, telemetryDir)
+		env = append(env, split.vmmdEnv()...)
+		apidEnv = split.apidEnv()
+	} else {
+		env = append(env, "FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(telemetryDir, "spans.sock"))
 	}
 
 	registry := e2etest.NewFakeRegistry()
@@ -134,7 +228,7 @@ func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake, env...)
+	h := e2etest.StartWithAPIDEnv(t, pool, e2etest.DeployWake, apidEnv, env...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -226,6 +320,9 @@ func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
 				detail, detailStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+sc.slug+"/debug/requests/"+item.ID+"/evidence", nil)
 				lastDetail = string(detail)
 				if detailStatus == http.StatusOK && sc.evidenceOK(lastDetail) {
+					if split != nil {
+						split.probeBinding(t, pool, appID, depID)
+					}
 					return
 				}
 			}

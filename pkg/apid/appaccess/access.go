@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Store is only the resource and membership lookup surface. There is no
@@ -27,6 +28,8 @@ type Store interface {
 	CronByID(context.Context, string) (state.Cron, error)
 	GetEdgeRuleByID(context.Context, string) (state.EdgeRule, error)
 	InvocationByID(context.Context, string) (state.Invocation, error)
+	TriggerByID(context.Context, string) (sqlc.Trigger, error)
+	GetWorkflowRun(context.Context, string) (*state.WorkflowRun, error)
 	OrgByID(context.Context, string) (state.Org, error)
 	OrgMemberByAccount(context.Context, string, string) (state.OrgMembership, error)
 	AccountByID(context.Context, string) (state.Account, error)
@@ -92,7 +95,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 		if principal, _, ok := authmw.AccountFromContext(r); ok {
 			actor = principal
 		}
-		app, addressed, err := addressedApp(r, store)
+		app, addressed, err := addressedApp(r, store, actor.ID)
 		if !addressed {
 			next(w, r, actor)
 			return
@@ -110,7 +113,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 	}
 }
 
-func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
+func addressedApp(r *http.Request, store Store, actorID string) (state.App, bool, error) {
 	// No app lookup is needed on account, authentication or organization
 	// management endpoints, including degraded-server health tests.
 	if r.PathValue("organization") != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
@@ -125,7 +128,7 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 		return app, true, nil
 	}
 	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !strings.HasPrefix(r.URL.Path, "/v1/builds/") && !strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
-		return indirectlyAddressedApp(r, store)
+		return indirectlyAddressedApp(r, store, actorID)
 	}
 	if store == nil {
 		return state.App{}, true, errors.New("application store unavailable")
@@ -167,12 +170,31 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 	return app, true, err
 }
 
+// Authorize applies Wrap's decision to an app the URL does not address, for a
+// handler that resolves it from the request body or a stored session (the
+// resumable upload routes). The route's action comes from routeActions; it
+// returns the account that owns the app's resources.
+func Authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
+	return authorize(r, store, audit, actor, app)
+}
+
+// AuthorizeRoute is Authorize for a request that finishes another route's
+// work on a different surface: the browser secret-entry page completes a
+// secret request, so it gets the decision that request's route pattern gets.
+func AuthorizeRoute(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App, pattern string) (state.Account, *api.Problem) {
+	served := r.Pattern
+	r.Pattern = pattern
+	defer func() { r.Pattern = served }()
+	return authorize(r, store, audit, actor, app)
+}
+
 func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
 	_, key, _, ok := authmw.PrincipalFrom(r)
 	if !ok {
 		return state.Account{}, api.ErrCapacity("application authorization requires an authenticated principal")
 	}
-	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID) {
+	// A key limited to projects reaches only their apps (ADR-20261104085712).
+	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID || authmw.AppOutsideKeyProjects(key, app)) {
 		return state.Account{}, notFound(r)
 	}
 	if app.OrgID == "" {
@@ -180,7 +202,7 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		if app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(r.Context(), store, key.OrgID, actor.ID) {
 			return state.Account{}, notFound(r)
 		}
-		return actor, nil
+		return actor, personalSuspension(r, actor)
 	}
 	org, err := store.OrgByID(r.Context(), app.OrgID)
 	if err != nil {
@@ -190,7 +212,7 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		if app.AccountID != actor.ID || org.PersonalOwnerAccountID == nil || *org.PersonalOwnerAccountID != actor.ID {
 			return state.Account{}, notFound(r)
 		}
-		return actor, nil
+		return actor, personalSuspension(r, actor)
 	}
 	return authorizeShared(r, store, audit, actor, key, app, org)
 }
@@ -218,6 +240,9 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	*r = *r.WithContext(ctx)
 	*r = *r.WithContext(authz.WithRequestOnContext(r.Context(), r))
 	action, supported := routeActions[r.Pattern]
+	if !supported && dashboardRead(r) {
+		action, supported = authz.OrgActionReadApp, true
+	}
 	if authz.QueuePattern(r.Pattern) {
 		action, supported = authz.QueueAction(r.Pattern)
 		if !supported {
@@ -244,7 +269,10 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 		}
 		action = authz.OrgActionManageAppSecurity
 	}
-	if (org.Status == state.OrgStatusSuspended || org.Status == state.OrgStatusPastDue) && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
+	// A past-due company keeps running and loses only deploys (spec §4.7), as
+	// a past-due account does: the owner account below carries past_due, so
+	// deploy admission refuses while members still revoke and reconfigure.
+	if org.Status == state.OrgStatusSuspended && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
 		return state.Account{}, api.ErrOrgRoleForbidden("change applications in an inactive organization")
 	}
 	if p := authz.AuthorizeOrgAction(r.Context(), action, audit); p != nil {
@@ -263,6 +291,20 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	}
 	*r = *r.WithContext(managedpostgres.WithOwnership(context.WithValue(r.Context(), grantKey{}, Grant{App: app, Actor: actor, Owner: owner, Fence: fence}), org.ID, owner.ResourceOwnerID()))
 	return owner, nil
+}
+
+// personalSuspension refuses a personal app to its suspended owner. The auth
+// middleware lets a billing-suspended caller through to app-addressed routes
+// so the app's owner decides (H87); for a personal app that owner is the
+// caller, so the suspension applies here exactly as it did at sign-in.
+func personalSuspension(r *http.Request, actor state.Account) *api.Problem {
+	if actor.Active() || authmw.InactiveAccountMayReach(actor, r.Method, r.URL.Path) {
+		return nil
+	}
+	if actor.AbuseHeld() {
+		return actor.InactiveProblem()
+	}
+	return authmw.SuspendedProblem()
 }
 
 func personalKey(ctx context.Context, store Store, orgID, actorID string) bool {
@@ -285,16 +327,29 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such cron run"
 	case strings.HasPrefix(path, "/v1/crons/"):
 		what = "no such cron"
+	case strings.HasPrefix(path, "/v1/cron-fire-now-requests/"):
+		what = "no such fire-now request"
 	case strings.HasPrefix(path, "/v1/deployments/"):
 		what = "no such deployment"
 	case strings.HasPrefix(path, "/v1/domains/"):
 		what = "no such domain"
+	case strings.HasPrefix(path, "/v1/workflows/runs/"):
+		return api.ErrWorkflowRunNotFound()
+	case strings.HasPrefix(path, "/v1/delayed-tasks/"), strings.HasPrefix(path, "/v1/invocations/"):
+		return api.ErrInvocationNotFound(r.PathValue("id"))
+	case strings.HasPrefix(path, "/v1/edge-rules/"):
+		return api.ErrEdgeRuleNotFound(r.PathValue("id"))
+	case strings.HasPrefix(path, "/v1/triggers/"):
+		what = "no such trigger"
+	case strings.HasPrefix(path, "/v1/deleted-apps/"):
+		what = "no such deleted app"
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }
 
 func lookupProblem(r *http.Request, err error) *api.Problem {
-	if errors.Is(err, state.ErrNotFound) {
+	// A path ID that is no UUID names no resource either (Hunt 14 H14-65).
+	if errors.Is(err, state.ErrNotFound) || state.IsMalformedID(err) {
 		return notFound(r)
 	}
 	return api.ErrCapacity("could not authorize application access")

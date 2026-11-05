@@ -121,5 +121,5 @@ func cmdCronsAddInteractive(slug string) int {
 	if err := ctx.Err(); err != nil {
 		return startInputExit(err)
 	}
-	return createCronAndRender(ctx, client, slug, api.CreateCronRequest{AppID: slug, Schedule: expression, Path: path, Timezone: timezone, Enabled: boolPtr(true), SkipIfRunning: boolPtr(false)})
+	return createCronAndRender(ctx, client, slug, api.CreateCronRequest{AppID: slug, Schedule: expression, Path: path, Timezone: timezone, Enabled: boolPtr(true), SkipIfRunning: boolPtr(false)}, nil)
 }

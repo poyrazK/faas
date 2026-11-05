@@ -71,3 +71,40 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 		})
 	}
 }
+
+// The rendered host ruleset admits guests only to the bridge services, the
+// public edge and ICMP, and drops other bridge traffic before the public and
+// source-CIDR rules (spec §11, ADR-20261020123000).
+func TestFirewallTemplateNarrowsTenantBridgeInputStandardJinja(t *testing.T) {
+	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
+		t.Skip("python3 with jinja2 required for firewall rendering")
+	}
+	template := filepath.Join("..", "..", "deploy", "ansible", "roles", "nftables", "templates", "policy_nftables.conf.j2")
+	script := `import pathlib, sys
+from jinja2 import Template
+print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0", masquerade_cidr="10.100.0.0/16", faas_postgres_allowed_cidrs=["10.0.0.0/8"]), end="")
+`
+	output, err := exec.Command("python3", "-c", script, template).CombinedOutput()
+	if err != nil {
+		t.Fatalf("standard Jinja render failed: %v: %s", err, output)
+	}
+	rendered := string(output)
+	if strings.Contains(rendered, "iifname \"br-tenants\" accept\n") {
+		t.Fatalf("input chain still admits every packet from the tenant bridge:\n%s", rendered)
+	}
+	at := 0
+	for _, rule := range []string{
+		`iifname "br-tenants" ip daddr 10.100.0.0/16 accept`,
+		`iifname "br-tenants" tcp dport { 80,443 } accept`,
+		`iifname "br-tenants" meta l4proto { icmp, ipv6-icmp } accept`,
+		`iifname "br-tenants" drop`,
+		`tcp dport { 22,80,443 } accept`,
+		`ip saddr 10.0.0.0/8 tcp dport 5432 accept`,
+	} {
+		i := strings.Index(rendered[at:], rule)
+		if i < 0 {
+			t.Fatalf("rendered ruleset lacks %q after offset %d, in order:\n%s", rule, at, rendered)
+		}
+		at += i + len(rule)
+	}
+}

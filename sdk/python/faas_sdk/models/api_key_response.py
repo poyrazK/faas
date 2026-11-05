@@ -18,9 +18,9 @@ T = TypeVar("T", bound="APIKeyResponse")
 @_attrs_define
 class APIKeyResponse:
     """API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count.
-    **Plaintext is returned only on POST**. `org_id` (PR 6 / issue #190 / IAM-6 / ADR-061) is the org the key was minted
-    against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key` /
-    `org.revoke_api_key` for the new org-scoped verbs.
+    **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped
+    responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new org-
+    scoped verbs.
 
         Example:
             {'id': '0123456789abcdef0123456789abcdef', 'org_id': '8b1f5e5d-273e-5a18-ae00-58fceba4fe6c', 'prefix':
@@ -32,8 +32,8 @@ class APIKeyResponse:
 
     id: str
     org_id: UUID
-    """Org the key was minted against (PR 6). Always set — every `api_keys` row carries an org_id post-migration
-    00127. Personal-org scoped keys stamp the caller's personal org id here."""
+    """Org the key was minted against. Always set — every `api_keys` row carries an org_id post-migration 00127.
+    Personal-org scoped keys stamp the caller's personal org id here."""
     prefix: str
     """First 16 chars of the key (e.g. `fp_live_abc12345…`)."""
     scopes: list[APIKeyResponseScopesItem]
@@ -53,6 +53,8 @@ class APIKeyResponse:
     """Predecessor key id when this row was minted by rotateKey. Absent on a fresh mint."""
     plaintext: None | str | Unset = UNSET
     """PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again."""
+    projects: list[str] | Unset = UNSET
+    """Project slugs the key was limited to, on the create response of a limited agent key."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +117,10 @@ class APIKeyResponse:
         else:
             plaintext = self.plaintext
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -140,6 +146,8 @@ class APIKeyResponse:
             field_dict["rotated_from_id"] = rotated_from_id
         if plaintext is not UNSET:
             field_dict["plaintext"] = plaintext
+        if projects is not UNSET:
+            field_dict["projects"] = projects
 
         return field_dict
 
@@ -246,6 +254,8 @@ class APIKeyResponse:
 
         plaintext = _parse_plaintext(d.pop("plaintext", UNSET))
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
         api_key_response = cls(
             id=id,
             org_id=org_id,
@@ -259,6 +269,7 @@ class APIKeyResponse:
             revoked_at=revoked_at,
             rotated_from_id=rotated_from_id,
             plaintext=plaintext,
+            projects=projects,
         )
 
         api_key_response.additional_properties = d

@@ -41,7 +41,39 @@ type Envelope struct {
 	AppID            string `json:"appid,omitempty"`
 	PlatformTenantID string `json:"platformtenantid,omitempty"`
 	TenantEventID    string `json:"tenanteventid,omitempty"`
+	// Producer is the server-stamped publisher (AppProducer, OrgProducer or
+	// ProducerPersonal). Fanout uses it to keep an event inside its company
+	// when the account's owner has lost access to the company
+	// (ADR-20261025211616). An event without one routes as before.
+	Producer string `json:"producer,omitempty"`
 }
+
+// ProducerPersonal marks an event published outside any company: a personal
+// session or key on the account routes.
+const ProducerPersonal = "personal"
+
+// AppProducer marks an event an app published; fanout reads the app's
+// company when it routes the event.
+func AppProducer(appID string) string { return "app:" + appID }
+
+// AppSource reports whether source is an app's own namespace, `app.<app
+// UUID>` (ADR-929, as amended 2026-10-26), and returns that app's canonical
+// ID. Only the app publishes there: its producer route and its own runtime.
+// Any UUID spelling counts, so a variant cannot slip past the check.
+func AppSource(source string) (string, bool) {
+	rest, ok := strings.CutPrefix(source, "app.")
+	if !ok {
+		return "", false
+	}
+	id, err := uuid.Parse(rest)
+	if err != nil {
+		return "", false
+	}
+	return id.String(), true
+}
+
+// OrgProducer marks an event published with a key bound to an organization.
+func OrgProducer(orgID string) string { return "org:" + orgID }
 
 func (e *Envelope) UnmarshalJSON(data []byte) error {
 	type wire Envelope

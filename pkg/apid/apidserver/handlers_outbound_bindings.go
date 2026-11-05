@@ -44,7 +44,22 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AILogExport:                    offer.AILogExport,
 		AIAllowUnmetered:               offer.AIAllowUnmetered,
 		AIAutoPromptCache:              offer.AIAutoPromptCache,
+		// ADR 20261020202035 per-trace limits.
+		AITraceMaxCalls:             copyOutboundDailyLimit(offer.AITraceMaxCalls),
+		AITraceMaxCostMillicents:    copyOutboundDailyLimit(offer.AITraceMaxCostMillicents),
+		AITraceMaxRepeatedToolCalls: copyOutboundDailyLimit(offer.AITraceMaxRepeatedToolCalls),
+		// ADR 20261021171712 quality settings.
+		AIOnlineEvaluation: outboundOnlineEvaluation(offer),
+		AIQualityAlerts:    offer.AIQualityAlerts,
 	}
+}
+
+func outboundOnlineEvaluation(offer state.OutboundIntegrationOffer) *api.OutboundAIOnlineEvaluation {
+	if offer.AIOnlineEvalPercent == nil {
+		return nil
+	}
+	return &api.OutboundAIOnlineEvaluation{SamplePercent: *offer.AIOnlineEvalPercent,
+		JudgeIntegrationID: offer.AIOnlineEvalJudgeIntegrationID, JudgeModel: offer.AIOnlineEvalModel, Rubric: offer.AIOnlineEvalRubric}
 }
 
 func copyOutboundDailyLimit(limit *int64) *int64 {
@@ -130,6 +145,10 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	requestPolicy := api.DefaultOutboundRequestPolicy()
+	if planPolicy, ok := api.AIOutboundRequestPolicyForPlan(acct.Plan); ok && req.AIProvider != "" {
+		// ADR 20261027132936: an AI integration starts at its plan's ceilings.
+		requestPolicy = planPolicy
+	}
 	if req.RequestPolicy != nil {
 		requestPolicy = *req.RequestPolicy
 	}

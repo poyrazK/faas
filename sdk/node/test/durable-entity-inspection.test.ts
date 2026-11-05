@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, inspectDurableEntity } from '../src/index.js';
+import { FaaSClient, inspectDurableEntity } from '../src/preview.js';
 
 test('inspection encodes selectors and rejects imprecise versions', async t => {
   let version = 1;

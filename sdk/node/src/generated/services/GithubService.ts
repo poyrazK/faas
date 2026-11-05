@@ -18,10 +18,10 @@ export class GithubService {
    * List repos the user's GitHub App installation can see.
    * Cookie-session-authenticated (NOT API-key). Hydrates the
    * dashboard bind picker's repo dropdown. Returns the repos
-   * visible to the user's GitHub App installation — githubd
+   * visible to the user's GitHub App installation — the GitHub integration
    * resolves the per-install token from the session's account.
    *
-   * ADR-1345 / §11: the exact installation must be durably connected to
+   * the exact installation must be durably connected to
    * the session's Gregale account before any GitHub call. A separate
    * GitHub sign-in claim is not required. Live installation verification
    * and account-scoped repository access checks still apply.
@@ -46,32 +46,45 @@ export class GithubService {
         live GitHub installation verification fails. Unknown and foreign
         installation IDs have the same response.
         `,
-        502: `code: github_unreachable — githubd could not reach api.github.com; retry in a minute.`,
-        503: `code: githubd_not_ready — githubd is not wired on this host (M7.5 slices 7-8).`,
+        502: `code: github_unreachable — the GitHub integration could not reach api.github.com; retry in a minute.`,
+        503: `code: githubd_not_ready — the GitHub integration is not wired on this host (M7.5 slices 7-8).`,
       },
     });
   }
   /**
    * List repositories visible to the account's GitHub App installation.
    * Bearer API-key surface for customer automation. Requires the
-   * dedicated `github:manage` scope. The account's durable GitHub App
-   * installation is resolved server-side, so callers do not need to
-   * copy or provide an installation id. Installation credentials are
-   * never returned.
+   * dedicated `github:manage` scope. `installation_id` names one of
+   * the account's connected installations; without it the account's
+   * only installation is used, and an account with several gets a 409
+   * `github_installation_required` naming them. Installation
+   * credentials are never returned.
    *
    * @returns RepoResponse Repositories currently visible to the account's GitHub App installation.
    * @throws ApiError
    */
-  public static listGitHubRepositories(): CancelablePromise<Array<RepoResponse>> {
+  public static listGitHubRepositories({
+    installationId,
+  }: {
+    /**
+     * A GitHub App installation connected to the account.
+     */
+    installationId?: number,
+  }): CancelablePromise<Array<RepoResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/github/repos',
+      query: {
+        'installation_id': installationId,
+      },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `The account has not completed GitHub App installation.`,
+        409: `The account has several connected installations and none was named.`,
         502: `GitHub could not be reached while listing repositories.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -105,7 +118,7 @@ export class GithubService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -149,7 +162,7 @@ export class GithubService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -163,6 +176,9 @@ export class GithubService {
    * calls. A missing policy row resolves to the safe defaults for a new
    * project. Legacy allow_marked compatibility rows are migrated to deny;
    * customers can explicitly opt back in when production calls are safe.
+   * An app without a project reports the defaults with an empty
+   * `project_id` and its own `production_trigger` and
+   * `preview_enabled`.
    *
    * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
    * @throws ApiError
@@ -197,7 +213,9 @@ export class GithubService {
    * trailing `**` directory patterns. `preview_service_policy=deny`
    * rejects preview calls to production dependencies before discovery or
    * wake-up; `allow_marked` preserves the marked-call compatibility mode.
-   * Mutations require MFA.
+   * An app without a project can set only `production_trigger` and
+   * `preview_enabled`, once it is bound to a repository; other fields
+   * answer 409 `project_required`. Mutations require MFA.
    *
    * @returns GitHubDeploymentPolicy Updated GitHub deployment policy.
    * @throws ApiError
@@ -274,6 +292,7 @@ export class GithubService {
         404: `code: not_found`,
         409: `code: conflict`,
         502: `GitHub could not be reached.`,
+        503: `GitHub could not be reached. Sent as 503 by the public edge.`,
       },
     });
   }
@@ -316,6 +335,7 @@ export class GithubService {
         404: `code: not_found`,
         409: `code: conflict`,
         502: `The GitHub repository catalog was unavailable during reconciliation.`,
+        503: `The GitHub repository catalog was unavailable during reconciliation. Sent as 503 by the public edge.`,
       },
     });
   }
@@ -360,7 +380,7 @@ export class GithubService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -401,14 +421,12 @@ export class GithubService {
   /**
    * Persist the (account, app, installation, repo, branch) bind row.
    * Cookie-session-authenticated (NOT API-key). Persists the
-   * GitHub install binding via githubd.BindAppRepo (which
-   * writes through to pkg/state.PgStore.UpsertGithubInstallBinding
-   * per PR-B).
+   * GitHub install binding.
    *
-   * ADR-1345 / §11: the exact installation must be durably connected to
+   * the exact installation must be durably connected to
    * the session's Gregale account. Requires the named, account-bound
    * bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
-   * required. Live installation verification and githubd's current
+   * required. Live installation verification and the GitHub integration's current
    * repository access check still run before persistence.
    *
    * On success emits `auth.install.bound` for the audit trail.
@@ -444,14 +462,15 @@ export class GithubService {
         installation IDs have the same response.
         `,
         404: `code: not_found`,
-        502: `code: github_unreachable — githubd could not reach api.github.com when persisting the bind; retry in a minute.`,
+        502: `code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.`,
+        503: `code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute. Sent as 503 by the public edge.`,
       },
     });
   }
   /**
    * Disconnect an app from its GitHub repository.
    * Cookie-session-authenticated and CSRF-protected. Idempotently removes
-   * the app's repository binding and invalidates githubd's binding cache.
+   * the app's repository binding and invalidates the GitHub integration's binding cache.
    * The GitHub App installation remains connected to the account so it can
    * be rebound to another repository.
    *
@@ -479,7 +498,7 @@ export class GithubService {
       errors: {
         400: `code: validation — missing or invalid CSRF token for disconnect.`,
         404: `code: not_found`,
-        503: `code: capacity — githubd could not remove the binding.`,
+        503: `code: capacity — the GitHub integration could not remove the binding.`,
       },
     });
   }
@@ -583,7 +602,7 @@ export class GithubService {
         400: `code: validation — a valid CSRF token is required for GitHub activity retry.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

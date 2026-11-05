@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ValidateObjectStoragePricing refuses a registry rate card other than the
+// published one. apid computes month-close charges and customer estimates
+// from it whether or not billing is on, so a mistyped price or currency would
+// otherwise become wrong invoices with no error (ADR-1430).
+func ValidateObjectStoragePricing(registry *objectstorage.Registry) error {
+	if registry == nil || registry.Pricing == nil {
+		return nil
+	}
+	if want := api.PublishedObjectStoragePricing(); *registry.Pricing != want {
+		return fmt.Errorf("apid: object storage pricing is not the published rate card (currency %s, storage_millicents_per_gib_month %d, request and egress prices 0); got currency %q, storage %d, requests %d, egress %d",
+			want.Currency, want.StorageMillicentsPerGiBMonth, registry.Pricing.Currency, registry.Pricing.StorageMillicentsPerGiBMonth, registry.Pricing.RequestsMillicentsPerMillion, registry.Pricing.EgressMillicentsPerGiB)
+	}
+	return nil
+}
+
 func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *objectstorage.Registry) error {
 	sink, ok := provider.(billing.ObjectStorageLineItemSink)
 	if !ok {
@@ -26,11 +42,13 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !enabled {
 		return nil
 	}
-	if registry != nil && registry.Accounting.GatewaySafety() {
-		return errors.New("apid: gateway safety accounting requires object storage billing to be off")
-	}
 	if registry == nil || registry.Pricing == nil {
 		return errors.New("apid: object storage billing requires object-storage pricing")
+	}
+	// Gateway safety bills Gregale's own storage meter, so only a
+	// storage-only rate card can be charged (ADR-20261024132844).
+	if registry.Accounting.GatewaySafety() && !registry.Pricing.StorageOnly() {
+		return errors.New("apid: gateway safety accounting bills storage only; set request and egress prices to zero")
 	}
 	if !registry.Pricing.Valid() {
 		return errors.New("apid: object storage billing requires a valid object-storage rate card")
@@ -84,15 +102,17 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		BucketProblem(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, acct.Plan))
+	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, snapshot.PlanLimits))
 }
 
 // ObjectStorageUsageResponse reports the account's effective policy: the
-// operator safety policy tightened by its plan's ceilings (ADR-1320).
-func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, plan api.Plan) api.ObjectStorageUsageResponse {
+// operator safety policy tightened by its plan's ceilings (ADR-1320),
+// including the storage ceiling its spend cap pays for (ADR-20261101214152).
+// limits are the plan limits the usage snapshot was read with.
+func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, limits api.ObjectStoragePlanLimits) api.ObjectStorageUsageResponse {
 	out := api.ObjectStorageUsageResponse{
 		Usage:       usage,
-		Policy:      api.MustLimitsFor(plan).ObjectStorage.Policy(s.Host.ObjectStorage().Accounting),
+		Policy:      limits.Policy(s.Host.ObjectStorage().Accounting),
 		Charges:     charges,
 		BillingMode: "off",
 	}
@@ -136,61 +156,197 @@ func (s *Service) RecordObjectStorageUsage(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ReconcileObjectInventories refreshes due bucket inventories. Periodic
+// inventory listings are platform maintenance: they never count toward the
+// account's request ceiling (ADR-20261023223000).
 func (s *Service) ReconcileObjectInventories(ctx context.Context, observe func(string)) error {
+	return s.reconcileObjectInventories(ctx, observe, nil)
+}
+
+// reconcileObjectInventories drains due inventories in batches of
+// ObjectStorageInventorySweepBatch, scanning up to
+// ObjectStorageInventorySweepConcurrency buckets at once, and starts no new
+// batch once ObjectStorageInventorySweepBudget has passed. A bucket returned
+// twice in one sweep did not advance its claim, so the sweep stops there
+// rather than spin on it. page, when set, counts each provider listing page.
+func (s *Service) reconcileObjectInventories(ctx context.Context, observe func(string), page func()) error {
 	st, ok := s.Host.Store().(state.ObjectStorageAccountingStore)
 	if !ok || s.Host.ObjectStorage() == nil {
 		return nil
 	}
-	rows, err := st.DueObjectInventories(ctx, 10)
-	if err != nil {
-		return err
-	}
-	for _, b := range rows {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		native, err := s.queueNativeObjectInventory(ctx, st, b)
-		if err != nil {
-			return err
-		}
-		if native {
-			continue
-		}
-		token := uuid.NewString()
-		if err := st.ClaimObjectInventory(ctx, b.ID, token); err != nil {
-			if errors.Is(err, state.ErrConflict) {
-				continue
-			}
-			return err
-		}
-		err = s.ScanObjectInventory(ctx, st, b, token)
-		outcome := "success"
-		if err != nil {
-			outcome = "failed"
-			s.Host.Logger().Warn("object storage inventory failed", "bucket_id", b.ID, "backend_id", b.BackendID)
-		}
+	var observeMu sync.Mutex
+	report := func(outcome string) {
 		if observe != nil {
+			observeMu.Lock()
+			defer observeMu.Unlock()
 			observe(outcome)
+		}
+	}
+	deadline := time.Now().Add(api.ObjectStorageInventorySweepBudget)
+	seen := map[string]bool{}
+	for time.Now().Before(deadline) {
+		rows, err := st.DueObjectInventories(ctx, api.ObjectStorageInventorySweepBatch)
+		if err != nil {
+			return err
+		}
+		batch := make([]state.ObjectBucket, 0, len(rows))
+		for _, b := range rows {
+			if !seen[b.ID] {
+				seen[b.ID] = true
+				batch = append(batch, b)
+			}
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := s.reconcileObjectInventoryBatch(ctx, st, batch, report, page); err != nil {
+			return err
+		}
+		if len(rows) < api.ObjectStorageInventorySweepBatch || len(batch) < len(rows) {
+			return nil
 		}
 	}
 	return nil
 }
 
+// reconcileObjectInventoryBatch scans one batch with bounded concurrency and
+// returns the first store or configuration error after the batch finishes.
+func (s *Service) reconcileObjectInventoryBatch(ctx context.Context, st state.ObjectStorageAccountingStore, batch []state.ObjectBucket, report func(string), page func()) error {
+	work := make(chan state.ObjectBucket)
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var first error
+	for range min(api.ObjectStorageInventorySweepConcurrency, len(batch)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for b := range work {
+				if err := s.reconcileObjectInventory(ctx, st, b, report, page); err != nil {
+					errMu.Lock()
+					if first == nil {
+						first = err
+					}
+					errMu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, b := range batch {
+		if ctx.Err() != nil {
+			break
+		}
+		work <- b
+	}
+	close(work)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return first
+}
+
+func (s *Service) reconcileObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, report func(string), page func()) error {
+	native, err := s.queueNativeObjectInventory(ctx, st, b)
+	if err != nil || native {
+		return err
+	}
+	if scans, ok := st.(state.ObjectInventoryScanStore); ok {
+		return s.advanceObjectInventory(ctx, st, scans, b, report, page)
+	}
+	token := uuid.NewString()
+	if err := st.ClaimObjectInventory(ctx, b.ID, token); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return nil
+		}
+		return err
+	}
+	outcome := "success"
+	err = awaitObjectDeletions(ctx, st, b, api.ObjectInventoryDeletionDrain)
+	if err == nil {
+		err = s.scanObjectInventory(ctx, st, b, token, page)
+	}
+	if err != nil {
+		outcome = "failed"
+		releaseObjectInventory(ctx, st, b.ID, token)
+		s.Host.Logger().Warn("object storage inventory failed", "bucket_id", b.ID, "backend_id", b.BackendID)
+	}
+	report(outcome)
+	return nil
+}
+
+var errObjectDeletionsUnsettled = errors.New("object deletions did not settle before inventory")
+
+// awaitObjectDeletions waits up to drain for deletions admitted before the
+// inventory claim to settle. New deletions wait for the claim, so the listing
+// starts from a settled bucket (ADR-20261025115958).
+func awaitObjectDeletions(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, drain time.Duration) error {
+	deletions, ok := st.(state.ObjectDeletionActivityStore)
+	if !ok {
+		return nil
+	}
+	deadline := time.Now().Add(drain)
+	for {
+		active, err := deletions.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID)
+		if err != nil || !active {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return errObjectDeletionsUnsettled
+		}
+		timer := time.NewTimer(api.ObjectDeletionAdmissionMaxPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// releaseObjectInventory gives up a claim that will not publish, so
+// deletions waiting for it continue at once.
+func releaseObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, bucket, token string) {
+	releaser, ok := st.(state.ObjectInventoryReleaser)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = releaser.ReleaseObjectInventory(ctx, bucket, token)
+}
+
+// ScanObjectInventory lists one claimed bucket and publishes its inventory.
+// The listing is maintenance and is not charged to the account's requests.
 func (s *Service) ScanObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, token string) error {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	return s.scanObjectInventory(ctx, st, b, token, nil)
+}
+
+func (s *Service) scanObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, token string, page func()) error {
+	ctx, cancel := context.WithTimeout(ctx, api.ObjectCapacityInventoryTimeout)
 	defer cancel()
 	backend, err := s.Host.ObjectStorage().Resolve(b.BackendID, b.BackendFingerprint)
 	if err != nil {
 		return err
 	}
-	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
-	if !counters {
-		bytes, objects, err = CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	var record func(context.Context) error
+	if page != nil {
+		record = func(context.Context) error { page(); return nil }
 	}
+	bytes, objects, err := completeBucketInventory(ctx, backend.Provider, b.PhysicalName, record)
 	if err != nil {
 		return err
 	}
 	return st.FinishObjectInventory(ctx, b.ID, token, bytes, objects)
+}
+
+// completeBucketInventory lists a whole bucket in one attempt: from an owned
+// node's usage counters when it has them, otherwise by listing.
+func completeBucketInventory(ctx context.Context, p objectstorage.Provider, physical string, record func(context.Context) error) (bytes, objects int64, err error) {
+	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, p, physical, record)
+	if !counters {
+		bytes, objects, err = CompleteObjectInventory(ctx, p, physical, record)
+	}
+	return bytes, objects, err
 }
 
 func (s *Service) inventoryRequestRecorder(b state.ObjectBucket) func(context.Context) error {
@@ -222,12 +378,59 @@ func (s *Service) CustomerObjectRequestRecorder(b state.ObjectBucket) func(conte
 	}
 }
 
+// RunObjectStorageAccounting runs the inventory sweep and the billing steps
+// on separate loops. Gateway admission needs a bucket inventory no older than
+// 900 s, so the sweep must never wait behind usage import, month close or
+// progress delivery: a hung billing step used to stop every bucket's reads and
+// writes once its inventory aged out.
 func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
-	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Complete or failed object storage inventory scans."}, []string{"outcome"})
+	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Object storage inventory attempts: success publishes, partial records progress of a listing that continues (ADR-20261030100835), failed does neither or keeps the pages listed before the failure."}, []string{"outcome"})
+	pages := prometheus.NewCounter(prometheus.CounterOpts{Name: "faas_object_storage_inventory_provider_requests_total", Help: "Provider listing requests made by periodic inventory scans; platform maintenance, not charged to accounts."})
+	swept := prometheus.NewGauge(prometheus.GaugeOpts{Name: "faas_object_storage_inventory_sweep_last_success_timestamp_seconds", Help: "Unix time of apid's last inventory sweep that completed without error; a stopped sweep shows as a growing age."})
+	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
+	placement := newPlacementMetrics()
 	if s.Host.Ops() != nil {
-		s.Host.Ops().Registry().MustRegister(counter)
+		s.Host.Ops().Registry().MustRegister(counter, pages, swept, accruals)
+		s.Host.Ops().Registry().MustRegister(placement.collectors()...)
 	}
-	var finalizedPeriod, estimatedAt time.Time
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.runObjectInventorySweeps(ctx, func(outcome string) { counter.WithLabelValues(outcome).Inc() }, pages.Inc, func(at time.Time) { swept.Set(float64(at.Unix())) })
+	}()
+	s.runObjectStorageBilling(ctx, accruals, placement)
+	wg.Wait()
+}
+
+// runObjectInventorySweeps refreshes due bucket inventories every minute, or
+// at once when bucket creation wakes it.
+func (s *Service) runObjectInventorySweeps(ctx context.Context, observe func(string), page func(), succeeded func(time.Time)) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		if err := s.reconcileObjectInventories(ctx, observe, page); err != nil {
+			if ctx.Err() == nil {
+				s.Host.Logger().Warn("object storage inventory sweep failed")
+			}
+		} else {
+			succeeded(time.Now())
+		}
+		ticker.Reset(time.Minute)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-s.InventoryWake:
+		}
+	}
+}
+
+// runObjectStorageBilling runs usage import, gateway storage accrual, month
+// close and progress delivery. Each step is bounded, so one slow account or
+// provider call delays only the next billing tick.
+func (s *Service) runObjectStorageBilling(ctx context.Context, accruals *prometheus.CounterVec, placement placementMetrics) {
+	var finalizedPeriod, finalizeRetryAt, estimatedAt, progressAt time.Time
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -248,21 +451,41 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 				}
 			}
 		}
-		if err := s.ReconcileObjectInventories(ctx, func(outcome string) { counter.WithLabelValues(outcome).Inc() }); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object storage inventory sweep failed")
+		if outcome := s.AccrueGatewayStorage(ctx); outcome != "" {
+			accruals.WithLabelValues(outcome).Inc()
+		}
+		if err := s.observePlacement(ctx, placement); err != nil && ctx.Err() == nil {
+			s.Host.Logger().Warn("object storage placement counts failed", "err", err)
 		}
 		if s.Host.ObjectStorage() != nil && s.Host.ObjectStorage().Pricing != nil {
 			now := time.Now().UTC()
 			period := state.ObjectStoragePeriod(now).AddDate(0, -1, 0)
-			if !period.Equal(finalizedPeriod) {
-				if records, err := s.finalizeObjectStorageBilling(ctx, *s.Host.ObjectStorage().Pricing, period, now); err != nil {
+			if !period.Equal(finalizedPeriod) && !now.Before(finalizeRetryAt) {
+				stepCtx, cancel := context.WithTimeout(ctx, api.ObjectStorageBillingStepTimeout)
+				records, err := s.finalizeObjectStorageBilling(stepCtx, *s.Host.ObjectStorage().Pricing, period, now)
+				cancel()
+				if err != nil {
+					finalizeRetryAt = now.Add(api.ObjectStorageFinalizeRetry)
 					if ctx.Err() == nil {
-						s.Host.Logger().Warn("object storage billing finalization failed", "period", period.Format("2006-01"), "err", err)
+						s.Host.Logger().Warn("object storage billing finalization failed", "period", period.Format("2006-01"), "retry_at", finalizeRetryAt, "err", err)
 					}
 				} else {
 					finalizedPeriod = period
 					s.Host.Logger().Info("object storage billing period finalized", "period", period.Format("2006-01"), "accounts", len(records))
 				}
+			}
+			if now.Sub(progressAt) >= api.ObjectStorageProgressSweepInterval {
+				stepCtx, cancel := context.WithTimeout(ctx, api.ObjectStorageBillingStepTimeout)
+				stepped, err := s.deliverObjectStorageProgress(stepCtx, *s.Host.ObjectStorage().Pricing, now)
+				cancel()
+				if err != nil {
+					if ctx.Err() == nil {
+						s.Host.Logger().Warn("object storage billing progress failed", "accounts", stepped, "err", err)
+					}
+				} else if stepped > 0 {
+					s.Host.Logger().Info("object storage billing progress delivered", "accounts", stepped)
+				}
+				progressAt = now
 			}
 		}
 		ticker.Reset(time.Minute)
@@ -270,9 +493,32 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-		case <-s.InventoryWake:
 		}
 	}
+}
+
+// AccrueGatewayStorage meters stored bytes under gateway-safety accounting,
+// where no provider usage report exists (ADR-20261024132844). It runs on the
+// billing loop before month close, and returns "success",
+// "failed", or "" when it does not apply.
+func (s *Service) AccrueGatewayStorage(ctx context.Context) string {
+	registry := s.Host.ObjectStorage()
+	if registry == nil || !registry.Accounting.GatewaySafety() {
+		return ""
+	}
+	st, ok := s.Host.Store().(state.ObjectStorageGatewayStorageStore)
+	if !ok {
+		return ""
+	}
+	accrueCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if err := st.AccrueObjectStorageGatewayStorage(accrueCtx); err != nil {
+		if ctx.Err() == nil {
+			s.Host.Logger().Warn("object storage gateway storage accrual failed", "err", err)
+		}
+		return "failed"
+	}
+	return "success"
 }
 
 // finalizeObjectStorageBilling is the daemon-side month-close boundary. The
@@ -293,4 +539,23 @@ func (s *Service) finalizeObjectStorageBilling(ctx context.Context, pricing api.
 		sink = candidate
 	}
 	return billing.FinalizeObjectStoragePeriods(ctx, storageBillingAccounts{store: runner}, runner, pricing, periodStart, now, sink)
+}
+
+// deliverObjectStorageProgress bills the open month's object storage in daily
+// steps, so a subscription that ends mid-month is billed for its storage up
+// to its last step (ADR-20261027093220). It does nothing while the sink is
+// off.
+func (s *Service) deliverObjectStorageProgress(ctx context.Context, pricing api.ObjectStoragePricing, now time.Time) (int, error) {
+	sink, ok := s.Host.BillingProvider().(billing.ObjectStorageLineItemSink)
+	if !ok {
+		return 0, nil
+	}
+	runner, ok := s.Host.Store().(interface {
+		state.ObjectStorageBillingStore
+		billing.ObjectStorageAccountSource
+	})
+	if !ok {
+		return 0, errors.New("object storage billing store is unavailable")
+	}
+	return billing.DeliverObjectStorageProgress(ctx, storageBillingAccounts{store: runner}, runner, pricing, now, sink)
 }

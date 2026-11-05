@@ -16,11 +16,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -111,6 +113,7 @@ const ScanSourceRankWorkspace = scanSourceRankWorkspace
 const StageHistoryStatusCancelled = stageHistoryStatusCancelled
 
 // Package-level vars
+var SnapshotGCPageRows = &snapshotGCPageRows
 var ErrAutomaticPollingData = &errAutomaticPollingData
 var ErrMemStoreAppErrors = &errMemStoreAppErrors
 var ErrMemStoreB3AlertMetrics = &errMemStoreB3AlertMetrics
@@ -227,6 +230,7 @@ var CronAppTaskRetryAt = cronAppTaskRetryAt
 var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
 var DecidePlanAdmission = decidePlanAdmission
 var DecideProfileCanaryGate = decideProfileCanaryGate
+var DecideRouteMonitorRollback = decideRouteMonitorRollback
 var DecodeInitialReview = decodeInitialReview
 var DecodeProfileCanaryHistoryCursor = decodeProfileCanaryHistoryCursor
 var DecodeRouteMonitorDeploymentBaseline = decodeRouteMonitorDeploymentBaseline
@@ -920,7 +924,8 @@ func (r *MemStore) RouteHealthHistory() *map[string][]routeHealthStoredDecision 
 func (r *MemStore) RouteLifecycleApprovals() *map[string]api.RouteLifecycleApproval {
 	return &r.routeLifecycleApprovals
 }
-func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time            { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) ScenarioPostgres() *map[string]rehearsalpg.Resource { return &r.scenarioPostgres }
 func (r *MemStore) ScheduleOccurrences() *map[string]ScheduleOccurrence {
 	return &r.scheduleOccurrences
 }
@@ -1137,3 +1142,45 @@ func (r *standardLocalIntentFixture) Rotated() *ApplicationStandardLogDestinatio
 // Members of workflowOperationWindow
 func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
+
+var LiveServiceProxyIdentities = liveServiceProxyIdentities
+
+// XFreezeDeploymentRuntime stores a reviewed candidate's frozen runtime on an
+// existing deployment, as GitOps candidate preparation does.
+func (m *MemStore) XFreezeDeploymentRuntime(id, raw string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.deployments[id]
+	d.EnvironmentWorkloadRuntime = raw
+	m.deployments[id] = d
+}
+
+// OperatorIntents exposes the MemStore's operator intents to tests.
+func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }
+
+// Keyed credential families (ADR 20261029202403 amendment 1).
+var (
+	AcknowledgmentToken      = acknowledgmentToken
+	AcknowledgmentMatches    = acknowledgmentMatches
+	AcknowledgmentDigest     = acknowledgmentDigest
+	ObjectUploadGrantLookups = objectUploadGrantLookups
+)
+
+// BeginTrafficBindingForTest opens the app binding transaction a deploy uses,
+// so a test can time its analysis bound (Hunt 31 H31-11).
+func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID string) (pgx.Tx, error) {
+	tx, err := s.beginTrafficBinding(ctx, TrafficPolicyWriterAppBinding, account, nil, appID)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// SeedLegacyWorkflowEvent inserts a retained event as written by an older
+// version, before the current event payload limit existed.
+func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
+	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
+}

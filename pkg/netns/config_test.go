@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,12 +56,14 @@ func TestSetupThenTeardownReferToSameResources(t *testing.T) {
 	if !strings.Contains(teardown, "link del "+c.VethHost) {
 		t.Error("teardown does not delete the host veth")
 	}
-	// The tc qdisc lives on VethHost and is implicitly freed when
-	// teardown deletes the link. Locking that single-side identity
-	// here prevents a future edit that accidentally moves the qdisc
-	// to the peer end (which would orphan it on teardown).
+	// The inbound qdisc lives on VethHost and is freed when teardown
+	// deletes the link; the egress qdisc lives on VethPeer inside the
+	// namespace teardown deletes. Neither outlives these commands.
 	if !strings.Contains(flatten(c.TcCommands()), "dev "+c.VethHost) {
 		t.Error("tc commands must target VethHost (the host-side veth that teardown deletes)")
+	}
+	if !strings.Contains(teardown, "netns del "+c.Netns) {
+		t.Error("teardown does not delete the namespace that holds the egress qdisc")
 	}
 
 	// Order matters: netns-del first, host veth second. The opposite order
@@ -675,7 +678,7 @@ func TestCommandsHaveNoShellMetacharacters(t *testing.T) {
 func TestTenantBridgeMatches(t *testing.T) {
 	// 1. The Go render must substitute the same name.
 	rendered := DefaultHostPolicy.Render()
-	if !strings.Contains(rendered, `iifname "`+TenantBridge+`" accept`) {
+	if !strings.Contains(rendered, `iifname "`+TenantBridge+`" drop`) {
 		t.Errorf("Go renderer did not use TenantBridge=%q in input chain; got:\n%s",
 			TenantBridge, rendered)
 	}
@@ -742,26 +745,27 @@ func flatten(cmds [][]string) string {
 
 // --- TcCommands / TcResetCommands ----------------------------------------
 
-// TestTcCommandsApplyRateToVethHost asserts the strict tc qdisc argv
-// targets VethHost (root-ns side of the veth pair, the choke point
-// nearest the box) and embeds the per-plan rate. Locks the wire shape
-// the manager's setupNetwork relies on.
-func TestTcCommandsApplyRateToVethHost(t *testing.T) {
+// TestTcCommandsApplyRateToBothDirections asserts the strict tc qdisc
+// argvs and the per-plan rate. A root qdisc shapes what its device
+// transmits: VethHost sends toward the guest, VethPeer sends what the
+// guest sends out (#4382: egress was unshaped while only VethHost had
+// a qdisc). Locks the wire shape the manager's setupNetwork relies on.
+func TestTcCommandsApplyRateToBothDirections(t *testing.T) {
 	c := testConfig()
 	c.EgressMbit = 25 // Hobby plan
 	cmds := c.TcCommands()
-	if len(cmds) != 1 {
-		t.Fatalf("TcCommands returned %d argvs, want 1: %v", len(cmds), cmds)
+	if len(cmds) != 2 {
+		t.Fatalf("TcCommands returned %d argvs, want 2: %v", len(cmds), cmds)
 	}
-	line := strings.Join(cmds[0], " ")
-	wants := []string{
-		"tc", "qdisc", "add", "dev", c.VethHost, "root", "tbf",
-		"rate", "25mbit",
-		"burst", "32kbit", "latency", "400ms",
+	want := [][]string{
+		{"tc", "qdisc", "add", "dev", c.VethHost, "root", "tbf",
+			"rate", "25mbit", "burst", "32kbit", "latency", "400ms"},
+		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "add", "dev", c.VethPeer, "root", "tbf",
+			"rate", "25mbit", "burst", "32kbit", "latency", "400ms"},
 	}
-	for _, w := range wants {
-		if !strings.Contains(line, w) {
-			t.Errorf("tc argv missing %q\ngot: %s", w, line)
+	for i := range want {
+		if !slices.Equal(cmds[i], want[i]) {
+			t.Errorf("tc argv %d:\n got %v\nwant %v", i, cmds[i], want[i])
 		}
 	}
 }
@@ -773,13 +777,16 @@ func TestTcCommandsApplyRateToVethHost(t *testing.T) {
 func TestTcResetCommandsPrependsDeleteRoot(t *testing.T) {
 	c := testConfig()
 	reset := c.TcResetCommands()
-	if len(reset) != 1 {
-		t.Fatalf("TcResetCommands returned %d argvs, want 1: %v", len(reset), reset)
+	want := [][]string{
+		{"tc", "qdisc", "del", "dev", c.VethHost, "root"},
+		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "del", "dev", c.VethPeer, "root"},
 	}
-	line := strings.Join(reset[0], " ")
-	for _, w := range []string{"tc", "qdisc", "del", "dev", c.VethHost, "root"} {
-		if !strings.Contains(line, w) {
-			t.Errorf("reset argv missing %q\ngot: %s", w, line)
+	if len(reset) != len(want) {
+		t.Fatalf("TcResetCommands returned %d argvs, want %d: %v", len(reset), len(want), reset)
+	}
+	for i := range want {
+		if !slices.Equal(reset[i], want[i]) {
+			t.Errorf("reset argv %d:\n got %v\nwant %v", i, reset[i], want[i])
 		}
 	}
 }
@@ -801,25 +808,25 @@ func TestTcCommandsHaveNoShellMetacharacters(t *testing.T) {
 	}
 }
 
-// TestTcCommandsPrefixNoNetnsExec locks the architectural choice: tc
-// runs in the root namespace and must NOT be wrapped in `ip netns
-// exec`. Wrapping would put the qdisc on the peer end inside the
-// per-instance netns, which (a) cannot be reached from outside without
-// re-entering the netns every time and (b) would be removed when the
-// netns is torn down at park time, losing the cap on a snapshot-
-// restore Wake. A future edit that adds the prefix by reflex —
-// mirroring NftCommands — would silently break the cap; this test
-// fails loudly.
-func TestTcCommandsPrefixNoNetnsExec(t *testing.T) {
+// TestTcCommandsShapeGuestEgressInsideNamespace locks which end shapes
+// which direction. The guest's outbound packets leave the instance
+// namespace through VethPeer, so only a qdisc on VethPeer, entered with
+// `ip netns exec`, caps egress; the VethHost qdisc runs in the root
+// namespace. Every setup creates a fresh namespace and reapplies both,
+// so a wake never runs without the egress cap. A future edit that
+// drops the namespace prefix would put the egress qdisc on a device the
+// root namespace cannot see and fail setup; one that moves it back to
+// VethHost would silently leave egress unshaped again.
+func TestTcCommandsShapeGuestEgressInsideNamespace(t *testing.T) {
 	c := testConfig()
 	c.EgressMbit = 25
 	for _, cmds := range [][][]string{c.TcCommands(), c.TcResetCommands()} {
-		for _, cmd := range cmds {
-			for _, arg := range cmd {
-				if arg == "netns" || arg == "exec" {
-					t.Errorf("tc argv contains 'netns exec' — must run in root ns: %v", cmd)
-				}
-			}
+		host, peer := cmds[0], cmds[1]
+		if slices.Contains(host, "netns") || !slices.Contains(host, c.VethHost) {
+			t.Errorf("host qdisc must run in the root namespace on VethHost: %v", host)
+		}
+		if !slices.Equal(peer[:4], []string{"ip", "netns", "exec", c.Netns}) || !slices.Contains(peer, c.VethPeer) {
+			t.Errorf("egress qdisc must run inside %s on VethPeer: %v", c.Netns, peer)
 		}
 	}
 }
@@ -833,10 +840,11 @@ func TestTcCommandsValidRate(t *testing.T) {
 	c := testConfig()
 	for _, mbit := range []int{10, 25, 100, 250} {
 		c.EgressMbit = mbit
-		line := strings.Join(c.TcCommands()[0], " ")
 		want := fmt.Sprintf("rate %dmbit", mbit)
-		if !strings.Contains(line, want) {
-			t.Errorf("rate %d: argv missing %q\ngot: %s", mbit, want, line)
+		for _, cmd := range c.TcCommands() {
+			if line := strings.Join(cmd, " "); !strings.Contains(line, want) {
+				t.Errorf("rate %d: argv missing %q\ngot: %s", mbit, want, line)
+			}
 		}
 	}
 }

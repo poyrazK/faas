@@ -62,14 +62,33 @@ func (s *PgStore) AdmitEventWorkflowRecipient(ctx context.Context, claim Publish
 		return result, err
 	}
 	var runID string
-	var created bool
+	var created, deferred bool
 	if matched {
 		runID, created, err = admitEventWorkflowTx(ctx, q, tx, receipt.ID, recipient, receipt.Payload)
+		if errors.Is(err, errWorkflowFailurePolicyLatched) {
+			if err := validateEventRoutingClaim(ctx, q, tx, claim); err != nil {
+				return result, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return result, err
+			}
+			return result, ErrWorkflowEventTargetUnavailable
+		}
+		// The app's run limit is capacity, not a routing failure: wait like a
+		// full delivery capacity without spending a routing attempt. The
+		// refusal wrote nothing, so the transaction records the wait.
+		if deferred = errors.Is(err, ErrWorkflowRunQuotaExceeded); deferred {
+			err = nil
+		}
 		if err != nil {
 			return result, err
 		}
 	}
 	progress := workflowRoutingProgress(matched, int(r.TotalAttempts))
+	preserveEventCapacityHistory(&progress, previous)
+	if deferred {
+		progress = eventCapacityProgress(previous, int(r.TotalAttempts), eventWorkflowCapacityScope)
+	}
 	if err := recordEventRecipientOutcome(ctx, q, tx, receipt.ID, recipient.AppID, recipient.ID, EventFanoutAttemptActionAttempt, progress); err != nil {
 		return result, err
 	}
@@ -87,5 +106,6 @@ func (s *PgStore) AdmitEventWorkflowRecipient(ctx context.Context, claim Publish
 	}
 	result.RunID, result.RunCreated = runID, created
 	result.Progress, result.ReceiptSettled = progress, settled
+	result.CapacityDeferred = deferred
 	return result, nil
 }

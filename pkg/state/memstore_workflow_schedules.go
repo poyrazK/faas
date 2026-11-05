@@ -109,15 +109,17 @@ func (m *MemStore) AdmitScheduledWorkflow(_ context.Context, appID, deploymentID
 	if definition == nil {
 		return WorkflowScheduleCursor{}, false, nil
 	}
-	active, named := 0, 0
+	var admission workflowAdmission
+	named := 0
 	for _, run := range m.workflowRuns {
 		if run.AppID == appID && (run.Status == WorkflowRunStatusPending || run.Status == WorkflowRunStatusRunning || run.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
+			admission.add(run.Status)
 			if run.WorkflowName == name {
 				named++
 			}
 		}
 	}
+	active := admission.admitted(account.Plan.WorkflowMaxParkedRuns())
 	key := appID + "/" + name
 	var previous *WorkflowScheduleCursor
 	if stored, exists := m.workflowSchedules[key]; exists {
@@ -233,16 +235,18 @@ func (m *MemStore) AdmitTenantScheduledWorkflow(_ context.Context, appID, tenant
 			customized = false
 		}
 	}
-	active, named := 0, 0
+	var admission workflowAdmission
+	named := 0
 	for _, run := range m.workflowRuns {
 		if run.AppID != appID || run.Status != WorkflowRunStatusPending && run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
 			continue
 		}
-		active++
+		admission.add(run.Status)
 		if sameMemUUID(run.PlatformTenantID, tenantID) && run.WorkflowName == name {
 			named++
 		}
 	}
+	active := admission.admitted(account.Plan.WorkflowMaxParkedRuns())
 	if m.workflowTenantSchedules == nil {
 		m.workflowTenantSchedules = make(map[string]WorkflowScheduleCursor)
 	}

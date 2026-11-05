@@ -1,7 +1,11 @@
 package api
 
 import (
+	"fmt"
+	"net/http"
+	"net/url"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -114,6 +118,37 @@ func templateGlob(template string, escape bool) (string, bool) {
 	return glob, true
 }
 
+// edgeRuleMethodOverrideHeaders are the headers frameworks read to run a
+// request as another method (Express method-override, Laravel, ASP.NET Core,
+// Rack); "_method" in the query is the parameter form (Rails, Laravel,
+// Spring's HiddenHttpMethodFilter).
+var edgeRuleMethodOverrideHeaders = []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"}
+
+// EdgeRuleMethodOverride returns the method a request asks the app to run it
+// as, through a method-override header or a "_method" query parameter, when
+// that differs from method; else "". A rule that denies or constrains
+// requests and is scoped to methods matches the overridden method too, or a
+// POST the app runs as DELETE would pass a DELETE-only gate (ADR-091
+// amendment 2026-11-02, later). A "_method" form field in the body is not
+// read here.
+func EdgeRuleMethodOverride(method string, header http.Header, rawQuery string) string {
+	candidates := make([]string, 0, 2)
+	for _, name := range edgeRuleMethodOverrideHeaders {
+		candidates = append(candidates, header.Values(name)...)
+	}
+	if strings.Contains(rawQuery, "_method") {
+		if q, err := url.ParseQuery(rawQuery); err == nil {
+			candidates = append(candidates, q["_method"]...)
+		}
+	}
+	for _, c := range candidates {
+		if m := strings.ToUpper(strings.TrimSpace(c)); m != method && slices.Contains(edgeRuleMatchMethods, m) {
+			return m
+		}
+	}
+	return ""
+}
+
 // EdgeRuleKindUsesProtectivePathMatch reports whether a rule kind denies or
 // constrains requests, and therefore matches path variants protectively
 // (MatchProtectiveEdgeRulePath) rather than exactly.
@@ -144,11 +179,67 @@ func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
 			return true, nil
 		}
 	}
+	// Java servlet containers and Spring route /admin;x/users as
+	// /admin/users: they drop a segment's ";" parameters before matching
+	// (ADR-091 amendment 2026-11-02, later).
+	if bare := stripPathParameters(cleaned); bare != cleaned {
+		if ok, _ := MatchEdgeRulePath(glob, bare); ok {
+			return true, nil
+		}
+		cleaned = bare
+	}
 	foldedGlob := strings.ToLower(glob)
 	if folded := strings.ToLower(cleaned); folded != cleaned || foldedGlob != glob {
 		return MatchEdgeRulePath(foldedGlob, folded)
 	}
 	return false, nil
+}
+
+// stripPathParameters drops each segment's ";" parameters (RFC 3986 section
+// 3.3), as servlet containers do before routing: /a;jsessionid=1/b;v=2
+// becomes /a/b.
+func stripPathParameters(p string) string {
+	if !strings.Contains(p, ";") {
+		return p
+	}
+	segments := strings.Split(p, "/")
+	for i, s := range segments {
+		segments[i], _, _ = strings.Cut(s, ";")
+	}
+	return path.Clean("/" + strings.Join(segments, "/"))
+}
+
+// edgeRuleMatchMethods is the closed vocabulary of match_methods: the RFC 9110
+// methods and PATCH.
+var edgeRuleMatchMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+	http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace,
+}
+
+// NormalizeEdgeRuleMatchMethods validates a rule's match_methods and returns
+// them upper-cased, without duplicates. The gateway compares methods exactly,
+// so an entry outside the vocabulary ("*", a typo, a trailing space) matched
+// no request, and a jwt or ip rule scoped by it silently never applied
+// (ADR-091 amendment 2026-10-28). An empty list matches every method and is
+// returned as given.
+func NormalizeEdgeRuleMatchMethods(methods []string) ([]string, *Problem) {
+	if len(methods) == 0 {
+		return methods, nil
+	}
+	out := make([]string, 0, len(methods))
+	for _, method := range methods {
+		if method == "*" {
+			return nil, ErrValidation(`match_methods cannot contain "*"; omit match_methods to match every method`)
+		}
+		upper := strings.ToUpper(method)
+		if !slices.Contains(edgeRuleMatchMethods, upper) {
+			return nil, ErrValidation(fmt.Sprintf("match_methods entry %q is not an HTTP method (%s)", method, strings.Join(edgeRuleMatchMethods, ", ")))
+		}
+		if !slices.Contains(out, upper) {
+			out = append(out, upper)
+		}
+	}
+	return out, nil
 }
 
 // MatchEdgeRuleKindPath applies the matching mode the gateway uses for kind.

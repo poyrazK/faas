@@ -2,7 +2,7 @@ const stages = ['collect', 'transform', 'finish'];
 const labels = ['Collect data', 'Transform rows', 'Generate file'];
 
 /** @typedef {import('../customer-operations.generated.js').CustomerExportOutput} CustomerExportOutput */
-/** @typedef {import('@gregale/sdk-node/operations').Operation<CustomerExportOutput>} CustomerExportOperation */
+/** @typedef {import('@gregale/sdk-node/preview/operations').Operation<CustomerExportOutput>} CustomerExportOperation */
 
 /** @param {CustomerExportOperation} operation */
 export function workflowProgress(operation) {

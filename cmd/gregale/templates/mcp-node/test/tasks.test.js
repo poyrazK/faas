@@ -69,7 +69,7 @@ class MemoryTaskStore {
     for (const row of this.rows.values()) {
       if (!['queued', 'running'].includes(row.status) || row.expires_at <= now) continue;
       if (row.status === 'running' && row.lease_expires_at > now) continue;
-      if (row.attempt_count >= maxAttempts) {
+      if (row.attempt_count >= maxAttempts && !(row.status === 'queued' && row.resume_pending)) {
         row.status = row.cancel_requested_at ? 'cancelled' : 'failed';
         row.error = row.cancel_requested_at ? null : { code: -32603, message: 'Task could not be resumed' };
         row.lease_token = null;
@@ -306,7 +306,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   const pool = { async query(sql, params) {
     calls.push({ sql, params });
     if (sql.includes("AS trusted")) return { rows: [{ trusted: true }] };
-    if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => row.owner_hash.equals(params[1])).length }] };
+    if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => params[1].some(owner => row.owner_hash.equals(owner))).length }] };
     if (sql.includes('INSERT INTO gregale_mcp_task_crypto_keys')) return { rows: [{ key_fingerprint: params[2] }] };
     if (sql.includes('INSERT INTO gregale_mcp_tasks')) {
       const row = {
@@ -347,7 +347,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
     }
     if (sql.includes('SELECT task_id::text AS task_id')) {
       const row = rows.get(params[1]);
-      return { rows: row && row.owner_hash.equals(params[2]) ? [row] : [] };
+      return { rows: row && params[2].some(owner => row.owner_hash.equals(owner)) ? [row] : [] };
     }
     return { rows: [] };
   } };
@@ -388,7 +388,7 @@ test('queue metrics count only unexpired queued and running rows in the task nam
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
   assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1, failedTasks: 2, retryWaitingTasks: 1, activeWorkers: 2, drainingWorkers: 0, unsupportedHandlerTasks: 1, withoutCompatibleWorkerTasks: 1 });
-  assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4]);
+  assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4, 3]);
   assert.match(captured.sql, /status IN \('queued', 'running', 'failed'\)/);
   assert.match(captured.sql, /expires_at > instant.now/);
   assert.match(captured.sql, /MIN\(created_at\)/);

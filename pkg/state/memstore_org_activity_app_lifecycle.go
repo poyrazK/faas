@@ -17,7 +17,7 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app Ap
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return App{}, 0, err
 	}
-	created, err := m.createAppIfUnderQuotaLocked(app, limits)
+	created, err := m.createAppIfUnderQuotaLocked(ctx, app, limits)
 	if err != nil {
 		return App{}, 0, err
 	}
@@ -82,13 +82,18 @@ func (m *MemStore) scheduleAppDeletion(ctx context.Context, id string, graceUnti
 		a.DeleteGraceUntil = &deadline
 	}
 	a.Status = AppDeleted
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, 0, err
+	}
 	m.apps[id] = a
+	m.cancelAppInvocationsLocked(id, now)
 	if !wasDeleted {
 		for _, memory := range sources {
 			touchGitOpsMemoryIntent(memory)
 		}
 	}
 	m.cancelAppTasksForAppLocked(id, now)
+	m.cancelDeletedAppPipelineLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)
 	}
@@ -125,7 +130,7 @@ func (m *MemStore) RestoreAppWithActivity(ctx context.Context, id string, limits
 	if err != nil {
 		return App{}, 0, err
 	}
-	restored, err := m.restoreAppLocked(id, limits)
+	restored, err := m.restoreAppLocked(ctx, id, limits)
 	if err != nil {
 		return App{}, 0, err
 	}

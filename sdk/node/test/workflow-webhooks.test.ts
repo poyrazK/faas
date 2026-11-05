@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, InboundWebhooksService } from '../src/index.js';
+import { FaaSClient, InboundWebhooksService } from '../src/preview.js';
 import type { CreateInboundWebhookEndpointRequest } from '../src/generated/models/CreateInboundWebhookEndpointRequest.js';
 
 test('inbound webhook SDK accepts the generic HMAC provider', () => {

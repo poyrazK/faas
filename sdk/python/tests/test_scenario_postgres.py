@@ -1,5 +1,5 @@
-from faas_sdk.models.create_scenario_postgres_request import CreateScenarioPostgresRequest
-from faas_sdk.models.scenario_postgres_evidence import ScenarioPostgresEvidence
+from faas_sdk.preview.models.create_scenario_postgres_request import CreateScenarioPostgresRequest
+from faas_sdk.preview.models.scenario_postgres_evidence import ScenarioPostgresEvidence
 
 
 def test_postgres_fixture_sql_and_duplicate_effects_round_trip():

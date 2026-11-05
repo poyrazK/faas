@@ -108,7 +108,7 @@ only the runtime connection:
 # File contents: DATABASE_URL=postgres://runtime:password@host:5432/db?sslmode=require
 gregale deploy --secrets-file ../rest-api-postgres.secrets
 # After app creation, update it with:
-gregale secrets set --app <slug> DATABASE_URL='postgres://runtime:password@host:5432/db?sslmode=require'
+gregale env set --app <slug> DATABASE_URL='postgres://runtime:password@host:5432/db?sslmode=require'
 ```
 
 For an already reserved app, use `gregale deploy --name <slug> --secrets-file ...`.

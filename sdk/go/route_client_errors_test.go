@@ -8,13 +8,15 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestRouteClientErrorSDKConfigurationAndEvidence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/apps/demo/route-health/gate" {
-			var request faas.SetRouteHealthGateRequest
+			var request preview.SetRouteHealthGateRequest
 			if r.Method != "PUT" || json.NewDecoder(r.Body).Decode(&request) != nil || len(request.Routes) != 1 || !slices.Equal(request.Routes[0].WatchStatuses, []int{403, 422}) {
 				t.Error("watched status intent binding")
 			}
@@ -32,11 +34,11 @@ func TestRouteClientErrorSDKConfigurationAndEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	zero := int64(0)
-	gate, err := client.SetRouteHealthGate(context.Background(), "demo", faas.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []faas.RouteHealthRoute{{Method: "POST", Path: "/checkout", WatchStatuses: []int{403, 422}}}})
+	gate, err := preview.Wrap(client).SetRouteHealthGate(context.Background(), "demo", preview.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []preview.RouteHealthRoute{{Method: "POST", Path: "/checkout", WatchStatuses: []int{403, 422}}}})
 	if err != nil || !slices.Equal(gate.Routes[0].WatchStatuses, []int{403, 422}) {
 		t.Fatal("configuration was lost")
 	}
-	report, err := client.GetRouteHealthReport(context.Background(), "demo", "candidate")
+	report, err := preview.Wrap(client).GetRouteHealthReport(context.Background(), "demo", "candidate")
 	if err != nil || report.Status != "healthy" || report.ClientErrorStatus != "regressed" {
 		t.Fatal("advisory result was lost")
 	}

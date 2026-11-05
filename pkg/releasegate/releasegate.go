@@ -1,5 +1,7 @@
-// Package releasegate judges an app's release gates (ADR-20261019071734):
-// SLO burn, new error groups and custom metric bounds. It is pure, so meterd's
+// Package releasegate judges an app's release gates (ADR-20261019071734,
+// ADR-20261022082305): SLO burn, new error groups, custom metric bounds,
+// AI call regressions (ADR 20261022153155), synthetic check probes and
+// metric changes. It is pure, so meterd's
 // canary circuit breaker and apid's post-release watch judge gates the same
 // way from evidence they collect themselves.
 package releasegate
@@ -18,7 +20,26 @@ const (
 	KindSLO          = "slo"
 	KindNewErrors    = "new_errors"
 	KindCustomMetric = "custom_metric"
+	KindAI           = "ai"
+	KindSynthetic    = "synthetic"
+	KindMetricChange = "metric_change"
 )
+
+// AI gate metrics (ADR 20261022153155).
+const (
+	AIMetricErrorRate   = "error_rate"
+	AIMetricFlaggedRate = "flagged_rate"
+	AIMetricCostPerCall = "cost_per_call"
+	AIMetricTTFB        = "ttfb_ms"
+)
+
+// AIMetrics lists the AI gate metrics.
+var AIMetrics = []string{AIMetricErrorRate, AIMetricFlaggedRate, AIMetricCostPerCall, AIMetricTTFB}
+
+// aiFloors is how far above its baseline a release's AI metric must also
+// be to fail, so a near-zero baseline does not fail on noise: a percentage
+// point for the rates, 50 ms, and one millicent per call.
+var aiFloors = map[string]float64{AIMetricErrorRate: 0.01, AIMetricFlaggedRate: 0.01, AIMetricCostPerCall: 1, AIMetricTTFB: 50}
 
 // Gate is one release gate with the parameters its kind uses.
 type Gate struct {
@@ -32,13 +53,35 @@ type Gate struct {
 	// New-error gates.
 	MaxNewGroups int
 	MinEvents    int
-	// Custom metric gates.
+	// Custom metric gates. An AI gate uses MetricName for its AI metric and
+	// Threshold for the largest increase over the baseline, in percent.
 	MetricName string
 	Comparison string
 	Threshold  float64
-	// MinSamples is the requests (SLO) or metric values (custom metric) the
-	// release needs before the gate is judged.
+	// Synthetic gates: the check's name and the share of failed probes
+	// allowed.
+	CheckName         string
+	MaxFailurePercent int
+	// Metric change gates (MetricName and Comparison too): how far the
+	// metric may move, in percent of its average before the rollout.
+	MaxChangePercent int
+	// MinSamples is the requests (SLO), probes (synthetic), metric values
+	// (custom metric, metric change) or AI calls (AI, on each side) needed
+	// before the gate is judged.
 	MinSamples int
+}
+
+// ProbeCounts is one revision's synthetic probes over a window.
+type ProbeCounts struct {
+	Requests int64
+	Failures int64
+}
+
+func (p ProbeCounts) failurePercent() float64 {
+	if p.Requests == 0 {
+		return 0
+	}
+	return float64(p.Failures) * 100 / float64(p.Requests)
 }
 
 // SLISample is one side's requests over a window.
@@ -68,13 +111,54 @@ type MetricWindow struct {
 	Average float64
 }
 
-// Evidence is what one gate measured for the release and, for SLO gates,
-// the baseline. Unavailable means the evidence could not be read.
+// AIWindow is one side's AI calls over a window (ADR 20261022153155).
+type AIWindow struct {
+	Calls          int64
+	ErrorCalls     int64
+	FlaggedCalls   int64
+	CostMillicents int64
+	TTFBCalls      int64
+	TTFBMSTotal    int64
+}
+
+// value returns an AI metric and the calls it is taken over: all calls, or
+// those with a first byte for time to first byte.
+func (w AIWindow) value(metric string) (float64, int64, bool) {
+	per := func(n, calls int64) float64 {
+		if calls <= 0 {
+			return 0
+		}
+		return float64(n) / float64(calls)
+	}
+	switch metric {
+	case AIMetricErrorRate:
+		return per(w.ErrorCalls, w.Calls), w.Calls, true
+	case AIMetricFlaggedRate:
+		return per(w.FlaggedCalls, w.Calls), w.Calls, true
+	case AIMetricCostPerCall:
+		return per(w.CostMillicents, w.Calls), w.Calls, true
+	case AIMetricTTFB:
+		return per(w.TTFBMSTotal, w.TTFBCalls), w.TTFBCalls, true
+	}
+	return 0, 0, false
+}
+
+// Evidence is what one gate measured for the release and, for SLO, AI,
+// synthetic and metric change gates, its baseline. Unavailable means the
+// evidence could not be read.
 type Evidence struct {
-	Release     SLISample
-	Baseline    SLISample
-	NewGroups   []ErrorGroup
-	Metric      MetricWindow
+	Release    SLISample
+	Baseline   SLISample
+	NewGroups  []ErrorGroup
+	Metric     MetricWindow
+	AIRelease  AIWindow
+	AIBaseline AIWindow
+	// Probes and BaselineProbes are the candidate's and the stable
+	// revision's synthetic probes (synthetic gates).
+	Probes         ProbeCounts
+	BaselineProbes ProbeCounts
+	// PriorMetric is the metric before the rollout started (metric change).
+	PriorMetric MetricWindow
 	Unavailable bool
 }
 
@@ -93,23 +177,22 @@ func (v Verdict) Summary() string {
 	return "release gate " + v.Failed.Name + ": " + v.Failed.Summary
 }
 
-// Judge judges each gate against its evidence, in gate name order. Gates
-// without evidence, or with too few samples, are not judged.
+// Judge judges each gate against its evidence, in gate name order. A gate
+// with too few samples or unreadable evidence is not judged; its result says
+// so (NotJudged) and never fails the verdict. A gate without an evidence entry
+// (its SLO was deleted) is left out.
 func Judge(gates []Gate, evidence map[string]Evidence) Verdict {
 	sorted := append([]Gate(nil), gates...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 	var v Verdict
 	for _, g := range sorted {
 		ev, ok := evidence[g.Name]
-		if !ok || ev.Unavailable {
+		if !ok {
 			continue
 		}
 		result, judged := judgeOne(g, ev)
-		if !judged {
-			continue
-		}
 		v.Results = append(v.Results, result)
-		if !result.Passed && v.Failed == nil {
+		if judged && !result.Passed && v.Failed == nil {
 			failed := result
 			v.Failed = &failed
 		}
@@ -117,12 +200,26 @@ func Judge(gates []Gate, evidence map[string]Evidence) Verdict {
 	return v
 }
 
+// notJudged records a gate that was not judged and why. Unjudged gates were
+// left out of decisions, so a canary on a quiet app completed with no sign
+// that its gates never ran (release review 2026-10-28).
+func notJudged(r api.ReleaseGateResult, samples int64, summary string) (api.ReleaseGateResult, bool) {
+	r.Passed, r.NotJudged, r.Samples, r.Summary = true, true, max(samples, 0), "not judged: "+summary
+	return r, false
+}
+
 func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 	r := api.ReleaseGateResult{Name: g.Name, Kind: g.Kind}
+	if ev.Unavailable {
+		return notJudged(r, 0, "its evidence could not be read")
+	}
 	switch g.Kind {
 	case KindSLO:
-		if ev.Release.Requests < int64(max(g.MinSamples, 1)) || g.ObjectiveBP <= 0 || g.ObjectiveBP >= 10000 {
-			return r, false
+		if g.ObjectiveBP <= 0 || g.ObjectiveBP >= 10000 {
+			return notJudged(r, ev.Release.Requests, "its SLO objective is out of range")
+		}
+		if minimum := int64(max(g.MinSamples, 1)); ev.Release.Requests < minimum {
+			return notJudged(r, ev.Release.Requests, fmt.Sprintf("%d of %d requests so far", ev.Release.Requests, minimum))
 		}
 		budget := float64(10000-g.ObjectiveBP) / 10000
 		badFraction := float64(ev.Release.Bad(g.LatencyThresholdMS)) / float64(ev.Release.Requests)
@@ -161,8 +258,11 @@ func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 			r.Summary += ": " + strings.Join(r.ErrorClasses, ", ")
 		}
 	case KindCustomMetric:
-		if ev.Metric.Samples < int64(max(g.MinSamples, 1)) || math.IsNaN(ev.Metric.Average) || math.IsInf(ev.Metric.Average, 0) {
-			return r, false
+		if minimum := int64(max(g.MinSamples, 1)); ev.Metric.Samples < minimum {
+			return notJudged(r, ev.Metric.Samples, fmt.Sprintf("%d of %d %s values so far", ev.Metric.Samples, minimum, g.MetricName))
+		}
+		if math.IsNaN(ev.Metric.Average) || math.IsInf(ev.Metric.Average, 0) {
+			return notJudged(r, ev.Metric.Samples, "its average could not be computed")
 		}
 		r.Observed, r.Bound, r.Samples = round(ev.Metric.Average), g.Threshold, ev.Metric.Samples
 		switch g.Comparison {
@@ -171,14 +271,118 @@ func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 		case "above":
 			r.Passed = ev.Metric.Average <= g.Threshold
 		default:
-			return r, false
+			return notJudged(r, ev.Metric.Samples, fmt.Sprintf("unknown comparison %q", g.Comparison))
 		}
 		r.Summary = fmt.Sprintf("%s averaged %g over %d values (fails %s %g)", g.MetricName, round(ev.Metric.Average), ev.Metric.Samples, g.Comparison, g.Threshold)
+	case KindAI:
+		return judgeAI(g, ev)
+	case KindSynthetic:
+		return judgeSynthetic(g, ev, r)
+	case KindMetricChange:
+		return judgeMetricChange(g, ev, r)
 	default:
-		return r, false
+		return notJudged(r, 0, fmt.Sprintf("unknown kind %q", g.Kind))
 	}
 	return r, true
 }
+
+// judgeAI fails a release whose AI metric is more than Threshold percent,
+// and more than the metric's floor, above its baseline's. Without enough
+// calls on both sides it is not judged.
+func judgeAI(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
+	r := api.ReleaseGateResult{Name: g.Name, Kind: g.Kind}
+	release, releaseCalls, ok := ev.AIRelease.value(g.MetricName)
+	baseline, baselineCalls, _ := ev.AIBaseline.value(g.MetricName)
+	minSamples := int64(max(g.MinSamples, 1))
+	switch {
+	case !ok:
+		return notJudged(r, 0, fmt.Sprintf("unknown AI metric %q", g.MetricName))
+	case g.Threshold <= 0 || math.IsNaN(g.Threshold) || math.IsInf(g.Threshold, 0):
+		return notJudged(r, releaseCalls, "its threshold is out of range")
+	case releaseCalls < minSamples || baselineCalls < minSamples:
+		return notJudged(r, releaseCalls, fmt.Sprintf("%d release and %d baseline calls of %d each so far", releaseCalls, baselineCalls, minSamples))
+	}
+	bound := max(baseline*(1+g.Threshold/100), baseline+aiFloors[g.MetricName])
+	r.Observed, r.Bound, r.Samples = round(release), round(bound), releaseCalls
+	r.Passed = release <= bound
+	r.Summary = fmt.Sprintf("%s %s over %d calls vs %s before (fails above %s, +%g%%)", g.MetricName, aiValue(g.MetricName, release),
+		releaseCalls, aiValue(g.MetricName, baseline), aiValue(g.MetricName, bound), g.Threshold)
+	return r, true
+}
+
+// aiValue formats an AI metric: rates as percentages, time to first byte
+// in milliseconds and cost per call in dollars.
+func aiValue(metric string, v float64) string {
+	switch metric {
+	case AIMetricErrorRate, AIMetricFlaggedRate:
+		return fmt.Sprintf("%.2f%%", v*100)
+	case AIMetricTTFB:
+		return fmt.Sprintf("%.0f ms", v)
+	}
+	return fmt.Sprintf("$%.5f", v/100_000)
+}
+
+// judgeSynthetic fails a candidate that failed more of its probes than the
+// gate allows and more than the stable revision did. Without enough probes
+// of the candidate it is not judged.
+func judgeSynthetic(g Gate, ev Evidence, r api.ReleaseGateResult) (api.ReleaseGateResult, bool) {
+	if g.MaxFailurePercent < 0 || g.MaxFailurePercent > 100 {
+		return notJudged(r, ev.Probes.Requests, "its max failure percent is out of range")
+	}
+	if minimum := int64(max(g.MinSamples, 1)); ev.Probes.Requests < minimum {
+		return notJudged(r, ev.Probes.Requests, fmt.Sprintf("%d of %d %s probes so far", ev.Probes.Requests, minimum, g.CheckName))
+	}
+	failed, baseline := ev.Probes.failurePercent(), ev.BaselineProbes.failurePercent()
+	r.Observed, r.Bound, r.Samples, r.Baseline = round(failed), float64(g.MaxFailurePercent), ev.Probes.Requests, round(baseline)
+	r.Passed = failed <= float64(g.MaxFailurePercent) || failed <= baseline
+	stable := "no probes of the stable revision"
+	if ev.BaselineProbes.Requests > 0 {
+		stable = fmt.Sprintf("%.0f%% on the stable revision", baseline)
+	}
+	r.Summary = fmt.Sprintf("%s failed %d of %d probes (%.0f%%, max %d%%) vs %s", g.CheckName, ev.Probes.Failures,
+		ev.Probes.Requests, failed, g.MaxFailurePercent, stable)
+	return r, true
+}
+
+// judgeMetricChange fails a metric that moved in the gate's direction by
+// more than the gate allows, relative to its average before the rollout.
+// Without enough values on both sides, or a zero average before the
+// rollout, it is not judged.
+func judgeMetricChange(g Gate, ev Evidence, r api.ReleaseGateResult) (api.ReleaseGateResult, bool) {
+	minSamples := int64(max(g.MinSamples, 1))
+	switch {
+	case g.MaxChangePercent < 1:
+		return notJudged(r, ev.Metric.Samples, "its max change percent is out of range")
+	case ev.Metric.Samples < minSamples || ev.PriorMetric.Samples < minSamples:
+		return notJudged(r, ev.Metric.Samples, fmt.Sprintf("%d release and %d prior %s values of %d each so far",
+			ev.Metric.Samples, ev.PriorMetric.Samples, g.MetricName, minSamples))
+	case !finite(ev.Metric.Average) || !finite(ev.PriorMetric.Average):
+		return notJudged(r, ev.Metric.Samples, "its average could not be computed")
+	case ev.PriorMetric.Average == 0:
+		return notJudged(r, ev.Metric.Samples, g.MetricName+" averaged 0 before the rollout, so it has no relative change")
+	}
+	change := (ev.Metric.Average - ev.PriorMetric.Average) / math.Abs(ev.PriorMetric.Average) * 100
+	r.Observed, r.Samples, r.Baseline = round(change), ev.Metric.Samples, round(ev.PriorMetric.Average)
+	switch g.Comparison {
+	case "above":
+		r.Bound = float64(g.MaxChangePercent)
+		r.Passed = change <= r.Bound
+	case "below":
+		r.Bound = -float64(g.MaxChangePercent)
+		r.Passed = change >= r.Bound
+	default:
+		return notJudged(r, ev.Metric.Samples, fmt.Sprintf("unknown comparison %q", g.Comparison))
+	}
+	direction := "rose"
+	if change < 0 {
+		direction = "fell"
+	}
+	r.Summary = fmt.Sprintf("%s %s %.0f%% (%g vs %g before the rollout; fails %s %+g%%)", g.MetricName, direction,
+		math.Abs(change), round(ev.Metric.Average), round(ev.PriorMetric.Average), g.Comparison, r.Bound)
+	return r, true
+}
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // round keeps decisions readable and JSON-stable.
 func round(v float64) float64 {

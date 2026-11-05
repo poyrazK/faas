@@ -187,8 +187,12 @@ func (h *harness) opens(t *testing.T, secret string) {
 		t.Fatalf("no key %s sealed to livequeryd's recipient", parsed.KID)
 	}
 	namespace, plain, err := secretbox.OpenBytes(h.identity, stored.Sealed)
-	if err != nil || namespace != livekeys.SealNamespace || string(plain) != secret {
+	if err != nil || namespace != livekeys.KeySealNamespaceFor("db-1") || string(plain) != secret {
 		t.Fatalf("sealed key opens to %q/%q (%v), want the issued secret", namespace, plain, err)
+	}
+	// Bound to its database: livequeryd refuses it for any other.
+	if livekeys.KeyNamespaceOpens(namespace, "db-2") {
+		t.Fatalf("a key sealed under %q opens for another database", namespace)
 	}
 }
 
@@ -306,8 +310,11 @@ func TestLiveQueriesLogins(t *testing.T) {
 		t.Fatalf("stored login %+v", login)
 	}
 	namespace, plain, err := secretbox.OpenBytes(h.identity, login.Sealed)
-	if err != nil || namespace != livekeys.LoginSealNamespace || !strings.HasPrefix(string(plain), "postgresql://gregale_live_ab:pw@ep-1.neon.tech:5432/neondb") {
+	if err != nil || namespace != livekeys.LoginSealNamespaceFor("db-1") || !strings.HasPrefix(string(plain), "postgresql://gregale_live_ab:pw@ep-1.neon.tech:5432/neondb") {
 		t.Fatalf("sealed login opens to %q in %q: %v", plain, namespace, err)
+	}
+	if livekeys.LoginNamespaceOpens(namespace, "db-2") {
+		t.Fatalf("a login sealed under %q opens for another database", namespace)
 	}
 
 	h.db.revoke = managedpostgres.ErrUnavailable

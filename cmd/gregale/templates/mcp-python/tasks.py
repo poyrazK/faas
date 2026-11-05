@@ -13,6 +13,10 @@ import threading
 import time
 import uuid
 
+from task_keys import check_task_payload_keys
+from task_owners import OWNER_SCHEMA, associate_owners, cleanup_expired_tasks
+from task_execution import RetryableTaskError, TaskExecutionPolicy
+
 TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 TASK_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 TASK_KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -31,11 +35,18 @@ CREATE TABLE IF NOT EXISTS gregale_mcp_tasks (
   input_methods text[] NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(), expires_at timestamptz NOT NULL,
   attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0), resume_pending boolean NOT NULL DEFAULT false,
+  next_attempt_at timestamptz,
   lease_token uuid, lease_expires_at timestamptz, cancel_requested_at timestamptz,
   PRIMARY KEY(namespace, task_id),
   CHECK ((status = 'running') = (lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)),
   CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL)))
 """
+TASK_LEASE_INSTANT_SQL = """WITH lease AS MATERIALIZED (
+ SELECT namespace,task_id FROM gregale_mcp_tasks
+ WHERE namespace=%s AND task_id=%s::uuid AND lease_token=%s::uuid AND status='running' FOR UPDATE
+), instant AS MATERIALIZED (SELECT clock_timestamp() AS now FROM lease)
+"""
+
 CREATE_WORKER_HANDLERS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS gregale_mcp_task_worker_handlers (
   namespace text NOT NULL, worker_id uuid NOT NULL, tool_name text NOT NULL,
@@ -225,6 +236,8 @@ class DurableTaskRuntime:
                 raise ValueError("MCP Tasks worker or observer requires tasks.enabled=true")
             return
 
+        self.execution = TaskExecutionPolicy(settings)
+
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
             from psycopg.conninfo import conninfo_to_dict
@@ -312,15 +325,17 @@ class DurableTaskRuntime:
             self.payload_encryption_version=1 if active=="legacy" else 2
         def integer_setting(name, default, zero_uses_default=False):
             value = settings.get(name)
-            if value is None or zero_uses_default and value == 0:
+            if value is None:
                 return default
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(f"tasks.{name} must be an integer")
+            if zero_uses_default and value == 0:
+                return default
             return value
 
-        self.ttl_ms = integer_setting("ttl_seconds", 86400) * 1000
-        self.poll_interval_ms = integer_setting("poll_interval_ms", 2000)
-        self.concurrency = integer_setting("worker_concurrency", 1)
+        self.ttl_ms = integer_setting("ttl_seconds", 86400, zero_uses_default=True) * 1000
+        self.poll_interval_ms = integer_setting("poll_interval_ms", 2000, zero_uses_default=True)
+        self.concurrency = integer_setting("worker_concurrency", 1, zero_uses_default=True)
         self.max_outstanding = integer_setting("max_outstanding", 1000, zero_uses_default=True)
         self.max_per_owner = integer_setting("max_outstanding_per_owner", 100, zero_uses_default=True)
         if not 60_000 <= self.ttl_ms <= 30 * 24 * 60 * 60 * 1000 or not 500 <= self.poll_interval_ms <= 30_000 or not 1 <= self.concurrency <= 16 or self.max_outstanding < 1 or not 1 <= self.max_per_owner <= self.max_outstanding:
@@ -344,11 +359,13 @@ class DurableTaskRuntime:
             check_task_schema(self.pool)
             if self.role == "observer":
                 self.queue_metrics()
+            else:
+                check_task_payload_keys(self)
         except Exception:
             self.pool.close()
             if self.role == "observer":
                 raise ValueError("MCP task observer health check failed; verify its read-only database grants") from None
-            raise ValueError("MCP Task schema is unavailable or incompatible; run python task_schema.py apply with the migration account") from None
+            raise ValueError("MCP Task preflight failed; check schema migrations, every retained payload key and database connectivity") from None
         self._stopping = threading.Event()
         self._notification_thread = None
         self._worker = None
@@ -550,14 +567,14 @@ class DurableTaskRuntime:
                 "LEAST(GREATEST(COALESCE(EXTRACT(EPOCH FROM (clock_timestamp()-MIN(created_at))),0),0),1000000000000)::double precision AS oldest_age_seconds "
                 ",(SELECT LEAST(COUNT(*),1000000000000)::bigint FROM gregale_mcp_tasks AS queued "
                 "WHERE queued.namespace=%s AND queued.expires_at>clock_timestamp() "
-                "AND (queued.status='queued' OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp())) "
-                "AND (queued.attempt_count<3 OR (queued.status='queued' AND queued.resume_pending AND queued.attempt_count=3)) "
+                "AND ((queued.status='queued' AND (queued.next_attempt_at IS NULL OR queued.next_attempt_at<=clock_timestamp())) OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp())) "
+                "AND (queued.attempt_count<%s OR (queued.status='queued' AND queued.resume_pending)) "
                 "AND NOT EXISTS (SELECT 1 FROM gregale_mcp_task_worker_handlers AS handler "
                 "WHERE handler.namespace=queued.namespace AND handler.tool_name=queued.tool_name "
                 "AND handler.handler_version=queued.handler_version "
                 "AND handler.heartbeat_at>clock_timestamp()-interval '45 seconds')) AS without_compatible_worker_tasks "
                 "FROM gregale_mcp_tasks WHERE namespace=%s AND expires_at>clock_timestamp() AND status IN ('queued','running')",
-                (self.namespace, self.namespace),
+                (self.namespace, self.execution.max_attempts, self.namespace),
             ).fetchone()
         if row is None:
             raise ValueError("could not read MCP task queue metrics")
@@ -665,30 +682,30 @@ class DurableTaskRuntime:
             "can_create_trigger", "can_create_schemas", "can_create_in_task_schema",
         )):
             raise ValueError("MCP task observer requires read-only PostgreSQL access")
-        with self.pool.connection() as connection:
-            worker_table = connection.execute(
-                "SELECT pg_catalog.to_regclass(%s)::oid IS NOT NULL AS table_exists, "
-                "COALESCE(pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'INSERT') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'INSERT') OR "
-                "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'UPDATE') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'UPDATE') OR "
-                "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'DELETE') OR pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'TRUNCATE') OR "
-                "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'REFERENCES') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'REFERENCES') OR "
-                "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'TRIGGER'),false) AS can_write",
-                ("gregale_mcp_task_worker_handlers",) * 10,
-            ).fetchone()
-        if worker_table is None or not worker_table["table_exists"] or worker_table["can_write"]:
-            raise ValueError("MCP task observer requires read-only PostgreSQL access")
+        for table in ("gregale_mcp_task_worker_handlers", "gregale_mcp_task_owners"):
+            with self.pool.connection() as connection:
+                worker_table = connection.execute(
+                    "SELECT pg_catalog.to_regclass(%s)::oid IS NOT NULL AS table_exists, "
+                    "COALESCE(pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'INSERT') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'INSERT') OR "
+                    "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'UPDATE') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'UPDATE') OR "
+                    "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'DELETE') OR pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'TRUNCATE') OR "
+                    "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'REFERENCES') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'REFERENCES') OR "
+                    "pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass(%s)::oid,'TRIGGER'),false) AS can_write",
+                    (table,) * 10,
+                ).fetchone()
+            if worker_table is None or not worker_table["table_exists"] or worker_table["can_write"]:
+                raise ValueError("MCP task observer requires read-only PostgreSQL access")
 
     def _owner_hashes(self, identity):
         if not getattr(identity, "subject", ""):
-            principal = "open"
+            principals = ["open"]
         else:
-            principal = json.dumps(
-                [identity.resource, identity.subject, identity.client_id],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        principal_bytes = principal.encode("utf-8")
-        return [hmac.new(key["owner_hash_key"], principal_bytes, hashlib.sha256).digest() for key in self.owner_keys]
+            parts = [json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                     for value in (identity.resource, identity.subject, identity.client_id)]
+            # Also accept the malformed JSON identity written by older Go starters.
+            principals = ["[" + ",".join(parts) + "]", '["' + '\",\"'.join(parts) + '\"]']
+        return list(dict.fromkeys(hmac.new(key["owner_hash_key"], principal.encode("utf-8"), hashlib.sha256).digest()
+                for key in self.owner_keys for principal in principals))
 
     def _aad(self, task_id, field):
         return f"gregale-mcp-task:v1:{self.namespace}:{task_id}:{field}".encode("utf-8")
@@ -757,6 +774,8 @@ class DurableTaskRuntime:
         task_id = str(uuid.uuid4())
         encrypted = self._encrypt(args, task_id, "arguments", 256 * 1024)
         owners = self._owner_hashes(identity)
+        with self.pool.connection() as connection:
+            associate_owners(connection, self.namespace, owners)
         owner = owners[0]
         input_methods = _input_methods_for(client_capabilities)
         with self.pool.connection() as connection:
@@ -784,12 +803,14 @@ class DurableTaskRuntime:
         if not isinstance(task_id, str) or not TASK_ID_PATTERN.fullmatch(task_id):
             raise TaskNotFound()
         with self.pool.connection() as connection:
+            associate_owners(connection, self.namespace, self._owner_hashes(identity))
             row = connection.execute(
                 "SELECT task_id::text AS task_id,tool_name,handler_version,status,created_at,updated_at,expires_at,attempt_count,lease_token::text AS lease_token,cancel_requested_at,arguments_encrypted,result_encrypted,error_encrypted,input_state_encrypted,input_methods FROM gregale_mcp_tasks WHERE namespace=%s AND task_id=%s AND owner_hash=ANY(%s::bytea[]) AND expires_at>clock_timestamp()",
                 (self.namespace, task_id, self._owner_hashes(identity)),
             ).fetchone()
         if row is None:
             raise TaskNotFound()
+        task_id = row["task_id"]
         row["arguments"] = self._decrypt(row.pop("arguments_encrypted"), task_id, "arguments")
         row["input_methods"] = row.get("input_methods") or []
         encrypted_input_state = row.pop("input_state_encrypted")
@@ -841,6 +862,7 @@ class DurableTaskRuntime:
 
     def update_inputs(self, task_id, input_responses, identity, authenticator, scopes):
         task = self._read_task(task_id, identity)
+        task_id = task["task_id"]
         if not authenticator.can_access_tool(task["tool_name"], scopes):
             raise TaskNotFound()
         if not isinstance(input_responses, dict):
@@ -878,25 +900,67 @@ class DurableTaskRuntime:
                     (encrypted, pending, pending, self.namespace, task_id),
                 )
 
+    def _lock_execution(self, connection):
+        # All runtimes use the same lock for claims and lease renewals.
+        connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                           (f"gregale_mcp_tasks:execution:{self.namespace}",))
+
     def _claim(self):
         supported = sorted(self._task_executors)
         if not supported:
             return None
-        handler_filter = " OR ".join("(tool_name=%s AND handler_version=%s)" for _ in supported)
+        handler_filter = " OR ".join("(queued.tool_name=%s AND queued.handler_version=%s)" for _ in supported)
         handler_params = tuple(value for pair in supported for value in pair)
         with self.pool.connection() as connection:
             with connection.transaction():
+                self._lock_execution(connection)
+                # Lowering the budget settles retries, but resumes continue an
+                # existing attempt even when it started under a higher budget.
                 connection.execute(
-                    "UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'failed' END,updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE namespace=%s AND status='running' AND lease_expires_at<=clock_timestamp() AND attempt_count>=3",
-                    (self.namespace,),
+                    "UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'failed' END,"
+                    "updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,next_attempt_at=NULL,resume_pending=false "
+                    "WHERE namespace=%s AND attempt_count>=%s AND ((status='running' AND lease_expires_at<=clock_timestamp()) "
+                    "OR (status='queued' AND NOT resume_pending))",
+                    (self.namespace, self.execution.max_attempts),
                 )
-                row = connection.execute(
-                    f"WITH candidate AS (SELECT namespace,task_id FROM gregale_mcp_tasks WHERE namespace=%s AND expires_at>clock_timestamp() AND (attempt_count<3 OR (status='queued' AND resume_pending AND attempt_count=3)) AND ({handler_filter}) AND (status='queued' OR (status='running' AND lease_expires_at<=clock_timestamp())) ORDER BY created_at,task_id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE gregale_mcp_tasks AS task SET status='running',attempt_count=task.attempt_count+CASE WHEN task.resume_pending THEN 0 ELSE 1 END,resume_pending=false,lease_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() FROM candidate WHERE task.namespace=candidate.namespace AND task.task_id=candidate.task_id RETURNING task.task_id::text AS task_id,task.tool_name,task.handler_version,task.lease_token::text AS lease_token,task.arguments_encrypted,task.input_methods",
-                    (self.namespace, *handler_params),
-                ).fetchone()
-        if row is not None:
-            row["arguments"] = self._decrypt(row.pop("arguments_encrypted"), row["task_id"], "arguments")
-            row["input_methods"] = row.get("input_methods") or []
+                row = connection.execute(f"""
+                    WITH policy AS MATERIALIZED (
+                        SELECT %s::text AS namespace,%s::int AS max_attempts,
+                               %s::bigint AS max_running,%s::bigint AS max_per_owner
+                    ), candidate AS (
+                        SELECT queued.namespace,queued.task_id FROM gregale_mcp_tasks AS queued CROSS JOIN policy
+                        WHERE queued.namespace=policy.namespace AND queued.expires_at>clock_timestamp()
+                        AND (queued.attempt_count<policy.max_attempts OR
+                             (queued.status='queued' AND queued.resume_pending))
+                        AND ({handler_filter})
+                        AND ((queued.status='queued' AND (queued.next_attempt_at IS NULL OR queued.next_attempt_at<=clock_timestamp()))
+                             OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp()))
+                        AND (SELECT COUNT(*) FROM gregale_mcp_tasks AS live WHERE live.namespace=policy.namespace
+                             AND live.status='running' AND live.expires_at>clock_timestamp()
+                             AND live.lease_expires_at>clock_timestamp())<policy.max_running
+                        AND (SELECT COUNT(*) FROM gregale_mcp_tasks AS live WHERE live.namespace=policy.namespace
+                             AND COALESCE((SELECT owner_group FROM gregale_mcp_task_owners WHERE namespace=live.namespace AND owner_hash=live.owner_hash),''::bytea)=COALESCE((SELECT owner_group FROM gregale_mcp_task_owners WHERE namespace=queued.namespace AND owner_hash=queued.owner_hash),''::bytea) AND live.status='running'
+                             AND live.expires_at>clock_timestamp() AND live.lease_expires_at>clock_timestamp())<policy.max_per_owner
+                        ORDER BY queued.created_at,queued.task_id FOR UPDATE OF queued SKIP LOCKED LIMIT 1
+                    ) UPDATE gregale_mcp_tasks AS task SET status='running',
+                        attempt_count=task.attempt_count+CASE WHEN task.resume_pending THEN 0 ELSE 1 END,
+                        resume_pending=false,next_attempt_at=NULL,lease_token=gen_random_uuid(),
+                        lease_expires_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
+                    FROM candidate WHERE task.namespace=candidate.namespace AND task.task_id=candidate.task_id
+                    RETURNING task.task_id::text AS task_id,task.tool_name,task.handler_version,task.attempt_count,
+                              task.lease_token::text AS lease_token,task.arguments_encrypted,task.input_methods,
+                              task.result_encrypted,task.error_encrypted,task.input_state_encrypted
+                    """, (self.namespace, self.execution.max_attempts, self.execution.max_running,
+                          self.execution.max_running_per_owner, *handler_params)).fetchone()
+                if row is not None:
+                    row["arguments"] = self._decrypt(row.pop("arguments_encrypted"), row["task_id"], "arguments")
+                    for field, column in (("result", "result_encrypted"), ("error", "error_encrypted"), ("input-state", "input_state_encrypted")):
+                        payload = row.pop(column)
+                        if payload is not None:
+                            self._decrypt_payload(payload, row["task_id"], field)
+                    if not isinstance(row["arguments"], dict):
+                        raise ValueError("MCP task arguments must be an object")
+                    row["input_methods"] = row.get("input_methods") or []
         return row
 
     def _request_inputs(self, task, requests):
@@ -919,7 +983,7 @@ class DurableTaskRuntime:
         with self.pool.connection() as connection:
             with connection.transaction():
                 row = connection.execute(
-                    "SELECT input_state_encrypted,cancel_requested_at FROM gregale_mcp_tasks WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' FOR UPDATE",
+                    "SELECT input_state_encrypted,cancel_requested_at FROM gregale_mcp_tasks WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' AND lease_expires_at>clock_timestamp() AND expires_at>clock_timestamp() FOR UPDATE",
                     (self.namespace, task["task_id"], task["lease_token"]),
                 ).fetchone()
                 if row is None:
@@ -941,32 +1005,53 @@ class DurableTaskRuntime:
                 ready = len(responses) == len(requests)
                 if not ready:
                     encrypted = self._encrypt(state, task["task_id"], "input-state", MAX_INPUT_STATE_BYTES)
-                    connection.execute(
-                        "UPDATE gregale_mcp_tasks SET status='input_required',input_state_encrypted=%s,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running'",
+                    updated = connection.execute(
+                        "UPDATE gregale_mcp_tasks SET status='input_required',input_state_encrypted=%s,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' AND lease_expires_at>clock_timestamp() AND expires_at>clock_timestamp()",
                         (encrypted, self.namespace, task["task_id"], task["lease_token"]),
                     )
+                    if updated.rowcount != 1:
+                        raise TaskInputLeaseLost()
                 return responses, ready
 
     def _heartbeat(self, task_id, lease_token):
         with self.pool.connection() as connection:
-            row = connection.execute(
-                "UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()+interval '30 seconds' WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' RETURNING cancel_requested_at IS NOT NULL AS cancelled",
-                (self.namespace, task_id, lease_token),
-            ).fetchone()
-        return row
+            with connection.transaction():
+                self._lock_execution(connection)
+                return connection.execute(
+                    "UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()+interval '30 seconds' "
+                    "WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' "
+                    "AND lease_expires_at>clock_timestamp() AND expires_at>clock_timestamp() "
+                    "RETURNING cancel_requested_at IS NOT NULL AS cancelled",
+                    (self.namespace, task_id, lease_token),
+                ).fetchone()
 
-    def _finish(self, task, status, value=None):
+    def _finish(self, task, status, value=None, retryable=False):
+        lease_args = (self.namespace, task["task_id"], task["lease_token"])
         if status == "completed":
             encrypted = self._encrypt(value, task["task_id"], "result", 1024 * 1024)
-            sql = "UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NULL THEN 'completed' ELSE 'cancelled' END,result_encrypted=CASE WHEN cancel_requested_at IS NULL THEN %s ELSE NULL END,error_encrypted=NULL,updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running'"
-            args = (encrypted, self.namespace, task["task_id"], task["lease_token"])
+            sql = TASK_LEASE_INSTANT_SQL + "UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NULL THEN 'completed' ELSE 'cancelled' END,result_encrypted=CASE WHEN cancel_requested_at IS NULL THEN %s ELSE NULL END,error_encrypted=NULL,updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL FROM instant WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' AND lease_expires_at>instant.now AND expires_at>instant.now"
+            args = lease_args + (encrypted,) + lease_args
         elif status == "cancelled":
-            sql = "UPDATE gregale_mcp_tasks SET status='cancelled',result_encrypted=NULL,error_encrypted=NULL,updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running'"
-            args = (self.namespace, task["task_id"], task["lease_token"])
+            sql = TASK_LEASE_INSTANT_SQL + "UPDATE gregale_mcp_tasks SET status='cancelled',result_encrypted=NULL,error_encrypted=NULL,updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL FROM instant WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' AND lease_expires_at>instant.now AND expires_at>instant.now"
+            args = lease_args + lease_args
         else:
             encrypted = self._encrypt({"code": -32603, "message": "Task execution failed"}, task["task_id"], "error", 1024 * 1024)
-            sql = "UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,error_encrypted=CASE WHEN cancel_requested_at IS NULL THEN %s ELSE NULL END,result_encrypted=NULL,updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running'"
-            args = (encrypted, self.namespace, task["task_id"], task["lease_token"])
+            delay_ms = self.execution.retry_delay_ms(task.get("attempt_count", 1))
+            sql = TASK_LEASE_INSTANT_SQL + """, policy AS MATERIALIZED (
+                SELECT %s::bytea AS error,%s::boolean AS retryable,%s::int AS max_attempts,
+                       %s::bigint*interval '1 millisecond' AS delay
+                ) UPDATE gregale_mcp_tasks SET
+                    status=CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
+                        WHEN policy.retryable AND attempt_count<policy.max_attempts AND instant.now+policy.delay<expires_at
+                        THEN 'queued' ELSE 'failed' END,
+                    next_attempt_at=CASE WHEN cancel_requested_at IS NULL AND policy.retryable
+                        AND attempt_count<policy.max_attempts AND instant.now+policy.delay<expires_at
+                        THEN instant.now+policy.delay ELSE NULL END,
+                    error_encrypted=CASE WHEN cancel_requested_at IS NULL THEN policy.error ELSE NULL END,
+                    result_encrypted=NULL,updated_at=instant.now,resume_pending=false,lease_token=NULL,lease_expires_at=NULL
+                FROM policy,instant WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running'
+                    AND lease_expires_at>instant.now AND expires_at>instant.now"""
+            args = lease_args + (encrypted, retryable, self.execution.max_attempts, delay_ms) + lease_args
         with self.pool.connection() as connection:
             connection.execute(sql, args)
 
@@ -1021,11 +1106,12 @@ class DurableTaskRuntime:
         except TaskInputCancelled:
             if not lease_lost.is_set() and not self._drain_expired.is_set():
                 self._finish(task, "cancelled")
-        except Exception:
+        except Exception as error:
             if lease_lost.is_set() or self._drain_expired.is_set():
                 return
             try:
-                self._finish(task, "cancelled" if cancelled.is_set() else "failed")
+                self._finish(task, "cancelled" if cancelled.is_set() else "failed",
+                             retryable=isinstance(error, RetryableTaskError))
             except Exception:
                 pass
         finally:
@@ -1158,7 +1244,7 @@ class DurableTaskRuntime:
             try:
                 if time.monotonic() - last_cleanup >= 60:
                     with self.pool.connection() as connection:
-                        connection.execute("DELETE FROM gregale_mcp_tasks WHERE namespace=%s AND task_id IN (SELECT task_id FROM gregale_mcp_tasks WHERE namespace=%s AND expires_at<=clock_timestamp() ORDER BY expires_at LIMIT 250)", (self.namespace, self.namespace))
+                        cleanup_expired_tasks(connection, self.namespace)
                     last_cleanup = time.monotonic()
                 while not self._stopping.is_set():
                     with self._drain_lock:
@@ -1267,10 +1353,11 @@ def migrate_task_schema(pool):
     statements = [
         CREATE_SCHEMA,
         CREATE_WORKER_HANDLERS_SCHEMA,
+        OWNER_SCHEMA,
         "ALTER TABLE gregale_mcp_task_worker_handlers ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT ''",
         "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx ON gregale_mcp_task_worker_handlers(namespace,tool_name,handler_version,heartbeat_at DESC)",
         "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx ON gregale_mcp_task_worker_handlers(namespace,heartbeat_at)",
-        "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS input_state_encrypted bytea, ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false",
+        "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS input_state_encrypted bytea, ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz",
         "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check",
         "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))",
         "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_input_state_check",
@@ -1312,9 +1399,10 @@ def check_task_schema(pool):
         row = connection.execute("SELECT version FROM gregale_mcp_task_starter_schema WHERE id=1").fetchone()
         if row is None or row["version"] != 1:
             raise ValueError("unsupported MCP Task starter schema version")
+        connection.execute("SELECT namespace,owner_hash,owner_group FROM gregale_mcp_task_owners LIMIT 0")
         connection.execute("""SELECT namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,
             result_encrypted,error_encrypted,input_state_encrypted,input_methods,created_at,updated_at,
-            expires_at,attempt_count,resume_pending,lease_token,lease_expires_at,cancel_requested_at
+            expires_at,attempt_count,resume_pending,next_attempt_at,lease_token,lease_expires_at,cancel_requested_at
             FROM gregale_mcp_tasks LIMIT 0""")
         connection.execute("SELECT namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at FROM gregale_mcp_task_worker_handlers LIMIT 0")
         row = connection.execute("""SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger

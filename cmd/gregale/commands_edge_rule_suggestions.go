@@ -15,10 +15,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleSuggestUsage = "usage: gregale edge-rules suggest [--app <slug>]"
+const edgeRuleSuggestUsage = "usage: gregale edge rule suggest [--app <slug>] [--rate-limits [--range <window>] [--dry-run --candidate-rps <n> [--candidate-burst <n>]]]"
 
-// cmdEdgeRulesSuggest lists suggested protection recipes for an app.
+// cmdEdgeRulesSuggest lists suggested protection recipes for an app. With
+// --rate-limits it lists per-route rate limits instead, as
+// `throttle-suggestions` does (ADR-20261026145832: one suggest command).
 func cmdEdgeRulesSuggest(args []string) int {
+	if rest, ok := takeBoolFlag(args, "rate-limits"); ok {
+		app, rest, err := takeAppTarget(rest)
+		if err != nil {
+			return printErr("Could not resolve app slug", fmt.Errorf("pass --app <slug> or run inside a linked project: %w", err))
+		}
+		return cmdThrottleSuggestions(append([]string{app}, rest...))
+	}
 	fs := newFlagSet("edge-rules suggest", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug (defaults to linked project context)")
 	if err := fs.Parse(args); err != nil {
@@ -46,19 +55,21 @@ func cmdEdgeRulesSuggest(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
+	rateLimits := fmt.Sprintf("Per-route rate limits: gregale edge rule suggest --app %s --rate-limits\n", slug)
 	if len(out.Suggestions) == 0 {
-		_, _ = fmt.Fprintf(osStdout, "No suggested protections for %s from the last %s of traffic.\n  Browse every recipe: gregale edge-rules recipes\n", slug, out.Window)
+		_, _ = fmt.Fprintf(osStdout, "No suggested protections for %s from the last %s of traffic.\n  Browse every recipe: gregale edge rule recipes\n%s", slug, out.Window, rateLimits)
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Suggested protections for %s, from the last %s of traffic:\n\n", slug, out.Window)
 	for _, sg := range out.Suggestions {
-		_, _ = fmt.Fprintf(osStdout, "%s — %s\n  %s\n  Add in log mode: %s\n", sg.Recipe, sg.Title, sg.Reason, edgeRuleSuggestCommand(slug, sg))
+		_, _ = fmt.Fprintf(osStdout, "%s — %s\n  %s\n  Add in log mode: %s\n", sg.Recipe, sg.Title, terminalSafe(sg.Reason), terminalSafe(edgeRuleSuggestCommand(slug, sg)))
 		if alt := sg.Alternative; alt != nil {
 			_, _ = fmt.Fprintf(osStdout, "  Or %s: %s\n", strings.ToLower(alt.Title[:1])+alt.Title[1:],
-				edgeRuleSuggestCommand(slug, api.EdgeRuleRecipeSuggestion{Recipe: alt.Recipe, Params: alt.Params}))
+				terminalSafe(edgeRuleSuggestCommand(slug, api.EdgeRuleRecipeSuggestion{Recipe: alt.Recipe, Params: alt.Params})))
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
+	_, _ = fmt.Fprint(osStdout, rateLimits)
 	return 0
 }
 
@@ -66,7 +77,7 @@ func cmdEdgeRulesSuggest(args []string) int {
 // parameters in name order and a placeholder for each required one the
 // suggestion cannot fill.
 func edgeRuleSuggestCommand(slug string, sg api.EdgeRuleRecipeSuggestion) string {
-	parts := []string{"gregale edge-rules recipe", sg.Recipe, "--app", slug}
+	parts := []string{"gregale edge rule recipe apply", sg.Recipe, "--app", slug}
 	names := make([]string, 0, len(sg.Params))
 	for name := range sg.Params {
 		names = append(names, name)

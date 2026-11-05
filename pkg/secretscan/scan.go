@@ -68,6 +68,20 @@ func (s Severity) String() string {
 	}
 }
 
+// Blocking returns the findings that refuse a deploy: High severity, the
+// known credential formats and private keys. Medium findings are heuristics
+// (high_entropy) or sandbox credentials (stripe_test); servers record them
+// as advisory instead of refusing the source (ADR-20261026152731).
+func Blocking(findings []Finding) []Finding {
+	var out []Finding
+	for _, f := range findings {
+		if f.Severity == SeverityHigh {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // Pattern is one provider regex + an optional key-name hint. KeyHint is the
 // case-insensitive substring the caller's KEY must contain for the regex to
 // fire. Empty KeyHint means "match on value only" — used by private_key_block

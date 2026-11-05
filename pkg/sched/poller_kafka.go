@@ -6,16 +6,23 @@
 // is a separate explicit CommitMessages call) and hands them to
 // the dispatch tick as SourceRecord slices.
 //
-// Ack: CommitMessages on the Reader. After the dispatch tick
-// sees the function return 2xx and ReportBatchItemFailures is
-// empty, it calls poller.Ack(ctx, t, ids) which calls
-// Reader.CommitMessages with the matching Message objects.
+// Ack settles a record; a terminal Nack (attempts exhausted, a poison
+// record under the "commit" strategy) settles it too. A consumer group
+// commits per partition, and committing an offset commits every offset
+// before it, so a partition commits only settled records below its
+// lowest record still open.
 //
-// Nack: Reader.SetOffset(msg.Offset) — rewinds the consumer to
-// re-read the message. We don't try to map per-message
-// visibility windows in Kafka; the broker doesn't have that
-// primitive. poison_record becomes a Skip+Commit so the same
-// offset doesn't redeliver.
+// A retryable Nack keeps the record and hands it back on the next Poll.
+// A consumer-group Reader cannot SetOffset, so rewinding did nothing and
+// the next commit skipped the failed record. The record stays open, so
+// nothing past it commits and a restart redelivers it from the broker.
+// NackUntil keeps a cooling retry back until it is due, and Defer hands a
+// record the batch left out back first in the next Poll.
+//
+// Record IDs are topic/partition/offset@timestamp, the same on every
+// redelivery, so attempts carry over; the topic and the record timestamp
+// keep a new topic or a recreated one from reusing an old record's ID
+// (ADR-20261101093512). Records stored before that used partition-offset.
 //
 // Connection sharing: one Reader per trigger (NOT one Reader
 // per partition — segmentio/kafka-go handles partition assignment
@@ -49,17 +56,15 @@ import (
 
 // kafkaBrokerOp is the minimal broker-side surface the poller's
 // Ack/Nack methods need. Defined as an interface so unit tests
-// can drive the poison-record branch without a real
+// can drive fetch, retry and commit without a real
 // segmentio/kafka-go Reader — the test injects a stub that
-// records CommitMessages vs SetOffset and the test asserts on
-// the recorded calls.
+// records the commits and the test asserts on them.
 //
 // Production wires the concrete *kafka.Reader (which satisfies
 // every method below) in newKafkaPoller.
 type kafkaBrokerOp interface {
 	FetchMessage(ctx context.Context) (kafka.Message, error)
 	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
-	SetOffset(offset int64) error
 	Stats() kafka.ReaderStats
 	Close() error
 }
@@ -67,18 +72,49 @@ type kafkaBrokerOp interface {
 // kafkaPoller wraps a segmentio/kafka-go Reader. One per
 // kind=kafka trigger.
 //
-// inFlight holds Message objects keyed by offset-as-string so
-// Ack/Nack can find them — segmentio/kafka-go's CommitMessages
-// takes Message values, not offsets.
+// inFlight holds the records handed to the dispatcher, by record ID.
+// retry holds records a retryable Nack or Defer keeps for a later Poll;
+// heldUntil holds back the ones NackUntil scheduled. open holds, per
+// partition, every offset fetched and not yet settled; settled holds
+// settled records waiting for the offsets below them.
 type kafkaPoller struct {
 	reader   kafkaBrokerOp
 	brokers  []string
 	topic    string
 	groupID  string
 	batchMax int
+	// lag reads the group's committed lag; group keeps the consumer-group
+	// errors kafka-go logs (kafka_broker_health.go). Either may be nil.
+	lag   *kafkaLagReader
+	group *kafkaGroupHealth
 
-	mu       sync.Mutex
-	inFlight map[string]kafka.Message
+	mu        sync.Mutex
+	inFlight  map[string]kafka.Message
+	retry     []kafka.Message
+	heldUntil map[string]time.Time
+	open      map[int]map[int64]bool
+	settled   map[int][]kafka.Message
+}
+
+// kafkaRecordID identifies a record across redeliveries: its topic,
+// partition and offset, plus the record timestamp as the topic's
+// generation, so a recreated topic whose offsets restart does not reuse an
+// earlier record's ID (ADR-20261101093512). A record without a timestamp
+// has none.
+func kafkaRecordID(msg kafka.Message) string {
+	id := fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset)
+	if !msg.Time.IsZero() {
+		id += fmt.Sprintf("@%d", msg.Time.UnixMilli())
+	}
+	return id
+}
+
+// kafkaLegacyRecordIDs are the IDs earlier releases stored msg under: the
+// record ID (partition-offset) and, for work-bound triggers, the stable ID
+// (topic/partition/offset).
+func kafkaLegacyRecordIDs(msg kafka.Message) []string {
+	return []string{fmt.Sprintf("%d-%d", msg.Partition, msg.Offset),
+		fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset)}
 }
 
 // kafkaTLSConfig mirrors pkg/gregalemanifest.TLSConfig for the
@@ -298,6 +334,7 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	group := newKafkaGroupHealth()
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        cfg.Brokers,
 		GroupID:        cfg.Group,
@@ -308,6 +345,7 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 		MaxWait:        250 * time.Millisecond,
 		CommitInterval: 0, // explicit commits only
 		Dialer:         dialer,
+		ErrorLogger:    group.logger(),
 	})
 	return &kafkaPoller{
 		reader:   reader,
@@ -315,7 +353,11 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 		topic:    cfg.Topic,
 		groupID:  cfg.Group,
 		batchMax: 100,
+		lag:      newKafkaLagReader(cfg, dialer),
+		group:    group,
 		inFlight: map[string]kafka.Message{},
+		open:     map[int]map[int64]bool{},
+		settled:  map[int][]kafka.Message{},
 	}, nil
 }
 
@@ -337,7 +379,23 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		limit = int(t.BatchSizeMax)
 	}
 	out := make([]SourceRecord, 0, limit)
-	for i := 0; i < limit; i++ {
+	// Records a retryable Nack or Defer kept come back first, once due.
+	k.mu.Lock()
+	now := time.Now()
+	held := k.retry[:0]
+	for _, msg := range k.retry {
+		id := kafkaRecordID(msg)
+		if len(out) >= limit || now.Before(k.heldUntil[id]) {
+			held = append(held, msg)
+			continue
+		}
+		delete(k.heldUntil, id)
+		out = append(out, kafkaSourceRecord(msg))
+		k.inFlight[id] = msg
+	}
+	k.retry = held
+	k.mu.Unlock()
+	for len(out) < limit {
 		// Per-fetch context: short enough that an idle trigger
 		// doesn't block the dispatcher, long enough to coalesce.
 		fetchCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
@@ -357,140 +415,179 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			// Anything else is a broker error — surface so the
 			// dispatcher can mark the records as
 			// dead_letter(reason='broker_error').
+			if len(out) > 0 {
+				// Records already taken from the retry queue still go out;
+				// the broker error shows on the next poll.
+				break
+			}
 			return PollResult{Error: fmt.Errorf("kafka_poller: fetch: %w", err)}
 		}
-		// Headers: kafka-go's Header is [{Key, Value}]; flatten
-		// into a map[string]string. Duplicate keys are kept-last
-		// (matches the wire's "last wins" semantics).
-		hdrs := map[string]string{}
-		for _, h := range msg.Headers {
-			hdrs[h.Key] = string(h.Value)
+		out = append(out, kafkaSourceRecord(msg))
+		k.mu.Lock()
+		k.inFlight[kafkaRecordID(msg)] = msg
+		if k.open == nil {
+			k.open = map[int]map[int64]bool{}
 		}
-		meta := map[string]any{
+		if k.open[msg.Partition] == nil {
+			k.open[msg.Partition] = map[int64]bool{}
+		}
+		k.open[msg.Partition][msg.Offset] = true
+		k.mu.Unlock()
+	}
+	return k.pollHealth(PollResult{Records: out})
+}
+
+func kafkaSourceRecord(msg kafka.Message) SourceRecord {
+	// Headers: kafka-go's Header is [{Key, Value}]; flatten into a
+	// map[string]string. Duplicate keys are kept-last (matches the
+	// wire's "last wins" semantics).
+	hdrs := map[string]string{}
+	for _, h := range msg.Headers {
+		hdrs[h.Key] = string(h.Value)
+	}
+	id := kafkaRecordID(msg)
+	return SourceRecord{
+		ItemIdentifier:    id,
+		StableIdentifier:  id,
+		LegacyIdentifiers: kafkaLegacyRecordIDs(msg),
+		Payload:           msg.Value,
+		Headers:           hdrs,
+		Metadata: map[string]any{
 			"topic":           msg.Topic,
 			"partition":       msg.Partition,
 			"offset":          msg.Offset,
 			"high_water_mark": msg.HighWaterMark,
-		}
-		seqStr := fmt.Sprintf("%d-%d-%d", msg.Partition, msg.Offset, msg.HighWaterMark)
-		out = append(out, SourceRecord{
-			ItemIdentifier:   seqStr,
-			StableIdentifier: fmt.Sprintf("%s/%d/%d", msg.Topic, msg.Partition, msg.Offset),
-			Payload:          msg.Value,
-			Headers:          hdrs,
-			Metadata:         meta,
-			ReceivedAt:       msg.Time,
-		})
-		// Stash the message so Ack can find it. The map key is
-		// partition+offset+highWaterMark — unique within a topic
-		// (kafka guarantees offset uniqueness per partition).
-		k.mu.Lock()
-		k.inFlight[seqStr] = msg
-		k.mu.Unlock()
+		},
+		ReceivedAt: msg.Time,
 	}
-	if out == nil {
-		out = []SourceRecord{}
-	}
-	return PollResult{Records: out}
 }
 
-// Ack commits each in-flight message by offset-key. CommitMessages
-// advances the consumer-group offset server-side; on next poll we
-// won't see these again.
+// Ack settles each record; settled records commit once every record
+// below them in their partition has settled too.
 func (k *kafkaPoller) Ack(commitCtx context.Context, _ sqlc.Trigger, ids []string) error {
 	k.mu.Lock()
-	msgs := make([]kafka.Message, 0, len(ids))
+	defer k.mu.Unlock()
 	for _, id := range ids {
-		if m, ok := k.inFlight[id]; ok {
-			msgs = append(msgs, m)
+		if msg, ok := k.inFlight[id]; ok {
 			delete(k.inFlight, id)
+			k.settleLocked(msg)
 		}
 	}
-	k.mu.Unlock()
-	if len(msgs) == 0 {
-		return nil
-	}
-	if err := k.reader.CommitMessages(commitCtx, msgs...); err != nil {
-		return fmt.Errorf("kafka_poller: commit: %w", err)
-	}
-	return nil
+	return k.commitSettledLocked(commitCtx)
 }
 
-// Nack rewinds the consumer to re-fetch the offset. Kafka
-// doesn't have a native "delay this offset" primitive, so we
-// rewind to msg.Offset — next FetchMessage will redeliver.
+// Nack decides each record's fate by reason:
 //
-// poison_record is different: we don't want infinite redelivery
-// for a poison pill. The dispatch tick has already minted a
-// dead_letter row (commit #15 audit + DLQ table); what the
-// broker side does depends on the trigger's broker_poison_strategy
-// (audit #10, migration 00275):
-//
-//   - "commit" (default) — call CommitMessages so the broker
-//     offset advances. The broker offset and the DB
-//     dead-letter state are permanently out of sync for that
-//     offset; operator retry works via the dashboard's
-//     "re-drive from DLQ" action.
-//   - "seek-to-offset" — call SetOffset(msg.Offset) so the next
-//     FetchMessage re-fetches the same message. Operator retry
-//     combines a trigger re-enable with a dashboard "reset
-//     offset" action that re-fetches the dead-lettered payload.
-//
-// Non-poison failures always rewind via SetOffset regardless of
-// broker_poison_strategy — the strategy only governs the
-// poison-specific terminal behaviour.
+//   - max_attempts: terminal; the record settles, so it commits in turn.
+//   - poison_record: the trigger's broker_poison_strategy decides.
+//     "commit" (default, and the empty value) settles it; the dead-letter
+//     row keeps the payload. "seek-to-offset" keeps it at the head of the
+//     partition: it is handed back on every Poll and nothing past it
+//     commits until an operator acts.
+//   - anything else (a retryable failure): the record is kept and handed
+//     back on the next Poll; it stays open, so nothing past it commits.
 func (k *kafkaPoller) Nack(commitCtx context.Context, t sqlc.Trigger, ids []string, reason string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	var firstErr error
 	for _, id := range ids {
 		msg, ok := k.inFlight[id]
 		if !ok {
 			continue
 		}
-		var err error
-		switch reason {
-		case triggerReasonMaxAttempts:
-			// Retry exhaustion is terminal regardless of the poison
-			// strategy: committing advances the broker and prevents a
-			// configured seek-to-offset policy from redelivering forever.
-			err = k.reader.CommitMessages(commitCtx, msg)
-		case triggerReasonPoisonRecord:
-			// Audit #10: the strategy column gates the
-			// poison-specific terminal broker op. The empty
-			// default ("") is treated as "commit" — matches the
-			// pre-migration behaviour byte-for-byte.
-			strategy := t.BrokerPoisonStrategy
-			if strategy == "" {
-				strategy = "commit"
-			}
-			switch strategy {
-			case "seek-to-offset":
-				// Rewind the broker to the failed offset so the
-				// next FetchMessage re-fetches it. SetOffset
-				// advances the reader's local position; no
-				// commit-side bookkeeping is touched.
-				err = k.reader.SetOffset(msg.Offset)
-			default:
-				// "commit" or any unknown value — fall
-				// through to the previous CommitMessages
-				// path. An unknown value is rejected by the
-				// SQL CHECK on insert, so by the time we see
-				// it here it's a deliberate "commit".
-				err = k.reader.CommitMessages(commitCtx, msg)
-			}
+		delete(k.inFlight, id)
+		switch {
+		case reason == triggerReasonMaxAttempts:
+			k.settleLocked(msg)
+		case reason == triggerReasonPoisonRecord && t.BrokerPoisonStrategy != "seek-to-offset":
+			k.settleLocked(msg)
 		default:
-			// Rewind to the failed offset. segmentio/kafka-go's
-			// Reader tracks its own offset; SetOffset rewinds.
-			// Next FetchMessage returns this message again.
-			err = k.reader.SetOffset(msg.Offset)
+			k.retry = append(k.retry, msg)
 		}
-		if err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("kafka_poller: nack %s: %w", id, err)
+	}
+	return k.commitSettledLocked(commitCtx)
+}
+
+// Defer hands records the batch left out back first in the next Poll,
+// in their order; they stay open, so nothing past them commits.
+func (k *kafkaPoller) Defer(_ context.Context, _ sqlc.Trigger, ids []string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	back := make([]kafka.Message, 0, len(ids)+len(k.retry))
+	for _, id := range ids {
+		if msg, ok := k.inFlight[id]; ok {
+			delete(k.inFlight, id)
+			back = append(back, msg)
+		}
+	}
+	k.retry = append(back, k.retry...)
+	return nil
+}
+
+// NackUntil keeps retried records back until their retry is due
+// (until[i] for ids[i]) instead of handing them back on every Poll while
+// they cool. They stay open, so nothing past them commits.
+func (k *kafkaPoller) NackUntil(_ context.Context, _ sqlc.Trigger, ids []string, until []time.Time) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.heldUntil == nil {
+		k.heldUntil = map[string]time.Time{}
+	}
+	for i, id := range ids {
+		msg, ok := k.inFlight[id]
+		if !ok {
+			continue
 		}
 		delete(k.inFlight, id)
+		k.heldUntil[id] = until[i]
+		k.retry = append(k.retry, msg)
 	}
-	return firstErr
+	return nil
+}
+
+// settleLocked marks msg done. Caller holds k.mu.
+func (k *kafkaPoller) settleLocked(msg kafka.Message) {
+	delete(k.heldUntil, kafkaRecordID(msg))
+	if open := k.open[msg.Partition]; open != nil {
+		delete(open, msg.Offset)
+	}
+	if k.settled == nil {
+		k.settled = map[int][]kafka.Message{}
+	}
+	k.settled[msg.Partition] = append(k.settled[msg.Partition], msg)
+}
+
+// commitSettledLocked commits, per partition, the settled records below
+// the lowest offset still open. A failed commit keeps them for the next
+// call. Caller holds k.mu.
+func (k *kafkaPoller) commitSettledLocked(ctx context.Context) error {
+	var commit []kafka.Message
+	for partition, done := range k.settled {
+		floor, bounded := int64(0), false
+		for offset := range k.open[partition] {
+			if !bounded || offset < floor {
+				floor, bounded = offset, true
+			}
+		}
+		keep := done[:0]
+		for _, msg := range done {
+			if bounded && msg.Offset >= floor {
+				keep = append(keep, msg)
+				continue
+			}
+			commit = append(commit, msg)
+		}
+		k.settled[partition] = keep
+	}
+	if len(commit) == 0 {
+		return nil
+	}
+	if err := k.reader.CommitMessages(ctx, commit...); err != nil {
+		for _, msg := range commit {
+			k.settled[msg.Partition] = append(k.settled[msg.Partition], msg)
+		}
+		return fmt.Errorf("kafka_poller: commit: %w", err)
+	}
+	return nil
 }
 
 // Close closes the Reader. After Close, the Reader can't be
@@ -502,20 +599,8 @@ func (k *kafkaPoller) Close() error {
 	for kk := range k.inFlight {
 		delete(k.inFlight, kk)
 	}
+	k.lag.close()
 	return k.reader.Close()
-}
-
-// BrokerStats returns consumer lag and queue depth from segmentio/kafka-go.
-func (k *kafkaPoller) BrokerStats(_ context.Context, _ sqlc.Trigger) BrokerStats {
-	if k == nil || k.reader == nil {
-		return BrokerStats{Available: false}
-	}
-	stats := k.reader.Stats()
-	return BrokerStats{
-		Lag:       stats.Lag,
-		Depth:     stats.QueueLength,
-		Available: true,
-	}
 }
 
 func init() {

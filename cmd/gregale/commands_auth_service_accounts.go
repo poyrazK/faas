@@ -88,7 +88,7 @@ func cmdAuthServiceAccounts(args []string) int {
 		return printErr("Invalid service account", errors.New("add needs --org"))
 	}
 	if args[0] == "remove" {
-		if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+		if code := requireConfirmationFlag(*yes, "--yes", "service account removal"); code != 0 {
 			return code
 		}
 		if !*yes && *keyStdin {
@@ -101,7 +101,7 @@ func cmdAuthServiceAccounts(args []string) int {
 	}
 	if args[0] == "remove" && !*yes {
 		_, _ = fmt.Fprintf(osStderr, "About to remove service account %s of %s with its secrets; its tokens stop working at once.\n", fs.Arg(1), fs.Arg(0))
-		if !requireTyped("remove service account") {
+		if !requireTypedOr("remove service account", "--yes") {
 			return 1
 		}
 	}

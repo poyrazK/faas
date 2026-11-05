@@ -1,0 +1,223 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
+import type { ProfilingConfig } from './ProfilingConfig.js';
+import type { ResourceProfile } from './ResourceProfile.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
+import type { WorkerScaling } from './WorkerScaling.js';
+import type { WorkloadPort } from './WorkloadPort.js';
+/**
+ * App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout, and optional manifest.
+ */
+export type CreateAppRequest = {
+  profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
+  /**
+   * The tag- prefix is reserved for stable deployment-alias hostnames.
+   */
+  slug: string;
+  type?: 'app' | 'function';
+  /**
+   * Ingress exposure for the new app. Choose internal to make it service-only; available on every plan.
+   */
+  visibility?: 'public' | 'internal';
+  /**
+   * Standalone target-side service allowlist. Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated.
+   */
+  allowed_service_callers?: Array<string>;
+  /**
+   * Optional target-side per-caller method/path grants. When present, callers absent from this map are denied; if allowed_service_callers is also set, both policies must allow the caller.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
+  /**
+   * Standalone outbound target app slugs. Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
+   */
+  service_binding_targets?: Array<string>;
+  /**
+   * Optional timeout and retry overrides for service_binding_targets.
+   */
+  service_reliability?: ServiceReliabilityPolicies;
+  /**
+   * Standalone caller authorization. Omit for legacy same-account reachability; declared permits only service_binding_targets.
+   */
+  service_binding_policy?: 'account' | 'declared';
+  /**
+   * Standalone canonical URL scheme. Omit to preserve the legacy HTTP contract; choose https to make GREGALE_SERVICE_<NAME>_URL use https://<service>.internal.
+   */
+  service_binding_transport?: ServiceBindingTransport;
+  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
+  ram_mb?: number;
+  /**
+   * Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default.
+   */
+  vcpu?: number;
+  /**
+   * Sustained CPU allowance per instance. Omit for 1000 millicores.
+   */
+  cpu_millicores?: 250 | 500 | 1000;
+  /**
+   * Named memory/CPU profile. When set, ram_mb and cpu_millicores are filled from the profile; explicit values must agree with it.
+   */
+  resource_profile?: ResourceProfile;
+  max_concurrency?: number;
+  idle_timeout_s?: number;
+  /**
+   * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform ceiling is 30 seconds.
+   */
+  request_timeout_s?: number;
+  /**
+   * Requests one Node or Python function worker may serve at once. Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
+   */
+  function_concurrency?: number;
+  /**
+   * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
+   */
+  execution_mode?: 'request' | 'service' | 'worker' | 'job';
+  /**
+   * Restart behavior for the workload. Omitted uses the execution-mode default.
+   */
+  restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  after_restore?: AfterRestoreHook;
+  before_checkpoint?: BeforeCheckpointHook;
+  /**
+   * When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
+  /**
+   * Upper bound on time-to-ready in seconds. 0 uses the plan default.
+   */
+  startup_deadline_s?: number;
+  /**
+   * Upper bound on worker or service shutdown draining time in seconds before SIGKILL. 0 uses the mode/plan default.
+   */
+  stop_grace_period_s?: number;
+  /**
+   * Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omitted defaults to SIGTERM.
+   */
+  stop_signal?: string;
+  /**
+   * Maximum consecutive restart attempts. 0 uses the plan default.
+   */
+  max_retries?: number;
+  /**
+   * Initial app-level invocation retry default; queue binding and per-invocation policies may override it.
+   */
+  retry_policy?: RetryPolicyDTO;
+  service_replicas?: ServiceReplicas;
+  worker_replicas?: WorkerScaling;
+  /**
+   * App-owned listener declarations. Named TCP listeners are publicly routable at `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only.
+   */
+  ports?: Array<WorkloadPort>;
+  /**
+   * Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB.
+   */
+  favicon?: string | null;
+  /**
+   * Create-time per-app robots.txt body; empty uses the platform allow-all default.
+   */
+  robots_txt?: string | null;
+  /**
+   * Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer.
+   */
+  head_wakes?: boolean;
+  /**
+   * Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the wake.
+   */
+  crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
+  /**
+   * Monitor-facing health path. Empty/omitted uses /healthz.
+   */
+  health_path?: string;
+  /**
+   * Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer.
+   */
+  health_path_wakes?: boolean;
+  /**
+   * Enable best-effort cookie-based routing to the same running instance. Omitted uses false.
+   */
+  session_affinity?: boolean;
+  /**
+   * Use a stable, non-secret browser cookie for rollout affinity. Omit to disable.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
+   * Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning.
+   */
+  revision_pin_ttl_seconds?: number;
+  /**
+   * Default rollout for production releases that name no rollout policy. Omit for safe.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Up to 3 concrete GET paths the default rollout probe checks instead of /.
+   */
+  release_probe_paths?: Array<string>;
+  /**
+   * Per-app streaming flag. Omitted at create-time → the API applies the plan default.
+   */
+  streaming_enabled?: boolean;
+  /**
+   * Per-app raw-bytes Upgrade bridge flag. Omitted → the API applies the plan default; PATCH-true on Free is rejected by the API with 403 plan_websocket_not_allowed.
+   */
+  websocket_enabled?: boolean;
+  /**
+   * Per-app per-route observability flag. Omitted → the API applies the plan default (Free = false; Hobby/Pro/Scale = true). PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed.
+   */
+  route_metrics_enabled?: boolean;
+  /**
+   * Coarse per-app maintenance toggle. Omitted → the API applies the default (false). Free-tier allowed; no plan gate. Flipping this on at create time pins the app for maintenance from the first request.
+   */
+  maintenance_mode?: boolean;
+  /**
+   * Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
+   */
+  app_protocol?: 'http1' | 'http2' | 'grpc';
+  /**
+   * Per-app two-tier snapshot flag. Omitted at create-time → the API applies the plan default. Free/Hobby PATCH-true is rejected.
+   */
+  warm_snapshot_enabled?: boolean;
+  /**
+   * Optional create-time override for the warm-tier request-count threshold. Range [1, 100]. Omitted → the API applies the plan default.
+   */
+  warm_snapshot_min_requests?: number;
+  /**
+   * Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds. Range [100, 60000]. Omitted → the API applies the plan default.
+   */
+  warm_snapshot_min_ms?: number;
+  /**
+   * Desired paused warm-pool size. Omit for the default of zero; non-zero values require Hobby+ and may not exceed max_concurrency.
+   */
+  warm_pool_size?: number;
+  /**
+   * Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → the API applies the schema default 'best_effort'.
+   */
+  eviction_priority?: 'best_effort' | 'reserved';
+  /**
+   * Per-app preferred spill target for cross-node pressure rebalance. Wire form is compute_nodes.name (resolved server-side). Omitted → no preference; empty string at create-time is rejected with 422 invalid_overflow_node because the column starts NULL and there is no 'clear' path at create-time.
+   */
+  overflow_node?: string;
+  /**
+   * Per-deployment token-gate flag. Omitted at create-time → the API applies the plan default (false). Pro/Scale only.
+   */
+  require_authn?: boolean;
+  /**
+   * Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy disabled. Available on Hobby and above.
+   */
+  platform_tenant_required?: boolean;
+};
+

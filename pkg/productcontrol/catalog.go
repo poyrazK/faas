@@ -26,6 +26,9 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 	if err := ValidateAccess(spec.Access); err != nil {
 		return api.ProductCatalog{}, err
 	}
+	if err := ValidateSignupPolicy(spec); err != nil {
+		return api.ProductCatalog{}, err
+	}
 	if spec.AuthApp != "" && !slug.MatchString(spec.AuthApp) {
 		return api.ProductCatalog{}, fmt.Errorf("auth_app must be an Application Auth app slug")
 	}
@@ -56,6 +59,9 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 			}
 		}
 	}
+	if err := ValidateTrialConversion(spec); err != nil {
+		return api.ProductCatalog{}, err
+	}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		return api.ProductCatalog{}, err
@@ -70,12 +76,13 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 }
 
 // UsesPlanPricing reports whether a catalog charges a plan fee, includes
-// starts or offers a trial, which a previous apid release would ignore: it
-// would finalize statements without fees and price every start
-// (ADR-20261021154511, ADR-20261021195901).
+// starts, offers a trial or requires a payment method after it, which a
+// previous apid release would ignore: it would finalize statements without
+// fees, price every start and keep every trial's plan (ADR-20261021154511,
+// ADR-20261021195901, ADR-20261022180921).
 func UsesPlanPricing(spec api.ProductCatalogSpec) bool {
 	for _, plan := range spec.Plans {
-		if plan.MonthlyFeeMillicents > 0 || plan.TrialDays > 0 {
+		if plan.MonthlyFeeMillicents > 0 || plan.TrialDays > 0 || plan.RequiresPaymentMethod {
 			return true
 		}
 		for _, grant := range plan.Features {

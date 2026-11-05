@@ -52,6 +52,7 @@ while [ "$#" -gt 0 ]; do
 		;;
 	esac
 done
+printf '%s\n' "$url" >>"$FAKE_ROOT/requests.log"
 case "$url" in
 *releases/latest) path="$FAKE_ROOT/api/latest.json" ;;
 *releases\?per_page=*) path="$FAKE_ROOT/api/list.json" ;;
@@ -132,15 +133,17 @@ printf '{"tag_name":"v2.0.0-rc.7","prerelease":true,"assets":[{"name":"gregale_2
 # ------------------------------------------------------------------ harness
 
 # run <expect-ok|expect-fail> <label> [extra install.sh args...]
-# Captures combined output into $RUN_OUT for assertions.
+# Captures combined output into $RUN_OUT for assertions. RUN_PATH_PREFIX
+# ("dir:dir:") goes in front of the stubs on the installer's PATH.
 RUN_OUT=""
+RUN_PATH_PREFIX=""
 run() {
 	local mode="$1" label="$2"
 	shift 2
 	local status=0
 	set +e
 	RUN_OUT="$(
-		PATH="$STUB:$PATH" \
+		PATH="$RUN_PATH_PREFIX$STUB:$PATH" \
 			FAKE_ROOT="$FAKE_ROOT" \
 			FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" \
 			FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
@@ -178,6 +181,38 @@ grep -Fq "next: gregale start" <<<"$RUN_OUT" ||
 DEST="$TMP_DIR/bin-bare-semver"
 run expect-ok "bare semver --version" --version "$SEMVER" --dir "$DEST"
 [ -x "$DEST/gregale" ] || fail "bare semver form did not install"
+
+# ------------------------------------------------------- PATH shadowing
+
+# An older gregale earlier on PATH (an npm install, /usr/local/bin) keeps
+# answering to plain `gregale`; the installer must say so and name it.
+SHADOW="$TMP_DIR/shadow-bin"
+mkdir -p "$SHADOW"
+printf '#!/bin/sh\necho gregale old\n' >"$SHADOW/gregale"
+chmod 0755 "$SHADOW/gregale"
+DEST="$TMP_DIR/bin-shadowed"
+RUN_PATH_PREFIX="$SHADOW:$DEST:"
+run expect-ok "older gregale earlier on PATH" --version "$TAG" --dir "$DEST"
+grep -Fq "on your PATH runs $SHADOW/gregale, not the copy just installed" <<<"$RUN_OUT" ||
+	fail "a shadowing gregale on PATH must be named: $RUN_OUT"
+grep -Fq "$DEST before $SHADOW on your PATH" <<<"$RUN_OUT" ||
+	fail "the shadow warning should say how to fix PATH: $RUN_OUT"
+
+# The installed copy first on PATH, or a symlink to it, is not shadowed.
+RUN_PATH_PREFIX="$DEST:$SHADOW:"
+run expect-ok "installed gregale first on PATH" --version "$TAG" --dir "$DEST"
+if grep -Fq "not the copy just installed" <<<"$RUN_OUT"; then
+	fail "the installed copy first on PATH must not warn: $RUN_OUT"
+fi
+LINKED="$TMP_DIR/linked-bin"
+mkdir -p "$LINKED"
+ln -s "$DEST/gregale" "$LINKED/gregale"
+RUN_PATH_PREFIX="$LINKED:$DEST:"
+run expect-ok "symlink to the installed gregale first on PATH" --version "$TAG" --dir "$DEST"
+if grep -Fq "not the copy just installed" <<<"$RUN_OUT"; then
+	fail "a symlink to the installed copy must not warn: $RUN_OUT"
+fi
+RUN_PATH_PREFIX=""
 
 # ----------------------------------------------------- version resolution
 
@@ -238,6 +273,46 @@ grep -Fq "could not resolve a release" <<<"$RUN_OUT" ||
 	fail "unresolvable release should say so: $RUN_OUT"
 mv "$FAKE_ROOT/api/list.json.off" "$FAKE_ROOT/api/list.json"
 mv "$FAKE_ROOT/api/latest.json.off" "$FAKE_ROOT/api/latest.json"
+
+# ------------------------------------------------------ channel pointers
+
+# ADR-20261025092617: release.yml publishes CLI-STABLE and CLI-LATEST on the
+# cli-channel release. Read through releases/download, they keep installs off
+# the GitHub API, whose anonymous limit (60 an hour per address) a shared NAT
+# or CI runner pool exhausts.
+api_off() { for f in latest list; do mv "$FAKE_ROOT/api/$f.json" "$FAKE_ROOT/api/$f.json.off"; done; }
+api_on() { for f in latest list; do mv "$FAKE_ROOT/api/$f.json.off" "$FAKE_ROOT/api/$f.json"; done; }
+api_calls() { grep -c "api.github.com" "$FAKE_ROOT/requests.log" || true; }
+
+api_off
+printf '%s\n' "$TAG" >"$FAKE_ROOT/dl/CLI-STABLE"
+printf 'v2.0.0-rc.7\n' >"$FAKE_ROOT/dl/CLI-LATEST"
+: >"$FAKE_ROOT/requests.log"
+run expect-ok "stable channel pointer without the API" --dir "$TMP_DIR/bin-channel-stable"
+grep -Fq "installing gregale $TAG" <<<"$RUN_OUT" || fail "stable pointer should win: $RUN_OUT"
+[ "$(api_calls)" -eq 0 ] || fail "a channel install must not call the API: $(cat "$FAKE_ROOT/requests.log")"
+if grep -Fq "prerelease" <<<"$RUN_OUT"; then fail "a stable install must not warn about a prerelease: $RUN_OUT"; fi
+
+# Today's state: no stable release yet, so only CLI-LATEST exists.
+rm "$FAKE_ROOT/dl/CLI-STABLE"
+: >"$FAKE_ROOT/requests.log"
+run expect-ok "prerelease channel pointer without the API" --dir "$TMP_DIR/bin-channel-latest"
+grep -Fq "installing gregale v2.0.0-rc.7" <<<"$RUN_OUT" || fail "latest pointer should install: $RUN_OUT"
+grep -Fq "warning: installing prerelease v2.0.0-rc.7" <<<"$RUN_OUT" ||
+	fail "a prerelease from the channel must warn: $RUN_OUT"
+[ "$(api_calls)" -eq 0 ] || fail "a channel install must not call the API: $(cat "$FAKE_ROOT/requests.log")"
+api_on
+
+# A pointer whose release does not list this platform, or that is not a tag
+# at all, is skipped for the API resolution rather than trusted.
+printf 'v9.9.9\n' >"$FAKE_ROOT/dl/CLI-STABLE"
+printf 'v2.0.0-rc.7;touch /tmp/pwned\n' >"$FAKE_ROOT/dl/CLI-LATEST"
+: >"$FAKE_ROOT/requests.log"
+run expect-ok "unusable pointers fall back to the API" --dir "$TMP_DIR/bin-channel-fallback"
+grep -Fq "installing gregale $TAG" <<<"$RUN_OUT" || fail "API fallback should install the stable tag: $RUN_OUT"
+[ "$(api_calls)" -gt 0 ] || fail "unusable pointers must fall back to the API"
+if grep -Fq "v9.9.9" <<<"$RUN_OUT"; then fail "a pointer without this platform must not be installed: $RUN_OUT"; fi
+rm "$FAKE_ROOT/dl/CLI-STABLE" "$FAKE_ROOT/dl/CLI-LATEST"
 
 # ------------------------------------------------------ checksum enforcement
 

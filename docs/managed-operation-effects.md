@@ -30,7 +30,7 @@ wrapper. Capture raw request bytes before Express parses JSON, as shown in the
 business writes, result, and webhook intent together:
 
 ```js
-import { operationRequestFromHeaders, withOperationTransaction } from '@gregale/sdk-node';
+import { operationRequestFromHeaders, withOperationTransaction } from '@gregale/sdk-node/preview';
 
 app.post('/orders/fulfill', async (req, res, next) => {
   try {

@@ -165,6 +165,9 @@ func (h *Handler) claimWakeFirstByteStart(appID, wakeID string) (time.Time, bool
 // target's historical WakeID.
 func (h *Handler) armWakeFirstByte(r *http.Request, appID string, target Target, admittedWakeID string) (*http.Request, Target) {
 	target.AppID = appID
+	// First-byte telemetry consumes WakeID; eviction must still identify the
+	// selected VM lifetime on later warm requests and retry attempts.
+	target.routingWakeID = target.WakeID
 	candidateWakeID := target.WakeID
 	if candidateWakeID == "" {
 		candidateWakeID = admittedWakeID

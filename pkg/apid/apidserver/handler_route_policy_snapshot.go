@@ -35,8 +35,9 @@ func (s *server) getDeploymentRoutePolicySnapshot(w http.ResponseWriter, r *http
 				"no route policy snapshot was captured for this deployment", ""))
 			return
 		}
+		logCustomerFailure(s.log, "failed to read deployment route policy snapshot", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read deployment route policy snapshot", err.Error()))
+			"failed to read deployment route policy snapshot", api.DetailServerFailure))
 		return
 	}
 	if snap.AppID != app.ID {
@@ -45,8 +46,9 @@ func (s *server) getDeploymentRoutePolicySnapshot(w http.ResponseWriter, r *http
 	}
 	rules, err := state.UnmarshalDeploymentRoutePolicySnapshot(snap)
 	if err != nil {
+		logCustomerFailure(s.log, "deployment route policy snapshot is invalid", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "invalid_deployment_route_policy_snapshot",
-			"deployment route policy snapshot is invalid", err.Error()))
+			"deployment route policy snapshot is invalid", api.DetailServerFailure))
 		return
 	}
 	w.Header().Set("Cache-Control", "private, max-age=300")

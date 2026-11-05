@@ -40,6 +40,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -60,9 +65,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
-     Removes the channel; alert rules stop delivering to it.
+     Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use
+    while the channel is the only destination of a rule (no webhook and no other channel), naming those
+    rules.
 
     Args:
         id (UUID):
@@ -91,9 +98,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
-     Removes the channel; alert rules stop delivering to it.
+     Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use
+    while the channel is the only destination of a rule (no webhook and no other channel), naming those
+    rules.
 
     Args:
         id (UUID):
@@ -117,9 +126,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
-     Removes the channel; alert rules stop delivering to it.
+     Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use
+    while the channel is the only destination of a rule (no webhook and no other channel), naming those
+    rules.
 
     Args:
         id (UUID):
@@ -146,9 +157,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
-     Removes the channel; alert rules stop delivering to it.
+     Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use
+    while the channel is the only destination of a rule (no webhook and no other channel), naming those
+    rules.
 
     Args:
         id (UUID):

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,7 +35,7 @@ func (s *server) applyPlatformTenant(w http.ResponseWriter, r *http.Request, acc
 			"Invalid onboarding bundle", "customer and consumer names/references, app UUIDs, and surface UUIDs must be valid and unique"))
 		return
 	}
-	result, err := store.ApplyPlatformTenant(r.Context(), in)
+	result, err := store.ApplyPlatformTenant(state.WithPublicTenantHostnameClaim(r.Context()), in)
 	if err != nil {
 		s.platformTenantApplyError(w, err, acct.Plan)
 		return
@@ -99,7 +100,13 @@ func (s *server) platformTenantApplyError(w http.ResponseWriter, err error, plan
 	var quota *state.PlatformTenantQuotaError
 	var surfaceQuota *state.TenantSurfaceQuotaError
 	var hostnameQuota *state.TenantHostnameQuotaError
+	var overlap *state.CustomDomainTenantOverlapError
+	var exact *state.TenantHostnameCustomDomainConflictError
 	switch {
+	case errors.As(err, &overlap):
+		api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(overlap.Wildcard, overlap.Hostname))
+	case errors.As(err, &exact):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeTenantHostnameAlreadyClaimed, "Hostname claimed", exact.Error()))
 	case errors.As(err, &surfaceQuota):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "tenant_surface_quota", "Tenant surface quota reached", "this account has reached its plan's tenant surface limit"))
 	case errors.As(err, &hostnameQuota):
@@ -118,7 +125,7 @@ func (s *server) platformTenantApplyError(w http.ResponseWriter, err error, plan
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid onboarding bundle", "consumer and surface references, surface names, and hostnames must be unique and valid"))
 	default:
-		api.WriteProblem(w, api.ErrInternal("could not apply platform tenant onboarding"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrInternal("could not apply platform tenant onboarding")))
 	}
 }
 

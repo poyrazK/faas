@@ -267,7 +267,14 @@ func (s *PostgresStore) CancelCutover(ctx context.Context, account, id string, n
 	if now.IsZero() {
 		return Cutover{}, ErrInvalid
 	}
-	r, err := sqlc.New().CancelManagedPostgresCutover(ctx, s.catalog, sqlc.CancelManagedPostgresCutoverParams{AccountID: account, ID: id, Now: healthTimestamp(now)})
+	q := sqlc.New()
+	r, err := q.CancelManagedPostgresCutover(ctx, s.catalog, sqlc.CancelManagedPostgresCutoverParams{AccountID: account, ID: id, Now: healthTimestamp(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// An activated cutover matches no row: it is final.
+		if _, getErr := q.GetManagedPostgresCutover(ctx, s.catalog, sqlc.GetManagedPostgresCutoverParams{AccountID: account, ID: id}); getErr == nil {
+			return Cutover{}, ErrConflict
+		}
+	}
 	if err != nil {
 		return Cutover{}, mapPostgresError(err)
 	}

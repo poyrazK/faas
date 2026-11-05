@@ -1,0 +1,162 @@
+package edgerules
+
+import (
+	"slices"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// edgeFeature is an edge rule feature a platform flag releases
+// (ADR-20261023113721); name is how a refusal names it, and wire how a rule
+// response's unreleased_features does.
+type edgeFeature struct{ flag, name, wire string }
+
+var (
+	featureChallenge   = edgeFeature{platformflags.EdgeChallenge, "Challenge rules", api.EdgeFeatureChallenge}
+	featureWAFBlocking = edgeFeature{platformflags.EdgeWAFBlocking, "WAF warn and block modes", api.EdgeFeatureWAFBlocking}
+	featurePenaltyBox  = edgeFeature{platformflags.EdgePenaltyBox, "Edge rule penalties", api.EdgeFeaturePenaltyBox}
+	featureAICrawlers  = edgeFeature{platformflags.EdgeAICrawlers, "AI crawler conditions", api.EdgeFeatureAICrawlers}
+	featureAttackMode  = edgeFeature{platformflags.EdgeAttackMode, "Attack mode", api.EdgeFeatureAttackMode}
+)
+
+// RuleResponse is the rule as acct sees it: EdgeRuleResponse plus the gated
+// features it uses that the account's flags do not release, enabled or not.
+func (s *Service) RuleResponse(acct state.Account, row state.EdgeRule) api.EdgeRuleResponse {
+	resp := EdgeRuleResponse(row)
+	for _, f := range storedRuleShape(row).features() {
+		if !s.Host.PlatformFlagEnabled(f.flag, acct) {
+			resp.UnreleasedFeatures = append(resp.UnreleasedFeatures, f.wire)
+		}
+	}
+	return resp
+}
+
+// FeatureReleased reports whether acct may use an edge feature
+// (api.EdgeFeature*); an unknown feature is not released.
+func (s *Service) FeatureReleased(acct state.Account, feature string) bool {
+	for _, f := range []edgeFeature{featureChallenge, featureWAFBlocking, featurePenaltyBox, featureAICrawlers, featureAttackMode} {
+		if f.wire == feature {
+			return s.Host.PlatformFlagEnabled(f.flag, acct)
+		}
+	}
+	return false
+}
+
+// ruleShape is what the release gate reads from a rule.
+type ruleShape struct {
+	kind    string
+	wafMode string // effective; observe when unset
+	penalty bool
+	// aiCrawlers is a match condition on the AI crawler fields
+	// (ADR-20261022083601 amendment 1).
+	aiCrawlers bool
+	// attackMode is the app's attack-mode rule (ADR-20261021220456
+	// amendment 1); only a stored rule can be one.
+	attackMode bool
+	// active is enabled and not in log mode (ADR-960).
+	active bool
+}
+
+// features lists the flag-gated features the rule uses.
+func (r ruleShape) features() []edgeFeature {
+	var out []edgeFeature
+	if r.kind == string(state.EdgeRuleKindChallenge) {
+		out = append(out, featureChallenge)
+	}
+	if r.kind == string(state.EdgeRuleKindWAF) && (r.wafMode == api.EdgeWAFModeWarn || r.wafMode == api.EdgeWAFModeBlock) {
+		out = append(out, featureWAFBlocking)
+	}
+	if r.penalty {
+		out = append(out, featurePenaltyBox)
+	}
+	if r.aiCrawlers {
+		out = append(out, featureAICrawlers)
+	}
+	if r.attackMode {
+		out = append(out, featureAttackMode)
+	}
+	return out
+}
+
+// storedRuleShape is a stored rule's shape.
+func storedRuleShape(row state.EdgeRule) ruleShape {
+	shape := ruleShape{
+		kind: string(row.Kind), penalty: row.Action.Penalty != nil,
+		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(row.Match),
+		attackMode: row.AttackMode(),
+		active:     row.Enabled && row.Mode != api.EdgeRuleModeLog,
+	}
+	if row.Kind == state.EdgeRuleKindWAF {
+		shape.wafMode = api.EdgeWAFModeObserve
+		if row.Action.WAF != nil && row.Action.WAF.Mode != "" {
+			shape.wafMode = row.Action.WAF.Mode
+		}
+	}
+	return shape
+}
+
+// updatedRuleShape is row's shape once req applies.
+func updatedRuleShape(row state.EdgeRule, req api.UpdateEdgeRuleRequest) ruleShape {
+	shape := storedRuleShape(row)
+	if req.Action != nil {
+		shape.wafMode = wafModeFromAction(shape.kind, *req.Action)
+	}
+	switch {
+	case req.ClearMatch:
+		shape.aiCrawlers = false
+	case req.Match != nil:
+		shape.aiCrawlers = api.EdgeRuleMatchUsesAICrawlerFields(req.Match)
+	}
+	switch {
+	case req.ClearPenalty:
+		shape.penalty = false
+	case req.Penalty != nil:
+		shape.penalty = true
+	}
+	enabled, mode := row.Enabled, row.Mode
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	if req.Mode != nil && *req.Mode != "" {
+		mode = *req.Mode
+	}
+	shape.active = enabled && mode != api.EdgeRuleModeLog
+	return shape
+}
+
+// createReleaseProblem refuses a new rule that uses an edge feature the
+// platform flags have not released to the account, whether or not the rule
+// starts enabled.
+func (s *Service) createReleaseProblem(acct state.Account, req api.CreateEdgeRuleRequest) *api.Problem {
+	shape := ruleShape{kind: req.Kind, wafMode: wafModeFromAction(req.Kind, req.Action), penalty: req.Penalty != nil,
+		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(req.Match)}
+	return s.releaseProblem(acct, shape.features(), nil)
+}
+
+// updateReleaseProblem refuses an update that switches on an unreleased
+// feature the rule does not already enforce. An edit that leaves an
+// enforced feature as it was, disabling a rule, putting it in log mode and
+// removing a feature are never refused, so withdrawing a flag strands no
+// rule.
+func (s *Service) updateReleaseProblem(acct state.Account, row state.EdgeRule, req api.UpdateEdgeRuleRequest) *api.Problem {
+	after := updatedRuleShape(row, req)
+	if !after.active {
+		return nil
+	}
+	var enforced []edgeFeature
+	if before := storedRuleShape(row); before.active {
+		enforced = before.features()
+	}
+	return s.releaseProblem(acct, after.features(), enforced)
+}
+
+func (s *Service) releaseProblem(acct state.Account, used, enforced []edgeFeature) *api.Problem {
+	for _, f := range used {
+		if !slices.Contains(enforced, f) && !s.Host.PlatformFlagEnabled(f.flag, acct) {
+			return api.ErrEdgeFeatureUnavailable(f.name)
+		}
+	}
+	return nil
+}

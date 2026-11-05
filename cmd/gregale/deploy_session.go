@@ -58,6 +58,16 @@ type savedDeploySession struct {
 	path     string
 	resuming bool
 	key      string
+	// warnings are this run's advisory notices for the receipt (for
+	// example credential-looking files in a local-files upload). They are
+	// not saved: a resume does not upload again.
+	warnings []string
+}
+
+func (s *savedDeploySession) addWarning(warning string) {
+	if warning != "" {
+		s.warnings = append(s.warnings, warning)
+	}
 }
 
 type deploySessionContextKey struct{}
@@ -263,11 +273,18 @@ func saveSessionUpload(ctx context.Context, c *Client, state resumableUploadStat
 }
 
 func (s *savedDeploySession) resumeCommand() string {
-	return recoveryCLI() + " deploy resume " + s.record.ID
+	return recoveryCLI() + " release resume " + s.record.ID
 }
 
 func (s *savedDeploySession) recovery(stage string) *deployRecovery {
-	r := newDeployRecovery(stage, s.record.AppSlug, s.record.DeploymentID, s.key, 0, s.record.WaitForRollout)
+	return s.recoveryWithTimeout(stage, 0)
+}
+
+// recoveryWithTimeout is recovery with the wait deadline the run used, so
+// the `release wait` next step repeats that --timeout instead of the
+// default (CLI audit 2026-10-31). Zero means the default.
+func (s *savedDeploySession) recoveryWithTimeout(stage string, timeout time.Duration) *deployRecovery {
+	r := newDeployRecovery(stage, s.record.AppSlug, s.record.DeploymentID, s.key, timeout, s.record.WaitForRollout)
 	r.SessionID, r.SubmissionOutcome = s.record.ID, s.record.Outcome
 	r.Configuration = s.record.CronConfiguration
 	r.ResumeCommand = s.resumeCommand()
@@ -276,12 +293,27 @@ func (s *savedDeploySession) recovery(stage string) *deployRecovery {
 		r.Hint = "Acceptance remains uncertain. Resume checks the saved submission or upload receipt without submitting another build; inspect deployment history if acceptance cannot be confirmed."
 	}
 	if s.record.Outcome == deploySubmissionRejected {
-		r.Hint = "Submission stopped before acceptance. Resume cannot submit a deployment; correct the error and rerun the original deploy."
+		// Resume refuses a rejected submission, so offering its command
+		// contradicted this hint (Hunt 14 H14-10).
+		r.ResumeCommand = ""
+		r.Hint = "Submission stopped before acceptance. Correct the error and rerun the original deploy."
 	}
-	if s.shouldCleanPolicies() {
+	if s.shouldCleanPolicies() && s.hasStagedSettingsToRestore() {
+		r.ResumeCommand = s.resumeCommand()
 		r.Hint = "No deployment needs to be submitted to recover this attempt. Resume the saved deploy to finish saved deployment settings cleanup; concurrent edits are preserved."
 	}
 	return r
+}
+
+// hasStagedSettingsToRestore reports whether a stopped deploy staged policies
+// or crons that resume would restore. A frozen deploy of an app without
+// gregale.yaml said it had settings cleanup to finish (Hunt 12 H12-31).
+func (s *savedDeploySession) hasStagedSettingsToRestore() bool {
+	if j := s.record.PolicyJournal; j != nil && !j.Cleaned && len(j.Intent.Desired) > 0 {
+		return true
+	}
+	j := s.record.CronJournal
+	return j != nil && j.Managed && !j.Cleaned
 }
 
 func (s *savedDeploySession) failure(title, stage string, err error) int {
@@ -290,6 +322,7 @@ func (s *savedDeploySession) failure(title, stage string, err error) int {
 
 func (s *savedDeploySession) decorate(receipt *DeployReceipt) {
 	receipt.SessionID = s.record.ID
+	receipt.Warnings = append([]string(nil), s.warnings...)
 	if receipt.SimpleAppPlan == nil {
 		receipt.SimpleAppPlan = s.record.SimpleAppPlan
 	}
@@ -332,7 +365,7 @@ func sessionDeployReceipt(ctx context.Context, receipt *DeployReceipt) *DeployRe
 
 func printSessionWaitRecovery(ctx context.Context, err error, dep api.DeploymentResponse, slug, stage string, timeout time.Duration, rollout bool, exit int) int {
 	if s := sessionFromContext(ctx); s != nil {
-		return printErr(fmt.Sprintf("Deployment %s stopped during %s", dep.ID, stage), &deployRecoveryError{err: err, recovery: s.recovery(stage), exit: exit})
+		return printErr(fmt.Sprintf("Deployment %s stopped during %s", dep.ID, stage), &deployRecoveryError{err: err, recovery: s.recoveryWithTimeout(stage, timeout), exit: exit})
 	}
 	return printDeploymentWaitRecovery(err, dep, slug, stage, timeout, rollout, exit)
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ProjectsService, OpenAPI } from '../src/index.js';
-import type { CreateProjectBindingVerificationRunRequest } from '../src/index.js';
+import { ProjectsService, OpenAPI } from '../src/preview.js';
+import type { CreateProjectBindingVerificationRunRequest } from '../src/preview.js';
 test('graph receipts preserve manifest, review and stable run routes', async () => {
  const oldFetch=globalThis.fetch,oldBase=OpenAPI.BASE;
  const id='11111111-1111-4111-8111-111111111111',target='22222222-2222-4222-8222-222222222222';

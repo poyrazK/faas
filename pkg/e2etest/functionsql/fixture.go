@@ -153,15 +153,23 @@ if(process.env.FUNCTION_SQL_CONTROL_URL){
    // Resource callbacks run concurrently. Observe both pool owners finishing
    // before sampling generations; never invoke their callbacks a second time.
    const wanted=phase==='checkpoint'?'checkpointed':'ready';
+   // Pool diagnostics hold no SQL or credentials; stderr reaches the test log.
+   const witness=()=>'function SQL '+phase+' witness pid='+process.pid+' pools='+JSON.stringify(databases.map(db=>db.diagnostics));
+   const started=Date.now();
+   let reported=false;
    while(databases.some(db=>db.diagnostics.state!==wanted)){
-     if(databases.some(db=>['unavailable','closed'].includes(db.diagnostics.state)))throw new Error('pool witness failed');
-     await delay(5,undefined,{signal});
+     if(databases.some(db=>['unavailable','closed'].includes(db.diagnostics.state))){
+       console.error(witness()+' failed');
+       throw new Error('pool witness failed');
+     }
+     if(!reported&&Date.now()-started>1000){reported=true;console.error(witness()+' still waiting');}
+     await delay(5,undefined,{signal}).catch(error=>{console.error(witness()+' aborted');throw error;});
    }
    const response=await fetch(process.env.FUNCTION_SQL_CONTROL_URL+'/'+phase+'?pid='+process.pid+'&generations='+databases.map(db=>db.generation).join(','),{
      method:'POST',signal,headers:{authorization:'Bearer '+process.env.FUNCTION_SQL_CONTROL_TOKEN,connection:'close'}
-   });
+   }).catch(error=>{console.error(witness()+' control request failed: '+(error?.cause?.code??error?.name));throw error;});
    await response.arrayBuffer();
-   if(response.status!==204)throw new Error('lifecycle control failed');
+   if(response.status!==204){console.error(witness()+' control answered '+response.status);throw new Error('lifecycle control failed');}
  };
  bridge.register({beforeCheckpoint:({signal})=>barrier('checkpoint',signal),afterRestore:({signal})=>barrier('recovery',signal)});
 }

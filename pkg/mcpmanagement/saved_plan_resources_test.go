@@ -170,7 +170,7 @@ func TestSavedRecoveryResourceRestartAmbiguityAndExpiry(t *testing.T) {
 	f, b, opts := newBudgetFixture(t)
 	store, path, key := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "recipe-resource"
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestSavedRecoveryResourceRestartAmbiguityAndExpiry(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = next.Close() })
 	opts.planStore, opts.AllowWrites = next, false
-	_, restored, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, restored, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestSavedRecoveryResourceFinalGuards(t *testing.T) {
 			_, b, opts := newBudgetFixture(t)
 			store, _, _ := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "recipe-guard"
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -361,7 +361,7 @@ func TestSavedRecoveryResourceHTTPRestartIsolationAndRevocation(t *testing.T) {
 
 func TestSavedRecoveryResourceDiagnosticConsent(t *testing.T) {
 	f, b, opts := newTriageFixture(t)
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

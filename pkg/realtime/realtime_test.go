@@ -54,7 +54,7 @@ func TestManagerConnectionLifecycleAndPublish(t *testing.T) {
 		OutboundQueue:    2,
 	}, hooks)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID:        "notifications",
 		AppID:     "app-1",
 		AccountID: "acct-1",
@@ -167,7 +167,7 @@ func TestManagerClosesSocketWhenCallbackOutboxStaysFull(t *testing.T) {
 		MaxAttempts:  1,
 	})
 	defer manager.Close()
-	endpoint := Endpoint{
+	endpoint := Endpoint{Preview: true,
 		ID:             "full-outbox",
 		CallbackURL:    callbackServer.URL,
 		ConnectPath:    "/connect",
@@ -240,7 +240,7 @@ func TestManagerClosesSocketWhenCallbackOutboxPersistenceFails(t *testing.T) {
 		MaxAttempts:  1,
 	})
 	defer manager.Close()
-	endpoint := Endpoint{
+	endpoint := Endpoint{Preview: true,
 		ID:             "outbox-write-failure",
 		CallbackURL:    callbackServer.URL,
 		ConnectPath:    "/connect",
@@ -322,7 +322,7 @@ func TestManagerClosesSocketWhenUnpersistedCallbackFails(t *testing.T) {
 		MaxAttempts: 1,
 	})
 	defer manager.Close()
-	endpoint := Endpoint{
+	endpoint := Endpoint{Preview: true,
 		ID:             "unpersisted-callback",
 		CallbackURL:    callbackServer.URL,
 		ConnectPath:    "/connect",
@@ -381,7 +381,7 @@ func TestManagerUpdatesCallbackAuthForExistingConnections(t *testing.T) {
 	hooks := &testHooks{accept: true}
 	m := NewManager(Config{MaxConnectionAge: time.Second}, hooks)
 	defer m.Close()
-	endpoint := Endpoint{ID: "rotating-callback", CallbackAuthToken: "callback-old"}
+	endpoint := Endpoint{Preview: true, ID: "rotating-callback", CallbackAuthToken: "callback-old"}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestManagerRejectsUnauthorizedAndCapsConnections(t *testing.T) {
 	hooks := &testHooks{accept: true}
 	m := NewManager(Config{MaxConnections: 1}, hooks)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "private",
 		Authorize: func(context.Context, *http.Request) (string, error) {
 			return "", ErrUnauthorized
@@ -491,7 +491,7 @@ func TestManagerRejectsUnauthorizedAndCapsConnections(t *testing.T) {
 	}
 
 	m.RemoveEndpoint("private")
-	if err := m.RegisterEndpoint(Endpoint{ID: "public"}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "public"}); err != nil {
 		t.Fatalf("register public: %v", err)
 	}
 	url = "ws" + server.URL[len("http"):] + ManagedPathPrefix + "public"
@@ -515,7 +515,7 @@ func TestManagerRejectsUnauthorizedAndCapsConnections(t *testing.T) {
 func TestManagerAllowsIdleConnectionUntilFirstHeartbeat(t *testing.T) {
 	m := NewManager(Config{Heartbeat: 200 * time.Millisecond, PongWait: 20 * time.Millisecond}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "idle"}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "idle"}); err != nil {
 		t.Fatalf("register endpoint: %v", err)
 	}
 	server := httptest.NewServer(m.Handler())
@@ -538,7 +538,7 @@ func TestManagerAllowsIdleConnectionUntilFirstHeartbeat(t *testing.T) {
 func TestManagerKeepsIdleConnectionAcrossPongs(t *testing.T) {
 	m := NewManager(Config{Heartbeat: 200 * time.Millisecond, PongWait: 150 * time.Millisecond, MaxConnectionAge: 3 * time.Second}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "idle"}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "idle"}); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(m.Handler())
@@ -581,7 +581,7 @@ func TestManagerKeepsIdleConnectionAcrossPongs(t *testing.T) {
 func TestManagerReregisterPreservesEndpointConnectionLimit(t *testing.T) {
 	m := NewManager(Config{MaxConnections: 10, Heartbeat: time.Hour}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxConnections: 1}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "limited", MaxConnections: 1}); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(m.Handler())
@@ -595,7 +595,7 @@ func TestManagerReregisterPreservesEndpointConnectionLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxConnections: 1}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "limited", MaxConnections: 1}); err != nil {
 		t.Fatal(err)
 	}
 	second, response, err := websocket.DefaultDialer.Dial(url, nil)
@@ -613,7 +613,7 @@ func TestManagerReregisterPreservesEndpointConnectionLimit(t *testing.T) {
 func TestManagerRemovalClosesExistingConnections(t *testing.T) {
 	m := NewManager(Config{MaxMessageBytes: 16, Heartbeat: time.Hour}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "limited", MaxMessageBytes: 4}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "limited", MaxMessageBytes: 4}); err != nil {
 		t.Fatalf("register endpoint: %v", err)
 	}
 	server := httptest.NewServer(m.Handler())
@@ -657,7 +657,7 @@ func TestManagerRemovalClosesExistingConnections(t *testing.T) {
 func TestManagerOperationsReturnStableErrors(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.Close()
-	if err := m.RegisterEndpoint(Endpoint{ID: "bad", MessagePath: "/events?admin=true"}); err == nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "bad", MessagePath: "/events?admin=true"}); err == nil {
 		t.Fatal("endpoint with callback query unexpectedly registered")
 	}
 	if err := m.Send(context.Background(), "missing", Message{}); !errors.Is(err, ErrConnectionNotFound) {
@@ -682,7 +682,7 @@ func TestManagerOperationsReturnStableErrors(t *testing.T) {
 func TestManagerReRegisterKeepsEndpointConnectionLimit(t *testing.T) {
 	manager := NewManager(Config{}, nil)
 	defer func() { _ = manager.Close() }()
-	endpoint := Endpoint{ID: "ep", AppID: "app", AccountID: "acct", MaxConnections: 1}
+	endpoint := Endpoint{Preview: true, ID: "ep", AppID: "app", AccountID: "acct", MaxConnections: 1}
 	if err := manager.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}

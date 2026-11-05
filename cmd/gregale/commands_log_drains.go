@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const logDrainsUsage = "usage: gregale log-drains <list|add|get|health|update|rm> --app <slug> [flags]"
+const logDrainsUsage = "usage: gregale logs drain <list|add|get|health|update|rm> --app <slug> [flags]"
 
 func cmdLogDrains(args []string) int {
 	if len(args) == 0 {
@@ -83,7 +83,7 @@ func logDrainFlags(name string, args []string, needID bool, define func(*flag.Fl
 		return "", "", false
 	}
 	if *app == "" || (needID && *drain == "") {
-		usage := "usage: gregale log-drains " + name + " --app <slug>"
+		usage := "usage: gregale logs drain " + name + " --app <slug>"
 		if needID {
 			usage += " --id <drain-id>"
 		}
@@ -175,7 +175,7 @@ func cmdLogDrainsAdd(args []string) int {
 		return 1
 	}
 	if *target == "" {
-		PrintUsage(os.Stderr, "usage: gregale log-drains add --app <slug> --url <URL> [--kind http_json|otlp] [--auth-header-env VAR]", "log-drains")
+		PrintUsage(os.Stderr, "usage: gregale logs drain create --app <slug> --url <URL> [--kind http_json|otlp] [--auth-header-env VAR]", "log-drains")
 		return 1
 	}
 	auth, err := logDrainAuthHeader(*authEnv)
@@ -196,7 +196,7 @@ func cmdLogDrainsAdd(args []string) int {
 	}
 	drain, err := client.CreateAppLogDrain(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create log drain", err)
 	}
 	return renderLogDrain(drain, "Created")
 }
@@ -282,7 +282,7 @@ func cmdLogDrainsUpdate(args []string) int {
 	}
 	drain, err := client.UpdateAppLogDrain(context.Background(), slug, id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update log drain", err)
 	}
 	return renderLogDrain(drain, "Updated")
 }
@@ -297,7 +297,7 @@ func cmdLogDrainsRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAppLogDrain(context.Background(), slug, id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete log drain", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"deleted": true, "id": id}))

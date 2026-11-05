@@ -18,6 +18,7 @@ def _get_kwargs(
     *,
     rule: UUID | Unset = UNSET,
     outcome: ListEdgeRuleEventsOutcome | Unset = UNSET,
+    request_id: str | Unset = UNSET,
     since: str | Unset = "24h",
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
@@ -35,6 +36,8 @@ def _get_kwargs(
         json_outcome = outcome
 
     params["outcome"] = json_outcome
+
+    params["request_id"] = request_id
 
     params["since"] = since
 
@@ -106,13 +109,14 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     rule: UUID | Unset = UNSET,
     outcome: ListEdgeRuleEventsOutcome | Unset = UNSET,
+    request_id: str | Unset = UNSET,
     since: str | Unset = "24h",
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> Response[EdgeRuleEventsResponse | Problem]:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -123,6 +127,7 @@ def sync_detailed(
         slug (str):
         rule (UUID | Unset):
         outcome (ListEdgeRuleEventsOutcome | Unset):
+        request_id (str | Unset):
         since (str | Unset):  Default: '24h'.
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -139,6 +144,7 @@ def sync_detailed(
         slug=slug,
         rule=rule,
         outcome=outcome,
+        request_id=request_id,
         since=since,
         limit=limit,
         cursor=cursor,
@@ -157,13 +163,14 @@ def sync(
     client: AuthenticatedClient | Client,
     rule: UUID | Unset = UNSET,
     outcome: ListEdgeRuleEventsOutcome | Unset = UNSET,
+    request_id: str | Unset = UNSET,
     since: str | Unset = "24h",
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> EdgeRuleEventsResponse | Problem | None:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -174,6 +181,7 @@ def sync(
         slug (str):
         rule (UUID | Unset):
         outcome (ListEdgeRuleEventsOutcome | Unset):
+        request_id (str | Unset):
         since (str | Unset):  Default: '24h'.
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -191,6 +199,7 @@ def sync(
         client=client,
         rule=rule,
         outcome=outcome,
+        request_id=request_id,
         since=since,
         limit=limit,
         cursor=cursor,
@@ -203,13 +212,14 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     rule: UUID | Unset = UNSET,
     outcome: ListEdgeRuleEventsOutcome | Unset = UNSET,
+    request_id: str | Unset = UNSET,
     since: str | Unset = "24h",
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> Response[EdgeRuleEventsResponse | Problem]:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -220,6 +230,7 @@ async def asyncio_detailed(
         slug (str):
         rule (UUID | Unset):
         outcome (ListEdgeRuleEventsOutcome | Unset):
+        request_id (str | Unset):
         since (str | Unset):  Default: '24h'.
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -236,6 +247,7 @@ async def asyncio_detailed(
         slug=slug,
         rule=rule,
         outcome=outcome,
+        request_id=request_id,
         since=since,
         limit=limit,
         cursor=cursor,
@@ -252,13 +264,14 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     rule: UUID | Unset = UNSET,
     outcome: ListEdgeRuleEventsOutcome | Unset = UNSET,
+    request_id: str | Unset = UNSET,
     since: str | Unset = "24h",
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
 ) -> EdgeRuleEventsResponse | Problem | None:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -269,6 +282,7 @@ async def asyncio(
         slug (str):
         rule (UUID | Unset):
         outcome (ListEdgeRuleEventsOutcome | Unset):
+        request_id (str | Unset):
         since (str | Unset):  Default: '24h'.
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -287,6 +301,7 @@ async def asyncio(
             client=client,
             rule=rule,
             outcome=outcome,
+            request_id=request_id,
             since=since,
             limit=limit,
             cursor=cursor,

@@ -23,7 +23,7 @@
   <header>
     <nav>
       <a href="/dashboard/">Home</a>
-      <a href="/dashboard/safe-releases">Safe releases</a>
+      {{if $.On "progressive-rollouts"}}<a href="/dashboard/safe-releases">Safe releases</a>{{end}}
       <strong>Admin</strong>
     </nav>
     <span><code>{{.Account.Email}}</code></span>

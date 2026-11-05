@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // OperatorRecoverySubmissionStore accepts a recovery action and its request
@@ -43,7 +43,7 @@ var (
 	ErrOperatorRecoveryKeyConflict = fmt.Errorf("recovery key belongs to different parameters: %w", ErrConflict)
 	ErrOperatorRecoveryLegacyKey   = fmt.Errorf("legacy recovery submission requires reconciliation: %w", ErrConflict)
 	ErrOperatorRecoveryDeployment  = fmt.Errorf("app has no deployment: %w", ErrNotFound)
-	operatorRecoveryReasonShape    = regexp.MustCompile(`^[a-z0-9_]+$`)
+	operatorRecoveryReasonShape    = lazyregexp.New(`^[a-z0-9_]+$`)
 )
 
 type OperatorRecoveryIneligibleError struct {

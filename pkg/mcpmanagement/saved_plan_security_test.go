@@ -146,8 +146,8 @@ func TestSavedRegressionReviewDiagnosticConsent(t *testing.T) {
 			cs, ctx := connectConfiguredTestServer(t, b, opts, protocol)
 			original := callTool(t, ctx, cs, "gregale_plan_regression_action", triageArgs("dismiss"), false)
 			wireID := planID(t, original)
-			assertSavedReview(t, callTool(t, ctx, cs, "gregale_get_plan", getActionArgs{App: "alpha", PlanID: wireID}, false), wireID)
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			assertSavedReview(t, callTool(t, ctx, cs, "gregale_get_saved_plan", getActionArgs{App: "alpha", PlanID: wireID}, false), wireID)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -160,7 +160,7 @@ func TestSavedRegressionReviewDiagnosticConsent(t *testing.T) {
 			if !bytes.Contains(review.Plan, []byte(f.row.Version)) || !bytes.Contains(review.Plan, []byte(`"action":"dismiss"`)) {
 				t.Fatal("triage review lost its pinned observation or dismissal")
 			}
-			result, err := m.getPlan(t.Context(), getActionArgs{App: "alpha", PlanID: id})
+			result, err := m.getSavedPlan(t.Context(), getActionArgs{App: "alpha", PlanID: id})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,7 +168,7 @@ func TestSavedRegressionReviewDiagnosticConsent(t *testing.T) {
 			if result.(*guardedRead).check(t.Context()) == nil {
 				t.Fatal("revoked diagnostic consent released regression review")
 			}
-			if _, err := m.getPlan(t.Context(), getActionArgs{App: "alpha", PlanID: id}); err == nil {
+			if _, err := m.getSavedPlan(t.Context(), getActionArgs{App: "alpha", PlanID: id}); err == nil {
 				t.Fatal("regression review ignored diagnostic consent")
 			}
 			f.mu.Lock()
@@ -203,7 +203,7 @@ func TestSavedServiceAbortAndIntegerProjection(t *testing.T) {
 		t.Fatal("review snapshot aliased a mutable policy")
 	}
 	for _, id := range []string{"../unknown", strings.Repeat("f", 64)} {
-		if _, err := m.getPlan(t.Context(), getActionArgs{App: "alpha", PlanID: id}); err == nil {
+		if _, err := m.getSavedPlan(t.Context(), getActionArgs{App: "alpha", PlanID: id}); err == nil {
 			t.Fatal("invalid/unknown app plan was exposed")
 		}
 		if _, err := m.getEnvironmentPlan(t.Context(), getEnvironmentActionArgs{Project: "shop", Environment: "production", PlanID: id}); err == nil {

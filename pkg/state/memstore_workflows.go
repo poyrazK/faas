@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/automationchecks"
 )
 
 type workflowRunCreateKey struct {
@@ -51,7 +53,7 @@ func (m *MemStore) insertWorkflowRunLocked(r *WorkflowRun) error {
 
 // CreateWorkflowRunAdmitted performs the quota check and insert under the same
 // store lock, mirroring PgStore's per-app advisory-lock transaction.
-func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, maxActive int) (int, error) {
+func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, maxActive, maxParked int) (int, error) {
 	if maxActive < 1 {
 		return 0, ErrWorkflowRunQuotaExceeded
 	}
@@ -60,12 +62,7 @@ func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	active := 0
-	for _, existing := range m.workflowRuns {
-		if existing.AppID == r.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(r.AppID, maxParked)
 	if active >= maxActive {
 		return active, ErrWorkflowRunQuotaExceeded
 	}
@@ -100,7 +97,7 @@ func (m *MemStore) GetWorkflowRunByIdempotencyKey(_ context.Context, appID, work
 	return &copy, nil
 }
 
-func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (int, bool, error) {
+func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context, r *WorkflowRun, maxActive, maxParked int, key string, requestFingerprint []byte) (int, bool, error) {
 	if err := validateWorkflowRunCreateIdempotency(key, requestFingerprint); err != nil {
 		return 0, false, err
 	}
@@ -128,12 +125,7 @@ func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context
 	if maxActive < 1 {
 		return 0, false, ErrWorkflowRunQuotaExceeded
 	}
-	active := 0
-	for _, existing := range m.workflowRuns {
-		if existing.AppID == r.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(r.AppID, maxParked)
 	if active >= maxActive {
 		return active, false, ErrWorkflowRunQuotaExceeded
 	}
@@ -403,6 +395,10 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		chosen.Input = cloneWorkflowJSON(chosen.Input)
 		chosen.Output = cloneWorkflowJSON(chosen.Output)
 		chosen.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
+		if priorStatus != WorkflowRunStatusRunning {
+			dueAt := chosen.ScheduledFor
+			chosen.ClaimedDueAt = &dueAt
+		}
 		return &chosen, nil
 	}
 	return nil, ErrNotFound
@@ -612,7 +608,7 @@ func (m *MemStore) CancelUnstartedWorkflowRuns(ctx context.Context, appID, workf
 // RetryWorkflowStep requeues a failed HTTP step in the existing run. The
 // store lock makes eligibility checks, descendant reopening, quota admission,
 // and the terminal-to-pending transition atomic.
-func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, maxActive int) (*WorkflowRun, int, error) {
+func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, maxActive, maxParked int) (*WorkflowRun, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if maxActive < 1 {
@@ -635,16 +631,12 @@ func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, 
 	if err != nil {
 		return nil, 0, err
 	}
-	active := 0
-	for _, existing := range m.workflowRuns {
-		if existing.AppID == run.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(run.AppID, maxParked)
 	if active >= maxActive {
 		return nil, active, ErrWorkflowRunQuotaExceeded
 	}
 	failed := steps[stepName]
+	failed.RetryBase = workflowManualRetryBase(&run, stepName, failed.Attempt, failed.RetryBase)
 	failed.Status = WorkflowStepStatusPending
 	failed.Output = nil
 	failed.NextCheckAt = nil
@@ -764,10 +756,13 @@ func (m *MemStore) CreateWorkflowSteps(_ context.Context, runID string, steps []
 func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*WorkflowStep, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.workflowStepsLocked(runID), nil
+}
 
+func (m *MemStore) workflowStepsLocked(runID string) []*WorkflowStep {
 	stepsMap, ok := m.workflowSteps[runID]
 	if !ok {
-		return []*WorkflowStep{}, nil
+		return []*WorkflowStep{}
 	}
 
 	var steps []*WorkflowStep
@@ -800,7 +795,7 @@ func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*Workflo
 		return steps[i].CreatedAt.Before(steps[j].CreatedAt)
 	})
 
-	return steps, nil
+	return steps
 }
 
 // StartWorkflowStep persists the resolved input with the running transition.
@@ -1349,11 +1344,14 @@ func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eve
 			if event.ID != eventID {
 				continue
 			}
-			if event.RunID == runID && event.EventName == eventName && equalWorkflowJSON(event.Payload, payload) {
+			if event.RunID == runID && event.EventName == eventName && automationchecks.EqualJSON(event.Payload, payload) {
 				return true, nil
 			}
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
 		}
+	}
+	if err := validateWorkflowEventPayload(payload); err != nil {
+		return false, err
 	}
 	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
 		return false, ErrWorkflowCallbackClosed
@@ -1371,6 +1369,7 @@ func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eve
 		ID: eventID, RunID: runID, EventName: eventName,
 		Payload: cloneWorkflowJSON(payload), ReceivedAt: now,
 	})
+	m.workflowEventApps[runID] = run.AppID
 	if run.Status == WorkflowRunStatusAwaitingEvent {
 		run.Status = WorkflowRunStatusPending
 		run.ScheduledFor = now
@@ -1419,9 +1418,6 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 			!m.workflowOutboundTenantLinkActiveLocked(app.AccountID, tenantID, app.ID) {
 			return ErrWorkflowRunNotFound
 		}
-		if run.Status != WorkflowRunStatusPending && run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
-			return ErrWorkflowNotRunning
-		}
 	}
 
 	if e.ID == "" {
@@ -1436,9 +1432,10 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 	for _, events := range m.workflowEvents {
 		for _, existing := range events {
 			if existing.ID == e.ID {
-				if existing.RunID != e.RunID || existing.EventName != e.EventName {
+				if existing.RunID != e.RunID || existing.EventName != e.EventName || !automationchecks.EqualJSON(existing.Payload, e.Payload) {
 					return fmt.Errorf("%w: workflow_events.id", ErrConflict)
 				}
+				e.ReceivedAt = existing.ReceivedAt
 				if run := m.workflowRuns[e.RunID]; run.Status == WorkflowRunStatusAwaitingEvent {
 					run.Status = WorkflowRunStatusPending
 					run.ScheduledFor = time.Now().UTC()
@@ -1449,10 +1446,17 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 			}
 		}
 	}
+	if run.Status != WorkflowRunStatusPending && run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
+		return ErrWorkflowNotRunning
+	}
+	if err := validateWorkflowEventPayload(e.Payload); err != nil {
+		return err
+	}
 
 	stored := *e
 	stored.Payload = cloneWorkflowJSON(e.Payload)
 	m.workflowEvents[e.RunID] = append(m.workflowEvents[e.RunID], stored)
+	m.workflowEventApps[e.RunID] = run.AppID
 	if run := m.workflowRuns[e.RunID]; run.Status == WorkflowRunStatusAwaitingEvent {
 		run.Status = WorkflowRunStatusPending
 		run.ScheduledFor = time.Now().UTC()
@@ -1522,7 +1526,6 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 			delete(m.workflowRuns, id)
 			delete(m.automationLiveVerifications, id)
 			delete(m.workflowSteps, id)
-			delete(m.workflowEvents, id)
 			for key := range m.workflowStepAttempts {
 				if key.runID == id {
 					delete(m.workflowStepAttempts, key)
@@ -1534,6 +1537,9 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 				}
 			}
 			deleted++
+			if deleted == api.WorkflowRetentionPruneBatch {
+				break
+			}
 		}
 	}
 	return deleted, nil
@@ -1555,13 +1561,18 @@ func (m *MemStore) SweepExpiredWorkflowEvents(_ context.Context, olderThan time.
 		}
 		var kept []WorkflowEvent
 		for _, e := range events {
-			if e.ReceivedAt.Before(threshold) {
+			if e.ReceivedAt.Before(threshold) && deleted < api.WorkflowRetentionPruneBatch {
 				deleted++
 			} else {
 				kept = append(kept, e)
 			}
 		}
-		m.workflowEvents[runID] = kept
+		if len(kept) == 0 {
+			delete(m.workflowEvents, runID)
+			delete(m.workflowEventApps, runID)
+		} else {
+			m.workflowEvents[runID] = kept
+		}
 	}
 	return deleted, nil
 }

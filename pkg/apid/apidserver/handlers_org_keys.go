@@ -159,6 +159,15 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := s.orgAgentKeyProblem(r.Context(), mem.OrgID, acct.ID, scopes); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	projects, prob := s.keyProjects(r.Context(), acct, mem.OrgID, scopes, req.Projects)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
@@ -172,6 +181,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// IAM hardening mega-PR (logical change 2): stamp the
@@ -188,6 +201,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	k, err := s.createOrgAPIKeyWithActivity(r.Context(), acct, mem.OrgID, hash, req.Label, scopes, expiresAt, bindIP, bindUA, nil, activity)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
+		return
+	}
+	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
@@ -207,6 +224,9 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	resp := orgAPIKeyResponse(k)
 	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
+	if len(projects) > 0 {
+		resp.Projects = projectSlugs(projects)
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -369,7 +389,14 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	activity := newOrgAPIKeyActivity(r, acct, mem.OrgID, "api_key.rotated", map[string]any{
 		"old_key_id": id, "grace_window_days": graceWindowDays,
 	})
-	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, req.Label, graceWindow, bindIP, bindUA, nil, activity)
+	// A sign-in key keeps its label through rotation: the label is how the
+	// sign-in key cap and the password-change revocation find it, so a new
+	// label would let it escape both (bug hunt 2026-10-28 B25).
+	label := req.Label
+	if existing, err := s.store.GetAPIKey(r.Context(), acct.ID, id); err == nil && existing.Label == signInKeyLabel {
+		label = ""
+	}
+	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, label, graceWindow, bindIP, bindUA, nil, activity)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")

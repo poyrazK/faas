@@ -1,0 +1,7 @@
+# pip for runner-python312. The upstream python:3.12 image bundles pip 25.0.1,
+# which has fixed advisories up to 26.2.0 (GHSA-4xh5-x5gv-qwph,
+# GHSA-58qw-9mgm-455v, GHSA-6vgw-5pg2-w6jp, GHSA-jp4c-xjxw-mgf9,
+# GHSA-qwm4-qh6w-59xr, GHSA-wf93-45jw-7689); the image replaces it with this
+# pin before installing the platform packages.
+pip==26.2.1 \
+    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e

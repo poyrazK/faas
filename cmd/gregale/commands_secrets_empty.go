@@ -60,7 +60,7 @@ func printEmptySecretList(app, scope, class, olderThan, deliveryStatus string, k
 		} else {
 			_, _ = fmt.Fprintln(osStdout, "The next list checks other scopes. To preview adding secrets in the selected scope:")
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s secrets set --app %s --scope %s --from-stdin --dry-run < secrets.env\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(scope))
+		_, _ = fmt.Fprintf(osStdout, "  %s env set --app %s --scope %s --from-stdin --dry-run < secrets.env\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(scope))
 		_, _ = fmt.Fprintln(osStdout, "Use your private KEY=VALUE file; the preview does not write values.")
 	}
 }

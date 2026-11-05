@@ -1,0 +1,84 @@
+# Loki pipeline (issue #274, ADR-20261023185953). The journal shipper is
+# Alloy, or Promtail for one release as the rollback; both scrape under the
+# promtail/promtail-compute jobs. These cases pin that each rule reads
+# whichever family a host exposes, so a mixed fleet stays covered.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "sends are recorded from either shipper"
+    input_series:
+      - series: 'promtail_sent_entries_total{job="promtail-compute",instance="fsn-2:9080"}'
+        values: '0+10x20'
+      - series: 'loki_write_sent_entries_total{job="promtail-compute",instance="fsn-3:9080",component_id="loki.write.loki"}'
+        values: '0+20x20'
+      # Loki's own metrics endpoint never counts as a shipper.
+      - series: 'loki_write_sent_entries_total{job="loki",instance="cp:3100"}'
+        values: '0+99x20'
+    promql_expr_test:
+      - expr: loki_send_total
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="loki_send_total",instance="fsn-2:9080"}'
+            value: 200
+          - labels: '{__name__="loki_send_total",instance="fsn-3:9080"}'
+            value: 400
+
+  - interval: 30s
+    name: "drops warn from either shipper"
+    input_series:
+      - series: 'promtail_dropped_entries_total{job="promtail-compute",instance="fsn-2:9080"}'
+        values: '0x10 5x30'
+      - series: 'loki_write_dropped_entries_total{job="promtail",instance="127.0.0.1:9080",component_id="loki.write.loki"}'
+        values: '0x10 3x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasLokiShippingDropped
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: promtail
+              family: loki_pipeline
+              instance: fsn-2:9080
+            exp_annotations:
+              summary: "The journal shipper dropped log entries on fsn-2:9080"
+              description: "The journal shipper exhausted its bounded retry budget and dropped journal entries during the last 10m. Investigate Loki reachability, mTLS expiry, and disk/journal pressure before the local journal rotates."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+          - exp_labels:
+              severity: warn
+              component: promtail
+              family: loki_pipeline
+              instance: 127.0.0.1:9080
+            exp_annotations:
+              summary: "The journal shipper dropped log entries on 127.0.0.1:9080"
+              description: "The journal shipper exhausted its bounded retry budget and dropped journal entries during the last 10m. Investigate Loki reachability, mTLS expiry, and disk/journal pressure before the local journal rotates."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
+
+  - interval: 30s
+    name: "an Alloy host that reads but never sends is stalled; one that sends is not"
+    input_series:
+      - series: 'loki_source_journal_target_lines_total{job="promtail-compute",instance="fsn-3:9080",component_id="loki.source.journal.faas"}'
+        values: '0+50x60'
+      - series: 'loki_write_sent_entries_total{job="promtail-compute",instance="fsn-3:9080",component_id="loki.write.loki"}'
+        values: '0x60'
+      - series: 'loki_source_journal_target_lines_total{job="promtail-compute",instance="fsn-2:9080",component_id="loki.source.journal.faas"}'
+        values: '0+50x60'
+      - series: 'loki_write_sent_entries_total{job="promtail-compute",instance="fsn-2:9080",component_id="loki.write.loki"}'
+        values: '0+50x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasLokiShippingStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: promtail
+              family: loki_pipeline
+              instance: fsn-3:9080
+            exp_annotations:
+              summary: "The journal shipper is reading journal entries but not shipping on fsn-3:9080"
+              description: "The journal shipper read journal lines but recorded no successful Loki sends for 10m. This is the backpressure signal; check the dropped-entry counter and the Loki mTLS/client path."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"

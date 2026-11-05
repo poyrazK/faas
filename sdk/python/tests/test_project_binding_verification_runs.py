@@ -1,4 +1,4 @@
-from faas_sdk.api.projects import (
+from faas_sdk.preview.api.projects import (
     cancel_project_binding_verification_run,
     complete_project_binding_verification_run,
     create_project_binding_verification_run,
@@ -6,7 +6,7 @@ from faas_sdk.api.projects import (
     resume_project_binding_verification_run,
     review_project_binding_verification,
 )
-from faas_sdk.models.create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
+from faas_sdk.preview.models.create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
 
 
 def test_graph_run_frozen_review_and_routes():
@@ -46,7 +46,7 @@ def test_graph_run_frozen_review_and_routes():
 
 
 def test_graph_review_request_preserves_consent_and_manifest():
-    from faas_sdk.models.review_project_binding_verification_request import ReviewProjectBindingVerificationRequest
+    from faas_sdk.preview.models.review_project_binding_verification_request import ReviewProjectBindingVerificationRequest
 
     manifest = {
         "project": "project",
@@ -67,7 +67,7 @@ def test_graph_review_request_preserves_consent_and_manifest():
 
 
 def test_graph_review_response_forwards_aggregate_and_member_digests():
-    from faas_sdk.models.project_binding_verification_review import ProjectBindingVerificationReview
+    from faas_sdk.preview.models.project_binding_verification_review import ProjectBindingVerificationReview
 
     identity = "11111111-1111-4111-8111-111111111111"
     manifest = {

@@ -50,7 +50,7 @@ type EventDeadlineOrderingExplanation struct {
 	NextAttemptAt  *time.Time `json:"next_attempt_at,omitempty"`
 }
 
-func (c *Client) explainDeadlineInvestigation(ctx context.Context, investigation EventDeadlineInvestigation) (*EventDeadlineExplanations, error) {
+func (c *PreviewClient) explainDeadlineInvestigation(ctx context.Context, investigation EventDeadlineInvestigation) (*EventDeadlineExplanations, error) {
 	out, request, indices := deadlineExplanationRequest(investigation)
 	if len(request.Queries) == 0 {
 		return out, ctx.Err()

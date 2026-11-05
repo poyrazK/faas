@@ -127,6 +127,13 @@ func ListPersonalTriggers(store TriggerStore, project func(sqlc.Trigger) api.Tri
 		}
 		out := []api.Trigger{}
 		kind := r.URL.Query().Get("kind")
+		// Cron schedules live under /v1/crons. A cron filter is refused
+		// rather than answered with an empty list, and a legacy cron-linked
+		// row never appears in the trigger inventory.
+		if kind == string(api.TriggerKindCron) {
+			api.WriteProblem(w, api.ErrCronNotATrigger())
+			return
+		}
 		for _, app := range apps {
 			rows, err := store.ListTriggersForApp(r.Context(), app.ID)
 			if err != nil {
@@ -134,6 +141,9 @@ func ListPersonalTriggers(store TriggerStore, project func(sqlc.Trigger) api.Tri
 				return
 			}
 			for _, row := range rows {
+				if row.Kind == string(api.TriggerKindCron) {
+					continue
+				}
 				if kind == "" || row.Kind == kind {
 					out = append(out, project(row))
 				}

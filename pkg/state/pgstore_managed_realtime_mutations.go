@@ -67,7 +67,7 @@ func (s *PgStore) MutateManagedRealtimeMessage(ctx context.Context, ep, stream s
 		return current, nil
 	}
 	if !remove && !inbox {
-		if err := validateEventSchemaPG(ctx, tx, ep, channel, data, binary, current.Metadata); err != nil {
+		if err := validateEventSchemaPG(ctx, tx, s.realtimeEventSchemas, ep, channel, data, binary, current.Metadata); err != nil {
 			return ManagedRealtimeChannelMessage{}, err
 		}
 	}

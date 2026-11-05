@@ -15,7 +15,7 @@ func (s *server) rollbackAttempt(ctx context.Context, r *http.Request, acct stat
 	if len(values) == 0 {
 		return "", nil
 	}
-	if len(values) != 1 || !api.ValidDeploymentAttemptID(values[0]) || req.TargetDeploymentID == nil || req.ExpectedCurrentDeploymentID == nil || req.AlertRuleID != nil || req.AcknowledgeReleases || app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest {
+	if len(values) != 1 || !api.ValidDeploymentAttemptID(values[0]) || req.TargetDeploymentID == nil || req.ExpectedCurrentDeploymentID == nil || req.AlertRuleID != nil || req.RestoreDatabases || req.AcknowledgeReleases || app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest {
 		return "", api.ErrValidation("Rollback-Attempt-ID requires an exact manual request-deployment rollback without release acknowledgement")
 	}
 	target, e1 := uuid.Parse(*req.TargetDeploymentID)

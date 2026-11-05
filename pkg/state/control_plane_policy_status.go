@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ServingGatewayControlPlaneState joins a registered serving gateway with
-// its most recent durable repair position. An epoch ObservedAt means that
-// gateway has not reported a position yet.
+// its current process's durable repair position. A zero ObservedAt means
+// no acknowledgement from a process with a fresh serving report.
 type ServingGatewayControlPlaneState struct {
 	NodeName                      string
+	DatabaseNow                   time.Time
 	LastChangeID                  int64
 	ObservedAt                    time.Time
 	LastEdgeRuleChangeID          int64
@@ -78,58 +82,36 @@ func (s *PgStore) LatestAppRequestPolicyRevision(ctx context.Context, appID stri
 	return id, nil
 }
 
-// ListServingGatewayControlPlaneStates uses the same active compute-node
-// membership predicate as the edge-rule barrier. A missing watermark stays
-// visible with revision zero, so the API cannot silently call it active.
+// ListServingGatewayControlPlaneStates accepts only the current process's
+// acknowledgements while its serving report is fresh. Missing progress remains
+// visible at zero; legacy watermarks cannot establish convergence.
 func (s *PgStore) ListServingGatewayControlPlaneStates(ctx context.Context) ([]ServingGatewayControlPlaneState, error) {
 	if s == nil || s.pool == nil {
 		return nil, fmt.Errorf("state: control-plane policy status has nil pool")
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT n.name,
-		       COALESCE(w.last_change_id, 0),
-	       COALESCE(w.observed_at, 'epoch'::timestamptz),
-	       COALESCE(e.last_change_id, 0),
-		       COALESCE(e.observed_at, 'epoch'::timestamptz),
-	       COALESCE(c.last_change_id, 0),
-	       COALESCE(c.observed_at, 'epoch'::timestamptz),
-	       COALESCE(r.last_change_id, 0),
-	       COALESCE(r.observed_at, 'epoch'::timestamptz)
-		FROM compute_nodes n
-		LEFT JOIN gateway_control_plane_watermarks w ON w.node_name = n.name
-		LEFT JOIN gateway_edge_rule_watermarks e ON e.node_name = n.name
-		LEFT JOIN gateway_cors_preset_watermarks c ON c.node_name = n.name
-		LEFT JOIN gateway_response_cache_purge_watermarks r ON r.node_name = n.name
-		WHERE n.active = true
-		  AND n.role IN ('compute-only', 'compute-node')
-		  AND n.gateway_target_url IS NOT NULL
-		  AND btrim(n.gateway_target_url) <> ''
-		ORDER BY n.name
-	`)
+	rows, err := sqlc.New().ListServingGatewayPolicyProgress(ctx, s.pool, sqlc.ListServingGatewayPolicyProgressParams{
+		FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(), RowLimit: api.TrafficRuntimeObservationMaxNodes + 1,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("state: list serving gateway control-plane states: %w", err)
+		return nil, fmt.Errorf("state: list serving gateway policy progress: %w", err)
 	}
-	defer rows.Close()
-	var states []ServingGatewayControlPlaneState
-	for rows.Next() {
-		var state ServingGatewayControlPlaneState
-		if err := rows.Scan(&state.NodeName, &state.LastChangeID, &state.ObservedAt,
-			&state.LastEdgeRuleChangeID, &state.EdgeRulesObservedAt,
-			&state.LastCorsPresetChangeID, &state.CorsPresetsObservedAt,
-			&state.LastResponseCachePurgeID, &state.ResponseCachePurgesObservedAt); err != nil {
-			return nil, fmt.Errorf("state: scan serving gateway control-plane state: %w", err)
+	if len(rows) > api.TrafficRuntimeObservationMaxNodes {
+		return nil, fmt.Errorf("state: gateway policy roster exceeds limit")
+	}
+	out := make([]ServingGatewayControlPlaneState, len(rows))
+	for i, r := range rows {
+		out[i] = ServingGatewayControlPlaneState{
+			NodeName: r.NodeName, DatabaseNow: r.DatabaseNow.Time, LastChangeID: r.LastChangeID, ObservedAt: r.ObservedAt.Time,
+			LastEdgeRuleChangeID: r.EdgeRuleChangeID, EdgeRulesObservedAt: r.EdgeRulesObservedAt.Time,
+			LastCorsPresetChangeID: r.CorsPresetChangeID, CorsPresetsObservedAt: r.CorsPresetsObservedAt.Time,
+			LastResponseCachePurgeID: r.CachePurgeChangeID, ResponseCachePurgesObservedAt: r.CachePurgesObservedAt.Time,
 		}
-		states = append(states, state)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: iterate serving gateway control-plane states: %w", err)
-	}
-	return states, nil
+	return out, nil
 }
 
-// UpsertGatewayEdgeRuleWatermark is called after edge-rule cache repair. It
-// has its own boot epoch and cursor because edge-rule IDs come from a separate
-// ledger sequence than control-plane IDs.
+// UpsertGatewayEdgeRuleWatermark preserves the legacy writer API. These
+// unfenced rows are not read by convergence status or ledger pruning.
 func (s *PgStore) UpsertGatewayEdgeRuleWatermark(ctx context.Context, nodeName, bootID string, lastChangeID int64) error {
 	if s == nil || s.pool == nil {
 		return fmt.Errorf("state: edge-rule policy status has nil pool")
@@ -157,9 +139,8 @@ func (s *PgStore) UpsertGatewayEdgeRuleWatermark(ctx context.Context, nodeName, 
 	return nil
 }
 
-// UpsertGatewayControlPlaneWatermark is called only after local replay
-// succeeds. A new boot resets a prior process's watermark; retries within a
-// boot may only move it forward. Each successful tick refreshes observed_at.
+// UpsertGatewayControlPlaneWatermark preserves the legacy writer API.
+// Current gateways publish through ReportGatewayPolicyProgress instead.
 func (s *PgStore) UpsertGatewayControlPlaneWatermark(ctx context.Context, nodeName, bootID string, lastChangeID int64) error {
 	if s == nil || s.pool == nil {
 		return fmt.Errorf("state: control-plane policy status has nil pool")

@@ -14,10 +14,10 @@ Drain and replace older workers first: SDK versions without this check cannot
 enforce a pause. Helpers never install DDL or update platform clone registries.
 
 ```go
-state, err := faas.GetEventOutboxPublishingControl(ctx, db, accountID, appID)
+state, err := preview.GetEventOutboxPublishingControl(ctx, db, accountID, appID)
 if err != nil { return err }
-receipt, err := faas.SetEventOutboxPublishingPaused(ctx, db, accountID, appID,
-    faas.EventOutboxPublishingControlOptions{
+receipt, err := preview.SetEventOutboxPublishingPaused(ctx, db, accountID, appID,
+    preview.EventOutboxPublishingControlOptions{
         CommandID: commandID, // Persist a fresh nonzero UUID and these arguments.
         ExpectedRevision: state.Revision,
         Paused: true,
@@ -88,7 +88,7 @@ the first result. Use a fresh ID for a new intervention.
 GetEventOutboxPublishingCommand retrieves a retained receipt after a lost response:
 
 ```go
-receipt, err := faas.GetEventOutboxPublishingCommand(ctx, db, accountID, appID, commandID)
+receipt, err := preview.GetEventOutboxPublishingCommand(ctx, db, accountID, appID, commandID)
 if err != nil { return err }
 // Inspect Outcome (paused/resumed/rejected), ErrorCode and Result.
 // Lookup success is not command success or a current-state assertion.
@@ -104,8 +104,8 @@ revision and issue a new ID rather than changing parameters under the old one.
 ListEventOutboxPublishingCommands returns bounded retained history for the scope:
 
 ```go
-page, err := faas.ListEventOutboxPublishingCommands(ctx, db, accountID, appID,
-    faas.EventOutboxPublishingHistoryOptions{After: afterSequence, Limit: 50})
+page, err := preview.ListEventOutboxPublishingCommands(ctx, db, accountID, appID,
+    preview.EventOutboxPublishingHistoryOptions{After: afterSequence, Limit: 50})
 if err != nil { return err }
 // Consume Items and continue with NextAfter when nonzero.
 _ = page

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const deploysLogsUsage = "usage: gregale deploys logs <id|vN> [--app SLUG] [--limit N]"
+const deploysLogsUsage = "usage: gregale release logs <id|vN> [--app SLUG] [--limit N]"
 
 // cmdDeploysLogs prints one deployment's build and deploy log, whatever its
 // status. `gregale logs --deployment` reads that log only for a deployment
@@ -61,7 +61,7 @@ func cmdDeploysLogs(args []string) int {
 			Line string `json:"line"`
 		}
 		if e.Event == "log" && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
-			_, _ = fmt.Fprintln(osStdout, entry.Line)
+			_, _ = fmt.Fprintln(osStdout, terminalSafe(entry.Line))
 			printed++
 		}
 	}

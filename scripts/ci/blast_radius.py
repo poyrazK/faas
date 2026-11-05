@@ -146,6 +146,23 @@ def assemble(base, head, merge_base, paths, closure, code, lanes):
     }
 
 
+def measure_code(base, head, names, out, build_fn=None):
+    """(compare result, base build error) for names. A merge base that does
+    not compile, as when two merged PRs collide, has no binaries to compare
+    with: every name head builds counts as changed and the error is
+    returned, so the PR that repairs main can still pass this check. A head
+    that does not compile still fails."""
+    build_fn = build_fn or build
+    try:
+        base_hashes = build_fn(base, [n for n in names if n in base.closures], out)
+    except RuntimeError as err:
+        head_hashes = build_fn(head, [n for n in names if n in head.closures], out)
+        first = (str(err).splitlines() or [""])[0][:300]
+        return {n: ("changed" if n in head_hashes else "removed") for n in names}, first
+    head_hashes = build_fn(head, [n for n in names if n in head.closures], out)
+    return compare(base_hashes, head_hashes, names), ""
+
+
 def report(base_ref, head_ref, root=".", config_path=au.DEFAULT_CONFIG, measure=True, every=False, workdir=None,
            extra_tags=()):
     head_sha = au.git("rev-parse", "--verify", f"{head_ref}^{{commit}}", root=root).strip()
@@ -164,14 +181,15 @@ def report(base_ref, head_ref, root=".", config_path=au.DEFAULT_CONFIG, measure=
             sides.append(tree)
         base, head = sides
         closure = candidates(paths, base, head, global_inputs)
-        code = None
+        code, base_error = None, ""
         if measure:
             names = sorted(set(base.closures) | set(head.closures)) if every else sorted(closure)
             os.makedirs(os.path.join(tmp, "out"))
-            base_hashes = build(base, [n for n in names if n in base.closures], os.path.join(tmp, "out"))
-            head_hashes = build(head, [n for n in names if n in head.closures], os.path.join(tmp, "out"))
-            code = compare(base_hashes, head_hashes, names)
-        return assemble(base, head, merge_base, paths, closure, code, lanes)
+            code, base_error = measure_code(base, head, names, os.path.join(tmp, "out"))
+        rep = assemble(base, head, merge_base, paths, closure, code, lanes)
+        if measure and base_error:
+            rep["base_build_error"] = base_error
+        return rep
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -195,6 +213,9 @@ def markdown(rep):
     most changes look like they touch a dozen daemons."""
     total = len(rep["binaries"])
     lines = [MARKER, "## Release binaries this change rebuilds", ""]
+    if rep.get("base_build_error"):
+        lines += [f"The merge base does not build (`{rep['base_build_error']}`), so every candidate binary "
+                  "counts as changed.", ""]
     span = f"`{rep['merge_base'][:12]}..{rep['head'][:12]}`, {rep['changed_paths']} changed paths"
     if not rep["closure"]:
         lines += [f"{span}: no release binary's inputs changed, so no service restarts."]

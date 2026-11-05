@@ -70,6 +70,9 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 // marks one that is missing or rejected.
 func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoicePaymentStore, exports state.StatementInvoiceExportStore,
 	conns map[string]*connection, export state.StatementInvoiceExport, now time.Time) error {
+	if !s.released(export.AccountID) {
+		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.APIMonetizationUnreleasedRetry))
+	}
 	p := s.provider(export.Provider)
 	cacheKey := export.AccountID + "/" + export.Provider
 	conn, ok := conns[cacheKey]
@@ -160,7 +163,9 @@ func (s *Service) notifyOverdue(ctx context.Context, payments state.StatementInv
 	}
 	byAccount := map[string][]state.StatementInvoiceExport{}
 	for _, export := range overdue {
-		byAccount[export.AccountID] = append(byAccount[export.AccountID], export)
+		if s.released(export.AccountID) {
+			byAccount[export.AccountID] = append(byAccount[export.AccountID], export)
+		}
 	}
 	accounts := make([]string, 0, len(byAccount))
 	for accountID := range byAccount {

@@ -20,7 +20,7 @@ func cmdWorkflowSchedules(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale workflows schedules --app <slug>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow schedules --app <slug>", "workflows")
 		return 1
 	}
 	client, err := authedClient()
@@ -29,7 +29,7 @@ func cmdWorkflowSchedules(args []string) int {
 	}
 	response, err := client.ListWorkflowSchedules(context.Background(), *app)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow schedules", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(response))

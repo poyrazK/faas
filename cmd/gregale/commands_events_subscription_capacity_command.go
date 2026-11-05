@@ -20,7 +20,7 @@ func cmdEventsSubscriptionCapacityCommand(args []string) int {
 		return 1
 	}
 	if len(positional) != 3 || rejectUnexpectedFlagArgs(fs) || *timeout <= 0 || *timeout > time.Minute {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-capacity-command <app> <subscription-id> <command-id> [--timeout DURATION]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-capacity get <app> <subscription-id> <command-id> [--timeout DURATION]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[1]); err != nil {

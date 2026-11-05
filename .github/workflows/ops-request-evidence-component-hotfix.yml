@@ -33,7 +33,7 @@ jobs:
     runs-on: [self-hosted, linux, faas-fleet-us]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify rollback and artifact contracts
         run: bash scripts/ops/request_evidence_hotfix_test.sh
@@ -66,7 +66,7 @@ jobs:
 
       - name: Preserve activation, inspection, and rollback receipts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: request-evidence-component-hotfix-${{ github.run_id }}
           path: |

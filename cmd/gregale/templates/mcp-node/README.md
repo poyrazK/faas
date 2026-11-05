@@ -10,11 +10,11 @@ authentication. It supports MCP 2026-07-28 and stateless compatibility with
 npm ci
 npm test
 npm start
-gregale mcp doctor --url http://127.0.0.1:8080/mcp --legacy
-gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
-gregale mcp deploy --path . --name my-mcp --profile small
-gregale mcp config --url https://my-mcp.gregale.dev/mcp --name my-mcp
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
+gregale mcp server deploy --path . --name my-mcp --profile small
+gregale mcp server export --url https://my-mcp.gregale.dev/mcp --name my-mcp
 ```
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
@@ -84,9 +84,9 @@ three harmless sample IDs included in the starter, filtered by the verified
 caller's sample-record ownership in external OAuth mode. Try either through the CLI:
 
 ```sh
-gregale mcp complete --url http://127.0.0.1:8080/mcp \
+gregale mcp client complete --url http://127.0.0.1:8080/mcp \
   --prompt summarize --argument style --value exec
-gregale mcp complete --url http://127.0.0.1:8080/mcp \
+gregale mcp client complete --url http://127.0.0.1:8080/mcp \
   --resource-template 'customer://records/{recordId}' --argument recordId --value example-
 ```
 
@@ -165,14 +165,18 @@ database.
 Try the built-in task with:
 
 ```sh
-gregale mcp call --url http://127.0.0.1:8080/mcp --tasks \
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tasks \
   --tool build_report --arguments '{"report":"weekly","steps":8}'
-gregale mcp call --url http://127.0.0.1:8080/mcp --tasks \
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tasks \
   --tool build_report --arguments '{"report":"weekly","steps":8,"request_approval":true}'
-gregale mcp task-wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
-gregale mcp resource-read --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
-gregale mcp resource-watch --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
+gregale mcp client wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
+gregale mcp client read --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
+gregale mcp client watch --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
 ```
+
+Node, Go and Python use the same owner identity for new Tasks. Retained Tasks
+written with the older Go identity remain accessible to their original caller,
+including input replies and cancellation, and count toward outstanding limits.
 
 The server only creates a handle after PostgreSQL confirms the row, so
 `tasks/get` can read it immediately. By default, the HTTP server also claims
@@ -347,7 +351,7 @@ credentials. Set `MCP_TASKS_SCALING_APP_SLUG` to the worker slug you pass as
 Alongside the queue gauges, only this observer role publishes
 `mcp_tasks_observer_heartbeat`; a worker publisher cannot keep that signal fresh.
 It also publishes a bounded handler-compatibility snapshot with waiting task and
-live worker counts by tool/version. `gregale mcp tasks status --details` reads
+live worker counts by tool/version. `gregale mcp server tasks status --details` reads
 that snapshot from the API; it needs no local task database credentials.
 The observer must stay running while the worker fleet is at zero; metrics
 published by worker processes themselves require at least one worker replica.
@@ -365,12 +369,12 @@ payload-free `mcp_task_metrics_publish_failed` log event.
 Configure the dedicated worker's task-backlog scaler after deploying the worker:
 
 ```sh
-gregale mcp tasks setup --app mcp-worker
-gregale mcp tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
-gregale mcp tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
-gregale mcp tasks observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
-gregale mcp tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
-gregale mcp tasks status --app mcp-worker
+gregale mcp server tasks setup --app mcp-worker
+gregale mcp observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
+gregale mcp observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp server tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
+gregale mcp server tasks status --app mcp-worker
 ```
 
 The first command previews the worker policy. Observer setup checks the task
@@ -391,7 +395,7 @@ To notify when queued work gets too old, create a webhook alert on
 `mcp_tasks_oldest_age_seconds`; the threshold is seconds (for example,
 `--comparison gt --threshold 300`). Missing or stale readings mark the rule
 degraded, and this signal cannot trigger deployment actions. See the MCP docs
-for the complete `gregale alerts add` command.
+for the complete `gregale alert create` command.
 
 To notify if a required task metric stops arriving, add a webhook rule on
 `mcp_tasks_metrics_stale` with `--comparison gt --threshold 0`. It fires when
@@ -408,7 +412,7 @@ observer is running; the CLI does not create the observer or provision its
 database and metrics credentials. `status` shows whether the worker's task
 metrics are present and fresh.
 
-For an additional gateway JWT/scope gate, run `gregale mcp policy --path . --name
+For an additional gateway JWT/scope gate, run `gregale mcp server policy --path . --name
 my-mcp` after configuring external OAuth. This separately updates the app-wide
 JWT edge rule. The provider retains login and token issuance; keep application
 catalog filtering and owner checks. Gateway resource policies accept simple
@@ -444,14 +448,16 @@ dynamic name or resource URI pattern to the matching scope allow-list; missing
 policy entries stay hidden and denied. The registry is local to one process, so
 every serving replica needs the same application registration code.
 
-`gregale mcp deploy` reads this digest from its zero-traffic candidate and pins
+`gregale mcp server deploy` reads this digest from its zero-traffic candidate and pins
 the promoted deployment revision with `MCP_CATALOG_EXPECTED_SHA256`. For other
 deploy paths, set that variable to the `/healthz` digest on every serving
 replica. Remove any existing app-wide env or secret with this key before using
-`gregale mcp deploy`; those runtime layers take precedence over deployment
+`gregale mcp server deploy`; those runtime layers take precedence over deployment
 overrides. A mismatch makes `/healthz` return 503 and blocks MCP requests.
-The health response includes Gregale's `FAAS_INSTANCE_ID`. In addition,
-`gregale mcp status` receives the selected replica identity from Gregale's
+The health response includes the serving instance from Gregale's
+`X-Faas-Instance-Id` request header. (`FAAS_INSTANCE_ID` is set at boot, so every
+instance restored from one snapshot would report the same value.) In addition,
+`gregale mcp server status` receives the selected replica identity from Gregale's
 authenticated exact-instance probes. It initializes MCP and lists the
 caller-visible catalogs on every running replica without invoking tools,
 reading resources, or relying on load-balancer sampling. Use `--token-env` or
@@ -499,6 +505,12 @@ and contain no customer identifiers.
 
 ### Task retry policy and failure metrics
 
+Numeric zero uses the omitted default for `ttl_seconds`, `poll_interval_ms`,
+`worker_concurrency`, `shutdown_timeout_ms`, `max_attempts`,
+`retry_base_delay_ms` and `retry_max_delay_ms`, matching CLI validation. Invalid
+types and negative values remain rejected. `MCP_DRAIN_TIMEOUT_SECONDS` overrides
+the configured shutdown timeout and must remain positive.
+
 Handler errors remain terminal by default. Opt into retries only for failures
 that are safe to repeat:
 
@@ -520,6 +532,11 @@ admission limits. Cancellation wins over retry scheduling. Exhausted attempts or
 a delay that would reach the Task TTL produce a terminal failure. Retries never
 extend TTL. Input pauses do not consume another execution attempt.
 
+Lowering `max_attempts` fails exhausted queued retries on the next worker poll,
+even before their retry due time. Live attempts can finish, and input or drain
+resumptions keep their existing attempt count even above the new budget. A later
+failure cannot grant another attempt above that budget.
+
 Keep retry settings consistent across every worker in a namespace. Upgrade all
 workers before enabling retryable handler errors, since older workers do not
 respect delayed retry scheduling. Handlers still need idempotent external side
@@ -538,7 +555,7 @@ these together when diagnosing backlog and autoscaling.
 
 ### Task operational diagnostics
 
-`gregale mcp tasks status --app <worker-app>` shows running Tasks, capacity waits,
+`gregale mcp server tasks status --app <worker-app>` shows running Tasks, capacity waits,
 delayed retries, retained failures, active worker registrations, unsupported
 handler versions, and observer heartbeat freshness. JSON output adds stable
 `diagnostics` entries with `code` and `message`, plus `worker_heartbeats_fresh`
@@ -561,10 +578,16 @@ observer database grants, and upgrade every worker so the inventory is complete.
 `mcp_tasks_active_workers` counts unexpired registrations.
 `mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and
 expired-lease running Tasks with no matching version among registered workers.
-Future retries and live executions are excluded; retry-attempt eligibility is
-separate from handler compatibility. When there are no registered
+Future retries, live executions and retries that have exhausted the configured
+`tasks.max_attempts` are excluded. Input and drain resumptions remain eligible
+without starting another attempt. When there are no registered
 workers the unsupported count is zero and compatibility is unknown; status reports
 worker absence rather than claiming that all handlers are compatible.
+
+The observer's `mcp_tasks_without_compatible_worker` metric uses the same due-time
+and retry-budget rules, including nondefault attempt budgets. Use the same
+`tasks.max_attempts` on workers and observers sharing a namespace. Delayed retries
+remain visible in `mcp_tasks_retry_waiting`.
 
 Only the observer role publishes `mcp_tasks_observer_heartbeat` (value 1), after
 its database read and aggregate metric publication succeed. Worker publishers do
@@ -576,6 +599,33 @@ status reports an unknown observer when that heartbeat is absent or stale.
 Telemetry contains aggregate counts and declared handler inventory, without Task
 arguments, results, bearer tokens, caller identities, or exception messages.
 
+
+### Retained owner aliases and runtime handoffs
+
+Run `npm run tasks:migrate` and refresh `tasks:roles` grants before upgrading.
+The runtime profile now includes data access to `gregale_mcp_task_owners`, and
+observers need SELECT on it. Drain and upgrade all workers sharing the queue
+before relying on alias-aware capacity. Canonical and earlier Go owner hashes
+share one execution limit after authenticated caller operations associate them.
+Unregistered retained owners conservatively share one namespace bucket bounded
+by `max_running_per_owner` until their callers return; migration can temporarily
+reduce throughput. Whole alias groups are pruned after their last unexpired Task
+expires. The registry stores only HMAC hashes, without caller identities.
+
+For Go/Python handoffs, keep the same owner secret and `tasks.owner_key_id`
+(the generated starters use `initial`; omitted IDs resolve to `default`). Node
+reads their native v2 payloads with the original KDF and AAD, including IDs in
+`tasks.previous_owner_keys` with `{ "id": "old", "env": "OLD_TASK_OWNER_KEY" }`.
+Those retained secrets also preserve owner lookup aliases. Bind the same settings
+to migration, runtime and doctor commands. Keep keys until retained Task TTL
+ends. Node continues writing v1 or its explicitly configured payload ring, and
+its existing stable-owner fingerprint check still applies to Node queues.
+
+Claims authenticate their payloads before committing the lease or attempt count.
+An unreadable retained row leaves its prior queue state available for key repair.
+Worker completion, cancellation, retry and input writes require a live lease and
+unexpired Task TTL. Terminal writes check the database clock after acquiring the
+row lock, including when a concurrent transaction delayed the write.
 
 ### Task payload encryption key rotation
 
@@ -625,7 +675,7 @@ permissions, retained encryption keys, live workers and eligible handler coverag
 Exit code 1 means failed or unknown readiness. No schema changes or Task claims
 are made. Detailed database errors, keys and payloads are omitted. Repeat on every
 writer during key rotation; this report cannot establish fleet-wide consistency.
-For remote metrics and scale-to-zero checks, use `gregale mcp doctor --hosting
+For remote metrics and scale-to-zero checks, use `gregale mcp server doctor --hosting
 --app <worker-app> --preflight-path <this-directory>` with the same environment.
 
 Task workers drain on SIGTERM/SIGINT. Set `tasks.shutdown_timeout_ms` (default
@@ -723,7 +773,7 @@ worker that exceeds its shutdown deadline retains its registration until expiry;
 the gate fails rather than promoting prematurely.
 
 Gregale also provides a native deployment adapter:
-`gregale mcp tasks release --plan release.json --state release-state.json`.
+`gregale mcp server tasks deploy --plan release.json --state release-state.json`.
 Its plan names the web app/source, an empty candidate worker app/source, previous
 worker apps, and the always-on observer and its metric destination. It deploys
 candidates, verifies endpoint/observer health, captures worker IDs from runtime

@@ -54,7 +54,16 @@ func (a *realtimeJWTAuthorizer) AuthorizeIdentity(ctx context.Context, rawToken 
 	if claims.Exp.IsZero() || !time.Now().Before(claims.Exp) {
 		return realtime.JWTIdentity{}, realtime.ErrUnauthorized
 	}
-	return realtime.JWTIdentity{Principal: claims.Subject, SessionID: claims.Custom["session_id"], ExpiresAt: claims.Exp}, nil
+	identity := realtime.JWTIdentity{Principal: claims.Subject, SessionID: claims.Custom["session_id"], ExpiresAt: claims.Exp}
+	if len(policy.ExtractClaims) > 0 {
+		identity.Claims = make(map[string]string, len(policy.ExtractClaims))
+		for _, name := range policy.ExtractClaims {
+			if value, ok := claims.Custom[name]; ok {
+				identity.Claims[name] = value
+			}
+		}
+	}
+	return identity, nil
 }
 
 // AuthorizeClaims verifies a token for RLS-mode live queries (ADR-20261016151947) and
@@ -99,7 +108,7 @@ func (a *realtimeJWTAuthorizer) verifyClaims(ctx context.Context, rawToken strin
 		Audience:       policy.Audience,
 		Algorithms:     policy.Algorithms,
 		RequiredClaims: policy.RequiredClaims,
-		ExtractClaims:  []string{"session_id"},
+		ExtractClaims:  append([]string{"session_id"}, policy.ExtractClaims...),
 		RequireExpiry:  requireExpiry,
 	})
 	if err != nil {

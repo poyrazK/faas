@@ -19,12 +19,12 @@ import (
 // traffic. Releases whose rollout started before the policy, releases that
 // completed a rollout and the app's serving release never wait, so a
 // rollback never does. A scheduled release starts its rollout when its time
-// comes (ADR-20261021152201), so a policy set while it waited gates it.
+// comes (ADR-20261021152201), so a policy set while it waited gates it. Only
+// production releases wait: the default scope and the production
+// environment's are one lane (state.IsProductionScope), so naming the
+// environment does not step around the policy.
 func Gated(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
-	if policy == nil || !RequestMode(app) {
-		return false
-	}
-	if d.Scope != "" && d.Scope != api.DefaultEnvScope {
+	if policy == nil || !RequestMode(app) || !state.IsProductionScope(d.Scope) {
 		return false
 	}
 	if startedBefore(d, policy.CreatedAt) || d.RolloutCompletedAt != nil {
@@ -44,7 +44,7 @@ func startedBefore(d state.Deployment, t time.Time) bool {
 // without traffic can only start through a schedule, whose canary can wait
 // (ADR-20261021152201).
 func ParkedNeedsCanary(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
-	if policy == nil || !RequestMode(app) || (d.Scope != "" && d.Scope != api.DefaultEnvScope) {
+	if policy == nil || !RequestMode(app) || !state.IsProductionScope(d.Scope) {
 		return false
 	}
 	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.CanaryTotalSteps == 0
@@ -78,7 +78,7 @@ func Status(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployme
 	if !Gated(policy, app, d) {
 		return out
 	}
-	out.RequiredApprovals = policy.RequiredApprovals
+	out.RequiredApprovals = RequiredApprovals(*policy, d)
 	out.AfterStage = policy.AfterStage
 	rejected := false
 	for _, a := range decisions {
@@ -100,7 +100,7 @@ func Status(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployme
 	switch {
 	case rejected:
 		out.State = api.ReleaseApprovalStateRejected
-	case out.Approvals >= policy.RequiredApprovals:
+	case out.Approvals >= out.RequiredApprovals:
 		out.State = api.ReleaseApprovalStateApproved
 	case waiting && !now.Before(since.Add(time.Duration(policy.TimeoutMinutes)*time.Minute)):
 		out.State = api.ReleaseApprovalStateExpired
@@ -110,8 +110,21 @@ func Status(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployme
 	return out
 }
 
+// RequiredApprovals is the approvals d needs. When the policy forbids
+// self-approval but Gregale cannot name the release's deployer (a GitHub
+// push carries a GitHub login, not an account), one of the approvals could be
+// the author's own, so the release needs one more: at least one approver is
+// then someone else (ADR-20261020085706 amendment 3).
+func RequiredApprovals(policy state.ReleaseApprovalPolicy, d state.Deployment) int {
+	if !policy.AllowSelfApproval && d.DeployedByUserID == "" {
+		return policy.RequiredApprovals + 1
+	}
+	return policy.RequiredApprovals
+}
+
 // SelfApproval reports whether approverAccountID deployed the release. A
-// release with no recorded deployer (a GitHub push) has no self.
+// release with no recorded deployer (a GitHub push) has no self; it needs an
+// extra approval instead (RequiredApprovals).
 func SelfApproval(d state.Deployment, approverAccountID string) bool {
 	return d.DeployedByUserID != "" && d.DeployedByUserID == approverAccountID
 }
@@ -220,12 +233,22 @@ type releaseReader interface {
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (state.Deployment, error)
 }
 
+// productionLanes are the scopes a production release lands in: the legacy
+// default scope and the production environment's (state.IsProductionScope).
+var productionLanes = []string{api.DefaultEnvScope, "production"}
+
 // CanaryRequired reports whether a production release of app must roll out
-// through a canary because the app requires approvals. The app's first
-// release, named environments, other scopes and non-request apps never need
-// one. Stores without approvals need none.
+// through a canary because the app requires approvals. A release names
+// production by the default scope or by the production environment, which
+// routing and release freezes treat as one lane, so both wait alike. The
+// app's first production release, other environments and scopes, and
+// non-request apps never need one. Stores without approvals need none.
 func CanaryRequired(ctx context.Context, store any, app state.App, scope, environment string) (bool, error) {
-	if environment != "" || (scope != "" && scope != api.DefaultEnvScope) || !RequestMode(app) {
+	target := scope
+	if environment != "" {
+		target = environment
+	}
+	if !state.IsProductionScope(target) || !RequestMode(app) {
 		return false, nil
 	}
 	reader, ok := store.(releaseReader)
@@ -238,13 +261,16 @@ func CanaryRequired(ctx context.Context, store any, app state.App, scope, enviro
 		}
 		return false, fmt.Errorf("read release approval policy: %w", err)
 	}
-	if _, err := reader.LiveDeploymentForScope(ctx, app.ID, api.DefaultEnvScope); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return false, nil
+	for _, lane := range productionLanes {
+		_, err := reader.LiveDeploymentForScope(ctx, app.ID, lane)
+		if err == nil {
+			return true, nil
 		}
-		return false, fmt.Errorf("read live deployment: %w", err)
+		if !errors.Is(err, state.ErrNotFound) {
+			return false, fmt.Errorf("read live deployment: %w", err)
+		}
 	}
-	return true, nil
+	return false, nil
 }
 
 // TakesTrafficWithoutCanary reports whether a deploy request would give the
@@ -255,4 +281,104 @@ func TakesTrafficWithoutCanary(req *api.CreateDeploymentRequest) bool {
 		return false
 	}
 	return req.TrafficPercent == nil || *req.TrafficPercent > 0
+}
+
+// WaitsBeforeReleaseCommand reports whether d's pinned release command must
+// wait for the app's approvals before it runs (ADR-20261020085706 amendment
+// 12). A release command (a migration) changes production data the moment it
+// runs, so a release that will wait for approval in its canary waits before
+// its release command instead: the approval covers the command and the
+// traffic. Releases the policy does not gate, and the app's first production
+// release, which has no canary to wait in, run their command at once.
+func WaitsBeforeReleaseCommand(ctx context.Context, store any, policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) (bool, error) {
+	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting || d.EnvironmentWorkloadHeld() {
+		return false, nil
+	}
+	if !Gated(policy, app, d) {
+		return false, nil
+	}
+	return CanaryRequired(ctx, store, app, d.Scope, "")
+}
+
+// ReleaseCommandStatus is the approval state of a release waiting before its
+// release command. It waits from when it reached its release phase (since)
+// for the policy's timeout, like a canary waits in its stage.
+func ReleaseCommandStatus(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment, decisions []state.ReleaseApproval, since, now time.Time) api.ReleaseApprovalStatus {
+	status := Status(policy, app, d, decisions, now)
+	if policy == nil || status.State != api.ReleaseApprovalStateWaiting {
+		return status
+	}
+	expires := since.Add(time.Duration(policy.TimeoutMinutes) * time.Minute)
+	status.WaitingSince = since.UTC().Format(time.RFC3339)
+	status.ExpiresAt = expires.UTC().Format(time.RFC3339)
+	if !now.Before(expires) {
+		status.State = api.ReleaseApprovalStateExpired
+	}
+	return status
+}
+
+// ReleasePhaseStartedAt is when d entered its current pipeline stage (for a
+// release waiting before its release command, its release phase), or its
+// creation when the stage has no start.
+func ReleasePhaseStartedAt(d state.Deployment) time.Time {
+	started := d.CreatedAt
+	var stages state.StageState
+	if len(d.StageState) == 0 || json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
+		return started
+	}
+	if stages.CurrentStartedAt.After(started) {
+		return *stages.CurrentStartedAt
+	}
+	return started
+}
+
+// releaseCommandReader is what LoadReleaseCommandWait reads.
+type releaseCommandReader interface {
+	ReleaseApprovalPolicy(ctx context.Context, appID string) (state.ReleaseApprovalPolicy, error)
+	ListReleaseApprovals(ctx context.Context, deploymentID string) ([]state.ReleaseApproval, error)
+}
+
+// ReleaseCommandWait is a release's wait for approval before its release
+// command (ADR-20261020085706 amendment 12). Waits is false when the release
+// does not wait; Status is its approval state when it does.
+type ReleaseCommandWait struct {
+	Waits  bool
+	Policy *state.ReleaseApprovalPolicy
+	Status api.ReleaseApprovalStatus
+}
+
+// Pending reports whether the release still waits for its approvals.
+func (w ReleaseCommandWait) Pending() bool {
+	return w.Waits && w.Status.State == api.ReleaseApprovalStateWaiting
+}
+
+// LoadReleaseCommandWait reads whether d waits for approval before its
+// release command, and its approval state at now. imaged holds the command
+// on it; apid's watchdog and imaged's stale sweep leave a pending wait alone.
+// Stores without approvals never wait.
+func LoadReleaseCommandWait(ctx context.Context, store any, app state.App, d state.Deployment, now time.Time) (ReleaseCommandWait, error) {
+	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting {
+		return ReleaseCommandWait{}, nil
+	}
+	reader, ok := store.(releaseCommandReader)
+	if !ok {
+		return ReleaseCommandWait{}, nil
+	}
+	policy, err := reader.ReleaseApprovalPolicy(ctx, app.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return ReleaseCommandWait{}, nil
+	}
+	if err != nil {
+		return ReleaseCommandWait{}, fmt.Errorf("read release approval policy: %w", err)
+	}
+	waits, err := WaitsBeforeReleaseCommand(ctx, store, &policy, app, d)
+	if err != nil || !waits {
+		return ReleaseCommandWait{}, err
+	}
+	decisions, err := reader.ListReleaseApprovals(ctx, d.ID)
+	if err != nil {
+		return ReleaseCommandWait{}, fmt.Errorf("list release approvals: %w", err)
+	}
+	status := ReleaseCommandStatus(&policy, app, d, decisions, ReleasePhaseStartedAt(d), now)
+	return ReleaseCommandWait{Waits: true, Policy: &policy, Status: status}, nil
 }

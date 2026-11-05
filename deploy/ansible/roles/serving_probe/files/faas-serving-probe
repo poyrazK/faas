@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Probe Gregale's public serving path from a compute node.
+
+ADR-20261023124955 §5. Every alert Prometheus evaluates is delivered by the
+control plane, so a control-plane outage silences them all. This probe runs
+on the compute nodes instead. It requests each configured URL through the
+public edge; a URL fails when two attempts, RETRY_DELAY apart, both miss a
+2xx. Failures go straight to a chat webhook and a fully passing run pings an
+external heartbeat check, so neither path needs the control plane. Metrics
+go to the node_exporter textfile directory for dashboards while the control
+plane is up.
+
+Notifications fire on a change (ok -> failing, failing -> recovered) and
+then at most once an hour while a URL keeps failing, so a long outage does
+not post every five minutes.
+
+Configuration (environment, from /etc/faas/serving-probe.env):
+  FAAS_SERVING_PROBE_URLS                  space-separated https URLs
+  FAAS_SERVING_PROBE_TIMEOUT_SECONDS       per attempt, default 20
+  FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS   between attempts, default 30
+  FAAS_SERVING_PROBE_NODE                  name used in messages, default hostname
+  FAAS_SERVING_PROBE_TEXTFILE              metrics file path
+Credentials (systemd LoadCredential): webhook_url, optional heartbeat_url.
+State (systemd StateDirectory): the last outcome per URL.
+"""
+
+import json
+import os
+import re
+import socket
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# Same pattern the role asserts. No quotes, spaces or "$": the URLs pass
+# through a systemd EnvironmentFile.
+URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~!&()*+,;=:@%/?-]*)?$")
+REMINDER_SECONDS = 3600
+DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/serving-probe.prom"
+USER_AGENT = "gregale-serving-probe/1"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # A redirect is not a served response: a misrouted host that 301s to a
+    # parking page must count as a failure, not follow through to a 200.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def default_opener():
+    return urllib.request.build_opener(_NoRedirect())
+
+
+class Config:
+    def __init__(self, env):
+        raw = env.get("FAAS_SERVING_PROBE_URLS", "").split()
+        bad = [u for u in raw if not URL_RE.match(u)]
+        if not raw or bad:
+            raise ValueError(f"FAAS_SERVING_PROBE_URLS must list https URLs; rejected {bad or 'an empty list'}")
+        self.urls = raw
+        self.timeout = float(env.get("FAAS_SERVING_PROBE_TIMEOUT_SECONDS", "20"))
+        self.retry_delay = float(env.get("FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS", "30"))
+        self.node = env.get("FAAS_SERVING_PROBE_NODE") or socket.gethostname()
+        self.textfile = Path(env.get("FAAS_SERVING_PROBE_TEXTFILE", DEFAULT_TEXTFILE))
+        state_dir = env.get("STATE_DIRECTORY", "").split(":")[0]
+        self.state = Path(state_dir) / "state.json" if state_dir else None
+        creds = env.get("CREDENTIALS_DIRECTORY", "")
+        self.webhook = _read_credential(creds, "webhook_url")
+        self.heartbeat = _read_credential(creds, "heartbeat_url")
+
+
+def _read_credential(directory, name):
+    if not directory:
+        return ""
+    path = Path(directory) / name
+    try:
+        return path.read_text().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def probe_once(url, timeout, opener):
+    """Return (status, first_byte_seconds, error). status 0 = no response."""
+    start = time.monotonic()
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            resp.read(1)
+            return resp.status, time.monotonic() - start, ""
+    except urllib.error.HTTPError as err:
+        return err.code, time.monotonic() - start, f"HTTP {err.code}"
+    except Exception as err:  # URLError, socket timeout, TLS failure
+        reason = getattr(err, "reason", err)
+        return 0, time.monotonic() - start, str(reason)[:200]
+
+
+def probe(url, cfg, opener, sleep):
+    """Two attempts; the result is the last attempt's."""
+    status, seconds, error = probe_once(url, cfg.timeout, opener)
+    attempts = 1
+    if not 200 <= status < 300:
+        sleep(cfg.retry_delay)
+        status, seconds, error = probe_once(url, cfg.timeout, opener)
+        attempts = 2
+    return {"ok": 200 <= status < 300, "status": status, "seconds": seconds, "error": error, "attempts": attempts}
+
+
+def _label(value):
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def write_metrics(path, results, now):
+    lines = [
+        "# HELP faas_serving_probe_success 1 when the URL answered 2xx within two attempts on the last run.",
+        "# TYPE faas_serving_probe_success gauge",
+    ]
+    lines += [f'faas_serving_probe_success{{url="{_label(u)}"}} {int(r["ok"])}' for u, r in results.items()]
+    lines += [
+        "# HELP faas_serving_probe_first_byte_seconds Seconds to the first response byte on the last attempt.",
+        "# TYPE faas_serving_probe_first_byte_seconds gauge",
+    ]
+    lines += [f'faas_serving_probe_first_byte_seconds{{url="{_label(u)}"}} {r["seconds"]:.3f}' for u, r in results.items()]
+    lines += [
+        "# HELP faas_serving_probe_http_status HTTP status of the last attempt; 0 when nothing answered.",
+        "# TYPE faas_serving_probe_http_status gauge",
+    ]
+    lines += [f'faas_serving_probe_http_status{{url="{_label(u)}"}} {r["status"]}' for u, r in results.items()]
+    lines += [
+        "# HELP faas_serving_probe_last_run_timestamp_seconds Unix time the probe last finished.",
+        "# TYPE faas_serving_probe_last_run_timestamp_seconds gauge",
+        f"faas_serving_probe_last_run_timestamp_seconds {now:.0f}",
+    ]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except OSError as err:
+        # Metrics are secondary; the probe still notifies.
+        print(f"serving-probe: cannot write metrics {path}: {err}", file=sys.stderr)
+
+
+def load_state(path):
+    if path is None:
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_state(path, state):
+    if path is None:
+        return
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def decide(results, previous, now):
+    """Return (messages, new_state). One message per URL that changed or is due a reminder."""
+    messages, state = [], {}
+    for url, r in results.items():
+        prev = previous.get(url, {})
+        if r["ok"]:
+            state[url] = {"ok": True}
+            if prev.get("ok") is False:
+                messages.append(f"RECOVERED {url} answered {r['status']} in {r['seconds']:.2f}s")
+            continue
+        last = prev.get("notified_at", 0) if prev.get("ok") is False else 0
+        if prev.get("ok") is not False or now - last >= REMINDER_SECONDS:
+            detail = r["error"] or f"HTTP {r['status']}"
+            since = prev.get("failing_since", now) if prev.get("ok") is False else now
+            minutes = int((now - since) // 60)
+            still = f" (failing for {minutes} min)" if minutes else ""
+            messages.append(f"FAILING {url}: {detail} after {r['attempts']} attempts{still}")
+            last = now
+        state[url] = {
+            "ok": False,
+            "notified_at": last,
+            "failing_since": prev.get("failing_since", now) if prev.get("ok") is False else now,
+        }
+    return messages, state
+
+
+def post_json(url, payload, timeout=10):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        resp.read()
+
+
+def ping(url, timeout=10):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        resp.read()
+
+
+def run(env=None, opener=None, sleep=time.sleep, now=time.time, post=post_json, beat=ping):
+    cfg = Config(os.environ if env is None else env)
+    opener = opener or default_opener()
+    results = {url: probe(url, cfg, opener, sleep) for url in cfg.urls}
+    finished = now()
+    write_metrics(cfg.textfile, results, finished)
+
+    for url, r in results.items():
+        outcome = "ok" if r["ok"] else "FAIL"
+        print(f"serving-probe: {outcome} {url} status={r['status']} first_byte={r['seconds']:.3f}s attempts={r['attempts']} {r['error']}".rstrip())
+
+    messages, state = decide(results, load_state(cfg.state), finished)
+    delivered = True
+    if messages:
+        text = f"Gregale serving probe from {cfg.node}:\n" + "\n".join(messages)
+        if cfg.webhook:
+            try:
+                post(cfg.webhook, {"text": text})
+            except Exception as err:
+                delivered = False
+                print(f"serving-probe: webhook delivery failed: {err}", file=sys.stderr)
+        else:
+            delivered = False
+            print("serving-probe: no webhook_url credential; notification not sent", file=sys.stderr)
+    if delivered:
+        # A reminder that could not be delivered stays due on the next run.
+        save_state(cfg.state, state)
+
+    failed = [u for u, r in results.items() if not r["ok"]]
+    if not failed and cfg.heartbeat:
+        try:
+            beat(cfg.heartbeat)
+        except Exception as err:
+            print(f"serving-probe: heartbeat ping failed: {err}", file=sys.stderr)
+    return 1 if failed or not delivered else 0
+
+
+def main():
+    try:
+        return run()
+    except ValueError as err:
+        print(f"serving-probe: {err}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

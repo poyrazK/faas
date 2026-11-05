@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -49,14 +51,14 @@ func TestWatchExecutionResumesAfterEOF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	watcher := c.WatchExecution(context.Background(), "run-1", faas.WatchExecutionOptions{
+	watcher := preview.Wrap(c).WatchExecution(context.Background(), "run-1", preview.WatchExecutionOptions{
 		RetryInitial: 0,
 		RetryMax:     0,
 		Limit:        25,
 	})
 	defer watcher.Close()
 
-	var events []faas.ExecutionEvent
+	var events []preview.ExecutionEvent
 	for {
 		event, nextErr := watcher.Next()
 		if errors.Is(nextErr, io.EOF) {
@@ -102,7 +104,7 @@ func TestWatchExecutionRejectsMalformedPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 	c, _ := faas.NewClient(srv.URL, "token")
-	watcher := c.WatchExecution(context.Background(), "run-1", faas.WatchExecutionOptions{})
+	watcher := preview.Wrap(c).WatchExecution(context.Background(), "run-1", preview.WatchExecutionOptions{})
 	defer watcher.Close()
 	_, err := watcher.Next()
 	if err == nil {
@@ -123,7 +125,7 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 		mu.Unlock()
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/executions":
-			var request faas.CreateExecutionRequest
+			var request preview.CreateExecutionRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode create request: %v", err)
 			}
@@ -144,14 +146,14 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 	}))
 	defer srv.Close()
 	c, _ := faas.NewClient(srv.URL, "token")
-	var seen []faas.ExecutionEventType
-	receipt, err := c.Run(context.Background(), faas.CreateExecutionRequest{
+	var seen []preview.ExecutionEventType
+	receipt, err := preview.Wrap(c).Run(context.Background(), preview.CreateExecutionRequest{
 		Runtime: faas.ExecutionRuntimePython313,
 		Profile: faas.ExecutionProfilePythonDataV1,
 		Source:  "def main(input, context): return input",
-	}, faas.RunOptions{
-		Watch: faas.WatchExecutionOptions{RetryInitial: 0, RetryMax: 0},
-		OnEvent: func(event faas.ExecutionEvent) error {
+	}, preview.RunOptions{
+		Watch: preview.WatchExecutionOptions{RetryInitial: 0, RetryMax: 0},
+		OnEvent: func(event preview.ExecutionEvent) error {
 			seen = append(seen, event.Type)
 			return nil
 		},
@@ -178,7 +180,7 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 func TestExecutionArtifactBytesVerifiesReceipt(t *testing.T) {
 	data := []byte{0, 1, 255}
 	hash := sha256.Sum256(data)
-	artifact := faas.ExecutionArtifact{Name: "result.bin", SizeBytes: len(data), SHA256: "sha256:" + hex.EncodeToString(hash[:]), Content: data}
+	artifact := preview.ExecutionArtifact{Name: "result.bin", SizeBytes: len(data), SHA256: "sha256:" + hex.EncodeToString(hash[:]), Content: data}
 	decoded, err := artifact.Bytes()
 	if err != nil {
 		t.Fatal(err)

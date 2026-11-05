@@ -77,8 +77,8 @@ func (s *PgStore) SetProductCustomerTrialEnd(ctx context.Context, account, app, 
 		if err != nil {
 			return mapErr(err)
 		}
-		customer := withProductTrial(api.ProductCustomer{TenantID: tenant, Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended,
-			AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)}, row.TrialStartsAt, row.TrialEndsAt)
+		customer := withProductConversion(withProductTrial(api.ProductCustomer{TenantID: tenant, Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended,
+			AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)}, row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt)
 		if err := validateProductTrialEnd(customer, end, time.Now()); err != nil {
 			return err
 		}

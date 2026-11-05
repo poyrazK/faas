@@ -61,16 +61,15 @@ class Invocation:
     received_at: datetime.datetime | None | Unset = UNSET
     """When the drain first claimed the row; null until claimed."""
     deadline_at: datetime.datetime | None | Unset = UNSET
-    """ADR-134 PR-B. Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still
+    """Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still
     pending|dispatching."""
     retry_policy: InvocationRetryPolicyType0 | None | Unset = UNSET
-    """ADR-134 PR-B. Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts,
-    base_seconds, max_seconds, jitter_seconds)."""
+    """Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts, base_seconds,
+    max_seconds, jitter_seconds)."""
     result_retention_until: datetime.datetime | None | Unset = UNSET
-    """ADR-134 PR-B. Optional explicit retention horizon. NULL means 'use plan default'
-    (Limits.MaxAsyncResultRetentionSeconds)."""
+    """Optional explicit retention horizon. NULL means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds)."""
     last_replayed_at: datetime.datetime | None | Unset = UNSET
-    """ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST
+    """When this row was most recently replayed from dead_letter via POST
     /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay."""
     on_success_destination_id: None | Unset | UUID = UNSET
     """EPIC #1278. App webhook subscription selected for a completed invocation."""

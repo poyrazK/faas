@@ -1,5 +1,5 @@
-from faas_sdk.api.projects import preview_project_environment_promotion_secrets
-from faas_sdk.models.project_environment_promotion_secret_preview_request import (
+from faas_sdk.preview.api.projects import preview_project_environment_promotion_secrets
+from faas_sdk.preview.models.project_environment_promotion_secret_preview_request import (
     ProjectEnvironmentPromotionSecretPreviewRequest,
 )
 

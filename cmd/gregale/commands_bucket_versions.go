@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const bucketVersionsUsage = "usage: gregale bucket versions list <app> <bucket-id> [--prefix PREFIX] [--delimiter DELIMITER] [--limit N] [--key-marker KEY] [--version-id-marker VERSION]"
+const bucketVersionsUsage = "usage: gregale bucket version list <app> <bucket-id> [--prefix PREFIX] [--delimiter DELIMITER] [--limit N] [--key-marker KEY] [--version-id-marker VERSION]"
 
 func parseBucketVersions(args []string) (string, string, api.ObjectVersionListRequest, error) {
 	req := api.ObjectVersionListRequest{Limit: api.MaxObjectS3ListItems}

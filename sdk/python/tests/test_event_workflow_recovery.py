@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from faas_sdk.models.event_recovery_request import EventRecoveryRequest
-from faas_sdk.models.event_workflow_recovery_plan import EventWorkflowRecoveryPlan
-from faas_sdk.models.event_workflow_recovery_target import EventWorkflowRecoveryTarget
+from faas_sdk.preview.models.event_recovery_request import EventRecoveryRequest
+from faas_sdk.preview.models.event_workflow_recovery_plan import EventWorkflowRecoveryPlan
+from faas_sdk.preview.models.event_workflow_recovery_target import EventWorkflowRecoveryTarget
 
 
 def test_workflow_recovery_job_preserves_reviewed_zero_generation_and_count():
@@ -33,8 +33,8 @@ def test_legacy_workflow_job_omits_generation_and_ordinary_request_omits_plan():
 
 
 def test_recovery_review_decision_and_live_status_roundtrip():
-    from faas_sdk.models.workflow_recovery_review_decision import WorkflowRecoveryReviewDecision
-    from faas_sdk.models.workflow_recovery_review_status import WorkflowRecoveryReviewStatus
+    from faas_sdk.preview.models.workflow_recovery_review_decision import WorkflowRecoveryReviewDecision
+    from faas_sdk.preview.models.workflow_recovery_review_status import WorkflowRecoveryReviewStatus
 
     decision = {
         "decision": "approved",
@@ -68,7 +68,7 @@ def test_recovery_review_decision_and_live_status_roundtrip():
 
 
 def test_recovery_review_notification_capture_roundtrip():
-    from faas_sdk.models.workflow_recovery_review_notification import WorkflowRecoveryReviewNotification
+    from faas_sdk.preview.models.workflow_recovery_review_notification import WorkflowRecoveryReviewNotification
 
     body = {
         "event_id": "11111111-1111-4111-8111-111111111111",
@@ -81,10 +81,10 @@ def test_recovery_review_notification_capture_roundtrip():
 
 
 def test_recovery_review_completion_snapshot_roundtrip():
-    from faas_sdk.models.workflow_recovery_review_completion_notification import (
+    from faas_sdk.preview.models.workflow_recovery_review_completion_notification import (
         WorkflowRecoveryReviewCompletionNotification,
     )
-    from faas_sdk.models.workflow_recovery_review_finished_webhook_payload import (
+    from faas_sdk.preview.models.workflow_recovery_review_finished_webhook_payload import (
         WorkflowRecoveryReviewFinishedWebhookPayload,
     )
 
@@ -135,12 +135,12 @@ def test_recovery_review_completion_snapshot_roundtrip():
 
 
 def test_automatic_policy_limits_pause_and_receipt_roundtrip():
-    from faas_sdk.models.workflow_recovery_policy import WorkflowRecoveryPolicy
-    from faas_sdk.models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
-    from faas_sdk.models.workflow_recovery_policy_paused_webhook_payload import (
+    from faas_sdk.preview.models.workflow_recovery_policy import WorkflowRecoveryPolicy
+    from faas_sdk.preview.models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
+    from faas_sdk.preview.models.workflow_recovery_policy_paused_webhook_payload import (
         WorkflowRecoveryPolicyPausedWebhookPayload,
     )
-    from faas_sdk.models.workflow_recovery_review_automatic_execution import WorkflowRecoveryReviewAutomaticExecution
+    from faas_sdk.preview.models.workflow_recovery_review_automatic_execution import WorkflowRecoveryReviewAutomaticExecution
 
     policy = {
         "enabled": True,
@@ -190,7 +190,7 @@ def test_automatic_policy_limits_pause_and_receipt_roundtrip():
 
 
 def test_recovery_operator_control_timestamps_roundtrip():
-    from faas_sdk.models.control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
+    from faas_sdk.preview.models.control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 
     control = {
         "expected_version": 4,
@@ -205,7 +205,7 @@ def test_recovery_operator_control_timestamps_roundtrip():
 
 
 def test_recovery_queue_entry_and_budget_roundtrip():
-    from faas_sdk.models.workflow_recovery_automatic_queue import WorkflowRecoveryAutomaticQueue
+    from faas_sdk.preview.models.workflow_recovery_automatic_queue import WorkflowRecoveryAutomaticQueue
 
     queue = {
         "policy": {
@@ -261,11 +261,11 @@ def test_recovery_queue_entry_and_budget_roundtrip():
 
 
 def test_automatic_suppression_and_block_notification_roundtrip():
-    from faas_sdk.models.suppress_workflow_recovery_automatic_action_request import (
+    from faas_sdk.preview.models.suppress_workflow_recovery_automatic_action_request import (
         SuppressWorkflowRecoveryAutomaticActionRequest,
     )
-    from faas_sdk.models.workflow_recovery_automatic_action import WorkflowRecoveryAutomaticAction
-    from faas_sdk.models.workflow_recovery_queue_blocked_webhook_payload import (
+    from faas_sdk.preview.models.workflow_recovery_automatic_action import WorkflowRecoveryAutomaticAction
+    from faas_sdk.preview.models.workflow_recovery_queue_blocked_webhook_payload import (
         WorkflowRecoveryQueueBlockedWebhookPayload,
     )
 
@@ -312,7 +312,7 @@ def test_automatic_suppression_and_block_notification_roundtrip():
 
 
 def test_policy_change_preview_roundtrip():
-    from faas_sdk.models.workflow_recovery_policy_change_preview import WorkflowRecoveryPolicyChangePreview
+    from faas_sdk.preview.models.workflow_recovery_policy_change_preview import WorkflowRecoveryPolicyChangePreview
 
     stamp = "2026-10-11T14:00:00+00:00"
     app_id = "11111111-1111-4111-8111-111111111111"
@@ -397,7 +397,7 @@ def test_policy_change_preview_roundtrip():
 
 
 def test_recovery_policy_health_roundtrip():
-    from faas_sdk.models.workflow_recovery_policy_health import WorkflowRecoveryPolicyHealth
+    from faas_sdk.preview.models.workflow_recovery_policy_health import WorkflowRecoveryPolicyHealth
 
     body = {
         "status": "stalled",
@@ -443,9 +443,9 @@ def test_recovery_policy_health_roundtrip():
 
 
 def test_recovery_health_alert_models_roundtrip():
-    from faas_sdk.models.workflow_recovery_health_alert_policy import WorkflowRecoveryHealthAlertPolicy
-    from faas_sdk.models.workflow_recovery_health_incident import WorkflowRecoveryHealthIncident
-    from faas_sdk.models.workflow_recovery_health_webhook_payload import WorkflowRecoveryHealthWebhookPayload
+    from faas_sdk.preview.models.workflow_recovery_health_alert_policy import WorkflowRecoveryHealthAlertPolicy
+    from faas_sdk.preview.models.workflow_recovery_health_incident import WorkflowRecoveryHealthIncident
+    from faas_sdk.preview.models.workflow_recovery_health_webhook_payload import WorkflowRecoveryHealthWebhookPayload
 
     settings = {"enabled": True, "stall_after_seconds": 300, "alert_after_seconds": 60}
     assert WorkflowRecoveryHealthAlertPolicy.from_dict(settings).to_dict() == settings

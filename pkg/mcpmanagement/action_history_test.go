@@ -13,8 +13,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// Feature fixtures exercise the complete catalog; focused-core discovery has
+// separate tests in toolsets_test.go.
+func newHistoryTestManagementServer(client *api.Client, opts Options) (*mcp.Server, *management, error) {
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
+	return newManagementServer(client, opts)
+}
 
 func actionDetail(t *testing.T, m *management, args getActionArgs) actionHistoryDetail {
 	t.Helper()
@@ -97,7 +108,7 @@ func TestActionHistoryLostResponseRestartAndExpiredAuthority(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 			t.Cleanup(backend.Close)
 			opts := Options{APIBase: backend.URL, AllowWrites: true, planStore: store, planNamespace: "first"}
-			_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,7 +141,7 @@ func TestActionHistoryLostResponseRestartAndExpiredAuthority(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = reopened.Close() })
 			opts.planStore = reopened
-			_, restored, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, restored, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,7 +165,7 @@ func TestActionHistoryLostResponseRestartAndExpiredAuthority(t *testing.T) {
 				}
 			}
 			opts.planNamespace = "other"
-			_, other, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+			_, other, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +188,7 @@ func TestActionHistoryTriageConsentAndNamedIdentity(t *testing.T) {
 	f, backend, opts := newTriageFixture(t)
 	f.scope = "staging"
 	opts.Environments.Named = map[string]EnvironmentGrant{"shop/staging": {Project: "shop", ProjectID: "project-one", Environment: "staging", EnvironmentID: "env-one", Apps: map[string]string{"alpha": f.app}, Write: true}}
-	_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +247,7 @@ func TestActionHistoryPaginationIdentityAndLegacyImport(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(backend.Close)
 	opts := Options{APIBase: backend.URL, AllowWrites: true, planStore: store, planNamespace: "legacy", AllowedApps: map[string]string{"alpha": "app-one"}}
-	_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +276,7 @@ func TestActionHistoryPaginationIdentityAndLegacyImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts.AllowWrites = false
-	_, restored, err := newManagementServer(api.NewClient(backend.URL, testToken), opts)
+	_, restored, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

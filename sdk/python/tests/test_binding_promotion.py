@@ -2,10 +2,10 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.deployments import promote_deployment_with_bindings
+from faas_sdk.preview.api.deployments import promote_deployment_with_bindings
 from faas_sdk.client import Client
-from faas_sdk.models.binding_promotion_request import BindingPromotionRequest
-from faas_sdk.models.problem import Problem
+from faas_sdk.preview.models.binding_promotion_request import BindingPromotionRequest
+from faas_sdk.preview.models.problem import Problem
 
 
 def test_binding_promotion_request_and_structured_blockers() -> None:

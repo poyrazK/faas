@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (m *MemStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, 
 	return m.PrepareEnvironmentGitOpsCandidates(ctx, lease, reviewed, nil)
 }
 
-func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
+func (m *MemStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inputs, snapshot, err := m.environmentCandidateInputsLocked(lease, reviewed)
@@ -99,6 +100,20 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 			buildIDs[inputs[i].BuildID] = true
 		}
 	}
+	// Rebound Job edits and identities commit with their candidate graph.
+	previousJobs, previousIntents := m.jobs, m.appEnvironmentWorkloadIntents
+	m.jobs, m.appEnvironmentWorkloadIntents = maps.Clone(m.jobs), maps.Clone(m.appEnvironmentWorkloadIntents)
+	committed := false
+	defer func() {
+		if !committed {
+			m.jobs, m.appEnvironmentWorkloadIntents = previousJobs, previousIntents
+		}
+	}()
+	memory := m.environmentGitOps[lease.Source.ID]
+	snapshot, err = m.reconcileReleasedCandidateJobsLocked(memory.source, memory.revisions[memory.source.ApprovedRevisionID], inputs, snapshot)
+	if err != nil {
+		return nil, err
+	}
 	// Allocate identities before publication so graph validation cannot leave
 	// an in-memory candidate or build without its preparation cohort.
 	prospective := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
@@ -114,9 +129,43 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 		}
 		prospective = append(prospective, EnvironmentWorkloadCandidate{DeploymentID: candidate.ID, AppID: candidate.AppID, Resource: frozen.Resource})
 	}
-	memory := m.environmentGitOps[lease.Source.ID]
 	graph, err := preparationGraph(snapshot, memory.revisions[memory.source.ApprovedRevisionID], memory.source.Generation, reviewed.Hash, prospective)
 	if err != nil {
+		return nil, err
+	}
+	// Stage new rows first: each takes a new revision URL, analyzed with the
+	// shared binding guard (ADR-570) before any candidate, build or graph
+	// is published.
+	staged := make(map[string]Deployment, len(inputs))
+	nextRevision := map[string]int{}
+	for i, input := range inputs {
+		frozen := candidateFrozenInputs(input)
+		candidate, err := m.environmentCandidateLocked(frozen)
+		if err != nil {
+			return nil, err
+		}
+		if candidate.ID != "" {
+			continue
+		}
+		input.Status, input.CreatedAt = DeployPending, time.Now().UTC()
+		input.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(true)
+		if nextRevision[input.AppID] == 0 {
+			nextRevision[input.AppID] = m.nextDeploymentRevisionLocked(input.AppID)
+		}
+		input.Revision = nextRevision[input.AppID]
+		nextRevision[input.AppID]++
+		input.TrafficPercentExplicit = true
+		input.CanaryPreset, input.RolloutState = "none", "pending"
+		input.StageState, _ = deploymentStageStateForCreate(nil, input.CreatedAt)
+		if frozen.BuiltArtifact != nil {
+			input.Status = DeploySnapshotting
+		} else if input.Kind != DeploymentKindImage {
+			input.Status = DeployBuilding
+		}
+		inputs[i] = input
+		staged[input.ID] = input
+	}
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, lease.Source.AccountID, nil, "", memTrafficPolicyChange{Deployments: staged})); err != nil {
 		return nil, err
 	}
 	out := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
@@ -126,18 +175,9 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 		if err != nil {
 			return nil, err
 		}
-		if candidate.ID == "" {
+		if _, isNew := staged[input.ID]; isNew && candidate.ID == "" {
 			// All fallible validation was completed before writing any row.
-			input.Status, input.CreatedAt = DeployPending, time.Now().UTC()
-			input.EnvironmentWorkloadHeldValue = environmentWorkloadHeldFlag(true)
-			input.Revision = m.nextDeploymentRevisionLocked(input.AppID)
-			input.TrafficPercentExplicit = true
-			input.CanaryPreset, input.RolloutState = "none", "pending"
-			input.StageState, _ = deploymentStageStateForCreate(nil, input.CreatedAt)
-			if frozen.BuiltArtifact != nil {
-				input.Status = DeploySnapshotting
-			} else if input.Kind != DeploymentKindImage {
-				input.Status = DeployBuilding
+			if input.Status == DeployBuilding {
 				m.builds[input.BuildID] = Build{ID: input.BuildID, DeploymentID: input.ID, Kind: input.Kind, Status: BuildQueued,
 					SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath, EnqueuedAt: input.CreatedAt}
 			}
@@ -155,6 +195,7 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 		graph.ID, graph.CreatedAt = newID(), time.Now().UTC()
 		memory.graphs[key] = clonePreparationGraph(graph)
 	}
+	committed = true
 	return out, nil
 }
 

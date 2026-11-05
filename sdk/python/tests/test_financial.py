@@ -3,15 +3,15 @@
 import httpx
 import pytest
 
-from faas_sdk.api.billing import get_financial_costs, get_financial_forecast
+from faas_sdk.preview.api.billing import get_financial_costs, get_financial_forecast
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.financial_costs_response import FinancialCostsResponse
-from faas_sdk.models.financial_forecast_response import FinancialForecastResponse
-from faas_sdk.models.problem import Problem
+from faas_sdk.preview.models.financial_costs_response import FinancialCostsResponse
+from faas_sdk.preview.models.financial_forecast_response import FinancialForecastResponse
+from faas_sdk.preview.models.problem import Problem
 
 
 def test_active_budget_runtime_preserves_unknown_cost_and_retry_state() -> None:
-    from faas_sdk.models.financial_budget_response import FinancialBudgetResponse
+    from faas_sdk.preview.models.financial_budget_response import FinancialBudgetResponse
     from faas_sdk.types import UNSET
 
     evaluation = {
@@ -143,9 +143,9 @@ def test_financial_auth_month_money_and_gaps(endpoint) -> None:
 def test_budget_preview_preserves_intent_and_unavailable_enforcement() -> None:
     import json
 
-    from faas_sdk.api.billing import preview_financial_budget
-    from faas_sdk.models.financial_budget_preview_request import FinancialBudgetPreviewRequest
-    from faas_sdk.models.financial_budget_preview_response import FinancialBudgetPreviewResponse
+    from faas_sdk.preview.api.billing import preview_financial_budget
+    from faas_sdk.preview.models.financial_budget_preview_request import FinancialBudgetPreviewRequest
+    from faas_sdk.preview.models.financial_budget_preview_response import FinancialBudgetPreviewResponse
 
     spec = {
         "name": "Preview guard",
@@ -214,7 +214,7 @@ def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors(
     import json
     from uuid import UUID
 
-    from faas_sdk.api.billing import (
+    from faas_sdk.preview.api.billing import (
         create_financial_budget,
         delete_financial_budget,
         get_financial_budget,
@@ -222,10 +222,10 @@ def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors(
         list_financial_budgets,
         update_financial_budget,
     )
-    from faas_sdk.models.create_financial_budget_request import CreateFinancialBudgetRequest
-    from faas_sdk.models.delete_financial_budget_request import DeleteFinancialBudgetRequest
-    from faas_sdk.models.financial_budget_response import FinancialBudgetResponse
-    from faas_sdk.models.update_financial_budget_request import UpdateFinancialBudgetRequest
+    from faas_sdk.preview.models.create_financial_budget_request import CreateFinancialBudgetRequest
+    from faas_sdk.preview.models.delete_financial_budget_request import DeleteFinancialBudgetRequest
+    from faas_sdk.preview.models.financial_budget_response import FinancialBudgetResponse
+    from faas_sdk.preview.models.update_financial_budget_request import UpdateFinancialBudgetRequest
 
     policy_id = UUID("6dc4f678-5766-4a06-a061-845c2b133fdd")
     spec = {
@@ -319,7 +319,7 @@ def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors(
 
 
 def test_preview_stop_runtime_preserves_prior_period_and_failed_teardown():
-    from faas_sdk.models.financial_budget_runtime import FinancialBudgetRuntime
+    from faas_sdk.preview.models.financial_budget_runtime import FinancialBudgetRuntime
 
     evaluation = {
         "period_start": "2026-09-01T00:00:00Z",

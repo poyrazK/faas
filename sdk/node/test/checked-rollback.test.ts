@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, DeploymentsService, type ServiceAbortReceipt, type RollbackOperation } from '../src/index.js';
+import { FaaSClient, DeploymentsService, type ServiceAbortReceipt, type RollbackOperation } from '../src/preview.js';
 
 // adr: 20261104144000
 // adr: 20261104173000

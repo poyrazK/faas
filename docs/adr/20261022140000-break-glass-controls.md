@@ -47,6 +47,11 @@ category Security), pauses every release on the platform:
 - **builderd** claims no queued build: the notification path leaves it
   queued, and the polling path answers as if the queue were empty. The
   polling worker picks the builds up after the pause is lifted.
+- **Retries and GitOps environment syncs** are paused too (fixed on
+  2026-10-24): a retried image deployment and an environment candidate built
+  from an image or an existing artifact need no builder, so builderd's pause
+  did not hold them. A paused GitOps sync reports itself unconverged and
+  continues after the pause is lifted.
 - **Not paused:** rollbacks (they do not pass the freeze check), rollouts
   already in progress (as with freezes, a half-finished canary must not be
   left in place), running apps, config and secret writes. Customers must be
@@ -64,8 +69,16 @@ credential of the chosen kinds:
 
 - sessions (dashboard and CLI);
 - API keys, including keys in their rotation grace period;
+- app deploy tokens, including tokens in their rotation grace period;
+- hosting automation credentials, whose rows are deleted, as their own
+  revoke does;
 - AI gateway access tokens (ADR-1431), which spend customers' provider keys;
 - platform tenant access tokens.
+
+Deploy tokens and hosting automation credentials were added on 2026-10-24.
+They live up to a year and 30 days, and the first version missed them.
+Short-lived credentials stay out: OIDC-exchanged bearers (5 minutes),
+dev-bridge sessions (1 hour) and fork access tokens (4 hours at most).
 
 All kinds are revoked in one transaction, which also writes one
 `break_glass.credentials_revoked` audit event with the counts and the reason.
@@ -126,3 +139,7 @@ Forced fleet-wide rotation of platform-issued credentials (object storage
 bindings, managed PostgreSQL passwords, GitHub install tokens), notifications
 targeted by what each account stored, resuming releases by plan, and a status
 page that does not depend on apid (ADR-130 serves it from apid) are follow-ups.
+
+## Amendment 1 (2026-11-02): the pause holds releases that were built before it
+
+The pause refused creating releases, but a release deployed earlier with `--no-traffic`, or parked for a scheduled start, could still take its first traffic during the pause: through `PATCH /v1/deployments/{id}/traffic`, promote, or a rollback to it. Those paths now answer `503 platform_release_paused` for a release that has never served. A rollback to a release that served before is still not paused.

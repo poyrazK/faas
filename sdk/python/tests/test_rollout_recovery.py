@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from faas_sdk.api.deployments import recover_rollout
-from faas_sdk.models.recover_rollout_request import RecoverRolloutRequest
-from faas_sdk.models.rollout_recovery_receipt import RolloutRecoveryReceipt
+from faas_sdk.preview.api.deployments import recover_rollout
+from faas_sdk.preview.models.recover_rollout_request import RecoverRolloutRequest
+from faas_sdk.preview.models.rollout_recovery_receipt import RolloutRecoveryReceipt
 
 
 def test_exact_canary_recovery_request_pins_both_deployments() -> None:
@@ -41,7 +41,7 @@ def test_service_abort_202_preserves_acceptance_and_pending_handoff() -> None:
     import httpx
 
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.rollout_transition_response import RolloutTransitionResponse
+    from faas_sdk.preview.models.rollout_transition_response import RolloutTransitionResponse
     from faas_sdk.types import UNSET
 
     candidate = "a2b9cc53-907f-4b5c-88a4-fd0c21214556"

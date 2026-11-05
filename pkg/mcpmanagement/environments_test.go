@@ -294,7 +294,7 @@ func TestEnvironmentRollbackUsesCapturedPromotionAndStableKey(t *testing.T) {
 
 func TestEnvironmentConsentRejectsUnreviewedWriteAndNarrowsApps(t *testing.T) {
 	_, b := newEnvironmentFixture(t)
-	available, err := discoverEnvironments(t.Context(), api.NewClient(b.URL, testToken))
+	available, err := discoverEnvironments(t.Context(), api.NewClient(b.URL, testToken), "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-// adr: 20261024140000
+// adr: 20261105000511
 package mcpmanagement
 
 import (
@@ -46,7 +46,7 @@ func savedPromptCalls(t *testing.T, prompt *mcp.GetPromptResult, args any, envir
 	if json.Unmarshal([]byte(line), &calls) != nil {
 		t.Fatal("invalid workflow JSON")
 	}
-	tools := []string{"gregale_get_action", "gregale_get_plan", "gregale_check_plan"}
+	tools := []string{"gregale_get_action", "gregale_get_saved_plan", "gregale_check_plan"}
 	if environment {
 		tools = []string{"gregale_get_environment_action", "gregale_get_environment_plan", "gregale_check_environment_plan"}
 		if !strings.Contains(text, "partial coverage") {
@@ -145,7 +145,7 @@ func TestSavedPlanPromptRestartExpiryAndUnknownAttempt(t *testing.T) {
 	f, b, opts := newBudgetFixture(t)
 	store, path, key := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "saved-prompt"
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestSavedPlanPromptRestartExpiryAndUnknownAttempt(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = next.Close() })
 	opts.planStore, opts.AllowWrites = next, false
-	_, restored, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, restored, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestSavedPlanPromptRestartExpiryAndUnknownAttempt(t *testing.T) {
 
 func TestSavedPromptRejectsUnsafeArgumentsAndConsentLoss(t *testing.T) {
 	f, b, opts := newTriageFixture(t)
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestSavedPromptFinalPlanGuards(t *testing.T) {
 			t.Cleanup(b.Close)
 			opts.APIBase = b.URL
 			var err error
-			_, m, err = newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err = newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -397,7 +397,7 @@ func TestSavedPromptRetrievalDoesNotFetchEvidence(t *testing.T) {
 			}))
 			t.Cleanup(b.Close)
 			opts.APIBase = b.URL
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}

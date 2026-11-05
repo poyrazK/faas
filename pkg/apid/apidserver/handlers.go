@@ -9,11 +9,13 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -50,7 +52,41 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), acct, r))
+	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" {
+		app, err := s.store.AppByID(r.Context(), p.Key.AppID)
+		if err != nil || app.AccountID != acct.ID {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "app-bound principal is no longer available"))
+			return
+		}
+		limits := s.accountResponse(r.Context(), acct, r).Limits
+		writeJSON(w, http.StatusOK, api.AccountResponse{ID: acct.ID, Plan: string(acct.Plan), Status: string(acct.Status), Limits: limits, KeyScopes: p.Key.Scopes, KeyApp: &api.AppAgentBinding{ID: app.ID, Slug: app.Slug}})
+		return
+	}
+	resp := s.accountResponse(r.Context(), acct, r)
+	// A key learns its own scopes; the hosted MCP server lists an agent
+	// key's tools from them (ADR-20261029085359). Sessions have none.
+	if p, ok := principalFrom(r); ok && p.Key != nil {
+		resp.KeyScopes = p.Key.Scopes
+		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
+		if p.Key.ProjectLimited {
+			resp.KeyProjects = s.projectSlugsByID(r.Context(), p.Key.ProjectIDs)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// keyOrg names the shared organization a key acts in, or nil for a personal
+// one; a connected agent lists that organization's apps
+// (ADR-20261101225122).
+func (s *server) keyOrg(ctx context.Context, orgID string) *api.KeyOrg {
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.OrgByID(ctx, orgID)
+	if err != nil || org.Personal {
+		return nil
+	}
+	return &api.KeyOrg{ID: org.ID, Slug: org.Slug, Name: org.Name}
 }
 
 // nilStringPtr returns a *string pointing at the given value, or
@@ -97,8 +133,9 @@ func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEm
 		if errors.Is(err, state.ErrNotFound) {
 			return "", api.ErrInvalidOverflowNode(*wire)
 		}
+		logCustomerFailure(s.log, "lookup overflow_node", err)
 		return "", api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-			"Capacity", fmt.Sprintf("lookup overflow_node %q: %v", *wire, err))
+			"Capacity", api.DetailServerFailure)
 	}
 	if !row.Active {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
@@ -118,23 +155,33 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return
 	}
-	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
+	apps, labelsByApp, problem := s.appListLabels(r, acct, apps)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	deps := s.readAccountAppDeployments(r.Context(), acct.ID, apps)
+	if deps.latestErr != nil {
+		s.log.Error("list app deployments failed", "account", acct.ID, "err", deps.latestErr)
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
-	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+	if deps.liveErr != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", deps.liveErr)
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
 		return
 	}
-	parkedByApp := s.latestParkedDeploymentsByApp(r.Context(), acct.ID)
+	latestByApp, liveByApp, parkedByApp := deps.latest, deps.live, deps.parked
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
-		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		var resp api.AppResponse
+		if deps.domainsRead {
+			resp = s.appResponseWithDomain(a, acct.Plan, deps.domains[a.ID])
+		} else {
+			resp = s.appResponseWithContext(r.Context(), a, acct.Plan)
+		}
 		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
+		resp.Labels = labelsByApp[a.ID]
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
@@ -145,6 +192,44 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// accountAppDeployments are listApps' account-wide deployment reads.
+type accountAppDeployments struct {
+	latest    map[string]state.Deployment
+	latestErr error
+	live      map[string]bool
+	liveErr   error
+	parked    map[string]state.Deployment
+	// domains are the apps' default custom domains; domainsRead is false
+	// when they could not be read in one query.
+	domains     map[string]string
+	domainsRead bool
+}
+
+// readAccountAppDeployments makes listApps' account-wide reads, and the
+// listed apps' default custom domains, at once: each needs only the account
+// or the app list, and one after another they cost every app list four round
+// trips (the domains were one per app).
+func (s *server) readAccountAppDeployments(ctx context.Context, accountID string, apps []state.App) accountAppDeployments {
+	var out accountAppDeployments
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		out.domains, out.domainsRead = s.defaultCustomDomains(ctx, apps)
+	}()
+	go func() {
+		defer wg.Done()
+		out.latest, out.latestErr = s.store.ListLatestDeploymentPerApp(ctx, accountID)
+	}()
+	go func() {
+		defer wg.Done()
+		out.live, out.liveErr = s.store.ListAppsWithLiveDeployment(ctx, accountID)
+	}()
+	out.parked = s.latestParkedDeploymentsByApp(ctx, accountID)
+	wg.Wait()
+	return out
 }
 
 // latestParkedDeploymentsByApp reads every app's parked reference in one
@@ -189,6 +274,10 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	var req api.CreateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if problem := s.appCreateSettingsProblem(r, acct, req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
@@ -245,8 +334,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-				"Capacity", "could not create app"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app")))
 		}
 		return
 	}
@@ -322,7 +411,11 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		cpuMillicores = profile.CPUMillicores
 	}
 	if ram == 0 {
-		ram = limits.RAMMB
+		ram = api.StandaloneAppDefaultRAMMB(limits)
+		if req.VCPU != 0 {
+			// An explicit vCPU asks for the plan's joint RAM/vCPU shape.
+			ram = limits.RAMMB
+		}
 	}
 	if cpuMillicores == 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores
@@ -576,6 +669,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if serviceTransportProblem != nil {
 		return state.App{}, serviceTransportProblem
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		return state.App{}, problem
+	}
 	appManifest := stateManifestFromAPI(lifecycle)
 	appManifest.AllowedServiceCallers = allowedCallers
 	appManifest.AllowedServiceCallScopes = allowedCallScopes
@@ -649,6 +745,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// JSON branch is the rest of this handler. Extracted to
 	// loadAppAndPreflight so createDeployment stays under the
 	// CLAUDE.md 50-line handler cap.
+	if !s.deploymentBodyCapabilityAllowed(r, acct) {
+		writeMissingRoute(w, r)
+		return
+	}
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
 		return
@@ -714,7 +814,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	if len(req.Workflows) > 0 {
-		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan, s.agentStepsAllowed(acct)); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -802,6 +902,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
 		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
 		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+		if s.releasePhaseOff && len(dep.ReleaseCommand) > 0 {
+			api.WriteProblem(w, releasePhaseOffProblem())
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return
@@ -933,6 +1037,42 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 // Request handlers should use the request context so the optional canonical
 // domain lookup is cancelled with the request.
 func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	return s.appResponseWithDomain(a, plan, s.defaultCustomDomain(ctx, a.ID))
+}
+
+// defaultCustomDomain is the app's usable default custom domain, or "".
+func (s *server) defaultCustomDomain(ctx context.Context, appID string) string {
+	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
+		if domain, err := resolver.DefaultCustomDomain(ctx, appID); err == nil {
+			return domain
+		}
+	}
+	return ""
+}
+
+// defaultCustomDomains reads every listed app's default custom domain in one
+// query; ok is false when the store cannot, or the read failed, and callers
+// then read app by app.
+func (s *server) defaultCustomDomains(ctx context.Context, apps []state.App) (map[string]string, bool) {
+	reader, ok := s.store.(state.DefaultCustomDomainBatchReader)
+	if !ok {
+		return nil, false
+	}
+	ids := make([]string, 0, len(apps))
+	for _, a := range apps {
+		ids = append(ids, a.ID)
+	}
+	domains, err := reader.DefaultCustomDomains(ctx, ids)
+	if err != nil {
+		s.log.Warn("apid: default custom domains lookup", "apps", len(ids), "err", err)
+		return nil, false
+	}
+	return domains, true
+}
+
+// appResponseWithDomain is appResponseWithContext with the default custom
+// domain already read ("" for none).
+func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string) api.AppResponse {
 	var allowedCallers *[]string
 	if a.Manifest.AllowedServiceCallers != nil {
 		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
@@ -955,11 +1095,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	}
 	platformURL := appURLForDomain(a.Slug, s.domain)
 	canonicalURL, defaultDomain := platformURL, ""
-	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
-		if domain, err := resolver.DefaultCustomDomain(ctx, a.ID); err == nil && domain != "" {
-			defaultDomain = domain
-			canonicalURL = "https://" + domain
-		}
+	if domain != "" {
+		defaultDomain = domain
+		canonicalURL = "https://" + domain
 	}
 	// EgressAllowlist is materialised as a non-nil empty slice so
 	// the JSON shape is `[]` (never `null`) regardless of plan /
@@ -1204,7 +1342,12 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	if !ok {
 		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
 	}
-	queueDepth, queueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	queueDepth, _, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	perInstance := 0
+	if a.ScalingPolicy != nil {
+		perInstance = a.ScalingPolicy.PerInstanceConcurrency
+	}
+	queueWait := api.ConcurrencyQueueDefaultWaitFor(plan, perInstance)
 	if a.ScalingPolicy != nil {
 		if a.ScalingPolicy.MaxQueueDepth > 0 {
 			queueDepth = a.ScalingPolicy.MaxQueueDepth
@@ -1224,7 +1367,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
-		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.PerInstanceConcurrency(perInstance),
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
@@ -1279,14 +1422,20 @@ func cORSOriginsList(v []string) []string {
 // at the schema layer (migration 00157), so this helper never
 // needs to validate.
 func (s *server) withParkedDeploymentRef(ctx context.Context, resp api.AppResponse, app state.App) api.AppResponse {
+	return withParkedDeployment(resp, s.latestParkedDeployment(ctx, app))
+}
+
+// latestParkedDeployment is the app's parked reference, or a zero Deployment
+// when it has none or the read failed.
+func (s *server) latestParkedDeployment(ctx context.Context, app state.App) state.Deployment {
 	d, err := s.store.LatestParkedDeploymentForApp(ctx, app.ID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			s.log.Warn("apid: parked deployment ref lookup", "app", app.ID, "err", err)
 		}
-		return resp
+		return state.Deployment{}
 	}
-	return withParkedDeployment(resp, d)
+	return d
 }
 
 // withParkedDeployment attaches d as the parked reference; a zero d (no parked
@@ -1324,6 +1473,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		MaxQueueDepth:           p.MaxQueueDepth,
 		WakeMaxQueueDepth:       p.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: p.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  p.PerInstanceConcurrency,
 	}
 	if p.Target != nil {
 		out.Target = &api.ScalingTarget{
@@ -1426,7 +1576,9 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-func validSlug(s string) bool { return api.ValidAppSlug(s) }
+// validSlug accepts app slugs and the longer PR preview slugs githubd
+// allocates; every creation path rejects the preview shape as reserved first.
+func validSlug(s string) bool { return api.ValidAppSlug(s) || api.ValidPreviewAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //

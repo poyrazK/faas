@@ -18,7 +18,7 @@ func TestAutomationInitialQueueEvidenceCLI(t *testing.T) {
 		if r.Method != "GET" || r.URL.Path != "/v1/apps/consumer/recovery-policy/queue" {
 			t.Fatal("extra action during queue read")
 		}
-		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticQueue{Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{InitialEvidence: &api.WorkflowRecoveryInitialQueueEvidence{Stage: "prepared", Diagnosis: api.WorkflowInitialEvidenceDiagnosis{ResumeCount: 1, Reason: "not_submitted_automatic_initial"}, CLICommand: "gregale automations failure-recovery-evidence --app consumer --review review", EvidenceURL: "/initial-recovery-reviews/review/evidence"}}}})
+		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticQueue{Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{InitialEvidence: &api.WorkflowRecoveryInitialQueueEvidence{Stage: "prepared", Diagnosis: api.WorkflowInitialEvidenceDiagnosis{ResumeCount: 1, Reason: "not_submitted_automatic_initial"}, CLICommand: "gregale automation failure-recovery-evidence --app consumer --review review", EvidenceURL: "/initial-recovery-reviews/review/evidence"}}}})
 	})
 	out := main.CaptureAutomationStdout(t)
 	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--queue"}); code != 0 {

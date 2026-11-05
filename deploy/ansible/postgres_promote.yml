@@ -189,6 +189,32 @@
       changed_when: false
       failed_when: (promote_recovery.stdout | trim) != 'f'
 
+    # ADR-20261025111015 amendment: promotion starts a new PostgreSQL
+    # timeline, and object storage serves only on an accepted one. A planned
+    # switchover lost nothing, so it accepts the new timeline here; after a
+    # failover the operator accepts it once the runbook's review is done
+    # (S3 key or grant revocations the standby never received are undone).
+    - name: Accept the new timeline for object storage after a planned switchover
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -X
+          - -A
+          - -t
+          - -v
+          - ON_ERROR_STOP=1
+          - -d
+          - faas
+          - -c
+          - >-
+            INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+            VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), 'postgres-promote:planned')
+            ON CONFLICT (singleton) DO UPDATE SET timeline = EXCLUDED.timeline, accepted_at = now(), accepted_by = EXCLUDED.accepted_by
+      become: true
+      become_user: postgres
+      changed_when: true
+      when: faas_promote_mode == 'planned'
+
     - name: Next steps
       ansible.builtin.debug:
         msg: >-
@@ -196,3 +222,5 @@
           docs/runbooks/ControlPlaneFailover.md: update the manifest so this
           host is the control plane, converge it, repoint the compute nodes
           and the public origin.
+          {% if faas_promote_mode == 'failover' %}Object storage stays fenced on the new
+          timeline until the runbook's review and gregalectl object-storage accept.{% endif %}

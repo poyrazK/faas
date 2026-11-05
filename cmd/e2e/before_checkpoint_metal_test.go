@@ -93,9 +93,7 @@ func TestBeforeCheckpointMetal(t *testing.T) {
 	if err := store.MarkSnapshotStale(ctx, snapID); err != nil {
 		t.Fatal(err)
 	}
-	if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
-		t.Fatalf("park: status=%d body=%s", status, body)
-	}
+	parkApp(t, h, key, slug)
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateStopped, 30*time.Second); err != nil {
 		t.Fatalf("failed capture did not stop guest: %v", err)
 	}
@@ -122,7 +120,7 @@ http.createServer((req, res) => {
   if (req.url === '/arm/reject') { mode = 'reject'; res.writeHead(200); res.end('armed'); return; }
   if (req.url === '/healthz') { res.writeHead(200); res.end('ready'); return; }
   res.writeHead(200); res.end('checkpoints=' + checkpoints);
-}).listen(8080, '0.0.0.0');`
+}).listen(Number(process.env.PORT || 8080), '0.0.0.0');`
 	return buildTarGz(t, map[string]string{
 		"package.json": packageJSON, "index.js": indexJS, ".faas-fixture": "node22\n",
 		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",

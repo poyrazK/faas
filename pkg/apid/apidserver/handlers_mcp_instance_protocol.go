@@ -78,11 +78,12 @@ func (s *server) postMCPInstanceProtocolProbe(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrValidation("MCP probe bearer token contains invalid header characters or exceeds its limit"))
 		return
 	}
-	if s.gatewaydControlURL == "" {
+	controlURL := s.gatewayControlURL(r.Context())
+	if controlURL == "" {
 		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
 		return
 	}
-	endpoint, err := url.JoinPath(s.gatewaydControlURL, "v1", "internal", "apps", app.Slug, "mcp-probe")
+	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", app.Slug, "mcp-probe")
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
 		return

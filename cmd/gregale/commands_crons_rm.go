@@ -16,7 +16,7 @@ func cmdCronsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale crons rm <id>", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron delete <id>", "crons")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -25,7 +25,7 @@ func cmdCronsRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteCron(context.Background(), id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete cron", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{

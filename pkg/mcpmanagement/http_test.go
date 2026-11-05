@@ -30,16 +30,25 @@ const testRedirect = "https://client.example/oauth/callback"
 const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNO"
 
 type remoteFixture struct {
-	t          *testing.T
-	server     *httptest.Server
-	client     *http.Client
-	resource   string
-	clientID   string
-	mu         sync.Mutex
-	accounts   map[string]string
-	apiHook    func(http.ResponseWriter, *http.Request, string) bool
-	opts       HTTPOptions
-	setHandler func(http.Handler)
+	t        *testing.T
+	server   *httptest.Server
+	client   *http.Client
+	resource string
+	clientID string
+	mu       sync.Mutex
+	accounts map[string]string
+	// keyScopes are the scopes /v1/account reports for a key (agent keys).
+	keyScopes map[string][]string
+	apiHook   func(http.ResponseWriter, *http.Request, string) bool
+	mints     []api.CliAuthCodeRequest
+	// agentClients and disconnects record what the bridge told apid about
+	// its keys (ADR-20261030133644), by key.
+	agentClients map[string]api.AgentClientRequest
+	disconnects  map[string]int
+	opts         HTTPOptions
+	setHandler   func(http.Handler)
+	// prefix is /mcp on a hosted bridge, whose OAuth routes live under it.
+	prefix string
 }
 
 func newRemoteFixture(t *testing.T, writes bool) *remoteFixture {
@@ -47,14 +56,20 @@ func newRemoteFixture(t *testing.T, writes bool) *remoteFixture {
 }
 
 func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions) *remoteFixture {
+	if options.Toolsets == nil {
+		options.Toolsets = []string{ToolsetAll}
+	}
 	t.Helper()
-	f := &remoteFixture{t: t, accounts: map[string]string{"fp_test_alice_remote_key": "alice", "fp_test_bob_remote_key": "bob"}}
+	f := &remoteFixture{t: t, accounts: map[string]string{"fp_test_alice_remote_key": "alice", "fp_test_bob_remote_key": "bob"}, agentClients: map[string]api.AgentClientRequest{}, disconnects: map[string]int{}}
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/v1/cli-auth/code" {
 			var input api.CliAuthCodeRequest
-			if json.NewDecoder(req.Body).Decode(&input) != nil || input.Purpose != api.CliAuthPurposeMCPRead {
+			if json.NewDecoder(req.Body).Decode(&input) != nil || (input.Purpose != api.CliAuthPurposeMCPRead && input.Purpose != api.CliAuthPurposeMCP) {
 				t.Error("unexpected native purpose")
 			}
+			f.mu.Lock()
+			f.mints = append(f.mints, input)
+			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(api.CliAuthCodeResponse{Code: "MCPR-fixture", URL: "https://console.example/cli-auth?code=MCPR-fixture", ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)})
 			return
 		}
@@ -118,15 +133,49 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			}
 			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentResponse{ID: account + "-" + slug, ProjectID: account + "-project", Slug: slug, Protected: slug == "production"})
 		case "/v1/account":
-			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active"})
+			f.mu.Lock()
+			scopes := f.keyScopes[strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")]
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active", KeyScopes: scopes})
 		case "/v1/capabilities":
 			_ = json.NewEncoder(w).Encode(api.CapabilitiesResponse{Plan: "free"})
+		case "/v1/agent-connections/self":
+			key := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+			f.mu.Lock()
+			if req.Method == http.MethodPut {
+				var input api.AgentClientRequest
+				_ = json.NewDecoder(req.Body).Decode(&input)
+				f.agentClients[key] = input
+			} else {
+				f.disconnects[key]++
+			}
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 		case "/v1/apps":
 			_ = json.NewEncoder(w).Encode([]api.AppResponse{{ID: account + "-app", Slug: "alpha"}})
 		case "/v1/apps/alpha":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app"})
 		case "/v1/apps/alpha/release-review":
 			_ = json.NewEncoder(w).Encode(api.AppReleaseReview{AppID: account + "-app", ConfigurationHash: strings.Repeat("a", 64), LatestDeploymentID: "release-base", ServingDeploymentIDs: []string{"release-base"}})
+		case "/v1/apps/alpha/operation-preview":
+			operation := req.URL.Query().Get("operation")
+			if req.Method != http.MethodGet || !api.ValidAppOperation(operation) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			preview := nativePreviewFixture(operation)
+			preview.AppID = account + "-app"
+			preview.Checks["account"] = api.AppOperationCheck{Status: "allowed", Reason: "active_account"}
+			preview.Checks["capability"] = api.AppOperationCheck{Status: "allowed", Reason: "fixture_capability_available"}
+			preview.Checks["environment"] = api.AppOperationCheck{Status: "allowed", Reason: "direct_writes_allowed"}
+			if scope := req.URL.Query().Get("environment"); scope != "" {
+				preview.Scope, preview.ProjectID, preview.EnvironmentID = scope, account+"-project", account+"-"+scope
+				if scope == "production" {
+					preview.Admission = "blocked"
+					preview.Checks["environment"] = api.AppOperationCheck{Status: "blocked", Reason: "protected_environment_requires_promotion"}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(preview)
 		case "/v1/apps/alpha/health":
 			_ = json.NewEncoder(w).Encode(api.AppHealthResponse{AppID: account + "-app", Scope: "default", ServingDeploymentIDs: []string{"release-base"}, LatestDeploymentID: "release-base"})
 		default:
@@ -150,6 +199,9 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 		options.RedirectURIs = []string{testRedirect}
 	}
 	f.opts = options
+	if options.Hosted {
+		f.prefix = "/mcp"
+	}
 	h, err := NewHTTPHandler(options)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +210,7 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 	f.setHandler(h)
 	f.client = f.server.Client()
 	f.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response := f.request(http.MethodPost, "/oauth/register", strings.NewReader(`{"client_name":"test-agent","redirect_uris":["`+testRedirect+`"],"grant_types":["authorization_code","refresh_token"],"token_endpoint_auth_method":"none"}`), "application/json", "")
+	response := f.request(http.MethodPost, f.prefix+"/oauth/register", strings.NewReader(`{"client_name":"test-agent","redirect_uris":["`+testRedirect+`"],"grant_types":["authorization_code","refresh_token"],"token_endpoint_auth_method":"none"}`), "application/json", "")
 	if response.StatusCode != 201 {
 		t.Fatalf("registration=%d", response.StatusCode)
 	}
@@ -209,7 +261,7 @@ func (f *remoteFixture) begin(scope string) browserFlow {
 	f.t.Helper()
 	sum := sha256.Sum256([]byte(testVerifier))
 	query := url.Values{"client_id": {f.clientID}, "redirect_uri": {testRedirect}, "response_type": {"code"}, "resource": {f.resource}, "scope": {scope}, "state": {"client-state"}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}}
-	return f.beginAt(context.Background(), f.server.URL+"/oauth/authorize?"+query.Encode())
+	return f.beginAt(context.Background(), f.server.URL+f.prefix+"/oauth/authorize?"+query.Encode())
 }
 
 func (f *remoteFixture) beginAt(ctx context.Context, authorizationURL string) browserFlow {
@@ -249,7 +301,7 @@ func (f *remoteFixture) beginAt(ctx context.Context, authorizationURL string) br
 
 func (f *remoteFixture) consent(flow browserFlow, decision, key, origin, csrf string, writes bool, selected ...string) *http.Response {
 	f.t.Helper()
-	form := url.Values{"app_access": {"all"}, "request_id": {flow.requestID}, "csrf": {csrf}, "decision": {decision}}
+	form := url.Values{"app_access": {"all"}, "request_id": {flow.requestID}, "csrf": {csrf}, "decision": {decision}, "toolsets": {"all"}}
 	if len(selected) > 0 {
 		form.Set("app_access", "selected")
 		form["apps"] = selected
@@ -265,8 +317,13 @@ func (f *remoteFixture) consent(flow browserFlow, decision, key, origin, csrf st
 }
 
 func (f *remoteFixture) submitConsent(flow browserFlow, form url.Values, origin string) *http.Response {
+	// Legacy workflows exercise the full catalog. Default-consent evaluations
+	// send an explicit empty selection to exercise the focused default.
+	if _, ok := form["toolsets"]; !ok {
+		form.Set("toolsets", "all")
+	}
 	f.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, f.server.URL+"/oauth/consent", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, f.server.URL+f.prefix+"/oauth/consent", strings.NewReader(form.Encode()))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -308,7 +365,7 @@ func (f *remoteFixture) authorizeAccount(key string, writes bool) string {
 
 func (f *remoteFixture) exchange(code, verifier, resource, clientID string) *http.Response {
 	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "code_verifier": {verifier}, "resource": {resource}, "client_id": {clientID}, "redirect_uri": {testRedirect}}
-	return f.request(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", "")
+	return f.request(http.MethodPost, f.prefix+"/oauth/token", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", "")
 }
 
 func (f *remoteFixture) connect(tokens tokenResponse, version string) (*mcp.ClientSession, context.Context) {
@@ -350,12 +407,12 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			if err != nil || len(aliceCatalog.Tools) != 67 {
+			if err != nil || len(aliceCatalog.Tools) != 83 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) != 58 {
-				t.Fatalf("bob tools=%+v error=%v", bobCatalog, err)
+			if err != nil || len(bobCatalog.Tools) != 73 {
+				t.Fatalf("bob count=%d tools=%+v error=%v", len(bobCatalog.Tools), bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)
 			bobContext := callTool(t, ctx, bobSession, "gregale_context", map[string]any{}, false)
@@ -572,7 +629,7 @@ func TestRemoteManagementOfficialSDKOAuthDiscoveryAndRefresh(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return &auth.AuthorizationResult{Code: location.Query().Get("code"), State: location.Query().Get("state")}, nil
+			return &auth.AuthorizationResult{Code: location.Query().Get("code"), State: location.Query().Get("state"), Iss: location.Query().Get("iss")}, nil
 		},
 		NewTokenSource: func(ctx context.Context, config *oauth2.Config, token *oauth2.Token) (oauth2.TokenSource, error) {
 			// Force a standard-library refresh before the retried MCP request.

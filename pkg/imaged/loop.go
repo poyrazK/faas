@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,9 +36,12 @@ import (
 
 const (
 	staleDeploymentSweepEvery = 5 * time.Minute
-	staleDeploymentThreshold  = 2 * time.Hour
-	staleDeploymentBatchSize  = 64
-	securityScanSweepEvery    = 6 * time.Hour
+	// signatureRevalidationEvery bounds how long a rolled-back image the
+	// current trust list rejects can serve (ADR-20261020085706 amendment 14).
+	signatureRevalidationEvery = 5 * time.Minute
+	staleDeploymentThreshold   = 2 * time.Hour
+	staleDeploymentBatchSize   = 64
+	securityScanSweepEvery     = 6 * time.Hour
 	// Evidence leases are checked much more frequently than the expensive
 	// scanner sweep so an enforce-mode app cannot continue serving after its
 	// last verified result has expired.
@@ -47,25 +51,40 @@ const (
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
 // the Handler's collaborators (store, notifier, OCI puller, builder).
 type Loop struct {
-	handler            *Handler
-	store              state.Store
-	pool               *pgxpool.Pool
-	log                *slog.Logger
-	now                func() time.Time
-	lvUsedPct          func(ctx context.Context) (float64, error)
-	gcEvery            time.Duration // default 24h; tests shrink to ms
-	securityScanEvery  time.Duration // default 6h; tests shrink to ms
-	securityLeaseEvery time.Duration // default 1m; tests shrink to ms
-	detectFC           func(ctx context.Context) (string, error)
-	appsRoot           string
-	storageRoot        string
-	gcMu               sync.Mutex
+	handler *Handler
+	store   state.Store
+	// signatureSweep keeps periodic signature revalidations from overlapping.
+	signatureSweep sync.Mutex
+	// leaseRescans records when an expired-evidence rescan started, per
+	// deployment, so the security lease waits for it once (amendment 14).
+	leaseRescanMu sync.Mutex
+	leaseRescans  map[string]time.Time
+	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
+	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
+	crashCaptureCryptoEvery time.Duration
+	pool                    *pgxpool.Pool
+	log                     *slog.Logger
+	now                     func() time.Time
+	lvUsedPct               func(ctx context.Context) (float64, error)
+	gcEvery                 time.Duration // default 24h; tests shrink to ms
+	securityScanEvery       time.Duration // default 6h; tests shrink to ms
+	securityLeaseEvery      time.Duration // default 1m; tests shrink to ms
+	detectFC                func(ctx context.Context) (string, error)
+	appsRoot                string
+	storageRoot             string
+	gcMu                    sync.Mutex
+	// securityScanRunning keeps the start-up rescan goroutine and the loop's
+	// ticks from sweeping at the same time.
+	securityScanRunning atomic.Bool
+	// prep prepares deployments' images off the loop; nil prepares inline.
+	prep *imagePrepWorkers
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
 	remoteDeleteFailures         prometheus.Counter
 	mcpRecoveryAttempts          *prometheus.CounterVec
 	mcpHoldDuration              prometheus.Histogram
+	crashMetrics                 *crashCaptureMetrics
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by the With*Channel helpers.
@@ -91,6 +110,9 @@ type LoopConfig struct {
 	GCEvery            time.Duration
 	SecurityScanEvery  time.Duration
 	SecurityLeaseEvery time.Duration
+	// ImagePrepWorkers is how many deployments the loop prepares at once
+	// (ADR-20261029174438). Zero or one prepares inline on the loop.
+	ImagePrepWorkers int
 }
 
 // NewLoop returns a Loop wired with sane defaults. The caller (cmd/imaged)
@@ -119,6 +141,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		now:                cfg.Now,
 		lvUsedPct:          cfg.LvUsedPct,
 		detectFC:           cfg.DetectFC,
+		prep:               newImagePrepWorkers(cfg.ImagePrepWorkers),
 		appsRoot:           cfg.AppsRoot,
 		storageRoot:        cfg.StorageRoot,
 		gcEvery:            cfg.GCEvery,
@@ -146,6 +169,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 			loop.remoteDeleteBacklogOldestAge,
 			loop.remoteDeleteFailures,
 		)
+		loop.crashMetrics = newCrashCaptureMetrics(cfg.Handler.ops.Registry())
 	}
 	return loop
 }
@@ -231,19 +255,27 @@ func (l *Loop) Run(ctx context.Context) error {
 		reader, _ := l.store.(state.BuildImageHandoffObservationStore)
 		go m.run(observeCtx, reader, l.handler.nodeName, l.log)
 	}
+	// Image preparations still running on workers return before Run does.
+	defer l.prep.wait()
 	// Serialize recovery with notification handling: replay cannot race an
 	// imaged conversion in this process, and deployment status deduplicates it.
+	// With workers on, both hand a deployment to the workers instead, which
+	// never prepare one deployment twice at once.
 	buildTicker := time.NewTicker(2 * time.Second)
 	defer buildTicker.Stop()
 	jobMaterializationTicker := time.NewTicker(30 * time.Second)
 	defer jobMaterializationTicker.Stop()
 	staleDeploymentTicker := time.NewTicker(staleDeploymentSweepEvery)
 	defer staleDeploymentTicker.Stop()
+	releaseApprovalTicker := time.NewTicker(releaseApprovalHoldSweepEvery)
+	defer releaseApprovalTicker.Stop()
+	signatureTicker := time.NewTicker(signatureRevalidationEvery)
+	defer signatureTicker.Stop()
 	securityScanEvery := l.securityScanEvery
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
 	}
-	securityScanTicker := time.NewTicker(securityScanEvery)
+	securityScanTicker := time.NewTicker(securityScanCheckEvery(securityScanEvery))
 	defer securityScanTicker.Stop()
 	securityLeaseEvery := l.securityLeaseEvery
 	if securityLeaseEvery <= 0 {
@@ -320,6 +352,11 @@ func (l *Loop) Run(ctx context.Context) error {
 	// reclaim anything because every restart resets the ticker. Run one sweep
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
+	// ADR-733: crash capture encryption, staging, purge and expiry run on
+	// their own goroutine (they stream whole guest memory images) and
+	// expire on time regardless of disk pressure.
+	go l.runCrashCaptureCrypto(ctx)
+	go l.runScannerDBRefresh(ctx)
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
 	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
@@ -336,9 +373,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := l.dispatchNotification(ctx, n); err != nil && ctx.Err() == nil {
-				l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
-			}
+			l.handleLoopNotification(ctx, n)
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
 			l.recoverMCPTaskPromotions(ctx)
@@ -350,6 +385,20 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-staleDeploymentTicker.C:
 			l.reconcileStaleDeployments(ctx)
+		case <-releaseApprovalTicker.C:
+			l.resumeReleaseApprovalHolds(ctx)
+		case <-signatureTicker.C:
+			// ADR-20261020085706 amendment 14: a rollback (manual or
+			// automatic) or signing turned on later can put an image the
+			// current trust list rejects back into service; revalidate every
+			// live signed image periodically, not only on start and signer
+			// changes.
+			if l.signatureSweep.TryLock() {
+				go func() {
+					defer l.signatureSweep.Unlock()
+					l.reconcileSecuritySignatures(ctx, l.now())
+				}()
+			}
 		case tick := <-l.securityScanCh:
 			l.reconcileSecurityScans(ctx, tick, securityScanEvery)
 		case tick := <-l.securityLeaseCh:
@@ -367,6 +416,25 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 }
 
+// runScannerDBRefresh keeps the vulnerability database current on its own
+// goroutine (ADR-20261028102540): at start, then every
+// api.ScannerDBRefreshEvery, so a download never holds the main loop.
+func (l *Loop) runScannerDBRefresh(ctx context.Context) {
+	if l.handler == nil {
+		return
+	}
+	ticker := time.NewTicker(api.ScannerDBRefreshEvery)
+	defer ticker.Stop()
+	for {
+		l.handler.refreshScannerDB(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 // reconcileStaleDeployments terminates old pipeline rows that have no active
 // build behind them. The candidate query is bounded and the final
 // CancelDeploymentTx transition is CAS-guarded, so a row that becomes live or
@@ -378,7 +446,27 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 	}
 	now := l.now().UTC()
 	cutoff := now.Add(-staleDeploymentThreshold)
-	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+	// Every candidate is visited: rows deliberately left in flight (a release
+	// waiting for approval, an MCP hold, a running build) must not fill the
+	// batch and hide a stuck deployment behind them (ADR-20261020085706
+	// amendment 13).
+	err := l.pageOperatorDeployments(ctx, staleDeploymentFilter(cutoff), func(rows []state.Deployment) int {
+		kept := 0
+		for _, deployment := range rows {
+			if !l.reconcileStaleDeployment(ctx, deployment, now, cutoff) {
+				kept++
+			}
+		}
+		return kept
+	})
+	if err != nil {
+		l.log.Warn("imaged: list stale deployments", "err", err)
+	}
+	l.observeStaleDeploymentBacklog(ctx, cutoff, now)
+}
+
+func staleDeploymentFilter(cutoff time.Time) state.OperatorDeploymentFilter {
+	return state.OperatorDeploymentFilter{
 		ExcludeMCPTaskHolds: true,
 		Statuses: []state.DeploymentStatus{
 			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
@@ -387,60 +475,87 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		CreatedBefore:  cutoff,
 		OldestFirst:    true,
 		Limit:          staleDeploymentBatchSize,
-	})
-	if err != nil {
-		l.log.Warn("imaged: list stale deployments", "err", err)
-		return
 	}
-	for _, deployment := range rows {
-		hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)
-		if holdErr != nil {
-			l.log.Warn("imaged: inspect MCP task hold before stale cancellation", "deployment", deployment.ID, "err", holdErr)
-			continue
+}
+
+// operatorDeploymentPages bounds one sweep's listing; a backlog past it is
+// reached on the next sweep.
+const operatorDeploymentPages = 64
+
+// pageOperatorDeployments lists filter page by page. visit returns how many
+// of a page's rows it left in place (did not move out of the filter), so the
+// next page starts after them and none is visited twice in a pass.
+func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int) error {
+	for page := 0; page < operatorDeploymentPages && ctx.Err() == nil; page++ {
+		rows, err := l.store.ListDeploymentsForOperator(ctx, filter)
+		if err != nil {
+			return err
 		}
-		if hold != nil {
-			continue
+		kept := visit(rows)
+		if len(rows) < filter.Limit {
+			return nil
 		}
-		entered := pipelineStageEnteredAt(deployment)
-		if !entered.Before(cutoff) {
-			// A rollback re-entered the pipeline recently; created_at alone
-			// would cancel every rollback to a deployment older than the
-			// threshold (hunt #9: a rollback cancelled six seconds in).
-			continue
-		}
-		if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
-			// A staged artifact is deliberately waiting for its graph, rather
-			// than a lost snapshot handoff. Its coordinator owns cancellation.
-			continue
-		}
-		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
-		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
-			continue
-		}
-		if buildErr != nil && !errors.Is(buildErr, state.ErrNotFound) {
-			l.log.Warn("imaged: inspect stale deployment build", "deployment", deployment.ID, "err", buildErr)
-			continue
-		}
-		started := time.Now()
-		age := now.Sub(entered).Round(time.Second)
-		principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
-		_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
-		if l.handler != nil && l.handler.ops != nil {
-			l.handler.ops.Observe("stale_deployment_reconcile", time.Since(started), cancelErr)
-		}
-		if cancelErr != nil {
-			if errors.Is(cancelErr, state.ErrInvalidStateTransition) || errors.Is(cancelErr, state.ErrCancelLiveForbidden) {
-				continue
-			}
+		filter.Offset += kept
+	}
+	return ctx.Err()
+}
+
+// reconcileStaleDeployment cancels one stale candidate and reports whether
+// the row left the candidate set (cancelled, or found live or terminal).
+func (l *Loop) reconcileStaleDeployment(ctx context.Context, deployment state.Deployment, now, cutoff time.Time) bool {
+	hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)
+	if holdErr != nil {
+		l.log.Warn("imaged: inspect MCP task hold before stale cancellation", "deployment", deployment.ID, "err", holdErr)
+		return false
+	}
+	if hold != nil {
+		return false
+	}
+	entered := pipelineStageEnteredAt(deployment)
+	if !entered.Before(cutoff) {
+		// A rollback re-entered the pipeline recently; created_at alone
+		// would cancel every rollback to a deployment older than the
+		// threshold (hunt #9: a rollback cancelled six seconds in).
+		return false
+	}
+	if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
+		// A staged artifact is deliberately waiting for its graph, rather
+		// than a lost snapshot handoff. Its coordinator owns cancellation.
+		return false
+	}
+	if l.releaseApprovalPending(ctx, deployment) {
+		// Waiting for approval before its release command
+		// (ADR-20261020085706 amendment 12); the policy's timeout
+		// closes it.
+		return false
+	}
+	build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
+	if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
+		return false
+	}
+	if buildErr != nil && !errors.Is(buildErr, state.ErrNotFound) {
+		l.log.Warn("imaged: inspect stale deployment build", "deployment", deployment.ID, "err", buildErr)
+		return false
+	}
+	started := time.Now()
+	age := now.Sub(entered).Round(time.Second)
+	principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
+	_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
+	if l.handler != nil && l.handler.ops != nil {
+		l.handler.ops.Observe("stale_deployment_reconcile", time.Since(started), cancelErr)
+	}
+	if cancelErr != nil {
+		if !errors.Is(cancelErr, state.ErrInvalidStateTransition) && !errors.Is(cancelErr, state.ErrCancelLiveForbidden) {
 			l.log.Warn("imaged: reconcile stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "err", cancelErr)
-			continue
 		}
-		if l.handler != nil && l.handler.ops != nil {
-			l.handler.ops.IncrementStaleDeploymentsReconciled()
-		}
-		l.log.Info("imaged: reconciled stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "actor", principal)
+		// An invalid transition means the row moved on (live or terminal).
+		return errors.Is(cancelErr, state.ErrInvalidStateTransition) || errors.Is(cancelErr, state.ErrCancelLiveForbidden)
 	}
-	l.observeStaleDeploymentBacklog(ctx, cutoff, now)
+	if l.handler != nil && l.handler.ops != nil {
+		l.handler.ops.IncrementStaleDeploymentsReconciled()
+	}
+	l.log.Info("imaged: reconciled stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "actor", principal)
+	return true
 }
 
 // observeStaleDeploymentBacklog refreshes the alert gauge after mutations, so
@@ -452,25 +567,18 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 	if l.handler == nil || l.handler.ops == nil {
 		return
 	}
-	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
-		ExcludeMCPTaskHolds: true,
-		Statuses: []state.DeploymentStatus{
-			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
-		},
-		IncludeDeleted: true,
-		CreatedBefore:  cutoff,
-		OldestFirst:    true,
-		Limit:          staleDeploymentBatchSize,
+	var oldest time.Duration
+	err := l.pageOperatorDeployments(ctx, staleDeploymentFilter(cutoff), func(rows []state.Deployment) int {
+		for _, deployment := range rows {
+			if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) && !l.releaseApprovalPending(ctx, deployment) {
+				oldest = max(oldest, now.Sub(entered))
+			}
+		}
+		return len(rows)
 	})
 	if err != nil {
 		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
 		return
-	}
-	var oldest time.Duration
-	for _, deployment := range rows {
-		if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) {
-			oldest = max(oldest, now.Sub(entered))
-		}
 	}
 	l.handler.ops.SetStaleDeploymentOldestAge(oldest)
 }
@@ -515,6 +623,41 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) error 
 		l.reconcileSecuritySignatures(ctx, observedAt)
 	}
 	return nil
+}
+
+// handleLoopNotification handles one LISTEN delivery. A snapshot_boot this
+// node prepares goes to the image preparation workers when they are on.
+func (l *Loop) handleLoopNotification(ctx context.Context, n db.Notification) {
+	deploymentID, ok := l.parallelImagePrep(n)
+	if !ok {
+		l.logNotificationError(ctx, n, l.dispatchNotification(ctx, n))
+		return
+	}
+	if !l.prep.start(ctx, deploymentID, func(ctx context.Context) {
+		l.logNotificationError(ctx, n, l.dispatchNotification(ctx, n))
+	}) {
+		l.log.Debug("imaged: snapshot_boot left to recovery; deployment already preparing", "deployment", deploymentID, "id", n.OutboxID)
+	}
+}
+
+// parallelImagePrep returns the deployment a snapshot_boot asks this node to
+// prepare, when the workers are on. Everything else stays on the loop,
+// including a payload the handler will reject.
+func (l *Loop) parallelImagePrep(n db.Notification) (string, bool) {
+	if l.prep == nil || l.handler == nil || n.Channel != db.NotifySnapshotBoot {
+		return "", false
+	}
+	var p snapshotBootPayload
+	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.DeploymentID == "" || !handlesSnapshotBoot(l.handler.nodeName, p.NodeID) {
+		return "", false
+	}
+	return p.DeploymentID, true
+}
+
+func (l *Loop) logNotificationError(ctx context.Context, n db.Notification, err error) {
+	if err != nil && ctx.Err() == nil {
+		l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
+	}
 }
 
 // dispatchNotification gives durable LISTEN deliveries the same renewable
@@ -668,7 +811,7 @@ const localSnapshotOrphanGrace = time.Hour
 // stale row, protects its deployment directory. The age guard avoids racing a
 // newly-created directory before snapshot publication commits its row.
 func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
-	if strings.TrimSpace(l.storageRoot) == "" {
+	if strings.TrimSpace(l.storageRoot) == "" && (l.handler == nil || l.handler.nativeSnapshotRoot == "") {
 		return
 	}
 	knownIDs, err := l.store.ListSnapshotDeploymentIDs(ctx)
@@ -676,9 +819,21 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan list", "err", err)
 		return
 	}
-	known := make(map[string]struct{}, len(knownIDs))
-	for _, deploymentID := range knownIDs {
+	// ADR-733 crash captures live under their deployment's directory and
+	// can outlive its snapshot rows.
+	captureIDs, err := l.store.LiveCrashCaptureDeploymentIDs(ctx)
+	if err != nil {
+		l.log.Warn("imaged: local snapshot orphan crash capture list", "err", err)
+		return
+	}
+	known := make(map[string]struct{}, len(knownIDs)+len(captureIDs))
+	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}
+	}
+	cutoff := now.Add(-localSnapshotOrphanGrace)
+	l.retireNativeRuntimeSnapshotOrphans(ctx, known, cutoff)
+	if strings.TrimSpace(l.storageRoot) == "" {
+		return
 	}
 	snapRoot := filepath.Join(filepath.Clean(l.storageRoot), "snap")
 	entries, err := os.ReadDir(snapRoot)
@@ -689,7 +844,6 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan scan", "root", snapRoot, "err", err)
 		return
 	}
-	cutoff := now.Add(-localSnapshotOrphanGrace)
 	removed := 0
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -916,14 +1070,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// The ADR-510 backing identity sits beside every capture; leaving it
 		// behind orphaned one object per collected snapshot (H5-13).
 		backingKey := state.SnapshotBackingKey(snap)
-		memErr := be.Delete(ctx, memKey)
-		vmstateErr := be.Delete(ctx, vmstateKey)
+		// A native runtime capture's objects are removed by vmmd (ADR
+		// 20261022184951 amendment 1); every other object by the backend.
+		memErr := l.handler.deleteSnapshotObject(ctx, be, memKey)
+		vmstateErr := l.handler.deleteSnapshotObject(ctx, be, vmstateKey)
 		var driveErr, backingErr error
 		if driveKey != "" {
-			driveErr = be.Delete(ctx, driveKey)
+			driveErr = l.handler.deleteSnapshotObject(ctx, be, driveKey)
 		}
 		if backingKey != "" {
-			backingErr = be.Delete(ctx, backingKey)
+			backingErr = l.handler.deleteSnapshotObject(ctx, be, backingKey)
 		}
 		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
 		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
@@ -1100,10 +1256,18 @@ func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 
 func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork, source string) {
 	for _, item := range work {
-		err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
-		l.handler.handoffMetrics.observeWork(ctx, source, err)
-		if err != nil {
-			l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+		prepare := func(ctx context.Context) {
+			err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
+			l.handler.handoffMetrics.observeWork(ctx, source, err)
+			if err != nil {
+				l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+			}
 		}
+		if l.prep == nil {
+			prepare(ctx)
+			continue
+		}
+		// A deployment already preparing is skipped; the next pass re-reads it.
+		l.prep.start(ctx, item.DeploymentID, prepare)
 	}
 }

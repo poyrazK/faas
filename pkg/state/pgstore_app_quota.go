@@ -12,7 +12,7 @@ import (
 )
 
 // resolveAppQuotaTx locks the persisted tenant's admission pool. Account locks
-// still protect the legacy storage reference; the organization advisory lock
+// still protect the legacy storage reference; the organization fence row
 // serializes different creators. The org SHARE lock precedes its quota lock,
 // matching the existing app-scope insert guard and serializing plan changes.
 func resolveAppQuotaTx(ctx context.Context, tx pgx.Tx, app *App, limits api.Limits) (api.Limits, bool, error) {
@@ -103,6 +103,9 @@ func checkAppQuotaDeltaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Li
 
 func checkResolvedAppQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits, personal bool, delta int) error {
 	limit, kind := appQuotaLimit(app, limits)
+	if kind == QuotaErrorKindPreviewApps {
+		return checkPreviewEnvironmentQuotaTx(ctx, tx, app, limits, personal, delta)
+	}
 	observed, err := countAppQuotaTx(ctx, tx, app, personal, kind)
 	if err != nil {
 		return err
@@ -112,6 +115,58 @@ func checkResolvedAppQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 			observed += delta
 		}
 		return &QuotaError{Kind: kind, Plan: limits.Plan, Limit: limit, Observed: observed}
+	}
+	return nil
+}
+
+// checkPreviewEnvironmentQuotaTx admits PR preview workloads by environment,
+// the open previews of one project and pull request. Limits.PreviewApps
+// caps open environments and one environment holds at most
+// Limits.DeployedApps workloads. A workload joining an environment that
+// already holds its allowance needs no new one. A preview that is not open
+// (a closed PR in its grace window) holds nothing, so it admits freely; it
+// is checked again when a reopened PR makes it open.
+func checkPreviewEnvironmentQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits, personal bool, delta int) error {
+	if delta <= 0 || app.PreviewPrState != "" && app.PreviewPrState != PreviewPrStateOpen {
+		return nil
+	}
+	q := quotasql.New()
+	members := 0
+	if app.ProjectID != "" {
+		count, err := q.CountOpenPreviewEnvironmentMembers(ctx, tx, quotasql.CountOpenPreviewEnvironmentMembersParams{
+			AccountID: mustPgUUID(app.AccountID), ProjectID: mustPgUUID(app.ProjectID),
+			PrNumber: int32(app.PreviewPrNumber), AppID: mustPgUUID(app.ID),
+		})
+		if err != nil {
+			return fmt.Errorf("state: count preview environment workloads: %w", err)
+		}
+		members = int(count)
+	}
+	environments := 0
+	if members == 0 {
+		count, err := q.CountOpenPreviewEnvironments(ctx, tx, quotasql.CountOpenPreviewEnvironmentsParams{
+			OrgID: mustPgUUID(app.OrgID), AccountID: mustPgUUID(app.AccountID), Personal: personal,
+		})
+		if err != nil {
+			return fmt.Errorf("state: count preview environments: %w", err)
+		}
+		environments = int(count)
+	}
+	return previewEnvironmentQuotaError(app, limits, members, environments, delta)
+}
+
+// previewEnvironmentQuotaError applies the environment admission rule to the
+// counts PostgreSQL or MemStore observed. members is the environment's other
+// open workloads; environments is only read when members is zero.
+func previewEnvironmentQuotaError(app App, limits api.Limits, members, environments, delta int) error {
+	if members+delta > limits.DeployedApps {
+		return &QuotaError{Kind: QuotaErrorKindPreviewWorkloads, Plan: limits.Plan, Limit: limits.DeployedApps, Observed: members}
+	}
+	if members > 0 {
+		return nil
+	}
+	if limit, _ := appQuotaLimit(app, limits); environments+1 > limit {
+		return &QuotaError{Kind: QuotaErrorKindPreviewApps, Plan: limits.Plan, Limit: limit, Observed: environments}
 	}
 	return nil
 }
@@ -131,7 +186,7 @@ func guardLegacySharedAppAccountTx(ctx context.Context, tx pgx.Tx, accountID str
 	return nil
 }
 
-func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID string) error {
+func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID string, deletion accountDeletion) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -140,9 +195,9 @@ func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID stri
 	if err := guardLegacySharedAppAccountTx(ctx, tx, accountID); err != nil {
 		return err
 	}
-	changed, err := quotasql.New().MarkDeletion(ctx, tx, mustPgUUID(accountID))
+	changed, err := quotasql.New().MarkDeletion(ctx, tx, quotasql.MarkDeletionParams{ID: mustPgUUID(accountID), IncludeManagedPostgres: deletion.managedPostgres})
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if changed == 0 {
 		return ErrNotFound

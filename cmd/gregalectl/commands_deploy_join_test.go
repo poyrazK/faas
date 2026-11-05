@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -461,6 +463,90 @@ func TestNodeJoinPreparationStopsBeforeDrainAndActivationRequiresMarker(t *testi
 	}
 }
 
+// An activation that converges roles runs node_join.yml from the top, so every
+// task skipped in activation leaves a result without its module fields. A later
+// task that runs in activation must not read those fields undefaulted: on rc.315
+// "Read the serving vmmd process before runtime pre-stage" read
+// faas_join_active_vmmd.stat and stopped fsn-2's activation.
+func TestNodeJoinActivationNeverReadsResultsItSkipped(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plays []map[string]any
+	if err := yaml.Unmarshal(body, &plays); err != nil {
+		t.Fatal(err)
+	}
+	skippedInActivation := func(when []string) bool {
+		for _, w := range when {
+			if strings.Contains(w, "!= 'activate'") || strings.Contains(w, "== 'prepare'") {
+				return true
+			}
+		}
+		return false
+	}
+	type task struct {
+		body map[string]any
+		when []string
+	}
+	var walk func(items any, inherited []string, out *[]task)
+	walk = func(items any, inherited []string, out *[]task) {
+		list, _ := items.([]any)
+		for _, item := range list {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			when := append([]string(nil), inherited...)
+			switch w := m["when"].(type) {
+			case string:
+				when = append(when, w)
+			case []any:
+				for _, c := range w {
+					when = append(when, fmt.Sprint(c))
+				}
+			}
+			if block, ok := m["block"]; ok {
+				walk(block, when, out)
+				walk(m["rescue"], when, out)
+				walk(m["always"], when, out)
+				continue
+			}
+			*out = append(*out, task{body: m, when: when})
+		}
+	}
+	for _, play := range plays {
+		var tasks []task
+		walk(play["tasks"], nil, &tasks)
+		var skipped []string
+		for _, tk := range tasks {
+			if !skippedInActivation(tk.when) {
+				rest := map[string]any{}
+				for k, v := range tk.body {
+					if k != "name" && k != "register" {
+						rest[k] = v
+					}
+				}
+				text, err := yaml.Marshal(rest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, reg := range skipped {
+					read := regexp.MustCompile(regexp.QuoteMeta(reg) + `\.\w+(\s*\|\s*default)?`)
+					for _, m := range read.FindAllStringSubmatch(string(text), -1) {
+						if m[1] == "" {
+							t.Errorf("%q runs in activation but reads %q, which activation skipped", tk.body["name"], m[0])
+						}
+					}
+				}
+			}
+			if reg, ok := tk.body["register"].(string); ok && skippedInActivation(tk.when) {
+				skipped = append(skipped, reg)
+			}
+		}
+	}
+}
+
 func TestNormalizedJoinRolloutPhase(t *testing.T) {
 	for input, want := range map[string]string{"": joinRolloutFull, "full": joinRolloutFull, " prepare ": joinRolloutPrepare, "activate": joinRolloutActivate} {
 		got, err := normalizedJoinRolloutPhase(input)
@@ -646,7 +732,7 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 			t.Errorf("drain barrier missing %q", token)
 		}
 	}
-	stopBlockEnd := strings.Index(playbook[stop:], "Install the verified release while keeping the row drained")
+	stopBlockEnd := strings.Index(playbook[stop:], "Install the verified release, keeping a drained row drained")
 	if stopBlockEnd < 0 {
 		t.Fatal("node_join is missing the release install after service stop")
 	}
@@ -659,13 +745,57 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 	}
 }
 
+// production-us rc.319 (2026-11-04): the edge socket stayed open through a
+// drained install, a tunnel request socket-activated the edge, and its Wants=
+// chain started the old release's gatewayd-internal, vmmd and realtimed
+// mid-install. The old gateway crash-looped into its start limit and the
+// daemon-set restart was refused. A drained install takes the edge out of
+// the tunnel first and returns it after the restart.
+func TestNodeJoinTakesTheDrainedEdgeOutOfTheTunnel(t *testing.T) {
+	playbook := nodeJoinPlaybook(t)
+	out := strings.Index(playbook, "- name: Take the drained node's app edge out of the tunnel before the install")
+	stop := strings.Index(playbook, "- name: Stop stale compute-only services before replacing the active release")
+	restart := strings.Index(playbook, "- name: Enable and restart the compute-only daemon set")
+	back := strings.Index(playbook, "- name: Return the node's app edge to the tunnel")
+	ready := strings.Index(playbook, "- name: Require dependency-aware readiness after release installation")
+	if out < 0 || stop < 0 || restart < 0 || back < 0 || ready < 0 || !(out < stop && stop < restart && restart < back && back < ready) {
+		t.Fatalf("edge order invalid: out=%d stop=%d restart=%d back=%d ready=%d", out, stop, restart, back, ready)
+	}
+	outBlock := playbook[out:stop]
+	for _, token := range []string{"state: stopped", "not (faas_join_skip_drain | bool)", "faas_edge_on_compute_nodes | default(false) | bool"} {
+		if !strings.Contains(outBlock, token) {
+			t.Errorf("edge take-out missing %q", token)
+		}
+	}
+	// The connector leaves first, so Cloudflare stops sending before the
+	// socket refuses; closing the socket is what stops socket activation.
+	connector := strings.Index(outBlock, "- faas-cloudflared.service")
+	socket := strings.Index(outBlock, "- faas-gatewayd-public-edge.socket")
+	if connector < 0 || socket < 0 || connector > socket {
+		t.Fatalf("edge take-out must stop the connector, then the socket: connector=%d socket=%d", connector, socket)
+	}
+	backEnd := strings.Index(playbook[back:], "\n    - name: ")
+	if backEnd < 0 {
+		t.Fatal("edge return task has no successor")
+	}
+	backBlock := playbook[back : back+backEnd]
+	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "- faas-gatewayd-public-edge.socket", "- faas-cloudflared.service"} {
+		if !strings.Contains(backBlock, token) {
+			t.Errorf("edge return missing %q", token)
+		}
+	}
+	if strings.Contains(backBlock, "faas_join_skip_drain") {
+		t.Error("the edge returns after every restart, drained or not")
+	}
+}
+
 func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	install := strings.Index(playbook, "Install the verified release while keeping the row drained")
+	install := strings.Index(playbook, "Install the verified release, keeping a drained row drained")
 	secrets := strings.Index(playbook, "Initialize host-local runtime identity and backup stubs")
 	doctor := strings.Index(playbook, "Run the node-scoped doctor before starting services")
 	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
@@ -674,7 +804,8 @@ func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
 		t.Fatalf("fresh-host activation order invalid: install=%d secrets=%d doctor=%d restart=%d", install, secrets, doctor, restart)
 	}
 	installEnd := strings.Index(playbook[install:], "Verify the requested release is the active on-host release")
-	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], "- --defer-activation") {
+	// A fresh host never restarts without a drain, so it always defers.
+	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], `- "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"`) {
 		t.Fatal("node_join release install must defer first-boot daemon start and database activation")
 	}
 	credentialBlock := playbook[secrets:restart]
@@ -1401,6 +1532,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	standInCosign(t, cosign)
 	computeDBEnv := filepath.Join(artifactDir, "compute-db.env")
 	if err := os.WriteFile(computeDBEnv, []byte("DATABASE_URL=postgres://faas@example/faas\nFAAS_VMMD_DBURL=postgres://faas@example/faas\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1464,12 +1596,19 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	oldVerifier := joinControlPlaneVerifier
 	oldRegistrar := joinReleaseBundleRegistrar
 	oldLookup := joinPrivateAddressLookup
+	oldProbe := joinBootstrapContractProbe
 	t.Cleanup(func() {
 		ansiblePlaybookRunner = oldRunner
 		joinControlPlaneVerifier = oldVerifier
 		joinReleaseBundleRegistrar = oldRegistrar
 		joinPrivateAddressLookup = oldLookup
+		joinBootstrapContractProbe = oldProbe
 	})
+	contractCurrent, probedContract := true, ""
+	joinBootstrapContractProbe = func(_ context.Context, _ string, _ []string, _, want, _ string) (bool, error) {
+		probedContract = want
+		return contractCurrent, nil
+	}
 	joinControlPlaneVerifier = func(context.Context, *deployJoinReport, string) error { return nil }
 	registrations := 0
 	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error {
@@ -1616,6 +1755,14 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		t.Fatalf("preparation registered the shared release bundle; registrations=%d", registrations)
 	}
 
+	// The same complete inputs with a cosign that is not the pinned build:
+	// node join would stage it as the host's release and provenance verifier.
+	pinnedCosignSHA256 = releaseinstall.PinnedCosignSHA256
+	if _, err := deployJoinValidate(applyOpts); err == nil || !strings.Contains(err.Error(), "--cosign-binary") ||
+		!strings.Contains(err.Error(), releaseinstall.PinnedCosignSHA256) {
+		t.Fatalf("unpinned cosign error = %v", err)
+	}
+
 	calls = nil
 	activateOpts := applyOpts
 	activateOpts.RolloutPhase = joinRolloutActivate
@@ -1641,5 +1788,55 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if registrations != 2 {
 		t.Fatalf("activation release registrations = %d, want one additional registration", registrations)
+	}
+	if !strings.HasPrefix(probedContract, "sha256:") || activateReport.RolesConverged {
+		t.Fatalf("current-contract activation probed %q, RolesConverged=%v", probedContract, activateReport.RolesConverged)
+	}
+
+	// ADR-20261025095348: a stale contract was prepared without role convergence, so
+	// activation runs the playbook from the top and converges roles first.
+	calls = nil
+	contractCurrent = false
+	staleReport := report
+	staleReport.Applied = false
+	staleReport.Prepared = false
+	if code, err := deployJoinApply(&activateOpts, &staleReport); err != nil || code != 0 {
+		t.Fatalf("stale-contract activate deployJoinApply: code=%d err=%v", code, err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("stale-contract activation Ansible calls = %d, want control-plane, node activation, and baseline acceptance", len(calls))
+	}
+	if joined := strings.Join(calls[1], " "); strings.Contains(joined, "--start-at-task") || !strings.Contains(joined, "node_join.yml") {
+		t.Fatalf("stale-contract activation must run node_join.yml from the top: %v", calls[1])
+	}
+	if !staleReport.RolesConverged || !staleReport.Applied {
+		t.Fatalf("stale-contract activation report = %#v, want roles converged and applied", staleReport)
+	}
+
+	// Converging roles needs the peers' private addresses, which only the fleet
+	// preflight caches; the activation job never ran it (rc.314 fsn-2).
+	for _, tc := range []struct {
+		current bool
+		want    []string
+	}{
+		{current: false, want: []string{"node_join_control_plane.yml", "preflight.yml", "node_join.yml", "node_join_accept_release.yml"}},
+		{current: true, want: []string{"node_join_control_plane.yml", "node_join.yml", "node_join_accept_release.yml"}},
+	} {
+		calls = nil
+		contractCurrent = tc.current
+		preflightOpts := activateOpts
+		preflightOpts.SkipFleetPreflight = false
+		preflightReport := report
+		preflightReport.Applied = false
+		if code, err := deployJoinApply(&preflightOpts, &preflightReport); err != nil || code != 0 {
+			t.Fatalf("activate (current=%v) deployJoinApply: code=%d err=%v", tc.current, code, err)
+		}
+		var playbooks []string
+		for _, call := range calls {
+			playbooks = append(playbooks, filepath.Base(call[len(call)-1]))
+		}
+		if !slices.Equal(playbooks, tc.want) {
+			t.Fatalf("activation (current contract=%v) playbooks = %v, want %v", tc.current, playbooks, tc.want)
+		}
 	}
 }

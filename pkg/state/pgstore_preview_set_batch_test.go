@@ -34,7 +34,7 @@ func TestPgPRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 			WorkloadName: "pg-swap-" + name, PreviewOfSlug: "pg-swap-" + name, PreviewPrNumber: 42,
 			PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry, RAMMB: 128, Status: state.AppActive}
 	}
-	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
+	limits := api.Limits{DeployedApps: 2, PreviewApps: 2} // one environment holds at most two workloads
 	head := state.PRPreviewHead{InstallationID: 7, RepoFullName: "octo/api", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
 	first, err := store.ReservePRPreviewSet(ctx, head, []state.App{preview("api"), preview("worker")}, limits)
 	if err != nil || len(first) != 2 {
@@ -77,8 +77,13 @@ func TestPgPRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 		t.Fatalf("deleted foreign slug error = %v, want conflict", err)
 	}
 	// A normal soft delete retains the global slug; remove only this test
-	// fixture so the following swap starts with a truly unclaimed slug.
+	// fixture, and the slug hold its purge records for the other account
+	// (ADR-20261101091049), so the following swap starts with a truly
+	// unclaimed slug.
 	if _, err := pool.Exec(ctx, `delete from apps where id = $1`, conflict.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `delete from app_slug_holds where slug = $1`, conflict.Slug); err != nil {
 		t.Fatal(err)
 	}
 	second, err := store.ReservePRPreviewSet(ctx, head, []state.App{preview("api"), preview("db")}, limits)

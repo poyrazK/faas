@@ -68,7 +68,7 @@ func TestScenarioTCPChaosMetal(t *testing.T) {
 			t.Fatal(err)
 		}
 		projects = append(projects, project)
-		body, code := postMultipartDeploymentWithOverrides(t, h, key, session.App.Slug, source, false, nil, "")
+		body, code := postMultipartDeploymentWithFields(t, h, key, session.App.Slug, source, false, nil, "")
 		if code != http.StatusAccepted {
 			t.Fatalf("deploy %s: %d %s", project, code, body)
 		}

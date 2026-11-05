@@ -67,6 +67,13 @@ var (
 // step timeout plus five minutes before each executor call.
 const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
 
+// WorkflowRunDueReader answers in one read whether ClaimNextDueWorkflowRun
+// could find a run, so a scheduler tick can ask once for all its dispatch
+// slots.
+type WorkflowRunDueReader interface {
+	WorkflowRunsDue(ctx context.Context) (bool, error)
+}
+
 const WorkflowRunIdempotencyKeyMaxBytes = 255
 
 func validateWorkflowRunCreateIdempotency(key string, requestFingerprint []byte) error {
@@ -87,13 +94,14 @@ type WorkflowRunLeaseStore interface {
 // It remains optional so existing WorkflowStore implementations and test
 // doubles do not need to support the operator retry surface.
 type WorkflowRetryStore interface {
-	RetryWorkflowStep(context.Context, string, string, int) (*WorkflowRun, int, error)
+	RetryWorkflowStep(ctx context.Context, runID, stepName string, maxActive, maxParked int) (*WorkflowRun, int, error)
 }
 
 // workflowRetryPlan validates an in-place retry and returns skipped dependency
 // descendants that must be reopened so the DAG can continue after the retry.
 func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep) ([]string, error) {
-	if run == nil || (run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
+	if run == nil || run.CancelledAt != nil || (run.LastError != nil && *run.LastError == "cancelled by operator") ||
+		(run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
 		return nil, ErrWorkflowRetryNotAllowed
 	}
 	var spec api.WorkflowSpec
@@ -188,6 +196,28 @@ func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep)
 	return reopen, nil
 }
 
+// workflowManualRetryBase grants one dispatch after an exhausted resumed
+// generation without resetting the automatic retry budget or attempt history.
+func workflowManualRetryBase(run *WorkflowRun, stepName string, attempt, base int) int {
+	if run.ResumeCount == 0 {
+		return base
+	}
+	var spec api.WorkflowSpec
+	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
+		return base
+	}
+	for _, step := range spec.Steps {
+		if step.Name == stepName {
+			limit := api.WorkflowStepMaxAttempts(step)
+			if attempt-base >= limit {
+				return attempt - limit + 1
+			}
+			break
+		}
+	}
+	return base
+}
+
 func validateWorkflowRunStatus(status string) error {
 	switch status {
 	case WorkflowRunStatusPending, WorkflowRunStatusRunning,
@@ -226,6 +256,16 @@ func validateWorkflowJSON(raw json.RawMessage, required bool) error {
 	}
 	if !json.Valid(raw) {
 		return fmt.Errorf("%w: malformed JSON", ErrWorkflowInvalidInput)
+	}
+	return nil
+}
+
+func validateWorkflowEventPayload(raw json.RawMessage) error {
+	if err := validateWorkflowJSON(raw, false); err != nil {
+		return err
+	}
+	if len(raw) != 0 && !api.WorkflowEventEnvelopeFits(raw) {
+		return fmt.Errorf("%w: workflow event payload exceeds supported size or numeric range", ErrWorkflowInvalidInput)
 	}
 	return nil
 }
@@ -332,6 +372,10 @@ type WorkflowRun struct {
 	LastError          *string         `json:"last_error,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
+	// ClaimedDueAt is set only on a run returned by ClaimNextDueWorkflowRun
+	// that was claimed because it was due: the scheduled_for it was due at.
+	// It is nil for a run recovered from an expired lease.
+	ClaimedDueAt *time.Time `json:"-"`
 }
 
 func earlierWorkflowWake(current, candidate, now time.Time) time.Time {
@@ -431,7 +475,7 @@ type WorkflowStore interface {
 	CreateWorkflowRun(ctx context.Context, r *WorkflowRun) error
 	// CreateWorkflowRunAdmitted serializes quota admission per app and returns
 	// the observed active count when the quota is already full.
-	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive int) (active int, err error)
+	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive, maxParked int) (active int, err error)
 	// GetWorkflowRunByIdempotencyKey returns the original run for a matching
 	// request fingerprint. A missing key returns ErrWorkflowRunNotFound and a
 	// different fingerprint returns ErrWorkflowRunIdempotencyConflict.
@@ -439,7 +483,7 @@ type WorkflowStore interface {
 	// CreateWorkflowRunAdmittedWithIdempotencyKey atomically records a run and
 	// its request key with quota admission. A replay replaces r with the
 	// original run and returns replayed=true without consuming another slot.
-	CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (active int, replayed bool, err error)
+	CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive, maxParked int, key string, requestFingerprint []byte) (active int, replayed bool, err error)
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error

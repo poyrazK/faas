@@ -51,7 +51,7 @@ func cmdBuild(args []string) int {
 		return cmdBuildList(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale build: unknown subcommand %q (known: status, provenance, sbom, list)\n", args[0])
+		printCommandValidation(os.Stderr, "gregale build: unknown subcommand %q (known: status, provenance, sbom, list)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}
@@ -396,7 +396,7 @@ func cmdBuildList(args []string) int {
 	})
 	page := api.BuildListResponse{Items: items, NextBefore: next}
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list builds", err)
 	}
 	if jsonOutput {
 		// Envelope (not NDJSON) so `next_before` survives; see file header.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { insertCommitEvent, insertRealtimeCommitEvent, listRealtimeCommitDeliveries, getRealtimeCommitDelivery, retryRealtimeCommitEvent } from '../dist/index.js';
+import { insertCommitEvent, insertRealtimeCommitEvent, listRealtimeCommitDeliveries, getRealtimeCommitDelivery, retryRealtimeCommitEvent } from '../dist/preview.js';
 
 const { Client } = pg;
 const dsn = process.env.DATABASE_URL;

@@ -12,7 +12,7 @@ export class RegistryService {
   /**
    * List sealed private-registry credentials on an app.
    * Returns every (registry, username, timestamps) triple on the app.
-   * Plaintext passwords are never returned — imaged transiently
+   * Plaintext passwords are never returned — the image service transiently
    * unseals the ciphertext in the pull path. Quota metadata
    * (`quota_max`, `count`) is included so the CLI can render a
    * progress bar without a second call.
@@ -88,7 +88,7 @@ export class RegistryService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

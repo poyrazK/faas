@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -35,9 +37,9 @@ func TestDurableEntityDeployedCounterAcceptance(t *testing.T) {
 	if _, err := rand.Read(random); err != nil {
 		t.Fatal(err)
 	}
-	request := faas.DurableEntityInvokeRequest{Namespace: "counters", Key: "qualification:" + hex.EncodeToString(random), RequestID: "first", Payload: json.RawMessage(`{"delta":1}`), Environment: os.Getenv("GREGALE_ENTITY_ENVIRONMENT"), PlatformTenantID: os.Getenv("GREGALE_ENTITY_TENANT_ID")}
+	request := preview.DurableEntityInvokeRequest{Namespace: "counters", Key: "qualification:" + hex.EncodeToString(random), RequestID: "first", Payload: json.RawMessage(`{"delta":1}`), Environment: os.Getenv("GREGALE_ENTITY_ENVIRONMENT"), PlatformTenantID: os.Getenv("GREGALE_ENTITY_TENANT_ID")}
 	started := time.Now()
-	first, err := client.InvokeDurableEntity(ctx, app, request)
+	first, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, request)
 	if err != nil || first.Version != 1 || string(first.Value) != `{"count":1}` {
 		t.Fatalf("first deployed result = %+v %v", first, err)
 	}
@@ -50,7 +52,7 @@ func TestDurableEntityDeployedCounterAcceptance(t *testing.T) {
 			defer wg.Done()
 			req := request
 			req.RequestID = "concurrent-" + string(rune('a'+i))
-			result, err := client.InvokeDurableEntity(ctx, app, req)
+			result, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, req)
 			if err != nil || result.Version < 2 || result.Version > calls+1 {
 				t.Errorf("concurrent deployed result = %+v %v", result, err)
 				return
@@ -70,18 +72,18 @@ func TestDurableEntityDeployedCounterAcceptance(t *testing.T) {
 	if len(seen) != calls {
 		t.Fatalf("only %d/%d concurrent requests acknowledged", len(seen), calls)
 	}
-	replayed, err := client.InvokeDurableEntity(ctx, app, request)
+	replayed, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, request)
 	if err != nil || !replayed.Replayed || replayed.Version != first.Version || string(replayed.Value) != string(first.Value) {
 		t.Fatalf("deployed replay changed original result = %+v %v", replayed, err)
 	}
 	request.Payload = json.RawMessage(`{"delta":2}`)
-	_, err = client.InvokeDurableEntity(ctx, app, request)
+	_, err = preview.Wrap(client).InvokeDurableEntity(ctx, app, request)
 	problem, ok := faas.AsAPIError(err)
 	if !ok || problem.Problem.Code != "durable_entity_request_conflict" {
 		t.Fatal("reusing a request ID with another payload did not fail with the expected conflict")
 	}
 	request.RequestID, request.Payload = "final", json.RawMessage(`{"delta":1}`)
-	final, err := client.InvokeDurableEntity(ctx, app, request)
+	final, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, request)
 	var value struct {
 		Count int `json:"count"`
 	}
@@ -94,7 +96,7 @@ func TestDurableEntityDeployedCounterAcceptance(t *testing.T) {
 	}
 }
 
-func qualifyDeployedEntityAlarm(t *testing.T, ctx context.Context, client *faas.Client, app string, request faas.DurableEntityInvokeRequest) {
+func qualifyDeployedEntityAlarm(t *testing.T, ctx context.Context, client *faas.Client, app string, request preview.DurableEntityInvokeRequest) {
 	t.Helper()
 	request.Key += ":alarm"
 	request.RequestID = "schedule-alarm"
@@ -102,7 +104,7 @@ func qualifyDeployedEntityAlarm(t *testing.T, ctx context.Context, client *faas.
 		Delta int       `json:"delta"`
 		At    time.Time `json:"alarm_at"`
 	}{0, time.Now().UTC().Add(time.Second)})
-	first, err := client.InvokeDurableEntity(ctx, app, request)
+	first, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, request)
 	if err != nil || first.Version != 1 || string(first.Value) != `{"count":0}` {
 		t.Fatalf("deployed alarm schedule = %+v %v", first, err)
 	}
@@ -117,7 +119,7 @@ func qualifyDeployedEntityAlarm(t *testing.T, ctx context.Context, client *faas.
 		case <-ticker.C:
 		}
 		observed.RequestID = "observe-alarm-" + fmt.Sprint(i)
-		result, err := client.InvokeDurableEntity(ctx, app, observed)
+		result, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, observed)
 		var value struct {
 			Count int `json:"count"`
 		}
@@ -128,7 +130,7 @@ func qualifyDeployedEntityAlarm(t *testing.T, ctx context.Context, client *faas.
 			break
 		}
 	}
-	replayed, err := client.InvokeDurableEntity(ctx, app, request)
+	replayed, err := preview.Wrap(client).InvokeDurableEntity(ctx, app, request)
 	if err != nil || !replayed.Replayed || replayed.Version != first.Version || string(replayed.Value) != string(first.Value) {
 		t.Fatalf("alarm changed original request receipt = %+v %v", replayed, err)
 	}

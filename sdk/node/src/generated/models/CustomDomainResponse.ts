@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DNSRecordInstruction } from './DNSRecordInstruction.js';
 /**
- * A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface.
+ * A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface.
  */
 export type CustomDomainResponse = {
   domain: string;
@@ -16,9 +16,17 @@ export type CustomDomainResponse = {
   challenge_token?: string | null;
   verified: boolean;
   verified_at?: string | null;
+  /**
+   * Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof.
+   */
+  verification_expires_at?: string;
+  /**
+   * True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim.
+   */
+  verification_expired?: boolean;
   txt_record?: string | null;
   /**
-   * True when this domain is the app's default (issue #961 / Mega-A PR-3). Set via `gregale domains set-default`.
+   * True when this domain is the app's default. Set via `gregale domains set-default`.
    */
   default?: boolean;
   /**
@@ -30,7 +38,7 @@ export type CustomDomainResponse = {
    */
   cert_sans?: Array<string>;
   /**
-   * Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted; issue #1397 / F3). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
+   * Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
    */
   cert_status?: string | null;
   /**
@@ -46,7 +54,7 @@ export type CustomDomainResponse = {
    */
   dns_last_checked_at?: string | null;
   /**
-   * DNS records to publish (ADR-520): the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses.
+   * DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses.
    */
   dns_records?: Array<DNSRecordInstruction>;
 };

@@ -3,12 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One recorded config change, without values (ADR-1451).
+ * One recorded config change, without values.
  */
 export type ConfigRevision = {
   revision: number;
   scope: string;
-  source: 'baseline' | 'env.set' | 'env.delete' | 'secret.set' | 'secret.delete' | 'secret.rotate' | 'config.rollback' | 'config.guard_restore';
+  source: 'baseline' | 'env.set' | 'env.delete' | 'env.batch' | 'secret.set' | 'secret.delete' | 'secret.rotate' | 'config.rollback' | 'config.guard_restore';
   key?: string;
   actor: string;
   created_at: string;

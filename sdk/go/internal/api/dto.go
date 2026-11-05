@@ -770,6 +770,9 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the capabilities whose platform flag is off for
+	// this account; omitted when nothing is hidden and by older servers.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -935,6 +938,9 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
 	RetryMax            *int            `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int            `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove them from the cron.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // SchedulePolicy controls overlap and missed-run handling for recurring work.
@@ -992,6 +998,60 @@ type ListScheduleOccurrencesResponse struct {
 	Limit       int                          `json:"limit"`
 	Before      string                       `json:"before,omitempty"`
 	NextBefore  string                       `json:"next_before,omitempty"`
+}
+
+// CronRunOutcome classifies one cron run. Mirrors pkg/api.CronRunOutcome.
+type CronRunOutcome string
+
+const (
+	CronRunSuccess    CronRunOutcome = "success"
+	CronRunFailed     CronRunOutcome = "failed"
+	CronRunTimeout    CronRunOutcome = "timeout"
+	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	CronRunCancelled  CronRunOutcome = "cancelled"
+	CronRunUncertain  CronRunOutcome = "uncertain"
+	CronRunRunning    CronRunOutcome = "running"
+)
+
+// CronRun is one row of GET /v1/crons/{id}/runs. Branch on Outcome, never
+// on Error.
+type CronRun struct {
+	ID          string         `json:"id"`
+	StartedAt   time.Time      `json:"started_at"`
+	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	DurationMs  *int64         `json:"duration_ms,omitempty"`
+	Outcome     CronRunOutcome `json:"outcome"`
+	Attempts    int            `json:"attempts"`
+	InstanceID  string         `json:"instance_id,omitempty"`
+	TaskID      string         `json:"task_id,omitempty"`
+	Error       string         `json:"error,omitempty"`
+}
+
+// ListCronRunsResponse is a newest-first page of cron runs.
+type ListCronRunsResponse struct {
+	Runs []CronRun `json:"runs"`
+}
+
+// FireCronResponse is the 202 body of POST /v1/crons/{id}/run.
+type FireCronResponse struct {
+	RequestID string `json:"request_id"`
+	CronID    string `json:"cron_id"`
+	Status    string `json:"status"`
+}
+
+// FireCronRequestResponse is a manual run's status. Timestamps are
+// RFC3339Nano UTC strings; the optional fields are nil until set.
+type FireCronRequestResponse struct {
+	RequestID    string  `json:"request_id"`
+	CronID       string  `json:"cron_id"`
+	Status       string  `json:"status"`
+	RequestedAt  string  `json:"requested_at"`
+	FinishedAt   *string `json:"finished_at,omitempty"`
+	InvocationID *string `json:"invocation_id,omitempty"`
+	OperationID  *string `json:"operation_id,omitempty"`
+	TaskID       *string `json:"task_id,omitempty"`
+	Error        *string `json:"error,omitempty"`
+	AccountID    string  `json:"account_id"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -1202,6 +1262,9 @@ type UsageSummaryResponse struct {
 	OverageGBHours  float64                        `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64                          `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
 	Executions      *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
+	// QuietPausedGBHours is quiet-paused time that was not billed; not part
+	// of UsedGBHours. Zero until unbilled quiet pause reaches the account.
+	QuietPausedGBHours float64 `json:"quiet_paused_gb_hours,omitempty"`
 }
 
 // AccountUsageResponse is the account-level usage projection. Optional
@@ -1266,6 +1329,11 @@ type ManagedPostgresUsageResponse struct {
 	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
 	EgressBytes                 int64      `json:"egress_bytes"`
+	ComputeAllowanceUnitSeconds int64      `json:"compute_allowance_unit_seconds,omitempty"`
+	ComputeCeilingUnitSeconds   int64      `json:"compute_ceiling_unit_seconds,omitempty"`
+	ComputeCapState             string     `json:"compute_cap_state,omitempty"`
+	OverageEnabled              bool       `json:"overage_enabled,omitempty"`
+	ComputeSuspendedAt          *time.Time `json:"compute_suspended_at,omitempty"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

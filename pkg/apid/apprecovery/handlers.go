@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -304,7 +305,7 @@ func (s Handler) restoreOwnedApp(w http.ResponseWriter, r *http.Request, acct st
 				"the deletion window is closed or the app cannot be restored in its current state"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not restore app")))
 		return
 	}
 	s.OnRestored(r.Context(), r, acct, restored)

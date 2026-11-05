@@ -33,7 +33,7 @@ func TestInstallOnDemandTLSAskFollowsFlag(t *testing.T) {
 		t.Run("mode="+tc.mode, func(t *testing.T) {
 			t.Setenv("FAAS_CUSTOM_DOMAIN_TLS", tc.mode)
 			mux := http.NewServeMux()
-			got := installOnDemandTLSAsk(mux, store, "gregale.dev", prometheus.NewRegistry(), slog.New(slog.DiscardHandler))
+			got := installOnDemandTLSAsk(mux, store, testDomains(t, "", "gregale.dev"), prometheus.NewRegistry(), slog.New(slog.DiscardHandler))
 			if got != tc.installed {
 				t.Fatalf("installed = %v, want %v", got, tc.installed)
 			}

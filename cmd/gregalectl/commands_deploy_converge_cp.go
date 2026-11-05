@@ -21,6 +21,12 @@ package main
 // may restart PostgreSQL or pgbouncer (faas_stateful_restart_allowed), and
 // the playbook records nothing; the lane records the contract and the role
 // hashes after its SLO gate.
+//
+// --roles with --full-release is a full release's mode
+// (docs/adr/20261030150000-full-release-converges-changed-roles.md): only
+// the named roles run, as in the lane, but they may restart PostgreSQL or
+// pgbouncer as a whole-play convergence does, and the playbook records the
+// contract. The workflow records the role hashes after it.
 
 import (
 	"context"
@@ -56,6 +62,9 @@ type deployConvergeControlPlaneOptions struct {
 	// Roles selects the host-configuration lane's mode: converge only these
 	// control-plane roles and record nothing. Empty runs the whole play.
 	Roles []string
+	// FullRelease converges Roles as a full release does: stateful
+	// restarts allowed, and the playbook records the contract.
+	FullRelease bool
 }
 
 type deployConvergeControlPlaneReport struct {
@@ -79,6 +88,7 @@ func cmdDeployConvergeControlPlane(args []string) int {
 	varsFile := fs.String("ansible-vars-file", "", "control-plane Ansible variables, e.g. prod-vars.yml (required)")
 	repoRoot := fs.String("repo-root", "", "repository root containing deploy/ansible (default: detected)")
 	roles := fs.String("roles", "", "converge only these comma-separated control-plane roles and record nothing (host-configuration lane)")
+	fullRelease := fs.Bool("full-release", false, "with --roles: converge them as a full release does (PostgreSQL and pgbouncer may restart) and record the contract")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -90,6 +100,7 @@ func cmdDeployConvergeControlPlane(args []string) int {
 		SSHKey:            strings.TrimSpace(*sshKey),
 		AnsibleVarsFile:   strings.TrimSpace(*varsFile),
 		RepoRoot:          strings.TrimSpace(*repoRoot),
+		FullRelease:       *fullRelease,
 	}
 	if strings.TrimSpace(*roles) != "" {
 		opts.Roles = strings.Split(strings.TrimSpace(*roles), ",")
@@ -98,13 +109,21 @@ func cmdDeployConvergeControlPlane(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy converge-control-plane: %v\n", err)
 		return 2
 	}
+	stdout := os.Stdout
+	if *jsonOut || jsonOutput {
+		// ansible-playbook inherits the process's stdout. Callers redirect
+		// the JSON report to a file and parse it, so the play's output goes
+		// to stderr until the report is written.
+		os.Stdout = os.Stderr
+		defer func() { os.Stdout = stdout }()
+	}
 	report, err := convergeControlPlane(context.Background(), opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy converge-control-plane: %v\n", err)
 		return 3
 	}
 	if *jsonOut || jsonOutput {
-		jsonEmit(os.Stdout, report)
+		jsonEmit(stdout, report)
 		return 0
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "deploy converge-control-plane: host=%s contract=%s environment=%s roles=%s duration=%dms\n",
@@ -137,6 +156,9 @@ func (o deployConvergeControlPlaneOptions) validate() error {
 		if !controlPlaneRoleName.MatchString(role) {
 			return fmt.Errorf("--roles: %q is not a role name", role)
 		}
+	}
+	if o.FullRelease && len(o.Roles) == 0 {
+		return errors.New("--full-release needs --roles; without it the whole play runs")
 	}
 	return nil
 }
@@ -222,6 +244,13 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	if len(opts.Roles) > 0 {
 		convergeVars["faas_cp_converge_roles_requested"] = opts.Roles
 		convergeVars["faas_cp_environment_sha256"] = report.Environment
+	}
+	switch {
+	case len(opts.Roles) > 0 && opts.FullRelease:
+		// A full release restarts PostgreSQL when a role needs it, as the
+		// whole play does, and records the contract like it.
+		convergeVars["faas_cp_full_release"] = true
+	case len(opts.Roles) > 0:
 		convergeVars["faas_cp_record_contract"] = false
 		// The lane never restarts PostgreSQL or pgbouncer: the roles that
 		// can report the change in check mode and fail the run instead.

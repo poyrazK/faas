@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
-func entityHandlerFixture(t *testing.T) faas.DurableEntityHandlerRequest {
+func entityHandlerFixture(t *testing.T) preview.DurableEntityHandlerRequest {
 	t.Helper()
 	body, err := os.ReadFile("testdata/durable-entity-handler-request.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := faas.DecodeDurableEntityHandlerRequest(body)
+	request, err := preview.DecodeDurableEntityHandlerRequest(body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestDurableEntityHandlerMatchesSharedWireContract(t *testing.T) {
 	}
 	payload["quantity"] = 99
 	next := json.RawMessage(`{"status":"reserved","quantity":2}`)
-	body, err := request.EncodeTransition(faas.DurableEntityTransition{Data: next, Result: next, Outbox: []faas.DurableEntityWebhookIntent{intent}})
+	body, err := request.EncodeTransition(preview.DurableEntityTransition{Data: next, Result: next, Outbox: []preview.DurableEntityWebhookIntent{intent}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestDurableEntityHandlerMatchesSharedWireContract(t *testing.T) {
 	}
 	// Constructed intents capture the original payload, without bucket or claim
 	// authority in either direction. Omitting Outbox does not clear pending work.
-	plain, err := request.EncodeTransition(faas.DurableEntityTransition{Data: next, Result: next})
+	plain, err := request.EncodeTransition(preview.DurableEntityTransition{Data: next, Result: next})
 	if err != nil || strings.Contains(string(plain), "outbox") || strings.Contains(string(body), "claim_token") {
 		t.Fatal(string(plain), err)
 	}
@@ -61,33 +61,33 @@ func TestDurableEntityHandlerPreservesFullUint64StateVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := faas.DecodeDurableEntityHandlerRequest(body)
+	decoded, err := preview.DecodeDurableEntityHandlerRequest(body)
 	if err != nil || decoded.State.Version != request.State.Version {
 		t.Fatal("Go handler rounded the state version", decoded.State.Version, err)
 	}
 }
 
 func TestDurableEntityHandlerRequiresNegotiatedOutbox(t *testing.T) {
-	for _, protocol := range []int{faas.DurableEntityHandlerProtocolVersion, faas.DurableEntityOutboxHandlerProtocolVersion} {
+	for _, protocol := range []int{preview.DurableEntityHandlerProtocolVersion, preview.DurableEntityOutboxHandlerProtocolVersion} {
 		request := entityHandlerFixture(t)
 		request.ProtocolVersion = protocol
-		if protocol == faas.DurableEntityHandlerProtocolVersion {
+		if protocol == preview.DurableEntityHandlerProtocolVersion {
 			request.Limits = nil
 		}
 		body, err := json.Marshal(request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		decoded, err := faas.DecodeDurableEntityHandlerRequest(body)
+		decoded, err := preview.DecodeDurableEntityHandlerRequest(body)
 		if err != nil || decoded.ProtocolVersion != protocol {
 			t.Fatal(decoded, err)
 		}
 		_, err = decoded.WebhookIntent("6dd283da-3c14-40de-9d47-bb71fb35be9a", "reservation.confirmed", nil)
-		if (err == nil) != (protocol == faas.DurableEntityOutboxHandlerProtocolVersion) {
+		if (err == nil) != (protocol == preview.DurableEntityOutboxHandlerProtocolVersion) {
 			t.Fatal("outbox support did not follow negotiated version", err)
 		}
-		_, err = decoded.EncodeTransition(faas.DurableEntityTransition{Data: json.RawMessage(`null`), Result: json.RawMessage(`null`), Outbox: []faas.DurableEntityWebhookIntent{}})
-		if (err == nil) != (protocol == faas.DurableEntityOutboxHandlerProtocolVersion) {
+		_, err = decoded.EncodeTransition(preview.DurableEntityTransition{Data: json.RawMessage(`null`), Result: json.RawMessage(`null`), Outbox: []preview.DurableEntityWebhookIntent{}})
+		if (err == nil) != (protocol == preview.DurableEntityOutboxHandlerProtocolVersion) {
 			t.Fatal("v1 accepted an outbox field", err)
 		}
 	}
@@ -101,7 +101,7 @@ func TestDurableEntityHandlerRejectsInvalidAndOversizedTransitions(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := faas.DurableEntityTransition{Data: json.RawMessage(`null`), Result: json.RawMessage(`null`), Outbox: []faas.DurableEntityWebhookIntent{intent}}
+			next := preview.DurableEntityTransition{Data: json.RawMessage(`null`), Result: json.RawMessage(`null`), Outbox: []preview.DurableEntityWebhookIntent{intent}}
 			switch kind {
 			case "url":
 				next.Outbox[0].WebhookID = "https://receiver.example.test"
@@ -129,7 +129,7 @@ func TestDurableEntityHandlerRejectsInvalidAndOversizedTransitions(t *testing.T)
 				request.Limits.TransitionBytes = request.Limits.OutboxBytes
 				next.Data = json.RawMessage(`"` + strings.Repeat("x", request.Limits.TransitionBytes) + `"`)
 			}
-			if _, err := request.EncodeTransition(next); !errors.Is(err, faas.ErrDurableEntityHandler) {
+			if _, err := request.EncodeTransition(next); !errors.Is(err, preview.ErrDurableEntityHandler) {
 				t.Fatal("invalid transition accepted", err)
 			}
 		})
@@ -169,9 +169,9 @@ func TestDurableEntityHandlerRejectsUnsupportedEnvelopes(t *testing.T) {
 				body = []byte(strings.TrimSuffix(string(body), "}") + `,"claim_token":"private"}`)
 			}
 			if kind == "bytes" {
-				body = append(body, []byte(strings.Repeat(" ", faas.DurableEntityHandlerMaxRequestBytes))...)
+				body = append(body, []byte(strings.Repeat(" ", preview.DurableEntityHandlerMaxRequestBytes))...)
 			}
-			if _, err := faas.DecodeDurableEntityHandlerRequest(body); !errors.Is(err, faas.ErrDurableEntityHandler) {
+			if _, err := preview.DecodeDurableEntityHandlerRequest(body); !errors.Is(err, preview.ErrDurableEntityHandler) {
 				t.Fatal("invalid envelope accepted", err)
 			}
 		})

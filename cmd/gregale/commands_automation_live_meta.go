@@ -15,7 +15,7 @@ func automationLiveCLISubs() []cliSub {
 		cliFlag{Name: "wait", Bool: true, Short: "wait and require a current passing assertion verdict"})
 	return []cliSub{
 		{Name: "baseline", Short: "Manage named baselines and inspect audit history", Subcommands: automationLiveBaselineCLISubs()},
-		{Name: "gate", Short: "Require passing retained suite evidence for an explicit candidate target; read-only", Flags: flags(
+		{Name: "gate", Short: "Require passing suite evidence for a candidate target", Notes: []string{"Read-only."}, Flags: flags(
 			cliFlag{Name: "policy", Value: "FILE", Short: "versioned required-case coverage policy JSON"},
 			cliFlag{Name: "baseline", Value: "UUID", Short: "retained baseline suite UUID; exclusive with baseline-name"},
 			cliFlag{Name: "baseline-name", Value: "NAME", Short: "resolve a named baseline; exclusive with baseline"},
@@ -28,7 +28,7 @@ func automationLiveCLISubs() []cliSub {
 		{Name: "start", Short: "Explicitly start one saved case against real handlers", Flags: append(start, wait...)},
 		{Name: "show", Short: "Read one verification without requiring a verdict", Flags: flags(run)},
 		{Name: "check", Short: "Check a terminal verification and require a current passing verdict", Flags: flags(run)},
-		{Name: "wait", Short: "Observe an existing run, check assertions and require a current passing verdict", Flags: append(flags(run), wait...)},
+		{Name: "wait", Short: "Observe a run, check assertions and require a passing verdict", Flags: append(flags(run), wait...)},
 	}
 }
 
@@ -54,5 +54,5 @@ func automationLiveBaselineCLISubs() []cliSub {
 	common := []cliFlag{{Name: "app", Value: "SLUG", Req: true, Short: "app slug"}, {Name: "name", Value: "NAME", Req: true, Short: "automation name"}, {Name: "baseline-name", Value: "NAME", Req: true, Short: "named release track, such as production"}}
 	promote := append(append([]cliFlag{}, common...), cliFlag{Name: "suite", Value: "UUID", Req: true, Short: "passing retained suite UUID"}, cliFlag{Name: "promotion-id", Value: "UUID", Req: true, Short: "stable promotion UUID; preserve for retries"}, cliFlag{Name: "expected-revision", Value: "N", Req: true, Short: "current baseline revision; explicit 0 creates"}, cliFlag{Name: "expected-version", Value: "N", Req: true, Short: "expected candidate saved version"}, cliFlag{Name: "expected-published-version", Value: "N", Req: true, Short: "expected published revision"}, cliFlag{Name: "expected-deployment-id", Value: "UUID", Req: true, Short: "expected candidate deployment UUID"}, cliFlag{Name: "policy", Value: "FILE", Req: true, Short: "version 2 coverage and age policy JSON"})
 	retire := append(append([]cliFlag{}, common...), cliFlag{Name: "retirement-id", Value: "UUID", Req: true, Short: "stable retirement UUID; preserve for retries"}, cliFlag{Name: "expected-revision", Value: "N", Req: true, Short: "current positive baseline revision"}, cliFlag{Name: "confirm-retirement", Bool: true, Req: true, Short: "confirm permanent retirement; release slot and evidence pin"})
-	return []cliSub{{Name: "retire", Short: "Permanently retire a baseline with audit history and revision protection", Flags: retire}, {Name: "list", Short: "Discover active baseline heads and read retained evidence health; never execute", Flags: common[:2]}, {Name: "show", Short: "Read the current immutable promotion receipt", Flags: common}, {Name: "history", Short: "Read up to 100 recent promotions", Flags: common}, {Name: "promote", Short: "Promote passing evidence with revision protection; never execute workflows", Flags: promote}}
+	return []cliSub{{Name: "retire", Short: "Permanently retire a baseline with audit history", Notes: []string{"Protected by revision checks."}, Flags: retire}, {Name: "list", Short: "Find active baselines and read retained evidence health", Notes: []string{"Never executes anything."}, Flags: common[:2]}, {Name: "show", Short: "Read the current immutable promotion receipt", Flags: common}, {Name: "history", Short: "Read up to 100 recent promotions", Flags: common}, {Name: "promote", Short: "Promote passing evidence to a baseline with revision checks", Notes: []string{"Never executes workflows."}, Flags: promote}}
 }

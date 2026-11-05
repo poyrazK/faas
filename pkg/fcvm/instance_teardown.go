@@ -91,13 +91,18 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	if retained.complete {
 		return nil
 	}
-	if err := m.cleanupOwned(ctx, retained); err != nil {
+	forwards := m.retireHTTPForwards(lease)
+	if err := m.cleanupOwned(ctx, retained, forwards); err != nil {
 		retained.failed = true
 		m.log.Warn("cleanup pending; retaining instance lease", "instance", lease.Instance, "err", err)
 		return err
 	}
 	if v := m.nativeVMM(); v != nil {
 		if err := v.confirmNativeCleanup(ctx, lease, nativeLeaseNetwork(lease)); err != nil {
+			return err
+		}
+		if err := m.releaseAllPrivateNetworkMembers(ctx, retained.net, lease.Instance); err != nil {
+			retained.failed = true
 			return err
 		}
 		if err := m.settleCleanedFinancialCompute(ctx, lease.Instance); err != nil {
@@ -114,6 +119,12 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			delete(m.pendingCleanup, lease.Instance)
 			m.mu.Unlock()
 			return nil
+		}
+	}
+	if m.nativeVMM() == nil {
+		if err := m.releaseAllPrivateNetworkMembers(ctx, retained.net, lease.Instance); err != nil {
+			retained.failed = true
+			return err
 		}
 	}
 	if m.resourceJournal != nil {
@@ -156,6 +167,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.cidToID, GuestVsockCID(lease.Slot))
 	delete(m.exportDirs, lease.Instance)
 	m.mu.Unlock()
+	m.forgetHTTPForwards(forwards)
 	if !lease.Networkless {
 		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
 	}
@@ -165,12 +177,15 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	return nil
 }
 
-func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup) error {
+func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup, forwards *httpForwardGeneration) error {
 	lease, nc := retained.lease, retained.net
 	// No network teardown or slot release before confirmed child exit. Kill
 	// also removes the jail, image mounts, materialised files and cgroup scope.
 	if err := m.vmm.Kill(ctx, lease); err != nil {
 		return fmt.Errorf("cleanup %s: kill vm: %w", lease.Instance, err)
+	}
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		return fmt.Errorf("cleanup %s: forwarding drain: %w", lease.Instance, err)
 	}
 	if retained.commandIdentity != nil {
 		store, ok := m.rehearsalNetworkPolicies.(rehearsalrecorder.CommandStore)
@@ -189,6 +204,7 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup) e
 		removeWorkloadCgroups(filepath.Join(cgroupRoot, parent, PerInstanceScope(lease.Instance)), retained.workloadNames)
 	}
 	if !lease.Networkless {
+		m.unregisterEgressCircuitNetwork(lease.Instance)
 		if m.nativeVMM() != nil {
 			networkCtx, skip, err := m.nativeCleanupNetworkContext(ctx, lease)
 			if err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
@@ -27,6 +28,11 @@ import (
 func main() { wire.Daemon("outboundd", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the outbound credential ring: outboundd checks integration and AI
+	// access tokens.
+	if err := credhash.Install(os.Getenv, credhash.FamilyOutbound); err != nil {
+		return fmt.Errorf("outboundd: %w", err)
+	}
 	ops := wire.NewOpsMetrics("outboundd")
 	var retainedSpansAcc *gateway.SpansAccumulator
 	var retainedSpansWriter *apidgrpc.SpansWriterClientImpl
@@ -74,8 +80,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			defer close(retainedFlushDone)
 			if err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so an outbound call's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {
@@ -111,6 +119,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	cfg.ApplyRelayEnv(os.Getenv)
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "outboundd")
 	if err != nil {
 		return fmt.Errorf("outboundd: open db: %w", err)
@@ -178,10 +187,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	// ADR 20261022111812: customer credentials open with the outbound seal
 	// domain identity once the seal_domains role stages it, and with the
-	// fleet identity (and either one's previous twin) until the re-seal
-	// moves every row to the domain.
+	// fleet identity (and either one's previous twin) until the domain is
+	// contracted: the seal_domains role then drops the fleet credential
+	// and unsets its path.
 	domainPath := os.Getenv("FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH")
 	fleetPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	domainLoaded, err := outboundSealDomainLoaded(domainPath)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Outbound, domainLoaded)
 	if domainPath != "" || fleetPath != "" {
 		identities, err := sealdomain.LoadReaderIdentities(domainPath, fleetPath)
 		if err != nil {
@@ -192,7 +207,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
-		log.Info("outbound customer credential identities loaded", "domain_identity", domainPath != "", "identities", len(identities))
+		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "fleet_identity", fleetPath != "", "identities", len(identities))
 	} else if needCustomerCredentials {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH or FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
@@ -200,6 +215,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.IdentityVerifier = identityVerifier
 	handler.ExecutionIdentityVerifier = executionIdentityVerifier
 	handler.ExecutionAuthorizer = executionAuthorizer
+	if cfg.AgentRunsEnabled {
+		agentRuns, err := outbound.NewPostgresAgentRuns(pool)
+		if err != nil {
+			return err
+		}
+		handler.AgentRunAuthorizer, handler.AgentRunSpend = agentRuns, agentRuns
+	}
 	if cfg.WorkflowOutboundEnabled || os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
 		authorizer, err := outbound.NewPostgresWorkflowAuthorizer(pool)
 		if err != nil {
@@ -212,6 +234,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("outboundd: register metrics: %w", err)
 	}
 	handler.Metrics = outboundMetrics
+	handler.Log = log
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	// ADR-1700: the gate and rollout are the live ai_gateway platform flag.
 	handler.AIGatewayFlags = aiGatewayFlags
@@ -236,6 +259,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go batchWorker.Run(ctx)
 	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go evaluationWorker.Run(ctx)
+	// ADR 20261021171712: sampled calls are scored by the integration's
+	// judge model, and quality drift alerts are checked.
+	onlineEvaluationWorker := &outbound.AIOnlineEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go onlineEvaluationWorker.Run(ctx)
+	driftWorker := &outbound.AIQualityDriftWorker{Store: backend, Metrics: outboundMetrics, Log: log}
+	go driftWorker.Run(ctx)
 	// ADR-20261019152416: enforced GitOps candidates cannot reach the gateway,
 	// so their outbound bindings are probed here and receipted for activation.
 	qualificationWorker := &outbound.QualificationProbeWorker{Store: state.NewPgStore(pool), Handler: handler, Log: log}

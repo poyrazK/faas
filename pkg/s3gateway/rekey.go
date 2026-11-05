@@ -16,7 +16,12 @@ const credentialRekeyBatchSize = 100
 // current host-age identity. It runs before the public listener starts, so an
 // operator can safely retire the previous identity after every gateway has
 // restarted successfully. Completed rows are crash-safe and skipped on retry.
-func RekeyCredentials(ctx context.Context, store state.ObjectS3CredentialRekeyStore, identities []*age.X25519Identity) (int, error) {
+//
+// A credential the storage seal-domain identity opens is left alone (ADR
+// 20261022111812): moving credentials into the domain is the operator's
+// gregalectl seal-domain migrate, gated on every gateway holding the
+// domain, never a side effect of one gateway's restart.
+func RekeyCredentials(ctx context.Context, store state.ObjectS3CredentialRekeyStore, identities, domain []*age.X25519Identity) (int, error) {
 	if store == nil {
 		return 0, errors.New("s3 gateway rekey: store is required")
 	}
@@ -41,6 +46,11 @@ func RekeyCredentials(ctx context.Context, store state.ObjectS3CredentialRekeySt
 			afterID = row.ID
 			if row.KID == currentKID {
 				continue
+			}
+			if len(domain) > 0 {
+				if _, _, err := secretbox.OpenBytesMulti(domain, row.SecretSealed); err == nil {
+					continue
+				}
 			}
 			namespace, plaintext, err := secretbox.OpenBytesMulti(identities, row.SecretSealed)
 			if err != nil || namespace != CredentialSecretNamespace || len(plaintext) != 40 {

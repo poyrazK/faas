@@ -61,9 +61,8 @@ func newLocalListener(t *testing.T) net.Listener {
 // FAAS_HOST_HMAC_KEY_PATH for the lifetime of the test so
 // loadOrGenerate{Audit,Recovery}HMACKey + loadHostHMACKey
 // auto-mint a fresh key in t.TempDir() rather than refusing to
-// start (production-grade strict-mode for the recovery-hmac.key
-// + host.hmac.key paths; the audit-hmac.key path tolerates a nil
-// but the recovery + env-diff paths do not).
+// start (production-grade strict mode for the audit-hmac.key,
+// recovery-hmac.key and host.hmac.key paths alike).
 //
 // The env-var overrides are unset by t.Cleanup. The tmp keys
 // persist for the test's lifetime — the loaders pass them
@@ -118,6 +117,9 @@ func withTestHMACFiles(t *testing.T) {
 	// Most in-process tests should not bind the production default under
 	// /run/faas. The startup integration test opts in with a temp socket.
 	t.Setenv("FAAS_OTEL_SPANS_WRITER_ENABLED", "false")
+	// The auth RPC runs whether or not app errors are on (ADR
+	// 20261029202403) and binds /run/faas/auth.sock by default.
+	t.Setenv("FAAS_AUTH_RPC_ENABLED", "false")
 }
 
 // --- seedDevAccount --------------------------------------------------------
@@ -205,8 +207,11 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		spansIngest{},
 		discardLogger(),
 		true,
+		telemetryIngest{},
+		nil,
 		nil,
 		nil,
 		nil,

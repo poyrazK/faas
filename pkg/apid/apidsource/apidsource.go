@@ -244,6 +244,7 @@ type EnqueueParams struct {
 	OverrideEnv              json.RawMessage
 	MCPTaskMigrationOverride bool
 	OverrideHealthcheck      json.RawMessage
+	OverrideLivenessProbe    json.RawMessage
 	OverrideMainDependsOn    json.RawMessage
 	TrafficPercent           int
 	TrafficPercentExplicit   bool
@@ -435,6 +436,9 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.ImageRef != "" {
 		return enqueueProjectImage(ctx, store, notif, p)
 	}
+	if p.ImagePort < 0 || p.ImagePort > 65535 {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: port %d out of range", p.ImagePort)
+	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: %w", err)
@@ -528,12 +532,17 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
 			}
 		}
-		if profileErr == nil || p.Kind == state.DeploymentKindDockerfile {
+		// An explicit Dockerfile selection (a gregale.yaml build: section, a
+		// Compose build) makes a Dockerfile build whatever the deployment's
+		// provenance kind, so a GitHub or source-ref deploy honours it too
+		// (ADR-20261026152731).
+		dockerfileBuild := p.Kind == state.DeploymentKindDockerfile || p.DockerfilePath != ""
+		if profileErr == nil || dockerfileBuild {
 			// The explicit deployment kind is authoritative. A source tree can
 			// contain language markers alongside its Dockerfile; persisting a
 			// Railpack profile would make builderd ignore the customer's
 			// Dockerfile selection.
-			if p.Kind == state.DeploymentKindDockerfile {
+			if dockerfileBuild {
 				profile.Version = frameworkprofile.Version
 				profile.Framework = string(markers.FrameworkDocker)
 				profile.FrameworkVer = ""
@@ -552,6 +561,12 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			}
 			if !p.DockerfileBuild.IsZero() {
 				profile.DockerfileBuild = p.DockerfileBuild.Clone()
+			}
+			if !p.ImageProcess.IsZero() {
+				if err := p.ImageProcess.Validate(); err != nil {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: Compose process: %w", err)
+				}
+				profile.BuildProcess = p.ImageProcess.Clone()
 			}
 			// A Compose healthcheck on a built service is frozen like a
 			// prebuilt image's (ADR-20261019195000); imaged merges it onto
@@ -635,6 +650,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		OverrideEnv:              append(json.RawMessage(nil), p.OverrideEnv...),
 		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
 		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideLivenessProbe:    append(json.RawMessage(nil), p.OverrideLivenessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:           p.TrafficPercent,
@@ -648,6 +664,10 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		CanaryStages:             append(json.RawMessage(nil), p.CanaryStages...),
 		ReleaseCommand:           append([]string(nil), p.ReleaseCommand...),
 		ReleaseCommandShell:      p.ReleaseCommandShell,
+		// A Compose service built from source listens on its ports:
+		// target (ADR-20261103112845); without one the build's EXPOSE or
+		// PORT decides, as before.
+		OverridePort: p.ImagePort,
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service

@@ -61,6 +61,39 @@
   loop_control:
     label: "{{ item.item }}"
 
+# ADR 20261025111015: a running s3-gatewayd that the manifest does not
+# manage has hand-edited configuration, no scrape job and silent alerts, and
+# a converge can revert it.
+- name: fleet_verify — read whether s3-gatewayd runs  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: systemctl is-active faas-s3-gatewayd
+  register: faas_verify_s3_gateway
+  changed_when: false
+  failed_when: false
+  when: faas_box_role == 'control-plane'
+
+- name: fleet_verify — warn about an unmanaged s3-gatewayd
+  ansible.builtin.debug:
+    msg: >-
+      faas-s3-gatewayd is running on {{ faas_node_name }} but the deploy
+      manifest does not manage it (object_storage.gateway: managed). Its
+      configuration, scrape job and alerts are not under the playbooks.
+  when:
+    - faas_box_role == 'control-plane'
+    - faas_verify_s3_gateway.rc | default(1) == 0
+    - not (faas_object_storage_gateway_managed | default(false) | bool)
+
+- name: fleet_verify — fail on an unmanaged s3-gatewayd in strict mode
+  ansible.builtin.assert:
+    that: faas_object_storage_gateway_managed | default(false) | bool
+    fail_msg: >-
+      faas-s3-gatewayd is running on {{ faas_node_name }} but the deploy
+      manifest does not manage it. Set object_storage.gateway: managed with
+      its config_src, or stop the unit (strict verify).
+  when:
+    - faas_verify_strict | bool
+    - faas_box_role == 'control-plane'
+    - faas_verify_s3_gateway.rc | default(1) == 0
+
 - name: fleet_verify — poll dependency-aware /readyz endpoints
   ansible.builtin.uri:
     url: >-

@@ -43,7 +43,25 @@ import (
 // (pkg/webhook/dispatcher.go:376). Single uppercase form mirrors
 // the SecretKeyPattern contract (api.SecretKeyPattern =
 // `^[A-Z][A-Z0-9_]*$`).
-const appWebhookSecretSealLabel = "APP_WEBHOOK"
+const appWebhookSecretSealLabel = api.AppWebhookSecretNamespace
+
+// sealAppWebhookSecret seals a webhook signing secret for schedd's
+// dispatcher, to the delivery seal domain's write recipients (ADR
+// 20261022111812). The caller validates the secret first.
+func sealAppWebhookSecret(plaintext string) ([]byte, *api.Problem) {
+	recipients, err := deliveryValueRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("webhook secret recipient not loaded — refusing to seal webhook secret")
+	}
+	sealed, err := secretbox.SealBytesTo(recipients, appWebhookSecretSealLabel, []byte(plaintext), api.AppWebhookSecretMaxBytes)
+	if err != nil {
+		if prob := api.AsProblem(err); prob != nil {
+			return nil, prob
+		}
+		return nil, api.ErrCapacity("could not seal webhook secret")
+	}
+	return sealed, nil
+}
 
 // defaultAppWebhookEnabled defaults to true when the customer
 // omits `enabled` on create. Mirrors alert-rule default.
@@ -230,6 +248,7 @@ func (s *server) listAppWebhooks(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	out := make([]api.AppWebhookResponse, 0, len(rows))
+	reveal := appWebhookTargetVisible(r)
 	for _, row := range rows {
 		// Defence-in-depth: loadApp already verified app.AccountID,
 		// but the per-app store query could in principle return a
@@ -238,7 +257,7 @@ func (s *server) listAppWebhooks(w http.ResponseWriter, r *http.Request, acct st
 		if row.AccountID != acct.ID {
 			continue
 		}
-		out = append(out, appWebhookResponse(row))
+		out = append(out, maskedAppWebhookResponse(row, reveal))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -275,7 +294,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateWebhookEventFilter(req.EventFilter, s.appWebhookEvents()); prob != nil {
+	if prob := validateWebhookEventFilter(req.EventFilter, s.appWebhookEvents(acct.ID)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -289,6 +308,10 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			return
 		}
 	}
+	if prob := s.datadogIntegrationProblem(flagSubject(r, acct), req.DeliveryFormat == api.AppWebhookDeliveryFormatDatadog); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDatadogAppWebhook(req.DeliveryFormat, req.TargetURL, req.EventFilter, &req.WebhookSecret, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -301,18 +324,9 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, appWebhookSecretSealLabel, []byte(req.WebhookSecret), api.AppWebhookSecretMaxBytes)
-	if err != nil {
-		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not seal webhook secret"))
+	sealed, prob := sealAppWebhookSecret(req.WebhookSecret)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	retryPolicy := req.RetryPolicy
@@ -332,14 +346,15 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		eventFilter = defaultAppWebhookEventFilter()
 	}
 	row, err := s.store.CreateAppWebhookIfUnderQuota(r.Context(), state.AppWebhook{
-		AccountID:      acct.ID,
-		AppID:          app.ID,
-		TargetURL:      req.TargetURL,
-		SecretSealed:   sealed,
-		EventFilter:    eventFilter,
-		RetryPolicy:    state.AppWebhookRetryPolicy(retryPolicy),
-		DeliveryFormat: state.AppWebhookDeliveryFormat(deliveryFormat),
-		Enabled:        enabled,
+		AccountID:          acct.ID,
+		AppID:              app.ID,
+		CreatedByAccountID: actorAccount(r, acct).ID,
+		TargetURL:          req.TargetURL,
+		SecretSealed:       sealed,
+		EventFilter:        eventFilter,
+		RetryPolicy:        state.AppWebhookRetryPolicy(retryPolicy),
+		DeliveryFormat:     state.AppWebhookDeliveryFormat(deliveryFormat),
+		Enabled:            enabled,
 	}, limits)
 	if err != nil {
 		var quotaErr *state.AppWebhookQuotaError
@@ -364,6 +379,15 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		"enabled":         row.Enabled,
 	})
 	writeJSON(w, http.StatusCreated, appWebhookResponse(row))
+}
+
+// appWebhookOutboxFullProblem names the outbox cap that refused a delivery.
+func appWebhookOutboxFullProblem(full *state.AppWebhookOutboxFullError) *api.Problem {
+	which := api.WebhookBacklogCapCount
+	if full.Bytes {
+		which = api.WebhookBacklogCapBytes
+	}
+	return api.ErrWebhookOutboxFull(which, full.Limit, full.Observed)
 }
 
 // deliverAppEvent is the application-outbox facade. The destination must be a
@@ -433,7 +457,15 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		Status:        state.AppWebhookDeliveryPending,
 		NextAttemptAt: now,
 		CreatedAt:     now,
+		// ADR-20261101093517: the account's undelivered backlog is capped.
+		AdmissionMaxPending:      limits.WebhookOutboxMaxPending,
+		AdmissionMaxBacklogBytes: limits.WebhookOutboxMaxBacklogBytes,
 	})
+	var full *state.AppWebhookOutboxFullError
+	if errors.As(err, &full) {
+		api.WriteProblem(w, appWebhookOutboxFullProblem(full))
+		return
+	}
 	if err != nil {
 		s.log.WarnContext(r.Context(), "enqueue application outbox delivery", slog.String("err", err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("could not enqueue outbox delivery"))
@@ -479,7 +511,7 @@ func (s *server) getAppWebhook(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "webhook not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, appWebhookResponse(row))
+	writeJSON(w, http.StatusOK, maskedAppWebhookResponse(row, appWebhookTargetVisible(r)))
 }
 
 // updateAppWebhook partial-updates the row. Same phase order as
@@ -525,7 +557,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		params.TargetURL = req.TargetURL
 	}
 	if req.EventFilter != nil {
-		if prob := validateWebhookEventFilter(*req.EventFilter, s.appWebhookEvents()); prob != nil {
+		if prob := validateWebhookEventFilter(*req.EventFilter, s.appWebhookEvents(acct.ID)); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -548,6 +580,12 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	if req.Enabled != nil {
 		params.Enabled = req.Enabled
 	}
+	switching := params.DeliveryFormat != nil && string(*params.DeliveryFormat) == api.AppWebhookDeliveryFormatDatadog &&
+		string(existing.DeliveryFormat) != api.AppWebhookDeliveryFormatDatadog
+	if prob := s.datadogIntegrationProblem(flagSubject(r, acct), switching); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateUpdatedDatadogAppWebhook(existing, params, req.WebhookSecret); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -557,21 +595,13 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			api.WriteProblem(w, prob)
 			return
 		}
-		recipient := hostSecretRecipient()
-		if recipient == nil {
-			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
-			return
-		}
-		sealed, sealErr := secretbox.SealBytes(recipient, appWebhookSecretSealLabel, []byte(*req.WebhookSecret), api.AppWebhookSecretMaxBytes)
-		if sealErr != nil {
-			if prob := api.AsProblem(sealErr); prob != nil {
-				api.WriteProblem(w, prob)
-				return
-			}
-			api.WriteProblem(w, api.ErrCapacity("could not seal webhook secret"))
+		sealed, prob := sealAppWebhookSecret(*req.WebhookSecret)
+		if prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 		params.WebhookSecretSealed = &sealed
+		params.PreviousSecretUntil = webhookSecretOverlapUntil()
 	}
 	row, err := s.store.UpdateAppWebhook(r.Context(), id, params)
 	if err != nil {
@@ -630,9 +660,19 @@ func (s *server) deleteAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// webhookSecretOverlapUntil is when a secret replaced now stops being valid
+// (ADR-20261101093517): until then deliveries carry a second signature made
+// with it, so a receiver can switch secrets after the rotation.
+func webhookSecretOverlapUntil() *time.Time {
+	until := timeNow().UTC().Add(api.WebhookSecretRotationOverlap)
+	return &until
+}
+
 // rotateAppWebhookSecret seals a caller-supplied replacement and overwrites
-// the row in place. The caller can install the same value in its receiver;
-// reads and responses still expose only the masked constant.
+// the row in place. The replaced secret keeps signing deliveries beside the
+// new one for api.WebhookSecretRotationOverlap. The caller can install the
+// same value in its receiver; reads and responses still expose only the
+// masked constant.
 func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.RotateAppWebhookSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -663,21 +703,14 @@ func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+	sealed, prob := sealAppWebhookSecret(req.WebhookSecret)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	sealed, err := secretbox.SealBytes(recipient, appWebhookSecretSealLabel, []byte(req.WebhookSecret), api.AppWebhookSecretMaxBytes)
-	if err != nil {
-		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not seal webhook secret"))
-		return
-	}
-	row, err := s.store.UpdateAppWebhook(r.Context(), id, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed})
+	row, err := s.store.UpdateAppWebhook(r.Context(), id, state.UpdateAppWebhookParams{
+		WebhookSecretSealed: &sealed, PreviousSecretUntil: webhookSecretOverlapUntil(),
+	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "webhook not found")
@@ -940,6 +973,23 @@ func appWebhookResponse(r state.AppWebhook) api.AppWebhookResponse {
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
 	})
+}
+
+// appWebhookTargetVisible reports whether the caller sees webhook targets in
+// full. Receivers such as Zapier catch hooks carry their credential in the
+// URL path, so the rule is the log drains' one: only a caller who may change
+// the webhook sees it, and viewers, developers and read-only keys get the
+// scheme and host (bug hunt 36; logs audit 2026-10-31 D9).
+func appWebhookTargetVisible(r *http.Request) bool { return appLogDrainTargetVisible(r) }
+
+// maskedAppWebhookResponse is appWebhookResponse with the target masked
+// unless reveal.
+func maskedAppWebhookResponse(row state.AppWebhook, reveal bool) api.AppWebhookResponse {
+	out := appWebhookResponse(row)
+	if !reveal {
+		out.TargetURL = api.MaskAppLogDrainTargetURL(out.TargetURL)
+	}
+	return out
 }
 
 // appWebhookDeliveryResponse maps a delivery row to the wire DTO.

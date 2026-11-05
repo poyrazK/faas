@@ -10,8 +10,7 @@ import (
 )
 
 func (s *Service) MutateManagedRealtimeMessage(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "retained message mutations unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "retained message mutations unavailable") {
 		return
 	}
 	endpoint, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
@@ -45,6 +44,9 @@ func (s *Service) MutateManagedRealtimeMessage(w http.ResponseWriter, r *http.Re
 			api.WriteProblem(w, api.ErrRealtimeInvalid("invalid principal"))
 			return
 		}
+	}
+	if !s.allowRealtimeWrites(w, acct, 1) {
+		return
 	}
 	store, ok := s.Host.Store().(state.ManagedRealtimeMutationStore)
 	if !ok {

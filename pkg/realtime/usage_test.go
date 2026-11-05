@@ -53,7 +53,7 @@ func newUsageFixture(t *testing.T, cfg Config) *usageFixture {
 	hooks := &testHooks{accept: true}
 	m := NewManager(cfg, hooks)
 	endpoint := uuid.NewString()
-	if err := m.RegisterEndpoint(Endpoint{ID: endpoint, AppID: "app-1", AccountID: "acct-1",
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: endpoint, AppID: "app-1", AccountID: "acct-1",
 		Authorize: func(context.Context, *http.Request) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,14 @@ func TestUsageRecorderCountsAndReportsHours(t *testing.T) {
 	clock = start.Add(10 * time.Second) // 10:00:40, minute 0
 	r.sample(clock)
 	_ = b.Close()
-	waitFor(t, "one connection", func() bool { return len(f.m.Snapshot()) == 1 })
+	// sample counts the endpoint's reservations, which the handler releases
+	// only after the connection has left Snapshot.
+	value, ok := f.m.endpoints.Load(f.endpoint)
+	if !ok {
+		t.Fatal("endpoint not registered")
+	}
+	endpoint := value.(*endpointState)
+	waitFor(t, "one connection", func() bool { return endpoint.reserved.Load() == 1 })
 	clock = start.Add(70 * time.Second) // 10:01:40, minute 1
 	r.sample(clock)
 	r.report(t.Context())

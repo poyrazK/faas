@@ -40,6 +40,26 @@ func verifiedTokenIssuedAt(token string) (time.Time, error) {
 	return time.Unix(claims.IssuedAt, 0).UTC(), nil
 }
 
+// verifiedTokenExpiry reads the exp claim of a token the authorizer already
+// verified. A zero time means the token carries none.
+func verifiedTokenExpiry(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}
+	}
+	var claims struct {
+		Expiry int64 `json:"exp"`
+	}
+	if json.Unmarshal(raw, &claims) != nil || claims.Expiry <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(claims.Expiry, 0).UTC()
+}
+
 func sessionRevoked(access state.ManagedRealtimeAccess, issued time.Time) bool {
 	return access.SessionsRevokedBefore != nil && (issued.IsZero() || !issued.After(*access.SessionsRevokedBefore))
 }
@@ -69,12 +89,7 @@ func (c *connection) refreshAccess(ctx context.Context) (state.ManagedRealtimeAc
 	if time.Since(c.accessChecked) < realtimeAccessRefreshInterval {
 		return c.access, nil
 	}
-	if c.m.cfg.AccessReader == nil {
-		return c.access, errors.New("realtime: access reader unavailable")
-	}
-	readCtx, cancel := context.WithTimeout(ctx, realtimeAccessReadTimeout)
-	defer cancel()
-	snapshot, err := c.m.cfg.AccessReader.ReadRealtimeAccess(readCtx, c.info.EndpointID, c.info.Principal)
+	snapshot, err := c.m.cachedAccess(ctx, c.info.EndpointID, c.info.Principal)
 	if err != nil {
 		c.accessChecked = time.Time{}
 		return c.access, err
@@ -91,8 +106,7 @@ func (c *connection) accessAllows(ctx context.Context, channel string) bool {
 		return true
 	}
 	snapshot, err := c.refreshAccess(ctx)
-	if err != nil || sessionRevoked(snapshot, c.issuedAt) {
-		_ = c.close(websocket.ClosePolicyViolation, "session access revoked or unavailable")
+	if !c.closeOnAccessFailure(snapshot, err) {
 		return false
 	}
 	return !channelDenied(snapshot, channel)
@@ -109,8 +123,7 @@ func (c *connection) monitorAccess() {
 			return
 		case <-ticker.C:
 			snapshot, err := c.refreshAccess(c.m.ctx)
-			if err != nil || sessionRevoked(snapshot, c.issuedAt) {
-				_ = c.close(websocket.ClosePolicyViolation, "session access revoked or unavailable")
+			if !c.closeOnAccessFailure(snapshot, err) {
 				return
 			}
 			c.mu.RLock()
@@ -138,4 +151,19 @@ func (c *connection) monitorAccess() {
 			}
 		}
 	}
+}
+
+// closeOnAccessFailure closes the connection and reports false when its
+// session was revoked (1008: reconnect with new credentials) or its access
+// could not be checked for realtimeAccessStaleMax (1013: try again later).
+func (c *connection) closeOnAccessFailure(snapshot state.ManagedRealtimeAccess, err error) bool {
+	if err != nil {
+		_ = c.close(websocket.CloseTryAgainLater, "session access unavailable")
+		return false
+	}
+	if sessionRevoked(snapshot, c.issuedAt) {
+		_ = c.close(websocket.ClosePolicyViolation, "session access revoked")
+		return false
+	}
+	return true
 }

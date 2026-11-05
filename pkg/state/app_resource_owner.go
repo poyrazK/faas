@@ -35,11 +35,7 @@ func AppResourceAccount(ctx context.Context, store AppOwnerReader, app App) (Acc
 		if err != nil {
 			return Account{}, err
 		}
-		if org.DeletedPending {
-			legacy.Status = AccountDeletedPending
-		} else if org.Status != OrgStatusActive && org.Status != OrgStatusPastDue {
-			legacy.Status = AccountStatus(org.Status)
-		}
+		legacy.Status = orgLegacyOwnerStatus(org, legacy.Status)
 		if org.AbuseHoldAt != nil {
 			legacy.AbuseHoldAt = org.AbuseHoldAt
 			legacy.AbuseHoldReason = org.AbuseHoldReason
@@ -77,6 +73,27 @@ func (a Account) AsyncQuotaSubjectID() string {
 	return a.ID
 }
 
+// orgLegacyOwnerStatus is the status a company app's creator account carries
+// as its resource owner before billing adoption: the company's, when that is
+// worse. A past-due company keeps running but may not deploy (spec §4.7), so
+// an active creator reads as past_due there; the account-level checks
+// (Account.Active, Account.MayDeploy) then apply the dunning ladder to the
+// company's apps.
+func orgLegacyOwnerStatus(org Org, status AccountStatus) AccountStatus {
+	switch {
+	case org.DeletedPending:
+		return AccountDeletedPending
+	case org.Status == OrgStatusPastDue:
+		if status == AccountActive {
+			return AccountPastDue
+		}
+		return status
+	case org.Status != OrgStatusActive:
+		return AccountStatus(org.Status)
+	}
+	return status
+}
+
 func organizationAccount(org Org) Account {
 	status := AccountStatus(org.Status)
 	if org.DeletedPending {
@@ -84,7 +101,8 @@ func organizationAccount(org Org) Account {
 	}
 	return Account{ID: org.ID, ResourceOrgID: org.ID, ResourceOwnershipEnabled: org.ResourceOwnershipEnabled, Plan: org.Plan, Status: status,
 		ProviderCustomerID: org.ProviderCustomerID, StripeSubscriptionItem: org.StripeSubscriptionItem,
-		CreatedAt: org.CreatedAt, AbuseHoldAt: org.AbuseHoldAt, AbuseHoldReason: org.AbuseHoldReason}
+		CreatedAt: org.CreatedAt, AbuseHoldAt: org.AbuseHoldAt, AbuseHoldReason: org.AbuseHoldReason,
+		DeletionRequestedAt: org.DeletionRequestedAt}
 }
 
 // ListBillingResourceAccounts adds shared tenant subjects without adding human
@@ -147,4 +165,27 @@ func SameAppResourceOwner(a, b App) bool {
 		return a.OrgID != "" && a.OrgID == b.OrgID
 	}
 	return a.AccountID == b.AccountID
+}
+
+// IssueResourceAccount resolves policy from the app while retaining its storage namespace.
+func IssueResourceAccount(ctx context.Context, store interface {
+	AppOwnerReader
+	AppByID(context.Context, string) (App, error)
+}, appID, accountID string) (Account, error) {
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return Account{}, err
+	}
+	if app.AccountID != accountID {
+		return Account{}, ErrNotFound
+	}
+	return AppResourceAccount(ctx, store, app)
+}
+
+func (s *PgStore) IssueResourceAccount(ctx context.Context, appID, accountID string) (Account, error) {
+	return IssueResourceAccount(ctx, s, appID, accountID)
+}
+
+func (s *MemStore) IssueResourceAccount(ctx context.Context, appID, accountID string) (Account, error) {
+	return IssueResourceAccount(ctx, s, appID, accountID)
 }

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,11 +39,19 @@ type gatewayTestStore struct {
 	credential                          state.ObjectS3Credential
 	bucket                              state.ObjectBucket
 	touched                             int
+	touchBudget                         time.Duration
 	admitted                            []string
 	activityMu                          sync.Mutex
 	activity                            map[string]state.ObjectBucketMutation
 	fenced                              bool
 	activityBeginErr, activityFinishErr error
+	cors                                []api.ObjectBucketCORSRule
+	resolves                            int
+	resolveErr                          error
+}
+
+func (s *gatewayTestStore) ObjectBucketCORSRules(context.Context, string) ([]api.ObjectBucketCORSRule, error) {
+	return s.cors, nil
 }
 
 // Deletion admission owns the same source hold as generic mutation admission
@@ -105,13 +114,20 @@ func (s *gatewayTestStore) RevokeObjectS3Credential(context.Context, string, str
 	panic("not used")
 }
 func (s *gatewayTestStore) ResolveObjectS3Credential(_ context.Context, access string) (state.ObjectS3Credential, state.ObjectBucket, error) {
+	s.resolves++
+	if s.resolveErr != nil {
+		return state.ObjectS3Credential{}, state.ObjectBucket{}, s.resolveErr
+	}
 	if access != s.credential.AccessKeyID {
 		return state.ObjectS3Credential{}, state.ObjectBucket{}, state.ErrNotFound
 	}
 	return s.credential, s.bucket, nil
 }
-func (s *gatewayTestStore) TouchObjectS3Credential(context.Context, string, time.Time) error {
+func (s *gatewayTestStore) TouchObjectS3Credential(ctx context.Context, _ string, _ time.Time) error {
 	s.touched++
+	if deadline, ok := ctx.Deadline(); ok {
+		s.touchBudget = time.Until(deadline)
+	}
 	return nil
 }
 func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _ int64, _ bool, _ api.ObjectStoragePolicy) error {
@@ -120,31 +136,37 @@ func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _
 }
 
 type gatewayTestProvider struct {
-	multipartMu      sync.Mutex
-	keepPartsOnAbort bool
-	multipartListErr error
-	multipartSignErr error
-	objects          objectstorage.ObjectPage
-	objectSize       int64
-	copyRequests     []objectstorage.CopyObjectRequest
-	presignRequests  []objectstorage.SignRequest
-	conditions       []objectstorage.ObjectWriteConditions
-	listRequests     []objectstorage.ObjectListRequest
-	tags             map[string]string
-	deleted          []string
-	deleteErrors     map[string]error
-	multipart        map[string]map[int32]objectstorage.MultipartPart
-	multipartCreates []objectstorage.MultipartCreateRequest
-	completedUploads []string
-	abortedUploads   []string
+	multipartMu           sync.Mutex
+	deleteMu              sync.Mutex // bulk deletes run entries concurrently
+	deleteDelay           time.Duration
+	deleting, maxDeleting int
+	keepPartsOnAbort      bool
+	multipartListErr      error
+	multipartSignErr      error
+	objects               objectstorage.ObjectPage
+	objectSize            int64
+	copyRequests          []objectstorage.CopyObjectRequest
+	presignRequests       []objectstorage.SignRequest
+	conditions            []objectstorage.ObjectWriteConditions
+	listRequests          []objectstorage.ObjectListRequest
+	tags                  map[string]string
+	deleted               []string
+	deleteErrors          map[string]error
+	multipart             map[string]map[int32]objectstorage.MultipartPart
+	multipartCreates      []objectstorage.MultipartCreateRequest
+	completedUploads      []string
+	abortedUploads        []string
 }
 
 type gatewayRequestMetrics struct {
+	mu    sync.Mutex
 	calls int
 	err   error
 }
 
 func (m *gatewayRequestMetrics) RecordObjectStorageProviderRequest(context.Context, string, time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls++
 	return m.err
 }
@@ -171,6 +193,15 @@ func (p *gatewayTestProvider) CopyObject(_ context.Context, _ string, request ob
 	return objectstorage.CopyObjectResult{ETag: `"copy-etag"`, LastModified: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)}, nil
 }
 func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key string) error {
+	p.deleteMu.Lock()
+	p.deleting++
+	p.maxDeleting = max(p.maxDeleting, p.deleting)
+	delay := p.deleteDelay
+	p.deleteMu.Unlock()
+	time.Sleep(delay)
+	p.deleteMu.Lock()
+	defer p.deleteMu.Unlock()
+	p.deleting--
 	p.deleted = append(p.deleted, key)
 	return p.deleteErrors[key]
 }
@@ -757,6 +788,86 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 	}
 }
 
+func TestGatewayIgnoresPrivateCannedACL(t *testing.T) {
+	var uploads int
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Amz-Acl") != "" {
+			t.Errorf("canned ACL reached the provider: %q", r.Header.Get("X-Amz-Acl"))
+		}
+		uploads++
+		header := make(http.Header)
+		header.Set("ETag", `"etag"`)
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	body := []byte("hello")
+	sum := sha256.Sum256(body)
+	for _, test := range []struct {
+		acl  string
+		want int
+	}{
+		{"private", http.StatusOK},
+		{"bucket-owner-full-control", http.StatusOK},
+		{"public-read", http.StatusNotImplemented},
+		{"authenticated-read", http.StatusNotImplemented},
+	} {
+		t.Run(test.acl, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/folder/hello.txt?x-id=PutObject", bytes.NewReader(body))
+			request.Host = "s3.gregale.dev"
+			request.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
+			request.Header.Set("X-Amz-Date", "20260907T120000Z")
+			request.Header.Set("Content-Type", "application/octet-stream")
+			request.Header.Set("X-Amz-Acl", test.acl)
+			if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("PUT with x-amz-acl %s = %d %s", test.acl, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	if uploads != 2 {
+		t.Fatalf("provider uploads = %d, want the two private ones", uploads)
+	}
+}
+
+func TestGatewayResponsesBypassTheCDNCache(t *testing.T) {
+	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Content-Type", "image/png")
+		header.Set("Content-Length", "5")
+		header.Set("Cache-Control", "public, max-age=86400")
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
+	})
+	for _, request := range []*http.Request{
+		signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/logo.png?x-id=GetObject", nil, "UNSIGNED-PAYLOAD"),
+		signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/other/logo.png", nil, "UNSIGNED-PAYLOAD"),
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if got := recorder.Header().Get("Cloudflare-CDN-Cache-Control"); got != "no-store" {
+			t.Fatalf("%s %d: Cloudflare-CDN-Cache-Control = %q, want no-store", request.URL.Path, recorder.Code, got)
+		}
+	}
+}
+
+func TestGatewayBoundsTheCredentialLastUsedWrite(t *testing.T) {
+	handler, store, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Content-Length", "5")
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-id=GetObject", nil, "UNSIGNED-PAYLOAD"))
+	if recorder.Code != http.StatusOK || store.touched != 1 {
+		t.Fatalf("GET = %d touched=%d", recorder.Code, store.touched)
+	}
+	if store.touchBudget <= 0 || store.touchBudget > api.ObjectCredentialTouchTimeout {
+		t.Fatalf("last-used write had %s, want at most %s rather than the transfer budget", store.touchBudget, api.ObjectCredentialTouchTimeout)
+	}
+}
+
 func TestGatewayBoundsConcurrentPutStaging(t *testing.T) {
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionWrite, func(*http.Request) (*http.Response, error) {
 		t.Fatal("throttled request reached provider")
@@ -768,7 +879,11 @@ func TestGatewayBoundsConcurrentPutStaging(t *testing.T) {
 	body := []byte("body")
 	sum := sha256.Sum256(body)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", body, hex.EncodeToString(sum[:])))
+	// The request gives up waiting for a slot when its context ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	request := signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", body, hex.EncodeToString(sum[:])).WithContext(ctx)
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "SlowDown") {
 		t.Fatalf("concurrent PUT limit = %d %s", recorder.Code, recorder.Body.String())
 	}
@@ -957,8 +1072,12 @@ func TestGatewayDeleteObjects(t *testing.T) {
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<DeleteResult") || !strings.Contains(recorder.Body.String(), "<Key>one.txt</Key>") {
 		t.Fatalf("DeleteObjects = %d %s", recorder.Code, recorder.Body.String())
 	}
-	if strings.Join(provider.deleted, ",") != "one.txt,folder/two.txt" {
+	// Entries run concurrently (ADR-20261025115958); the response keeps order.
+	if slices.Sort(provider.deleted); strings.Join(provider.deleted, ",") != "folder/two.txt,one.txt" {
 		t.Fatalf("deleted keys = %v", provider.deleted)
+	}
+	if strings.Index(recorder.Body.String(), "<Key>one.txt</Key>") > strings.Index(recorder.Body.String(), "<Key>folder/two.txt</Key>") {
+		t.Fatalf("DeleteObjects reordered its entries: %s", recorder.Body.String())
 	}
 
 	quietBody := []byte(`<Delete><Object><Key>quiet.txt</Key></Object><Quiet>true</Quiet></Delete>`)
@@ -1087,7 +1206,7 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 }
 
 func TestGatewayPublicMultipartLifecycle(t *testing.T) {
-	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+	handler, store, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/") {
 			if _, err := io.Copy(io.Discard, r.Body); err != nil {
 				return nil, err
@@ -1162,10 +1281,19 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 		}
 	}
 
+	// ListParts is admitted and its page counted as egress like the other
+	// listings (bug hunt 33: it skipped both).
 	recorder = httptest.NewRecorder()
+	store.admitted = nil
+	served, listMetrics := handler.requestMetrics, &readEgressMetrics{}
+	handler.requestMetrics = listMetrics
 	handler.ServeHTTP(recorder, signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/archive.bin?uploadId="+initiated.UploadID, nil, "UNSIGNED-PAYLOAD"))
+	handler.requestMetrics = served
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<PartNumber>1</PartNumber>") || !strings.Contains(recorder.Body.String(), "<PartNumber>2</PartNumber>") {
 		t.Fatalf("list parts = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Contains(store.admitted, "__list__") || listMetrics.delivered != int64(recorder.Body.Len()) {
+		t.Fatalf("list parts admitted %v, recorded %d of %d bytes", store.admitted, listMetrics.delivered, recorder.Body.Len())
 	}
 
 	completeBody := []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag-1"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"etag-2"</ETag></Part></CompleteMultipartUpload>`)

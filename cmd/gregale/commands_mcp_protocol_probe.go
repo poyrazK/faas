@@ -66,15 +66,21 @@ func (t *mcpPublicProtocolRoundTripper) RoundTrip(request *http.Request) (*http.
 	if err != nil {
 		return nil, err
 	}
-	if err := validateMCPProtocolResponseHeaders(response.Header, t.version); response.StatusCode >= 200 && response.StatusCode < 300 && err != nil && t.protocolErr == nil {
+	if err := validateMCPProtocolResponseHeaders(response.StatusCode, response.Header, t.version); response.StatusCode >= 200 && response.StatusCode < 300 && err != nil && t.protocolErr == nil {
 		t.protocolErr = err
 	}
 	return response, nil
 }
 
-func validateMCPProtocolResponseHeaders(header http.Header, version string) error {
+func validateMCPProtocolResponseHeaders(status int, header http.Header, version string) error {
 	if header.Get("MCP-Session-Id") != "" {
 		return fmt.Errorf("MCP response created a stateful session")
+	}
+	// A notification's 202 Accepted has no body and no version to echo;
+	// the starters answer notifications/initialized with a bare 202, which
+	// failed every mcp deploy qualification (Hunt 14 H14-2).
+	if status == http.StatusAccepted {
+		return nil
 	}
 	if actual := header.Get("MCP-Protocol-Version"); actual != version {
 		return fmt.Errorf("MCP response reported protocol version %q, want %q", actual, version)
@@ -128,7 +134,7 @@ func (t *mcpInstanceProtocolRoundTripper) RoundTrip(request *http.Request) (*htt
 	protocolHeaders := make(http.Header)
 	protocolHeaders.Set("MCP-Protocol-Version", result.ProtocolVersion)
 	protocolHeaders.Set("Mcp-Session-Id", result.SessionID)
-	if err := validateMCPProtocolResponseHeaders(protocolHeaders, t.protocolVersion); result.HTTPStatus >= 200 && result.HTTPStatus < 300 && err != nil && t.protocolErr == nil {
+	if err := validateMCPProtocolResponseHeaders(result.HTTPStatus, protocolHeaders, t.protocolVersion); result.HTTPStatus >= 200 && result.HTTPStatus < 300 && err != nil && t.protocolErr == nil {
 		t.protocolErr = fmt.Errorf("MCP %s response from instance %s: %w", method, t.instanceID, err)
 	}
 	header := make(http.Header)
@@ -259,8 +265,9 @@ func qualifyMCPProtocolPublicRoles(ctx context.Context, endpointURL, endpointPat
 		return []mcpRoleProtocolReport{{Name: "public", Error: "MCP public endpoint is invalid for protocol qualification"}}
 	}
 	u.Path, u.RawPath = endpointPath, ""
-	reports := make([]mcpRoleProtocolReport, 0, len(roles))
-	for _, role := range roles {
+	reports := make([]mcpRoleProtocolReport, len(roles))
+	runMCPVerificationJobs(ctx, len(roles), func(ctx context.Context, index int) {
+		role := roles[index]
 		report := qualifyMCPProtocolEndpoint(ctx, u.String(), role, timeout)
 		if report.Qualified {
 			for _, replica := range exact.Replicas {
@@ -276,8 +283,8 @@ func qualifyMCPProtocolPublicRoles(ctx context.Context, endpointURL, endpointPat
 				}
 			}
 		}
-		reports = append(reports, report)
-	}
+		reports[index] = report
+	})
 	return reports
 }
 
@@ -308,10 +315,14 @@ func qualifyMCPProtocolDeployment(ctx context.Context, client *api.Client, slug,
 	}
 	roleDigests := make(map[string]string, len(roles))
 	checkedIDs := make(map[string]struct{}, len(expected))
-	for _, instanceID := range expected {
+	roleReports := make([]mcpRoleProtocolReport, len(expected)*len(roles))
+	runMCPVerificationJobs(ctx, len(roleReports), func(ctx context.Context, index int) {
+		roleReports[index] = qualifyMCPProtocolInstance(ctx, client, slug, deploymentID, expected[index/len(roles)], u.Host, endpointPath, roles[index%len(roles)], timeout)
+	})
+	for instanceIndex, instanceID := range expected {
 		replica := mcpReplicaProtocolReport{InstanceID: instanceID, Qualified: true, Roles: make([]mcpRoleProtocolReport, 0, len(roles))}
-		for _, role := range roles {
-			roleReport := qualifyMCPProtocolInstance(ctx, client, slug, deploymentID, instanceID, u.Host, endpointPath, role, timeout)
+		for roleIndex := range roles {
+			roleReport := roleReports[instanceIndex*len(roles)+roleIndex]
 			replica.Roles = append(replica.Roles, roleReport)
 			if !roleReport.Qualified {
 				replica.Qualified = false

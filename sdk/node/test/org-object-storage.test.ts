@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, StorageService } from '../src/index.js';
+import { FaaSClient, StorageService } from '../src/preview.js';
 
 test('organization object storage clients retain tenant and bucket boundaries', async (t) => {
   const paths: string[] = [];

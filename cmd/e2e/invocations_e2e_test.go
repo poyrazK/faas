@@ -18,7 +18,7 @@
 //       POST /invoke/async → 402 + CodePlanFeatureGated. No drain needed.
 //
 //   - TestE2E_QueueSend_PlanCap_QueueDepth
-//       Hobby plan has MaxQueueDepth=5. Pre-fill the per-app queue to 5
+//       Pre-fill the per-app queue to Hobby's MaxQueueDepth (pkg/api/limits.go)
 //       via direct INSERTs, then POST /queues/send → 403 + CodePlanQueueDepth.
 //       (Free's MaxQueueDepth=0 would short-circuit to 402/FeatureGated
 //       — use Hobby to actually exercise the depth branch.)
@@ -285,9 +285,10 @@ func TestE2E_AsyncInvoke_PlanCap_FreePlanRejects(t *testing.T) {
 }
 
 // TestE2E_QueueSend_PlanCap_QueueDepth asserts the per-app queue depth
-// cap. Hobby has MaxQueueDepth=5; we pre-fill the queue to 5 via direct
-// INSERTs (bypassing the handler's own cap check) so the 6th POST must
-// hit the cap branch in the handler.
+// cap. We pre-fill the queue to Hobby's MaxQueueDepth via direct INSERTs
+// (bypassing the handler's own cap check) so the next POST must hit the cap
+// branch in the handler. The depth comes from pkg/api/limits.go so a plan
+// change (ADR-20261022105723 raised Hobby to 10,000) cannot strand the test.
 //
 // Why Hobby, not Free? Free has MaxQueueDepth=0 which short-circuits to
 // 402 + CodePlanFeatureGated (the plan-feature gate), not 403 +
@@ -321,7 +322,7 @@ func TestE2E_QueueSend_PlanCap_QueueDepth(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, body)
 	}
 
-	prefillQueueRows(t, h, ctx, appResp.ID, 5)
+	prefillQueueRows(t, h, ctx, appResp.ID, api.MustLimitsFor(api.PlanHobby).MaxQueueDepth)
 
 	assertProblem(t, h, key, http.MethodPost,
 		"/v1/apps/"+slug+"/queues/send",
@@ -455,12 +456,13 @@ func seedLiveDeployment(t *testing.T, ctx context.Context, store *state.PgStore,
 // lands.
 func prefillQueueRows(t *testing.T, h *e2etest.Harness, ctx context.Context, appID string, count int) {
 	t.Helper()
-	app, err := state.NewPgStore(h.Pool).AppByID(ctx, appID)
+	store := state.NewPgStore(h.Pool)
+	app, err := store.AppByID(ctx, appID)
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
 	}
 	for range count {
-		_, err := state.NewPgStore(h.Pool).EnqueueInvocation(ctx, state.Invocation{
+		_, err := store.EnqueueInvocation(ctx, state.Invocation{
 			AppID:     appID,
 			AccountID: app.AccountID,
 			Source:    state.InvocationQueue,

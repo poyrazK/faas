@@ -14,12 +14,12 @@ T = TypeVar("T", bound="PlanAffectedApp")
 
 @_attrs_define
 class PlanAffectedApp:
-    """One row of the ADR-124 blast-radius partition. action is closed-
+    """One row of the blast-radius partition. action is closed-
     vocabulary:
       create — scan workload, no existing app row matches (root_dir, name).
       update — scan workload, existing app matches.
       remove — existing app, no scan workload, not protected by --exclude.
-      noop   — operator excluded via --exclude, or no scan change.
+      noop — operator excluded via --exclude, or no scan change.
     id is empty for action == create. existing_root_dir is populated
     only when the existing app's root_dir differs from the scan root_dir
     (monorepo collision surface).

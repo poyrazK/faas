@@ -39,7 +39,6 @@ package apidserver
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -54,8 +53,9 @@ func (s *server) getDeploymentStages(w http.ResponseWriter, r *http.Request, acc
 			s.notFound(w, "no such deployment")
 			return
 		}
+		logCustomerFailure(s.log, "load deployment", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load deployment: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), d.AppID)
@@ -64,8 +64,9 @@ func (s *server) getDeploymentStages(w http.ResponseWriter, r *http.Request, acc
 		// as 500 so the operator can distinguish from a missing
 		// row. Collapsing this into the IDOR 404 path would
 		// mask outages as "no such deployment".
+		logCustomerFailure(s.log, "load app", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load app: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	if app.AccountID != acct.ID {

@@ -62,6 +62,53 @@ route is public. This is the portable source of truth; public Cloudflare DNS
 is never used for private transport names. Do not copy a server IP into the
 committed `deploy/ansible/host_vars` files.
 
+Hosts with role `database` are native managed-PostgreSQL nodes (ADR-1027).
+Each carries a `database` block (`admission_ceiling_mb`,
+`volume_capacity_bytes`, optional `boot_slots`, `postgres_majors` and
+`lifecycle`), and the fleet then needs a `managed_postgres` section:
+
+```yaml
+fleet:
+  hosts:
+    - name: db-1
+      role: database
+      address: 10.42.0.5:50051     # its vmmd; pgproxyd listens on 5432
+      database:
+        admission_ceiling_mb: 48000
+        volume_capacity_bytes: 3000000000000
+managed_postgres:
+  host_suffix: db.gregale.dev    # clients connect to <database-id>.<suffix>
+  shared_archive: true           # every dbbackupd shares one bucket
+  app_route: true                # guests reach pgproxyd at 198.18.0.1:5432
+  evacuate_draining: true        # move databases off draining nodes
+  drill_every: 24h               # restore drill spacing per node (default 24h; off turns drills off)
+```
+
+The generator renders the `database_nodes` inventory group and each node's
+vmmd and pgproxyd settings, including pgproxyd's cancel instance id and
+peers. The control plane gets schedd's `[database_scheduler]` (written to
+`/etc/faas/schedd-database.toml`) and pgproxyd's access to the verifier
+table. With `app_route`, compute nodes get the route to every pgproxyd.
+pgproxyd's control-plane DSN uses a password `database_node.yml` generates
+once on the control plane (`/var/lib/faas/pgproxyd/postgres-password`;
+`faas_pgproxyd_postgres_password` in Vault overrides it). Each node's first
+PKI bundle is issued from the control-plane issuer when the node has none,
+and renewed daily. Still per deployment: pgproxyd's `*.<host_suffix>`
+certificate (see `deploy/ansible/database_node.yml`). Control-plane Prometheus scrapes
+every database node (runbook `docs/runbooks/FaasDatabaseNodes.md`).
+
+A node's `lifecycle` drives schedd. Set it, re-render, and converge the
+control plane, which restarts schedd:
+- `draining`: the node takes no new databases. With `evacuate_draining`
+  (which needs `shared_archive`), schedd moves its databases off one at a
+  time.
+- `unavailable`: the node is lost. schedd fails its production-class
+  databases over and parks the rest (`node_lost`). A point-in-time
+  restore recovers those onto another node from the bucket. The
+  generator also drops it from the `database_nodes` group, the scrape
+  targets, the other nodes' cancel peers and the app route. Converge the
+  compute and database nodes too. Its pgproxyd instance id stays reserved.
+
 `public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
 customer custom domains. It renders `faas_custom_domain_*` for the control
 plane only: the `public_edge` role adds Caddy's on-demand TLS site (asking
@@ -69,6 +116,26 @@ gatewayd-public before every certificate load, issue and renewal), nftables
 opens 80/443 to every source while the platform site keeps answering
 Cloudflare only, and apid publishes the CNAME target and apex addresses to
 customers. See `docs/ops/custom-domain-tls.md`.
+
+`workload_identity.source_dir` (ADR-1141) turns on workload-identity tokens,
+which queue workers use to lease messages without an API key in the image.
+Point it at the directory `gregalectl workload-identity init --out DIR` wrote
+on the Ansible controller; it must be absolute. It renders
+`faas_workload_identity_source_dir` for every control-plane and compute host:
+the control plane installs the public JWKS and apid trusts it, each compute
+node installs the signing key and vmmd mints tokens. Converge the control
+plane first. Leaving it out keeps issuance off.
+
+`log_archive` names the bucket customer logs are archived to
+(`pkg/logarchive`). It renders `faas_log_archive_*` for every control-plane
+and compute host, and the `log_archive` role writes it into
+`/etc/faas/secrets/storage-box/archive-creds.json`. `endpoint` must be https;
+`region` defaults to `auto`. `auth: gcp_metadata` uses the host's attached
+service account (GCS); `auth: static` reads `{"key_id", "secret"}` from the
+absolute controller path in `credentials_src` (OVH, R2, MinIO), so keys never
+enter the manifest. Leaving it out keeps each host's existing envelope, and
+the role fails a public node that has none. See
+`deploy/ansible/roles/log_archive/README.md`.
 
 The validator fails closed on every missing field, every
 malformed CIDR, every non-octal mode, every non-hex digest, and

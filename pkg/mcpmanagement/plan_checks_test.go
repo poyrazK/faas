@@ -91,7 +91,7 @@ func TestPlanCheckBudgetCASAndRetryRestart(t *testing.T) {
 	f, b, opts := newBudgetFixture(t)
 	store, path, key := testStateStore(t)
 	opts.planStore, opts.planNamespace = store, "plan-check"
-	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestPlanCheckBudgetCASAndRetryRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = next.Close() })
 	opts.planStore = next
-	_, restored, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+	_, restored, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestPlanCheckRegressionVersionAndUnknown(t *testing.T) {
 	for _, change := range []string{"version", "unavailable", "triage-consent", "dismissal"} {
 		t.Run(change, func(t *testing.T) {
 			f, b, opts := newTriageFixture(t)
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +274,7 @@ func TestPlanCheckFinalGuardsAndExpiry(t *testing.T) {
 			_, b, opts := newBudgetFixture(t)
 			store, _, _ := testStateStore(t)
 			opts.planStore, opts.planNamespace = store, "check-guard"
-			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			_, m, err := newHistoryTestManagementServer(api.NewClient(b.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
 			}

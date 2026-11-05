@@ -63,12 +63,26 @@ func requestObjectVersioning(j ObjectBucketVersioning, status string, now time.T
 	j.LastErrorCode = ""
 	return j, nil
 }
+
+// observeObjectVersioning records the provider's versioning status. Any
+// status may leave noncurrent versions, so capacity inventories every version
+// from then on, behind the 15-minute propagation fence. The one exception is
+// a bucket whose versioning Gregale never observed or changed reporting
+// Suspended: GCS reports every never-versioned bucket that way, nothing is
+// propagating, and fencing it froze writes and deletes for 15 minutes on a
+// read-only status call or the first delete (H9-S135/S158,
+// ADR-20261023223000).
 func observeObjectVersioning(j ObjectBucketVersioning, status string, now time.Time) ObjectBucketVersioning {
+	baseline := status == "Suspended" && j.ObservedStatus == "" && j.DesiredStatus == "" && j.Revision == 0
 	j.ObservedStatus = status
 	j.UpdatedAt = now
 	if status != "" && !j.VersionsRequired {
 		j.VersionsRequired = true
-		t := now.Add(api.ObjectBucketVersioningPropagation)
+		// Versions always carry a propagation instant; a baseline's has passed.
+		t := now
+		if !baseline {
+			t = now.Add(api.ObjectBucketVersioningPropagation)
+		}
 		j.PropagationUntil = &t
 	}
 	if !j.LeaseUntil.After(now) && j.State == "ready" && (j.DesiredStatus != status || status != "" && j.CapacityJobID == "") {

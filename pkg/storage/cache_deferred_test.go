@@ -365,3 +365,52 @@ func TestLocalCacheBackend_LowDiskEvictsOldestKeepsNewest(t *testing.T) {
 		})
 	}
 }
+
+// #5709: the standing floor kept 8 GiB free on a disk where a build drive
+// needs 20 GiB. ReclaimFreeBytes evicts oldest-first until the requested
+// space is free and leaves the standing floor as it was.
+func TestLocalCacheBackend_ReclaimFreeBytesEvictsOldestUntilFree(t *testing.T) {
+	ctx := context.Background()
+	epoch := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	parent := newFakeBackend()
+	keys := []string{"snap/a/1", "snap/a/2", "snap/a/3"}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.SetMinFreeBytes(api.ArtifactCacheMinFreeBytes)
+	// Each evicted entry frees 6 GiB of a disk that starts with 10 GiB free.
+	cache.SetDiskSpaceForTest(func(string) (int64, int64, error) {
+		free := int64(10 << 30)
+		for _, k := range keys {
+			if _, err := os.Stat(storage.CacheFileForKey(cache.Root(), k)); err != nil {
+				free += 6 << 30
+			}
+		}
+		return free, 100 << 30, nil
+	})
+	for i, k := range keys {
+		parent.blobs[k] = []byte("snapshot " + k)
+		_, rc := getString(t, ctx, cache, k)
+		_ = rc.Close()
+		when := epoch.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(storage.CacheFileForKey(cache.Root(), k), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := storage.ReclaimFreeBytes(cache, 20<<30); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []bool{false, false, true} {
+		if got := cached(t, cache, keys[i]); got != want {
+			t.Errorf("%s cached = %v, want %v", keys[i], got, want)
+		}
+	}
+	// The standing 8 GiB floor is back: 22 GiB free evicts nothing more.
+	parent.blobs["snap/a/4"] = []byte("snapshot 4")
+	_, rc := getString(t, ctx, cache, "snap/a/4")
+	_ = rc.Close()
+	if !cached(t, cache, keys[2]) || !cached(t, cache, "snap/a/4") {
+		t.Fatal("an install after the reclaim evicted under the standing floor")
+	}
+}

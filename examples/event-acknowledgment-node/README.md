@@ -359,7 +359,7 @@ Create a long-lived collector at worker-host initialization and pass its bound
 observer directly to the existing coordinated-job wrapper:
 
 ```js
-import { EventAcknowledgmentPreparationMetrics } from '@gregale/sdk-node';
+import { EventAcknowledgmentPreparationMetrics } from '@gregale/sdk-node/preview';
 import { processOwnedCoordinatedDelivery } from './processing.mjs';
 
 const preparationMetrics = new EventAcknowledgmentPreparationMetrics();
@@ -436,7 +436,7 @@ import {
   EventAcknowledgmentIntentRecoveryPassCancelled,
   EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
   EventAcknowledgmentIntentRecoveryPassError,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 try {
   const progress = await recoverAcknowledgmentsPass(scope, pool, shutdown.signal);

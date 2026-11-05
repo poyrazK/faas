@@ -151,7 +151,7 @@ func (c *Client) StreamDeploymentLogs(ctx context.Context, id string, beforeSeq 
 // Move 3 / M7.5 prep — this is the SDK seam for `faas tail`. The
 // dashboard uses the same route via the browser EventSource; nothing
 // in this slice changes the dashboard's auth path.
-func (c *Client) StreamEvents(ctx context.Context) (io.ReadCloser, error) {
+func (c *PreviewClient) StreamEvents(ctx context.Context) (io.ReadCloser, error) {
 	return c.stream(ctx, "/v1/events")
 }
 

@@ -113,8 +113,8 @@ func TestCmdJobsList_RejectsNegativePaginationLocally(t *testing.T) {
 			if code != 1 {
 				t.Errorf("cmdJobsList(%v) = %d, want 1", args, code)
 			}
-			if !strings.Contains(captured, "gregale jobs list") {
-				t.Errorf("usage must mention 'gregale jobs list'; got: %s", captured)
+			if !strings.Contains(captured, "gregale job list") {
+				t.Errorf("usage must mention 'gregale job list'; got: %s", captured)
 			}
 		})
 	}

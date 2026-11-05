@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -41,13 +44,19 @@ func TestBreakGlassPostgres(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	// pgtest hands out a private clone; ConnString still names the base
-	// database, so point the commands at the clone.
+	// pgtest hands out a private clone database, or an isolated schema on
+	// the search_path; ConnString names neither, so carry both into the
+	// commands' DSN.
 	u, err := url.Parse(pool.Config().ConnString())
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.Path = "/" + pool.Config().ConnConfig.Database
+	if sp := pool.Config().ConnConfig.RuntimeParams["search_path"]; sp != "" {
+		q := u.Query()
+		q.Set("search_path", sp)
+		u.RawQuery = q.Encode()
+	}
 	dsn := u.String()
 	store := state.NewPgStore(pool)
 	acct, err := store.CreateAccount(ctx, "break-glass-"+uuid.NewString()+"@example.com", api.PlanPro)
@@ -59,6 +68,35 @@ func TestBreakGlassPostgres(t *testing.T) {
 	}
 	hash := sha256.Sum256([]byte("gk_" + uuid.NewString()))
 	if _, err := store.CreateAPIKey(ctx, acct.ID, hash[:], "ci", []string{api.ScopeDeployWrite}); err != nil {
+		t.Fatal(err)
+	}
+	// App deploy tokens and hosting automation credentials are CI
+	// credentials too, and live for up to a year and 30 days.
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "bg-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployHash := sha256.Sum256([]byte("gdt_" + uuid.NewString()))
+	if _, err := store.CreateDeployToken(ctx, acct.ID, app.ID, deployHash[:], "ci", []string{api.ScopeDeployWrite}, time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "bg-" + uuid.NewString()[:8]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	siteID := uuid.NewString()
+	site, err := store.CreateHostingSite(ctx, api.HostingSite{ID: siteID, AccountID: acct.ID, ProjectID: project.ID, Name: "web", Environment: "production",
+		Hostname: siteID + ".hosting.example", OriginID: strings.Repeat("a", 64), DurableRouting: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostingToken, hostingHash, err := api.GenerateHostingAutomationToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := store.CreateHostingAutomationCredential(ctx, api.HostingAutomationCredential{ID: uuid.NewString(), AccountID: acct.ID, SiteID: site.ID,
+		Label: "CI", Operations: []string{"stage"}, Hash: hostingHash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,7 +118,8 @@ func TestBreakGlassPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if breakGlassCount(before, state.BreakGlassSessions) < 1 || breakGlassCount(before, state.BreakGlassAPIKeys) < 1 {
+	if breakGlassCount(before, state.BreakGlassSessions) < 1 || breakGlassCount(before, state.BreakGlassAPIKeys) < 1 ||
+		breakGlassCount(before, state.BreakGlassDeployTokens) < 1 || breakGlassCount(before, state.BreakGlassHostingCredentials) < 1 {
 		t.Fatalf("live credentials before = %+v", before)
 	}
 	if code := cmdBreakGlass([]string{"revoke-credentials", "--pg-dsn", dsn}); code != 0 {
@@ -103,6 +142,12 @@ func TestBreakGlassPostgres(t *testing.T) {
 		if c.Count != 0 {
 			t.Fatalf("%d live %s after the revoke", c.Count, c.Kind)
 		}
+	}
+	if _, _, err := store.AuthenticateDeployToken(ctx, deployHash[:]); !errors.Is(err, state.ErrAPIKeyRevoked) {
+		t.Fatalf("deploy token after the revoke: %v", err)
+	}
+	if _, _, err := store.AuthenticateHostingAutomationToken(ctx, api.HashAPIKey(hostingToken)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("hosting automation credential after the revoke: %v", err)
 	}
 	var data []byte
 	if err := pool.QueryRow(ctx, `SELECT data FROM events WHERE kind = 'break_glass.credentials_revoked' ORDER BY id DESC LIMIT 1`).Scan(&data); err != nil {

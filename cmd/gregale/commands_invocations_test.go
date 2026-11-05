@@ -100,7 +100,7 @@ func TestCmdInvocationsGet_NoPositional(t *testing.T) {
 	if code := main.CmdInvocationsGet(nil); code != 1 {
 		t.Errorf("invocation bare = %d, want 1 (usage)", code)
 	}
-	if !strings.Contains(stderr(), "usage: gregale invocations get") {
+	if !strings.Contains(stderr(), "usage: gregale invocation get") {
 		t.Errorf("stderr missing usage line\nfull: %s", stderr())
 	}
 }
@@ -295,7 +295,7 @@ func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(stderr()), &metadata); err != nil || metadata.ExitCode != 124 {
 		t.Fatalf("timeout metadata: %+v error=%v", metadata, err)
 	}
-	if problem.Code != "invocation_wait_timeout" || problem.Status != http.StatusRequestTimeout || !strings.Contains(problem.Hint, "gregale invocations get "+inv.ID) {
+	if problem.Code != "invocation_wait_timeout" || problem.Status != http.StatusRequestTimeout || !strings.Contains(problem.Hint, "gregale invocation get "+inv.ID) {
 		t.Fatalf("timeout problem = %+v", problem)
 	}
 }
@@ -306,7 +306,7 @@ func TestCmdInvocationsWait_NoID(t *testing.T) {
 	if code := main.CmdInvocationsWait(nil); code != 1 {
 		t.Fatalf("invocations wait without id = %d, want 1", code)
 	}
-	if !strings.Contains(stderr(), "usage: gregale invocations wait") {
+	if !strings.Contains(stderr(), "usage: gregale invocation wait") {
 		t.Errorf("stderr missing usage:\n%s", stderr())
 	}
 }
@@ -400,7 +400,7 @@ func TestCmdInvocationsGet_ReplayHappyPath(t *testing.T) {
 		"App:", "my-app",
 		"Replay id:", replayID,
 		"Replay status:", "/v1/invocations/" + replayID,
-		"Poll with:", "gregale invocations get", replayID,
+		"Poll with:", "gregale invocation get", replayID,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\nfull: %s", want, out)

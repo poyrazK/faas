@@ -6,9 +6,9 @@ from uuid import UUID
 import httpx
 import pytest
 
-from faas_sdk.api.storage import delete_object_bucket_tags, get_object_bucket_tags, put_object_bucket_tags
+from faas_sdk.preview.api.storage import delete_object_bucket_tags, get_object_bucket_tags, put_object_bucket_tags
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectTaggingRequest, ObjectTaggingRequestTags, ObjectTaggingResult
+from faas_sdk.preview.models import ObjectTaggingRequest, ObjectTaggingRequestTags, ObjectTaggingResult
 from faas_sdk.types import UNSET, Unset
 
 

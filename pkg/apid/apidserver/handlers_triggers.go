@@ -68,6 +68,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -118,6 +119,7 @@ func triggerResponse(t sqlc.Trigger) api.Trigger {
 		RetryPolicy:          retryPolicyFromTriggerConfig(t.Config),
 		PayloadMaxBytes:      int(t.PayloadMaxBytes),
 		BrokerPoisonStrategy: t.BrokerPoisonStrategy,
+		Agent:                t.Agent.String,
 		CreatedAt:            t.CreatedAt.Time,
 		UpdatedAt:            t.UpdatedAt.Time,
 	}
@@ -181,6 +183,10 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if p := s.hiddenTriggerAgent(acct, req.Agent); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if req.AppID == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "app_id is required"))
 		return
@@ -220,6 +226,10 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such app")
 		return
 	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -230,6 +240,11 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	delivery, p := s.requestedTriggerDelivery(appFlagSubject(acct, app), req.Kind, req.Delivery)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	agent, p := s.requestedTriggerAgent(r.Context(), acct, req.Kind, delivery, req.Agent)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -248,12 +263,15 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	source := triggerSourceForConfig(req.Kind, req.Config)
 	// A realtime trigger is created disabled and enabled only once it is
 	// bound, so no dispatcher polls a group it cannot consume.
-	// Batch delivery is switched on before the trigger is enabled, so no record
-	// is ever delivered in the wrong shape.
-	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil && delivery == api.TriggerDeliveryRecord,
+	// Batch delivery and an agent target are set before the trigger is
+	// enabled, so no record is ever delivered in the wrong shape or place.
+	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil && delivery == api.TriggerDeliveryRecord && agent == "",
 		source, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
 	if problem == nil && delivery != api.TriggerDeliveryRecord {
 		t, problem = s.applyTriggerDelivery(r.Context(), t, delivery, enabled && realtimeCfg == nil)
+	}
+	if problem == nil && agent != "" {
+		t, problem = s.applyTriggerAgent(r.Context(), t, agent, enabled)
 	}
 	if problem == nil && realtimeCfg != nil {
 		t, problem = s.bindRealtimeTrigger(r.Context(), acct, t, *realtimeCfg, enabled)
@@ -412,7 +430,13 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 			"")
 	}
 	switch req.Kind {
-	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime:
+	case api.TriggerKindSQSCompat:
+		// Delisted 2026-10-29: the poller speaks an invented wire protocol
+		// with no SigV4, so it reaches neither AWS SQS nor Gregale queues.
+		// Existing triggers keep their rows; no new one is created.
+		return api.NewProblem(http.StatusUnprocessableEntity, "trigger_kind_unavailable", "Trigger kind unavailable",
+			"sqs_compat triggers are not available; consume Gregale queues with kind=queue")
+	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindQueue, api.TriggerKindRealtime:
 		if req.Slug == "" {
 			return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "slug is required for non-cron triggers")
 		}
@@ -425,7 +449,7 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 		return nil
 	default:
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
-			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue|realtime")
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|queue|realtime")
 	}
 }
 
@@ -610,12 +634,12 @@ func setRetryPolicyInConfig(config *json.RawMessage, policy *api.RetryPolicyDTO)
 	}
 	b, err := json.Marshal(policy)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The retry policy could not be encoded.")
 	}
 	top["retry_policy"] = b
 	merged, err := json.Marshal(top)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The trigger config could not be encoded.")
 	}
 	*config = merged
 	return nil
@@ -754,7 +778,13 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		}
 	}
 	if req.Delivery != nil {
-		if _, p := s.requestedTriggerDelivery(appFlagSubject(acct, app), api.TriggerKind(t.Kind), req.Delivery); p != nil {
+		delivery, p := s.requestedTriggerDelivery(appFlagSubject(acct, app), api.TriggerKind(t.Kind), req.Delivery)
+		if p == nil && t.Agent.Valid {
+			if err := api.ValidateTriggerAgent(api.TriggerKind(t.Kind), delivery, t.Agent.String); err != nil {
+				p = api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery", err.Error())
+			}
+		}
+		if p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -771,6 +801,12 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
@@ -803,7 +839,7 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			api.WriteProblem(w, problem)
 			return
 		}
-		if err := validateTriggerConfig(api.TriggerKind(t.Kind), mergedConfig); err != nil {
+		if err := validateTriggerConfig(api.TriggerKind(t.Kind), triggerconfig.ValidationView(api.TriggerKind(t.Kind), mergedConfig)); err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger config", err.Error()))
 			return
 		}
@@ -817,7 +853,7 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if mergedConfig != nil {
-		sealed, problem := sealTriggerConfig(api.TriggerKind(t.Kind), mergedConfig)
+		sealed, problem := sealMergedTriggerConfig(api.TriggerKind(t.Kind), mergedConfig)
 		if problem != nil {
 			api.WriteProblem(w, problem)
 			return
@@ -1070,21 +1106,22 @@ func (s *server) listTriggerRecords(w http.ResponseWriter, r *http.Request, acct
 // store method lands (PR-B scope), we synthesize the write
 // inline: this is a small one-line UPDATE that doesn't belong
 // on the dispatcher's interface.
+//
+// The record must belong to the trigger in the URL: the store call is
+// scoped by trigger and app, so another trigger's record is a 404.
 func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tID, ok := parseTriggerID(w, r)
+	trigger, recID, ok := s.triggerRecordForWrite(w, r, acct)
 	if !ok {
 		return
 	}
-	if !s.authoriseTriggerRead(w, r, acct, tID) {
-		return
-	}
-	recID, ok := parseTriggerRecordID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.RetryTriggerRecordByOperator(r.Context(), recID); err != nil {
+	if err := s.store.RetryTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
+		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
+			return
+		}
+		if problem := appevents.QueueCapProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not retry record"))
@@ -1094,19 +1131,14 @@ func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct
 }
 
 // dropTriggerRecord handles POST /v1/triggers/{id}/records/{rid}/drop.
+// Like retry, it acts only on a record of the trigger in the URL.
 func (s *server) dropTriggerRecord(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tID, ok := parseTriggerID(w, r)
+	trigger, recID, ok := s.triggerRecordForWrite(w, r, acct)
 	if !ok {
 		return
 	}
-	if !s.authoriseTriggerRead(w, r, acct, tID) {
-		return
-	}
-	recID, ok := parseTriggerRecordID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DropTriggerRecordByOperator(r.Context(), recID); err != nil {
+	if err := s.store.DropTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
+		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
 			return
@@ -1149,11 +1181,11 @@ func (s *server) listTriggerDeadLetter(w http.ResponseWriter, r *http.Request, a
 
 // getTriggerMetrics handles GET /v1/triggers/{id}/metrics.
 //
-// Walks trigger_records for the trigger and counts by state. The
-// store layer is the future home of a CountTriggerRecordsByState
-// helper; this handler-side aggregation covers the dashboard until
-// then. A 1000-row ceiling keeps the cost bounded; the Prometheus
-// surface (`/v1/metrics`) is the authoritative counters path.
+// Counts the trigger's records by state, each count stopping at
+// api.TriggerMetricsCountLimit, and reports the scheduler's last
+// observation of its broker consumer: liveness, the last error and the
+// broker's lag (ADR-20261101104512). The Prometheus surface
+// (`/v1/metrics`) is the authoritative counters path.
 func (s *server) getTriggerMetrics(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, ok := parseTriggerID(w, r)
 	if !ok {
@@ -1168,7 +1200,36 @@ func (s *server) getTriggerMetrics(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	metrics.TriggerID = id
+	if metrics.Consumer, err = s.triggerConsumerStatus(r.Context(), id); err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load trigger consumer health"))
+		return
+	}
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+// triggerConsumerStatus is the scheduler's last observation of the
+// trigger's consumer, nil before its first poll.
+func (s *server) triggerConsumerStatus(ctx context.Context, id string) (*api.TriggerConsumerStatus, error) {
+	healthStore, ok := s.store.(state.TriggerConsumerHealthStore)
+	if !ok {
+		return nil, nil
+	}
+	health, err := healthStore.TriggerConsumerHealth(ctx, id)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("trigger consumer health: %w", err)
+	}
+	return &api.TriggerConsumerStatus{
+		Liveness:      queueBindingConsumerLiveness(time.Now().UTC(), health),
+		LastPollAt:    health.LastPollAt,
+		LastSuccessAt: health.LastSuccessAt,
+		LastErrorAt:   health.LastErrorAt,
+		LastError:     health.LastError,
+		LagMessages:   health.LagMessages,
+		LagAgeSeconds: health.LagAgeSeconds,
+	}, nil
 }
 
 // batchCreateTrigger handles POST /v1/triggers:batch_create.
@@ -1191,7 +1252,7 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "app_id is required"))
 		return
 	}
-	m, prob := validateManifestBytes([]byte(req.ManifestYAML), acct.Plan)
+	m, prob := validateManifestBytes([]byte(req.ManifestYAML), acct.Plan, s.agentStepsAllowed(acct))
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1209,6 +1270,10 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -1439,6 +1504,27 @@ func parseTriggerRecordID(w http.ResponseWriter, r *http.Request) (string, bool)
 	return uid.String(), true
 }
 
+// triggerRecordForWrite authorises a record mutation. Its routes require the
+// deploy-write scope (server.go), so a read-only key never gets here; the {id}
+// trigger must be the caller's (ownedTrigger) and {rid} a well-formed record
+// id. The store call that follows scopes the record by the returned trigger's
+// id and app, so a record of another trigger, app or account answers 404.
+func (s *server) triggerRecordForWrite(w http.ResponseWriter, r *http.Request, acct state.Account) (sqlc.Trigger, string, bool) {
+	tID, ok := parseTriggerID(w, r)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	trigger, ok := s.ownedTrigger(w, r, acct, tID)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	recID, ok := parseTriggerRecordID(w, r)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	return trigger, recID, true
+}
+
 // authoriseTriggerRead resolves the trigger + app + account and
 // emits a 404 (intentionally not 403 — see handlers_ext.go for
 // precedent) if either step fails. Both fail branches use
@@ -1446,17 +1532,24 @@ func parseTriggerRecordID(w http.ResponseWriter, r *http.Request) (string, bool)
 // "someone else's trigger". Returns true when the caller is
 // authorised; false when a response has already been written.
 func (s *server) authoriseTriggerRead(w http.ResponseWriter, r *http.Request, acct state.Account, id string) bool {
+	_, ok := s.ownedTrigger(w, r, acct, id)
+	return ok
+}
+
+// ownedTrigger returns the trigger when its app belongs to acct, and
+// otherwise writes the 404 authoriseTriggerRead documents.
+func (s *server) ownedTrigger(w http.ResponseWriter, r *http.Request, acct state.Account, id string) (sqlc.Trigger, bool) {
 	t, err := s.store.TriggerByID(r.Context(), id)
 	if err != nil {
 		s.notFound(w, "no such trigger")
-		return false
+		return sqlc.Trigger{}, false
 	}
 	app, err := s.store.AppByID(r.Context(), uuidFromPgtype(t.AppID).String())
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such trigger")
-		return false
+		return sqlc.Trigger{}, false
 	}
-	return true
+	return t, true
 }
 
 // intFrom returns *p when non-nil, 0 otherwise. Helper for the
@@ -1503,26 +1596,26 @@ func validateTriggerConfig(kind api.TriggerKind, raw json.RawMessage) error {
 	return probe.Validate()
 }
 
-func triggerConfigIdentities() []*age.X25519Identity {
-	if mfaIdentities != nil {
-		if identities := mfaIdentities(); len(identities) > 0 {
-			return append([]*age.X25519Identity(nil), identities...)
-		}
-	}
-	if mfaIdentity != nil {
-		if identity := mfaIdentity(); identity != nil {
-			return []*age.X25519Identity{identity}
-		}
-	}
-	return nil
+// sealTriggerConfig seals a new trigger config's credentials to the
+// delivery domain, which schedd opens them with (ADR 20261022111812).
+func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
+	return sealTriggerConfigWith(triggerconfig.Seal, kind, raw)
 }
 
-func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
-	var recipient *age.X25519Recipient
+// sealMergedTriggerConfig seals an updated config's new credentials and
+// keeps the stored ciphertext the merge carried over.
+func sealMergedTriggerConfig(kind api.TriggerKind, merged json.RawMessage) (json.RawMessage, *api.Problem) {
+	return sealTriggerConfigWith(triggerconfig.SealMerged, kind, merged)
+}
+
+func sealTriggerConfigWith(seal func(api.TriggerKind, json.RawMessage, []*age.X25519Recipient) (json.RawMessage, error), kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
+	var recipients []*age.X25519Recipient
 	if setSecretRecipient != nil {
-		recipient = hostSecretRecipient()
+		// Without a recipient the seal fails only for a config that holds a
+		// credential, as it always has.
+		recipients, _ = triggerConfigRecipients()
 	}
-	sealed, err := triggerconfig.Seal(kind, raw, recipient)
+	sealed, err := seal(kind, raw, recipients)
 	if err == nil {
 		return sealed, nil
 	}
@@ -1533,8 +1626,13 @@ func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessa
 	return nil, api.ErrSecretStoreUnavailable()
 }
 
+// mergeTriggerConfigForUpdate merges an update into the stored config
+// without opening it: apid holds no identity for trigger credentials.
 func mergeTriggerConfigForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (json.RawMessage, *api.Problem) {
-	merged, err := triggerconfig.MergeForUpdate(kind, stored, incoming, triggerConfigIdentities())
+	merged, err := triggerconfig.MergeForUpdate(kind, stored, incoming)
+	if errors.Is(err, triggerconfig.ErrCredentialMove) {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required", err.Error())
+	}
 	if err != nil {
 		return nil, api.ErrSecretStoreUnavailable()
 	}
@@ -1579,10 +1677,21 @@ func kafkaSkipVerifyRequested(kind api.TriggerKind, raw json.RawMessage) (bool, 
 	return cfg.TLS.SkipVerify, nil
 }
 
-// aggregateTriggerMetrics walks trigger_records for the trigger
-// and counts by state. A 1000-row ceiling keeps the cost bounded
-// (the dispatcher owns the authoritative counters via Prometheus).
+// aggregateTriggerMetrics counts the trigger's records by state, each
+// count stopping at api.TriggerMetricsCountLimit. A store without the
+// counter (narrow test stores) counts the newest 1000 rows instead.
 func (s *server) aggregateTriggerMetrics(ctx context.Context, id string) (api.TriggerMetricsResponse, error) {
+	if counter, ok := s.store.(state.TriggerRecordStateCounter); ok {
+		counts, err := counter.CountTriggerRecordsByState(ctx, id, api.TriggerMetricsCountLimit)
+		if err != nil {
+			return api.TriggerMetricsResponse{}, err
+		}
+		return api.TriggerMetricsResponse{
+			PendingCount: int(counts.Pending), ClaimedCount: int(counts.Claimed),
+			SucceededCount: int(counts.Succeeded), RetryCount: int(counts.Retry),
+			DeadLetterCount: int(counts.DeadLetter), CountLimit: api.TriggerMetricsCountLimit,
+		}, nil
+	}
 	rows, err := s.store.ListTriggerRecordsForTrigger(ctx, id, int32(1000))
 	if err != nil {
 		return api.TriggerMetricsResponse{}, err

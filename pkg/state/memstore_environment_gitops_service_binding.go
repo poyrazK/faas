@@ -54,7 +54,9 @@ func (m *MemStore) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, c
 		return zero, true, false, ErrConflict
 	}
 	memory, active := m.environmentGitOps[caller.SourceID]
-	if !active || memory.source.Detached || memory.source.Suspended || memory.source.Spec.Mode != "enforce" ||
+	// Reconciliation controls pause future mutations; the active release still
+	// authorizes its frozen service graph until it is replaced or withdrawn.
+	if !active || memory.source.Detached ||
 		memory.source.AccountID != callerApp.AccountID || memory.source.ProjectID != callerApp.ProjectID ||
 		memory.source.EnvironmentID != caller.EnvironmentID || normalizedDeploymentScope(memory.source.EnvironmentSlug) != normalizedDeploymentScope(callerDeployment.Scope) {
 		return zero, true, false, ErrConflict
@@ -108,5 +110,6 @@ func (m *MemStore) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, c
 		TargetAppID: targetAppID, TargetDeploymentID: targetDeploymentID,
 		ReleaseSetID: release.ID, AccountID: callerApp.AccountID,
 		RequireHTTPS: requireHTTPS, CallScope: callScope, Reliability: reliability,
+		ReconciliationActive: memory.source.Spec.Mode == "enforce" && !memory.source.Suspended,
 	}, true, true, nil
 }

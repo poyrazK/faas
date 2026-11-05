@@ -3,8 +3,8 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import get_route_health_gate, get_route_health_report, set_route_health_gate
-from faas_sdk.models import RouteHealthGate, RouteHealthReport, SetRouteHealthGateRequest
+from faas_sdk.preview.api.apps import get_route_health_gate, get_route_health_report, set_route_health_gate
+from faas_sdk.preview.models import RouteHealthGate, RouteHealthReport, SetRouteHealthGateRequest
 
 
 def test_route_health_requests_and_evidence():
@@ -102,7 +102,7 @@ def test_route_health_requests_and_evidence():
 
 
 def test_route_latency_zero_and_legacy_selectors():
-    from faas_sdk.models import RouteHealthCounts, RouteHealthRoute
+    from faas_sdk.preview.models import RouteHealthCounts, RouteHealthRoute
     from faas_sdk.types import Unset
 
     legacy = {"method": "POST", "path": "/checkout"}

@@ -101,7 +101,7 @@ func TestManagedPostgresFixturePublicRotation(t *testing.T) {
 		if stop != nil {
 			stop()
 		}
-		service, reconciler, bindingService, bindingReconciler, usage, health, err := loadManagedPostgres(pool, func(name string) string { return environment[name] }, logger)
+		service, reconciler, bindingService, bindingReconciler, usage, health, err := loadManagedPostgres(pool, func(name string) string { return environment[name] }, logger, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

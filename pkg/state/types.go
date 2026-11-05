@@ -129,6 +129,10 @@ type DeploymentStatus string
 type DeploymentOutcomeCounts struct {
 	Succeeded int
 	Failed    int
+	// FailedAccounts counts the distinct accounts behind Failed, so public
+	// status can tell one tenant's failing apps from a platform-wide problem
+	// (Hunt 14 H14-22).
+	FailedAccounts int
 }
 
 // LatestDeploymentOutcome is the last platform-attributable terminal
@@ -1241,6 +1245,12 @@ type APIKey struct {
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
 	AppID string
+	// ProjectLimited and ProjectIDs: an agent or mcp-login key limited to
+	// projects of its organization (ADR-20261104085712). The middleware
+	// stamps them on the principal's copy when it authenticates the key;
+	// stores' key reads leave them unset.
+	ProjectLimited bool
+	ProjectIDs     []string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -1332,6 +1342,8 @@ type App struct {
 	// scaling input or the owning scheduler node changes; schedulers
 	// acknowledge observing this revision without creating a deployment.
 	ScalingPolicyRevision int64
+	// ScalingRevision guards RAM, CPU, concurrency and instance-floor edits.
+	ScalingRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -1969,6 +1981,10 @@ type AppManifest struct {
 	// Dockerfile build (ADR-20261019142544); project-managed like
 	// BuildDockerfile and captured per deployment at enqueue.
 	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildGoCommand selects the `cmd/<name>` main package a Railpack build
+	// of a multi-command Go module compiles (ADR-20261025134512);
+	// project-managed like BuildDockerfile.
+	BuildGoCommand string `json:"build_go_command,omitempty"`
 	// ProjectImage preserves declared image intent (including a mutable tag).
 	// Each deployment resolves and pins its own immutable source. Command
 	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
@@ -1976,10 +1992,24 @@ type AppManifest struct {
 	ProjectImageCommand     []string                `json:"project_image_command,omitempty"`
 	ProjectImagePort        int                     `json:"project_image_port,omitempty"`
 	ProjectImageHealthcheck *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	// ProjectReadinessCheck is the scanned HTTP or gRPC readiness check
+	// (ADR-20261029093621 §3); project deploys pass it as the deployment's
+	// startup probe. Nil leaves readiness to the image and inferred profile.
+	ProjectReadinessCheck *api.DeploymentHealthcheck `json:"project_readiness_check,omitempty"`
 	// ProjectImageProcess is the Compose entrypoint, user, working_dir and
 	// stop contract for the image (ADR-1337); nil inherits the image's.
 	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
 	ProjectDependencyConditions map[string]string   `json:"project_dependency_conditions,omitempty"`
+	// ProjectSecretFiles are a Compose service's secrets, written to
+	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
+	// them into the guest manifest; they name app secrets, never values.
+	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
+	// ProjectReleaseCommand is the command of the Compose service this app
+	// waits for with service_completed_successfully (ADR-20261102192943).
+	// A deploy whose source declares no release command (gregale.yaml
+	// release.command or Procfile release:) runs it as the release command.
+	ProjectReleaseCommand      []string `json:"project_release_command,omitempty"`
+	ProjectReleaseCommandShell bool     `json:"project_release_command_shell,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2084,7 +2114,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2102,12 +2132,15 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.DockerfileBuild = desired.DockerfileBuild.Clone()
+	existing.BuildGoCommand = desired.BuildGoCommand
 	existing.ProjectImage = desired.ProjectImage
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectReadinessCheck = desired.ProjectReadinessCheck.Clone()
 	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
+	existing.ProjectSecretFiles = api.CloneSecretFiles(desired.ProjectSecretFiles)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
@@ -2217,6 +2250,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds is an optional per-app cold-wake wait budget.
 	// Zero means the gateway uses the plan-derived default.
 	WakeMaxQueueWaitSeconds int
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Zero means the plan's concurrency_per_vm;
+	// readers resolve it through api.Limits.PerInstanceConcurrency, which
+	// also clamps a value a plan downgrade left above the bound.
+	PerInstanceConcurrency int
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-198). Empty means UTC. One zone per app rather than one per
 	// schedule: a business has a working day, not a working day per rule.
@@ -2345,6 +2383,7 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -2372,6 +2411,7 @@ func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -2424,6 +2464,14 @@ type GitHubBinding struct {
 	OwnerID          int64
 	RepoID           int64
 	ProductionBranch string
+	// ProductionTrigger chooses the webhook or GitHub Actions for an app
+	// bound without a project (ADR-20261101160300). Empty is the webhook.
+	// A binding upsert keeps it; unbinding clears it.
+	ProductionTrigger ProductionTrigger
+	// PreviewsOff turns off pull-request previews for an app bound without
+	// a project; a project-backed app follows its project's policy. Kept and
+	// cleared like ProductionTrigger.
+	PreviewsOff bool
 }
 
 // GitHubInstall is the durable OAuth handshake state for one account's
@@ -2477,10 +2525,14 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
-	submissionAttemptID  string
-	releaseWorkerAttempt string
-	releaseConfigAttempt string
-	retryDeploymentID    string
+	submissionAttemptID string
+	// eventSubscriptionIntent is creation-only: the event subscriptions a
+	// production manifest deploy declares (ADR-20261101030512). nil records
+	// no intent; an empty slice declares none.
+	eventSubscriptionIntent *[]string
+	releaseWorkerAttempt    string
+	releaseConfigAttempt    string
+	retryDeploymentID       string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -3290,6 +3342,8 @@ const (
 type CustomDomain struct {
 	Domain string
 	AppID  string
+	// RedirectAppID mirrors the legacy redirect FK used by app purge.
+	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
 	// non-empty value binds the hostname to one project environment.
 	EnvironmentID    string
@@ -3315,6 +3369,15 @@ type CustomDomain struct {
 
 // Verified reports whether the TXT challenge has been satisfied.
 func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
+
+// ClaimLive reports whether the row still reserves its hostname: it is
+// verified, or its verification deadline has not passed. An expired challenge
+// is not an ownership record; it must not shadow a broader route, deny a
+// certificate or block another reservation. A zero deadline predates the
+// column and never expires.
+func (d CustomDomain) ClaimLive(now time.Time) bool {
+	return d.Verified() || d.VerificationExpiresAt.IsZero() || d.VerificationExpiresAt.After(now)
+}
 
 // DomainDoctorObservation (ADR-120) is the dns_poller's
 // view of a per-domain probe pass. The struct mirrors the
@@ -3368,6 +3431,24 @@ type Cron struct {
 	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
 	CreatedAt       time.Time
 	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
+	// ScheduleAnchorAt is when the schedule last took effect: a schedule or
+	// timezone change, an enable, or a lifted suspension (ADR-20261026201726).
+	// Zero until then. See ScheduleCursor.
+	ScheduleAnchorAt time.Time
+}
+
+// ScheduleCursor is the instant after which the cron's next boundary
+// falls: LastFiredAt (CreatedAt before the first fire), or ScheduleAnchorAt
+// when that is later (ADR-20261026201726).
+func (c Cron) ScheduleCursor() time.Time {
+	cursor := c.LastFiredAt
+	if cursor.IsZero() {
+		cursor = c.CreatedAt
+	}
+	if c.ScheduleAnchorAt.After(cursor) {
+		cursor = c.ScheduleAnchorAt
+	}
+	return cursor
 }
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"
@@ -3393,6 +3474,12 @@ type CronOptions struct {
 	CommandMaxOutputBytes int
 	RetryMax              int
 	RetryBackoffSeconds   int
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's policy or
+	// rules on an update; a nil SchedulePolicy or FailureRules leaves them
+	// as they are. Nothing could remove either once set (crons audit
+	// 2026-11-03).
+	ClearSchedulePolicy bool
+	ClearFailureRules   bool
 }
 
 const (
@@ -3430,7 +3517,7 @@ type FireNowRequest struct {
 	AccountID    string
 	RequestedAt  time.Time
 	Status       FireNowStatus
-	InvocationID *string // nil while pending/running; set on terminal
+	InvocationID *string // set once an HTTP fire queues its invocation (ADR-20261026201726)
 	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
@@ -3482,7 +3569,46 @@ const (
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
 	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
+	// OperatorIntentKindDatabaseMove moves a native managed database to
+	// another database node (ADR-1027). TargetID is the database id,
+	// AccountID is nil, and Metadata names the target node (empty: the
+	// active node with the most free volume capacity). schedd's database
+	// scheduler parks the database and records the move before stamping
+	// the intent; the copy finishes in the background.
+	OperatorIntentKindDatabaseMove OperatorIntentKind = "database_move"
+	// OperatorIntentKindDatabaseRestart restarts a running native managed
+	// database in place (ADR-1027), onto its node's current base. TargetID
+	// is the database id and AccountID is nil. schedd's database scheduler
+	// parks the database and wakes it again before stamping the intent; a
+	// parked database is left for its next wake, which boots the current
+	// base anyway.
+	OperatorIntentKindDatabaseRestart OperatorIntentKind = "database_restart"
+	// OperatorIntentKindDatabaseSwitchover hands a production-class native
+	// managed database to its synchronized standby on purpose (ADR-1027).
+	// TargetID is the database id and AccountID is nil. schedd's database
+	// scheduler stops a running primary cleanly and promotes the standby,
+	// or moves a parked database's record to the standby's node, before
+	// stamping the intent.
+	OperatorIntentKindDatabaseSwitchover OperatorIntentKind = "database_switchover"
 )
+
+// IsOperatorDatabaseKind reports the native database operations (ADR-1027),
+// which schedd's database scheduler runs.
+func IsOperatorDatabaseKind(kind OperatorIntentKind) bool {
+	switch kind {
+	case OperatorIntentKindDatabaseMove, OperatorIntentKindDatabaseRestart, OperatorIntentKindDatabaseSwitchover:
+		return true
+	default:
+		return false
+	}
+}
+
+// DatabaseMoveIntentMetadata is a database_move intent's metadata: the
+// node to move to, or empty for the active node with the most free volume
+// capacity.
+type DatabaseMoveIntentMetadata struct {
+	TargetNode string `json:"target_node,omitempty"`
+}
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
 // apid inserts customer-workload or fleet-level node intents, emits
@@ -3588,8 +3714,13 @@ const (
 	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
 	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	// AlertMetricQueueBacklog and AlertMetricQueueOldestAge watch the app's
+	// durable queue: messages waiting for its workers and the age of the
+	// oldest (ADR-20261018101500 amendment 2026-10-27). Webhook-only.
+	AlertMetricQueueBacklog              AlertMetric = "queue_backlog"
+	AlertMetricQueueOldestAge            AlertMetric = "queue_oldest_age_seconds"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
@@ -3617,6 +3748,10 @@ const (
 	// AlertMetricRouteInsightsDetected counts the app's route insights that
 	// became active in the window (ADR-20261020161310).
 	AlertMetricRouteInsightsDetected AlertMetric = "route_insights_detected"
+	// Route monitor incidents open within the window and canaries the route
+	// health guard holds or aborted (ADR-20261028110044).
+	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
+	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3624,6 +3759,9 @@ const (
 	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
 	// AlertRule.CustomMetricName (ADR-745).
 	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// AlertMetricLogSearchMatches counts an app's log events matching
+	// AlertRule.LogQuery within the window (ADR-20261018083536).
+	AlertMetricLogSearchMatches AlertMetric = "log_search_matches"
 	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
 	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
 	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
@@ -3812,6 +3950,7 @@ type UpdateAlertRuleParams struct {
 	WebhookURL          *string
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 	CooldownMinutes     *int
+	NotifyResolved      *bool
 }
 
 // AlertRule is one customer-configurable rule (issue #396, ADR-045).
@@ -3832,25 +3971,33 @@ type AlertRule struct {
 	ID                              string
 	AccountID                       string
 	AppID                           string // empty = account-wide
-	Name                            string
-	Enabled                         bool
-	Metric                          AlertMetric
-	Comparison                      AlertComparison
-	Threshold                       float64
-	WindowSpec                      AlertWindowSpec
-	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
-	SLOID                           string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
-	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL                      string
-	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes                 int
-	State                           AlertState
-	LastFiredAt                     time.Time // zero until first fire
-	LastEvaluatedAt                 time.Time
-	CreatedAt                       time.Time
-	UpdatedAt                       time.Time
+	// CreatedByAccountID is the member who created the rule
+	// (ADR-20261026151103); empty for a rule older than the column, which
+	// only the app's creator could create.
+	CreatedByAccountID  string
+	Name                string
+	Enabled             bool
+	Metric              AlertMetric
+	Comparison          AlertComparison
+	Threshold           float64
+	WindowSpec          AlertWindowSpec
+	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery            string             // canonical log search filters; set only for log_search_matches
+	SLOID               string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL          string
+	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
+	// NotifyResolved also sends the webhook a signed resolve event when the
+	// rule recovers (ADR-20261029203000); channels always get one.
+	NotifyResolved  bool
+	CooldownMinutes int
+	State           AlertState
+	LastFiredAt     time.Time // zero until first fire
+	LastEvaluatedAt time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -3946,6 +4093,9 @@ type AppWebhookEvent string
 
 const (
 	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"
+	AppWebhookEventConsumerPlanChanged                     AppWebhookEvent = "consumer.plan_changed"
+	AppWebhookEventConsumerClosed                          AppWebhookEvent = "consumer.closed"
 	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
 	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
 	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
@@ -4008,6 +4158,8 @@ const (
 	AppWebhookEventRouteHealthResumed                      AppWebhookEvent = "routes.health.resumed"
 	AppWebhookEventProfileRouteRegressed                   AppWebhookEvent = "profile.route_regressed"
 	AppWebhookEventProfileRouteRecovered                   AppWebhookEvent = "profile.route_recovered"
+	AppWebhookEventProfileCaptureReady                     AppWebhookEvent = "profile.capture_ready"
+	AppWebhookEventProfileCaptureOOMLinked                 AppWebhookEvent = "profile.capture_oom_linked"
 	AppWebhookEventRouteRequirementsChanged                AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated               AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered              AppWebhookEvent = "routes.requirements.recovered"
@@ -4024,6 +4176,7 @@ const (
 	AppWebhookEventRecoveryExecutionFinished               AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
+	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
 	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
 	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
 	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
@@ -4056,6 +4209,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRealtimeInboxAcknowledged,
 	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
+	AppWebhookEventProfileCaptureReady, AppWebhookEventProfileCaptureOOMLinked,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
@@ -4078,7 +4232,11 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventConsumerUsageThreshold,
+	AppWebhookEventConsumerSignedUp,
+	AppWebhookEventConsumerPlanChanged,
+	AppWebhookEventConsumerClosed,
 	AppWebhookEventOutboundAIBudgetThreshold,
+	AppWebhookEventOutboundAIQualityDrift,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
@@ -4186,7 +4344,25 @@ type UpdateAppWebhookParams struct {
 	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
+	// PreviousSecretUntil, set with WebhookSecretSealed, keeps the secret
+	// being replaced as the previous secret until this instant
+	// (ADR-20261101093517): deliveries carry a second signature made with
+	// it. A rotation inside the window replaces the previous secret with
+	// the one it retires. Ignored without WebhookSecretSealed.
+	PreviousSecretUntil *time.Time
 }
+
+// AppWebhookPreviousSecretStore reads the secret a rotation replaced while
+// its overlap window lasts (ADR-20261101093517). nil means none: never
+// rotated, rotated without overlap, or the window has passed.
+type AppWebhookPreviousSecretStore interface {
+	PreviousAppWebhookSecret(ctx context.Context, webhookID string, now time.Time) ([]byte, error)
+}
+
+var (
+	_ AppWebhookPreviousSecretStore = (*MemStore)(nil)
+	_ AppWebhookPreviousSecretStore = (*PgStore)(nil)
+)
 
 // AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
@@ -4215,8 +4391,11 @@ type AppWebhook struct {
 	RetryPolicy      AppWebhookRetryPolicy
 	DeliveryFormat   AppWebhookDeliveryFormat
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created an app-scope webhook
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -4248,6 +4427,12 @@ type ManagedRealtimeEndpoint struct {
 	Enabled                    bool
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
+	// Slug names the endpoint within its app so gregale.yaml can declare it
+	// (ADR-20261019102657). Empty for endpoints created without one.
+	Slug string
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
@@ -4271,6 +4456,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	MaxMessageBytes                 *int64
 	MaxConnectionAgeSeconds         *int64
 	Enabled                         *bool
+	// Slug replaces the endpoint's slug; an empty value removes it.
+	Slug *string
+	// ChannelRules replaces the endpoint's channel rules.
+	ChannelRules *[]api.RealtimeChannelRule
 }
 
 type ManagedRealtimeEndpointQuotaScope string
@@ -4346,6 +4535,40 @@ type AppWebhookDelivery struct {
 	DeliveredAt      *time.Time // nil until status=succeeded
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+
+	// AdmissionMaxPending and AdmissionMaxBacklogBytes are the producer's
+	// caps on the account's undelivered deliveries (ADR-20261101093517):
+	// RecordAppWebhookDelivery counts the account's pending and in-flight
+	// rows and their payload bytes under a per-account lock and refuses
+	// with *AppWebhookOutboxFullError at either cap. Zero leaves that cap
+	// off. Admission input only; never stored.
+	AdmissionMaxPending      int   `json:"-"`
+	AdmissionMaxBacklogBytes int64 `json:"-"`
+}
+
+// AppWebhookOutboxFullError reports that an admission-capped
+// RecordAppWebhookDelivery found the account's undelivered deliveries at a
+// cap. It unwraps to ErrQuotaExceeded.
+type AppWebhookOutboxFullError struct {
+	Bytes    bool // the payload-bytes cap refused; otherwise the count cap
+	Limit    int64
+	Observed int64
+}
+
+func (e *AppWebhookOutboxFullError) Error() string { return ErrQuotaExceeded.Error() }
+func (e *AppWebhookOutboxFullError) Unwrap() error { return ErrQuotaExceeded }
+
+// appWebhookOutboxAdmission applies the caps to the account's undelivered
+// count and payload bytes. A delivery admitted just under the bytes cap may
+// pass it by its own size, as queue admission does.
+func appWebhookOutboxAdmission(in AppWebhookDelivery, pending, held int64) error {
+	if in.AdmissionMaxPending > 0 && pending >= int64(in.AdmissionMaxPending) {
+		return &AppWebhookOutboxFullError{Limit: int64(in.AdmissionMaxPending), Observed: pending}
+	}
+	if in.AdmissionMaxBacklogBytes > 0 && held >= in.AdmissionMaxBacklogBytes {
+		return &AppWebhookOutboxFullError{Bytes: true, Limit: in.AdmissionMaxBacklogBytes, Observed: held}
+	}
+	return nil
 }
 
 // AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
@@ -4569,6 +4792,10 @@ type Invocation struct {
 	// this Source, enforced inside the enqueue transaction (0 = uncapped).
 	// It is admission input only, never persisted or customer-authored.
 	AdmissionMaxPending int `json:"-"`
+	// AdmissionMaxBacklogBytes is the producer's per-account cap on pending
+	// queue payload bytes (ADR-20261022105723; 0 = uncapped). Like
+	// AdmissionMaxPending it is admission input only.
+	AdmissionMaxBacklogBytes int64 `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`
@@ -5293,7 +5520,19 @@ const (
 	// (ADR-137) the run-to-completion RestartPolicy default 'no'
 	// applies; billed at standard rate while RUNNING.
 	InstanceModeJob InstanceMode = "job"
+	// InstanceModeFork tags a production fork (ADR-732): a quarantined
+	// restore of an app capture that never serves traffic. It bills like
+	// a live instance, counts toward the RAM ceiling but not
+	// max_concurrency, is never routed, never idle-reaped, parked,
+	// snapshotted or drained, and is destroyed only by the fork
+	// coordinator at its TTL.
+	InstanceModeFork InstanceMode = "fork"
 )
+
+// IsFork reports whether mode is the ADR-732 production-fork mode. Every
+// path that routes to, counts, parks or snapshots instances must skip
+// these rows.
+func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.
@@ -5596,6 +5835,121 @@ type ComputeNode struct {
 	// nil on a never-recovered node. The DB CHECK constraint
 	// (00582) rejects values outside this closed set.
 	LastRecoveryOutcome *string
+	// CPUTemplate is the Firecracker CPU template vmmd boots guests with,
+	// and CPUModel the host CPU signature (fcvm.HostCPU.Signature). vmmd
+	// writes both at registration; empty means "not reported", a vmmd from
+	// before ADR-20261024225612.
+	CPUTemplate string
+	CPUModel    string
+	// Readiness is what schedd's heartbeat last proved about the node
+	// (ADR-20261022184531). Placement prefers ready nodes; Lifecycle stays
+	// the authority for operator and recovery states.
+	Readiness NodeReadiness
+	// ReadinessReason says why a node is not ready; nil when it is.
+	ReadinessReason *string
+	// WakeBreakerOpenUntil is the node's wake breaker (ADR-20261022184531
+	// step 3): degraded until then, half-open once it passes, closed when
+	// nil. WakeBreakerReason says what opened it.
+	WakeBreakerOpenUntil *time.Time
+	WakeBreakerReason    *string
+	// CPUPressureUntil is how long the node's schedd holds it under CPU
+	// pressure (ADR 20261030100950): its tenant tasks waited for CPU while
+	// its CPUs were nearly all busy. It only expires; nil when never set.
+	CPUPressureUntil *time.Time
+}
+
+// WakeBreakerOpen reports whether the node's wake breaker holds it degraded
+// at now.
+func (n ComputeNode) WakeBreakerOpen(now time.Time) bool {
+	return n.WakeBreakerOpenUntil != nil && now.Before(*n.WakeBreakerOpenUntil)
+}
+
+// CPUPressured reports whether the node is held under CPU pressure at now.
+func (n ComputeNode) CPUPressured(now time.Time) bool {
+	return n.CPUPressureUntil != nil && now.Before(*n.CPUPressureUntil)
+}
+
+// NodeReadiness is whether a compute node has proven it can take a wake
+// (ADR-20261022184531). The values mirror compute_nodes_readiness_chk.
+type NodeReadiness string
+
+const (
+	// NodeReadinessReady: the node answers its heartbeat and its vmmd can
+	// adopt its configured base generations. Rows default to ready.
+	NodeReadinessReady NodeReadiness = "ready"
+	// NodeReadinessDegraded: the node answers but has proven it cannot serve
+	// a wake. Placement uses it only when no ready node fits.
+	NodeReadinessDegraded NodeReadiness = "degraded"
+	// NodeReadinessUnavailable and NodeReadinessDraining mirror lifecycle.
+	NodeReadinessUnavailable NodeReadiness = "unavailable"
+	NodeReadinessDraining    NodeReadiness = "draining"
+)
+
+// Valid reports whether r is one of the values the column admits.
+func (r NodeReadiness) Valid() bool {
+	switch r {
+	case NodeReadinessReady, NodeReadinessDegraded, NodeReadinessUnavailable, NodeReadinessDraining:
+		return true
+	}
+	return false
+}
+
+// EffectiveReadiness is EffectiveReadinessAt the current time.
+func (n ComputeNode) EffectiveReadiness() NodeReadiness {
+	return n.EffectiveReadinessAt(time.Now())
+}
+
+// EffectiveReadinessAt is the node's readiness with lifecycle and its wake
+// breaker applied: a node that lifecycle keeps out of placement reads
+// unavailable or draining even before the heartbeat writes it, an open wake
+// breaker reads degraded, and a row with no readiness reads ready.
+func (n ComputeNode) EffectiveReadinessAt(now time.Time) NodeReadiness {
+	switch n.Lifecycle {
+	case NodeLifecycleDraining, NodeLifecycleForceDraining, NodeLifecycleMaintenance:
+		return NodeReadinessDraining
+	case NodeLifecycleUnavailable, NodeLifecycleRetired:
+		return NodeReadinessUnavailable
+	}
+	if n.Lifecycle == "" && !n.Active {
+		return NodeReadinessUnavailable
+	}
+	if n.WakeBreakerOpen(now) {
+		return NodeReadinessDegraded
+	}
+	if n.Readiness == "" {
+		return NodeReadinessReady
+	}
+	return n.Readiness
+}
+
+// ComputeNodeWakeBreakerStore records a node's wake breaker
+// (ADR-20261022184531 step 3). Any schedd may write it; every schedd places
+// by it.
+type ComputeNodeWakeBreakerStore interface {
+	// OpenComputeNodeWakeBreaker holds the node degraded until until.
+	OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error
+	// CloseComputeNodeWakeBreaker clears the breaker and reports whether one
+	// was set.
+	CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error)
+}
+
+// ComputeNodeCPUPressureStore records how long a node is held under CPU
+// pressure (ADR 20261030100950). Only the schedd that receives the node's
+// readings writes it; every schedd places by it.
+type ComputeNodeCPUPressureStore interface {
+	// HoldComputeNodeCPUPressure sets the node's cpu_pressure_until.
+	HoldComputeNodeCPUPressure(ctx context.Context, nodeID string, until time.Time) error
+}
+
+// ComputeNodeReadinessStore records a node's proven readiness. schedd's
+// heartbeat writes it (ADR-20261022184531), and so does the scheduler that
+// receives a node's capacity stream when that stream goes silent and vmmd
+// does not answer a ping (ADR-20261029085904).
+type ComputeNodeReadinessStore interface {
+	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
+	// and reports whether either changed. Only a change fires
+	// compute_node_changed, so an unchanged verdict costs no notification.
+	SetComputeNodeReadiness(ctx context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error)
 }
 
 // NodeLifecycle is the compute-node controller state. Constants mirror the
@@ -6760,6 +7114,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612): a templated snapshot restores on any node
+	// class the template supports, a template-less one only on the same
+	// CPUModel. Both empty identifies a legacy row.
+	CPUTemplate string
+	CPUModel    string
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -6859,14 +7219,33 @@ type EmailVerificationToken struct {
 
 // CliAuthCode is one row of the cli_auth_codes table (spec §2.2
 // device-code flow). AccountID is empty between mint and claim; the
-// claim statement fills it in atomically. The 4-byte entropy + 5-min
-// TTL + per-IP rate limit means brute-force on the code space is not
-// realistic, so we don't bump the byte length here.
+// claim statement fills it in atomically. TokenHash is the hash of the
+// short code the user approves. DeviceHash, when set, is the hash of a
+// 32-byte device code only the CLI holds, and the row can then be
+// exchanged only with that device code (bug hunt 2026-10-28 H67).
 type CliAuthCode struct {
 	TokenHash  []byte
+	DeviceHash []byte
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
+	// approval; "" is the personal one (ADR-20261101225122).
+	OrgID string
+	// ProjectIDs are the projects the sign-in was limited to at approval;
+	// nil is every project (ADR-20261104085712). MemStore only: the Pg
+	// store reads it through CliAuthCodeProjects.
+	ProjectIDs []string
+}
+
+// CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
+// issued through it is refused by ConsumeCliAuthCode, so guessing the short
+// code the user approves never yields a key.
+type CliAuthDeviceCodeStore interface {
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
+	// the device code's hash.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
 }
 
 // AccountPassword is one row of the account_passwords table
@@ -7556,6 +7935,9 @@ type ProjectEnvironmentApproval struct {
 	ExpiresAt         time.Time
 	ConsumedAt        *time.Time
 	CreatedAt         time.Time
+	// ApprovedByAccountID is who gave the approval; "" for approvals made
+	// before it was recorded (ADR-20261020085706 amendment 2).
+	ApprovedByAccountID string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret
@@ -7744,8 +8126,11 @@ type Org struct {
 	ProviderCustomerID       string
 	StripeSubscriptionItem   string
 	DeletedPending           bool
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// DeletionRequestedAt is when DeletedPending turned on (ADR-20261101143527);
+	// meterd delivers the organization's usage from before it.
+	DeletionRequestedAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;
@@ -8159,7 +8544,9 @@ type EdgeRuleIPAction struct {
 //     enforced as a sanity floor — MaxBodyBytes > plan cap is a
 //     create-time 422 from pkg/api/dto.go.
 type EdgeRuleValidateAction struct {
-	Schema              json.RawMessage `json:"schema"`
+	// Schema is absent for a parameter-only rule. Rows written before
+	// omitempty store "schema": null; the gateway reads that as absent.
+	Schema              json.RawMessage `json:"schema,omitempty"`
 	ContentTypes        []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`
@@ -8258,6 +8645,7 @@ type EdgeRuleGeoAction struct {
 // apid-Validate.
 type EdgeRuleBudgetAction struct {
 	BudgetMs            int    `json:"budget_ms"`
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
@@ -8381,7 +8769,11 @@ type EdgeRuleAsyncAction struct {
 // gatewayd matcher only reads Kind + the kind-specific subset it
 // needs.
 type EdgeRuleAction struct {
-	Kind     EdgeRuleKind            `json:"kind"`
+	Kind EdgeRuleKind `json:"kind"`
+	// Penalty is the rule's penalty box (ADR-20261022105846). It is
+	// kind-independent, so it sits beside the kind payloads; ip, geo,
+	// throttle and waf (block) rules may carry one.
+	Penalty  *EdgeRulePenalty        `json:"penalty,omitempty"`
 	Route    *EdgeRuleRouteAction    `json:"route,omitempty"`
 	Rewrite  *EdgeRuleRewriteAction  `json:"rewrite,omitempty"`
 	Redirect *EdgeRuleRedirectAction `json:"redirect,omitempty"`
@@ -8466,11 +8858,22 @@ type EdgeRuleAction struct {
 	Challenge *EdgeRuleChallengeAction `json:"challenge,omitempty"`
 }
 
+// EdgeRulePenalty is the stored penalty box; values are the effective ones
+// api.EdgeRulePenalty.Validate wrote.
+type EdgeRulePenalty struct {
+	Seconds       int `json:"seconds"`
+	After         int `json:"after"`
+	WithinSeconds int `json:"within_seconds"`
+}
+
 // EdgeRuleChallengeAction is the stored kind=challenge payload. Values are
 // the effective ones written by api.EdgeRuleChallengeAction.Validate.
 type EdgeRuleChallengeAction struct {
 	Difficulty     int `json:"difficulty,omitempty"`
 	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
+	// MaxDifficulty caps raising the difficulty under attack (ADR-831
+	// amendment 8); zero keeps it fixed.
+	MaxDifficulty int `json:"max_difficulty,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
@@ -8525,7 +8928,8 @@ type EdgeRule struct {
 	AccountID string
 	AppID     string
 	// ManifestKey is a private stable ownership key for edge rules applied
-	// from deployment manifests. It is empty for manually managed rules.
+	// from deployment manifests, or EdgeRuleAttackModeKey for the app's
+	// attack-mode rule. It is empty for manually managed rules.
 	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
@@ -8581,6 +8985,18 @@ const (
 // EdgeRuleExpired reports whether the rule's expiry has passed at now.
 func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
 	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
+}
+
+// EdgeRuleAttackModeKey is the ownership key (manifest_key) of an app's
+// attack-mode rule (ADR-20261021220456): one app-wide challenge rule the
+// attack-mode switch creates, extends and removes. The unique (app_id,
+// manifest_key) index keeps it to one per app. It is outside the plan's
+// rule quotas and a rule-set rollback leaves it as it is.
+const EdgeRuleAttackModeKey = "attack-mode"
+
+// AttackMode reports whether r is its app's attack-mode rule.
+func (r EdgeRule) AttackMode() bool {
+	return r.ManifestKey == EdgeRuleAttackModeKey
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -9055,6 +9471,10 @@ type OIDCExchangedToken struct {
 	Audience  []string
 	JTI       string
 	CreatedAt time.Time
+	// AppID binds the bearer to one app (ADR-20261101100000): set for a
+	// deploy bearer minted under a trust policy Gregale created, and
+	// enforced like a per-app deploy token. Empty is account-wide.
+	AppID string
 }
 
 // ToAPIKey projects the OIDC-bearer row into a synthetic state.APIKey
@@ -9085,6 +9505,7 @@ func (e OIDCExchangedToken) ToAPIKey() APIKey {
 		AccountID: e.AccountID,
 		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
+		AppID:     e.AppID,
 	}
 }
 
@@ -9451,8 +9872,11 @@ type AppLogDrain struct {
 	TargetURL        string
 	AuthHeaderSealed []byte
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created the drain
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // AppLogDrainHealth is the durable, customer-safe delivery snapshot for one

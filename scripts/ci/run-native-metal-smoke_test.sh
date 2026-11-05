@@ -21,7 +21,9 @@ expanded="$(
 # The `"$@"` placeholder is test-metal's RUN_REGEX slot: with RUN_REGEX unset it
 # expands to nothing, so this gate's runtime invocation is unchanged. It appears
 # here because `make -n` prints the recipe text, not the post-shell argv.
-expected='/usr/bin/true test -tags metal -race -count=1 -timeout=30m -v "$@" ./pkg/fcvm'
+# The tag slot is FAAS_METAL_TEST_TAGS with metal as its default; this wrapper
+# never sets it, so the fcvm gate builds with the plain metal tag.
+expected='/usr/bin/true test -tags "${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 -timeout=30m -v "$@" ./pkg/fcvm'
 
 grep -Fq -- "${expected}" <<<"${expanded}" || {
   echo "native metal invocation expanded incorrectly:" >&2

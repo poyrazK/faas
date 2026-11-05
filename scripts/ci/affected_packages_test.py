@@ -150,7 +150,7 @@ class TextContractTest(unittest.TestCase):
 
 class ShardTest(unittest.TestCase):
     def test_shards_partition_the_race_packages_deterministically(self):
-        dirs = [f"pkg/p{i}" for i in range(20)] + ["pkg/sched"]
+        dirs = [f"pkg/p{i}" for i in range(20)] + ["pkg/gateway"]
         shards = [ap.shard(dirs, i, 3) for i in (1, 2, 3)]
         flat = sorted(d for s in shards for d in s)
         self.assertEqual(flat, sorted(dirs))
@@ -168,9 +168,25 @@ class ShardTest(unittest.TestCase):
         shards = [ap.shard(["cmd/gregale", "pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
         self.assertEqual(shards, [[], [], ["pkg/x"]])
 
-    def test_each_selective_package_has_its_own_shard(self):
-        pinned = sorted(ap.SELECTIVE_SHARD.values())
-        self.assertEqual(pinned, [1, 2, 3])
+    def test_slowest_race_packages_avoid_the_shard_with_two_selective_packages(self):
+        # The #4153 timeout: both 17-minute race packages beside the
+        # pkg/sched and pkg/state builds on one shard.
+        slow = ["cmd/gatewayd-internal", "pkg/environmentsync/pgintegration"]
+        dirs = slow + ["cmd/gregale", "pkg/sched", "pkg/state", "pkg/apid/apidserver",
+                       "pkg/e2etest", "pkg/gateway", "cmd/gregalectl", "pkg/operations/acceptance"]
+        busy = ap.SELECTIVE_SHARD["pkg/sched"]
+        shards = {i: ap.shard(dirs, i, 3) for i in (1, 2, 3)}
+        self.assertFalse(set(slow) & set(shards[busy]), shards)
+        self.assertEqual(len([i for i in shards if set(slow) & set(shards[i])]), 2, shards)
+
+    def test_every_shard_owns_a_selective_package(self):
+        self.assertEqual(sorted(set(ap.SELECTIVE_SHARD.values())), [1, 2, 3])
+
+    def test_pkg_state_keeps_its_postgres_service_on_a_shared_shard(self):
+        # ci-light points only pkg/state at the shard's second PostgreSQL
+        # service; pkg/sched shares its shard and uses the first.
+        self.assertEqual(ap.SELECTIVE_SHARD["pkg/sched"], ap.SELECTIVE_SHARD["pkg/state"])
+        self.assertNotEqual(ap.SELECTIVE_SHARD["pkg/state"], ap.SELECTIVE_SHARD["pkg/apid/apidserver"])
 
 
 class CommandTest(unittest.TestCase):
@@ -188,6 +204,9 @@ class CommandTest(unittest.TestCase):
             (["pkg/apid/apidserver/handler_test.go"], ap.SELECTIVE_SHARD["pkg/apid/apidserver"], ["./pkg/apid/apidserver"]),
             (["pkg/apid/apidserver/handler_test.go"], ap.SELECTIVE_SHARD["pkg/state"], []),
             (["pkg/state/store_test.go"], ap.SELECTIVE_SHARD["pkg/state"], ["./pkg/state"]),
+            (["pkg/sched/engine_test.go"], ap.SELECTIVE_SHARD["pkg/sched"], ["./pkg/sched"]),
+            (["pkg/sched/engine_test.go", "pkg/state/store_test.go"], ap.SELECTIVE_SHARD["pkg/sched"],
+             ["./pkg/sched", "./pkg/state"]),
             (["pkg/util/helper.go"], 3, []),
         ]:
             with self.subTest(paths=paths, shard=shard):
@@ -197,7 +216,7 @@ class CommandTest(unittest.TestCase):
         owners = [self.run_command("pinned", [], i) for i in (1, 2, 3)]
         self.assertEqual(sorted(p for o in owners for p in o),
                          sorted("./" + d for d in ap.SELECTIVE_SHARD))
-        self.assertTrue(all(len(o) == 1 for o in owners))
+        self.assertTrue(all(owners))
 
     def test_race_and_selective_commands_cover_selected_packages_once(self):
         paths = ["pkg/apid/apidserver/handler_test.go", "pkg/state/store_test.go", "pkg/util/helper.go"]

@@ -142,6 +142,12 @@ type Pending struct {
 	// per app; the gateway's compiled-rule slice is rebuilt on
 	// every change. Same add/remove/modify semantics as crons.
 	EdgeRules []api.CreateEdgeRuleRequest
+	// Companions is the companion set the deploy will send, from the
+	// source directory's gregale.yaml. CompanionsKnown is false when the
+	// preview did not read one; a known, empty set removes every companion,
+	// as the deploy itself would.
+	Companions      []api.DeploymentCompanion
+	CompanionsKnown bool
 }
 
 // AppConfigPatch mirrors [api.UpdateAppRequest] so the engine does

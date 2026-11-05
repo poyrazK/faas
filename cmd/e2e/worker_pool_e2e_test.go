@@ -5,11 +5,13 @@
 // declares a queue-driven worker through the customer API and lets the real
 // schedd targets tick size the pool against real queue rows.
 //
-// The backlog is seeded with a future due time so it counts as queue depth
-// but the drain never delivers it: with a fake vmmd the guest would answer
-// instantly and the backlog would vanish before the scaler observed it. That
-// makes this a test of the scaling loop, not of delivery semantics, which
-// need a real guest and live in the metal suite.
+// The backlog is seeded as claimed (dispatching under a lease that outlives
+// the test), so it counts as queue depth but the drain never delivers it:
+// with a fake vmmd the guest would answer instantly and the backlog would
+// vanish before the scaler observed it. Depth counts dispatching and due
+// pending messages only (bug hunt 2026-10-28 B18), so a future due time no
+// longer works. That makes this a test of the scaling loop, not of delivery
+// semantics, which need a real guest and live in the metal suite.
 package e2e_test
 
 import (
@@ -86,6 +88,11 @@ func TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn(t *testing.T) {
 			t.Fatalf("enqueue backlog: %v", err)
 		}
 		backlog = append(backlog, inv.ID)
+	}
+	if _, err := f.h.Pool.Exec(f.ctx, `update invocations
+		   set state = 'dispatching', lease_expires_at = now() + interval '30 minutes', attempts = 1
+		 where id = any($1::uuid[])`, backlog); err != nil {
+		t.Fatalf("claim backlog: %v", err)
 	}
 	peak := 0
 	deadline := time.Now().Add(45 * time.Second)

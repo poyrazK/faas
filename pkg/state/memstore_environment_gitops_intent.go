@@ -161,10 +161,9 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && normalizedDeploymentScope(deployment.Scope) == source.EnvironmentSlug && deployment.Status == DeployLive {
 				managed := deployment.EnvironmentWorkloadRuntime != ""
-				if !managed {
-					row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest,
-						SourceURL: deployment.SourceURL, CommitSHA: deployment.CommitSHA, SourceRoot: deployment.SourceRoot, Inputs: environmentWorkloadDeploymentInputs(deployment)})
-				}
+				row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest,
+					SourceURL: deployment.SourceURL, CommitSHA: deployment.CommitSHA, SourceRoot: deployment.SourceRoot, Inputs: environmentWorkloadDeploymentInputs(deployment),
+					Managed: managed, PlanHash: candidateFrozenInputs(deployment).PlanHash})
 				row.LiveDeployments = append(row.LiveDeployments, gitOpsSecretBaseline{ID: deployment.ID,
 					SecretRefs: append(json.RawMessage(nil), deployment.OverrideEnvSecrets...), Managed: managed})
 			}
@@ -329,7 +328,7 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 			if !ok {
 				return ErrConflict
 			}
-			row, err = m.syncEnvironmentGitOpsJobLocked(row, app, workload, snapshot.Plan)
+			row, err = m.syncEnvironmentGitOpsJobLocked(memory.source, row, app, workload, snapshot.Plan, false)
 			if err != nil {
 				return err
 			}
@@ -375,7 +374,7 @@ func (m *MemStore) ApplyEnvironmentGitOpsWithEffects(ctx context.Context, lease 
 	return m.applyEnvironmentGitOps(ctx, lease, reviewed, effects, true)
 }
 
-func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, effects []EnvironmentGitOpsEffectSpec, requireEffects bool) ([]EnvironmentGitOpsStep, error) {
+func (m *MemStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, effects []EnvironmentGitOpsEffectSpec, requireEffects bool) ([]EnvironmentGitOpsStep, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	memory, err := m.gitOpsLeaseLocked(lease, time.Now())
@@ -486,6 +485,26 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 			return nil, ErrInvalidArgument
 		}
 	}
+	// Environment edge policies are part of every bound hostname's policy
+	// projection (ADR-570); analyze them before changing any in-memory rows.
+	stagedPolicies := map[string]ProjectEnvironmentEdgePolicy{}
+	for _, change := range plan.Changes {
+		if change.Path != "policies" || change.Action == "keep" || change.Action == "retain_unmanaged" || change.Action == "overridden" {
+			continue
+		}
+		appID := observed.State.ResourceIDs[change.Resource]
+		key := projectEnvironmentRoutePolicyKey(appID, memory.source.EnvironmentSlug)
+		if change.Action == "remove" {
+			stagedPolicies[key] = ProjectEnvironmentEdgePolicy{}
+		} else {
+			stagedPolicies[key] = ProjectEnvironmentEdgePolicy{AccountID: memory.source.AccountID, ProjectID: memory.source.ProjectID, AppID: appID, EnvironmentSlug: memory.source.EnvironmentSlug, Rules: policies[change.Resource]}
+		}
+	}
+	if len(stagedPolicies) > 0 {
+		if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, memory.source.AccountID, nil, "", memTrafficPolicyChange{Policies: stagedPolicies})); err != nil {
+			return nil, err
+		}
+	}
 	oldJobs := m.jobs
 	m.jobs = maps.Clone(m.jobs)
 	jobsCommitted := false
@@ -512,7 +531,7 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 			if !ok {
 				return nil, ErrConflict
 			}
-			row, err = m.syncEnvironmentGitOpsJobLocked(row, app, workload, snapshot.Plan)
+			row, err = m.syncEnvironmentGitOpsJobLocked(memory.source, row, app, workload, snapshot.Plan, true)
 			if err != nil {
 				return nil, err
 			}

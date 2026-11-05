@@ -66,7 +66,7 @@ func standardPreviewSetOnboarding(t *testing.T, s standardPreviewSetTestStore, s
 	// Force rejection only after the first app has been inserted. This tests
 	// both atomic preview entry points without depending on generated app IDs.
 	limited := limits
-	limited.PreviewApps = 1
+	limited.DeployedApps = 1 // one workload per PR preview environment
 	for _, test := range []struct {
 		name    string
 		reserve func([]state.App, api.Limits) ([]state.App, error)
@@ -112,7 +112,7 @@ func standardPreviewSetOnboarding(t *testing.T, s standardPreviewSetTestStore, s
 	seed(a, owner.Account.ID)
 	// The second head retires worker and inserts database before failing on
 	// cache. Rollback must restore the old set and worker with the old pins.
-	limited.PreviewApps = 2
+	limited.DeployedApps = 2 // two workloads per PR preview environment
 	next := head
 	next.CommitSHA = strings.Repeat("b", 40)
 	if _, err := s.ReservePRPreviewSet(ctx, next, []state.App{preview("api"), preview("database"), preview("cache")}, limited); !errors.Is(err, state.ErrQuotaExceeded) {

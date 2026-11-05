@@ -6,7 +6,6 @@ package vmmdgrpc
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"net/netip"
 	"time"
@@ -131,7 +130,7 @@ func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteracti
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid interactive job", detail)
 	}
-	if len(in.GetAttachTokenSha256()) != sha256.Size {
+	if !validAttachDigest(in.GetAttachTokenSha256()) {
 		return nil, invalid("attach_token_sha256 must be a SHA-256 digest")
 	}
 	if req.GetTaskTimeoutSec() > fcvm.JobInteractiveMaxTaskTimeoutSec {
@@ -391,11 +390,14 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Wake. Empty slice = no allowlist rule (current behaviour).
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
 		PrivateNetworkID:            app.GetPrivateNetworkId(),
 		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
+		StaticEgressIP:              app.GetStaticEgressIp(),
+		StaticEgressExcluded:        app.GetStaticEgressExcluded(),
 		// tier-2 PR-B: schedd fans UpdateEgressAllowlist out by
 		// app_id, so the live Instance needs to remember which app
 		// it was woken for. The scheduler already knows the app
@@ -484,6 +486,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			StorageKey:        snap.GetStorageKey(),
 			VMStateStorageKey: snap.GetVmstateStorageKey(),
 			MemBytes:          snap.GetMemBytes(),
+			CaptureID:         snap.GetCaptureId(),
+			SealedKey:         snap.GetSealedKey(),
 		}
 	}
 	return wr, nil
@@ -567,11 +571,14 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// mirrors it so deploy primes the same egress policy.
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
 		PrivateNetworkID:            app.GetPrivateNetworkId(),
 		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
+		StaticEgressIP:              app.GetStaticEgressIp(),
+		StaticEgressExcluded:        app.GetStaticEgressExcluded(),
 		// tier-2 PR-B: see toWakeRequest. The cold-boot path is
 		// the first boot of a deploy; setting AppID here means
 		// the very first UpdateEgressAllowlist fan-out finds the
@@ -624,7 +631,24 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// after the VM exits.
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
+		// ADR-20261026091500: the built app's sealed registry
+		// credentials, for the builder's FROM pulls.
+		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
 	}, nil
+}
+
+// buildRegistryCredentialsFromProto copies a builder's sealed registry
+// credentials; vmmd opens them only while staging the builder's files.
+func buildRegistryCredentialsFromProto(b *vmmdpb.BuildSpec) []fcvm.BuildRegistryCredential {
+	creds := b.GetRegistryCredentials()
+	if len(creds) == 0 {
+		return nil
+	}
+	out := make([]fcvm.BuildRegistryCredential, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, fcvm.BuildRegistryCredential{Registry: c.GetRegistry(), Username: c.GetUsername(), PasswordSealed: c.GetPasswordSealed()})
+	}
+	return out
 }
 
 func validateAppHealthcheck(app *vmmdpb.AppSpec) *api.Problem {
@@ -850,9 +874,11 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		NetnsTapMs:   inst.NetnsTapMs,
 		GuestReadyMs: inst.GuestReadyMs,
 	}
-	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot &&
-		inst.RestoreFallbackReason == fcvm.WakeReasonAfterRestoreFailed {
-		resp.RestoreFallbackReason = fcvm.WakeReasonAfterRestoreFailed
+	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot {
+		switch inst.RestoreFallbackReason {
+		case fcvm.WakeReasonAfterRestoreFailed, fcvm.RestoreFallbackNodeLocal:
+			resp.RestoreFallbackReason = inst.RestoreFallbackReason
+		}
 	}
 	if inst.Method == fcvm.WakeColdBoot {
 		if structVal, ok := characterizationToStruct(inst.Characterization); ok {

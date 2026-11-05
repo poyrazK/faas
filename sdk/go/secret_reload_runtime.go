@@ -201,6 +201,10 @@ func (c *SecretReloadCoordinator) Reload(ctx context.Context) (string, error) {
 	return "", secretReloadError("secret reload cancelled")
 }
 
+// Done is closed once the reload worker has stopped, after Stop or the
+// Start context ends, including its final invalidation of consumers.
+func (c *SecretReloadCoordinator) Done() <-chan struct{} { return c.workerDone }
+
 func (c *SecretReloadCoordinator) Stop() {
 	c.stopOnce.Do(func() {
 		c.mu.Lock()

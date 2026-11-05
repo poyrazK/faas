@@ -1,8 +1,8 @@
-from faas_sdk.api.workflows.start_automation_live_verification import _get_kwargs
-from faas_sdk.models.automation_live_expectation import AutomationLiveExpectation
-from faas_sdk.models.automation_live_verification import AutomationLiveVerification
-from faas_sdk.models.automation_test_case import AutomationTestCase
-from faas_sdk.models.start_automation_live_verification_request import StartAutomationLiveVerificationRequest
+from faas_sdk.preview.api.workflows.start_automation_live_verification import _get_kwargs
+from faas_sdk.preview.models.automation_live_expectation import AutomationLiveExpectation
+from faas_sdk.preview.models.automation_live_verification import AutomationLiveVerification
+from faas_sdk.preview.models.automation_test_case import AutomationTestCase
+from faas_sdk.preview.models.start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 
 
 def test_live_expectations_preserve_null_zero_and_large_numbers():
@@ -62,11 +62,11 @@ def test_live_start_requires_explicit_key_and_target_fences():
 def test_shared_suite_metadata_routes_and_missing_run_identity():
     from uuid import UUID
 
-    from faas_sdk.api.workflows.get_automation_live_suite import _get_kwargs as get_kwargs
-    from faas_sdk.api.workflows.list_automation_live_suites import _get_kwargs as list_kwargs
-    from faas_sdk.api.workflows.save_automation_live_suite import _get_kwargs as save_kwargs
-    from faas_sdk.models.automation_live_suite import AutomationLiveSuite
-    from faas_sdk.models.save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
+    from faas_sdk.preview.api.workflows.get_automation_live_suite import _get_kwargs as get_kwargs
+    from faas_sdk.preview.api.workflows.list_automation_live_suites import _get_kwargs as list_kwargs
+    from faas_sdk.preview.api.workflows.save_automation_live_suite import _get_kwargs as save_kwargs
+    from faas_sdk.preview.models.automation_live_suite import AutomationLiveSuite
+    from faas_sdk.preview.models.save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
 
     suite_id = UUID("00000000-0000-4000-8000-000000000010")
     run_id = "00000000-0000-4000-8000-000000000011"
@@ -119,8 +119,8 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
 def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
     from uuid import UUID
 
-    from faas_sdk.api.workflows.compare_automation_live_suites import _get_kwargs
-    from faas_sdk.models.automation_live_suite_comparison import AutomationLiveSuiteComparison
+    from faas_sdk.preview.api.workflows.compare_automation_live_suites import _get_kwargs
+    from faas_sdk.preview.models.automation_live_suite_comparison import AutomationLiveSuiteComparison
 
     candidate = UUID("00000000-0000-4000-8000-000000000001")
     baseline = UUID("00000000-0000-4000-8000-000000000002")
@@ -169,11 +169,11 @@ def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
 def test_managed_suites_preserve_target_and_explicit_continuation():
     from uuid import UUID
 
-    from faas_sdk.api.workflows.advance_automation_live_suite import _get_kwargs as advance_kwargs
-    from faas_sdk.api.workflows.start_automation_live_suite import _get_kwargs as start_kwargs
-    from faas_sdk.models.advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
-    from faas_sdk.models.automation_live_suite_summary import AutomationLiveSuiteSummary
-    from faas_sdk.models.start_automation_live_suite_request import StartAutomationLiveSuiteRequest
+    from faas_sdk.preview.api.workflows.advance_automation_live_suite import _get_kwargs as advance_kwargs
+    from faas_sdk.preview.api.workflows.start_automation_live_suite import _get_kwargs as start_kwargs
+    from faas_sdk.preview.models.advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
+    from faas_sdk.preview.models.automation_live_suite_summary import AutomationLiveSuiteSummary
+    from faas_sdk.preview.models.start_automation_live_suite_request import StartAutomationLiveSuiteRequest
 
     suite_id = UUID("0199e820-0000-7000-8000-000000000010")
     body = {
@@ -212,12 +212,12 @@ def test_managed_suites_preserve_target_and_explicit_continuation():
 def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     from uuid import UUID
 
-    from faas_sdk.api.workflows.get_automation_live_baseline import _get_kwargs as get_head
-    from faas_sdk.api.workflows.get_automation_live_baseline_history import _get_kwargs as get_history
-    from faas_sdk.api.workflows.promote_automation_live_baseline import _get_kwargs as promote
-    from faas_sdk.models.automation_live_baseline import AutomationLiveBaseline
-    from faas_sdk.models.automation_live_baseline_history import AutomationLiveBaselineHistory
-    from faas_sdk.models.promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
+    from faas_sdk.preview.api.workflows.get_automation_live_baseline import _get_kwargs as get_head
+    from faas_sdk.preview.api.workflows.get_automation_live_baseline_history import _get_kwargs as get_history
+    from faas_sdk.preview.api.workflows.promote_automation_live_baseline import _get_kwargs as promote
+    from faas_sdk.preview.models.automation_live_baseline import AutomationLiveBaseline
+    from faas_sdk.preview.models.automation_live_baseline_history import AutomationLiveBaselineHistory
+    from faas_sdk.preview.models.promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 
     promotion_id = UUID("00000000-0000-4000-8000-000000000020")
     suite_id = "00000000-0000-4000-8000-000000000010"
@@ -268,8 +268,8 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     history = {"promotions": [receipt]}
     assert AutomationLiveBaselineHistory.from_dict(history).to_dict() == history
 
-    from faas_sdk.api.workflows.list_automation_live_baselines import _get_kwargs as list_baselines
-    from faas_sdk.models.list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
+    from faas_sdk.preview.api.workflows.list_automation_live_baselines import _get_kwargs as list_baselines
+    from faas_sdk.preview.models.list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
 
     listing = list_baselines("billing", "case/report")
     assert listing["method"] == "get"
@@ -294,10 +294,10 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
 
 
 def test_baseline_retirement_request_and_history_roundtrip():
-    from faas_sdk.api.workflows.retire_automation_live_baseline import _get_kwargs
-    from faas_sdk.models.automation_live_baseline_history import AutomationLiveBaselineHistory
-    from faas_sdk.models.automation_live_baseline_retirement import AutomationLiveBaselineRetirement
-    from faas_sdk.models.retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
+    from faas_sdk.preview.api.workflows.retire_automation_live_baseline import _get_kwargs
+    from faas_sdk.preview.models.automation_live_baseline_history import AutomationLiveBaselineHistory
+    from faas_sdk.preview.models.automation_live_baseline_retirement import AutomationLiveBaselineRetirement
+    from faas_sdk.preview.models.retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
 
     identity = "00000000-0000-4000-8000-000000000014"
     request = RetireAutomationLiveBaselineRequest(expected_revision=3)

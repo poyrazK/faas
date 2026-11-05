@@ -45,6 +45,12 @@ class Failure(Exception):
     """Only fixed, credential-free diagnostics may leave this harness."""
 
 
+# Deploy's recovery guidance after an uncertain submission (deploy_recovery.go,
+# deploy_success.go). These lines may name an accepted deployment that the
+# guided session has not adopted.
+RECOVERY_GUIDANCE = re.compile(r"Stage: \S+; inspect: |Deployment: \S+; resume: |(?:deployment|release) wait \S+")
+
+
 def require(condition, message):
     if not condition:
         raise Failure(message)
@@ -265,6 +271,14 @@ def source_multipart(root, project):
 class Terminal:
     """Real CLI, terminal stdin, plain bounded output kept only in memory."""
     def __init__(self, cli, directory, environment):
+        # gregale start refuses FAAS_TOKEN, which would shadow the login it
+        # saves; sign the CLI in to this launch's config directory instead.
+        environment = dict(environment)
+        token = environment.pop("FAAS_TOKEN", "")
+        if token:
+            login = subprocess.run([str(cli), "login", "--token-stdin"], env=environment, input=token.encode(),
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, check=False)
+            require(login.returncode == 0, "gregale login failed: " + login.stderr.decode(errors="replace").replace(token, "[credential]")[-500:])
         master, slave = pty.openpty()
         settings = termios.tcgetattr(slave)
         settings[3] &= ~termios.ECHO
@@ -1107,7 +1121,13 @@ class Run:
                             terminal.wait(-signal.SIGKILL)
                         else:
                             terminal.wait(3, timeout=60)
-                        require(receipt["deployment_id"] not in terminal.output, "CLI received the acceptance that should have been withheld")
+                        # The upload receipt confirms a commit whose reply was lost
+                        # (#4806), so deploy may name the deployment in its recovery
+                        # guidance. Nothing else may: the session keeps the submission
+                        # pending (checked below) until recovery verifies it.
+                        leaked = [line for line in terminal.output.splitlines()
+                                  if receipt["deployment_id"] in line and not RECOVERY_GUIDANCE.search(line)]
+                        require(not leaked, "CLI adopted the acceptance that should have been withheld: " + "; ".join(leaked)[:400])
                         item["exit_status"] = terminal.process.returncode
                         item["pending"] = run.pending_submission(launch, receipt, previous)
                         counts = relay.command("healthy", True)
@@ -1302,6 +1322,18 @@ class Run:
                 require(self.api.get("/v1/apps/" + slug, expected=(200, 404))[0] == 404, "app deletion did not converge")
             except Failure:
                 failures.append("owned app deletion needs inspection")
+        if resources.get("environment_id"):
+            # A project with a named stage refuses deletion (409), so the stage
+            # this run created goes first, and only when it is still that stage.
+            path = "/v1/projects/" + project + "/environments/" + self.target["named_environment"]
+            try:
+                status, environment = self.api.get(path, expected=(200, 404))
+                if status == 200:
+                    require(environment.get("id") == resources["environment_id"], "environment identity changed; refusing environment deletion")
+                    self.api.request("DELETE", path, expected=(202, 204))
+                require(self.api.get(path, expected=(200, 404))[0] == 404, "environment deletion did not converge")
+            except Failure:
+                failures.append("owned environment deletion needs inspection")
         if resources.get("project_id"):
             try:
                 status, project_row = self.api.get("/v1/projects/" + project, expected=(200, 404))

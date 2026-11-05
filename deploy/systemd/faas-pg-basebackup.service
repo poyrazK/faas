@@ -20,6 +20,26 @@ Requires=postgresql.service
 Type=oneshot
 User=postgres
 Group=postgres
+# Security review 2026-10-23: these units hold the off-host backup
+# credentials or the backups themselves. Deny what backup work never needs:
+# gaining privileges, kernel tunables, modules and logs, cgroup, clock and
+# hostname changes, new namespaces, realtime scheduling, setuid files and
+# foreign syscall ABIs. Filesystem and capability limits are deliberately
+# left out: the scripts read and prune files other users own and rclone may
+# write under the invoking user's home, which only a live host can verify.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 # ExecStart only — the timer stamps the destination.
 # `-X fetch` streams the WAL segments inline; we don't want a slot because
 # pg_basebackup's slot creation lingers if the drill is interrupted.

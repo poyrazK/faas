@@ -289,6 +289,9 @@ func automationRevisionResponse(revision state.AutomationRevision) (api.Automati
 }
 func (s *server) automationList(ctx context.Context, app state.App, account state.Account) (api.ListAutomationsResponse, error) {
 	response := api.ListAutomationsResponse{AppSlug: app.Slug, RuntimeEnabled: s.workflowRuntimeEnabled, UnavailableReason: workflowScheduleUnavailableReason(s.workflowRuntimeEnabled, app, account), MaxDefinitions: account.Plan.WorkflowMaxPerApp(), Automations: []api.AutomationResponse{}}
+	if response.UnavailableReason == "" && !s.capabilityEnabledFor("workflows", account, app) {
+		response.UnavailableReason = "workflows_not_released"
+	}
 	store, ok := s.store.(state.AutomationStore)
 	if !ok {
 		return response, errors.New("automation storage unavailable")
@@ -377,6 +380,10 @@ func automationResponses(manifest json.RawMessage, records []state.Automation) (
 func (s *server) saveAutomationDraft(w http.ResponseWriter, r *http.Request, account state.Account) {
 	var body api.SaveAutomationDraftRequest
 	if !decodeAutomationBody(w, r, &body) {
+		return
+	}
+	if api.WorkflowUsesAgentSteps(body.Definition) && !s.agentStepsAllowed(account) {
+		writeAutomationError(w, fmt.Errorf("%w: %w", state.ErrAutomationInvalid, api.ErrWorkflowInvalidStepTarget))
 		return
 	}
 	raw, err := json.Marshal(body.Definition)
@@ -491,6 +498,9 @@ func (s *server) validateAutomation(w http.ResponseWriter, r *http.Request, acco
 	}
 	response := api.ValidateAutomationResponse{Issues: []string{}, StepOrder: []string{}}
 	order, err := s.checkAutomationDefinition(r.Context(), app.ID, body.Definition, account.Plan)
+	if err == nil && api.WorkflowUsesAgentSteps(body.Definition) && !s.agentStepsAllowed(account) {
+		order, err = nil, fmt.Errorf("%w: %w", state.ErrAutomationInvalid, api.ErrWorkflowInvalidStepTarget)
+	}
 	if err != nil && !errors.Is(err, state.ErrAutomationInvalid) {
 		writeAutomationError(w, err)
 		return

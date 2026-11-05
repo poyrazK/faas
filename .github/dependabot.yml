@@ -53,6 +53,8 @@ updates:
       - "dependencies"
       - "go"
 
-  # Docker images: dependabot also watches the runner container image
-  # once we add `Dockerfile`s for builders/images/. Off until we have
-  # at least one Dockerfile in the tree.
+  # Docker images: not a Dependabot ecosystem here. images/Dockerfile.lock is
+  # the source of truth for every base digest, and a Dependabot bump of a FROM
+  # line alone fails `make images-lock-check`. The weekly
+  # .github/workflows/images-lock-refresh.yml moves the lock and the FROM
+  # lines together instead (ADR 20261024132405).

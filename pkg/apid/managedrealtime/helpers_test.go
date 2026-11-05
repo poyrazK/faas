@@ -2,6 +2,7 @@ package managedrealtime
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -29,7 +30,9 @@ func (fakeHost) EmitAudit(context.Context, string, *string, map[string]any) {}
 
 func (fakeHost) Ops() *wire.OpsMetrics { return nil }
 
-func (fakeHost) SecretRecipient() *age.X25519Recipient { return nil }
+func (fakeHost) SecretRecipients() ([]*age.X25519Recipient, error) {
+	return nil, errors.New("no recipient")
+}
 
 func (fakeHost) HostIdentitiesForUnseal(context.Context) []*age.X25519Identity { return nil }
 

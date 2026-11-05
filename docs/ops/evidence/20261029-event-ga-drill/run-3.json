@@ -1,0 +1,11 @@
+{
+  "rate_per_second": 50,
+  "acknowledged": 1498,
+  "survived": 1498,
+  "lost": 0,
+  "loss_window_seconds": 0,
+  "crash_to_first_accept_seconds": 1.449125391,
+  "receipts_settled": 1499,
+  "receipts_unsettled": 0,
+  "routing_settle_seconds": 44.488286567
+}

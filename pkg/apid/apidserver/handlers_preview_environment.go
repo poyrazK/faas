@@ -14,7 +14,7 @@ import (
 // Looking up the app first gives unknown and cross-account slugs the same 404
 // surface; the state projection then validates every sibling against its scope.
 func (s *server) getPreviewEnvironmentStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.loadPreviewForStatus(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -36,7 +36,7 @@ func (s *server) getPreviewEnvironmentStatus(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrCapacity("could not read preview environment status"))
 		return
 	}
-	result := previewset.Evaluate(environment.Set.PRNumber, app.ID, environment.Members)
+	result := previewset.EvaluateSet(environment.Set.PRNumber, app.ID, environment.Members, environment.Set.SetupError)
 	response := api.PreviewEnvironmentStatusResponse{
 		RootSlug: app.Slug, RepoFullName: environment.Set.RepoFullName,
 		PRNumber: environment.Set.PRNumber, CommitSHA: environment.Set.CommitSHA,

@@ -17,8 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
-	"os"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -192,6 +194,9 @@ type Service struct {
 	// WritePreviewCheck.
 	WritePreviewCheckForkRefused                WritePreviewCheckForkRefused
 	WritePreviewCheckForkRefusedForInstallation WritePreviewCheckForkRefusedForInstallationFunc
+	// WritePreviewCheckNeutralForInstallation posts the neutral check of
+	// a PR the project's policy skips (bot or draft). Nil-safe.
+	WritePreviewCheckNeutralForInstallation WritePreviewCheckNeutralForInstallationFunc
 	// WritePreviewDestroyComment is the one-time PR-thread
 	// destroy-hint writer (issue #961 Mega-C PR-1, leaf 3).
 	// Same nil-safe posture as WritePreviewCheck. The dedupe
@@ -226,6 +231,12 @@ type Service struct {
 	// behaviour; tests that don't care about source staging
 	// keep working unchanged).
 	WorkDir string
+	// AutomationEvents forwards pull_request deliveries to apid as
+	// gregale.github events (ADR-20261027090010 §9); nil forwards none.
+	AutomationEvents AutomationEventPublisher
+	// CapabilityAllowed decides a product capability's platform flag for an
+	// account (ADR-20261023115741). nil releases every capability.
+	CapabilityAllowed func(capability, accountID string) bool
 }
 
 // NewService builds a Service. Tests inject fakes for the seams;
@@ -254,6 +265,16 @@ func webhookDeliveryID(ctx context.Context) string {
 	return deliveryID
 }
 
+// errUnprocessableWebhook marks a delivery whose payload cannot be decoded
+// or validated, or whose event githubd does not route. Retrying cannot change
+// the stored bytes, so the worker dead-letters it on the first attempt and the
+// dead-delivery alert surfaces it at once instead of after the retry budget.
+var errUnprocessableWebhook = errors.New("githubd: unprocessable webhook delivery")
+
+func unprocessableWebhook(err error) error {
+	return fmt.Errorf("%w: %w", errUnprocessableWebhook, err)
+}
+
 // HandleWebhookEvent routes the standard X-GitHub-Event value. Keeping the
 // router beside the business service prevents the HTTP transport and durable
 // worker from drifting into push-only behavior.
@@ -264,27 +285,35 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 	case "push":
 		event, err := DecodePush(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if event.Installation.ID <= 0 {
-			return errors.New("githubd: push missing installation.id")
+			return unprocessableWebhook(errors.New("githubd: push missing installation.id"))
 		}
 		_, err = s.HandlePushRequest(ctx, body)
 		return err
 	case "pull_request":
-		event, err := DecodePullRequest(body)
-		if err != nil {
+		// Automations come first and decode on their own: the preview
+		// path refuses actions it does not handle.
+		if err := s.forwardPullRequest(ctx, body); err != nil {
 			return err
 		}
+		event, err := DecodePullRequest(body)
+		if errors.Is(err, ErrPullRequestActionIgnored) {
+			return ErrIgnored
+		}
+		if err != nil {
+			return unprocessableWebhook(err)
+		}
 		if event.Installation.ID <= 0 {
-			return errors.New("githubd: pull_request missing installation.id")
+			return unprocessableWebhook(errors.New("githubd: pull_request missing installation.id"))
 		}
 		_, err = s.handlePullRequest(ctx, body)
 		return err
-	case "installation", "installation_repositories", "repository":
+	case "installation", "installation_repositories", "repository", "installation_target":
 		return s.HandleInstallationLifecycle(ctx, eventType, body)
 	default:
-		return fmt.Errorf("githubd: unsupported webhook event %q", eventType)
+		return unprocessableWebhook(fmt.Errorf("githubd: unsupported webhook event %q", eventType))
 	}
 }
 
@@ -396,6 +425,17 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			err = nil
 		}
 	}
+	if (err != nil || binding.BindingID == "") && isTag {
+		// An app bound without a project to a branch other than the default
+		// one; taggedBoundBranch below picks the branch the tag deploys.
+		tagged, found, tagErr := s.tagBindingForRepository(ctx, ev.Installation.ID, ev.Repository.FullName)
+		if tagErr != nil {
+			return reconcile.Result{}, tagErr
+		}
+		if found {
+			binding, err = tagged, nil
+		}
+	}
 	if err != nil {
 		return reconcile.Result{}, ErrNoBinding
 	}
@@ -424,16 +464,47 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, ErrNoBinding
 	}
 
-	// 3. Resolve the project row. ProjectByRepo is the
-	// push-dispatch lookup from PR-F; missing projects map to
-	// ErrNoBinding (a bind row without a project is a soft-
-	// deleted binding — ignore the push).
+	// 3. Resolve the project bound to the repository, if any, and the apps
+	// bound to the pushed branch at the app level (ADR-20261101160300). The
+	// project's apps deploy through reconcile; app-bound apps build as they
+	// are, beside the project's or without one.
 	project, err := s.Reconcile.Store.ProjectByRepo(ctx, binding.AccountID, install.InstallationID, ev.Repository.FullName)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return reconcile.Result{}, fmt.Errorf("githubd: resolve project: %w", err)
+	}
+	projectBound := err == nil
+	if isTag && !projectBound {
+		tagged, ok, tagErr := s.taggedBoundBranch(ctx, binding, install.InstallationID, ev)
+		if tagErr != nil {
+			return reconcile.Result{}, tagErr
+		}
+		if !ok {
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonTagNotBranchHead)
+		}
+		branch = tagged
+	}
+	// A project's release tags deploy only the project, as they always have.
+	var boundApps []state.App
+	actionsOnly := false
+	if !isTag || !projectBound {
+		boundApps, actionsOnly, err = s.appsBoundForPush(ctx, binding, install.InstallationID, ev.Repository.FullName, branch, project.ID)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+	if !projectBound {
+		if actionsOnly {
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
+		}
+		if len(boundApps) == 0 {
 			return reconcile.Result{}, ErrNoBinding
 		}
-		return reconcile.Result{}, fmt.Errorf("githubd: resolve project: %w", err)
+		project = state.Project{AccountID: binding.AccountID, InstallID: install.InstallationID,
+			RepoFullName: ev.Repository.FullName, ProductionBranch: branch}
+	}
+	appBound := make(map[string]bool, len(boundApps))
+	for _, app := range boundApps {
+		appBound[app.ID] = true
 	}
 	policy, err := s.githubDeployPolicy(ctx, project)
 	if err != nil {
@@ -457,8 +528,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			"repo", ev.Repository.FullName)
 		return reconcile.Result{}, ErrNoBinding
 	}
-	if policy.ProductionTrigger == state.ProductionTriggerActions {
-		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	// deployProject reports whether the push reconciles and builds the
+	// project's apps; app-bound apps build either way.
+	deployProject := projectBound && policy.ProductionTrigger != state.ProductionTriggerActions
+	if !deployProject && len(boundApps) == 0 {
+		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonActionsTrigger)
+	}
+	if !s.capabilityAllowed(CapabilityGitHubDeploys, binding.AccountID) {
+		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonCapability)
+		s.Log.Info("githubd: push ignored; capability off",
+			"capability", CapabilityGitHubDeploys, "account_id", binding.AccountID,
+			"repo", ev.Repository.FullName)
+		return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonNotEnabled)
 	}
 
 	// An explicit commit marker is a customer-controlled no-op. Resolve the
@@ -476,12 +557,19 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, ErrSkipDeploy
 	}
 
-	deploymentScope, reconcileBranch, err := s.scopeForPush(ctx, project, branch)
-	if err != nil {
-		if errors.Is(err, ErrIgnored) {
-			return reconcile.Result{}, ErrIgnored
+	deploymentScope, reconcileBranch := state.DefaultEnvScope, branch
+	if deployProject {
+		deploymentScope, reconcileBranch, err = s.scopeForPush(ctx, project, branch)
+		if errors.Is(err, ErrIgnored) && len(boundApps) > 0 {
+			// The project does not deploy this branch; the apps bound to it do.
+			deployProject, deploymentScope, reconcileBranch, err = false, state.DefaultEnvScope, branch, nil
 		}
-		return reconcile.Result{}, err
+		if err != nil {
+			if errors.Is(err, ErrIgnored) {
+				return reconcile.Result{}, pushSkip(SkipReasonBranchNotDeployed)
+			}
+			return reconcile.Result{}, err
+		}
 	}
 	if !isTag {
 		current, headErr := s.pushBranchHeadIsCurrent(ctx, install.InstallationID, ev.Repository.FullName, branch, ev.After)
@@ -489,7 +577,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, fmt.Errorf("githubd: verify push branch head: %w", headErr)
 		}
 		if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonSuperseded)
 		}
 	}
 
@@ -512,9 +600,13 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// the Service.Scan field. The production-branch guard
 	// returns ErrIgnored when the pushed branch differs from
 	// project.ProductionBranch — the caller renders 200-ignored.
-	scan, err := s.Reconcile.Scan(tree.FS())
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
+	// App-bound apps have nothing to reconcile.
+	var scan reposcan.Result
+	if deployProject {
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
+		}
 	}
 	// Fetch and scan can take long enough for the branch to advance after
 	// the pre-fetch check. Re-read the remote head immediately before applying
@@ -526,30 +618,72 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck push branch head: %w", headErr)
 		}
 		if !current {
-			return reconcile.Result{WasIgnored: true}, ErrIgnored
+			return reconcile.Result{WasIgnored: true}, pushSkip(SkipReasonSuperseded)
 		}
 	}
-	// githubd is push-driven (no --exclude analog on the webhook
-	// path); pass nil so workloadDiff's exclude filter is a no-op.
-	result, err := s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
-	if err != nil {
-		if errors.Is(err, reconcile.ErrIgnored) {
-			// Defensive: ErrIgnored is the Plan-side sentinel;
-			// the apply path surfaces feature-branch via
-			// Result.WasIgnored instead. The check stays so a
-			// future guard that errors out with ErrIgnored
-			// gets the same translation.
-			result.WasIgnored = true
-			return result, ErrIgnored
+	var result reconcile.Result
+	// held names the project apps this push does not deploy, with the reason
+	// its GitHub check gives (ADR-20261103112845).
+	held := map[string]string{}
+	if deployProject {
+		// A push never removes a service: an app whose service left the
+		// Compose file (or is hidden by an inactive profile) is excluded
+		// from the reconcile, keeps serving, and waits for a reviewed deploy.
+		// A new service whose app name a deleted (or another) app still
+		// holds is not created; the rest of the push goes ahead.
+		heldSlugs, slugErr := s.pushServicesWithHeldSlugs(ctx, project, &scan)
+		if slugErr != nil {
+			return reconcile.Result{}, slugErr
 		}
-		return result, err
-	}
-	// Production-branch guard trips without returning an error;
-	// reconcile marks Result.WasIgnored so the caller can render
-	// the 200-ignored body. Translate to ErrIgnored so the HTTP
-	// handler can branch on the typed sentinel.
-	if result.WasIgnored {
-		return result, ErrIgnored
+		kept, keptErr := s.pushKeptServices(ctx, project, scan)
+		if keptErr != nil {
+			return reconcile.Result{}, keptErr
+		}
+		exclude := make([]string, 0, len(kept))
+		for _, app := range kept {
+			exclude = append(exclude, app.WorkloadName)
+			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+		}
+		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
+		if err != nil {
+			if errors.Is(err, reconcile.ErrIgnored) {
+				// Defensive: ErrIgnored is the Plan-side sentinel;
+				// the apply path surfaces feature-branch via
+				// Result.WasIgnored instead. The check stays so a
+				// future guard that errors out with ErrIgnored
+				// gets the same translation.
+				result.WasIgnored = true
+				return result, pushSkip(SkipReasonBranchNotDeployed)
+			}
+			return result, err
+		}
+		// Production-branch guard trips without returning an error;
+		// reconcile marks Result.WasIgnored so the caller can render
+		// the 200-ignored body. Translate to ErrIgnored so the HTTP
+		// handler can branch on the typed sentinel.
+		if result.WasIgnored {
+			return result, pushSkip(SkipReasonBranchNotDeployed)
+		}
+		// A service whose Compose postgres a push cannot create waits for a
+		// reviewed deploy instead of starting without its database.
+		waiting, waitErr := s.pushServicesWaitingForDatabase(ctx, project, scan, tree.FS(), deploymentScope)
+		if waitErr != nil {
+			return result, waitErr
+		}
+		for id, reason := range waiting {
+			held[id] = reason
+		}
+		// A service held for its slug has no app, so its check is written
+		// by slug here.
+		for _, slug := range slices.Sorted(maps.Keys(heldSlugs)) {
+			s.Log.Info("githubd: push holds service with a held slug", "slug", slug, "detail", heldSlugs[slug])
+			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+				if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					slug, deploymentScope, githubdgrpc.CheckPhaseFailed, heldSlugs[slug]); werr != nil {
+					s.Log.Warn("githubd: write held slug check", "slug", slug, "err", werr)
+				}
+			}
+		}
 	}
 
 	// 6. Build fan-out (PR-GH.6 path-filtered). Query GitHub's
@@ -568,13 +702,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// reconcile metadata delta. A source-only commit does not change an app row,
 	// and a retried delivery sees an already-converged reconcile result; both
 	// still need the same path-filtered deployment fan-out.
-	touched, err := s.Reconcile.Store.AppsForProject(ctx, binding.AccountID, project.ID)
-	if err != nil {
-		return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
+	var touched []state.App
+	if deployProject {
+		touched, err = s.Reconcile.Store.AppsForProject(ctx, binding.AccountID, project.ID)
+		if err != nil {
+			return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
+		}
 	}
 	for i := range touched {
 		touched[i] = applyGitHubRootPolicy(touched[i], policy)
 	}
+	// The project's policy (root, ignored paths) is not an app-bound app's.
+	building := append(append([]state.App(nil), touched...), boundApps...)
 
 	// Path-filter optimization (review #1): when the reconcile
 	// step produced zero apps (empty touched set, e.g. a default-
@@ -586,10 +725,15 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// reachable (binding pointing at a project whose root has no
 	// workloads, or a "no-op drift" reconcile that produced
 	// Added=∅, Changed=∅).
-	var changedFiles []string
+	var changedFiles, boundChangedFiles []string
 	filterMode := filterModePaths
-	if len(touched) > 0 {
-		changedFiles, filterMode = s.lookupChangedFiles(ctx, ev, install.InstallationID)
+	if len(building) > 0 {
+		compared := ev
+		if !isTag {
+			compared.Before = s.changedFilesBase(ctx, ev, binding.AccountID, building, deploymentScope, branch)
+		}
+		changedFiles, filterMode = s.lookupChangedFiles(ctx, compared, install.InstallationID)
+		boundChangedFiles = changedFiles
 		if filterMode == filterModePaths {
 			changedFiles = filterIgnoredGitHubPaths(changedFiles, policy)
 		}
@@ -626,6 +770,8 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	} else {
 		toEnqueue, skipped = s.filterByPath(touched, changedFiles, filterMode)
 	}
+	boundToEnqueue, boundSkipped := s.filterByPath(boundApps, boundChangedFiles, filterMode)
+	skipped = append(skipped, boundSkipped...)
 	deliveryID := webhookDeliveryID(ctx)
 	githubSourceRef := ""
 	var githubInstallationID int64
@@ -639,7 +785,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// Durable deliveries let the deployment outbox write the initial queued
 	// state; skipping the eager write prevents a reclaimed, already-live
 	// delivery from regressing its Check Run back to queued.
-	if deliveryID == "" && s.WriteAppCheck == nil && s.WriteScopedAppCheck == nil && s.WriteCheck != nil && len(toEnqueue) > 0 {
+	if deliveryID == "" && s.WriteAppCheck == nil && s.WriteScopedAppCheck == nil && s.WriteCheck != nil && len(toEnqueue)+len(boundToEnqueue) > 0 {
 		if werr := s.WriteCheck(ctx, ev.Repository.FullName, ev.After, githubdgrpc.CheckPhaseQueued); werr != nil {
 			s.Log.Warn("githubd: write queued check", "err", werr, "repo", ev.Repository.FullName, "sha", ev.After)
 		}
@@ -652,8 +798,26 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return result, fmt.Errorf("githubd: order dependency admission: %w", err)
 	}
 	selected, accepted := reconcile.ProjectDeploymentSelection(toEnqueue), make(map[string]bool, len(toEnqueue))
+	// App-bound apps have no project dependency graph and deploy to their
+	// production scope, whichever scope the branch maps the project's to.
+	toEnqueue = append(toEnqueue, boundToEnqueue...)
 	for _, app := range toEnqueue {
-		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
+		appScope := deploymentScope
+		if reason, ok := held[app.ID]; ok && !appBound[app.ID] {
+			// No deployment exists for a held app, so no outbox writes its
+			// check; write it here on every delivery path.
+			s.Log.Info("githubd: push holds app", "app_id", app.ID, "detail", reason)
+			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+				if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, appScope, githubdgrpc.CheckPhaseFailed, reason); werr != nil {
+					s.Log.Warn("githubd: write held app check", "app_id", app.ID, "err", werr)
+				}
+			}
+			continue
+		}
+		if appBound[app.ID] {
+			appScope = state.DefaultEnvScope
+		} else if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
 			s.Log.Warn("githubd: dependency admission blocked", "app_id", app.ID, "detail", blocker)
 			if deliveryID != "" {
 				deliveryErrors = append(deliveryErrors, fmt.Errorf("enqueue app %s: %s", app.ID, blocker))
@@ -662,7 +826,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
 			if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-				app.Slug, deploymentScope, githubdgrpc.CheckPhaseQueued, fmt.Sprintf("Deployment queued (scope: %s).", deploymentScope)); werr != nil {
+				app.Slug, appScope, githubdgrpc.CheckPhaseQueued, fmt.Sprintf("Deployment queued (scope: %s).", appScope)); werr != nil {
 				s.Log.Warn("githubd: write queued app check", "app_id", app.ID, "err", werr)
 			}
 		}
@@ -678,7 +842,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			s.Log.Warn("githubd: stage app source", "app_id", app.ID, "err", stageErr, "repo", ev.Repository.FullName, "sha", ev.After)
 			if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
 				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, deploymentScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Source staging failed (scope: %s): %s", deploymentScope, stageErr.Error()))
+					app.Slug, appScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Source staging failed (scope: %s): %s", appScope, stageErr.Error()))
 			}
 			if deliveryID != "" {
 				deliveryErrors = append(deliveryErrors, fmt.Errorf("stage app %s: %w", app.ID, stageErr))
@@ -695,7 +859,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			Branch:               branch,
 			GitHubSourceRef:      githubSourceRef,
 			GitHubInstallationID: githubInstallationID,
-			Scope:                deploymentScope,
+			Scope:                appScope,
 			Pusher:               ev.Pusher.Name,
 			SourcePath:           sourcePath,
 			SourceURL:            sourceURL,
@@ -713,7 +877,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			s.Log.Warn("githubd: enqueue build", "app_id", app.ID, "err", err, "repo", ev.Repository.FullName, "sha", ev.After)
 			if deliveryID == "" && (s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil) {
 				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, deploymentScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Build enqueue failed (scope: %s): %s", deploymentScope, err.Error()))
+					app.Slug, appScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Build enqueue failed (scope: %s): %s", appScope, err.Error()))
 			}
 			if deliveryID != "" {
 				deliveryErrors = append(deliveryErrors, fmt.Errorf("enqueue app %s: %w", app.ID, err))
@@ -729,7 +893,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// The durable build row is the source of truth, so
 		// emitting on success keeps the audit paper trail
 		// consistent with the build pipeline.
-		if s.Reconcile != nil && build.ID != "" {
+		if s.Reconcile != nil && build.ID != "" && deployProject && !appBound[app.ID] {
 			s.Reconcile.EmitBuildEnqueued(ctx, project, app.ID, build.ID, build.DeploymentID, ev.After, ev.Repository.FullName, branch, sourcePath)
 		}
 	}
@@ -744,7 +908,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		"sha", ev.After, "binding", binding.BindingID,
 		"added", len(result.Added), "changed", len(result.Changed),
 		"removed", len(result.Removed),
-		"touched", len(touched), "rebuilt", len(buildIDs),
+		"touched", len(building), "rebuilt", len(buildIDs),
 		"skipped", len(skipped), "filter_mode", filterMode,
 		"files", len(changedFiles),
 		"pusher", ev.Pusher.Name)
@@ -829,6 +993,51 @@ func (s *Service) writeAppCheck(ctx context.Context, installationID int64, repoF
 //
 // Any error from the client is logged at warn level so the
 // dashboard can group by mode + truncated flag.
+// changedFilesBase picks the commit the path filter compares the push head
+// against. A delivery dropped because a newer push had already moved the
+// branch never ran its own compare, so the next push compared only its own
+// before..after range: in a monorepo, an app changed only by the dropped push
+// was never rebuilt (the same happens when a partially enqueued delivery's
+// retry is dropped). The base is the commit of the project's most recent
+// GitHub deployment from this branch and scope; a push that is not built on
+// it widens its compare to cover what was skipped. Without such a deployment,
+// or when it is the push's own before or head, the push's before stands.
+func (s *Service) changedFilesBase(ctx context.Context, ev PushEvent, accountID string, touched []state.App, scope, branch string) string {
+	if ev.Before == "" || s.Reconcile == nil || s.Reconcile.Store == nil {
+		return ev.Before
+	}
+	latest, err := s.Reconcile.Store.ListLatestDeploymentPerApp(ctx, accountID)
+	if err != nil {
+		s.Log.Warn("githubd: latest deployments unavailable; comparing the push range only",
+			"repo", ev.Repository.FullName, "sha", ev.After, "err", err)
+		return ev.Before
+	}
+	var base state.Deployment
+	for _, app := range touched {
+		dep, ok := latest[app.ID]
+		if !ok || dep.Kind != state.DeploymentKindGitHub || dep.GitHubSourceRef != branch || dep.CommitSHA == "" ||
+			dep.CommitSHA == ev.After || deploymentScopeKey(dep.Scope) != deploymentScopeKey(scope) {
+			continue
+		}
+		if base.ID == "" || dep.CreatedAt.After(base.CreatedAt) {
+			base = dep
+		}
+	}
+	if base.ID == "" || base.CommitSHA == ev.Before {
+		return ev.Before
+	}
+	s.Log.Info("githubd: push is not built on the last deployed commit; widening the compare",
+		"repo", ev.Repository.FullName, "before", ev.Before, "base", base.CommitSHA, "head", ev.After)
+	return base.CommitSHA
+}
+
+func deploymentScopeKey(scope string) string {
+	if scope == "" {
+		return "default"
+	}
+	return scope
+}
+
 func (s *Service) lookupChangedFiles(ctx context.Context, ev PushEvent, installationID int64) ([]string, string) {
 	if s.ChangedFiles == nil {
 		s.ObserveFilterMode(filterModeFullFallback)
@@ -1089,33 +1298,35 @@ func previewHostnameForSlug(slug string) string {
 	if slug == "" {
 		return ""
 	}
-	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	return slug + "." + domain
+	return slug + "." + AppsDomain()
 }
 
-// dashboardDestroyPreviewURL derives the customer-facing dashboard
-// one-click destroy URL from the parent app's slug + the preview
-// slug (issue #961 Mega-C PR-1, leaf 3). Shape:
-//
-//	/dashboard/apps/{parent_slug}/preview/{preview_slug}/destroy
-//
-// The route is mounted by cmd/apid/server.go as
-// POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy (a
-// future PR-2 commit); githubd's job is to compose the URL and
-// embed it in the PR-thread comment Markdown so the author can
-// click through to the dashboard action.
-func dashboardDestroyPreviewURL(parentSlug, previewSlug string) string {
-	if parentSlug == "" || previewSlug == "" {
+// DashboardAppURL is the customer dashboard page for one app. Links written
+// to GitHub must use routes the dashboard serves: an app page, selected with
+// query parameters, is the deepest one. The page's app menu carries the
+// "Tear down preview" action for a preview app. The dashboard lives on the
+// platform domain (ADR-20261026100000).
+func DashboardAppURL(slug string) string {
+	if slug == "" {
 		return ""
 	}
-	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
+	return "https://" + PlatformDomain() + "/dashboard/apps/" + url.PathEscape(slug)
+}
+
+// DashboardDeploymentURL opens one deployment on its app's Deployments tab.
+func DashboardDeploymentURL(slug, deploymentID string) string {
+	if slug == "" || deploymentID == "" {
+		return ""
 	}
-	return "https://" + domain + "/dashboard/apps/" + parentSlug + "/preview/" + previewSlug + "/destroy"
+	return DashboardAppURL(slug) + "?" + url.Values{"tab": {"Deployments"}, "deployment": {deploymentID}}.Encode()
+}
+
+// DashboardLogsURL opens an app's Logs tab.
+func DashboardLogsURL(slug string) string {
+	if slug == "" {
+		return ""
+	}
+	return DashboardAppURL(slug) + "?tab=Logs"
 }
 
 // previewCommentOnce stamps apps.preview_destroy_commented_at
@@ -1250,6 +1461,25 @@ func (s *Service) writePreviewCheck(ctx context.Context, installationID int64, r
 	return nil
 }
 
+type WritePreviewCheckNeutralForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, title, summary string) error
+
+// previewSkipReason names why the project's policy skips this pull
+// request's preview, or "" to preview it. A close always proceeds so an
+// existing preview is torn down. The policy reads the PR's author, not the
+// event's sender: a human pushing to a Dependabot branch is still a bot PR.
+func previewSkipReason(ev PullRequestEvent, policy state.GitHubDeployPolicy) string {
+	switch {
+	case ev.Action == PullRequestActionClosed:
+		return ""
+	case ev.PullRequest.OpenedByBot() && !policy.PreviewBotPRs:
+		return fmt.Sprintf("This pull request was opened by a bot (%s); the project does not preview bot pull requests. Enable them with `gregale github setup <app> --preview-bots`.",
+			ev.PullRequest.User.Login)
+	case ev.PullRequest.Draft && !policy.PreviewDraftPRs:
+		return "This pull request is a draft; the project previews it once it is marked ready for review."
+	}
+	return ""
+}
+
 func (s *Service) writeForkRefusedCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
 	if s.WritePreviewCheckForkRefusedForInstallation != nil {
 		return s.WritePreviewCheckForkRefusedForInstallation(ctx, installationID, repoFullName, commitSHA, summary)
@@ -1275,15 +1505,18 @@ func previewCommentMarker(previewSlug string) string {
 	return "<!-- gregale-preview:" + previewSlug + " -->"
 }
 
-func previewCommentBody(marker, previewSlug, previewURL, parentSlug, commitSHA string, closed bool) string {
-	status := "queued"
-	statusCopy := "The preview build is queued."
-	if closed {
-		status = "closed"
-		statusCopy = "The PR is closed; teardown is scheduled after the grace period."
-	}
-	destroyURL := dashboardDestroyPreviewURL(parentSlug, previewSlug)
-	return fmt.Sprintf("%s\n### Gregale preview — %s\n\n%s\n\n[Open preview](%s) · [Destroy preview](%s)\n\nCommit: `%s`", marker, status, statusCopy, previewURL, destroyURL, commitSHA)
+const (
+	previewCommentQueued = "The preview build is queued."
+	previewCommentClosed = "The PR is closed. The preview keeps serving for 24 hours, then it is torn down."
+)
+
+// previewCommentBody is the stable PR comment githubd writes before a
+// deployment reports; cmd/githubd's check sync owns it afterwards. The
+// details link opens the preview app's dashboard page, whose app menu
+// tears the preview environment down.
+func previewCommentBody(marker, previewSlug, previewURL, commitSHA, status, detail string) string {
+	return fmt.Sprintf("%s\n### Gregale preview — %s\n\n%s\n\n[Open preview](%s) · [Preview details and teardown](%s)\n\nCommit: `%s`",
+		marker, status, detail, previewURL, DashboardAppURL(previewSlug), commitSHA)
 }
 
 func (s *Service) writePreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
@@ -1326,63 +1559,127 @@ func (s *Service) writePreviewComment(ctx context.Context, installationID int64,
 //   - any other error → 500 (logged with op context).
 func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile.Result, error) {
 	ev, err := DecodePullRequest(body)
+	if errors.Is(err, ErrPullRequestActionIgnored) {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+	target, err := s.resolvePullRequestTarget(ctx, ev)
+	if err != nil {
+		return reconcile.Result{WasIgnored: IsIgnored(err)}, err
+	}
 
-	// D3 fork refusal: short-circuit BEFORE any app creation.
-	// The neutral Check Run is the only outbound signal — no
-	// apps row, no deployment row, no Slack/audit notifications.
+	// D3 fork refusal: short-circuit BEFORE any app creation. Only a bound
+	// repository with previews on hears about it, through the neutral Check
+	// Run; no apps row, no deployment row, no notifications. A fork never
+	// had a preview, so previews being off leaves nothing to retire.
 	if ev.IsFork() {
-		if werr := s.writeForkRefusedCheck(ctx, ev.Installation.ID,
-			ev.Repository.FullName, ev.PullRequest.HeadSHA,
-			"Fork PR refused — head repo differs from base repo "+
-				"(security policy; ADR-094 D3)"); werr != nil {
-			s.Log.Warn("githubd: write fork-refused preview check", "err", werr,
-				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+		if ev.Action != PullRequestActionClosed && target.previewsOff == "" {
+			if werr := s.writeForkRefusedCheck(ctx, target.install.InstallationID,
+				ev.Repository.FullName, ev.PullRequest.HeadSHA,
+				"Fork PR refused — head repo differs from base repo "+
+					"(security policy; ADR-094 D3)"); werr != nil {
+				s.Log.Warn("githubd: write fork-refused preview check", "err", werr,
+					"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+			}
 		}
 		s.Log.Info("githubd pull_request: fork refused",
 			"repo", ev.Repository.FullName,
 			"head_repo", ev.HeadRepoFullName(),
 			"pr_number", ev.Number, "action", string(ev.Action),
 			"sender", ev.Sender.Login)
-		result := reconcile.Result{}
-		result.WasIgnored = true
-		return result, ErrIgnored
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
+	if target.previewsOff != "" && ev.Action != PullRequestActionClosed {
+		retired, err := s.retirePullRequestPreviews(ctx, ev, target)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		// Only a PR that had a live preview hears about it; with previews
+		// off, the others stay as quiet as before.
+		if retired && s.WritePreviewCheckNeutralForInstallation != nil {
+			if werr := s.WritePreviewCheckNeutralForInstallation(ctx, target.install.InstallationID,
+				ev.Repository.FullName, ev.PullRequest.HeadSHA, "Previews off", target.previewsOff); werr != nil {
+				s.Log.Warn("githubd: write previews-off check", "err", werr,
+					"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+			}
+		}
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	// The skip below retires a live preview, so it acts on the PR's current
+	// head and draft state, never on a delayed event's.
+	if current, currentErr := s.currentPullRequestDelivery(ctx, target.install.InstallationID, &ev); currentErr != nil {
+		return reconcile.Result{}, fmt.Errorf("githubd: verify current PR state: %w", currentErr)
+	} else if !current {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	if reason := previewSkipReason(ev, target.policy); reason != "" {
+		return s.skipPullRequestPreview(ctx, ev, target, reason)
+	}
+	if ev.Action == PullRequestActionConvertedToDraft {
+		// The project previews drafts: the preview keeps serving this head.
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	result, err := s.applyPullRequest(ctx, ev, target)
+	var setup *previewSetupError
+	if errors.As(err, &setup) {
+		// Retrying the delivery cannot fix the head; tell the PR and finish.
+		s.reportPreviewSetupFailure(ctx, ev, target, setup.reason)
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	return result, err
+}
 
+// pullRequestTarget is the bound production app a pull_request event
+// previews, with the installation and project policy it was resolved under.
+type pullRequestTarget struct {
+	binding state.GitHubBinding
+	install state.GitHubInstall
+	parent  state.App
+	policy  state.GitHubDeployPolicy
+	// siblings are the other apps bound without a project to the parent's
+	// repository and branch; the PR's preview set previews them too.
+	siblings []state.App
+	// previewsOff, when set, says why previews are off for this PR's
+	// project or account.
+	previewsOff string
+}
+
+// resolvePullRequestTarget resolves the (repo) binding, its installation and
+// the parent app. ErrNoBinding and ErrIgnored complete the delivery without
+// any GitHub write: the repository is not previewed by this account.
+func (s *Service) resolvePullRequestTarget(ctx context.Context, ev PullRequestEvent) (pullRequestTarget, error) {
 	// 1. Resolve the (repo) binding. PR previews don't branch-
 	//    filter: any PR opened against a bound repo triggers
-	//    preview provisioning for the parent app. The empty-
-	//    branch argument is the canonical "match any branch"
-	//    shape for AppBindingStore.GetAppBinding.
-	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, "", ev.Installation.ID)
+	//    preview provisioning for the parent app.
+	binding, err := s.pullRequestBinding(ctx, ev)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) || IsNoBinding(err) {
-			return reconcile.Result{}, ErrNoBinding
+			return pullRequestTarget{}, ErrNoBinding
 		}
-		return reconcile.Result{}, fmt.Errorf("githubd: resolve binding for PR: %w", err)
+		return pullRequestTarget{}, fmt.Errorf("githubd: resolve binding for PR: %w", err)
 	}
 	if binding.BindingID == "" || binding.AccountID == "" || binding.AppID == "" {
 		// Defensive: the bind row exists but is incomplete.
 		// The OAuth handshake should never write a partial row,
 		// but a manual SQL edit could.
-		return reconcile.Result{}, ErrNoBinding
+		return pullRequestTarget{}, ErrNoBinding
 	}
 	if ev.Installation.ID > 0 && binding.InstallID != ev.Installation.ID {
-		return reconcile.Result{}, ErrNoBinding
+		return pullRequestTarget{}, ErrNoBinding
 	}
 
 	// 2. Resolve the install row (same shape as HandlePushRequest).
 	install, err := installForAccount(ctx, s.Installs, binding.AccountID, binding.InstallID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return reconcile.Result{}, ErrNoBinding
+			return pullRequestTarget{}, ErrNoBinding
 		}
-		return reconcile.Result{}, fmt.Errorf("githubd: resolve install for PR: %w", err)
+		return pullRequestTarget{}, fmt.Errorf("githubd: resolve install for PR: %w", err)
 	}
 	if install.AccountID == "" || install.InstallationID == 0 {
-		return reconcile.Result{}, ErrNoBinding
+		return pullRequestTarget{}, ErrNoBinding
 	}
 
 	// 3. Takeover guard: the bind row's InstallID must match
@@ -1394,7 +1691,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			"binding_install_id", binding.InstallID,
 			"install_installation_id", install.InstallationID,
 			"repo", ev.Repository.FullName, "pr_number", ev.Number)
-		return reconcile.Result{}, ErrNoBinding
+		return pullRequestTarget{}, ErrNoBinding
 	}
 
 	// 4. Load the parent app. The binding's AppID is the parent;
@@ -1406,30 +1703,185 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			// Bind row points at a deleted parent — treat as
 			// unbound. The dashboard's "orphaned bindings"
 			// pane surfaces this case to operators.
-			return reconcile.Result{}, ErrNoBinding
+			return pullRequestTarget{}, ErrNoBinding
 		}
-		return reconcile.Result{}, fmt.Errorf("githubd: resolve parent app: %w", err)
+		return pullRequestTarget{}, fmt.Errorf("githubd: resolve parent app: %w", err)
 	}
-	if parentApp.Status != state.AppActive && ev.Action != PullRequestActionClosed {
-		// The parent isn't active (soft-deleted, suspended, etc.).
-		// Provisioning a preview on top of an inactive parent is
-		// nonsensical. A close event still needs to retire existing siblings.
-		return reconcile.Result{}, ErrNoBinding
+	if !previewableProductionApp(parentApp) && ev.Action != PullRequestActionClosed {
+		// The parent is soft-deleted or otherwise retired. Provisioning a
+		// preview on top of it is nonsensical. A close event still needs to
+		// retire existing siblings.
+		return pullRequestTarget{}, ErrNoBinding
 	}
 	previewProject := state.Project{ID: parentApp.ProjectID, AccountID: parentApp.AccountID, RepoFullName: ev.Repository.FullName}
 	policy, err := s.githubDeployPolicy(ctx, previewProject)
 	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("githubd: resolve PR preview policy: %w", err)
+		return pullRequestTarget{}, fmt.Errorf("githubd: resolve PR preview policy: %w", err)
 	}
-	if !policy.PreviewEnabled && ev.Action != PullRequestActionClosed {
-		result := reconcile.Result{WasIgnored: true}
-		return result, ErrIgnored
+	target := pullRequestTarget{binding: binding, install: install, parent: parentApp, policy: policy}
+	appPreviewsOff := false
+	if parentApp.ProjectID == "" {
+		// Every app bound without a project to this branch is previewed, in
+		// app ID order; the first with previews on is the set's root.
+		members, err := s.plainPreviewApps(ctx, binding, install.InstallationID, ev.Repository.FullName)
+		if err != nil {
+			return pullRequestTarget{}, err
+		}
+		if len(members) == 0 {
+			appPreviewsOff = true
+		} else {
+			target.parent, target.siblings = members[0], members[1:]
+		}
 	}
-	if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
-		return reconcile.Result{}, fmt.Errorf("githubd: verify current PR state: %w", currentErr)
-	} else if !current {
-		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	// A closed PR still tears its preview down when previews are off; any
+	// other event retires the PR's open previews (handlePullRequest).
+	switch {
+	case !s.previewsAllowed(binding.AccountID):
+		target.previewsOff = "PR previews are not enabled for this account; this pull request's preview is being torn down."
+	case !policy.PreviewEnabled:
+		target.previewsOff = "PR previews are turned off for this project; this pull request's preview is being torn down."
+	case appPreviewsOff:
+		target.previewsOff = "PR previews are turned off for the apps bound to this branch; this pull request's preview is being torn down."
 	}
+	return target, nil
+}
+
+// plainPreviewApps returns the live apps bound without a project to
+// binding's repository and branch whose previews are on, in app ID order.
+func (s *Service) plainPreviewApps(ctx context.Context, binding state.GitHubBinding, installationID int64, repo string) ([]state.App, error) {
+	bound, err := s.appsBoundToBranch(ctx, binding, installationID, repo, bindingBranch(binding), "")
+	if err != nil {
+		return nil, err
+	}
+	var apps []state.App
+	for _, candidate := range bound {
+		if candidate.app.ProjectID == "" && !candidate.binding.PreviewsOff && previewableProductionApp(candidate.app) {
+			apps = append(apps, candidate.app)
+		}
+	}
+	return apps, nil
+}
+
+// skipPullRequestPreview answers a PR head the project's policy does not
+// preview (a bot's PR, or a draft). A preview built for an earlier head is
+// retired too: GitHub's later events for the PR are skipped as well, so it
+// would serve that head to the end of its lease while the PR's check said
+// the preview was skipped.
+// pullRequestTargetStillCurrent re-resolves the PR's binding and preview
+// policy and reports whether they still allow the preview target resolved at
+// the start of the event. A lookup error counts as not current: the event is
+// ignored and the next one retries.
+func (s *Service) pullRequestTargetStillCurrent(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) bool {
+	fresh, err := s.resolvePullRequestTarget(ctx, ev)
+	if err != nil {
+		if !errors.Is(err, ErrNoBinding) && s.Log != nil {
+			s.Log.Warn("githubd: recheck PR preview target failed; ignoring the event", "repo", ev.Repository.FullName, "pr", ev.Number, "err", err)
+		}
+		return false
+	}
+	return fresh.previewsOff == "" && fresh.parent.ID == target.parent.ID &&
+		fresh.binding.InstallID == target.binding.InstallID && strings.EqualFold(fresh.binding.RepoFullName, target.binding.RepoFullName)
+}
+
+func (s *Service) skipPullRequestPreview(ctx context.Context, ev PullRequestEvent, target pullRequestTarget, reason string) (reconcile.Result, error) {
+	retired, err := s.retirePullRequestPreviews(ctx, ev, target)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if retired {
+		reason += " Its earlier preview is being torn down."
+	}
+	if s.WritePreviewCheckNeutralForInstallation != nil {
+		if werr := s.WritePreviewCheckNeutralForInstallation(ctx, target.install.InstallationID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA, "Preview skipped", reason); werr != nil {
+			s.Log.Warn("githubd: write skipped preview check", "err", werr,
+				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+		}
+	}
+	return reconcile.Result{WasIgnored: true}, ErrIgnored
+}
+
+// retirePullRequestPreviews tears down an open PR's previews once previews
+// are off for its project or account, or its policy skips the PR. githubd
+// ignores the PR's pushes from then on, so the previews would otherwise serve
+// their last commit to the end of their lease. Their lease ends now; the
+// janitor tears them down.
+// retired reports whether the PR's preview was still open.
+func (s *Service) retirePullRequestPreviews(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) (retired bool, err error) {
+	now := time.Now()
+	if err := s.closePRDependencies(ctx, target.parent, target.install.InstallationID, ev.Repository.FullName, ev.Number, now); err != nil {
+		return false, fmt.Errorf("githubd: retire PR preview siblings: %w", err)
+	}
+	if sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore); ok {
+		if err := sets.ClosePRPreviewSet(ctx, target.install.InstallationID, ev.Repository.FullName, ev.Number); err != nil {
+			return false, fmt.Errorf("githubd: retire PR preview set: %w", err)
+		}
+	}
+	slug, err := previewSlug(target.parent.Slug, ev.Number)
+	if err != nil {
+		return false, err
+	}
+	preview, err := s.Reconcile.Store.AppBySlug(ctx, slug)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && preview.Status == state.AppDeleted) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("githubd: resolve retiring preview: %w", err)
+	}
+	if _, err := s.Reconcile.Store.ClosePRPreview(ctx, preview.ID, now); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return false, fmt.Errorf("githubd: retire PR preview: %w", err)
+	}
+	return preview.PreviewPrState == state.PreviewPrStateOpen, nil
+}
+
+// pullRequestBinding finds the binding a PR previews. Bindings are keyed by
+// (repository, production branch), and the stores read an empty branch as
+// "main", so a branch-less lookup missed every repository whose production
+// branch is master, trunk or anything else. The PR's base branch comes first
+// (a PR into a branch with its own binding previews that app), then the
+// project's production branch, the repository's default branch and finally
+// the legacy empty-branch lookup.
+func (s *Service) pullRequestBinding(ctx context.Context, ev PullRequestEvent) (state.GitHubBinding, error) {
+	branches := []string{ev.PullRequest.Base.Ref}
+	if s.Reconcile != nil && s.Reconcile.Store != nil && ev.Installation.ID > 0 {
+		project, err := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		switch {
+		case err == nil:
+			branches = append(branches, project.ProductionBranch)
+		case !errors.Is(err, state.ErrNotFound):
+			return state.GitHubBinding{}, fmt.Errorf("githubd: resolve project for PR: %w", err)
+		}
+	}
+	branches = append(branches, ev.Repository.DefaultBranch, "")
+	tried := make(map[string]bool, len(branches))
+	for _, branch := range branches {
+		if tried[branch] {
+			continue
+		}
+		tried[branch] = true
+		binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, branch, ev.Installation.ID)
+		if err == nil && binding.BindingID != "" {
+			return binding, nil
+		}
+		if err != nil && !errors.Is(err, state.ErrNotFound) && !IsNoBinding(err) {
+			return state.GitHubBinding{}, err
+		}
+	}
+	return state.GitHubBinding{}, ErrNoBinding
+}
+
+// previewableProductionApp reports whether a production app can be
+// previewed. A parked app (evicted_cold) is still the customer's app: its
+// PR previews are separate apps that wake on their own.
+func previewableProductionApp(app state.App) bool {
+	return app.Status == state.AppActive || app.Status == state.AppEvictedCold
+}
+
+// applyPullRequest provisions, refreshes or closes the PR preview set for a
+// current delivery. A *previewSetupError reports a failure the PR head or
+// account must fix; other errors retry the delivery.
+func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) (reconcile.Result, error) {
+	binding, install, parentApp, policy := target.binding, target.install, target.parent, target.policy
 
 	// 5. Derive the preview slug + provision the preview apps row.
 	//    Idempotent on (account_id, slug) — a 2nd synchronize
@@ -1443,7 +1895,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	closeExpiresAt := time.Time{}
 	if ev.Action == PullRequestActionClosed {
 		closeExpiresAt = time.Now().Add(state.PRPreviewClosedGrace)
-		if closeErr := s.closePRDependencies(ctx, parentApp, ev.Number, closeExpiresAt); closeErr != nil {
+		if closeErr := s.closePRDependencies(ctx, parentApp, install.InstallationID, ev.Repository.FullName, ev.Number, closeExpiresAt); closeErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: close PR preview siblings: %w", closeErr)
 		}
 		if sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore); ok {
@@ -1451,14 +1903,19 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 				return reconcile.Result{}, fmt.Errorf("githubd: close PR preview set: %w", closeErr)
 			}
 		}
-		if _, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal); lookupErr != nil {
-			if errors.Is(lookupErr, state.ErrNotFound) {
-				// GitHub can deliver a close after retention already removed the
-				// preview (or without a prior open). Teardown is an idempotent no-op;
-				// never create a quota-consuming closed app just to delete it later.
-				return reconcile.Result{}, nil
-			}
+		existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
+		if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 			return reconcile.Result{}, fmt.Errorf("githubd: resolve closing preview: %w", lookupErr)
+		}
+		// GitHub can deliver a close after retention already removed the
+		// preview (or without a prior open). Teardown is an idempotent no-op;
+		// never create a quota-consuming closed app just to delete it later. A
+		// preview torn down before the close (lease expired, destroyed) leaves
+		// a tombstone under its slug: its PR comment already says it is gone,
+		// and must not be rewritten to say it keeps serving for 24 hours.
+		if lookupErr != nil || existing.Status == state.AppDeleted ||
+			existing.PreviewPrState == state.PreviewPrStateTearingDown || existing.PreviewPrState == state.PreviewPrStateTornDown {
+			return reconcile.Result{}, nil
 		}
 	}
 
@@ -1481,32 +1938,42 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		// ID is left blank — pgstore.CreateAppIfUnderQuota mints a
 		// UUIDv7 when App.ID is empty. The preview app is a fresh
 		// row; reusing the parent's ID would collide on the PK.
-		AccountID:        parentApp.AccountID,
-		OrgID:            parentApp.OrgID,
-		Slug:             previewSlugVal,
-		Type:             parentApp.Type,
-		Runtime:          parentApp.Runtime,
-		RAMMB:            parentApp.RAMMB,
-		MaxConcurrency:   parentApp.MaxConcurrency,
-		IdleTimeoutS:     parentApp.IdleTimeoutS,
-		ProjectID:        parentApp.ProjectID,
-		RootDir:          parentApp.RootDir,
-		WorkloadName:     parentApp.WorkloadName,
-		WorkloadClass:    parentApp.WorkloadClass,
-		StartCommand:     parentApp.StartCommand,
-		Manifest:         previewManifest(parentApp.Manifest),
-		AppProtocol:      parentApp.AppProtocol,
-		Status:           state.AppActive,
-		Visibility:       parentApp.Visibility,
-		PreviewOfSlug:    parentApp.Slug,
-		PreviewPrNumber:  ev.Number,
-		PreviewPrState:   previewState,
-		PreviewExpiresAt: &expiresAt,
+		AccountID:      parentApp.AccountID,
+		OrgID:          parentApp.OrgID,
+		Slug:           previewSlugVal,
+		Type:           parentApp.Type,
+		Runtime:        parentApp.Runtime,
+		RAMMB:          parentApp.RAMMB,
+		MaxConcurrency: parentApp.MaxConcurrency,
+		IdleTimeoutS:   parentApp.IdleTimeoutS,
+		// The preview serves what production serves: a WebSocket or
+		// streaming app's preview answered upgrades with 501 and buffered
+		// streamed responses (ADR-20261031120000).
+		CPUMillicores:       parentApp.CPUMillicores,
+		StreamingEnabled:    parentApp.StreamingEnabled,
+		WebSocketEnabled:    parentApp.WebSocketEnabled,
+		RouteMetricsEnabled: parentApp.RouteMetricsEnabled,
+		ProjectID:           parentApp.ProjectID,
+		RootDir:             parentApp.RootDir,
+		WorkloadName:        parentApp.WorkloadName,
+		WorkloadClass:       parentApp.WorkloadClass,
+		StartCommand:        parentApp.StartCommand,
+		Manifest:            previewManifest(parentApp.Manifest),
+		AppProtocol:         parentApp.AppProtocol,
+		Status:              state.AppActive,
+		Visibility:          parentApp.Visibility,
+		PreviewOfSlug:       parentApp.Slug,
+		PreviewPrNumber:     ev.Number,
+		PreviewPrState:      previewState,
+		PreviewExpiresAt:    &expiresAt,
 	}
-	previewApp = applyGitHubRootPolicy(previewApp, policy)
+	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
-	// allowance comes from the plan table, including dependency previews.
-	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
+	// allowance comes from the plan table, including dependency previews. It
+	// is the account that owns the project's resources, as for a project
+	// deploy: an organization's plan for its apps, not the binding creator's
+	// personal plan (bug hunt 33).
+	account, err := state.AppResourceAccount(ctx, s.Reconcile.Store, parentApp)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
 	}
@@ -1520,20 +1987,50 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	var dependencies []state.App
 	var workloads map[string]reposcan.Workload
 	var available map[string]struct{}
+	var headValues map[string]map[string]string
 	if sourceReady {
+		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
+			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
+		if reopenErr != nil {
+			return reconcile.Result{}, reopenErr
+		}
+		if reopened {
+			return reconcile.Result{}, nil
+		}
+		kept, keepErr := s.keepLivePreviewOnReady(ctx, ev, install.InstallationID,
+			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
+		if keepErr != nil {
+			return reconcile.Result{}, keepErr
+		}
+		if kept {
+			return reconcile.Result{}, nil
+		}
+		skipped, skipErr := s.skipIgnoredPullRequestPush(ctx, ev, install.InstallationID, policy,
+			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
+		if skipErr != nil {
+			return reconcile.Result{}, skipErr
+		}
+		if skipped {
+			return reconcile.Result{WasIgnored: true}, nil
+		}
 		tree, err = s.Source.Fetch(ctx, binding.AccountID, install.InstallationID,
 			ev.Repository.FullName, ev.PullRequest.HeadSHA)
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: fetch preview source: %w", err)
 		}
 		defer func() { _ = tree.Close() }()
-		scan, err = s.Reconcile.Scan(tree.FS())
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(binding.AccountID))
 		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("githubd: scan PR source: %w", err)
+			return reconcile.Result{}, previewSetupFailure("Gregale could not read the project at this commit: %s", strings.TrimPrefix(err.Error(), "reposcan: "))
 		}
 		dependencies, err = s.previewDependencyParents(ctx, parentApp, scan, ev.Number)
 		if err != nil {
 			return reconcile.Result{}, err
+		}
+		if parentApp.ProjectID == "" {
+			// Apps bound without a project have no dependency graph; the
+			// other apps bound to the branch join the PR's preview set.
+			dependencies = target.siblings
 		}
 		workloads = make(map[string]reposcan.Workload, len(scan.Workloads))
 		available = make(map[string]struct{}, len(scan.Workloads))
@@ -1542,13 +2039,25 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			workloads[key] = workload
 			available[key] = struct{}{}
 		}
+		if reasons := reconcile.WorkloadPlanAdmissionReasons(account.Plan, previewedWorkloads(workloads, parentApp, dependencies)); len(reasons) > 0 {
+			return reconcile.Result{}, previewSetupFailure("the pull request does not fit the %s plan: %s", account.Plan, strings.Join(reasons, "; "))
+		}
+		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
 	if sourceReady {
-		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
+		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, &ev); currentErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
 		} else if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
+		// Previews turned off, or the app unbound or rebound, while the
+		// source was fetched and scanned: that retire marked this PR's
+		// preview stale, and reserving now would reopen it with a fresh
+		// lease (bug hunt 33). The next event for the PR acts on the
+		// current target.
+		if !s.pullRequestTargetStillCurrent(ctx, ev, target) {
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}
@@ -1580,13 +2089,10 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		if reserveErr != nil {
 			var quota *state.QuotaError
 			if errors.As(reserveErr, &quota) {
-				previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
-				if werr := s.writePreviewCheck(ctx, install.InstallationID, ev.Repository.FullName,
-					ev.PullRequest.HeadSHA, githubdgrpc.CheckPhaseFailed, previewURL,
-					"Preview skipped: the full dependency set exceeds the PR preview limit. Close a preview or upgrade your plan."); werr != nil {
-					s.Log.Warn("githubd: write quota preview check", "err", werr)
-				}
-				return reconcile.Result{WasIgnored: true}, ErrIgnored
+				return reconcile.Result{}, previewSetupFailure("%s", previewQuotaSummary(quota, len(batch)))
+			}
+			if errors.Is(reserveErr, state.ErrConflict) {
+				return reconcile.Result{}, previewSetupFailure("a preview app name for this pull request is already used by another app or pull request")
 			}
 			return reconcile.Result{}, fmt.Errorf("githubd: reserve PR preview set: %w", reserveErr)
 		}
@@ -1606,21 +2112,10 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 					created = existing
 					err = nil
 				} else {
-					previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
-					if werr := s.writePreviewCheck(ctx, install.InstallationID,
-						ev.Repository.FullName, ev.PullRequest.HeadSHA,
-						githubdgrpc.CheckPhaseFailed, previewURL,
-						"Preview skipped: account has reached its PR preview limit. "+
-							"Close an existing preview or upgrade your plan."); werr != nil {
-						s.Log.Warn("githubd: write quota preview check", "err", werr,
-							"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
-					}
 					s.Log.Info("githubd pull_request: quota exhausted",
 						"repo", ev.Repository.FullName, "pr_number", ev.Number,
 						"sender", ev.Sender.Login)
-					result := reconcile.Result{}
-					result.WasIgnored = true
-					return result, ErrIgnored
+					return reconcile.Result{}, previewSetupFailure("%s", previewQuotaSummary(qe, 1))
 				}
 			}
 		}
@@ -1699,8 +2194,11 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
 	if s.WritePreviewCommentForInstallation != nil {
 		marker := previewCommentMarker(previewSlugVal)
-		body := previewCommentBody(marker, previewSlugVal, previewURL, parentApp.Slug,
-			ev.PullRequest.HeadSHA, ev.Action == PullRequestActionClosed)
+		status, detail := "queued", previewCommentQueued
+		if ev.Action == PullRequestActionClosed {
+			status, detail = "closed", previewCommentClosed
+		}
+		body := previewCommentBody(marker, previewSlugVal, previewURL, ev.PullRequest.HeadSHA, status, detail)
 		if werr := s.writePreviewComment(ctx, install.InstallationID, ev.Repository.FullName,
 			ev.Number, marker, body); werr != nil {
 			s.Log.Warn("githubd: upsert preview status comment", "err", werr,
@@ -1720,10 +2218,9 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	if ev.Action == PullRequestActionClosed && s.WritePreviewCommentForInstallation == nil && s.WritePreviewDestroyComment != nil {
 		firstTime, _ := s.previewCommentOnce(ctx, created.ID)
 		if firstTime {
-			destroyURL := dashboardDestroyPreviewURL(parentApp.Slug, previewSlugVal)
 			body := fmt.Sprintf(
 				"Preview `%s` is open against `%s`. [Tear it down from the dashboard](%s).",
-				previewSlugVal, parentApp.Slug, destroyURL)
+				previewSlugVal, parentApp.Slug, DashboardAppURL(previewSlugVal))
 			if werr := s.WritePreviewDestroyComment(ctx,
 				ev.Repository.FullName, ev.Number, body); werr != nil {
 				s.Log.Warn("githubd: write preview destroy comment", "err", werr,
@@ -1762,7 +2259,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	// real DeploymentKindPreview build.
 	if sourceReady {
 		if parentApp.ProjectID != "" {
-			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy)
+			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
+				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head workload %q: %w", parentApp.WorkloadName, err)
 			}
@@ -1774,9 +2272,13 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			if refreshErr != nil {
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
-			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy)
-			if err != nil {
-				return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
+			if dependency.ProjectID != "" {
+				// An app bound without a project builds as it is, like the root.
+				preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
+					headValues[strings.ToLower(dependency.WorkloadName)], previewPlatformEnv(ev))
+				if err != nil {
+					return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
+				}
 			}
 			toBuild = append(toBuild, preview)
 			result.Added = append(result.Added, preview)
@@ -1809,6 +2311,9 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 				EventKind:    githubdpb.EnqueueBuildEventKind_EVENT_KIND_PULL_REQUEST,
 			})
 			if enqueueErr != nil {
+				if setup := enqueueSetupFailure(preview.WorkloadName, enqueueErr); setup != nil {
+					return result, setup
+				}
 				return result, fmt.Errorf("githubd: enqueue preview build for %q: %w", preview.WorkloadName, enqueueErr)
 			}
 			if build.ID != "" {
@@ -1842,6 +2347,48 @@ func (errIgnored) Error() string { return "githubd: push to non-production branc
 // IsIgnored reports whether err is the ignored sentinel.
 func IsIgnored(err error) bool {
 	return errors.As(err, new(errIgnored))
+}
+
+// Why a delivery githubd completes deployed nothing (ADR-20261101160300,
+// amendment 2). The delivery records it and `gregale github status` shows
+// it; release-tag refusals add their own reasons.
+const (
+	SkipReasonActionsTrigger    = "actions_trigger"
+	SkipReasonBranchNotDeployed = "branch_not_deployed"
+	SkipReasonSuperseded        = "superseded"
+	SkipReasonNotEnabled        = "not_enabled"
+	SkipReasonTagNotBranchHead  = "tag_not_branch_head"
+	SkipReasonNoBinding         = "no_binding"
+	SkipReasonSkipMarker        = "skip_marker"
+	SkipReasonIgnored           = "ignored"
+)
+
+// pushSkip is an ignored push that says why; IsIgnored holds for it.
+type pushSkip string
+
+func (s pushSkip) Error() string { return "githubd: push skipped: " + string(s) }
+
+func (pushSkip) Unwrap() error { return ErrIgnored }
+
+// SkipReason names why a delivery completed without deploying, or "" when
+// err is nil or not a skip.
+func SkipReason(err error) string {
+	var reason pushSkip
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &reason):
+		return string(reason)
+	case IsNoBinding(err):
+		return SkipReasonNoBinding
+	case IsSkipDeploy(err):
+		return SkipReasonSkipMarker
+	case isReleaseTagRejected(err):
+		return releaseTagRejectReason(err)
+	case IsIgnored(err):
+		return SkipReasonIgnored
+	}
+	return ""
 }
 
 // refToBranch converts "refs/heads/main" → "main". Returns "" for

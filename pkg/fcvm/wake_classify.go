@@ -59,6 +59,34 @@ const (
 	WakeReasonMemBackendErr      = "mem_backend_err"
 )
 
+// RestoreFallbackNodeLocal is the restore fallback reason for a failure that
+// says nothing about the snapshot: this node could not read the snapshot's
+// identity or its own backing images, ran out of disk, or could not set up
+// the jail, cgroup or network namespace. schedd marked every snapshot whose
+// restore fell back stale for the whole fleet, so one node's full disk threw
+// away valid snapshots everywhere (bug hunt 2026-10-28 B12); it keeps these.
+// It is operator-only and never reaches the customer timeline. It is not a
+// WakeReason* metric label.
+const RestoreFallbackNodeLocal = "node_local"
+
+// RestoreFailureNodeLocal reports whether a refused or failed restore is
+// RestoreFallbackNodeLocal. A changed backing image, an unreadable or missing
+// identity record and every other restore failure still count against the
+// snapshot.
+func RestoreFailureNodeLocal(err error) bool {
+	switch {
+	case err == nil, errors.Is(err, ErrSnapshotBackingChanged), errors.Is(err, ErrAfterRestoreHook):
+		return false
+	case errors.Is(err, errBackingCheckFailed):
+		return true
+	}
+	switch ClassifyWakeError(err, WakeContext{}) {
+	case WakeReasonDiskFull, WakeReasonJailerFail, WakeReasonNetnsFail, WakeReasonCgroupFail:
+		return true
+	}
+	return false
+}
+
 // Sentinel errors for typed classification (issue #1059 / ADR-127).
 // These wrap the lower-level errors at the boundary site so the
 // classifier can use errors.Is without inspecting the wrapped
@@ -127,6 +155,27 @@ var (
 	// transport/platform failures or generic snapshot restore errors.
 	ErrAfterRestoreHook = errors.New("application after_restore failed")
 )
+
+// ErrWakeNotStarted marks a wake failure that happened on this node before
+// the VM started, so no guest code ran (ADR-20261022184531 step 3): the jail
+// lease or the network could not be set up. vmmd tells schedd, which places
+// the wake on another node and counts the failure against this one. Only
+// failures that are certainly node-local and certainly before the guest
+// carry it.
+var ErrWakeNotStarted = errors.New("fcvm: wake failed before the VM started")
+
+// wakeNotStarted wraps err with ErrWakeNotStarted without changing its text.
+func wakeNotStarted(err error) error {
+	if err == nil {
+		return nil
+	}
+	return wakeNotStartedError{err: err}
+}
+
+type wakeNotStartedError struct{ err error }
+
+func (e wakeNotStartedError) Error() string   { return e.err.Error() }
+func (e wakeNotStartedError) Unwrap() []error { return []error{e.err, ErrWakeNotStarted} }
 
 // WakeContext bundles the inputs ClassifyWakeError needs from the
 // failure site. Building a single struct (instead of passing four
