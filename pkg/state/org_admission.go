@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -73,13 +74,7 @@ func (m *MemStore) CreateSharedOrg(ctx context.Context, ownerID, slug, name stri
 	if _, exists := m.accounts[ownerID]; !exists {
 		return Org{}, ErrNotFound
 	}
-	owned := 0
-	for _, org := range m.orgs {
-		member := m.memberships[orgAccountKey{OrgID: org.ID, AccountID: ownerID}]
-		if !org.Personal && !org.DeletedPending && org.Plan == api.PlanFree && member.Role == OrgRoleOwner && member.RemovedAt == nil {
-			owned++
-		}
-	}
+	owned := m.ownedFreeSharedOrgsLocked(ownerID, time.Now())
 	if owned >= api.FreeOrganizationsOwnedMax {
 		return Org{}, &OrgFreeLimitError{Owned: owned}
 	}
@@ -116,4 +111,23 @@ func lockOrgInvitationLimit(ctx context.Context, tx pgx.Tx, orgID string) (int, 
 		return 0, fmt.Errorf("state: lock invitation target: %w", err)
 	}
 	return orgInvitationLimit(api.Plan(row.Plan), OrgStatus(row.Status), row.DeletedPending, row.AbuseHoldAt.Valid)
+}
+
+// ownedFreeSharedOrgsLocked mirrors CountOwnedFreeSharedOrgs: a Free
+// organization deleted this UTC month still counts (ADR-20261104211412).
+func (m *MemStore) ownedFreeSharedOrgsLocked(accountID string, now time.Time) int {
+	at := now.UTC()
+	month := time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
+	owned := 0
+	for _, org := range m.orgs {
+		member := m.memberships[orgAccountKey{OrgID: org.ID, AccountID: accountID}]
+		if org.Personal || org.Plan != api.PlanFree || member.Role != OrgRoleOwner || member.RemovedAt != nil {
+			continue
+		}
+		if org.DeletedPending && (org.DeletionRequestedAt == nil || org.DeletionRequestedAt.Before(month)) {
+			continue
+		}
+		owned++
+	}
+	return owned
 }

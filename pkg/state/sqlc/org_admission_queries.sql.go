@@ -25,14 +25,30 @@ func (q *Queries) CountActiveOrgMembers(ctx context.Context, db DBTX, orgID pgty
 const countOwnedFreeSharedOrgs = `-- name: CountOwnedFreeSharedOrgs :one
 SELECT count(*) FROM orgs o JOIN org_memberships m ON m.org_id=o.id
 WHERE m.account_id=$1 AND m.role='owner' AND m.removed_at IS NULL
-  AND NOT o.personal_org AND NOT o.deleted_pending AND o.plan='free'
+  AND NOT o.personal_org AND o.plan='free'
+  AND (NOT o.deleted_pending OR o.deletion_requested_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
 `
 
+// A Free organization deleted this UTC month still holds its slot until the
+// month ends (ADR-20261104211412): its Free allowance was already used for the
+// month, so deleting and recreating it must not grant a fresh one.
 func (q *Queries) CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countOwnedFreeSharedOrgs, accountID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const freeSharedOrgForTransfer = `-- name: FreeSharedOrgForTransfer :one
+SELECT (NOT personal_org AND plan='free' AND NOT deleted_pending)::boolean AS takes_free_slot FROM orgs WHERE id=$1
+`
+
+// Whether an organization takes a Free slot from whoever owns it.
+func (q *Queries) FreeSharedOrgForTransfer(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, freeSharedOrgForTransfer, id)
+	var takes_free_slot bool
+	err := row.Scan(&takes_free_slot)
+	return takes_free_slot, err
 }
 
 const insertFreeSharedOrg = `-- name: InsertFreeSharedOrg :one

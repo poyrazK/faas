@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ OrgActivityOwnershipTransferMutationStore = (*PgStore)(nil)
@@ -72,6 +74,9 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	if to.Role == OrgRoleOwner {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 	}
+	if err := checkTransferFreeOrgSlotTx(ctx, tx, orgID, toAccountID); err != nil {
+		return OrgMembership{}, OrgMembership{}, err
+	}
 
 	// Demote first to preserve the one-active-owner partial unique index.
 	if _, err := tx.Exec(ctx, `
@@ -91,4 +96,39 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	from.Role = OrgRoleAdmin
 	to.Role = OrgRoleOwner
 	return from, to, nil
+}
+
+// checkTransferFreeOrgSlotTx refuses to make toAccountID the owner of a Free
+// organization when it already owns FreeOrganizationsOwnedMax of them
+// (ADR-20261104211412). The limit was checked only at creation, so creating
+// an organization and handing it to another account multiplied the Free
+// tier. The recipient's account row is locked as creation locks it.
+func checkTransferFreeOrgSlotTx(ctx context.Context, tx pgx.Tx, orgID, toAccountID string) error {
+	org, err := parsePgUUID(orgID)
+	if err != nil {
+		return err
+	}
+	to, err := parsePgUUID(toAccountID)
+	if err != nil {
+		return err
+	}
+	q := sqlc.New()
+	takesSlot, err := q.FreeSharedOrgForTransfer(ctx, tx, org)
+	if err != nil {
+		return mapErr(err)
+	}
+	if !takesSlot {
+		return nil
+	}
+	if _, err := q.LockSharedOrgCreator(ctx, tx, to); err != nil {
+		return mapErr(err)
+	}
+	owned, err := q.CountOwnedFreeSharedOrgs(ctx, tx, to)
+	if err != nil {
+		return fmt.Errorf("state: count recipient's Free orgs: %w", err)
+	}
+	if owned >= int64(api.FreeOrganizationsOwnedMax) {
+		return &OrgFreeLimitError{Owned: int(owned)}
+	}
+	return nil
 }
