@@ -2074,6 +2074,7 @@ var VerifyTestServiceHot = verifyTestServiceHot
 var VerifyTestServiceTCPHot = verifyTestServiceTCPHot
 var VerifyTestServiceWake = verifyTestServiceWake
 var VisibleCliCommands = visibleCliCommands
+var PublicReferenceCommands = publicReferenceCommands
 var WaitAlertRollback = waitAlertRollback
 var WaitCommitEvent = waitCommitEvent
 var WaitDataAPIRefresh = waitDataAPIRefresh

@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -144,6 +145,9 @@ func run(args []string) (status int) {
 	typed := args
 	args, err := rewriteCliTree(args)
 	if err != nil {
+		if errors.As(err, new(errFoldFlagRequired)) {
+			return printErr("Missing required flag", err)
+		}
 		return printErr("Invalid app target", err)
 	}
 	if slices.Equal(typed, args) {
