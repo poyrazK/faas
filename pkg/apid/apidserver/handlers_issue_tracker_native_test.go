@@ -3865,6 +3865,9 @@ func TestNativeIssueSlackDestinationsThreadRetryAndFenceDeliveries(t *testing.T)
 	if wins != 1 || first.Attempt != 1 || first.ThreadTS != "" {
 		t.Fatal("concurrent Slack claim", wins, first.Status)
 	}
+	if err = st.BeginIssueSlackAttempt(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
 	if err = st.FinishIssueSlackDelivery(t.Context(), first, state.IssueSlackResult{Status: "failed", Error: "transport_error", RetryAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}

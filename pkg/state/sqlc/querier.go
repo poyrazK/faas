@@ -3076,10 +3076,13 @@ type Querier interface {
 	IssueMarkAttributionReviewed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error)
 	IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error
+	IssuePolicyApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssuePolicyAppRow, error)
+	IssuePolicyLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (IssuePolicyLockAccountRow, error)
+	IssuePolicyLockOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) (IssuePolicyLockOrgRow, error)
 	IssuePublishSourceMaps(ctx context.Context, db DBTX, arg IssuePublishSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error
 	IssuePurgeEventsBounded(ctx context.Context, db DBTX, arg IssuePurgeEventsBoundedParams) (int64, error)
-	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
+	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, arg IssuePurgeExpiredTokensParams) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
 	IssuePutSavedView(ctx context.Context, db DBTX, arg IssuePutSavedViewParams) (AppIssueSavedView, error)
 	IssuePutTeam(ctx context.Context, db DBTX, arg IssuePutTeamParams) (AppIssueTeam, error)
@@ -3101,6 +3104,7 @@ type Querier interface {
 	IssueSlackActionPrepare(ctx context.Context, db DBTX, arg IssueSlackActionPrepareParams) error
 	IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (bool, error)
 	IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSlackActionSentParams) error
+	IssueSlackAttemptStart(ctx context.Context, db DBTX, arg IssueSlackAttemptStartParams) (int64, error)
 	IssueSlackCancelPrevious(ctx context.Context, db DBTX, arg IssueSlackCancelPreviousParams) error
 	IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.UUID, error)
 	IssueSlackCandidateDelivery(ctx context.Context, db DBTX, arg IssueSlackCandidateDeliveryParams) (IssueSlackCandidateDeliveryRow, error)

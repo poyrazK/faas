@@ -10598,6 +10598,13 @@ ORDER BY i.started_at DESC NULLS LAST, i.id
 LIMIT 1;
 -- name: IssueLockApp :one
 SELECT id, account_id, org_id FROM apps WHERE id = sqlc.arg(app_id) FOR UPDATE;
+-- name: IssuePolicyApp :one
+SELECT account_id, org_id FROM apps WHERE id = sqlc.arg(app_id);
+-- name: IssuePolicyLockAccount :one
+SELECT plan, status, abuse_hold_at FROM accounts WHERE id = sqlc.arg(account_id) FOR SHARE;
+-- name: IssuePolicyLockOrg :one
+SELECT personal_org, personal_owner_account_id, resource_ownership_enabled, plan, status, deleted_pending, abuse_hold_at
+FROM orgs WHERE id = sqlc.arg(org_id) FOR SHARE;
 -- name: IssueDeploymentScope :one
 SELECT d.id, d.commit_sha, d.image_digest, d.created_at FROM deployments d JOIN apps a ON a.id = d.app_id
 WHERE d.id = sqlc.arg(deployment_id) AND d.app_id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
@@ -10857,13 +10864,30 @@ AND expires_at>now() LIMIT 2;
 -- name: IssueTokenStillValid :one
 SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND revoked_at IS NULL AND expires_at>sqlc.arg(now));
 -- name: IssuePurgePlanEvents :execrows
-WITH expired AS (
- SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN apps a ON a.id=e.app_id JOIN app_resource_accounts c ON c.app_id = a.id
- WHERE c.plan=sqlc.arg(plan) AND e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT sqlc.arg(batch_limit) FOR UPDATE OF e SKIP LOCKED
+WITH candidate_apps AS MATERIALIZED (
+ SELECT a.id FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id
+ JOIN LATERAL (SELECT e.received_at FROM issue_events e
+  WHERE e.app_id=a.id AND e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT 1) oldest ON true
+ WHERE c.plan=sqlc.arg(plan) ORDER BY oldest.received_at,a.id
+ LIMIT sqlc.arg(batch_limit) FOR UPDATE OF a SKIP LOCKED
+), locked_usage AS MATERIALIZED (
+ SELECT u.app_id FROM issue_event_usage u JOIN candidate_apps a ON a.id=u.app_id
+ ORDER BY u.app_id FOR UPDATE OF u SKIP LOCKED
+), eligible_apps AS MATERIALIZED (
+ SELECT a.id FROM candidate_apps a
+ WHERE EXISTS (SELECT 1 FROM locked_usage u WHERE u.app_id=a.id)
+ OR NOT EXISTS (SELECT 1 FROM issue_event_usage u WHERE u.app_id=a.id)
+), expired AS (
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN eligible_apps a ON a.id=e.app_id
+ WHERE e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT sqlc.arg(batch_limit) FOR UPDATE OF e SKIP LOCKED
 )
 DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id;
 -- name: IssuePurgeExpiredTokens :execrows
-DELETE FROM issue_ingest_tokens WHERE expires_at < sqlc.arg(now);
+WITH expired AS (
+ SELECT expired_token.id FROM issue_ingest_tokens expired_token WHERE expired_token.expires_at < sqlc.arg(now)
+ ORDER BY expired_token.expires_at,expired_token.id LIMIT sqlc.arg(batch_limit) FOR UPDATE SKIP LOCKED
+)
+DELETE FROM issue_ingest_tokens t USING expired x WHERE t.id=x.id;
 -- name: IssueExpiredIgnores :many
 SELECT app_id,id FROM app_issues i WHERE state='ignored' AND ignored_until <= sqlc.arg(now)
 AND NOT EXISTS (SELECT 1 FROM issue_group_links l WHERE l.issue_id=i.id)
