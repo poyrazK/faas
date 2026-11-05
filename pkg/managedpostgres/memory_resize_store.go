@@ -77,9 +77,10 @@ func (s *MemoryStore) FailResize(_ context.Context, expected Database, operation
 }
 
 func (s *MemoryStore) resizeView(operation ResizeOperation) ResizeOperation {
-	if operation.State == ResizePending {
+	switch operation.State {
+	case ResizePending:
 		operation.LastErrorCode = s.databases[operation.DatabaseID].LastErrorCode
-	} else if operation.State == ResizeFailed {
+	case ResizeFailed:
 		operation.LastErrorCode = operation.ErrorCode
 	}
 	return operation
