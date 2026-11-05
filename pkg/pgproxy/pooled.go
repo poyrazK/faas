@@ -3,9 +3,6 @@ package pgproxy
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -378,8 +375,8 @@ func (s *pooledSession) skipToSync() {
 	}
 }
 
-// forward sends one client message, rewriting named prepared statements
-// to the server's content-addressed names and preparing them on this
+// forward sends one client message, rewriting prepared statements
+// to the server's per-Parse names and preparing them on this
 // server first when needed.
 func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 	fe := s.server.fe
@@ -387,19 +384,11 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 	case *pgproto3.Parse:
 		parse := &pgproto3.Parse{Name: m.Name, Query: m.Query, ParameterOIDs: append([]uint32(nil), m.ParameterOIDs...)}
 		e := expectation{kind: 'P', mutates: true, name: m.Name, previous: s.statements[m.Name]}
-		name := serverStatement(parse)
-		if m.Name == "" {
-			// A new unnamed Parse replans even identical SQL after DDL.
-			// Its identity remains stable when this client borrows another server.
-			name = "gregale_unnamed_" + strconv.FormatUint(s.p.statementSequence.Add(1), 16)
-		}
+		// Every fresh Parse replans, including named statements after a
+		// Close or reconnect. Its identity survives borrowing another server.
+		name := "gregale_statement_" + strconv.FormatUint(s.p.statementSequence.Add(1), 16)
 		parse.Name = name
 		s.statements[m.Name] = parse
-		if s.server.prepared[name] {
-			e.synthetic = []byte{'1', 0, 0, 0, 4}
-			s.expect = append(s.expect, e)
-			return nil
-		}
 		fe.Send(&pgproto3.Parse{Name: name, Query: parse.Query, ParameterOIDs: parse.ParameterOIDs})
 		s.server.prepared[name] = true
 		e.prepared = name
@@ -426,8 +415,8 @@ func (s *pooledSession) forward(msg pgproto3.FrontendMessage) error {
 		s.expect = append(s.expect, expectation{kind: 'D'})
 	case *pgproto3.Close:
 		if m.ObjectType == 'S' {
-			// The server keeps the statement for other clients; this
-			// client only forgets its name.
+			// Retain the backend plan so a skipped Close can restore
+			// the client mapping after an error earlier in the batch.
 			e := expectation{kind: 'C', synthetic: []byte{'3', 0, 0, 0, 4}, mutates: true, name: m.Name, previous: s.statements[m.Name]}
 			delete(s.statements, m.Name)
 			s.expect = append(s.expect, e)
@@ -476,19 +465,6 @@ func (s *pooledSession) prepare(clientName string) (string, error) {
 		s.expect = append(s.expect, expectation{kind: 'P', swallow: true, prepared: name})
 	}
 	return name, nil
-}
-
-// serverStatement names a named statement by its text and parameter types,
-// so clients preparing the same named query share it on a server.
-func serverStatement(p *pgproto3.Parse) string {
-	h := sha256.New()
-	h.Write([]byte(p.Query))
-	var oid [4]byte
-	for _, o := range p.ParameterOIDs {
-		binary.BigEndian.PutUint32(oid[:], o)
-		h.Write(oid[:])
-	}
-	return "gregale_" + hex.EncodeToString(h.Sum(nil)[:12])
 }
 
 // greetPooled completes a pooled client's login with the pool's server

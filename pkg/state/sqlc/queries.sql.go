@@ -6225,6 +6225,91 @@ func (q *Queries) ClaimManagedPostgresBindingRetirement(ctx context.Context, db 
 	return i, err
 }
 
+const claimManagedPostgresComputeHold = `-- name: ClaimManagedPostgresComputeHold :one
+WITH locked AS MATERIALIZED (
+    SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels FROM managed_postgres_databases
+    WHERE id=$9::uuid AND account_id=$10::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=$1::text,
+    lease_until=clock_timestamp()+$2::bigint*interval '1 millisecond'
+FROM locked l WHERE d.id=l.id
+    AND l.state=$3::text AND l.state IN ('ready','failed')
+    AND l.desired_generation=$4::bigint
+    AND l.backend_id=$5::text AND l.backend_fingerprint=$6::text
+    AND l.provider_resource_id=$7::text
+    AND COALESCE(l.data_resource_id,l.provider_resource_id)=$8::text
+    AND (l.lease_until IS NULL OR l.lease_until<=clock_timestamp())
+RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels
+`
+
+type ClaimManagedPostgresComputeHoldParams struct {
+	LeaseToken         string
+	LeaseMilliseconds  int64
+	State              string
+	Generation         int64
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+}
+
+func (q *Queries) ClaimManagedPostgresComputeHold(ctx context.Context, db DBTX, arg ClaimManagedPostgresComputeHoldParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, claimManagedPostgresComputeHold,
+		arg.LeaseToken,
+		arg.LeaseMilliseconds,
+		arg.State,
+		arg.Generation,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.ProviderResourceID,
+		arg.DataResourceID,
+		arg.DatabaseID,
+		arg.AccountID,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+		&i.OrgID,
+		&i.PurgeAfter,
+		&i.RestoreSlotUntil,
+		&i.Labels,
+	)
+	return i, err
+}
+
 const claimManagedPostgresCutover = `-- name: ClaimManagedPostgresCutover :one
 UPDATE managed_postgres_cutovers SET lease_token=$1::text,lease_until=$2::timestamptz,
 attempt_count=least(attempt_count+1,30),updated_at=$3::timestamptz
@@ -96162,6 +96247,29 @@ UPDATE account_async_quota SET current_inflight=greatest(current_inflight-1,0),u
 func (q *Queries) ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, releaseEnvironmentQueueDeliveryQuota, accountID)
 	return err
+}
+
+const releaseManagedPostgresComputeHold = `-- name: ReleaseManagedPostgresComputeHold :execrows
+WITH locked AS MATERIALIZED (
+    SELECT id,state,lease_token,lease_until FROM managed_postgres_databases
+    WHERE id=$2::uuid FOR UPDATE
+)
+UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
+FROM locked l WHERE d.id=l.id AND l.lease_token=$1::text
+    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp()
+`
+
+type ReleaseManagedPostgresComputeHoldParams struct {
+	LeaseToken string
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReleaseManagedPostgresComputeHold(ctx context.Context, db DBTX, arg ReleaseManagedPostgresComputeHoldParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseManagedPostgresComputeHold, arg.LeaseToken, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const releaseManagedPostgresCutover = `-- name: ReleaseManagedPostgresCutover :execrows
