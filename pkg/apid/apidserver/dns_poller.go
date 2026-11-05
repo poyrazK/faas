@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/domainverify"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -72,6 +73,9 @@ func startDNSPoller(ctx context.Context, s *server, log *slog.Logger) {
 }
 
 func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, api.DomainVerificationPassTimeout)
+	defer cancel()
 	pending, err := s.pendingUnverifiedDomains(ctx)
 	if err != nil {
 		if s.domainVerificationMetrics != nil {
@@ -94,125 +98,167 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			s.domainVerificationMetrics.oldest.Set(age.Seconds())
 		}
 	}
-	for _, d := range pending {
-		probeCtx := state.WithCustomDomainProbe(ctx, d)
-		checkedAt := time.Now().UTC()
-		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
-			if s.domainVerificationMetrics != nil {
-				s.domainVerificationMetrics.results.WithLabelValues("success").Inc()
-			}
-			if d.CertStatus == state.CustomDomainCertDNSDrifted {
-				// Drifted domains must repair the routing target before the
-				// TXT challenge can restore verification. This prevents a
-				// stale TXT record from immediately re-enabling a wrong CNAME.
-				probeDomain, _ := state.WildcardProbeHost(d.Domain)
-				if pointsToG := checkPointsToGregale(ctx, probeDomain); pointsToG.Status != probeOK {
-					continue
-				}
-			}
-			verifier, ok := s.store.(state.CustomDomainChallengeVerifier)
-			if !ok {
-				log.Warn("dns_poller: challenge-bound verification unavailable", "domain", d.Domain)
-				continue
-			}
-			matched, err := verifier.MarkDomainVerifiedIfChallenge(ctx, d.Domain, d.ChallengeToken)
-			s.domainVerificationMetrics.recordPublication(matched, err)
-			if err != nil {
-				log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
-				continue
-			}
-			if !matched {
-				// The row expired or was reclaimed while DNS was in flight. Never
-				// apply an old account's proof to the replacement challenge.
-				log.Info("dns_poller: stale domain challenge ignored", "domain", d.Domain)
-				continue
-			}
-			// Verification publishes pending certificate state atomically. A
-			// later write here could erase a concurrently issued certificate.
-			if api.CustomDomainTLSOnDemand() {
-				// ADR-520: the edge issues on the first TLS handshake. Probe
-				// now so issuance starts without waiting for the doctor batch;
-				// the probe also records the resulting certificate status.
-				s.startOnDemandTLSProbe(probeCtx, log, d.Domain)
-			} else {
-				// gatewayd-internal listens for this event to eagerly mint a
-				// customer-owned wildcard certificate with DNS-01.
-				_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
-			}
-			log.Info("domain verified", "domain", d.Domain)
-		} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
-			if s.domainVerificationMetrics != nil {
-				s.domainVerificationMetrics.results.WithLabelValues("failure").Inc()
-			}
-			// Keep dns_drifted durable until the customer has both fixed the
-			// target and satisfied the TXT challenge. A failed TXT lookup on
-			// the next tick must not downgrade the warning back to pending.
-			if recorder, ok := s.store.(state.CustomDomainVerificationCheckStore); ok {
-				if err := recorder.RecordCustomDomainVerificationCheck(probeCtx, d, checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
-					log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
-				}
-			}
-		}
-	}
-	// ADR-100 / issue #879: poll tenant hostnames alongside
-	// custom domains. Both use the same _faas-verify.<hostname>
-	// TXT record format, so checkTXT is shared. The poller is
-	// gated on api.TenantSurfacesEnabled() so a feature-flag
-	// disable suppresses the LISTEN load on the poller goroutine
-	// even when the table is empty.
-	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
-		return
-	}
-	pendingHostnames, err := s.pendingUnverifiedHostnames(ctx)
-	if err != nil {
-		log.Warn("dns_poller: list tenant hostnames failed", "err", err)
-		return
-	}
-	verifier, verifierOK := s.store.(state.TenantHostnameChallengeVerifier)
-	for _, h := range pendingHostnames {
-		if !checkTXT(ctx, h.Hostname, h.ChallengeToken) {
-			// Stamp the miss. The batch serves the least recently
-			// checked rows first, so a row never stamped stays at the
-			// head: once 50 hostnames anywhere were pending, no newer
-			// hostname was ever checked.
-			if err := s.store.MarkTenantHostnameCheckFailed(ctx, h.Hostname, tenantHostnameTXTPending); err != nil && !errors.Is(err, state.ErrNotFound) {
-				log.Warn("dns_poller: record tenant hostname check failed", "hostname", h.Hostname, "err", err)
-			}
-			continue
-		}
-		if !verifierOK {
-			log.Warn("dns_poller: challenge-bound tenant hostname verification unavailable", "hostname", h.Hostname)
-			continue
-		}
-		matched, err := verifier.MarkTenantHostnameVerifiedIfChallenge(ctx, h.Hostname, h.ChallengeToken)
+	var pendingHostnames []pendingHostnameRow
+	if s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
+		pendingHostnames, err = s.pendingUnverifiedHostnames(ctx)
 		if err != nil {
-			log.Warn("dns_poller: mark tenant hostname verified failed", "hostname", h.Hostname, "err", err)
-			continue
+			log.Warn("dns_poller: list tenant hostnames failed", "err", err)
 		}
-		if !matched {
-			// Deleted and added again while DNS was in flight: the proof
-			// belongs to the old row's token, never the replacement's.
-			log.Info("dns_poller: stale tenant hostname challenge ignored", "hostname", h.Hostname)
-			continue
-		}
-		// tenant_surface_changed fires on the tenant_hostnames
-		// UPDATE (the trigger at migrations/00243 fires on
-		// every relevant column change including verified_at).
-		// The gatewayd cert-remint subscriber picks it up and
-		// asks the issuer for a fresh SAN-aggregated cert.
-		//
-		// Audit row: tenant_hostname.verified is the third
-		// event of the surface lifecycle (added / removed /
-		// verified). The data carries the surface_id so the
-		// dashboard "verified at" timeline keys off it.
-		if s.audit != nil {
-			s.audit.Emit(ctx, "tenant_hostname.verified", nil, map[string]any{
-				"hostname":   h.Hostname,
-				"surface_id": h.SurfaceID,
+	}
+	checks := make([]func(context.Context), 0, len(pending)+len(pendingHostnames))
+	finished := make([]bool, len(pending))
+	// Interleave the registries so slow custom-domain checks cannot consume
+	// the pass deadline before any tenant hostname gets a worker.
+	for i := range max(len(pending), len(pendingHostnames)) {
+		if i < len(pending) {
+			d := pending[i]
+			checks = append(checks, func(ctx context.Context) {
+				s.verifyCustomDomain(ctx, log, d)
+				finished[i] = ctx.Err() == nil
 			})
 		}
-		log.Info("tenant hostname verified", "hostname", h.Hostname, "surface", h.SurfaceID)
+		if i < len(pendingHostnames) {
+			h := pendingHostnames[i]
+			checks = append(checks, func(ctx context.Context) { s.verifyTenantHostname(ctx, log, h) })
+		}
 	}
+	domainverify.RunBatch(ctx, api.DomainVerificationWorkers, checks)
+	if ctx.Err() != nil {
+		s.releaseUnfinishedDomainVerifications(parent, log, pending, finished)
+	}
+}
+
+func (s *server) releaseUnfinishedDomainVerifications(ctx context.Context, log *slog.Logger, claims []state.CustomDomain, finished []bool) {
+	leases, ok := s.store.(state.CustomDomainVerificationLeaseStore)
+	if !ok {
+		return
+	}
+	var abandoned []state.CustomDomain
+	for i, claim := range claims {
+		if !finished[i] {
+			abandoned = append(abandoned, claim)
+		}
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.DomainVerificationCleanupTimeout)
+	defer cancel()
+	if err := leases.ReleaseCustomDomainVerificationLeases(cleanupCtx, abandoned); err != nil {
+		log.Warn("dns_poller: release unfinished verification checks failed", "err", err)
+	}
+}
+
+func (s *server) verifyCustomDomain(ctx context.Context, log *slog.Logger, d state.CustomDomain) {
+	probeCtx := state.WithCustomDomainProbe(ctx, d)
+	checkedAt := time.Now().UTC()
+	matchedTXT := checkTXT(ctx, d.Domain, d.ChallengeToken)
+	if ctx.Err() != nil {
+		return
+	}
+	if matchedTXT {
+		if s.domainVerificationMetrics != nil {
+			s.domainVerificationMetrics.results.WithLabelValues("success").Inc()
+		}
+		if d.CertStatus == state.CustomDomainCertDNSDrifted {
+			// Drifted domains must repair the routing target before the
+			// TXT challenge can restore verification. This prevents a
+			// stale TXT record from immediately re-enabling a wrong CNAME.
+			probeDomain, _ := state.WildcardProbeHost(d.Domain)
+			if pointsToG := checkPointsToGregale(ctx, probeDomain); pointsToG.Status != probeOK {
+				return
+			}
+		}
+		verifier, ok := s.store.(state.CustomDomainChallengeVerifier)
+		if !ok {
+			log.Warn("dns_poller: challenge-bound verification unavailable", "domain", d.Domain)
+			return
+		}
+		matched, err := verifier.MarkDomainVerifiedIfChallenge(probeCtx, d.Domain, d.ChallengeToken)
+		s.domainVerificationMetrics.recordPublication(matched, err)
+		if err != nil {
+			log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
+			return
+		}
+		if !matched {
+			// The row expired or was reclaimed while DNS was in flight. Never
+			// apply an old account's proof to the replacement challenge.
+			log.Info("dns_poller: stale domain challenge ignored", "domain", d.Domain)
+			return
+		}
+		// Verification publishes pending certificate state atomically. A
+		// later write here could erase a concurrently issued certificate.
+		if api.CustomDomainTLSOnDemand() {
+			// ADR-520: the edge issues on the first TLS handshake. Probe
+			// now so issuance starts without waiting for the doctor batch;
+			// the probe also records the resulting certificate status.
+			s.startOnDemandTLSProbe(probeCtx, log, d.Domain)
+		} else {
+			// gatewayd-internal listens for this event to eagerly mint a
+			// customer-owned wildcard certificate with DNS-01.
+			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
+		}
+		log.Info("domain verified", "domain", d.Domain)
+	} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
+		if s.domainVerificationMetrics != nil {
+			s.domainVerificationMetrics.results.WithLabelValues("failure").Inc()
+		}
+		// Keep dns_drifted durable until the customer has both fixed the
+		// target and satisfied the TXT challenge. A failed TXT lookup on
+		// the next tick must not downgrade the warning back to pending.
+		if recorder, ok := s.store.(state.CustomDomainVerificationCheckStore); ok {
+			if err := recorder.RecordCustomDomainVerificationCheck(probeCtx, d, checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
+				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
+			}
+		}
+	}
+}
+
+func (s *server) verifyTenantHostname(ctx context.Context, log *slog.Logger, h pendingHostnameRow) {
+	verifier, verifierOK := s.store.(state.TenantHostnameChallengeVerifier)
+	matchedTXT := checkTXT(ctx, h.Hostname, h.ChallengeToken)
+	if ctx.Err() != nil {
+		return
+	}
+	if !matchedTXT {
+		// Stamp the miss. The batch serves the least recently
+		// checked rows first, so a row never stamped stays at the
+		// head: once 50 hostnames anywhere were pending, no newer
+		// hostname was ever checked.
+		if err := s.store.MarkTenantHostnameCheckFailed(ctx, h.Hostname, tenantHostnameTXTPending); err != nil && !errors.Is(err, state.ErrNotFound) {
+			log.Warn("dns_poller: record tenant hostname check failed", "hostname", h.Hostname, "err", err)
+		}
+		return
+	}
+	if !verifierOK {
+		log.Warn("dns_poller: challenge-bound tenant hostname verification unavailable", "hostname", h.Hostname)
+		return
+	}
+	matched, err := verifier.MarkTenantHostnameVerifiedIfChallenge(ctx, h.Hostname, h.ChallengeToken)
+	if err != nil {
+		log.Warn("dns_poller: mark tenant hostname verified failed", "hostname", h.Hostname, "err", err)
+		return
+	}
+	if !matched {
+		// Deleted and added again while DNS was in flight: the proof
+		// belongs to the old row's token, never the replacement's.
+		log.Info("dns_poller: stale tenant hostname challenge ignored", "hostname", h.Hostname)
+		return
+	}
+	// tenant_surface_changed fires on the tenant_hostnames
+	// UPDATE (the trigger at migrations/00243 fires on
+	// every relevant column change including verified_at).
+	// The gatewayd cert-remint subscriber picks it up and
+	// asks the issuer for a fresh SAN-aggregated cert.
+	//
+	// Audit row: tenant_hostname.verified is the third
+	// event of the surface lifecycle (added / removed /
+	// verified). The data carries the surface_id so the
+	// dashboard "verified at" timeline keys off it.
+	if s.audit != nil {
+		s.audit.Emit(ctx, "tenant_hostname.verified", nil, map[string]any{
+			"hostname":   h.Hostname,
+			"surface_id": h.SurfaceID,
+		})
+	}
+	log.Info("tenant hostname verified", "hostname", h.Hostname, "surface", h.SurfaceID)
 }
 
 // tenantHostnameTXTPending is the last_error a pending tenant hostname shows
@@ -448,6 +494,9 @@ func (s *server) emitDoctorSkip(log *slog.Logger) {
 }
 
 func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
+	// Order overlapping passes by when their work began. Completion time
+	// would make an older, slower DNS/TLS result appear newer.
+	observedAt := time.Now().UTC()
 	legacy, legacyErr := s.store.DomainByName(ctx, domain)
 	legacyLoaded := legacyErr == nil
 	if expected, bound := state.CustomDomainProbe(ctx); bound && (!legacyLoaded || !state.SameCustomDomainClaim(expected, legacy)) {
@@ -472,14 +521,14 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 	// the load-bearing one).
 	obs := state.DomainDoctorObservation{
 		Domain:          domain,
-		ObservedAt:      time.Now().UTC(),
+		ObservedAt:      observedAt,
 		DNSRecordFound:  probeToBool(dnsFound.Status, true),
 		PointsToGregale: probeToBool(pointsToG.Status, false),
 		IPv6Conflict:    aaaa.Status == probeFail,
 		ObservedTarget:  pointsToG.Observed,
 		ObservedAAAA:    aaaa.Observed,
 		CAAObserved:     caa.Observed,
-		DNSCheckedAt:    earliest(dnsFound.ObservedAt, pointsToG.ObservedAt, caa.ObservedAt, aaaa.ObservedAt),
+		DNSCheckedAt:    observedAt,
 	}
 	// CAA is tri-state. ok = true; fail = false; pending
 	// stays nil (NULL in the column) when DNS or issuer restrictions
@@ -496,13 +545,11 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		// Preserve the reason permission remains unconfirmed.
 		obs.CAAObserved = caa.Detail
 	}
-	// Surface-aware cert state. Look up the tenant_surfaces
-	// row via the hostname; if present, read its
-	// cert_state (the cert engine is the SOLE writer per
-	// CLAUDE.md ownership). If absent, the domain is a
-	// legacy custom_domains row; fall back to a live
-	// port-443 dial.
-	if s.store != nil {
+	// A custom-domain claim has its own verification and drift lifecycle.
+	// An overlapping surface must not suppress it, including a pending
+	// reservation or one left behind after tenant routing was disabled.
+	// Surface-only hostnames still use the cert engine's durable state.
+	if !legacyLoaded {
 		if surface, err := s.store.TenantSurfaceByHostname(ctx, domain); err == nil {
 			obs.SurfaceID = surface.ID
 			obs.CertState = string(surface.CertState)
@@ -527,6 +574,10 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 			obs.CertCheckedAt = time.Now().UTC()
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
+			if obs.CertNotAfter.IsZero() {
+				// A failed probe does not invalidate the last certificate we saw.
+				obs.CertNotAfter = legacy.CertExpiresAt
+			}
 			obs.CertCheckedAt = time.Now().UTC()
 			if obs.CertState == certStatusDialFailed && legacyLoaded && withinOnDemandIssuanceGrace(legacy, obs.CertCheckedAt) {
 				// ADR-520: the edge obtains the certificate during this
@@ -549,7 +600,7 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 			// verifier clears it by writing pending when verification succeeds.
 			drifted = true
 		}
-		if drifted {
+		if drifted && pointsToG.Status == probeFail {
 			reason := "DNS target no longer points to Gregale"
 			if pointsToG.Observed != "" {
 				reason += ": " + pointsToG.Observed
@@ -665,19 +716,6 @@ func probeToBool(s probeStatus, defaultForNA bool) bool {
 	default:
 		return false
 	}
-}
-
-func earliest(ts ...time.Time) time.Time {
-	var out time.Time
-	for _, t := range ts {
-		if t.IsZero() {
-			continue
-		}
-		if out.IsZero() || t.Before(out) {
-			out = t
-		}
-	}
-	return out
 }
 
 // dialCertForDoctor is a thin wrapper around dialCertFunc

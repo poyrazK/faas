@@ -2178,6 +2178,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// gatewayd-internal.
 	renewer := gateway.NewSurfaceCertRenewer(pgStore, log).SetEnabled(tenantSurfacesFlag.Load)
 	go renewer.Run(handoffCtx)
+	// Custom wildcard claims have a separate lifecycle and keep recovering
+	// while tenant surfaces are disabled. Caddy mode skips legacy work.
+	go gateway.NewCustomDomainCertRenewer(pgStore, backend, log).Run(handoffCtx)
 
 	// ADR-132: routing and certificate lifecycle consume the same durable
 	// runtime flag as apid. The watcher applies only acknowledged values and

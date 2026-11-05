@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -27,33 +26,35 @@ type UploadAuthenticator interface {
 }
 
 type UploadConfig struct {
-	Store          PublicReadStore
-	Routes         state.ObjectUploadRouteStore
-	Buckets        state.ObjectBucketStore
-	Authenticator  UploadAuthenticator
-	Registry       *Registry
-	Accounting     state.ObjectStorageAccountingStore
-	RequestMetrics state.ObjectStorageProviderUsageStore
-	Enabled        func() bool
-	AppsDomain     string
-	Next           http.Handler
-	Now            func() time.Time
-	Log            *slog.Logger
+	Store                 PublicReadStore
+	Routes                state.ObjectUploadRouteStore
+	Buckets               state.ObjectBucketStore
+	Authenticator         UploadAuthenticator
+	Registry              *Registry
+	Accounting            state.ObjectStorageAccountingStore
+	RequestMetrics        state.ObjectStorageProviderUsageStore
+	Enabled               func() bool
+	TenantSurfacesEnabled func() bool
+	AppsDomain            string
+	Next                  http.Handler
+	Now                   func() time.Time
+	Log                   *slog.Logger
 }
 
 type uploadHandler struct {
-	store          PublicReadStore
-	routes         state.ObjectUploadRouteStore
-	buckets        state.ObjectBucketStore
-	authenticator  UploadAuthenticator
-	registry       *Registry
-	accounting     state.ObjectStorageAccountingStore
-	requestMetrics state.ObjectStorageProviderUsageStore
-	enabled        func() bool
-	appsDomain     string
-	next           http.Handler
-	now            func() time.Time
-	log            *slog.Logger
+	store                 PublicReadStore
+	routes                state.ObjectUploadRouteStore
+	buckets               state.ObjectBucketStore
+	authenticator         UploadAuthenticator
+	registry              *Registry
+	accounting            state.ObjectStorageAccountingStore
+	requestMetrics        state.ObjectStorageProviderUsageStore
+	enabled               func() bool
+	tenantSurfacesEnabled func() bool
+	appsDomain            string
+	next                  http.Handler
+	now                   func() time.Time
+	log                   *slog.Logger
 }
 
 // NewUploadHandler adds policy-controlled POST /uploads/{route} handling to
@@ -81,7 +82,7 @@ func NewUploadHandler(c UploadConfig) (http.Handler, error) {
 	if domain == "" {
 		domain = "gregale.dev"
 	}
-	return &uploadHandler{store: c.Store, routes: c.Routes, buckets: c.Buckets, authenticator: c.Authenticator, registry: c.Registry, accounting: c.Accounting, requestMetrics: c.RequestMetrics, enabled: c.Enabled, appsDomain: domain, next: c.Next, now: c.Now, log: c.Log}, nil
+	return &uploadHandler{store: c.Store, routes: c.Routes, buckets: c.Buckets, authenticator: c.Authenticator, registry: c.Registry, accounting: c.Accounting, requestMetrics: c.RequestMetrics, enabled: c.Enabled, tenantSurfacesEnabled: c.TenantSurfacesEnabled, appsDomain: domain, next: c.Next, now: c.Now, log: c.Log}, nil
 }
 
 func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -388,12 +389,7 @@ func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app
 }
 
 func (h *uploadHandler) lookupApp(r *http.Request) (state.App, error) {
-	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.Host), "."))
-	if hostName, port, err := net.SplitHostPort(host); err == nil && port != "" {
-		host = hostName
-	} else {
-		host = strings.Trim(host, "[]")
-	}
+	host := storageRequestHost(r.Host)
 	if strings.HasSuffix(host, "."+h.appsDomain) {
 		slug := strings.TrimSuffix(host, "."+h.appsDomain)
 		if slug == "" || strings.Contains(slug, ".") {
@@ -401,14 +397,11 @@ func (h *uploadHandler) lookupApp(r *http.Request) (state.App, error) {
 		}
 		return h.store.AppBySlug(r.Context(), slug)
 	}
-	domain, err := h.store.DomainByName(r.Context(), host)
-	if err != nil {
-		return state.App{}, err
+	tenantSurfaces := api.TenantSurfacesEnabled()
+	if h.tenantSurfacesEnabled != nil {
+		tenantSurfaces = h.tenantSurfacesEnabled()
 	}
-	if !domain.Verified() {
-		return state.App{}, state.ErrNotFound
-	}
-	return h.store.AppByID(r.Context(), domain.AppID)
+	return storageDomainApp(r.Context(), h.store, host, tenantSurfaces)
 }
 
 func (h *uploadHandler) record(ctx context.Context, completion state.ObjectUploadCompletion) {

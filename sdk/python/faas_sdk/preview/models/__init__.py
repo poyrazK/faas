@@ -3082,6 +3082,8 @@ from .object_bucket_object_lock_configuration import ObjectBucketObjectLockConfi
 from .object_bucket_object_lock_last_error_code import ObjectBucketObjectLockLastErrorCode
 from .object_bucket_object_lock_request import ObjectBucketObjectLockRequest
 from .object_bucket_object_lock_state import ObjectBucketObjectLockState
+from .object_bucket_retry import ObjectBucketRetry
+from .object_bucket_retry_reason import ObjectBucketRetryReason
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
 from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
@@ -9229,6 +9231,8 @@ __all__ = (
     "ObjectBucketObjectLockLastErrorCode",
     "ObjectBucketObjectLockRequest",
     "ObjectBucketObjectLockState",
+    "ObjectBucketRetry",
+    "ObjectBucketRetryReason",
     "ObjectBucketState",
     "ObjectBucketVersioning",
     "ObjectBucketVersioningDesiredStatus",

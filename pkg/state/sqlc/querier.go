@@ -226,6 +226,7 @@ type Querier interface {
 	// the plaintext never loses it.
 	BeginCrashCapturePurge(ctx context.Context, db DBTX, arg BeginCrashCapturePurgeParams) (CrashCapture, error)
 	BeginCrashCaptureStage(ctx context.Context, db DBTX, arg BeginCrashCaptureStageParams) (CrashCapture, error)
+	BeginCustomDomainCertificateAttempt(ctx context.Context, db DBTX, arg BeginCustomDomainCertificateAttemptParams) (int64, error)
 	BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDatabaseVMMoveParams) (int64, error)
 	// Marks a parked database upgrading to upgrade_major as the operation
 	// under the caller's lease; the caller checked its node's room under the
@@ -492,6 +493,7 @@ type Querier interface {
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
+	ClearCustomDomainCertificateAttempt(ctx context.Context, db DBTX, domain string) error
 	ClearCustomDomainProbeObservation(ctx context.Context, db DBTX, domain string) error
 	ClearDatabaseStandbySlotDrop(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	// schedd: a fork command's output comes from inside a copy of production
@@ -3510,6 +3512,9 @@ type Querier interface {
 	ListCrashCapturesToPurge(ctx context.Context, db DBTX, rowLimit int32) ([]CrashCapture, error)
 	ListCrashCapturesToStage(ctx context.Context, db DBTX, arg ListCrashCapturesToStageParams) ([]CrashCapture, error)
 	ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCronsForAppRow, error)
+	ListCustomDomainCertificateRetries(ctx context.Context, db DBTX, arg ListCustomDomainCertificateRetriesParams) ([]ListCustomDomainCertificateRetriesRow, error)
+	// Membership hints only: certificate admission still checks the live claim.
+	ListCustomDomainTLSKnownHosts(ctx context.Context, db DBTX, arg ListCustomDomainTLSKnownHostsParams) ([]string, error)
 	ListCustomDomainsForActor(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCustomDomainsForActorRow, error)
 	ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, arg ListCustomerAlertRulesByPresetParams) ([]AlertRule, error)
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
@@ -3581,6 +3586,8 @@ type Querier interface {
 	// (PR-A ships that query; the regression cron uses the same shape).
 	ListDeploymentsForCompare(ctx context.Context, db DBTX, arg ListDeploymentsForCompareParams) ([]ListDeploymentsForCompareRow, error)
 	ListDevBridges(ctx context.Context, db DBTX, arg ListDevBridgesParams) ([]ListDevBridgesRow, error)
+	ListDoctorDomainBatch(ctx context.Context, db DBTX, batchLimit int32) ([]string, error)
+	ListDoctorDomains(ctx context.Context, db DBTX) ([]string, error)
 	ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error)
 	ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error)
 	ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DBTX, maxRows int32) ([]ReleaseDatabaseSwitch, error)
@@ -6211,6 +6218,7 @@ type Querier interface {
 	// (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
 	ReadTrafficRouteWriteScopes(ctx context.Context, db DBTX, patterns []string) ([]ReadTrafficRouteWriteScopesRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
+	ReadUsableCustomDomainDefaults(ctx context.Context, db DBTX, arg ReadUsableCustomDomainDefaultsParams) ([]ReadUsableCustomDomainDefaultsRow, error)
 	ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error)
 	// Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.
 	// Management callers retain the complete row; request snapshots omit secrets.
@@ -6469,6 +6477,7 @@ type Querier interface {
 	ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error)
 	ReleaseConfigurationCandidateOwner(ctx context.Context, db DBTX, appID string) (ReleaseConfigurationCandidateOwnerRow, error)
 	ReleaseCustomDomainProbeFailureEmail(ctx context.Context, db DBTX, arg ReleaseCustomDomainProbeFailureEmailParams) error
+	ReleaseCustomDomainVerificationLeases(ctx context.Context, db DBTX, leases []byte) error
 	// Marks the standby VM stopped; it stays synchronized only if keep_synced
 	// (a clean stop after its primary's).
 	ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg ReleaseDatabaseStandbyParams) (int64, error)
@@ -7137,7 +7146,7 @@ type Querier interface {
 	SetComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, arg SetComputeNodeVMMDRestartNoticeParams) (int64, error)
 	// ADR-733 crash snapshots.
 	SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg SetCrashSnapshotSettingsParams) (CrashSnapshotSetting, error)
-	SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (int32, error)
+	SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (bool, error)
 	SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error
 	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
 	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)

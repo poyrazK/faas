@@ -350,3 +350,89 @@ omits its obsolete TXT proof. Resuming `gregale domains setup` for the same app
 and environment recreates the claim and prints fresh instructions. If the lease
 expires while setup waits, setup stops with the resume command. This preserves
 the hard lease: verification and retry do not extend an expired claim.
+
+## Amendment 8 (2026-11-04): preserve observation order and expiry evidence
+
+The verifier carries the drifted claim's DNS-check timestamp into publication,
+as well as its app and token. A newer mismatch invalidates that snapshot; an
+older successful lookup cannot restore verification after newer DNS drift.
+Healthy observations do not advance a drifted claim's mismatch timestamp, and
+monitoring an ordinary pending claim does not prevent its initial verification.
+Doctor passes are ordered by their start time. Superseded certificate updates
+return a stale-observation error before activities, emails or cached observations
+are written, and observation upserts independently reject older check times.
+
+A failed TLS probe retains the last known certificate expiry. Expiry metrics
+and diagnostics continue reporting that certificate until a successful probe
+observes a replacement, or a claim reset explicitly clears it.
+
+Ownership verification uses 16 workers shared by custom domains and tenant
+hostnames, interleaving both inventories within a 25-second pass deadline.
+Queued work stops at cancellation, allowing the doctor to run even when DNS
+servers time out. Unfinished custom-domain checks release only their matching
+claim/attempt lease in one bounded cleanup write; cancelled work does not accrue
+retry backoff or overwrite a newer worker's lease. These bounds live in
+`pkg/api/limits.go`.
+
+## Amendment 9 (2026-11-04): protect legacy observations and cold TLS lookups
+
+A claim-bound certificate update without a DNS-check timestamp is older than
+any stored DNS observation. It cannot erase a newer `dns_drifted` transition
+or clear its clock. Legacy rows with no DNS observation still accept their
+first certificate result; explicit unbound repair operations retain their
+existing behavior. This also fences delayed legacy wildcard issuance results.
+
+Before applying its unknown-host lookup bucket, the edge loads durable TLS
+admission names in indexed pages into a fixed 2 MiB Bloom filter. Its hash seed
+is private to the process. Membership is only a lookup hint: every possible
+match still passes the live exact/wildcard, verification, plan, allowlist and
+claim-bound admission checks. False positives cost those reads and grant no
+permission. Existing certificates therefore survive a process restart or the
+recent-host cache's expiry while unknown SNI traffic exhausts the bucket.
+
+The filter refreshes every five minutes and includes local admissions made
+during a refresh. Reads share a two-second deadline; a failed refresh retains
+the previous filter and retries after one second. Initial failure denies
+permission until loading succeeds. The page size and filter bounds live in
+`pkg/api/limits.go`; refreshing allocates one replacement filter plus a page,
+independently of the number of historical hostnames.
+
+## Amendment 10 (2026-11-04): resume bounded TLS inventory scans
+
+An inventory scan retains its completed pages and cursor across the shared
+two-second deadline or a transient page-read failure. The next bounded retry
+continues from that cursor rather than starting again. Inventories whose
+total read time exceeds one request budget can therefore finish warming up.
+An incomplete replacement never grants membership and the previous filter
+remains usable until every page of its replacement has loaded. Memory remains
+bounded to the current filter, one replacement filter and one page.
+
+## Amendment 11 (2026-11-04): independent doctor claims and legacy recovery
+
+A registered custom domain keeps its own DNS-drift and certificate monitoring
+even when a tenant surface reserves the same hostname. Its doctor uses the
+live certificate probe and replaces an old surface observation's association.
+Surface-only hostnames continue to use cert-engine state. Both doctor inventory
+queries exclude deleted surfaces, retaining any independently verified custom
+domain at that name so retired hostnames cannot monopolize a bounded batch.
+
+The DNS-01 issuer reads certificates using certmagic's canonical storage keys,
+including its `wildcard_` encoding of a wildcard label. A successful CA order
+must not be reported as failed because the observer used a different path.
+
+In legacy DNS-01 mode, gatewayd-internal runs a separate bounded recovery pass
+at boot and every five minutes. It discovers verified wildcard claims needing
+initial issuance, retry, or renewal, including work whose notification was lost.
+The issuer atomically claims `custom_domains.cert_retry_at` for the captured app
+and challenge before an attempt; eager notifications use the same cooldown.
+Replacement claims clear that clock and queued obsolete claims are rejected.
+Current billing-owner plan checks apply before contacting the CA.
+
+The pass handles at most 16 claims using four workers, with a two-minute attempt
+deadline, four-minute pass deadline, and five-minute durable cooldown. These
+bounds live in `pkg/api/limits.go`. Failed or interrupted attempts become due
+after the cooldown across process restarts. This recovery is independent of the
+tenant-surfaces flag. Caddy on-demand mode skips both discovery and legacy
+issuance; Ansible propagates that same mode to the internal gateway. Deploy the
+expand migration before the gateway update. Ownership-verification retry APIs
+keep their existing unverified-claim semantics.
