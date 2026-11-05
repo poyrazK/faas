@@ -108,6 +108,11 @@ func workflowScheduleReplayDefinition(row WorkflowScheduleOccurrence, raw json.R
 	if definition == nil || definition.Trigger == nil || definition.Trigger.Type != "schedule" {
 		return nil, WorkflowScheduleReplayScheduleDisabled, nil
 	}
+	// Tenant cadence cannot re-enable an owner-disabled or failure-paused
+	// trigger. Check the effective base before applying tenant preferences.
+	if definition.Trigger.Enabled != nil && !*definition.Trigger.Enabled {
+		return nil, WorkflowScheduleReplayScheduleDisabled, nil
+	}
 	if cursor != nil {
 		configured, _, customized := tenantWorkflowScheduleConfigFromSnapshot(cursor.TriggerSnapshot)
 		if customized && definition.Trigger.TenantConfigurable {

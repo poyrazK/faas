@@ -55,15 +55,6 @@ func webhookAutomationDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name s
 		records = append(records, automationFromSQL(row))
 	}
 	spec, reason, err := webhookAutomationDefinition(live.Workflows, records, name, api.Plan(live.Plan))
-	if err == nil {
-		paused, _, pauseErr := automationFailureBlocksAdmissionPG(ctx, tx, appID, name, time.Now().UTC())
-		if pauseErr != nil {
-			return nil, "", "", pauseErr
-		}
-		if paused {
-			reason = "automation_failure_paused"
-		}
-	}
 	return spec, reason, pgUUIDString(live.DeploymentID), err
 }
 func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts WebhookAutomationBindingOptions) (WebhookAutomationBinding, error) {
@@ -100,7 +91,11 @@ func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts Webhook
 	if err := validateWorkflowOutboundTx(ctx, tx, endpoint.AppID, endpoint.AccountID, *spec); err != nil {
 		return WebhookAutomationBinding{}, err
 	}
-	row, err := q.SaveWebhookAutomationBinding(ctx, tx, sqlc.SaveWebhookAutomationBindingParams{EndpointID: mustPgUUID(endpoint.ID), WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: normalizedWebhookFilter(opts.Filter)})
+	filter, err := canonicalWebhookFilter(opts.Filter)
+	if err != nil {
+		return WebhookAutomationBinding{}, ErrAutomationInvalid
+	}
+	row, err := q.SaveWebhookAutomationBinding(ctx, tx, sqlc.SaveWebhookAutomationBindingParams{EndpointID: mustPgUUID(endpoint.ID), WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: filter})
 	if isUniqueViolation(err) {
 		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
 	}
@@ -176,6 +171,10 @@ func (s *PgStore) AcceptWebhookAutomation(ctx context.Context, verified InboundW
 	return s.AcceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled)
 }
 func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled bool) (WebhookAutomationReceipt, bool, error) {
+	return s.acceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled, true)
+}
+
+func (s *PgStore) acceptVerifiedWebhookAutomation(ctx context.Context, verified InboundWebhookEndpoint, eventID, eventType string, body json.RawMessage, runtimeEnabled, retryAfterLatch bool) (WebhookAutomationReceipt, bool, error) {
 	if len(eventID) == 0 || len(eventID) > api.WorkflowWebhookEventMaxBytes ||
 		(eventType != "" && !api.ValidInboundWebhookEventType(eventType)) ||
 		(verified.Provider == InboundWebhookProviderGeneric && (!api.ValidInboundWebhookEventType(eventType) || !api.ValidInboundWebhookEventID(eventID))) {
@@ -194,6 +193,21 @@ func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified 
 		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
 	}
 	q := sqlc.New()
+	var callbackReceipt workflowCallbackWebhookReceipt
+	err = tx.QueryRow(ctx, `SELECT body_hash,callback_id::text,status,accepted_at FROM workflow_callback_webhook_receipts WHERE endpoint_id=$1 AND provider_event_id=$2`, endpoint.ID, eventID).Scan(&callbackReceipt.BodyHash, &callbackReceipt.CallbackID, &callbackReceipt.Status, &callbackReceipt.AcceptedAt)
+	if err == nil {
+		matches, hashErr := callbackReceiptMatches(callbackReceipt, body)
+		if hashErr != nil {
+			return WebhookAutomationReceipt{}, true, hashErr
+		}
+		if !matches {
+			return WebhookAutomationReceipt{}, true, ErrWebhookAutomationConflict
+		}
+		return WebhookAutomationReceipt{}, true, &WebhookCallbackAlreadyHandled{CallbackID: callbackReceipt.CallbackID, Status: callbackReceipt.Status}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return WebhookAutomationReceipt{}, true, err
+	}
 	row, receiptErr := q.GetWebhookAutomationReceipt(ctx, tx, sqlc.GetWebhookAutomationReceiptParams{EndpointID: mustPgUUID(endpoint.ID), ProviderEventID: eventID})
 	if receiptErr != nil && !errors.Is(receiptErr, pgx.ErrNoRows) {
 		return WebhookAutomationReceipt{}, true, receiptErr
@@ -229,6 +243,24 @@ func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified 
 			err = ErrWebhookAutomationUnavailable
 		}
 		return WebhookAutomationReceipt{}, true, err
+	}
+	paused, latched, err := automationFailureBlocksAdmissionPG(ctx, tx, endpoint.AppID, bindingRow.WorkflowName, time.Now().UTC())
+	if err != nil {
+		return WebhookAutomationReceipt{}, true, err
+	}
+	// Persist the pause and its notification before fallible receipt work.
+	// A fresh transaction revalidates the target, binding and deduplication.
+	if latched {
+		if err := tx.Commit(ctx); err != nil {
+			return WebhookAutomationReceipt{}, true, err
+		}
+		if !retryAfterLatch {
+			return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
+		}
+		return s.acceptVerifiedWebhookAutomation(ctx, verified, eventID, eventType, body, runtimeEnabled, false)
+	}
+	if paused {
+		reason = "automation_failure_paused"
 	}
 	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, webhookAutomationBindingFromSQL(bindingRow), spec, reason, eventID, eventType, body, time.Now().UTC())
 	if err != nil {

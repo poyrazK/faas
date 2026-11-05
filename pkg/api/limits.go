@@ -1314,6 +1314,7 @@ const (
 	WorkflowScheduleHistoryPageMax       = 200
 	WorkflowScheduleHistoryPruneBatch    = 1000
 	WorkflowRetentionPruneBatch          = 1000
+	WorkflowRetentionArchiveBatch        = 64
 	WorkflowScheduleReplayBatchMax       = 20
 	WorkflowQueuedRunCancelBatchMax      = 20
 )
@@ -10248,10 +10249,12 @@ const (
 	AutomationTestStepResultsMax                   = AutomationSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected
 	// case simulation/output controls.
-	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
-	AutomationNameMaxBytes                            = 128
-	WorkflowRunInputMaxBytes                    int64 = 1 << 20
-	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
+	AutomationConsoleFormMaxBytes int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
+	AutomationNameMaxBytes              = 128
+	WorkflowRunInputMaxBytes      int64 = 1 << 20
+	// A JSON encoder can represent each one-byte filter character as a six-byte
+	// Unicode escape. Leave room for that representation and the binding fields.
+	WorkflowWebhookBindingMaxBytes              int64 = 6*WorkflowWebhookFilterMaxBytes + 4096
 	WorkflowWebhookFilterMaxBytes                     = 32 << 10
 	WorkflowWebhookNameMaxBytes                       = 128
 	WorkflowWebhookEventMaxBytes                      = 256

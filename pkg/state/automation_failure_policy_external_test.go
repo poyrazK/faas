@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -63,6 +64,80 @@ func automationFailureRun(t *testing.T, store state.Store, appID, name, status s
 		}
 	}
 	return run
+}
+
+func TestAutomationFailurePolicyRepeatedTerminalStatusAfterResume(t *testing.T) {
+	automationFailureStores(t, func(t *testing.T, store state.Store) {
+		ctx := t.Context()
+		app, _ := automationFailureFixture(t, store)
+		policies := store.(state.AutomationFailurePolicyStore)
+		enabled := true
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "nightly", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		run := automationFailureRun(t, store, app.ID, "nightly", state.WorkflowRunStatusFailed)
+		if _, err := policies.EvaluateAutomationFailurePolicies(ctx, "", "", api.AutomationFailurePolicyBatch, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := policies.ResumeAutomationFailurePause(ctx, app.ID, "nightly", app.AccountID, api.ResumeAutomationFailurePauseRequest{ExpectedGeneration: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := policies.EvaluateAutomationFailurePolicies(ctx, "", "", api.AutomationFailurePolicyBatch, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		out, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "nightly")
+		if err != nil || out.Paused || out.ObservedFailures != 0 {
+			t.Fatalf("old failure counted after resume: %+v %v", out, err)
+		}
+	})
+}
+
+func TestAutomationFailurePolicyEnableStartsNewMonitoringWindow(t *testing.T) {
+	automationFailureStores(t, func(t *testing.T, store state.Store) {
+		ctx := t.Context()
+		app, _ := automationFailureFixture(t, store)
+		policies := store.(state.AutomationFailurePolicyStore)
+		enabled := false
+		request := api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "nightly", request); err != nil {
+			t.Fatal(err)
+		}
+		automationFailureRun(t, store, app.ID, "nightly", state.WorkflowRunStatusFailed)
+		enabled = true
+		request.ExpectedVersion = 1
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "nightly", request); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := policies.EvaluateAutomationFailurePolicies(ctx, "", "", api.AutomationFailurePolicyBatch, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		out, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "nightly")
+		if err != nil || out.Paused || out.ObservedFailures != 0 {
+			t.Fatalf("disabled-period failure counted: %+v %v", out, err)
+		}
+		automationFailureRun(t, store, app.ID, "nightly", state.WorkflowRunStatusFailed)
+		if _, err := policies.EvaluateAutomationFailurePolicies(ctx, "", "", api.AutomationFailurePolicyBatch, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		out, err = policies.GetAutomationFailurePolicy(ctx, app.ID, "nightly")
+		if err != nil || !out.Paused {
+			t.Fatalf("new failure not counted: %+v %v", out, err)
+		}
+		enabled = false
+		request.ExpectedVersion = 2
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "nightly", request); err != nil {
+			t.Fatal(err)
+		}
+		enabled = true
+		request.ExpectedVersion = 3
+		out, err = policies.SetAutomationFailurePolicy(ctx, app.ID, "nightly", request)
+		if err != nil || !out.Paused {
+			t.Fatalf("policy change cleared existing pause: %+v %v", out, err)
+		}
+	})
 }
 func TestAutomationFailurePolicyCountsLatchResumeAndPrivacy(t *testing.T) {
 	automationFailureStores(t, func(t *testing.T, store state.Store) {
@@ -290,4 +365,71 @@ func TestEventAdmissionChecksUnlatchedFailureThreshold(t *testing.T) {
 			t.Fatalf("event admission did not durably latch pause: %+v, %v", policy, err)
 		}
 	})
+}
+
+func TestFailureAdmissionDurablyLatchesThreshold(t *testing.T) {
+	automationFailureStores(t, func(t *testing.T, store state.Store) {
+		app, _ := automationFailureFixture(t, store)
+		ctx := t.Context()
+		policies := store.(state.AutomationFailurePolicyStore)
+		enabled := true
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "paid", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		automationFailureRun(t, store, app.ID, "paid", state.WorkflowRunStatusFailed)
+		admission := store.(state.AutomationFailureAdmissionStore)
+		allowed, err := admission.CheckAutomationFailureAdmission(ctx, app.ID, "paid", time.Now().UTC())
+		if err != nil || allowed {
+			t.Fatalf("admission after failure: allowed=%v, %v", allowed, err)
+		}
+		// The pause must survive even after the failing run leaves the window.
+		allowed, err = admission.CheckAutomationFailureAdmission(ctx, app.ID, "paid", time.Now().UTC().Add(time.Hour))
+		if err != nil || allowed {
+			t.Fatalf("admission after failure aged out: allowed=%v, %v", allowed, err)
+		}
+		policy, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+		if err != nil || !policy.Paused || policy.Generation != 1 {
+			t.Fatalf("durable pause: %+v, %v", policy, err)
+		}
+	})
+}
+
+func TestScheduledAdmissionRechecksFailureThreshold(t *testing.T) {
+	for _, tenant := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tenant=%t", tenant), func(t *testing.T) {
+			automationFailureStores(t, func(t *testing.T, store state.Store) {
+				app, deployment, tenantID := seedCatchUpSchedule(t, store, tenant, "allow")
+				ctx := t.Context()
+				enabled := true
+				policies := store.(state.AutomationFailurePolicyStore)
+				if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "report", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+					t.Fatal(err)
+				}
+				admit := catchUpAdmitter(store, app, deployment, tenantID)
+				now := time.Now().UTC().Truncate(5 * time.Minute)
+				if _, _, err := admit(now.Add(-5 * time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+				allowed, err := store.(state.AutomationFailureAdmissionStore).CheckAutomationFailureAdmission(ctx, app.ID, "report", time.Now().UTC())
+				if err != nil || !allowed {
+					t.Fatalf("initial check: %v %v", allowed, err)
+				}
+				run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenantID, WorkflowName: "report", DefinitionSnapshot: json.RawMessage(`{"name":"report","steps":[{"name":"main","path":"/report"}]}`)}
+				if err := store.CreateWorkflowRun(ctx, run); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+					t.Fatal(err)
+				}
+				cursor, changed, err := admit(now)
+				if err != nil || changed || cursor.LastRunID != "" {
+					t.Fatalf("scheduled admission after threshold: %+v %v %v", cursor, changed, err)
+				}
+				out, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "report")
+				if err != nil || !out.Paused || out.Generation != 1 {
+					t.Fatalf("pause not latched: %+v %v", out, err)
+				}
+			})
+		})
+	}
 }

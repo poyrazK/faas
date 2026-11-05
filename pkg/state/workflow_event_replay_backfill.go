@@ -1,7 +1,6 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -182,13 +181,7 @@ func sameJSONDocument(left, right []byte) bool {
 	if len(right) == 0 {
 		right = []byte(`{}`)
 	}
-	var a, b any
-	if json.Unmarshal(left, &a) != nil || json.Unmarshal(right, &b) != nil {
-		return false
-	}
-	encodedA, errA := json.Marshal(a)
-	encodedB, errB := json.Marshal(b)
-	return errA == nil && errB == nil && bytes.Equal(encodedA, encodedB)
+	return json.Valid(left) && json.Valid(right) && equalWorkflowJSON(left, right)
 }
 
 func processWorkflowEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventReplayJob, target PublishedEventRecipient, rows []sqlc.EventReplayBackfillCandidatesRow) (eventReplayBackfillPageProgress, error) {
@@ -198,6 +191,7 @@ func processWorkflowEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries
 		if err := ctx.Err(); err != nil {
 			return progress, err
 		}
+		progress.examined++
 		var envelope eventcontract.Envelope
 		if err := json.Unmarshal(row.Payload, &envelope); err != nil {
 			if err := insertBackfillFailure(ctx, q, tx, job, row, EventFanoutFailureCodeInternal, "decode retained event envelope"); err != nil {
@@ -280,6 +274,11 @@ func processWorkflowEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries
 		}
 		_, created, err := admitEventWorkflowTx(ctx, q, tx, row.ID, target, row.Payload)
 		if err != nil {
+			if errors.Is(err, errWorkflowFailurePolicyLatched) {
+				// No replay item or cursor was written for this one-row page.
+				// Commit the pause first; the next pass records the deferral.
+				return progress, err
+			}
 			if code, retryable, message, recordable := workflowBackfillAdmissionFailure(err); recordable {
 				if _, insertErr := q.EventReplayBackfillInsertWorkflowFailure(ctx, tx, sqlc.EventReplayBackfillInsertWorkflowFailureParams{
 					JobID: job.ID, OutboxID: row.ID, AcceptedAt: row.CreatedAt, EventSource: row.Source, EventID: row.EventID,
@@ -287,7 +286,7 @@ func processWorkflowEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries
 				}); insertErr != nil {
 					return progress, insertErr
 				}
-				continue
+				return progress, nil
 			}
 			return progress, err
 		}
@@ -296,7 +295,7 @@ func processWorkflowEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries
 			if err := insertBackfillSkipped(ctx, q, tx, job, row, "skipped_existing"); err != nil {
 				return progress, err
 			}
-			continue
+			return progress, nil
 		}
 		if _, err := q.EventReplayBackfillInsertItem(ctx, tx, sqlc.EventReplayBackfillInsertItemParams{
 			JobID: job.ID, OutboxID: row.ID, AcceptedAt: row.CreatedAt, EventSource: row.Source, EventID: row.EventID,
@@ -304,6 +303,7 @@ func processWorkflowEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries
 		}); err != nil {
 			return progress, err
 		}
+		return progress, nil
 	}
 	return progress, nil
 }
@@ -324,11 +324,6 @@ func workflowBackfillAdmissionFailure(err error) (code string, retryable bool, m
 }
 
 func (s *PgStore) retryWorkflowEventReplayBackfill(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, accountID, jobID string, job api.EventReplayBackfillJobResponse, limit int) (api.EventReplayBackfillRetryResponse, error) {
-	if _, err := q.EventReplayBackfillWorkflowExpireRetry(ctx, tx, sqlc.EventReplayBackfillWorkflowExpireRetryParams{
-		JobID: mustPgUUID(jobID), AccountID: mustPgUUID(accountID),
-	}); err != nil {
-		return api.EventReplayBackfillRetryResponse{}, err
-	}
 	jobSnapshot, err := q.EventReplayBackfillTargetSnapshot(ctx, tx, sqlc.EventReplayBackfillTargetSnapshotParams{JobID: mustPgUUID(jobID), AccountID: mustPgUUID(accountID)})
 	if err != nil {
 		return api.EventReplayBackfillRetryResponse{}, err
@@ -352,8 +347,10 @@ func (s *PgStore) retryWorkflowEventReplayBackfill(ctx context.Context, q *sqlc.
 	}
 	var retried int64
 	for _, row := range rows {
+		admissionAttempted := false
 		parent, err := q.EventReplayBackfillLockParent(ctx, tx, row.OutboxID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (uuidFromPgtype(parent.AccountID).String() != uuidFromPgtype(jobSnapshot.AccountID).String() ||
+			parent.Source != row.EventSource || parent.EventID != row.EventID || !parent.CreatedAt.Time.Equal(row.AcceptedAt.Time))) {
 			updated, updateErr := q.EventReplayBackfillWorkflowFinishRetry(ctx, tx, sqlc.EventReplayBackfillWorkflowFinishRetryParams{
 				State: "failed", FailureCode: EventFanoutFailureCodeTargetUnavailable,
 				LastError: "source event is no longer retained", Retryable: false,
@@ -369,10 +366,6 @@ func (s *PgStore) retryWorkflowEventReplayBackfill(ctx context.Context, q *sqlc.
 		}
 		if err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
-		}
-		if uuidFromPgtype(parent.AccountID).String() != uuidFromPgtype(jobSnapshot.AccountID).String() ||
-			parent.Source != row.EventSource || parent.EventID != row.EventID || !parent.CreatedAt.Time.Equal(row.AcceptedAt.Time) {
-			return api.EventReplayBackfillRetryResponse{}, ErrConflict
 		}
 		state, failureCode, lastError, retryable := "", "", "", false
 		if parent.State != "delivered" {
@@ -403,8 +396,23 @@ func (s *PgStore) retryWorkflowEventReplayBackfill(ctx context.Context, q *sqlc.
 					} else if !errors.Is(priorErr, pgx.ErrNoRows) {
 						return api.EventReplayBackfillRetryResponse{}, priorErr
 					} else {
+						admissionAttempted = true
 						_, created, admissionErr := admitEventWorkflowTx(ctx, q, tx, row.OutboxID, target, row.Payload)
 						if admissionErr != nil {
+							if errors.Is(admissionErr, errWorkflowFailurePolicyLatched) {
+								if err := tx.Commit(ctx); err != nil {
+									return api.EventReplayBackfillRetryResponse{}, err
+								}
+								remaining, err := q.EventReplayBackfillWorkflowRetryableCount(ctx, s.pool, sqlc.EventReplayBackfillWorkflowRetryableCountParams{JobID: mustPgUUID(jobID), AccountID: mustPgUUID(accountID)})
+								if err != nil {
+									return api.EventReplayBackfillRetryResponse{}, err
+								}
+								updated, err := getEventReplayBackfill(ctx, q, s.pool, accountID, jobID)
+								if err != nil {
+									return api.EventReplayBackfillRetryResponse{}, err
+								}
+								return api.EventReplayBackfillRetryResponse{RetriedCount: retried, RemainingRetryableCount: remaining, Job: updated}, nil
+							}
 							code, canRetry, safeMessage, recordable := workflowBackfillAdmissionFailure(admissionErr)
 							if !recordable {
 								return api.EventReplayBackfillRetryResponse{}, admissionErr
@@ -429,6 +437,9 @@ func (s *PgStore) retryWorkflowEventReplayBackfill(ctx context.Context, q *sqlc.
 			return api.EventReplayBackfillRetryResponse{}, ErrConflict
 		}
 		retried++
+		if admissionAttempted {
+			break
+		}
 	}
 	if err := q.EventReplayBackfillFinalize(ctx, tx, mustPgUUID(jobID)); err != nil {
 		return api.EventReplayBackfillRetryResponse{}, err

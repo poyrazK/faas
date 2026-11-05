@@ -27,16 +27,16 @@ func (f *failurePolicyScheduleFixture) EvaluateAutomationFailurePolicies(context
 	return "", errPolicyUnavailable
 }
 
-func (f *failurePolicyScheduleFixture) GetAutomationFailurePolicy(_ context.Context, appID, _ string) (api.AutomationFailurePolicyResponse, error) {
+func (f *failurePolicyScheduleFixture) CheckAutomationFailureAdmission(_ context.Context, appID, _ string, _ time.Time) (bool, error) {
 	switch appID {
 	case "unavailable":
-		return api.AutomationFailurePolicyResponse{}, errPolicyUnavailable
+		return false, errPolicyUnavailable
 	case "over-limit":
-		return api.AutomationFailurePolicyResponse{Policy: api.AutomationFailurePolicy{Enabled: true, FailureThreshold: 2, MinCompletedRuns: 3}, ObservedFailures: 2, ObservedCompletedRuns: 3}, nil
+		return false, nil
 	case "paused":
-		return api.AutomationFailurePolicyResponse{Paused: true}, nil
+		return false, nil
 	default:
-		return api.AutomationFailurePolicyResponse{}, nil
+		return true, nil
 	}
 }
 
@@ -66,6 +66,53 @@ func TestFailurePolicyScanErrorDoesNotBlockHealthySchedules(t *testing.T) {
 	}
 }
 
+type unavailablePolicyScan struct{ MemStore *state.MemStore }
+
+func (*unavailablePolicyScan) EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error) {
+	return "", errPolicyUnavailable
+}
+
+func TestFailurePolicyFallbackLatchesThreshold(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "fallback-latch@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "fallback-latch", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := json.RawMessage(`[{"name":"nightly","trigger":{"type":"schedule","schedule":"* * * * *"},"steps":[{"name":"main","path":"/report"}]}]`)
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, ImageDigest: "sha256:abc", Workflows: definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err := store.SetAutomationFailurePolicy(ctx, app.ID, "nightly", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","path":"/report"}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := sched.MakeEngine(t, statetest.NewMem(&unavailablePolicyScan{MemStore: store}), &sched.FakeWakeVMM{})
+	loop := sched.NewLoop(nil, engine, nil).WithWorkflowsDispatched(true)
+	if err := loop.RunWorkflowSchedulesTick(ctx); !errors.Is(err, errPolicyUnavailable) {
+		t.Fatalf("scan failure: %v", err)
+	}
+	policy, err := store.GetAutomationFailurePolicy(ctx, app.ID, "nightly")
+	if err != nil || !policy.Paused || policy.Generation != 1 {
+		t.Fatalf("fallback did not persist pause: %+v, %v", policy, err)
+	}
+}
+
 type partialFailurePolicyFixture struct {
 	MemStore   *state.MemStore
 	evaluated  []string
@@ -80,9 +127,9 @@ func (f *partialFailurePolicyFixture) EvaluateAutomationFailurePolicies(_ contex
 	return "", nil
 }
 
-func (f *partialFailurePolicyFixture) GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error) {
+func (f *partialFailurePolicyFixture) CheckAutomationFailureAdmission(context.Context, string, string, time.Time) (bool, error) {
 	f.checkCount++
-	return api.AutomationFailurePolicyResponse{}, nil
+	return true, nil
 }
 
 func (f *partialFailurePolicyFixture) ListWorkflowScheduleCandidates(context.Context, string, string, int) ([]state.WorkflowScheduleCandidate, error) {
@@ -126,9 +173,9 @@ func (f *tenantPolicyCacheFixture) EvaluateAutomationFailurePolicies(context.Con
 	return "", errPolicyUnavailable
 }
 
-func (f *tenantPolicyCacheFixture) GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error) {
+func (f *tenantPolicyCacheFixture) CheckAutomationFailureAdmission(context.Context, string, string, time.Time) (bool, error) {
 	f.checks++
-	return api.AutomationFailurePolicyResponse{}, nil
+	return true, nil
 }
 
 func TestFailurePolicyFallbackCachesTenantChecks(t *testing.T) {
@@ -180,8 +227,8 @@ func (f *slowPolicyScanFixture) EvaluateAutomationFailurePolicies(ctx context.Co
 	<-ctx.Done()
 	return "", ctx.Err()
 }
-func (f *slowPolicyScanFixture) GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error) {
-	return api.AutomationFailurePolicyResponse{}, nil
+func (f *slowPolicyScanFixture) CheckAutomationFailureAdmission(context.Context, string, string, time.Time) (bool, error) {
+	return true, nil
 }
 func (f *slowPolicyScanFixture) ListWorkflowScheduleCandidates(context.Context, string, string, int) ([]state.WorkflowScheduleCandidate, error) {
 	return []state.WorkflowScheduleCandidate{{AppID: "healthy", Workflows: json.RawMessage(`[{"name":"report","trigger":{"type":"schedule"}}]`)}}, nil

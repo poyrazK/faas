@@ -81,6 +81,8 @@ func writeSuiteError(w http.ResponseWriter, err error) {
 		problem = api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Suite unavailable", "No such retained suite, verification or automation.")
 	case errors.Is(err, state.ErrWorkflowRunIdempotencyConflict):
 		problem = api.NewProblem(http.StatusConflict, api.CodeConflict, "Suite identity already used", "The suite target, ordered selection and existing run links are immutable. Use a new suite UUID for a different selection.")
+	case errors.Is(err, state.ErrAutomationLiveVerificationExpired):
+		problem = api.NewProblem(http.StatusGone, api.CodeConflict, "Live verification expired", err.Error())
 	case errors.Is(err, state.ErrAutomationVersionConflict):
 		problem = api.NewProblem(http.StatusConflict, api.CodeAutomationVersionConflict, "Suite target changed", "Reload the saved automation version, published revision and deployment before creating a shared suite.")
 	case errors.Is(err, state.ErrAutomationInvalid):

@@ -219,6 +219,8 @@ export class InboundWebhooksService {
    * must be true: bound endpoints start automations instead of app delivery.
    * Callback and managed-operation bindings must be removed first.
    * Event types accept edge wildcards; filters use the existing event language.
+   * Normalized filters, including PostgreSQL numeric expansion, are limited
+   * to 32 KiB. The request body allows escaped filter representations.
    *
    * @returns WebhookAutomationBindingResponse Saved binding with its new revision.
    * @throws ApiError
@@ -266,7 +268,7 @@ export class InboundWebhooksService {
         402: `Plan does not allow workflows.`,
         404: `code: not_found`,
         409: `Binding revision or routing mode conflict (webhook_automation_conflict).`,
-        413: `Request body exceeds 64 KiB.`,
+        413: `Request body exceeds 200704 bytes.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

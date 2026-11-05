@@ -56,7 +56,11 @@ func (m *MemStore) SaveWebhookAutomationBinding(_ context.Context, opts WebhookA
 		return WebhookAutomationBinding{}, err
 	}
 	m.webhookAutomationRevision++
-	binding := WebhookAutomationBinding{EndpointID: endpoint.ID, WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: normalizedWebhookFilter(opts.Filter), Version: m.webhookAutomationRevision, UpdatedAt: time.Now().UTC()}
+	filter, err := canonicalWebhookFilter(opts.Filter)
+	if err != nil {
+		return WebhookAutomationBinding{}, ErrAutomationInvalid
+	}
+	binding := WebhookAutomationBinding{EndpointID: endpoint.ID, WorkflowName: opts.WorkflowName, EventType: opts.EventType, Filter: filter, Version: m.webhookAutomationRevision, UpdatedAt: time.Now().UTC()}
 	if m.webhookAutomationBindings == nil {
 		m.webhookAutomationBindings = map[string]WebhookAutomationBinding{}
 	}
@@ -115,6 +119,16 @@ func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified I
 		return WebhookAutomationReceipt{}, true, ErrAutomationInvalid
 	}
 	key := webhookAutomationReceiptKey(endpoint.ID, eventID)
+	if prior, exists := m.workflowCallbackWebhookReceipts[key]; exists {
+		matches, err := callbackReceiptMatches(prior, body)
+		if err != nil {
+			return WebhookAutomationReceipt{}, true, err
+		}
+		if !matches {
+			return WebhookAutomationReceipt{}, true, ErrWebhookAutomationConflict
+		}
+		return WebhookAutomationReceipt{}, true, &WebhookCallbackAlreadyHandled{CallbackID: prior.CallbackID, Status: prior.Status}
+	}
 	prior, exists := m.webhookAutomationReceipts[key]
 	binding, bound := m.webhookAutomationBindings[endpoint.ID]
 	if !exists && !bound {

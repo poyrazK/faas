@@ -19194,6 +19194,16 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_automation_live_retired_keys",
+    "columns": [
+      "app_id",
+      "key_hash",
+      "name",
+      "request_fingerprint"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_automation_live_suites",
     "columns": [
       "app_id",
@@ -19275,6 +19285,15 @@
     }
   },
   {
+    "table": "workflow_automation_schedule_invalidations",
+    "columns": [
+      "app_id",
+      "invalidated_at",
+      "name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_callback_webhook_bindings",
     "columns": [
       "created_at",
@@ -19297,6 +19316,18 @@
         ]
       ]
     }
+  },
+  {
+    "table": "workflow_callback_webhook_receipts",
+    "columns": [
+      "accepted_at",
+      "body_hash",
+      "callback_id",
+      "endpoint_id",
+      "provider_event_id",
+      "status"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_code_admission_guard",

@@ -23,6 +23,7 @@ import (
 const eventInvocationMethod = "POST"
 const eventInvocationPath = "/"
 const eventFanoutRecoveryBatch = 100
+const eventReplayBackfillSweepTimeout = 2 * time.Second
 
 // eventReceiptPruneLimit bounds the settled receipts one sweep prunes. A
 // sweep that prunes the whole limit prunes again on the next sweep instead
@@ -535,6 +536,17 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 				}
 			} else {
 				caughtUp := pruned < eventReceiptPruneLimit
+				if callbacks, ok := l.engine.store.(state.WorkflowCallbackWebhookReceiptRetentionStore); ok {
+					count, err := callbacks.PruneWorkflowCallbackWebhookReceipts(ctx, now, eventReceiptPruneLimit)
+					if err != nil {
+						caughtUp = false
+						if l.log != nil {
+							l.log.Warn("sched: prune callback webhook receipts failed", "err", err)
+						}
+					} else if count >= eventReceiptPruneLimit {
+						caughtUp = false
+					}
+				}
 				if backfills, ok := l.engine.store.(state.EventReplayBackfillStore); ok {
 					if _, err := backfills.PruneEventReplayBackfills(ctx, now, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
 						l.log.Warn("sched: prune completed event replay backfills failed", "err", err)
@@ -570,7 +582,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		}
 	}
 	l.runEventRecoveryExecutionNotifications(ctx, now)
-	l.runEventReplayBackfillSweep(ctx, now)
+	l.dispatchEventReplayBackfillSweep(ctx)
 	_, recipientSupported := store.(state.PublishedEventRecipientWorkStore)
 	_, workflowSupported := store.(state.EventWorkflowRecipientAdmissionStore)
 	adoption, adopting := store.(state.PublishedEventRecipientAdoptionClaimStore)
@@ -671,22 +683,41 @@ func (l *Loop) releaseEventAdoptionClaims(ctx context.Context, store state.Publi
 	}
 }
 
-func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
+func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) bool {
 	store, ok := l.engine.store.(state.EventReplayBackfillStore)
-	if !ok {
-		return
+	if !ok || !l.engine.eventsReleased() {
+		return false
 	}
-	l.runEventReplayBackfillLifecycle(ctx, now)
+	deadline := time.Now().Add(eventReplayBackfillSweepTimeout)
+	lifecycleCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	l.runEventReplayBackfillLifecycle(lifecycleCtx, now)
+	cancel()
+	after := l.eventReplayBackfillAfter
 	for i := 0; i < eventFanoutRecoveryBatch; i++ {
-		worked, err := store.ProcessNextEventReplayBackfill(ctx, now)
+		if ctx.Err() != nil || !l.engine.eventsReleased() {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return true
+		}
+		var worked bool
+		var err error
+		if fair, ok := store.(state.FairEventReplayBackfillStore); ok {
+			after, worked, err = fair.ProcessNextEventReplayBackfillAfter(ctx, now, after)
+			if after != "" || err == nil {
+				l.eventReplayBackfillAfter = after
+			}
+		} else {
+			worked, err = store.ProcessNextEventReplayBackfill(ctx, now)
+		}
 		if err != nil && !l.eventJobContinue("event replay backfill page", err) {
-			return
+			return false
 		}
 		if !worked {
-			return
+			return false
 		}
 	}
-	l.eventFanoutBacklog = true
+	return true
 }
 
 // eventJobContinue logs a failed recovery or backfill pass and reports

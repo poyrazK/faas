@@ -50,6 +50,10 @@ export type AutomationFailurePolicyResponse = {
    */
   retained_events: number;
   /**
+   * True when the advisory count was unavailable within its time budget; retained_events is then not an exact count.
+   */
+  retained_events_incomplete?: boolean;
+  /**
    * Latest pause and resume transitions in descending generation order.
    */
   history: Array<AutomationFailureTransition>;

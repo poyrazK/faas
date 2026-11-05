@@ -130,6 +130,9 @@ func (m *MemStore) AdmitScheduledWorkflow(_ context.Context, appID, deploymentID
 		return WorkflowScheduleCursor{}, false, err
 	}
 	if run != nil {
+		if m.automationFailureBlocksAdmissionLocked(appID, name, time.Now().UTC()) {
+			return WorkflowScheduleCursor{}, false, nil
+		}
 		if err := m.insertWorkflowRunLocked(run); err != nil {
 			return WorkflowScheduleCursor{}, false, err
 		}
@@ -253,6 +256,8 @@ func (m *MemStore) AdmitTenantScheduledWorkflow(_ context.Context, appID, tenant
 	var previous *WorkflowScheduleCursor
 	if stored, exists := m.workflowTenantSchedules[key]; exists {
 		value := stored
+		m.rearmTenantAfterFailureResumeLocked(&value, appID, name)
+		rearmTenantScheduleAfterOwnerChange(&value, m.automationScheduleInvalidations[appID+"/"+name])
 		if customized {
 			value.TriggerSnapshot, err = json.Marshal(configured)
 			if err != nil {
@@ -268,6 +273,9 @@ func (m *MemStore) AdmitTenantScheduledWorkflow(_ context.Context, appID, tenant
 	}
 	outcomeChanged := workflowScheduleOutcomeChanged(cursor, previous)
 	if run != nil {
+		if m.automationFailureBlocksAdmissionLocked(appID, name, time.Now().UTC()) {
+			return WorkflowScheduleCursor{}, false, nil
+		}
 		if err := m.insertWorkflowRunLocked(run); err != nil {
 			return WorkflowScheduleCursor{}, false, err
 		}
@@ -279,6 +287,7 @@ func (m *MemStore) AdmitTenantScheduledWorkflow(_ context.Context, appID, tenant
 		}
 	}
 	m.recordWorkflowScheduleOccurrenceLocked(cursor, previous, *definition)
+	cursor.UpdatedAt = time.Now().UTC()
 	m.workflowTenantSchedules[key] = *cursor
 	return *cursor, outcomeChanged, nil
 }
@@ -290,8 +299,12 @@ func (m *MemStore) ListTenantWorkflowSchedules(_ context.Context, accountID, ten
 	if !eligible || account.ID != accountID {
 		return nil, ErrNotFound
 	}
+	configuration, err := mergeAutomationDefinitions(m.automationDeploymentLocked(appID).Workflows, m.automationRecordsLocked(appID))
+	if err != nil {
+		return nil, err
+	}
 	var definitions []api.WorkflowSpec
-	if err := json.Unmarshal(deployment.Workflows, &definitions); err != nil {
+	if err := json.Unmarshal(configuration, &definitions); err != nil {
 		return nil, fmt.Errorf("state: decode tenant workflow schedules: %w", err)
 	}
 	result := make([]TenantWorkflowSchedule, 0)
@@ -307,7 +320,10 @@ func (m *MemStore) ListTenantWorkflowSchedules(_ context.Context, accountID, ten
 		stored, exists := m.workflowTenantSchedules[key]
 		configured, version, customized := tenantWorkflowScheduleConfigFromSnapshot(stored.TriggerSnapshot)
 		schedule := tenantWorkflowScheduleFromDefinition(appID, tenantID, deployment.ID, definition, configured, version, customized)
+		applyTenantFailurePause(&schedule, m.automationFailureGuards[appID+"/"+definition.Name].PausedAt != nil)
 		if exists {
+			m.rearmTenantAfterFailureResumeLocked(&stored, appID, definition.Name)
+			rearmTenantScheduleAfterOwnerChange(&stored, m.automationScheduleInvalidations[appID+"/"+definition.Name])
 			stored.TriggerSnapshot = cloneWorkflowJSON(stored.TriggerSnapshot)
 			stored.ScheduledFor = cloneTimePtr(stored.ScheduledFor)
 			stored.LastAdmittedAt = cloneTimePtr(stored.LastAdmittedAt)
@@ -330,7 +346,11 @@ func (m *MemStore) UpdateTenantWorkflowSchedule(_ context.Context, accountID, te
 	if !eligible || account.ID != accountID {
 		return TenantWorkflowSchedule{}, ErrNotFound
 	}
-	definition, err := tenantConfigurableWorkflowDefinition(deployment.Workflows, name, account.Plan)
+	configuration, err := mergeAutomationDefinitions(m.automationDeploymentLocked(appID).Workflows, m.automationRecordsLocked(appID))
+	if err != nil {
+		return TenantWorkflowSchedule{}, err
+	}
+	definition, err := tenantConfigurableWorkflowDefinition(configuration, name, account.Plan)
 	if err != nil {
 		return TenantWorkflowSchedule{}, err
 	}
@@ -366,12 +386,15 @@ func (m *MemStore) UpdateTenantWorkflowSchedule(_ context.Context, accountID, te
 	cursor.DeploymentID = deployment.ID
 	cursor.TriggerSnapshot = snapshot
 	cursor.LastEvaluatedAt = now
+	cursor.UpdatedAt = now
 	cursor.Status = WorkflowScheduleArmed
 	if cursor.ScheduledFor != nil && cursor.ScheduledFor.After(now) {
 		cursor.ScheduledFor = nil
 	}
 	m.workflowTenantSchedules[key] = cursor
-	return tenantWorkflowScheduleFromDefinition(appID, tenantID, deployment.ID, *definition, trigger, version, true), nil
+	result := tenantWorkflowScheduleFromDefinition(appID, tenantID, deployment.ID, *definition, trigger, version, true)
+	applyTenantFailurePause(&result, m.automationFailureGuards[appID+"/"+name].PausedAt != nil)
+	return result, nil
 }
 
 var _ TenantWorkflowScheduleStore = (*MemStore)(nil)

@@ -62,6 +62,7 @@ const (
 	// its key is the trigger, so a trigger has one batch in flight.
 	workBrokerTriggerDispatch workKind = "broker_trigger_dispatch"
 	workEventFanout           workKind = "event_fanout"
+	workEventReplayBackfill   workKind = "event_replay_backfill"
 	workReaper                workKind = "reaper"
 	workRehearsalFault        workKind = "rehearsal_worker_fault"
 	workRehearsalSuspend      workKind = "rehearsal_suspend_resume"
@@ -127,7 +128,7 @@ const (
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout, workEventReplayBackfill,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
 	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
@@ -202,6 +203,7 @@ var workSpecs = map[workKind]workSpec{
 	// lane is resubmitted by the next trigger tick.
 	workBrokerTriggerDispatch: {slots: api.BrokerTriggerDispatchSlotsPerNode, overflow: overflowDrop},
 	workEventFanout:           {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	workEventReplayBackfill:   {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.

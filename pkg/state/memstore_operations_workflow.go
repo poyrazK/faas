@@ -45,6 +45,10 @@ func (m *MemStore) prepareOperationWorkflowLocked(op *Operation, inv Invocation,
 
 func (m *MemStore) insertOperationWorkflowLocked(op Operation, run WorkflowRun, steps []*WorkflowStep) {
 	m.workflowRuns[run.ID] = run
+	if m.operationWorkflowRuns == nil {
+		m.operationWorkflowRuns = make(map[string]struct{})
+	}
+	m.operationWorkflowRuns[run.ID] = struct{}{}
 	m.workflowSteps[run.ID] = map[string]WorkflowStep{}
 	for _, step := range steps {
 		m.workflowSteps[run.ID][step.StepName] = *step

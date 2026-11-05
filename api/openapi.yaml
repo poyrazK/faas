@@ -42710,6 +42710,8 @@ paths:
         must be true: bound endpoints start automations instead of app delivery.
         Callback and managed-operation bindings must be removed first.
         Event types accept edge wildcards; filters use the existing event language.
+        Normalized filters, including PostgreSQL numeric expansion, are limited
+        to 32 KiB. The request body allows escaped filter representations.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -42733,7 +42735,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '413': { description: 'Request body exceeds 64 KiB.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '413': { description: 'Request body exceeds 200704 bytes.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
     get:
@@ -63288,7 +63290,7 @@ paths:
           type: string
           minLength: 1
           maxLength: 255
-        description: Stable request key; retry the same key and body to recover the original run.
+        description: Stable request key; retry the same key and body to recover the original run. After run retention expires, the key remains reserved and returns 410 rather than starting another run.
       requestBody:
         required: true
         content:
@@ -63312,6 +63314,11 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/AutomationConflict'
+        '410':
+          description: The original run expired; the idempotency key remains reserved.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
@@ -97189,6 +97196,9 @@ components:
           format: int64
           minimum: 0
           description: Advisory count of unadmitted retained event recipients for this automation.
+        retained_events_incomplete:
+          type: boolean
+          description: True when the advisory count was unavailable within its time budget; retained_events is then not an exact count.
         history:
           type: array
           maxItems: 100

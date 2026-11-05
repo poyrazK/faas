@@ -92,6 +92,8 @@ func writeError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAutomationVersionConflict, "Verification target changed", "Reload the saved case, published revision and deployment before starting verification."))
 	case errors.Is(err, state.ErrWorkflowRunIdempotencyConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Idempotency key already used", "Use a new key for a different live verification request."))
+	case errors.Is(err, state.ErrAutomationLiveVerificationExpired):
+		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeConflict, "Live verification expired", err.Error()))
 	case errors.Is(err, state.ErrWorkflowDeploymentUnavailable), errors.Is(err, state.ErrWorkflowEventTargetUnavailable):
 		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 	case errors.Is(err, state.ErrAutomationInvalid):

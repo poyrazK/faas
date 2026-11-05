@@ -216,6 +216,11 @@ func (m *MemStore) DeleteInboundWebhookEndpoint(_ context.Context, id string) er
 			delete(m.webhookAutomationReceipts, key)
 		}
 	}
+	for key := range m.workflowCallbackWebhookReceipts {
+		if strings.HasPrefix(key, id+"\x00") {
+			delete(m.workflowCallbackWebhookReceipts, key)
+		}
+	}
 	delete(m.exclusiveTriggerBindings, "inbound_webhook\x00"+id)
 	m.deleteOperationWebhookEndpointLocked(id)
 	for bindingID, binding := range m.workflowCallbackWebhookBindings {

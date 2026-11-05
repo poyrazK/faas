@@ -1932,11 +1932,19 @@ func (s *PgStore) SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.D
 }
 
 func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time.Duration) (int, error) {
+	deleted, _, err := s.SweepExpiredWorkflowEventsWithProgress(ctx, olderThan)
+	return deleted, err
+}
+
+// SweepExpiredWorkflowEventsWithProgress moves at most one bounded batch of
+// orphaned events before performing the existing age-based cleanup.
+func (s *PgStore) SweepExpiredWorkflowEventsWithProgress(ctx context.Context, olderThan time.Duration) (int, bool, error) {
 	if olderThan < 0 {
-		return 0, ErrWorkflowInvalidRecord
+		return 0, false, ErrWorkflowInvalidRecord
 	}
 	secs := int64(olderThan.Seconds())
 	intervalStr := fmt.Sprintf("%d seconds", secs)
+	more, archiveErr := s.archiveRetainedWorkflowEvents(ctx)
 
 	query := `
 		DELETE FROM workflow_events WHERE id IN (
@@ -1950,6 +1958,9 @@ func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time
 	`
 	tag, err := s.pool.Exec(ctx, query, intervalStr, api.WorkflowRetentionPruneBatch)
 	var failures []error
+	if archiveErr != nil {
+		failures = append(failures, archiveErr)
+	}
 	var liveDeleted, archived int64
 	if err != nil {
 		failures = append(failures, fmt.Errorf("pgstore: sweep expired workflow events: %w", err))
@@ -1962,7 +1973,54 @@ func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time
 			failures = append(failures, fmt.Errorf("pgstore: sweep archived workflow events: %w", err))
 		}
 	}
-	return int(liveDeleted + archived), errors.Join(errors.Join(failures...), ctx.Err())
+	return int(liveDeleted + archived), more, errors.Join(errors.Join(failures...), ctx.Err())
+}
+
+func (s *PgStore) archiveRetainedWorkflowEvents(ctx context.Context) (bool, error) {
+	// Keep the cursor local to this worker and serialize passes using it. A
+	// restart simply begins another complete scan at the oldest owner.
+	s.workflowArchiveMu.Lock()
+	defer s.workflowArchiveMu.Unlock()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("pgstore: begin workflow event archive: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	result, err := q.ArchiveRetainedWorkflowEvents(ctx, tx, sqlc.ArchiveRetainedWorkflowEventsParams{
+		AfterDeletedAt: s.workflowArchiveAfterTime, AfterRunID: s.workflowArchiveAfterRun,
+		AfterEventID: s.workflowArchiveAfterEvent, BatchSize: api.WorkflowRetentionArchiveBatch,
+	})
+	if err != nil {
+		return false, fmt.Errorf("pgstore: archive workflow events: %w", err)
+	}
+	if len(result.OwnerIds) > 0 {
+		if _, err := q.PruneEmptyWorkflowEventOwners(ctx, tx, result.OwnerIds); err != nil {
+			return false, fmt.Errorf("pgstore: prune workflow event owners: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("pgstore: commit workflow event archive: %w", err)
+	}
+	// An event cursor also passes conflicting IDs without losing either copy.
+	// End a complete scan rather than spinning on locked or conflicting rows.
+	more := false
+	if result.Examined >= api.WorkflowRetentionArchiveBatch {
+		s.workflowArchiveAfterTime, s.workflowArchiveAfterRun = result.LastEventDeletedAt, result.LastEventRunID
+		s.workflowArchiveAfterEvent = result.LastEventID
+		more = true
+	} else if result.OwnersSelected >= api.WorkflowRetentionArchiveBatch {
+		s.workflowArchiveAfterTime, s.workflowArchiveAfterRun = result.LastDeletedAt, result.LastRunID
+		s.workflowArchiveAfterEvent = pgtype.UUID{}
+		more = true
+	} else {
+		s.workflowArchiveAfterTime, s.workflowArchiveAfterRun = pgtype.Timestamptz{}, pgtype.UUID{}
+		s.workflowArchiveAfterEvent = pgtype.UUID{}
+	}
+	if result.Moved != result.Examined {
+		return more, fmt.Errorf("pgstore: archive workflow events: %w: event id already archived", ErrConflict)
+	}
+	return more, nil
 }
 
 func (s *PgStore) workflowRunWriteResult(ctx context.Context, id string, rows int64, noop bool) error {

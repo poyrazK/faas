@@ -12,6 +12,72 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestTenantScheduleSettingsRemainAvailableDuringFailurePause(t *testing.T) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		ctx := t.Context()
+		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tenant-policy-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		definition := json.RawMessage(`[{"name":"nightly","trigger":{"type":"schedule","schedule":"* * * * *","tenant_configurable":true},"steps":[{"name":"main","path":"/report"}]}]`)
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:tenant-policy", Status: state.DeployPending, Workflows: definition})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		tenants := store.(state.PlatformTenantStore)
+		ref := uuid.NewString()
+		tenant, _, err := tenants.CreatePlatformTenant(ctx, account.ID, ref, ref, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, ref, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tenants.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+			t.Fatal(err)
+		}
+		policies := store.(state.AutomationFailurePolicyStore)
+		enabled := true
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "nightly", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","path":"/report"}]}`)}
+		if err := store.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := policies.EvaluateAutomationFailurePolicies(ctx, "", "", api.AutomationFailurePolicyBatch, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		out, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "nightly")
+		if err != nil || !out.Paused {
+			t.Fatalf("failure pause: %+v %v", out, err)
+		}
+		schedules := store.(state.TenantWorkflowScheduleStore)
+		list, err := schedules.ListTenantWorkflowSchedules(ctx, account.ID, tenant.ID, app.ID)
+		if err != nil || len(list) != 1 || !list[0].Enabled || list[0].EffectiveTrigger.Enabled == nil || *list[0].EffectiveTrigger.Enabled {
+			t.Fatalf("schedule settings: %+v %v", list, err)
+		}
+		updated, err := schedules.UpdateTenantWorkflowSchedule(ctx, account.ID, tenant.ID, app.ID, "nightly", 0, "*/2 * * * *", "UTC", "skip", true)
+		if err != nil || updated.Schedule != "*/2 * * * *" || !updated.Enabled || updated.EffectiveTrigger.Enabled == nil || *updated.EffectiveTrigger.Enabled {
+			t.Fatalf("update during failure pause: %+v %v", updated, err)
+		}
+		if _, changed, err := schedules.AdmitTenantScheduledWorkflow(ctx, app.ID, tenant.ID, deployment.ID, "nightly", time.Now().UTC().Add(time.Minute)); err != nil || changed {
+			t.Fatalf("admission during failure pause: changed=%t err=%v", changed, err)
+		}
+	})
+}
+
 func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()

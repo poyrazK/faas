@@ -18,6 +18,7 @@ import (
 )
 
 var ErrAutomationPublishCheckRequired = errors.New("automation: publishing checks required; rerun publish with --scenarios (receipt missing, expired or stale)")
+var ErrAutomationCodePublishChecksUnsupported = errors.New("server publication checks do not support code-first workflows; a local SDK test cannot produce a server verification receipt")
 
 type AutomationPublishCheckStore interface {
 	GetAutomationPublishPolicy(context.Context, string) (api.AutomationPublishPolicy, error)
@@ -77,6 +78,9 @@ func evaluatePublicationChecks(ctx context.Context, store AutomationStore, outbo
 	var def api.WorkflowSpec
 	if json.Unmarshal(draft.Draft, &def) != nil {
 		return fail(ErrAutomationInvalid)
+	}
+	if def.Code != nil {
+		return fail(ErrAutomationCodePublishChecksUnsupported)
 	}
 	if err := outbound.ValidateWorkflowOutboundBindings(ctx, appID, def); err != nil {
 		return fail(err)
@@ -139,6 +143,10 @@ func validatePublicationReceipt(p api.AutomationPublishPolicy, r automationPubli
 	}
 	if previous == nil {
 		return ErrNotFound
+	}
+	var draft api.WorkflowSpec
+	if json.Unmarshal(previous.Draft, &draft) == nil && draft.Code != nil {
+		return ErrAutomationCodePublishChecksUnsupported
 	}
 	if r.TokenHash == "" || !credentialHexMatches(credTagPublishReceipt, automationReceiptHash(m.CheckReceipt), r.TokenHash) || r.AppID != appID || r.Name != name || r.AccountID != m.ActorAccountID || r.APIKeyID != m.ActorAPIKeyID || r.PolicyVersion != p.Version || !time.Now().Before(r.ExpiresAt) || r.Evidence.CheckedVersion != previous.Version {
 		return ErrAutomationPublishCheckRequired

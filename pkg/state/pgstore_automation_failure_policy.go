@@ -12,11 +12,19 @@ import (
 )
 
 const (
-	automationFailurePolicyItemTimeout = 3 * time.Second
-	automationFailurePolicyPageBudget  = 3 * time.Second
+	automationFailurePolicyItemTimeout    = 3 * time.Second
+	automationFailurePolicyPageBudget     = 3 * time.Second
+	automationFailureRetainedCountTimeout = 500 * time.Millisecond
 )
 
-func failurePolicyResponsePG(ctx context.Context, db sqlc.DBTX, appID, name string, now time.Time) (api.AutomationFailurePolicyResponse, error) {
+func retainedAutomationEvents(ctx context.Context, db sqlc.DBTX, appID, name string) (int64, bool) {
+	countCtx, cancel := context.WithTimeout(ctx, automationFailureRetainedCountTimeout)
+	defer cancel()
+	count, err := sqlc.New().AutomationFailureRetainedEvents(countCtx, db, sqlc.AutomationFailureRetainedEventsParams{AppID: appID, Name: name})
+	return count, err != nil
+}
+
+func failurePolicyResponsePG(ctx context.Context, db sqlc.DBTX, appID, name string, now time.Time, includeRetained bool) (api.AutomationFailurePolicyResponse, error) {
 	q := sqlc.New()
 	raw, err := q.GetAutomationFailurePolicy(ctx, db, sqlc.GetAutomationFailurePolicyParams{AppID: mustPgUUID(appID), Name: name, HistoryLimit: api.AutomationFailurePolicyHistoryLimit})
 	var out api.AutomationFailurePolicyResponse
@@ -39,7 +47,9 @@ func failurePolicyResponsePG(ctx context.Context, db sqlc.DBTX, appID, name stri
 	out.PendingRuns = signals.PendingRuns
 	out.RunningRuns = signals.RunningRuns
 	out.WaitingRuns = signals.WaitingRuns
-	out.RetainedEvents, err = q.AutomationFailureRetainedEvents(ctx, db, sqlc.AutomationFailureRetainedEventsParams{AppID: appID, Name: name})
+	if includeRetained {
+		out.RetainedEvents, out.RetainedEventsIncomplete = retainedAutomationEvents(ctx, db, appID, name)
+	}
 	return out, err
 }
 
@@ -91,6 +101,28 @@ func automationFailureBlocksAdmissionPG(ctx context.Context, tx pgx.Tx, appID, n
 	}
 	return true, true, nil
 }
+
+func (s *PgStore) CheckAutomationFailureAdmission(ctx context.Context, appID, name string, now time.Time) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
+		return false, err
+	}
+	if err := failurePolicyTargetPG(ctx, tx, appID, name); err != nil {
+		return false, err
+	}
+	blocked, _, err := automationFailureBlocksAdmissionPG(ctx, tx, appID, name, now.UTC())
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return !blocked, nil
+}
 func failurePolicyTargetPG(ctx context.Context, db sqlc.DBTX, appID, name string) error {
 	exists, err := sqlc.New().AutomationFailureTargetExists(ctx, db, sqlc.AutomationFailureTargetExistsParams{AppID: mustPgUUID(appID), Name: name})
 	if err != nil {
@@ -105,7 +137,7 @@ func (s *PgStore) GetAutomationFailurePolicy(ctx context.Context, appID, name st
 	if err := failurePolicyTargetPG(ctx, s.pool, appID, name); err != nil {
 		return api.AutomationFailurePolicyResponse{}, err
 	}
-	return failurePolicyResponsePG(ctx, s.pool, appID, name, time.Now().UTC())
+	return failurePolicyResponsePG(ctx, s.pool, appID, name, time.Now().UTC(), true)
 }
 func (s *PgStore) SetAutomationFailurePolicy(ctx context.Context, appID, name string, r api.SetAutomationFailurePolicyRequest) (api.AutomationFailurePolicyResponse, error) {
 	if !validAutomationFailurePolicy(name, r) {
@@ -134,7 +166,7 @@ func (s *PgStore) SetAutomationFailurePolicy(ctx context.Context, appID, name st
 	if err = failurePolicyTargetPG(ctx, tx, appID, name); err != nil {
 		return out, err
 	}
-	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC())
+	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC(), false)
 	if err != nil {
 		return out, err
 	}
@@ -148,11 +180,20 @@ func (s *PgStore) SetAutomationFailurePolicy(ctx context.Context, appID, name st
 	if err = q.EnsureAutomationFailureGuard(ctx, tx, sqlc.EnsureAutomationFailureGuardParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
 		return out, err
 	}
-	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC())
+	if !out.Policy.Enabled && *r.Enabled {
+		if err = q.StartAutomationFailureMonitoring(ctx, tx, sqlc.StartAutomationFailureMonitoringParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+			return out, err
+		}
+	}
+	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC(), false)
 	if err != nil {
 		return out, err
 	}
-	return out, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return out, err
+	}
+	out.RetainedEvents, out.RetainedEventsIncomplete = retainedAutomationEvents(ctx, s.pool, appID, name)
+	return out, nil
 }
 func (s *PgStore) ResumeAutomationFailurePause(ctx context.Context, appID, name, actor string, r api.ResumeAutomationFailurePauseRequest) (api.AutomationFailurePolicyResponse, error) {
 	var out api.AutomationFailurePolicyResponse
@@ -175,7 +216,7 @@ func (s *PgStore) ResumeAutomationFailurePause(ctx context.Context, appID, name,
 	if err = failurePolicyTargetPG(ctx, tx, appID, name); err != nil {
 		return out, err
 	}
-	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC())
+	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC(), false)
 	if err != nil {
 		return out, err
 	}
@@ -188,14 +229,15 @@ func (s *PgStore) ResumeAutomationFailurePause(ctx context.Context, appID, name,
 	if err = q.DeleteAutomationScheduleCursor(ctx, tx, sqlc.DeleteAutomationScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name}); err != nil {
 		return out, err
 	}
-	if err = q.RearmTenantAutomationSchedules(ctx, tx, sqlc.RearmTenantAutomationSchedulesParams{AppID: mustPgUUID(appID), WorkflowName: name}); err != nil {
-		return out, err
-	}
-	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC())
+	out, err = failurePolicyResponsePG(ctx, tx, appID, name, time.Now().UTC(), false)
 	if err != nil {
 		return out, err
 	}
-	return out, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return out, err
+	}
+	out.RetainedEvents, out.RetainedEventsIncomplete = retainedAutomationEvents(ctx, s.pool, appID, name)
+	return out, nil
 }
 func (s *PgStore) ListAutomationFailurePauses(ctx context.Context, appID string) ([]string, error) {
 	return sqlc.New().ListAutomationFailurePauses(ctx, s.pool, mustPgUUID(appID))

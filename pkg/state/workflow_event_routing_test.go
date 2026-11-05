@@ -486,6 +486,56 @@ func TestPgEventWorkflowRecipientAdmissionLeaseExpiresWhileWaiting(t *testing.T)
 	})
 }
 
+func TestPgEventWorkflowExpiredLeasePreservesNewFailurePause(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		pg, ok := store.(*PgStore)
+		if !ok {
+			t.Skip("requires PostgreSQL lock contention")
+		}
+		app, _, claim := seedOwnedWorkflowRouting(t, store, 150)
+		ctx := t.Context()
+		enabled := true
+		if _, err := pg.SetAutomationFailurePolicy(ctx, app.ID, "paid", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		run := &WorkflowRun{AppID: app.ID, WorkflowName: "paid", DefinitionSnapshot: json.RawMessage(`{"name":"paid","steps":[{"name":"main","path":"/paid"}]}`)}
+		if err := store.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		blocker, err := pg.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = blocker.Rollback(ctx) }()
+		if _, err := blocker.Exec(ctx, `SELECT id FROM apps WHERE id=$1 FOR UPDATE`, app.ID); err != nil {
+			t.Fatal(err)
+		}
+		setWorkflowRecipientLease(t, store, claim, time.Now().UTC().Add(200*time.Millisecond))
+		done := make(chan error, 1)
+		go func() { _, err := pg.AdmitEventWorkflowRecipient(ctx, claim); done <- err }()
+		time.Sleep(300 * time.Millisecond)
+		if err := blocker.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrWorkflowEventTargetUnavailable) {
+				t.Fatalf("admission error=%v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("admission did not unblock")
+		}
+		out, err := pg.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+		if err != nil || !out.Paused || out.Generation != 1 {
+			t.Fatalf("pause lost after lease expiry: %+v %v", out, err)
+		}
+		assertWorkflowRoutingEvidence(t, store, app, claim, "", 0)
+	})
+}
+
 // A burst past the app's concurrent workflow run limit waits as capacity: the
 // claim spends no routing attempt and creates no run, and the recipient routes
 // once a run finishes. Counting it as an attempt dropped bursts after 12 tries.

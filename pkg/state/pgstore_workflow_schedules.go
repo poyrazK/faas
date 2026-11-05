@@ -107,6 +107,18 @@ func (s *PgStore) AdmitScheduledWorkflow(ctx context.Context, appID, deploymentI
 		return WorkflowScheduleCursor{}, false, err
 	}
 	if run != nil {
+		blocked, latched, err := automationFailureBlocksAdmissionPG(ctx, tx, appID, name, time.Now().UTC())
+		if err != nil {
+			return WorkflowScheduleCursor{}, false, err
+		}
+		if blocked {
+			if latched {
+				if err := tx.Commit(ctx); err != nil {
+					return WorkflowScheduleCursor{}, false, err
+				}
+			}
+			return WorkflowScheduleCursor{}, false, nil
+		}
 		_, err = queries.InsertScheduledWorkflowRun(ctx, tx, sqlc.InsertScheduledWorkflowRunParams{
 			DeploymentID: mustPgUUID(run.DeploymentID), ID: mustPgUUID(run.ID), AppID: mustPgUUID(appID), WorkflowName: name, Input: run.Input,
 			DefinitionSnapshot: run.DefinitionSnapshot, ScheduledFor: pgtype.Timestamptz{Time: run.ScheduledFor, Valid: true},

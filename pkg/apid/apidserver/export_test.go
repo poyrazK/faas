@@ -2055,6 +2055,23 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
 
+func ExhaustInboundWebhookBudgetForTest(e TestEnv, accountID string, capacity int) {
+	now := time.Now()
+	e.s.inboundWebhookAccepts.now = func() time.Time { return now }
+	for range capacity {
+		e.s.inboundWebhookAccepts.take(accountID, capacity)
+	}
+}
+
+func SetCallbackCompletionBudgetForTest(e TestEnv, accountID string, capacity int, tokens float64) {
+	budget := e.s.inboundWebhookCallbacks
+	budget.mu.Lock()
+	defer budget.mu.Unlock()
+	now := time.Now()
+	budget.now = func() time.Time { return now }
+	budget.buckets[accountID] = &apiRequestBucket{tokens: tokens, cap: capacity, last: now}
+}
+
 // XPrepareDeliveryCrons runs the GitHub bridge's cron staging for one push
 // against store; staged marks a release staged without traffic.
 func XPrepareDeliveryCrons(ctx context.Context, store *state.MemStore, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, m *gregalemanifest.Manifest, kind state.DeploymentKind, staged bool) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {

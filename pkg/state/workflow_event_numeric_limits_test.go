@@ -21,7 +21,7 @@ func TestWorkflowEventRejectsUnsupportedNumericPayload(t *testing.T) {
 		if err := store.CreateWorkflowRun(context.Background(), run); err != nil {
 			t.Fatal(err)
 		}
-		for _, payload := range []string{`{"value":1e200000}`, `{"value":1e-20000}`} {
+		for _, payload := range []string{`{"value":1e200000}`, `{"value":1e-20000}`, `{"value":"\u0000"}`, `{"value":"\ud800"}`, `{"value":"\udc00"}`, "{\"value\":\"\xff\"}"} {
 			event := &state.WorkflowEvent{RunID: run.ID, EventName: "ready", Payload: json.RawMessage(payload)}
 			if err := store.InsertWorkflowEvent(context.Background(), event); !errors.Is(err, state.ErrWorkflowInvalidInput) {
 				t.Fatalf("payload %s: got %v", payload, err)
@@ -104,9 +104,11 @@ func TestWorkflowCallbackRejectsUnsupportedNumericPayload(t *testing.T) {
 		if err := store.CreateWorkflowRun(t.Context(), run); err != nil {
 			t.Fatal(err)
 		}
-		_, err := store.CompleteWorkflowCallback(t.Context(), run.ID, "await", "ready", uuid.NewString(), time.Hour, json.RawMessage(`{"value":1e200000}`))
-		if !errors.Is(err, state.ErrWorkflowInvalidInput) {
-			t.Fatalf("invalid callback: %v", err)
+		for _, payload := range []string{`{"value":1e200000}`, `{"value":"\u0000"}`, `{"value":"\ud800"}`} {
+			_, err := store.CompleteWorkflowCallback(t.Context(), run.ID, "await", "ready", uuid.NewString(), time.Hour, json.RawMessage(payload))
+			if !errors.Is(err, state.ErrWorkflowInvalidInput) {
+				t.Fatalf("invalid callback %s: %v", payload, err)
+			}
 		}
 		events, err := store.GetWorkflowEventsForRun(t.Context(), run.ID)
 		if err != nil || len(events) != 0 {

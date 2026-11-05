@@ -44,6 +44,12 @@ func (m *MemStore) startAutomationLiveVerificationLocked(ctx context.Context, ap
 			return view, true, err
 		}
 	}
+	if prior, exists := m.automationLiveRetiredKeys[workflowRunCreateKey{appID: appID, workflowName: name, key: automationReceiptHash(key)}]; exists {
+		if !bytes.Equal(prior, fingerprint) {
+			return api.AutomationLiveVerification{}, false, ErrWorkflowRunIdempotencyConflict
+		}
+		return api.AutomationLiveVerification{}, false, ErrAutomationLiveVerificationExpired
+	}
 	app, exists := m.apps[appID]
 	if !exists || app.Status == AppDeleted {
 		return api.AutomationLiveVerification{}, false, ErrNotFound
@@ -92,6 +98,10 @@ func (m *MemStore) startAutomationLiveVerificationLocked(ctx context.Context, ap
 	}
 	live.View.CreatedAt = run.CreatedAt
 	m.automationLiveVerifications[run.ID] = live
+	if m.automationLiveRetiredKeys == nil {
+		m.automationLiveRetiredKeys = make(map[workflowRunCreateKey][]byte)
+	}
+	m.automationLiveRetiredKeys[workflowRunCreateKey{appID: appID, workflowName: name, key: automationReceiptHash(key)}] = append([]byte(nil), fingerprint...)
 	view, err := m.liveViewLocked(live)
 	return view, false, err
 }

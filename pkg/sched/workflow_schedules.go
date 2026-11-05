@@ -25,6 +25,7 @@ const (
 	workflowFailurePolicyPassTimeout = 5 * time.Second
 	workflowFailurePolicyReadTimeout = time.Second
 	workflowFailurePolicyCacheTTL    = time.Second
+	workflowScheduleRetryBackoff     = 10 * time.Second
 )
 
 type workflowSchedulePolicyCheck struct {
@@ -60,19 +61,17 @@ func (l *Loop) workflowSchedulePolicyAllowed(ctx context.Context, appID, name st
 	if prior, ok := checks[key]; ok && time.Since(prior.checked) < workflowFailurePolicyCacheTTL {
 		return prior.allowed, prior.err
 	}
-	store, ok := l.engine.Store().(state.AutomationFailurePolicyStore)
+	store, ok := l.engine.Store().(state.AutomationFailureAdmissionStore)
 	if !ok {
 		return false, errors.New("workflow failure policy unavailable")
 	}
 	readCtx, cancel := context.WithTimeout(ctx, workflowFailurePolicyReadTimeout)
 	defer cancel()
-	policy, err := store.GetAutomationFailurePolicy(readCtx, appID, name)
+	allowed, err := store.CheckAutomationFailureAdmission(readCtx, appID, name, l.now())
 	if err != nil {
 		checks[key] = workflowSchedulePolicyCheck{err: err, checked: time.Now()}
 		return false, err
 	}
-	thresholdReached := policy.Policy.Enabled && policy.ObservedFailures >= int64(policy.Policy.FailureThreshold) && policy.ObservedCompletedRuns >= int64(policy.Policy.MinCompletedRuns)
-	allowed := !policy.Paused && !thresholdReached
 	checks[key] = workflowSchedulePolicyCheck{allowed: allowed, checked: time.Now()}
 	return allowed, nil
 }
@@ -128,6 +127,9 @@ func (l *Loop) runApplicationWorkflowSchedulesTick(ctx context.Context, checkPol
 	if l.workflowScheduleComplete {
 		return nil
 	}
+	if now.Before(l.workflowScheduleRetryAfter) {
+		return nil
+	}
 	candidates, err := store.ListWorkflowScheduleCandidates(ctx, l.engine.OwnerNodeID(), l.workflowScheduleAfter, workflowScheduleBatch)
 	if err != nil {
 		return err
@@ -173,6 +175,11 @@ func (l *Loop) runApplicationWorkflowSchedulesTick(ctx context.Context, checkPol
 	l.workflowScheduleFailed = l.workflowScheduleFailed || len(failures) > 0
 	if len(candidates) < workflowScheduleBatch {
 		l.workflowScheduleComplete = !l.workflowScheduleFailed
+		if l.workflowScheduleFailed {
+			l.workflowScheduleRetryAfter = now.Add(workflowScheduleRetryBackoff)
+		} else {
+			l.workflowScheduleRetryAfter = time.Time{}
+		}
 		l.workflowScheduleAfter, l.workflowScheduleFailed = "", false
 	} else {
 		l.workflowScheduleAfter = candidates[len(candidates)-1].AppID
@@ -199,6 +206,9 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context, checkPolicy b
 		l.tenantWorkflowScheduleComplete = false
 	}
 	if l.tenantWorkflowScheduleComplete {
+		return nil
+	}
+	if now.Before(l.tenantWorkflowScheduleRetryAfter) {
 		return nil
 	}
 	var candidates []state.WorkflowScheduleCandidate
@@ -267,6 +277,11 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context, checkPolicy b
 	l.tenantWorkflowScheduleFailed = l.tenantWorkflowScheduleFailed || len(failures) > 0
 	if len(candidates) < workflowScheduleBatch {
 		l.tenantWorkflowScheduleComplete = !l.tenantWorkflowScheduleFailed
+		if l.tenantWorkflowScheduleFailed {
+			l.tenantWorkflowScheduleRetryAfter = now.Add(workflowScheduleRetryBackoff)
+		} else {
+			l.tenantWorkflowScheduleRetryAfter = time.Time{}
+		}
 		l.tenantWorkflowScheduleFairAfter = nil
 		if l.tenantWorkflowScheduleComplete {
 			l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = "", ""

@@ -3248,7 +3248,7 @@ export class WorkflowsService {
      */
     name: string,
     /**
-     * Stable request key; retry the same key and body to recover the original run.
+     * Stable request key; retry the same key and body to recover the original run. After run retention expires, the key remains reserved and returns 410 rather than starting another run.
      */
     idempotencyKey: string,
     requestBody: StartAutomationLiveVerificationRequest,
@@ -3271,6 +3271,7 @@ export class WorkflowsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `The original run expired; the idempotency key remains reserved.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses

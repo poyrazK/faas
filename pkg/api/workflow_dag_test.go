@@ -518,3 +518,12 @@ func TestWorkflowRetryJSONRejectsUnknownField(t *testing.T) {
 		t.Fatalf("error = %v, want nested retry unknown-field error", err)
 	}
 }
+
+func TestWorkflowTriggerRejectsIncompatibleJSONBFilters(t *testing.T) {
+	for _, filter := range []string{`{"field":"\u0000"}`, `{"field":"\ud800"}`, `{"field":{"$eq":1e200000}}`} {
+		trigger := &WorkflowTriggerSpec{Type: "event", Source: "billing", EventType: "paid", Filter: json.RawMessage(filter)}
+		if err := ValidateWorkflowTrigger(trigger); !errors.Is(err, ErrWorkflowInvalidTrigger) {
+			t.Errorf("filter %s: got %v", filter, err)
+		}
+	}
+}

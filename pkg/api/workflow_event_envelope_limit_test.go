@@ -35,3 +35,41 @@ func TestWorkflowEventEnvelopeFitsPostgresNumericExpansion(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowJSONBCompatibleStringsAndNumbers(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload string
+		want          bool
+	}{
+		{"nul escape", `{"value":"\u0000"}`, false},
+		{"escaped backslash", `{"value":"\\u0000"}`, true},
+		{"valid surrogate pair", `{"value":"\ud83d\ude00"}`, true},
+		{"unpaired high surrogate", `{"value":"\ud800"}`, false},
+		{"unpaired low surrogate", `{"value":"\udc00"}`, false},
+		{"wrong low surrogate", `{"value":"\ud800\u0041"}`, false},
+		{"unsupported number", `{"value":1e200000}`, false},
+		{"large valid string", `"` + strings.Repeat("x", int(WorkflowRunInputMaxBytes)) + `"`, true},
+		{"malformed JSON", `{`, false},
+		{"invalid UTF-8", "{\"value\":\"\xff\"}", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WorkflowJSONBCompatible([]byte(tc.payload)); got != tc.want {
+				t.Fatalf("compatible=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowJSONBFitsBoundsSerializedSeparators(t *testing.T) {
+	payload := []byte(`{"a":1,"b":[2,3]}`)
+	if WorkflowJSONBFits(payload, int64(len(payload))) {
+		t.Fatal("JSONB separator expansion exceeded the limit")
+	}
+	if !WorkflowJSONBFits(payload, int64(len(payload)+4)) {
+		t.Fatal("valid JSONB should fit including separator expansion")
+	}
+	canonical := []byte(`{"a": 1, "b": [2, 3]}`)
+	if !WorkflowJSONBFits(canonical, int64(len(canonical))) {
+		t.Fatal("canonical JSONB should fit again at its exact size")
+	}
+}

@@ -136,6 +136,7 @@ type Loop struct {
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
 	eventFanoutBacklog          bool
+	eventReplayBackfillAfter    string
 	eventBackfillLifecycleAt    time.Time
 	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
@@ -261,12 +262,14 @@ type Loop struct {
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
+	workflowScheduleRetryAfter        time.Time
 	tenantWorkflowScheduleMinute      int64
 	tenantWorkflowScheduleAfterApp    string
 	tenantWorkflowScheduleAfterTenant string
 	tenantWorkflowScheduleFairAfter   *state.FairTenantScheduleCursor
 	tenantWorkflowScheduleComplete    bool
 	tenantWorkflowScheduleFailed      bool
+	tenantWorkflowScheduleRetryAfter  time.Time
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
 	// triggerAgents admits the runs of agent-target triggers (ADR-20261027090010 §9).
@@ -4685,6 +4688,18 @@ func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
 		// The pass is still in flight, so this coalesces into one rerun.
 		if l.eventFanoutBacklog && ctx.Err() == nil {
 			l.dispatchEventFanoutSweep(ctx)
+		}
+	})
+}
+
+func (l *Loop) dispatchEventReplayBackfillSweep(ctx context.Context) {
+	l.submitWork(workEventReplayBackfill, "tick", func() {
+		now := time.Now().UTC()
+		if l.now != nil {
+			now = l.now().UTC()
+		}
+		if l.runEventReplayBackfillSweep(ctx, now) && ctx.Err() == nil {
+			l.dispatchEventReplayBackfillSweep(ctx)
 		}
 	})
 }

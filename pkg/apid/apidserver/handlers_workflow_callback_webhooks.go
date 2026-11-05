@@ -3,12 +3,14 @@ package apidserver
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/automationchecks"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -172,7 +174,7 @@ type stripeWorkflowCallbackMatch struct {
 // receiveBoundWorkflowCallback returns true once the signed event has been
 // handled (including a store failure). Unmatched events retain ADR-212's
 // ordinary invocation path.
-func (s *server) receiveBoundWorkflowCallback(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, body []byte) bool {
+func (s *server) receiveBoundWorkflowCallback(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID string, body []byte, account state.Account) bool {
 	bindings, ok := workflowCallbackWebhookBindingStore(s.store)
 	if !ok {
 		return false
@@ -189,6 +191,25 @@ func (s *server) receiveBoundWorkflowCallback(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("could not resolve workflow webhook binding"))
 		return true
 	}
+	// A retained automation receipt keeps precedence when an endpoint has
+	// since been rebound as a callback.
+	if automations, ok := s.store.(state.WebhookAutomationStore); ok {
+		_, err := automations.GetWebhookAutomationReceipt(r.Context(), endpoint.ID, providerEventID)
+		if err == nil {
+			return false
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("could not resolve webhook automation receipt"))
+			return true
+		}
+	}
+	capacity := api.MustLimitsFor(account.Plan).InboundWebhookAcceptsPerMinute
+	// Bound repeated checks per callback without spending capacity reserved
+	// for other callbacks in the same account.
+	if wait, allowed := s.inboundWebhookCallbackChecks.take(account.ID+":"+binding.ID, capacity); !allowed {
+		api.WriteProblem(w, api.ErrInboundWebhookRateLimited(capacity, int(math.Ceil(wait.Seconds()))))
+		return true
+	}
 	run, err := s.store.GetWorkflowRun(r.Context(), binding.RunID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve workflow callback run"))
@@ -196,6 +217,11 @@ func (s *server) receiveBoundWorkflowCallback(w http.ResponseWriter, r *http.Req
 	}
 	if run.AppID != endpoint.AppID {
 		api.WriteProblem(w, api.ErrCapacity("workflow webhook binding ownership mismatch"))
+		return true
+	}
+	existing, err := s.store.FindMatchingEvent(r.Context(), run.ID, api.WorkflowCallbackEventName(run.ID, binding.StepName))
+	if err != nil && !errors.Is(err, state.ErrWorkflowEventNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect workflow callback completion"))
 		return true
 	}
 	callbacks, err := workflowCallbackSpecs(run)
@@ -214,8 +240,45 @@ func (s *server) receiveBoundWorkflowCallback(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("workflow callback binding step is invalid"))
 		return true
 	}
-	duplicate, err := s.store.CompleteWorkflowCallback(r.Context(), run.ID, binding.StepName,
-		api.WorkflowCallbackEventName(run.ID, binding.StepName), binding.ID, timeout, json.RawMessage(body))
+	knownDuplicate := existing != nil && existing.ID == binding.ID && automationchecks.EqualJSON(existing.Payload, body)
+	if !knownDuplicate {
+		if wait, allowed := s.inboundWebhookCallbacks.take(account.ID, capacity); !allowed {
+			api.WriteProblem(w, api.ErrInboundWebhookRateLimited(capacity, int(math.Ceil(wait.Seconds()))))
+			return true
+		}
+	}
+	fenced, ok := s.store.(state.FencedWorkflowCallbackWebhookStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow callback routing fence unavailable"))
+		return true
+	}
+	duplicate, err := fenced.CompleteBoundWorkflowCallback(r.Context(), endpoint, binding, providerEventID, timeout, json.RawMessage(body))
+	if errors.Is(err, state.ErrWebhookAutomationReceiptPrecedesCallback) {
+		return false
+	}
+	if errors.Is(err, state.ErrWebhookLegacyReceiptPrecedesCallback) {
+		receiptID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+providerEventID)).String()
+		invocation, lookupErr := s.store.InvocationByID(r.Context(), receiptID)
+		if lookupErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("inbound webhook receipt unavailable"))
+			return true
+		}
+		if !inboundWebhookReceiptMatches(invocation, endpoint, providerEventID, event.Type, body) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Inbound webhook event conflict", "event id was already accepted with different content or metadata"))
+			return true
+		}
+		acceptedAt := invocation.CreatedAt
+		if acceptedAt.IsZero() {
+			acceptedAt = time.Now().UTC()
+		}
+		writeJSON(w, http.StatusAccepted, api.InboundWebhookReceiptResponse{ReceiptID: receiptID, Status: "accepted", Duplicate: true, AcceptedAt: acceptedAt.UTC().Format(time.RFC3339)})
+		return true
+	}
+	var priorCallback *state.WebhookCallbackAlreadyHandled
+	if errors.As(err, &priorCallback) {
+		writeJSON(w, http.StatusAccepted, api.WorkflowCallbackWebhookReceiptResponse{CallbackID: priorCallback.CallbackID, Status: priorCallback.Status, Duplicate: true})
+		return true
+	}
 	status := "received"
 	if errors.Is(err, state.ErrWorkflowCallbackClosed) || errors.Is(err, state.ErrWorkflowCallbackExpired) || errors.Is(err, state.ErrConflict) {
 		status = "ignored"

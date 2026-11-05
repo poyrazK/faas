@@ -103,6 +103,17 @@ func (s *PgStore) StartAutomationLiveVerification(ctx context.Context, appID, na
 }
 
 func startLiveVerificationTx(ctx context.Context, tx pgx.Tx, appID, name, key string, req api.StartAutomationLiveVerificationRequest, fingerprint []byte, runtimeEnabled bool) (sqlc.WorkflowAutomationLiveVerification, error) {
+	var retiredFingerprint []byte
+	err := tx.QueryRow(ctx, `SELECT request_fingerprint FROM workflow_automation_live_retired_keys WHERE app_id=$1 AND name=$2 AND key_hash=sha256(convert_to($3::text,'UTF8'))`, appID, name, key).Scan(&retiredFingerprint)
+	if err == nil {
+		if !bytes.Equal(retiredFingerprint, fingerprint) {
+			return sqlc.WorkflowAutomationLiveVerification{}, ErrWorkflowRunIdempotencyConflict
+		}
+		return sqlc.WorkflowAutomationLiveVerification{}, ErrAutomationLiveVerificationExpired
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return sqlc.WorkflowAutomationLiveVerification{}, err
+	}
 	q := sqlc.New()
 	target, err := q.LockEventWorkflowTarget(ctx, tx, mustPgUUID(appID))
 	if errors.Is(err, pgx.ErrNoRows) || target.AppStatus == string(AppDeleted) {

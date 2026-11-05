@@ -2307,6 +2307,87 @@ func (q *Queries) ArchiveDeploymentCronOutcome(ctx context.Context, db DBTX, app
 	return err
 }
 
+const archiveRetainedWorkflowEvents = `-- name: ArchiveRetainedWorkflowEvents :one
+WITH owners AS MATERIALIZED (
+ SELECT o.run_id, o.app_id, o.deleted_at FROM workflow_event_owners o JOIN apps a ON a.id=o.app_id
+ WHERE o.deleted_at IS NOT NULL AND ($1::timestamptz IS NULL OR
+       (o.deleted_at,o.run_id) > ($1::timestamptz,$2::uuid) OR
+       ($3::uuid IS NOT NULL AND
+        (o.deleted_at,o.run_id) = ($1::timestamptz,$2::uuid)))
+ ORDER BY o.deleted_at,o.run_id LIMIT $4::integer
+ FOR UPDATE OF o SKIP LOCKED FOR KEY SHARE OF a SKIP LOCKED
+), selected AS MATERIALIZED (
+ SELECT e.id, o.run_id, o.app_id, o.deleted_at FROM owners o
+ JOIN LATERAL (
+  SELECT id FROM workflow_events WHERE run_id=o.run_id
+  AND ($3::uuid IS NULL OR
+       (o.deleted_at,o.run_id) > ($1::timestamptz,$2::uuid) OR
+       id > $3::uuid)
+  ORDER BY id LIMIT $4::integer FOR UPDATE SKIP LOCKED
+ ) e ON true ORDER BY o.deleted_at,o.run_id,e.id LIMIT $4::integer
+), written AS (
+ INSERT INTO workflow_event_archive (id,run_id,app_id,event_name,payload,received_at)
+ SELECT e.id,e.run_id,s.app_id,e.event_name,e.payload,e.received_at FROM workflow_events e JOIN selected s ON s.id=e.id
+ ON CONFLICT (id) DO NOTHING
+ RETURNING id
+), moved AS (
+ DELETE FROM workflow_events e USING written w WHERE e.id=w.id
+ RETURNING e.id
+)
+SELECT (SELECT count(*) FROM moved)::bigint AS moved,
+       (SELECT count(*) FROM selected)::bigint AS examined,
+       (SELECT count(*) FROM owners)::bigint AS owners_selected,
+       coalesce((SELECT array_agg(run_id) FROM owners),'{}'::uuid[])::uuid[] AS owner_ids,
+       (SELECT deleted_at FROM owners ORDER BY deleted_at DESC,run_id DESC LIMIT 1)::timestamptz AS last_deleted_at,
+       (SELECT run_id FROM owners ORDER BY deleted_at DESC,run_id DESC LIMIT 1)::uuid AS last_run_id,
+       (SELECT deleted_at FROM selected ORDER BY deleted_at DESC,run_id DESC,id DESC LIMIT 1)::timestamptz AS last_event_deleted_at,
+       (SELECT run_id FROM selected ORDER BY deleted_at DESC,run_id DESC,id DESC LIMIT 1)::uuid AS last_event_run_id,
+       (SELECT id FROM selected ORDER BY deleted_at DESC,run_id DESC,id DESC LIMIT 1)::uuid AS last_event_id
+`
+
+type ArchiveRetainedWorkflowEventsParams struct {
+	AfterDeletedAt pgtype.Timestamptz
+	AfterRunID     pgtype.UUID
+	AfterEventID   pgtype.UUID
+	BatchSize      int32
+}
+
+type ArchiveRetainedWorkflowEventsRow struct {
+	Moved              int64
+	Examined           int64
+	OwnersSelected     int64
+	OwnerIds           []pgtype.UUID
+	LastDeletedAt      pgtype.Timestamptz
+	LastRunID          pgtype.UUID
+	LastEventDeletedAt pgtype.Timestamptz
+	LastEventRunID     pgtype.UUID
+	LastEventID        pgtype.UUID
+}
+
+// Lock a bounded owner page and examine at most a bounded event page. A
+// conflicting archive ID remains live while the keyset advances past it.
+func (q *Queries) ArchiveRetainedWorkflowEvents(ctx context.Context, db DBTX, arg ArchiveRetainedWorkflowEventsParams) (ArchiveRetainedWorkflowEventsRow, error) {
+	row := db.QueryRow(ctx, archiveRetainedWorkflowEvents,
+		arg.AfterDeletedAt,
+		arg.AfterRunID,
+		arg.AfterEventID,
+		arg.BatchSize,
+	)
+	var i ArchiveRetainedWorkflowEventsRow
+	err := row.Scan(
+		&i.Moved,
+		&i.Examined,
+		&i.OwnersSelected,
+		&i.OwnerIds,
+		&i.LastDeletedAt,
+		&i.LastRunID,
+		&i.LastEventDeletedAt,
+		&i.LastEventRunID,
+		&i.LastEventID,
+	)
+	return i, err
+}
+
 const artifactEvidenceStorageTime = `-- name: ArtifactEvidenceStorageTime :one
 SELECT clock_timestamp()::timestamptz
 `
@@ -2681,7 +2762,10 @@ func (q *Queries) AutomationFailurePaused(ctx context.Context, db DBTX, arg Auto
 
 const automationFailureRetainedEvents = `-- name: AutomationFailureRetainedEvents :one
 SELECT count(*)::bigint FROM event_fanout_outbox o CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
-WHERE o.state IN ('pending','processing') AND r->>'app_id'=$1::text AND r->'workflow'->>'name'=$2::text
+LEFT JOIN event_fanout_recipients routed ON o.recipient_claims AND routed.outbox_id=o.id AND routed.subscription_id=r->>'id'
+WHERE o.account_id=(SELECT account_id FROM apps WHERE id=$1::text::uuid)
+AND o.state<>'delivered' AND o.state IN ('pending','processing') AND r->>'app_id'=$1::text AND r->'workflow'->>'name'=$2::text
+AND coalesce(routed.state,o.recipient_progress->(r->>'id')->>'state','pending') IN ('pending','processing')
 AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AND x.recipient_id=(r->>'id')::uuid)
 `
 
@@ -2698,12 +2782,20 @@ func (q *Queries) AutomationFailureRetainedEvents(ctx context.Context, db DBTX, 
 }
 
 const automationFailureSignals = `-- name: AutomationFailureSignals :one
-SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz)::bigint AS failures,
- count(*) FILTER(WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz)::bigint AS completed_runs,
- count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
- count(*) FILTER(WHERE status='running')::bigint AS running_runs,
- count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
-FROM workflow_runs WHERE app_id=$3::uuid AND workflow_name=$4::text
+SELECT completed.failures, completed.completed_runs, active.pending_runs, active.running_runs, active.waiting_runs
+FROM (
+ SELECT count(*) FILTER(WHERE status IN ('failed','dead'))::bigint AS failures,
+  count(*)::bigint AS completed_runs
+ FROM workflow_runs WHERE finished_at>=$1::timestamptz AND finished_at<=$2::timestamptz
+  AND app_id=$3::uuid AND workflow_name=$4::text
+  AND status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL
+) completed CROSS JOIN (
+ SELECT count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
+  count(*) FILTER(WHERE status='running')::bigint AS running_runs,
+  count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
+ FROM workflow_runs WHERE app_id=$3::uuid AND workflow_name=$4::text
+  AND status IN ('pending','running','awaiting_event')
+) active
 `
 
 type AutomationFailureSignalsParams struct {
@@ -63892,7 +63984,7 @@ const markWorkflowRunStatusFenced = `-- name: MarkWorkflowRunStatusFenced :execr
 UPDATE workflow_runs SET status=$1::text,output=coalesce($2::jsonb,output),
  last_error=coalesce($3::text,last_error),
  started_at=CASE WHEN $1::text='running' AND started_at IS NULL THEN now() ELSE started_at END,
- finished_at=CASE WHEN $1::text IN ('succeeded','failed','dead') THEN now() ELSE finished_at END,
+ finished_at=CASE WHEN $1::text IN ('succeeded','failed','dead') AND (status<>$1::text OR finished_at IS NULL) THEN clock_timestamp() ELSE finished_at END,
  updated_at=now()
 WHERE id=$4 AND ($5::integer IS NULL OR resume_count=$5::integer)
  AND (status NOT IN ('succeeded','failed','dead') OR status=$1::text)
@@ -76075,6 +76167,23 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const pruneEmptyWorkflowEventOwners = `-- name: PruneEmptyWorkflowEventOwners :execrows
+DELETE FROM workflow_event_owners WHERE run_id IN (
+ SELECT o.run_id FROM workflow_event_owners o
+ WHERE o.run_id=ANY($1::uuid[]) AND o.deleted_at IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id=o.run_id)
+ FOR UPDATE OF o SKIP LOCKED
+)
+`
+
+func (q *Queries) PruneEmptyWorkflowEventOwners(ctx context.Context, db DBTX, ownerIds []pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, pruneEmptyWorkflowEventOwners, ownerIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneEnvironmentGitOpsReports = `-- name: PruneEnvironmentGitOpsReports :exec
 DELETE FROM environment_gitops_runs r USING (
  SELECT id, completed_at, row_number() OVER (ORDER BY completed_at DESC,id DESC) AS position
@@ -76399,13 +76508,22 @@ func (q *Queries) PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64
 }
 
 const pruneUnownedWorkflowRuns = `-- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs WHERE id IN (
- SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+WITH candidates AS MATERIALIZED (
+ SELECT r.id FROM workflow_runs r JOIN apps a ON a.id = r.app_id WHERE r.finished_at IS NOT NULL
  AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
  AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
  AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
- ORDER BY r.finished_at,r.id LIMIT $2::integer FOR UPDATE OF r SKIP LOCKED
+ ORDER BY r.finished_at,r.id LIMIT $2::integer
+ FOR UPDATE OF r SKIP LOCKED FOR KEY SHARE OF a SKIP LOCKED
+), retained AS (
+ INSERT INTO workflow_automation_live_retired_keys(app_id,name,key_hash,request_fingerprint)
+ SELECT v.app_id,v.name,sha256(convert_to(v.idempotency_key,'UTF8')),v.request_fingerprint
+ FROM workflow_automation_live_verifications v JOIN candidates c ON c.id=v.run_id
+ ON CONFLICT (app_id,name,key_hash) DO NOTHING
+ RETURNING 1 AS persisted
 )
+DELETE FROM workflow_runs WHERE id IN (SELECT id FROM candidates)
+  AND (SELECT count(*) FROM retained) >= 0
 `
 
 type PruneUnownedWorkflowRunsParams struct {
@@ -104500,6 +104618,21 @@ func (q *Queries) StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlS
 	return err
 }
 
+const startAutomationFailureMonitoring = `-- name: StartAutomationFailureMonitoring :exec
+UPDATE workflow_automation_failure_guards SET monitoring_since=clock_timestamp()
+WHERE app_id=$1 AND name=$2 AND paused_at IS NULL
+`
+
+type StartAutomationFailureMonitoringParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) StartAutomationFailureMonitoring(ctx context.Context, db DBTX, arg StartAutomationFailureMonitoringParams) error {
+	_, err := db.Exec(ctx, startAutomationFailureMonitoring, arg.AppID, arg.Name)
+	return err
+}
+
 const startCustomerOperationWorkflowRun = `-- name: StartCustomerOperationWorkflowRun :exec
 UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=$1::timestamptz
 WHERE id=$2::uuid AND operation_id=$3::uuid
@@ -107639,7 +107772,7 @@ func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpa
 
 const updateTenantWorkflowScheduleLastAdmittedAt = `-- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows
 UPDATE platform_tenant_workflow_schedule_cursors
-SET last_admitted_at = $1::timestamptz, updated_at = now()
+SET last_admitted_at = $1::timestamptz
 WHERE app_id = $2::uuid AND platform_tenant_id = $3::uuid
   AND workflow_name = $4::text
 `
@@ -107651,6 +107784,8 @@ type UpdateTenantWorkflowScheduleLastAdmittedAtParams struct {
 	WorkflowName   string
 }
 
+// A manual replay changes fairness, not the evaluated schedule. Preserve the
+// evaluation timestamp so it cannot hide a pending owner change or resume.
 func (q *Queries) UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error) {
 	result, err := db.Exec(ctx, updateTenantWorkflowScheduleLastAdmittedAt,
 		arg.LastAdmittedAt,

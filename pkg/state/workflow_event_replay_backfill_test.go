@@ -13,6 +13,144 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPgWorkflowReplayBackfillPreservesLargeNumbers(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	account, err := store.CreateAccount(ctx, uuid.NewString()+"@workflow-replay.example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "replay-numeric-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createWorkflowBackfillDeployment(t, store, app, `[{"name":"paid","trigger":{"type":"event","source":"billing.stripe","event_type":"invoice.paid","filter":{"data":{"amount":{"$eq":9007199254740993}}}},"steps":[{"name":"main","path":"/paid"}]}]`)
+	job, err := store.CreateWorkflowEventReplayBackfill(ctx, account.ID, state.WorkflowEventReplayBackfillQuery{AppID: app.ID, WorkflowEventReplayBackfillRequest: api.WorkflowEventReplayBackfillRequest{WorkflowName: "paid", From: time.Now().UTC().Add(-time.Hour), Until: time.Now().UTC().Add(time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot string
+	if err := pool.QueryRow(ctx, `SELECT recipient::text FROM event_replay_jobs WHERE id=$1`, job.ID).Scan(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snapshot, "9007199254740993") || strings.Contains(snapshot, "9007199254740992") {
+		t.Fatalf("large number changed in replay snapshot: %s", snapshot)
+	}
+}
+
+func TestPgWorkflowReplayPersistsPauseBeforeItemWriteFailure(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	account, err := store.CreateAccount(ctx, uuid.NewString()+"@workflow-pause.example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "replay-pause-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createWorkflowBackfillDeployment(t, store, app, `[]`)
+	publishWorkflowBackfillEvent(t, store, pool, app, "before-policy", 150, true)
+	createWorkflowBackfillDeployment(t, store, app, `[{"name":"paid","trigger":{"type":"event","source":"billing.*","event_type":"invoice.paid"},"steps":[{"name":"main","path":"/paid"}]}]`)
+	_, err = store.CreateWorkflowEventReplayBackfill(ctx, account.ID, state.WorkflowEventReplayBackfillQuery{AppID: app.ID, WorkflowEventReplayBackfillRequest: api.WorkflowEventReplayBackfillRequest{WorkflowName: "paid", From: time.Now().UTC().Add(-time.Hour), Until: time.Now().UTC().Add(time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err := store.SetAutomationFailurePolicy(ctx, app.ID, "paid", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "paid", DefinitionSnapshot: json.RawMessage(`{"name":"paid","steps":[{"name":"main","path":"/paid"}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_replay_item_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected replay item failure'; END $$;
+		CREATE TRIGGER reject_replay_item_test BEFORE INSERT ON event_replay_job_items FOR EACH ROW EXECUTE FUNCTION reject_replay_item_test()`); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := store.ProcessNextEventReplayBackfill(ctx, time.Now().UTC()); err != nil || !worked {
+		t.Fatalf("latch pass: worked=%t err=%v", worked, err)
+	}
+	if _, err := store.ProcessNextEventReplayBackfill(ctx, time.Now().UTC()); err == nil {
+		t.Fatal("expected injected item-write failure")
+	}
+	policy, err := store.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+	if err != nil || !policy.Paused || policy.Generation != 1 {
+		t.Fatalf("failure pause lost: %+v %v", policy, err)
+	}
+}
+
+func TestPgWorkflowReplayRetryBoundsExpiredItemCleanup(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	account, err := store.CreateAccount(ctx, uuid.NewString()+"@workflow-expired.example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "replay-expired-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createWorkflowBackfillDeployment(t, store, app, `[{"name":"paid","trigger":{"type":"event","source":"billing.*","event_type":"invoice.paid"},"steps":[{"name":"main","path":"/paid"}]}]`)
+	job, err := store.CreateWorkflowEventReplayBackfill(ctx, account.ID, state.WorkflowEventReplayBackfillQuery{AppID: app.ID, WorkflowEventReplayBackfillRequest: api.WorkflowEventReplayBackfillRequest{WorkflowName: "paid", From: time.Now().UTC().Add(-time.Hour), Until: time.Now().UTC().Add(time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO event_replay_job_items(job_id,outbox_id,accepted_at,event_source,event_id,event_type,schema_version,state,attempts,failure_code,last_error,retryable)
+		SELECT $1,900000000+n,clock_timestamp()+n*interval '1 microsecond','billing.us','expired-'||n,'invoice.paid','','failed',1,'target_unavailable','temporary',true FROM generate_series(1,4) n`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE event_replay_jobs SET state='completed_with_failures',scan_complete=true,completed_at=clock_timestamp() WHERE id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.RetryFailedEventReplayBackfill(ctx, account.ID, job.ID, 2)
+	if err != nil || result.RemainingRetryableCount != 2 {
+		t.Fatalf("bounded cleanup: %+v %v", result, err)
+	}
+}
+
+func TestPgWorkflowReplayRetriesAdvancePastUnavailableItem(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	account, err := store.CreateAccount(ctx, uuid.NewString()+"@workflow-retry-fair.example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "retry-fair-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createWorkflowBackfillDeployment(t, store, app, `[]`)
+	event := publishWorkflowBackfillEvent(t, store, pool, app, "still-retained", 150, true)
+	createWorkflowBackfillDeployment(t, store, app, `[{"name":"paid","trigger":{"type":"event","source":"billing.*","event_type":"invoice.paid"},"steps":[{"name":"main","path":"/paid"}]}]`)
+	job, err := store.CreateWorkflowEventReplayBackfill(ctx, account.ID, state.WorkflowEventReplayBackfillQuery{AppID: app.ID, WorkflowEventReplayBackfillRequest: api.WorkflowEventReplayBackfillRequest{WorkflowName: "paid", From: time.Now().UTC().Add(-time.Hour), Until: time.Now().UTC().Add(time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO event_replay_job_items(job_id,outbox_id,accepted_at,event_source,event_id,event_type,schema_version,state,attempts,failure_code,last_error,retryable)
+		SELECT $1,id,created_at,source,event_id,event_type,coalesce(schema_version,''),'failed',1,'target_unavailable','temporary',true FROM event_fanout_outbox WHERE id=$2`, job.ID, event.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO event_replay_job_items(job_id,outbox_id,accepted_at,event_source,event_id,event_type,schema_version,state,attempts,failure_code,last_error,retryable)
+		VALUES ($1,900000001,clock_timestamp()+interval '1 second','billing.us','expired','invoice.paid','','failed',1,'target_unavailable','temporary',true)`, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE event_replay_jobs SET state='completed_with_failures',scan_complete=true,completed_at=clock_timestamp() WHERE id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE apps SET maintenance_mode=true WHERE id=$1`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.RetryFailedEventReplayBackfill(ctx, account.ID, job.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.RetryFailedEventReplayBackfill(ctx, account.ID, job.ID, 1)
+	if err != nil || result.RemainingRetryableCount != 1 {
+		t.Fatalf("expired item starved: %+v %v", result, err)
+	}
+}
+
 func TestPgWorkflowEventReplayBackfillPinsDefinitionAndDeduplicatesAcrossJobs(t *testing.T) {
 	store, pool, ctx := pgStoreWithPool(t)
 	account, err := store.CreateAccount(ctx, uuid.NewString()+"@workflow-backfill.example.com", api.PlanScale)
@@ -173,7 +311,7 @@ func publishWorkflowBackfillEvent(t *testing.T, store *state.PgStore, pool *pgxp
 
 func runWorkflowBackfillToCompletion(t *testing.T, store *state.PgStore, accountID, jobID string) api.EventReplayBackfillJobResponse {
 	t.Helper()
-	for range 4 {
+	for range 100 {
 		job, err := store.GetEventReplayBackfill(context.Background(), accountID, jobID)
 		if err != nil {
 			t.Fatalf("get job: %v", err)

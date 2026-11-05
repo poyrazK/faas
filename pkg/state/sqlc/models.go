@@ -15507,6 +15507,13 @@ type WorkflowAutomationLiveBaselineRetirement struct {
 	Receipt      []byte
 }
 
+type WorkflowAutomationLiveRetiredKey struct {
+	AppID              pgtype.UUID
+	Name               string
+	KeyHash            []byte
+	RequestFingerprint []byte
+}
+
 type WorkflowAutomationLiveSuite struct {
 	ID                pgtype.UUID
 	AppID             pgtype.UUID
@@ -15565,6 +15572,12 @@ type WorkflowAutomationRevision struct {
 	CheckEvidence        []byte
 }
 
+type WorkflowAutomationScheduleInvalidation struct {
+	AppID         pgtype.UUID
+	Name          string
+	InvalidatedAt pgtype.Timestamptz
+}
+
 type WorkflowCallbackWebhookBinding struct {
 	ID         pgtype.UUID
 	EndpointID pgtype.UUID
@@ -15573,6 +15586,15 @@ type WorkflowCallbackWebhookBinding struct {
 	EventType  string
 	ObjectID   string
 	CreatedAt  pgtype.Timestamptz
+}
+
+type WorkflowCallbackWebhookReceipt struct {
+	EndpointID      pgtype.UUID
+	ProviderEventID string
+	BodyHash        []byte
+	CallbackID      pgtype.UUID
+	Status          string
+	AcceptedAt      pgtype.Timestamptz
 }
 
 type WorkflowCodeAdmissionGuard struct {
@@ -15614,6 +15636,12 @@ type WorkflowEventCodeRef struct {
 	OutboxID     int64
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
+}
+
+type WorkflowEventOwner struct {
+	RunID     pgtype.UUID
+	AppID     pgtype.UUID
+	DeletedAt pgtype.Timestamptz
 }
 
 type WorkflowEventReceipt struct {

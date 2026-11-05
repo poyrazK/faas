@@ -101,12 +101,22 @@ func TestWebhookAutomationQuotaSnapshotsAndRoutingModes(t *testing.T) {
 		if _, err := store.(WorkflowCallbackWebhookBindingStore).CreateWorkflowCallbackWebhookBinding(ctx, callback); err != nil {
 			t.Fatal(err)
 		}
+		if duplicate, err := store.(FencedWorkflowCallbackWebhookStore).CompleteBoundWorkflowCallback(ctx, endpoint, callback, "evt_callback", time.Minute, webhookTestBody("evt_callback")); err != nil || duplicate {
+			t.Fatalf("complete bound callback: duplicate=%t err=%v", duplicate, err)
+		}
 		opts.ExpectedVersion = 0
 		if _, err := starts.SaveWebhookAutomationBinding(ctx, opts); !errors.Is(err, ErrWebhookAutomationConflict) {
 			t.Fatalf("automation competing with callback=%v", err)
 		}
 		if err := store.(WorkflowCallbackWebhookBindingStore).DeleteWorkflowCallbackWebhookBinding(ctx, callback.ID); err != nil {
 			t.Fatal(err)
+		}
+		fenced := store.(FencedWorkflowCallbackWebhookStore)
+		if _, err := fenced.CompleteBoundWorkflowCallback(ctx, endpoint, callback, "evt_quota", time.Minute, webhookTestBody("evt_quota")); !errors.Is(err, ErrWebhookAutomationReceiptPrecedesCallback) {
+			t.Fatalf("earlier automation receipt lost precedence: %v", err)
+		}
+		if _, err := fenced.CompleteBoundWorkflowCallback(ctx, endpoint, callback, "evt_race", time.Minute, webhookTestBody("evt_race")); !errors.Is(err, ErrWebhookCallbackBindingChanged) {
+			t.Fatalf("deleted callback binding was accepted: %v", err)
 		}
 		if _, err := store.(ExclusiveTriggerBindingStore).UpsertExclusiveTriggerBinding(ctx, operationBinding); err != nil {
 			t.Fatal(err)
@@ -120,6 +130,22 @@ func TestWebhookAutomationQuotaSnapshotsAndRoutingModes(t *testing.T) {
 		replacement, err := starts.SaveWebhookAutomationBinding(ctx, opts)
 		if err != nil || replacement.Version <= binding.Version {
 			t.Fatalf("revision after recreation=%+v %v", replacement, err)
+		}
+		_, handled, err = starts.AcceptWebhookAutomation(ctx, endpoint, webhookTestBody("evt_callback"), true)
+		var priorCallback *WebhookCallbackAlreadyHandled
+		if !handled || !errors.As(err, &priorCallback) || priorCallback.CallbackID != callback.ID {
+			t.Fatalf("callback receipt lost after rebinding: handled=%t err=%v", handled, err)
+		}
+		equivalent := bytes.Replace(webhookTestBody("evt_callback"), []byte(`150`), []byte(`150.0`), 1)
+		_, handled, err = starts.AcceptWebhookAutomation(ctx, endpoint, equivalent, true)
+		priorCallback = nil
+		if !handled || !errors.As(err, &priorCallback) || priorCallback.CallbackID != callback.ID {
+			t.Fatalf("equivalent numeric payload lost callback receipt: handled=%t err=%v", handled, err)
+		}
+		changedCallback := append(json.RawMessage(nil), webhookTestBody("evt_callback")...)
+		changedCallback = bytes.Replace(changedCallback, []byte(`150`), []byte(`151`), 1)
+		if _, handled, err := starts.AcceptWebhookAutomation(ctx, endpoint, changedCallback, true); !handled || !errors.Is(err, ErrWebhookAutomationConflict) {
+			t.Fatalf("changed callback event reused its identity: handled=%t err=%v", handled, err)
 		}
 	})
 }
@@ -225,16 +251,46 @@ func TestWebhookAutomationEnvelopeSizeAndIgnoredEvents(t *testing.T) {
 	if !errors.Is(err, ErrWorkflowEventInputTooLarge) {
 		t.Fatalf("expanding matching webhook: %v", err)
 	}
+	for _, invalid := range []json.RawMessage{json.RawMessage(`{"value":1e200000}`), json.RawMessage(`{"value":"\u0000"}`), json.RawMessage(`{"value":"\ud800"}`)} {
+		if _, _, _, err := prepareWebhookAutomation(endpoint, binding, spec, "", "evt_invalid", "invoice.paid", invalid, time.Now()); !errors.Is(err, ErrAutomationInvalid) {
+			t.Fatalf("matching webhook with unsupported jsonb value: %v", err)
+		}
+	}
 	for _, tc := range []struct{ reason, eventType, want string }{
 		{"automation_paused", "invoice.paid", "automation_paused"},
 		{"", "customer.created", "event_filtered"},
 	} {
-		receipt, _, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, tc.reason, "evt_large", tc.eventType, body, time.Now())
+		for _, oversized := range []json.RawMessage{body, expanding} {
+			if _, _, _, err := prepareWebhookAutomation(endpoint, binding, spec, tc.reason, "evt_large", tc.eventType, oversized, time.Now()); !errors.Is(err, ErrWorkflowEventInputTooLarge) {
+				t.Fatalf("ignored oversized webhook: %v", err)
+			}
+		}
+		receipt, _, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, tc.reason, "evt_small", tc.eventType, json.RawMessage(`{"value":1}`), time.Now())
 		if err != nil || receipt.Status != "ignored" || receipt.IgnoredReason != tc.want || len(recipients) != 0 {
 			t.Fatalf("ignored webhook receipt=%+v recipients=%d err=%v", receipt, len(recipients), err)
 		}
+		for _, invalid := range []json.RawMessage{json.RawMessage(`{"value":1e200000}`), json.RawMessage(`{"value":"\u0000"}`), json.RawMessage(`{"value":"\ud800"}`), json.RawMessage("{\"value\":\"\xff\"}")} {
+			if _, _, _, err := prepareWebhookAutomation(endpoint, binding, spec, tc.reason, "evt_invalid", tc.eventType, invalid, time.Now()); !errors.Is(err, ErrAutomationInvalid) {
+				t.Fatalf("ignored webhook with unsupported jsonb value: %v", err)
+			}
+		}
 	}
 }
+
+func TestWebhookAutomationRejectsInvalidJSONBForFilteredDelivery(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		_, endpoint, _ := seedWebhookAutomation(t, store)
+		for _, body := range []json.RawMessage{
+			json.RawMessage(`{"id":"evt_bad_number","type":"customer.created","data":1e200000}`),
+			json.RawMessage(`{"id":"evt_bad_string","type":"customer.created","data":"\u0000"}`),
+		} {
+			if _, handled, err := store.(WebhookAutomationStore).AcceptWebhookAutomation(t.Context(), endpoint, body, true); !handled || !errors.Is(err, ErrAutomationInvalid) {
+				t.Fatalf("filtered invalid delivery: handled=%v err=%v", handled, err)
+			}
+		}
+	})
+}
+
 func TestWebhookAutomationPlanDowngradeIsRetryable(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		app, endpoint, _ := seedWebhookAutomation(t, store)
@@ -405,4 +461,114 @@ func TestWebhookAutomationEligibilityAndBindingRevision(t *testing.T) {
 			t.Fatalf("unpublished=%v", err)
 		}
 	})
+}
+
+func TestWebhookAutomationBindingRejectsIncompatibleJSONBFilters(t *testing.T) {
+	opts := WebhookAutomationBindingOptions{WorkflowName: "paid", EventType: "*"}
+	for _, filter := range []string{
+		`{"field":{"$eq":1e200000}}`,
+		`{"field":"\u0000"}`,
+		`{"field":"\ud800"}`,
+		`{"a":{"$eq":1e10000},"b":{"$eq":1e10000},"c":{"$eq":1e10000},"d":{"$eq":1e10000}}`,
+	} {
+		opts.Filter = json.RawMessage(filter)
+		if err := validateWebhookAutomationBinding(opts); !errors.Is(err, ErrAutomationInvalid) {
+			t.Errorf("filter %s: got %v", filter, err)
+		}
+	}
+	opts.Filter = json.RawMessage(`{"field":{"$eq":1e2}}`)
+	if err := validateWebhookAutomationBinding(opts); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebhookAutomationBindingEscapedFilterRoundTrip(t *testing.T) {
+	value := strings.Repeat("<", api.WorkflowWebhookFilterMaxBytes-32)
+	raw := json.RawMessage(`{"value":"` + value + `"}`)
+	opts := WebhookAutomationBindingOptions{WorkflowName: "paid", EventType: "*", Filter: raw}
+	if err := validateWebhookAutomationBinding(opts); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(struct {
+		Filter json.RawMessage `json:"filter"`
+	}{raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(wire))+1024 > api.WorkflowWebhookBindingMaxBytes {
+		t.Fatal("binding body limit prevents the escaped filter round trip")
+	}
+	var response struct {
+		Filter json.RawMessage `json:"filter"`
+	}
+	if err := json.Unmarshal(wire, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Filter) <= api.WorkflowWebhookFilterMaxBytes {
+		t.Fatal("test did not expand escapes")
+	}
+	opts.Filter = response.Filter
+	if err := validateWebhookAutomationBinding(opts); err != nil {
+		t.Fatalf("escaped round trip: %v", err)
+	}
+	canonical, err := canonicalWebhookFilter(opts.Filter)
+	if err != nil || !bytes.Equal(canonical, raw) {
+		t.Fatalf("canonical filter differs: %v", err)
+	}
+}
+
+func TestWebhookInvalidDeliveryKeepsNewFailurePause(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		app, endpoint, _ := seedWebhookAutomation(t, store)
+		ctx := t.Context()
+		enabled := true
+		policies := store.(AutomationFailurePolicyStore)
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "paid", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		run := &WorkflowRun{AppID: app.ID, WorkflowName: "paid", DefinitionSnapshot: json.RawMessage(`{"name":"paid","steps":[{"name":"main","path":"/paid"}]}`)}
+		if err := store.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		body := json.RawMessage(`{"id":"evt_invalid_pause","type":"invoice.paid","value":"\u0000"}`)
+		if _, _, err := store.(WebhookAutomationStore).AcceptWebhookAutomation(ctx, endpoint, body, true); !errors.Is(err, ErrAutomationInvalid) {
+			t.Fatalf("invalid delivery: %v", err)
+		}
+		out, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+		if err != nil || !out.Paused || out.Generation != 1 {
+			t.Fatalf("failure pause lost: %+v %v", out, err)
+		}
+	})
+}
+
+func TestWebhookOutboxFailureKeepsNewFailurePause(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := NewPgStore(pool)
+	app, endpoint, _ := seedWebhookAutomation(t, store)
+	ctx := t.Context()
+	enabled := true
+	if _, err := store.SetAutomationFailurePolicy(ctx, app.ID, "paid", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	run := &WorkflowRun{AppID: app.ID, WorkflowName: "paid", DefinitionSnapshot: json.RawMessage(`{"name":"paid","steps":[{"name":"main","path":"/paid"}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_webhook_automation_outbox_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected outbox failure'; END $$;
+		CREATE TRIGGER reject_webhook_automation_outbox_test BEFORE INSERT ON event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION reject_webhook_automation_outbox_test()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.AcceptWebhookAutomation(ctx, endpoint, webhookTestBody("evt_outbox_failure"), true); err == nil {
+		t.Fatal("expected injected outbox failure")
+	}
+	out, err := store.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+	if err != nil || !out.Paused || out.Generation != 1 {
+		t.Fatalf("failure pause lost: %+v %v", out, err)
+	}
 }

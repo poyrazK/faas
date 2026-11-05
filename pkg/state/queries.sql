@@ -19021,7 +19021,9 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND workflow_name = sqlc.arg(workflow_name
 
 -- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows
 UPDATE platform_tenant_workflow_schedule_cursors
-SET last_admitted_at = sqlc.arg(last_admitted_at)::timestamptz, updated_at = now()
+-- A manual replay changes fairness, not the evaluated schedule. Preserve the
+-- evaluation timestamp so it cannot hide a pending owner change or resume.
+SET last_admitted_at = sqlc.arg(last_admitted_at)::timestamptz
 WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_id)::uuid
   AND workflow_name = sqlc.arg(workflow_name)::text;
 
@@ -19560,7 +19562,7 @@ UPDATE workflow_runs SET cancelled_at=clock_timestamp() WHERE id=sqlc.arg(run_id
 UPDATE workflow_runs SET status=sqlc.arg(status)::text,output=coalesce(sqlc.narg(output)::jsonb,output),
  last_error=coalesce(sqlc.narg(last_error)::text,last_error),
  started_at=CASE WHEN sqlc.arg(status)::text='running' AND started_at IS NULL THEN now() ELSE started_at END,
- finished_at=CASE WHEN sqlc.arg(status)::text IN ('succeeded','failed','dead') THEN now() ELSE finished_at END,
+ finished_at=CASE WHEN sqlc.arg(status)::text IN ('succeeded','failed','dead') AND (status<>sqlc.arg(status)::text OR finished_at IS NULL) THEN clock_timestamp() ELSE finished_at END,
  updated_at=now()
 WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
  AND (status NOT IN ('succeeded','failed','dead') OR status=sqlc.arg(status)::text);
@@ -20151,14 +20153,70 @@ DELETE FROM workflow_event_archive WHERE id IN (
  ORDER BY received_at,id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE SKIP LOCKED
 );
 
+-- name: ArchiveRetainedWorkflowEvents :one
+-- Lock a bounded owner page and examine at most a bounded event page. A
+-- conflicting archive ID remains live while the keyset advances past it.
+WITH owners AS MATERIALIZED (
+ SELECT o.run_id, o.app_id, o.deleted_at FROM workflow_event_owners o JOIN apps a ON a.id=o.app_id
+ WHERE o.deleted_at IS NOT NULL AND (sqlc.narg(after_deleted_at)::timestamptz IS NULL OR
+       (o.deleted_at,o.run_id) > (sqlc.narg(after_deleted_at)::timestamptz,sqlc.narg(after_run_id)::uuid) OR
+       (sqlc.narg(after_event_id)::uuid IS NOT NULL AND
+        (o.deleted_at,o.run_id) = (sqlc.narg(after_deleted_at)::timestamptz,sqlc.narg(after_run_id)::uuid)))
+ ORDER BY o.deleted_at,o.run_id LIMIT sqlc.arg(batch_size)::integer
+ FOR UPDATE OF o SKIP LOCKED FOR KEY SHARE OF a SKIP LOCKED
+), selected AS MATERIALIZED (
+ SELECT e.id, o.run_id, o.app_id, o.deleted_at FROM owners o
+ JOIN LATERAL (
+  SELECT id FROM workflow_events WHERE run_id=o.run_id
+  AND (sqlc.narg(after_event_id)::uuid IS NULL OR
+       (o.deleted_at,o.run_id) > (sqlc.narg(after_deleted_at)::timestamptz,sqlc.narg(after_run_id)::uuid) OR
+       id > sqlc.narg(after_event_id)::uuid)
+  ORDER BY id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE SKIP LOCKED
+ ) e ON true ORDER BY o.deleted_at,o.run_id,e.id LIMIT sqlc.arg(batch_size)::integer
+), written AS (
+ INSERT INTO workflow_event_archive (id,run_id,app_id,event_name,payload,received_at)
+ SELECT e.id,e.run_id,s.app_id,e.event_name,e.payload,e.received_at FROM workflow_events e JOIN selected s ON s.id=e.id
+ ON CONFLICT (id) DO NOTHING
+ RETURNING id
+), moved AS (
+ DELETE FROM workflow_events e USING written w WHERE e.id=w.id
+ RETURNING e.id
+)
+SELECT (SELECT count(*) FROM moved)::bigint AS moved,
+       (SELECT count(*) FROM selected)::bigint AS examined,
+       (SELECT count(*) FROM owners)::bigint AS owners_selected,
+       coalesce((SELECT array_agg(run_id) FROM owners),'{}'::uuid[])::uuid[] AS owner_ids,
+       (SELECT deleted_at FROM owners ORDER BY deleted_at DESC,run_id DESC LIMIT 1)::timestamptz AS last_deleted_at,
+       (SELECT run_id FROM owners ORDER BY deleted_at DESC,run_id DESC LIMIT 1)::uuid AS last_run_id,
+       (SELECT deleted_at FROM selected ORDER BY deleted_at DESC,run_id DESC,id DESC LIMIT 1)::timestamptz AS last_event_deleted_at,
+       (SELECT run_id FROM selected ORDER BY deleted_at DESC,run_id DESC,id DESC LIMIT 1)::uuid AS last_event_run_id,
+       (SELECT id FROM selected ORDER BY deleted_at DESC,run_id DESC,id DESC LIMIT 1)::uuid AS last_event_id;
+
+-- name: PruneEmptyWorkflowEventOwners :execrows
+DELETE FROM workflow_event_owners WHERE run_id IN (
+ SELECT o.run_id FROM workflow_event_owners o
+ WHERE o.run_id=ANY(sqlc.arg(owner_ids)::uuid[]) AND o.deleted_at IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id=o.run_id)
+ FOR UPDATE OF o SKIP LOCKED
+);
+
 -- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs WHERE id IN (
- SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+WITH candidates AS MATERIALIZED (
+ SELECT r.id FROM workflow_runs r JOIN apps a ON a.id = r.app_id WHERE r.finished_at IS NOT NULL
  AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
  AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
  AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
- ORDER BY r.finished_at,r.id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE OF r SKIP LOCKED
-);
+ ORDER BY r.finished_at,r.id LIMIT sqlc.arg(batch_size)::integer
+ FOR UPDATE OF r SKIP LOCKED FOR KEY SHARE OF a SKIP LOCKED
+), retained AS (
+ INSERT INTO workflow_automation_live_retired_keys(app_id,name,key_hash,request_fingerprint)
+ SELECT v.app_id,v.name,sha256(convert_to(v.idempotency_key,'UTF8')),v.request_fingerprint
+ FROM workflow_automation_live_verifications v JOIN candidates c ON c.id=v.run_id
+ ON CONFLICT (app_id,name,key_hash) DO NOTHING
+ RETURNING 1 AS persisted
+)
+DELETE FROM workflow_runs WHERE id IN (SELECT id FROM candidates)
+  AND (SELECT count(*) FROM retained) >= 0;
 
 -- name: LockCustomerOperationArtifactQuota :exec
 SELECT pg_advisory_xact_lock(hashtextextended('operation-artifact-quota/' || sqlc.arg(account_id)::text, 0));
@@ -25022,17 +25080,32 @@ VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,name) DO UPDATE SET version=excl
 -- name: EnsureAutomationFailureGuard :exec
 INSERT INTO workflow_automation_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING;
 
+-- name: StartAutomationFailureMonitoring :exec
+UPDATE workflow_automation_failure_guards SET monitoring_since=clock_timestamp()
+WHERE app_id=$1 AND name=$2 AND paused_at IS NULL;
+
 -- name: AutomationFailureSignals :one
-SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz)::bigint AS failures,
- count(*) FILTER(WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL AND finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz)::bigint AS completed_runs,
- count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
- count(*) FILTER(WHERE status='running')::bigint AS running_runs,
- count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
-FROM workflow_runs WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(name)::text;
+SELECT completed.failures, completed.completed_runs, active.pending_runs, active.running_runs, active.waiting_runs
+FROM (
+ SELECT count(*) FILTER(WHERE status IN ('failed','dead'))::bigint AS failures,
+  count(*)::bigint AS completed_runs
+ FROM workflow_runs WHERE finished_at>=sqlc.arg(since_at)::timestamptz AND finished_at<=sqlc.arg(now_at)::timestamptz
+  AND app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(name)::text
+  AND status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL
+) completed CROSS JOIN (
+ SELECT count(*) FILTER(WHERE status='pending')::bigint AS pending_runs,
+  count(*) FILTER(WHERE status='running')::bigint AS running_runs,
+  count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
+ FROM workflow_runs WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(name)::text
+  AND status IN ('pending','running','awaiting_event')
+) active;
 
 -- name: AutomationFailureRetainedEvents :one
 SELECT count(*)::bigint FROM event_fanout_outbox o CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) r
-WHERE o.state IN ('pending','processing') AND r->>'app_id'=sqlc.arg(app_id)::text AND r->'workflow'->>'name'=sqlc.arg(name)::text
+LEFT JOIN event_fanout_recipients routed ON o.recipient_claims AND routed.outbox_id=o.id AND routed.subscription_id=r->>'id'
+WHERE o.account_id=(SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::text::uuid)
+AND o.state<>'delivered' AND o.state IN ('pending','processing') AND r->>'app_id'=sqlc.arg(app_id)::text AND r->'workflow'->>'name'=sqlc.arg(name)::text
+AND coalesce(routed.state,o.recipient_progress->(r->>'id')->>'state','pending') IN ('pending','processing')
 AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AND x.recipient_id=(r->>'id')::uuid);
 
 -- name: ListAutomationFailurePolicyCandidates :many

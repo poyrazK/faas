@@ -22,6 +22,8 @@ type AutomationLiveStore interface {
 	CheckAutomationLiveVerification(context.Context, string, string, string) (api.AutomationLiveVerification, error)
 }
 
+var ErrAutomationLiveVerificationExpired = errors.New("the original live verification has expired; use a new key only to explicitly start a new verification")
+
 type automationLiveRecord struct {
 	AppID, Name, Key string
 	Fingerprint      []byte

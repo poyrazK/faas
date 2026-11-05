@@ -12,7 +12,7 @@ RETURNING id;
 
 -- name: EventReplayBackfillWorkflowTarget :many
 SELECT a.id AS app_id, a.account_id, a.slug AS app_slug, d.id AS deployment_id,
-       definition.value AS workflow, ac.plan
+       definition.value::jsonb AS workflow, ac.plan
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN LATERAL (
@@ -93,6 +93,8 @@ SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(account_id)::uuid::text,6
 -- (ADR-20261028095548), so the next job in line goes ahead.
 SELECT * FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
   AND (next_attempt_at IS NULL OR next_attempt_at<=sqlc.arg(now_at)::timestamptz)
+  AND (sqlc.narg(after_job_id)::uuid IS NULL OR (created_at,id) >
+       (SELECT created_at,id FROM event_replay_jobs WHERE id=sqlc.narg(after_job_id)::uuid))
   AND (SELECT count(*) FROM event_replay_job_items i
        WHERE i.job_id=event_replay_jobs.id AND i.state IN ('pending','processing')) < sqlc.arg(in_flight_max)::bigint
 ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1;
@@ -205,7 +207,7 @@ ON CONFLICT (job_id,outbox_id) DO NOTHING;
 
 -- name: EventReplayBackfillWorkflowRetryCandidates :many
 SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type, i.schema_version,
-       i.attempts, o.payload, o.recipient_snapshot, o.state,
+       i.attempts, o.payload, o.recipient_snapshot, coalesce(o.state, '')::text AS state,
        CASE WHEN o.recipient_snapshot IS NULL THEN 'unknown'
             WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) s(recipient)
                          WHERE s.recipient->>'id'=j.subscription_id::text
@@ -217,22 +219,12 @@ SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type, i.s
                WHERE wr.outbox_id=o.id AND wr.recipient_id=j.subscription_id) AS workflow_admission_exists
 FROM event_replay_job_items i
 JOIN event_replay_jobs j ON j.id=i.job_id
-JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+LEFT JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
     AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
 WHERE i.job_id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
   AND j.consumer_kind='workflow' AND i.state='failed' AND i.retryable
-ORDER BY i.accepted_at,i.outbox_id LIMIT sqlc.arg(page_limit)::integer;
-
--- name: EventReplayBackfillWorkflowExpireRetry :execrows
-UPDATE event_replay_job_items i SET failure_code='target_unavailable',
-       last_error='source event is no longer retained',retryable=false,updated_at=clock_timestamp()
-FROM event_replay_jobs j
-WHERE i.job_id=j.id AND i.job_id=sqlc.arg(job_id)::uuid
-  AND j.account_id=sqlc.arg(account_id)::uuid AND j.consumer_kind='workflow'
-  AND i.state='failed' AND i.retryable
-  AND NOT EXISTS (SELECT 1 FROM event_fanout_outbox o
-                  WHERE o.id=i.outbox_id AND o.account_id=j.account_id
-                    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at);
+-- A retry that remains unavailable moves behind less-attempted items.
+ORDER BY i.attempts,i.accepted_at,i.outbox_id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EventReplayBackfillTargetSnapshot :one
 SELECT recipient, app_id, account_id, consumer_kind, workflow_name FROM event_replay_jobs

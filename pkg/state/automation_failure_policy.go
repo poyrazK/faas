@@ -31,6 +31,25 @@ type AutomationFailurePolicyStore interface {
 	ListAutomationFailurePauses(context.Context, string) ([]string, error)
 	EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
 }
+
+// AutomationFailureAdmissionStore atomically evaluates and latches a failure
+// pause before a scheduler admits another automatic run.
+type AutomationFailureAdmissionStore interface {
+	CheckAutomationFailureAdmission(context.Context, string, string, time.Time) (bool, error)
+}
+
+func (m *MemStore) CheckAutomationFailureAdmission(ctx context.Context, appID, name string, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := m.failurePolicyTargetLocked(appID, name); err != nil {
+		return false, err
+	}
+	return !m.automationFailureBlocksAdmissionLocked(appID, name, now.UTC()), nil
+}
+
 type automationFailureGuard struct {
 	Generation      int64
 	MonitoringSince time.Time
@@ -49,7 +68,7 @@ func (m *MemStore) automationFailureBlocksAdmissionLocked(appID, name string, no
 	if !m.automationFailurePolicies[key].Enabled {
 		return false
 	}
-	out := m.failurePolicyResponseLocked(appID, name, now)
+	out := m.failurePolicyAdmissionStateLocked(appID, name, now)
 	if automationFailureBlocksAdmission(out) {
 		m.latchAutomationFailureLocked(appID, name, out, now)
 		return true
@@ -107,7 +126,7 @@ func (m *MemStore) failurePolicyTargetLocked(appID, name string) error {
 	}
 	return ErrNotFound
 }
-func (m *MemStore) failurePolicyResponseLocked(appID, name string, now time.Time) api.AutomationFailurePolicyResponse {
+func (m *MemStore) failurePolicyAdmissionStateLocked(appID, name string, now time.Time) api.AutomationFailurePolicyResponse {
 	key := appID + "/" + name
 	p, exists := m.automationFailurePolicies[key]
 	if !exists {
@@ -143,6 +162,9 @@ func (m *MemStore) failurePolicyResponseLocked(appID, name string, now time.Time
 		if r.CancelledAt != nil || r.FinishedAt == nil || r.FinishedAt.Before(since) || r.FinishedAt.After(now) {
 			continue
 		}
+		if _, owned := m.operationWorkflowRuns[r.ID]; owned {
+			continue
+		}
 		if r.Status == WorkflowRunStatusSucceeded || r.Status == WorkflowRunStatusFailed || r.Status == WorkflowRunStatusDead {
 			out.ObservedCompletedRuns++
 		}
@@ -150,12 +172,26 @@ func (m *MemStore) failurePolicyResponseLocked(appID, name string, now time.Time
 			out.ObservedFailures++
 		}
 	}
+	return out
+}
+
+func (m *MemStore) failurePolicyResponseLocked(appID, name string, now time.Time) api.AutomationFailurePolicyResponse {
+	out := m.failurePolicyAdmissionStateLocked(appID, name, now)
 	for _, work := range m.eventFanout {
 		if work.Delivered {
 			continue
 		}
 		for _, recipient := range work.RecipientSnapshot {
 			if recipient.AppID != appID || len(recipient.Workflow) == 0 {
+				continue
+			}
+			progress := work.RecipientProgress[recipient.ID]
+			if work.RecipientClaims {
+				if route := work.routingRecipients[recipient.ID]; route != nil {
+					progress.State = route.State
+				}
+			}
+			if progress.State != "" && progress.State != "pending" && progress.State != "processing" {
 				continue
 			}
 			var d api.WorkflowSpec
@@ -166,7 +202,7 @@ func (m *MemStore) failurePolicyResponseLocked(appID, name string, now time.Time
 			}
 		}
 	}
-	history := m.automationFailureHistory[key]
+	history := m.automationFailureHistory[appID+"/"+name]
 	for i := len(history) - 1; i >= 0 && len(out.History) < api.AutomationFailurePolicyHistoryLimit; i-- {
 		out.History = append(out.History, history[i])
 	}
@@ -214,6 +250,13 @@ func (m *MemStore) SetAutomationFailurePolicy(ctx context.Context, appID, name s
 	if _, ok := m.automationFailureGuards[key]; !ok {
 		m.automationFailureGuards[key] = automationFailureGuard{MonitoringSince: time.Now().UTC()}
 	}
+	if !p.Enabled && *r.Enabled {
+		guard := m.automationFailureGuards[key]
+		if guard.PausedAt == nil {
+			guard.MonitoringSince = time.Now().UTC()
+			m.automationFailureGuards[key] = guard
+		}
+	}
 	return m.failurePolicyResponseLocked(appID, name, time.Now().UTC()), nil
 }
 func (m *MemStore) ResumeAutomationFailurePause(ctx context.Context, appID, name, actor string, r api.ResumeAutomationFailurePauseRequest) (api.AutomationFailurePolicyResponse, error) {
@@ -244,13 +287,14 @@ func (m *MemStore) ResumeAutomationFailurePause(ctx context.Context, appID, name
 }
 func (m *MemStore) rearmFailureSchedulesLocked(appID, name string) {
 	delete(m.workflowSchedules, appID+"/"+name)
-	for key, c := range m.workflowTenantSchedules {
-		if c.AppID == appID && c.WorkflowName == name {
-			c.DeploymentID = ""
-			c.Status = WorkflowScheduleArmed
-			c.LastRunID = ""
-			c.ScheduledFor = nil
-			m.workflowTenantSchedules[key] = c
+}
+
+func (m *MemStore) rearmTenantAfterFailureResumeLocked(cursor *WorkflowScheduleCursor, appID, name string) {
+	history := m.automationFailureHistory[appID+"/"+name]
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].State == "resumed" {
+			rearmTenantScheduleAfterFailureResume(cursor, history[i].RecordedAt)
+			return
 		}
 	}
 }
