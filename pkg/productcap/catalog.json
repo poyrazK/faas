@@ -4192,7 +4192,8 @@
         "/v1/networks"
       ],
       "cli": [
-        "app network"
+        "app network attach",
+        "app network detach"
       ]
     },
     {

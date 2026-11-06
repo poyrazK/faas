@@ -6234,7 +6234,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 	if !idempotencyReplayable(status) {
 		return false
 	}
-	if status != http.StatusConflict {
+	if status != http.StatusConflict && status != http.StatusUnprocessableEntity {
 		return true
 	}
 	var problem struct {
@@ -6242,6 +6242,13 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 	}
 	if json.Unmarshal(body, &problem) != nil {
 		return true
+	}
+	if status == http.StatusUnprocessableEntity {
+		// Release commands being off is an operator gate, like a 501: it
+		// clears when the operator enables them. The CLI derives deploy keys
+		// from the source, so a cached refusal kept answering the same deploy
+		// for 24 h after release commands were turned on.
+		return problem.Code != api.CodeReleasePhaseUnavailable
 	}
 	switch problem.Code {
 	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
