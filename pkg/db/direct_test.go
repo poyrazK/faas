@@ -378,7 +378,8 @@ func TestDirectMaxConnsFollowsNotifyHubMode(t *testing.T) {
 		appName string
 		want    int32
 	}{
-		{"hub on is the small pooled budget", "", "faas-schedd", directHubOnMaxConns},
+		{"hub on reserves concurrent primes", "", "faas-schedd", directSchedulerHubOnMaxConns},
+		{"hub on reserves concurrent primes, unprefixed", "1", "schedd", directSchedulerHubOnMaxConns},
 		{"hub on, unprefixed", "1", "gatewayd-internal", directHubOnMaxConns},
 		{"hub on reserves apid's nested guard", "", "faas-apid", directNestedGuardHubOnMaxConns},
 		{"hub on reserves apid's nested guard, unprefixed", "1", "apid", directNestedGuardHubOnMaxConns},

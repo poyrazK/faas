@@ -267,7 +267,10 @@ jobs:
   checks:
     name: "light: codegen, policy, migrations"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold generation builds plus the complete migration history and ledger
+    # recovery/replay checks can exceed 15 minutes. Keep every gate and the
+    # individual test deadlines; give the job enough time to finish them.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

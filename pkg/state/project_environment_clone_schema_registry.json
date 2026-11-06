@@ -17878,6 +17878,7 @@
       "environment_id",
       "instance_id",
       "node_id",
+      "prime_activation_handoff",
       "scope",
       "secret_fingerprint",
       "wake_id"

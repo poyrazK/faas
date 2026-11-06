@@ -3188,6 +3188,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	RetryIntent         *DeploymentRetryIntent       `json:"retry_intent,omitempty"`
 	BuildDependencyGate *BuildDependencyGate         `json:"build_dependency_gate,omitempty"`
 	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`

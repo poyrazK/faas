@@ -575,6 +575,10 @@ const (
 	PrimeRuntimePublicationBusyAttempts   = 5
 	PrimeRuntimePublicationBusyBackoff    = 500 * time.Millisecond
 	PrimeRuntimePublicationBusyMaxBackoff = 4 * time.Second
+	// Scheduler workers and direct session-pool capacity share this budget.
+	// Prime can also run once inline when all off-loop slots are occupied.
+	SnapshotPrimeConcurrentSlots = 4
+	SnapshotPrimeInlineSlots     = 1
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30

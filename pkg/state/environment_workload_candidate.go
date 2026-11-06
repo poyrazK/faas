@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
+	"github.com/onebox-faas/faas/pkg/ociref"
 )
 
 var ErrEnvironmentWorkloadPreparationUnavailable = errors.New("environment workload preparation adapter is unavailable")
@@ -201,10 +202,13 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 			return nil, fmt.Errorf("%w: frozen build artifact disagrees with candidate", ErrInvalidArgument)
 		}
 	} else if frozen.SourceArchive != nil {
+		// SourceArchive pins the reviewed source bytes. Imaging separately
+		// fills ImageDigest with the produced OCI manifest's canonical digest;
+		// it does not replace the archive's identity or grant image authority.
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
 			(frozen.Source.ReuseUnchangedBuild != (frozen.SourceArchive.ContextFormat == api.EnvironmentGitBuildContextFormat)) ||
 			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || frozen.Source.BuildArtifactID != "" || frozen.Source.BuildArtifactHash != "" || !validEnvironmentGitCandidateProvenance(d, frozen) ||
-			d.ImageDigest != "" ||
+			(d.ImageDigest != "" && ociref.ValidateDigest(d.ImageDigest) != nil) ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
 			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
 			frozen.RevisionID != frozen.SourceArchive.RevisionID || d.CommitSHA != frozen.SourceArchive.CommitSHA || frozen.DefinitionDigest != frozen.SourceArchive.DefinitionDigest {

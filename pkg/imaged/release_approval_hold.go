@@ -208,7 +208,7 @@ func (h *Handler) resumeReleaseApprovalHold(ctx context.Context, dep state.Deplo
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return err
 	}
@@ -257,7 +257,7 @@ func (l *Loop) resumeReleaseApprovalHolds(ctx context.Context) {
 			work = append(work, state.BuildImageWork{AppID: d.AppID, DeploymentID: d.ID, NodeID: l.handler.nodeName})
 		}
 		return len(rows)
-	})
+	}, &l.releaseApprovalOffset)
 	if err != nil {
 		l.log.Warn("imaged: list releases held for approval", "err", err)
 	}
@@ -271,7 +271,7 @@ func (l *Loop) releaseApprovalPending(ctx context.Context, d state.Deployment) b
 	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting {
 		return false
 	}
-	app, err := l.store.AppByID(ctx, d.AppID)
+	app, err := state.AppForDeployment(ctx, l.store, d)
 	if err != nil {
 		return false
 	}

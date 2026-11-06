@@ -277,6 +277,7 @@ export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentResponseCheckCapabilities } from './models/DeploymentResponseCheckCapabilities.js';
 export type { DeploymentResponseCheckRequest } from './models/DeploymentResponseCheckRequest.js';
 export type { DeploymentResponseCheckResult } from './models/DeploymentResponseCheckResult.js';
+export type { DeploymentRetryIntent } from './models/DeploymentRetryIntent.js';
 export type { DeploymentRuntimeResponse } from './models/DeploymentRuntimeResponse.js';
 export type { DeploymentStageHistoryEntry } from './models/DeploymentStageHistoryEntry.js';
 export type { DeploymentStageState } from './models/DeploymentStageState.js';

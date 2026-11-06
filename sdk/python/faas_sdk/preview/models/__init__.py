@@ -1363,6 +1363,8 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_tag import DeploymentResponseTag
+from .deployment_retry_intent import DeploymentRetryIntent
+from .deployment_retry_intent_version import DeploymentRetryIntentVersion
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
@@ -7633,6 +7635,8 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
     "DeploymentResponseTag",
+    "DeploymentRetryIntent",
+    "DeploymentRetryIntentVersion",
     "DeploymentRoutePolicySnapshotResponse",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",

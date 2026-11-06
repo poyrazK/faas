@@ -436,6 +436,9 @@ func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
 func (r *Engine) Now() *func() time.Time              { return &r.now }
 func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
 func (r *Engine) Owners() *ownerCache                 { return &r.owners }
+func (r *Engine) WorkerReconcileSubmit() *func(context.Context, string) {
+	return &r.workerReconcileSubmit
+}
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }
