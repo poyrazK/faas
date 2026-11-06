@@ -5537,12 +5537,31 @@ const (
 	// snapshotted or drained, and is destroyed only by the fork
 	// coordinator at its TTL.
 	InstanceModeFork InstanceMode = "fork"
+	// InstanceModeRefresh tags a platform snapshot refresh
+	// (ADR-20261106214916): after a node takes a release that made an
+	// app's snapshot stale, schedd boots the app's current deployment,
+	// captures a fresh snapshot and parks it before a user asks. It is
+	// never routed, never counted toward max_concurrency (it admits as a
+	// snapshot prime), counts toward the RAM ceiling, is never
+	// idle-reaped, and is not billed: the release, not the customer,
+	// caused it.
+	InstanceModeRefresh InstanceMode = "refresh"
 )
 
 // IsFork reports whether mode is the ADR-732 production-fork mode. Every
 // path that routes to, counts, parks or snapshots instances must skip
 // these rows.
 func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
+
+// IsRefresh reports whether mode is a platform snapshot refresh
+// (ADR-20261106214916).
+func IsRefresh(mode string) bool { return mode == string(InstanceModeRefresh) }
+
+// NeverServes reports an instance mode that must never receive traffic or
+// stand in for a serving replica: a production fork (ADR-732) or a platform
+// snapshot refresh (ADR-20261106214916). Every target loader, wake reuse and
+// replica count skips these rows.
+func NeverServes(mode string) bool { return IsFork(mode) || IsRefresh(mode) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.

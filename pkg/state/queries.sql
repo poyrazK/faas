@@ -9071,7 +9071,7 @@ SELECT EXISTS (
     SELECT 1 FROM instances i JOIN deployments d ON d.id = i.deployment_id
     WHERE i.id = sqlc.arg(instance_id)::uuid AND i.app_id = sqlc.arg(app_id)::uuid
       AND i.node_id = sqlc.arg(node_id)::uuid AND i.deployment_id = sqlc.arg(deployment_id)::uuid
-      AND i.state = 'running' AND i.mode <> 'fork' AND d.app_id = sqlc.arg(app_id)::uuid
+      AND i.state = 'running' AND i.mode NOT IN ('fork', 'refresh') AND d.app_id = sqlc.arg(app_id)::uuid
       AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL
 )::boolean AS allowed;
 
@@ -10648,7 +10648,7 @@ LEFT JOIN LATERAL (
                        AND d.deleted_at IS NULL AND d.status IN ('live', 'superseded', 'snapshotting')
     LEFT JOIN compute_nodes cn ON cn.id = i.node_id
     -- ADR-732: a production fork shares the live deployment but never serves.
-    WHERE i.app_id = requested.app_id AND i.state = 'running' AND i.mode <> 'fork'
+    WHERE i.app_id = requested.app_id AND i.state = 'running' AND i.mode NOT IN ('fork', 'refresh')
     ORDER BY i.id
     LIMIT sqlc.arg(max_rows)::integer
 ) AS candidate ON true
@@ -10680,7 +10680,7 @@ JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
 LEFT JOIN compute_nodes cn ON cn.id = i.node_id
 WHERE i.app_id = sqlc.arg(app_id)::uuid
   AND i.deployment_id = sqlc.arg(deployment_id)::uuid
-  AND i.state = 'running' AND i.mode <> 'fork'
+  AND i.state = 'running' AND i.mode NOT IN ('fork', 'refresh')
 ORDER BY i.started_at DESC NULLS LAST, i.id
 LIMIT 1;
 -- name: IssueLockApp :one
@@ -26902,7 +26902,7 @@ JOIN apps a ON a.id = i.app_id
 JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
 WHERE i.id = sqlc.arg(instance_id)::uuid
   AND i.app_id = sqlc.arg(app_id)::uuid
-  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND i.state = 'running' AND i.mode NOT IN ('fork', 'refresh') AND a.status <> 'deleted'
   AND NOT EXISTS (
       SELECT 1 FROM crash_captures c
       WHERE c.app_id = a.id
@@ -26927,7 +26927,7 @@ JOIN apps a ON a.id = i.app_id
 JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
 WHERE i.id = sqlc.arg(instance_id)::uuid
   AND i.app_id = sqlc.arg(app_id)::uuid
-  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND i.state = 'running' AND i.mode NOT IN ('fork', 'refresh') AND a.status <> 'deleted'
   AND NOT EXISTS (
       SELECT 1 FROM crash_captures c
       WHERE c.app_id = a.id
@@ -26947,7 +26947,7 @@ SELECT a.account_id, a.id, i.deployment_id, i.id, 'manual', '',
 FROM apps a
 JOIN LATERAL (
     SELECT ins.id, ins.deployment_id FROM instances ins
-    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode NOT IN ('fork', 'refresh')
     ORDER BY ins.started_at DESC NULLS LAST, ins.id
     LIMIT 1
 ) i ON true
@@ -27136,7 +27136,7 @@ SELECT a.account_id, a.id, i.deployment_id, i.id, 'live_fork', '',
 FROM apps a
 JOIN LATERAL (
     SELECT ins.id, ins.deployment_id FROM instances ins
-    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode NOT IN ('fork', 'refresh')
     ORDER BY ins.started_at DESC NULLS LAST, ins.id
     LIMIT 1
 ) i ON true

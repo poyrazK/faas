@@ -2131,7 +2131,7 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 	for _, instance := range instances {
 		// ADR-732: a running fork shares the live deployment but never
 		// serves a wake; skipping it lets the wake find a real replica.
-		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) &&
+		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.NeverServes(instance.Mode) &&
 			e.instanceNodeServes(ctx, instance.NodeID) {
 			return instance, nil
 		}
@@ -8376,6 +8376,11 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// restart but must never be rebuilt as serving
 				// concurrency (invariant 1).
 				kind = KindFork
+			} else if state.IsRefresh(ins.Mode) {
+				// ADR-20261106214916: a snapshot refresh admits as a
+				// prime, so a restart re-books its RAM without a serving
+				// slot.
+				kind = KindSnapshotPrime
 			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
