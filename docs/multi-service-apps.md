@@ -217,6 +217,13 @@ the next push deploys them
   The migration's `user:` and `working_dir:` must match its owner's settings,
   including when one side inherits the image default. The plan rejects a mismatch
   because the release command runs in the owner's runtime.
+- A service can also declare its own release command in its own directory:
+  `release.command` in its `gregale.yaml`, or `release:` in a `Procfile` there
+  (`services/api/gregale.yaml`, `services/api/Procfile`). It runs before each
+  release of that service, as on a single-app deploy of the directory, and
+  wins over a Compose step. When another service builds from the same
+  directory the deploy fails with the reason, because the command would run
+  once per service; declare it as a Compose step instead.
 
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
@@ -499,9 +506,9 @@ credentials. It gets:
   To set one for every service of the project at once:
 
   ```sh
-  gregale project preview-secrets set shop STRIPE_KEY=sk_test_…
-  printf 'STRIPE_KEY=%s\n' "$KEY" | gregale project preview-secrets set shop --from-stdin
-  gregale project preview-secrets unset shop STRIPE_KEY
+  gregale project preview secret set shop STRIPE_KEY=sk_test_…
+  printf 'STRIPE_KEY=%s\n' "$KEY" | gregale project preview secret set shop --from-stdin
+  gregale project preview secret unset shop STRIPE_KEY
   ```
 
   It writes the value to each service's `pr-preview` scope; a service added
@@ -528,6 +535,53 @@ lifecycle:
 See [cold wake](cold-wake.md#refresh-application-state-after-restore).
 Before [ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md) project deploys and GitHub pushes ignored
 these settings.
+
+## Databases and buckets in gregale.yaml
+
+A Compose `postgres` service already becomes a managed database. To declare
+resources by name instead, list them in the `gregale.yaml` at the repository
+root, give each entry the service it binds to, and add `create` for any that
+do not exist yet:
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:
+      postgres_major: 17
+buckets:
+  - bucket: segments
+    app: store
+    create: true
+```
+
+The plan lists them before you apply: databases under **Managed PostgreSQL
+(provided by this deploy)**, buckets under **Object storage (from
+gregale.yaml)**. Apply creates whatever is missing and binds it to its service
+after the services exist and before they build, so the first deployment
+starts with its keys. An entry without `create` binds an existing resource, and
+a missing one stops the plan before anything changes
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+Deploys never delete a database or bucket. See
+[managed PostgreSQL](postgres.md#connect-an-app) for the database fields;
+object-storage bindings inject the bucket's S3 settings under
+`GREGALE_S3_<BUCKET>_*` unless the entry sets `prefix`. Binding a bucket
+needs a credential with `storage:manage`, and creating a database needs
+`postgres:manage`. Organization projects attach buckets with
+`gregale add bucket` for now; a project deploy refuses `buckets:` there.
+
+## Debugging a project
+
+- `gregale logs --project shop --follow` streams every service's logs, each
+  line prefixed with its service.
+- `gregale debug trace <trace-id>` joins one request's hops across services,
+  with how each was woken. See [tracing](tracing.md).
+- `gregale postgres connect <database>` opens `psql` on your machine through
+  a bound service. See [managed PostgreSQL](postgres.md#connect-from-your-laptop).
+- `gregale app port-forward <service> 5433:<host>:<port>` reaches anything else
+  on a service's network.
+- `gregale dev bridge` runs one service on your machine against the rest of
+  the project in a remote development environment.
 
 ## Cold starts and tracing
 

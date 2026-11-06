@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"context"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,11 +20,12 @@ import (
 // past the budget the request is answered 503 with Retry-After instead of
 // reading the store.
 type HostLookupBudget struct {
-	mu       sync.Mutex
-	known    map[string]struct{}
-	maxKnown int
-	budget   *rate.Limiter
-	shed     prometheus.Counter
+	mu             sync.Mutex
+	known          map[string]struct{}
+	maxKnown       int
+	budget         *rate.Limiter
+	wildcardBudget *rate.Limiter
+	shed           prometheus.Counter
 	// preloaded holds every app slug and verified custom domain, refreshed
 	// from the store, so a real app's host skips the budget even before this
 	// edge has served it (after a restart). Set before serving.
@@ -42,9 +44,10 @@ func (b *HostLookupBudget) Preload(known *knownhosts.Set) {
 // <prefix>_host_lookups_shed_total.
 func NewHostLookupBudget(prefix string) *HostLookupBudget {
 	return &HostLookupBudget{
-		known:    map[string]struct{}{},
-		maxKnown: api.PublicReadKnownHostsMax,
-		budget:   rate.NewLimiter(rate.Limit(api.PublicReadNewHostLookupsPerSecond), api.PublicReadNewHostLookupBurst),
+		known:          map[string]struct{}{},
+		maxKnown:       api.PublicReadKnownHostsMax,
+		budget:         rate.NewLimiter(rate.Limit(api.PublicReadNewHostLookupsPerSecond), api.PublicReadNewHostLookupBurst),
+		wildcardBudget: rate.NewLimiter(rate.Limit(api.PublicReadWildcardRecoveryPerSecond), api.PublicReadWildcardRecoveryBurst),
 		shed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: prefix + "_host_lookups_shed_total",
 			Help: "Public-read host lookups refused with 503 because the edge spent its budget of store reads for hostnames it has never seen name an app.",
@@ -59,14 +62,14 @@ func (b *HostLookupBudget) Collectors() []prometheus.Collector {
 
 // admit reports whether a store read of host may go ahead. A nil budget
 // admits every read.
-func (b *HostLookupBudget) admit(host string) bool {
+func (b *HostLookupBudget) admit(ctx context.Context, host string) bool {
 	if b == nil || b.preloaded.Has(host) {
 		return true
 	}
 	b.mu.Lock()
 	_, seen := b.known[host]
 	b.mu.Unlock()
-	if seen || b.budget.Allow() {
+	if seen || b.budget.Allow() || b.preloaded.Recover(ctx, host) || (b.preloaded.WildcardCandidate(host) && b.wildcardBudget.Allow()) {
 		return true
 	}
 	b.shed.Inc()

@@ -45,6 +45,12 @@ func TestPgRuntimeAppEnvOwnerSurvivesPinLossAndRejectsReplacement(t *testing.T) 
 	if _, err := store.RuntimeAppEnvForDeployment(ctx, f.account.ID, f.app.ID, dep.ID); err != nil {
 		t.Fatalf("same owner recovery: %v", err)
 	}
+	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "stage"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("active deployment must block environment deletion: %v", err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "stage"); err != nil {
 		t.Fatal(err)
 	}

@@ -2707,6 +2707,19 @@ const ObjectOwnedCleanupBucketBatch = 20
 
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
+// Operator usage evidence is bounded independently of customer plan allowances.
+// Access-log identities remain in memory only for one complete export attempt.
+const (
+	MaxObjectStorageUsageReportBytes       = 4 << 20
+	MaxObjectStorageUsageReportRows        = 10_000
+	MaxObjectStorageUsagePriceBytes        = 128
+	MaxObjectStorageAccessLogObjects       = 10_000
+	MaxObjectStorageAccessLogBytes         = 64 << 20
+	MaxObjectStorageAccessLogRecords       = 1_000_000
+	MaxObjectStorageAccessLogLineBytes     = 1 << 20
+	MaxObjectStorageAccessLogCoverageBytes = 8 << 20
+)
+
 // Permanent immutable deletion is a single bounded provider attempt. Its
 // durable public selector makes retry safe after an uncertain acknowledgment.
 const ObjectVersionDeleteOperationTimeout = time.Minute
@@ -3916,7 +3929,17 @@ const (
 	// (ADR-20261103163954 §4).
 	PublicReadNewHostLookupsPerSecond = 25
 	PublicReadNewHostLookupBurst      = 500
-	PublicReadKnownHostsMax           = 100_000
+	// Wildcard recovery stays bounded while ordinary unknown-host floods cannot
+	// monopolize legacy wildcard customers' first lookup after a restart.
+	PublicReadWildcardRecoveryPerSecond = 5
+	PublicReadWildcardRecoveryBurst     = 50
+	PublicReadKnownHostsMax             = 100_000
+	// PublicReadHostLookupTimeout bounds one host's mount lookup (app and
+	// buckets). Concurrent misses for a host share that one lookup, so it runs
+	// apart from the request that started it; each waiting request still
+	// leaves at its own deadline. It covers dialing a fresh control-plane
+	// connection from a compute edge.
+	PublicReadHostLookupTimeout = 2 * time.Second
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -8955,6 +8978,11 @@ const (
 	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
 	// keeps per app to seed new instances of that app.
 	DNSGatedEgressAppSeedMax = 4096
+
+	// Timed egress grants are bounded per instance and address family by the
+	// corresponding kernel set capacities (ADR 20261105120000).
+	DNSGatedEgressInstanceFamilyMax = 65535
+	DatabaseEgressInstanceFamilyMax = 1024
 	// ADR-371 egress flow log: rows are kept EgressFlowLogRetentionDays
 	// (long enough to answer a provider abuse report, which can arrive
 	// weeks later) and an operator lookup returns at most
@@ -9609,6 +9637,11 @@ const (
 	OnDemandTLSAskKnownHostPageSize  = 1024
 	OnDemandTLSAskKnownHostRefresh   = 5 * time.Minute
 	OnDemandTLSAskKnownHostRetry     = time.Second
+	// The admission ledger retains one week, with at most 150 new hosts
+	// per three hours. One extra window covers boundary timestamps.
+	OnDemandTLSAskRecentHostRows    = OnDemandTLSFleetNewHostsPer3h * (7*24/3 + 1)
+	OnDemandTLSAskRecentHostRetry   = time.Second
+	OnDemandTLSAskRecentHostWaiters = 512
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -13131,22 +13164,23 @@ const (
 	// a restart, each host's first request, which the burst covers. A flood
 	// of random names under the apps wildcard spends this budget instead of
 	// control-plane Postgres reads. A read waits up to
-	// GatewayNewHostLookupMaxWait for budget; past that the request is
-	// answered 503 traffic_policy_unavailable with Retry-After, never 404
-	// (ADR-20261103163954 §4).
-	GatewayNewHostLookupsPerSecond = 25
-	GatewayNewHostLookupBurst      = 500
-	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// GatewayNewHostLookupMaxWait for budget; past that it may wait for a
+	// shared recent-host catch-up before returning 503 with Retry-After,
+	// never 404 (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond   = 25
+	GatewayNewHostLookupBurst        = 500
+	GatewayWildcardRecoveryPerSecond = 5
+	GatewayWildcardRecoveryBurst     = 50
+	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
 	// The gateway and the edge preload every app slug and verified custom
-	// domain (at most KnownRouteHostsMax of each), refreshed every
-	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
-	// new-host budgets above or PublicReadNewHostLookups*. Only names that
-	// are not an app's do: after a restart a flood of random names no longer
-	// answers 503 for apps the process has not yet served. Wildcard custom
-	// domains are not preloaded (ADR-20261103163954 §4).
+	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
+	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
+	// can skip the lookup budget; wildcard patterns only qualify for the
+	// separately bounded recovery budget (ADR-520 amendment 14).
 	KnownRouteHostsMax             = 1_000_000
 	KnownRouteHostsRefreshInterval = time.Minute
 	KnownRouteHostsRefreshTimeout  = 20 * time.Second
+	KnownRouteRecentHostTimeout    = 3 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -13912,6 +13946,25 @@ const (
 	VmmdLogRingBudgetBytes int64 = 512 << 20
 	VmmdLogRingFloorBytes  int64 = 256 << 10
 )
+
+// A release that OOMs on every request looped forever: each kill re-staled
+// its snapshots and the next wake cold-booted into the same OOM (bug hunt
+// H34). Only the first kill in WorkloadOOMBackoffWindow re-stales them, and
+// WorkloadOOMBackoffKills kills in the window back off the deployment's
+// wakes with a 503, starting at WorkloadOOMBackoffInitial and doubling up
+// to WorkloadOOMBackoffMax while the kills continue.
+const (
+	WorkloadOOMBackoffWindow  = 5 * time.Minute
+	WorkloadOOMBackoffKills   = 5
+	WorkloadOOMBackoffInitial = 30 * time.Second
+	WorkloadOOMBackoffMax     = 5 * time.Minute
+)
+
+// VmmdScanRefusalRefreshTTL is how long one canonical re-read of a refused
+// base's scan sidecar answers the boots that follow it. Concurrent refusals
+// share the re-read, so a cold burst against a fail-closed sidecar costs one
+// object-store read per interval instead of one per wake (bug hunt O36).
+const VmmdScanRefusalRefreshTTL = 5 * time.Second
 
 // UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
 // a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
@@ -15092,6 +15145,9 @@ const (
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
+	// AppHealthCollectorWorkers collect due apps concurrently in each sweep
+	// (bug hunt O35); each claims up to AppHealthCollectorBatch apps.
+	AppHealthCollectorWorkers       = 4
 	AppHealthHistoryPageSize        = 20
 	AppHealthHistoryMaxPage         = 100
 	AppHealthHistoryMaxEntries      = 100
@@ -17527,6 +17583,7 @@ const (
 	DataPipelineCheckConcurrency           = 2
 	DataPipelineSetupConcurrency           = 2
 	DataPipelineWorkerIdleInterval         = time.Second
+	DataPipelineCatalogRetryMax            = 30 * time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17561,22 +17618,23 @@ const (
 // Pipeline health webhooks have one encrypted destination per pipeline. The
 // independent catalog worker debounces incidents and recovery before delivery.
 const (
-	DataPipelineAlertDebounce           = 2 * time.Minute
-	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
-	DataPipelineAlertCheckInterval      = 15 * time.Second
-	DataPipelineAlertWorkerInterval     = time.Second
-	DataPipelineAlertBatch              = 32
-	DataPipelineAlertHistoryMax         = 100
-	DataPipelineAlertPendingMax         = 100
-	DataPipelineAlertAttemptsMax        = 7
-	DataPipelineAlertAttemptTimeout     = 10 * time.Second
-	DataPipelineAlertLease              = 30 * time.Second
-	DataPipelineAlertRetryBase          = 30 * time.Second
-	DataPipelineAlertRetryMax           = 6 * time.Hour
-	DataPipelineAlertURLMaxBytes        = 2048
-	DataPipelineAlertSecretMinBytes     = 32
-	DataPipelineAlertSecretMaxBytes     = 256
-	DataPipelineAlertRetryAfterMaxBytes = 256
+	DataPipelineAlertDebounce            = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce    = 30 * time.Second
+	DataPipelineAlertCheckInterval       = 15 * time.Second
+	DataPipelineAlertWorkerInterval      = time.Second
+	DataPipelineAlertBatch               = 32
+	DataPipelineAlertDeliveryConcurrency = 8
+	DataPipelineAlertHistoryMax          = 100
+	DataPipelineAlertPendingMax          = 100
+	DataPipelineAlertAttemptsMax         = 7
+	DataPipelineAlertAttemptTimeout      = 10 * time.Second
+	DataPipelineAlertLease               = 30 * time.Second
+	DataPipelineAlertRetryBase           = 30 * time.Second
+	DataPipelineAlertRetryMax            = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes         = 2048
+	DataPipelineAlertSecretMinBytes      = 32
+	DataPipelineAlertSecretMaxBytes      = 256
+	DataPipelineAlertRetryAfterMaxBytes  = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
@@ -17833,3 +17891,7 @@ const (
 	DomainVerificationPassTimeout    = 25 * time.Second
 	DomainVerificationCleanupTimeout = 3 * time.Second
 )
+
+// MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
+// (ADR-20261106114500); the catalog CHECK enforces the same bound.
+const MaxObjectKeyScopeBytes = 512

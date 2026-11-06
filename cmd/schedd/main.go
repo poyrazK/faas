@@ -1866,6 +1866,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		log.Info("owner cache enabled (ADR-1741)")
 	}
+	if cfg.AsyncWakeFinalize {
+		engine.WithAsyncWakeFinalize()
+		log.Info("async wake finalize enabled (ADR-20261105090246)")
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership
@@ -2555,7 +2559,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
 		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
-			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
+			Enabled: true, Owner: owner, NodeID: strings.TrimSpace(ownerNodeID), MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
@@ -2834,6 +2838,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
+	// ADR-20261105090246: keep the records of wakes that already answered.
+	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
+	if err := engine.WaitWakeFinalize(stopCtx); err != nil {
+		log.Warn("schedd: wake bookkeeping still running at shutdown", "err", err)
+	}
 	if httpSrv != nil {
 		//nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		_ = httpSrv.Shutdown(stopCtx)

@@ -164,8 +164,18 @@ register_tool({
 }, lookup)
 ```
 
-Tool handlers validate arguments against the advertised schema and return a
-normal MCP tool result. Resource handlers receive `(uri, variables, caller)`
+The starter validates a custom tool's declared `inputSchema` before invoking
+its handler or queuing a task. JSON Schema validation supports local references,
+does not retrieve external references, and does not coerce values or insert
+defaults. Boolean property schemas, including nested `true` and `false` schemas,
+work with modern request headers; argument validation still enforces them.
+Handlers enforce business rules and ownership and return a normal
+MCP tool result. Successful custom tool handler results must include
+`structuredContent` matching a declared `outputSchema`; `isError: true`
+results and intermediate `input_required` responses may omit it. Both schemas
+are checked when registering or replacing the tool, and invalid results
+produce a redacted tool error.
+Resource handlers receive `(uri, variables, caller)`
 and return a list of MCP resource contents. Prompt handlers receive
 `(arguments, caller)` and return the MCP prompt result. `caller` contains the
 verified subject, client ID, and scopes, but no bearer token. Mutations send
@@ -385,6 +395,21 @@ and scopes; cookies and credentialed CORS are not enabled.
 
 ## Task schema setup and upgrade
 
+Tasks save the advertised `outputSchema` in a nullable `output_schema` JSONB
+column at admission. Workers validate final successful `structuredContent`
+against that snapshot before completing the task. Invalid output fails with a
+redacted error; `isError: true` tool results may omit structured output. Retries,
+input pauses, retained handler versions, worker restarts and catalog replacements
+keep the original contract. Schemas are reviewed catalog metadata stored in
+plaintext; task arguments, results, errors and input state remain encrypted.
+
+Existing queues must run `python task_schema.py apply` to add the column, even
+with starter schema version 1 already installed. Startup checks for it without
+running DDL. Migrate first, then upgrade and drain every older worker before
+deploying producers that rely on output validation: older workers ignore the
+saved contract. Tasks admitted without a schema retain their prior behavior;
+the migration does not infer a contract from today's catalog.
+
 Run schema setup from a trusted operator environment using a schema-owner account:
 
 ```sh
@@ -418,7 +443,7 @@ Use a dedicated schema without CREATE privileges for PUBLIC. Configure the same
 search_path (that schema, then pg_catalog) for migration and service accounts.
 For example, after migration, grant the existing runtime role USAGE on that
 schema, SELECT/INSERT/UPDATE/DELETE on gregale_mcp_tasks and
-gregale_mcp_task_worker_handlers and gregale_mcp_task_owners, and SELECT on
+gregale_mcp_task_worker_handlers, gregale_mcp_task_workers and gregale_mcp_task_owners, and SELECT on
 gregale_mcp_task_starter_schema. An observer needs SELECT on all four tables and USAGE on the schema; its existing
 read-only privilege checks still apply. Do not grant schema CREATE, table
 ownership, TRIGGER or write access to the version table to service accounts.

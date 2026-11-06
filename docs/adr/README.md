@@ -1,7 +1,41 @@
 # Architecture Decision Records
 
+- [ADR-20261106105015: gregale.yaml creates what it binds, `postgres connect`, and SDK lifecycle hooks](20261106105015-declarative-resources-connect-and-lifecycle-helpers.md) — accepted; `create` on gregale.yaml databases and buckets (project and single-app deploys; project deploys now apply root `buckets:`), `gregale postgres connect` through a bound app's task VM, and Go/Node/Python helpers for the before_checkpoint/after_restore hooks
+
+- [ADR-20261105181403: Bound outbound work and pace retries without an explicit policy](20261105181403-outbound-reliability-defaults.md)
+
+- [ADR-20261105180352: Preserve PostgreSQL hold ownership and fresh plan lifetimes](20261105180352-managed-postgres-hold-publication-and-plan-lifetimes.md) — durable mirror pins, independent mirror uploads, fresh named plans, and lifecycle-fenced cap holds
+
+- [ADR-20261105150000: A release keeps the previous guest-init while its code is the same, so bases and snapshots survive it](20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md) — proposed; amends ADR-510's consequences: every refusal traced to a release whose guest-init digest differed (26 digests in 12 days); the release ships the previous signed release's guest-init while its code digest (ADR-1650) is the same, guest-init builds with `grpcnotrace`, and a nightly check keeps unreferenced pkg/api changes out of its code; releases that change what the guest runs still retire snapshots (1 of 5 pairs was reusable)
+
+- [ADR-20261105133000: Fence app rollback routing and preserve migration evidence](20261105133000-rollback-routing-ownership-and-evidence-budgets.md)
+
+- [ADR-20261105130932: Preserve PostgreSQL state on rejected work](20261105130932-managed-postgres-admission-and-batch-recovery.md) — roll back skipped named statements, admit resizes before retiring standbys, and reserve archive bytes across concurrent streams
+
+- [ADR-20261105123632: Isolate pooled statements and archive upload failures](20261105123632-managed-postgres-pooling-and-upload-isolation.md) — preserve each client's unnamed SQL, stream multipart backups, keep unrelated databases uploading, and close archive sockets on shutdown
+
+- [ADR-20261105120854: Mirror holds protect PostgreSQL recovery data](20261105120854-managed-postgres-mirror-retention-safety.md) — verify both hold inventories before pruning, protect queued mirror deletions, and discover recovery backups despite incomplete primary listings
+
+- [ADR-20261105185744: Repair catalog references and retained outcome resolution](20261105185744-repair-catalog-references-and-retained-resolution.md) — rejects name-based catalog references in repair fields and keys, and lets compacted plans settle uncommitted hosted outcomes
+
+- [ADR-20261105110000: Repair preparation recovery and monetary locales](20261105110000-repair-prepare-recovery-and-money-locales.md) — preserves pending prepare identities and refresh paths, canonicalizes money capture, and qualifies monetary fingerprint rendering without rewriting history
+
+- [ADR-20261105100000: vmmd launches the jailer and firecracker from verified copies on the jail tmpfs](20261105100000-resident-jailer-and-firecracker-executables.md) — proposed; the first restore after a node sits idle stalled ~200 ms in `bind_tun` (47 of 1,087 restores on rc.322), probably reading evicted jailer and firecracker binaries from a busy disk: vmmd stages byte-verified copies in `<jail base>/.faas-resident/` at startup and launches the jailer and `--exec-file` from them (same basenames, falls back to the installed binaries), and `vmmd_restore_phase_duration_seconds` gains `tun_journal_checks`, `tun_wait_mntns`, `tun_wait_chroot`, `tun_setup_jail`, `cgroup_fence` to confirm the cause
+
+- [ADR-20261105090246: A booted wake answers before its bookkeeping](20261105090246-booted-wake-answers-before-its-bookkeeping.md) — proposed; behind schedd `async_wake_finalize` (off by default): a booted wake answers once its RUNNING publication commits, and the observed workload class and secret delivery records (with their audit rows) follow in the background, bounded by 10 s and awaited on shutdown
+
 - [ADR-20261104203253: A managed PostgreSQL create in flight does not pause its account](20261104203253-managed-postgres-in-flight-create-does-not-pause-account.md) — accepted; amends ADR-581: an unresolved obligation still provisioning under a held lease, reserved in the current usage window, does not block admission, so parallel creates work; a lost reply blocks again when the lease lapses or the window closes
+
+- [ADR-20261104200000: Preserve rollback serving history and retained readiness](20261104200000-rollback-serving-windows-and-retained-readiness.md)
+
+- [ADR-20261104160001: Guard graph and service rollback publication](20261104160001-graph-and-service-rollback-safety.md) — accepted; graph contracts and migration serving windows, atomic service-abort release guards, and durable checked completion after replacement.
+
 - [ADR-20261104143000: Deleting a managed PostgreSQL database does not pause the account for its correction tail](20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md) — accepted; amends ADR-569 and ADR-582: a deleted database blocks new databases, restores and resizes only until its windows are covered through the end of the hour it was deleted in (usually under an hour, was 3–4 h); its three-window correction tail is still replayed and blocks as `final_correction_pending` only once overdue by `usage.stale_after_seconds`
+
+- [ADR-20261104140000: Fence rollback execution and reconcile outcomes](20261104140000-rollback-execution-fences-and-outcomes.md) — accepted; database-switch code writes validate leases, plain rollback reviews are preparation-bound, project rollback retains contract checks, and outcome sweeps reconcile fairly.
+
+- [ADR-20261104110001: Retain rollback release and contract evidence](20261104110001-rollback-release-and-contract-evidence.md) — accepted; checked cutover validates acknowledged release runs, contract gates cover production scopes and serving baselines, and historical contracts survive readiness.
+
 - [ADR-20261104104521: Recoverable app scaling](20261104104521-recoverable-app-scaling.md) — accepted; native app/environment identity and revision guards, atomic scaling receipts, safe MCP retries, and configuration verification.
 
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
@@ -1996,6 +2030,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
+- [ADR-20261105103642: Pipeline health and verification pause handling](20261105103642-pipeline-health-and-verification-pause.md) — local/staging; catch-up health stays pending, verification admission honors pause intent, and key-limit recovery is actionable
+- [ADR-20261105110155: Pipeline worker deployment and recovery](20261105110155-pipeline-worker-deployment-recovery.md) — optional workers converge on deployment and recover from catalog outages
+- [ADR-20261105115244: Pipeline check contention and pilot refresh](20261105115244-pipeline-check-contention-and-pilot-refresh.md) — serialize shared checks, normalize UUIDs, retain poll state, and refresh alert scope
 - [ADR-20261104221106: Pipeline slot advancement and schema waits](20261104221106-pipeline-slot-advancement-and-schema-waits.md) — local/staging; unobserved slot advances require fresh verification, and CLI waits continue through pending schema refresh
 - [ADR-20261104211004: Pipeline native stream continuity and readiness](20261104211004-pipeline-native-stream-continuity-and-readiness.md) — local/staging; uncertain slot continuity gates a fresh proof, and lost native table readiness requires explicit recovery
 - [ADR-20261104202549: Pipeline source storage checks and missing-slot cleanup](20261104202549-pipeline-source-storage-and-slotless-cleanup.md) — local/staging; live rewrites gate reads through verification, and missing-main-slot cleanup needs no replacement replication capacity
@@ -2049,6 +2086,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261104212930: MCP live worker receipts and schema snapshots](20261104212930-mcp-live-worker-receipts-and-schema-snapshots.md) — recover native handoffs after log eviction, accept empty previous pools and isolate Zod metadata through Standard Schema snapshots
 - [ADR-20261104220400: MCP subscription setup ownership](20261104220400-mcp-subscription-setup-ownership.md) — reserve pending stream capacity, handle early disconnects and dispose registrations that finish after cancellation
 - [ADR-20261104222700: MCP catalog SDK keys and HTTP framing](20261104222700-mcp-catalog-sdk-keys-and-http-framing.md) — support prototype-property catalog names, honor sample resource replacements and decode bounded Python chunked requests
+- [ADR-20261105104950: MCP subscription output and rejected request framing](20261105104950-mcp-subscription-output-and-rejected-request-framing.md) — bound notification buffers and writes, preserve retry framing after early rejection and classify JSON parser errors
+- [ADR-20261105161206: Durable MCP Task output contracts](20261105161206-mcp-task-output-contracts.md) — preserve accepted handles, await admission validators and validate worker results against the saved schema
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
 - [ADR 20261017191504: MCP dashboard grant retirement recovery](20261017191504-mcp-dashboard-grant-retirement-recovery.md)
@@ -2144,3 +2183,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261105000511: Management MCP saved-plan recovery prompts](20261105000511-management-mcp-saved-plan-recovery-prompts.md)
 - [ADR-20261105000512: Durable request promotion outcome recovery](20261105000512-management-mcp-promotion-outcomes.md)
 - [ADR-20261105000513: Durable request rollback acceptance recovery](20261105000513-management-mcp-rollback-outcomes.md)
+
+
+
+- [ADR-20261105082446: Durable service rollback acceptance recovery](20261105082446-management-mcp-service-rollback-outcomes.md)
+- [ADR-20261105102920: Exact environment rollback acceptance recovery](20261105102920-management-mcp-environment-rollback-outcomes.md)
+- [ADR-20261105103000: Recover egress policy after uncertain writes and restarts](20261105103000-egress-retry-and-restart-policy-recovery.md)
+- [ADR-20261105115100: Gate public raw ingress on production readiness and teardown](20261105115100-public-raw-ingress-production-readiness-and-teardown.md)
+- [ADR-20261105120000: Enforce network quarantine, timed grants and release ports](20261105120000-network-quarantine-renewal-and-release-ports.md) — bounds per-instance, per-family DNS/database grants at the existing kernel set capacities
+- [ADR-20261105153007: Exact environment promotion acceptance recovery](20261105153007-management-mcp-environment-promotion-outcomes.md)
+- [ADR-20261106114500: Key-scoped bucket bindings and `gregale bucket sign`](20261106114500-key-scoped-bucket-bindings.md)

@@ -261,3 +261,22 @@ The default filled in a canary and `rollback_on_5xx` only for a release into the
 ## Amendment 2 (2026-11-03): a promotion into production gets first-wake rollback
 
 A project environment promotion copies its staging release, canary cleared and at full traffic. Staging is not a production scope, so the copy carried no `rollback_on_5xx`, and a promotion into production shipped with no first-wake 5xx guard and no post-release watch (release review 2026-11-03). A promotion into a production scope that already serves now gets `rollback_on_5xx` by the same rules as a deploy (release policy, plan, app kind, operator switch). It does not get the default canary: its protected approval already stands in for the apps' approval policies, and a canary would hold it for them again. A dark (release-graph) promotion activates its apps together and keeps its promotion rollback.
+
+## Amendment 3 (2026-11-06): a stage nobody called advances at its boundary
+
+The bounded low-traffic hold assumed probes would cover a quiet release. They
+go through the public edge, so a `visibility: internal` service never gets
+probe evidence, and each stage of its rollout waited its dwell time plus the
+whole `CanaryLowTrafficMaxHold`. A four-stage rollout of an internal service
+took about 25 minutes and outlasted the CLI's 20-minute deploy wait although
+it finished cleanly (ChronoLake field report, rc.325).
+
+A stage in which neither the candidate nor its predecessor answered a single
+request, organic or probe (`canary.NoTrafficStage`), now takes the bounded
+advance at its boundary instead of after the bound. Every other condition of
+the bounded advance still applies (readable, clean OOM and liveness signals,
+zero candidate 5xx), and any request on either side keeps the bound. Holding
+such a stage longer produced no evidence and protected no request; the ADR-625
+first-wake window still covers the release when traffic arrives. The advance
+is still exported as `advance_low_traffic`, and meterd logs it with
+`no_traffic=true`.

@@ -330,7 +330,7 @@ type bringUpTimings struct {
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
-	// (ADR-192).
+	// (ADR-192). bringUp adds the ADR-510 backing check to it.
 	prepare WakePrepareTimings
 }
 
@@ -425,6 +425,13 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	resolvedEgressGeneration string // immutable once captured, guarded by Manager.mu
+	// awaitingExit: teardown has recorded its cleanup intent but is waiting
+	// for the guest to exit by itself (a builder finishing its build), so
+	// its DNS answers are still granted. Guarded by Manager.mu.
+	awaitingExit bool
+	// Cached contents do not establish convergence after an uncertain nft write.
+	egressAllowlistUncertain bool // guarded by Manager.mu
+	egressPortsUncertain     bool // guarded by Manager.mu
 	publicForwardTarget      *netns.PublicForwardTarget
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
 	nativeGeneration          string
@@ -851,6 +858,7 @@ type Manager struct {
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
+	scanRefresh               scanRefreshCoalescer // O36: one canonical scan re-read per refusal burst
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
 	nativeRecoveryFlight      *nativeRecoveryInitFlight
@@ -1182,6 +1190,12 @@ type Manager struct {
 	// beforeBackingHash, when set, runs before a file version is hashed.
 	// Tests use it to hold a hash in flight.
 	beforeBackingHash func(path string)
+	// backingRecorder keeps digests with the files across vmmd restarts
+	// (ADR-510 amendment 2); nil uses the platform's (a trusted xattr on
+	// Linux). backingKeys are the base keys this vmmd attached, which the
+	// digest primer follows. Both guarded by backingMu where mutable.
+	backingRecorder backingDigestRecorder
+	backingKeys     map[string]struct{}
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -5559,6 +5573,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
 		"restore_prefetch_bytes", restorePrefetchBytes,
 	}
+	// ADR-510: the backing check runs inside bring_up but outside restore_ms
+	// and cold_boot_ms; without it the gap between them was unattributed.
+	wakeAttrs = append(wakeAttrs, timings.prepare.Backing.attrs()...)
 	// Include every outer phase measurement on successes too. A
 	// fallback can spend most of its wall time before Firecracker Boot (for
 	// example materializing runtime files); reporting only cold_boot_ms hid
@@ -5641,7 +5658,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// than the ones it was captured with. The refusal happens before any
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
-		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+		backing, refusal := m.checkSnapshotBacking(ctx, req.Snapshot, req.BaseKey)
+		if timings != nil {
+			timings.prepare.Backing = backing
+		}
+		if refusal != nil {
 			if sealed {
 				return WakeRestore, fmt.Errorf("sealed crash capture: %w", refusal)
 			}
@@ -5808,6 +5829,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	}
 
 	spec := m.coldBootSpecForWake(nc, req, serviceDiscoveryIP)
+	if timings != nil {
+		// A check that refused the restore, or accepted one that then
+		// failed, delayed this cold boot too.
+		spec.Backing = timings.prepare.Backing
+	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.bootColdBootWithSources(ctx, lease, spec, req.ArtifactSources)
 	if timings != nil {
@@ -6013,7 +6039,9 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
-	if gateErr != nil && m.refreshCachedScan(ctx, baseKey, scanKey) {
+	if gateErr != nil && m.scanRefresh.do(ctx, scanKey, time.Now(), func(ctx context.Context) bool {
+		return m.refreshCachedScan(ctx, baseKey, scanKey)
+	}) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
 		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
@@ -6619,11 +6647,20 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
 	m.retireHTTPForwards(inst.Lease)
+	// The VMM lets a builder run to its own exit (builderd waits for a build
+	// with this call), so the guest keeps its DNS grants until it exits
+	// (ADR-373). A retried teardown has no running guest to wait for.
+	m.mu.Lock()
+	inst.awaitingExit = (exportDir != "" || inst.Lease.IsBuilder) && m.pendingCleanup[instance] == nil
+	m.mu.Unlock()
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
 	m.beginAdoptionOp(instance, adoptionOpStop)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
+	m.mu.Lock()
+	inst.awaitingExit = false // Teardown proper refuses grants from here.
+	m.mu.Unlock()
 	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
 		return exitCode, err
@@ -7351,6 +7388,7 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		prior      []netip.Prefix
 		handleV4   uint64
 		handleV6   uint64
+		uncertain  bool
 	}
 	var targets []patchTarget
 	m.mu.Lock()
@@ -7362,11 +7400,12 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		copy(prior, inst.Net.EgressAllowlist)
 		targets = append(targets, patchTarget{
 			instanceID: id, instance: inst, generation: inst.nativeGeneration,
-			netns:    inst.Net.Netns,
-			net:      inst.Net,
-			prior:    prior,
-			handleV4: inst.AllowlistHandleV4,
-			handleV6: inst.AllowlistHandleV6,
+			netns:     inst.Net.Netns,
+			net:       inst.Net,
+			prior:     prior,
+			handleV4:  inst.AllowlistHandleV4,
+			handleV6:  inst.AllowlistHandleV6,
+			uncertain: inst.egressAllowlistUncertain,
 		})
 	}
 	m.mu.Unlock()
@@ -7405,14 +7444,14 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		// (delete-then-add the same rule). Skip both the
 		// argv build and the nft exec — schedd's pg_notify
 		// redelivery lands here on reconnect.
-		if samePrefixSet(t.prior, allowlist) && !egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
+		if !t.uncertain && samePrefixSet(t.prior, allowlist) && !egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
 			continue
 		}
 		ctx, err := m.nativeInstanceNetworkContext(ctx, t.instanceID, t.generation)
 		if err != nil {
 			return err
 		}
-		if egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
+		if t.uncertain || egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
 			nc := t.net
 			nc.EgressAllowlist = append([]netip.Prefix(nil), allowlist...)
 			if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
@@ -7434,6 +7473,7 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 			m.mu.Lock()
 			if inst := m.live[t.instanceID]; inst == t.instance {
 				inst.AllowlistHandleV4, inst.AllowlistHandleV6 = 0, 0
+				inst.egressAllowlistUncertain = true
 				m.markAdoptionDirty(t.instanceID)
 			}
 			m.mu.Unlock()
@@ -7446,6 +7486,7 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		if inst == t.instance {
 			inst.Net.EgressAllowlist = append([]netip.Prefix(nil), allowlist...)
 			inst.AllowlistHandleV4, inst.AllowlistHandleV6 = newH.v4, newH.v6
+			inst.egressAllowlistUncertain = false
 			m.markAdoptionDirty(t.instanceID)
 		}
 		m.mu.Unlock()
@@ -8503,7 +8544,8 @@ func (m *Manager) capturePrivateNetworkHandlesForWake(ctx context.Context, netns
 // listChainHandles runs `ip netns exec <ns> nft -a list chain
 // <family> faas forward` and returns the handle of the rule that
 // matches the allowlist-renderer invariant
-// `iifname "<tap>" <family> daddr { … } tcp dport != 25 accept`.
+// `iifname "<tap>" <family> daddr { … } tcp dport != <blocked> accept`.
+// Both the legacy port-25 guard and the current canonical blocked set qualify.
 // Returns 0 when the rule is absent or ambiguous.
 //
 // The renderer always emits tap0 (identical in every netns per
@@ -8511,7 +8553,7 @@ func (m *Manager) capturePrivateNetworkHandlesForWake(ctx context.Context, netns
 // lets tap vary per instance, this helper needs to take the tap
 // name as a parameter.
 func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family, table, chain string) (uint64, error) {
-	argv := []string{"ip", "netns", "exec", netnsName, "nft", "-a", "list", "chain", family, table, chain}
+	argv := []string{"ip", "netns", "exec", netnsName, "nft", "-a", "-n", "list", "chain", family, table, chain}
 	out, err := cap.RunCapture(ctx, argv)
 	if err != nil {
 		return 0, fmt.Errorf("nft -a list chain %s %s %s: %w", family, table, chain, err)
@@ -8528,10 +8570,9 @@ func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family,
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := strings.Join(strings.Fields(scanner.Text()), " ")
-		// The public CIDR exception has ADR-031's explicit port-25 guard.
-		// Other destination accepts, including the later egress_db tuple set,
-		// must never supply its handle.
-		if !strings.Contains(line, needleAllow) || !strings.Contains(line, " tcp dport != 25 accept # handle ") {
+		// A legacy SMTP exclusion or the current blocked-port set identifies
+		// the public CIDR exception. Private/database accepts cannot supply it.
+		if !strings.Contains(line, needleAllow) || !publicAllowlistGuard(line) {
 			continue
 		}
 		idx := strings.LastIndex(line, "# handle ")
@@ -8555,6 +8596,20 @@ func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family,
 	}
 	// Only one public allowlist rule may identify this address family.
 	return matched, nil
+}
+
+// Numeric listings make the current anonymous port set comparable to the
+// renderer, while legacy port-25 rules remain identifiable during upgrades.
+func publicAllowlistGuard(line string) bool {
+	_, tail, ok := strings.Cut(line, " tcp dport != ")
+	if !ok {
+		return false
+	}
+	guard, _, ok := strings.Cut(tail, " accept # handle ")
+	if !ok {
+		return false
+	}
+	return guard == "25" || strings.ReplaceAll(guard, " ", "") == "{"+netns.AllowlistBlockedPortsSet()+"}"
 }
 
 // listPrivateNetworkHandle resolves the handle for a private-network accept
@@ -8836,7 +8891,7 @@ func (m *Manager) updateEgressPorts(ctx context.Context, appID string, extra []u
 			continue
 		}
 		ports := tenantEgressPorts(inst.Plan, extra)
-		if slices.Equal(inst.Net.EgressPorts, ports) {
+		if !inst.egressPortsUncertain && slices.Equal(inst.Net.EgressPorts, ports) {
 			continue
 		}
 		nc := inst.Net
@@ -8852,12 +8907,18 @@ func (m *Manager) updateEgressPorts(ctx context.Context, appID string, extra []u
 			continue
 		}
 		if err := m.runNftCommands(ctx, t.nc.Netns, t.nc.EgressPortsUpdateCommands()); err != nil {
+			m.mu.Lock()
+			if inst := m.live[t.id]; inst == t.instance {
+				inst.egressPortsUncertain = true
+			}
+			m.mu.Unlock()
 			errs = append(errs, fmt.Errorf("fcvm: update egress ports for %s: %w", t.id, err))
 			continue
 		}
 		m.mu.Lock()
 		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.EgressPorts = t.nc.EgressPorts
+			inst.egressPortsUncertain = false
 		}
 		m.mu.Unlock()
 	}

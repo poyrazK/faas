@@ -787,6 +787,7 @@ from .config_revision_detail import ConfigRevisionDetail
 from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
 from .config_revision_detail_variables import ConfigRevisionDetailVariables
 from .config_revision_source import ConfigRevisionSource
+from .config_rollback_receipt import ConfigRollbackReceipt
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
@@ -1642,11 +1643,13 @@ from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
+from .environment_promotion_receipt import EnvironmentPromotionReceipt
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_rollback_receipt import EnvironmentRollbackReceipt
 from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
 from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
@@ -7077,6 +7080,7 @@ __all__ = (
     "ConfigRevisionDetailSecretVersions",
     "ConfigRevisionDetailVariables",
     "ConfigRevisionSource",
+    "ConfigRollbackReceipt",
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
@@ -7908,11 +7912,13 @@ __all__ = (
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
+    "EnvironmentPromotionReceipt",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRollbackReceipt",
     "EnvironmentRouteBudgetReceipt",
     "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",

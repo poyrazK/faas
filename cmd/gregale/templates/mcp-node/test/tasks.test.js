@@ -384,6 +384,53 @@ test('input-required tasks can be cancelled and task updates keep caller isolati
   }
 });
 
+test('form elicitation defaults survive durable input waits and replay without mutating the request', async () => {
+  const request = { method: 'elicitation/create', params: {
+    message: 'Approve?', requestedSchema: { type: 'object', properties: { approved: { type: 'boolean' } } },
+  } };
+  let executions = 0;
+  const store = new MemoryTaskStore();
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: {
+    work: { version: '1', async execute(_args, { requestInput }) {
+      executions++;
+      const response = await requestInput('approval', request);
+      return { content: [{ type: 'text', text: response.action }] };
+    } },
+  } });
+  await runtime.start();
+  try {
+    const handle = await runtime.create('work', {}, {}, 'open', { elicitation: { form: {} } });
+    const waiting = await eventually(() => runtime.get(handle.taskId, {}, 'open').then(task => task.status === 'input_required' ? task : null), 'task did not request default form input');
+    assert.deepEqual(waiting.inputRequests.approval, request);
+    assert.equal(Object.hasOwn(request.params, 'mode'), false);
+    await runtime.update(handle.taskId, { approval: { action: 'accept', content: { approved: true } } }, {}, 'open');
+    const completed = await eventually(() => runtime.get(handle.taskId, {}, 'open').then(task => task.status === 'completed' ? task : null), 'task did not resume');
+    assert.equal(completed.result.content[0].text, 'accept');
+    assert.equal(executions, 2);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+for (const mode of [null, '', 'invalid', 1]) {
+  test(`invalid explicit elicitation mode ${JSON.stringify(mode)} still fails before storing input`, async () => {
+    const store = new MemoryTaskStore();
+    const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: {
+      work: { version: '1', async execute(_args, { requestInput }) {
+        await requestInput('approval', { method: 'elicitation/create', params: { mode, message: 'Approve?' } });
+      } },
+    } });
+    await runtime.start();
+    try {
+      const handle = await runtime.create('work', {}, {}, 'open', { elicitation: { form: {} } });
+      await eventually(() => runtime.get(handle.taskId, {}, 'open').then(task => task.status === 'failed' ? task : null), 'invalid mode did not fail');
+      assert.equal(store.rows.get(handle.taskId).input_state, null);
+    } finally {
+      await runtime.stop();
+    }
+  });
+}
+
 test('task failures do not expose exception text in persisted results', async () => {
   const store = new MemoryTaskStore();
   const handlers = { work: { version: '1', execute: async () => { throw new Error('private database password'); } } };

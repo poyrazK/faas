@@ -23,6 +23,7 @@ import (
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	gcsapi "google.golang.org/api/storage/v1"
 
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 )
@@ -85,13 +86,14 @@ type gcsStore interface {
 	ListObjectVersions(context.Context, string, string, int32) ([]gcsObjectState, string, error)
 	DeleteObject(context.Context, string, string) error
 	ObjectState(context.Context, string, string) (gcsObjectState, error)
-	UpdateObjectMetadata(context.Context, string, string, map[string]string) (gcsObjectState, error)
+	UpdateObjectMetadata(context.Context, string, string, int64, int64, map[string]string) (gcsObjectState, error)
 	CopyObject(context.Context, string, string, string, string, ObjectMetadata, string) (gcsObjectState, error)
 	CopyObjectVersion(context.Context, string, string, string, string, int64, int64) (gcsObjectState, error)
 }
 
 type googleGCSStore struct {
-	client *storage.Client
+	client  *storage.Client
+	objects *gcsapi.ObjectsService
 }
 
 func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
@@ -133,6 +135,11 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 	if err != nil {
 		return nil, errors.New("GCS client initialization failed")
 	}
+	objects, err := newGCSObjectListingClient(ctx, oauthClient, c.Endpoint)
+	if err != nil {
+		_ = client.Close()
+		return nil, errors.New("GCS listing client initialization failed")
+	}
 	parsedEndpoint, err := url.Parse(endpoint)
 	if err != nil {
 		_ = client.Close()
@@ -143,7 +150,7 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 		storageClass = "STANDARD"
 	}
 	p := &GCS{
-		store:          &googleGCSStore{client: client},
+		store:          &googleGCSStore{client: client, objects: objects},
 		httpClient:     oauthClient,
 		endpoint:       parsedEndpoint,
 		serviceAccount: c.GCSServiceAccount,
@@ -208,26 +215,28 @@ func (s *googleGCSStore) ListObjects(ctx context.Context, bucket, prefix, delimi
 
 func (s *googleGCSStore) ListObjectsStartingAfter(ctx context.Context, bucket string, request ObjectListRequest) ([]gcsObjectState, []string, string, error) {
 	prefix, delimiter, cursor, limit := request.Prefix, request.Delimiter, request.Cursor, request.Limit
-	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: prefix, Delimiter: delimiter, StartOffset: request.StartAfter, Projection: storage.ProjectionNoACL})
-	pager := iterator.NewPager(iter, int(limit), cursor)
-	var attrs []*storage.ObjectAttrs
-	next, err := pager.NextPage(&attrs)
+	page, err := s.listObjectPage(ctx, bucket, prefix, delimiter, request.StartAfter, cursor, limit)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	objects := make([]gcsObjectState, 0, len(attrs))
-	prefixes := make([]string, 0)
-	for _, attr := range attrs {
-		if request.StartAfter != "" && (attr.Prefix == "" && attr.Name <= request.StartAfter || attr.Prefix != "" && attr.Prefix <= request.StartAfter) {
+	objects := make([]gcsObjectState, 0, len(page.Items))
+	prefixes := make([]string, 0, len(page.Prefixes))
+	for _, item := range page.Items {
+		object, err := gcsListedObject(item)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if request.StartAfter != "" && object.Key <= request.StartAfter {
 			continue
 		}
-		if attr.Prefix != "" {
-			prefixes = append(prefixes, attr.Prefix)
-			continue
-		}
-		objects = append(objects, gcsObjectState{Key: attr.Name, ETag: attr.Etag, Size: attr.Size, LastModified: attr.Updated, Version: attr.Generation, Metadata: attr.Metadata})
+		objects = append(objects, object)
 	}
-	return objects, prefixes, next, nil
+	for _, prefix := range page.Prefixes {
+		if request.StartAfter == "" || prefix > request.StartAfter {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return objects, prefixes, page.NextPageToken, nil
 }
 
 func (s *googleGCSStore) ListObjectVersions(ctx context.Context, bucket, cursor string, limit int32) ([]gcsObjectState, string, error) {
@@ -299,12 +308,12 @@ func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (g
 	return gcsStateFromAttrs(attr), nil
 }
 
-func (s *googleGCSStore) UpdateObjectMetadata(ctx context.Context, bucket, key string, metadata map[string]string) (gcsObjectState, error) {
-	attrs, err := s.client.Bucket(bucket).Object(key).Update(ctx, storage.ObjectAttrsToUpdate{Metadata: metadata})
+func (s *googleGCSStore) UpdateObjectMetadata(ctx context.Context, bucket, key string, generation, metageneration int64, metadata map[string]string) (gcsObjectState, error) {
+	attrs, err := s.client.Bucket(bucket).Object(key).If(storage.Conditions{GenerationMatch: generation, MetagenerationMatch: metageneration}).Retryer(storage.WithPolicy(storage.RetryNever)).Update(ctx, storage.ObjectAttrsToUpdate{Metadata: metadata})
 	if err != nil {
 		return gcsObjectState{}, err
 	}
-	return gcsObjectState{Key: attrs.Name, ETag: attrs.Etag, Size: attrs.Size, LastModified: attrs.Updated, Metadata: attrs.Metadata}, nil
+	return gcsStateFromAttrs(attrs), nil
 }
 
 func (s *googleGCSStore) CopyObject(ctx context.Context, sourceBucket, destinationBucket, source, destination string, metadata ObjectMetadata, directive string) (gcsObjectState, error) {
@@ -330,7 +339,7 @@ func (s *googleGCSStore) CopyObject(ctx context.Context, sourceBucket, destinati
 	if attrs == nil {
 		return gcsObjectState{}, ErrUnavailable
 	}
-	return gcsObjectState{Key: attrs.Name, ETag: attrs.Etag, Size: attrs.Size, LastModified: attrs.Updated, Metadata: attrs.Metadata}, nil
+	return gcsStateFromAttrs(attrs), nil
 }
 
 func (s *googleGCSStore) CopyObjectVersion(ctx context.Context, sourceBucket, destinationBucket, source, destination string, generation, metaVersion int64) (gcsObjectState, error) {
@@ -602,31 +611,12 @@ func (p *GCS) GetObjectTags(ctx context.Context, bucket, key string) (map[string
 }
 
 func (p *GCS) PutObjectTags(ctx context.Context, bucket, key string, tags map[string]string) error {
-	if !ValidKey(key) {
-		return ErrInvalid
-	}
-	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
-		return err
-	}
-	object, err := p.store.ObjectState(ctx, bucket, key)
-	if err != nil {
-		return normalizeGCS(err)
-	}
-	metadata := cloneMetadata(object.Metadata)
-	encoded, err := EncodeObjectTags(tags)
+	call, err := p.prepareObjectTagging(ctx, bucket, http.MethodPut, key, tags, nil)
 	if err != nil {
 		return err
 	}
-	if encoded == "" {
-		// The GCS JSON API merges metadata maps; omitting an existing key does
-		// not clear it. An explicit empty value is normalized to no logical tags
-		// by gcsTagsFromMetadata while preserving the other metadata entries.
-		metadata[ReservedObjectTagsMetadataKey] = ""
-	} else {
-		metadata[ReservedObjectTagsMetadataKey] = encoded
-	}
-	_, err = p.store.UpdateObjectMetadata(ctx, bucket, key, metadata)
-	return normalizeGCS(err)
+	_, err = call(ctx)
+	return err
 }
 
 func (p *GCS) DeleteObjectTags(ctx context.Context, bucket, key string) error {
@@ -823,40 +813,9 @@ func (p *GCS) ensureGCSMultipart(ctx context.Context, bucket string, r Multipart
 	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
-	var found, keyMarker, uploadMarker string
-	for page := 0; page < 100; page++ {
-		query := url.Values{"uploads": {""}, "prefix": {r.Key}, "max-uploads": {"1000"}}
-		if keyMarker != "" {
-			query.Set("key-marker", keyMarker)
-		}
-		if uploadMarker != "" {
-			query.Set("upload-id-marker", uploadMarker)
-		}
-		var listed gcsListMultipartUploadsResult
-		if r.BeforeRequest != nil {
-			if err := r.BeforeRequest(ctx); err != nil {
-				return "", err
-			}
-		}
-		if err := p.xmlRequest(ctx, http.MethodGet, bucket, "", query, nil, nil, &listed); err != nil {
-			return "", normalizeGCS(err)
-		}
-		for _, upload := range listed.Uploads {
-			if upload.Key != r.Key {
-				continue
-			}
-			if upload.UploadID == "" || found != "" && found != upload.UploadID {
-				return "", ErrConflict
-			}
-			found = upload.UploadID
-		}
-		if !listed.IsTruncated {
-			break
-		}
-		if listed.NextKeyMarker == "" || page == 99 {
-			return "", ErrUnavailable
-		}
-		keyMarker, uploadMarker = listed.NextKeyMarker, listed.NextUploadIDMarker
+	found, err := p.discoverGCSMultipartUpload(ctx, bucket, r)
+	if err != nil {
+		return "", err
 	}
 	if found != "" {
 		return found, nil
@@ -891,7 +850,7 @@ func (p *GCS) ensureGCSMultipart(ctx context.Context, bucket string, r Multipart
 	if err := p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploads": {""}}, headers, nil, &initiated); err != nil {
 		return "", normalizeGCS(err)
 	}
-	if initiated.UploadID == "" {
+	if !validMultipartUploadID(initiated.UploadID) {
 		return "", ErrUnavailable
 	}
 	return initiated.UploadID, nil
@@ -920,7 +879,7 @@ func (p *GCS) PresignMultipartPart(ctx context.Context, bucket string, r Multipa
 }
 
 func (p *GCS) ListMultipartParts(ctx context.Context, bucket string, r MultipartListPartsRequest) (MultipartPartsPage, error) {
-	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumberMarker < 0 || r.PartNumberMarker > 10000 || r.Limit < 1 || r.Limit > 1000 {
+	if !ValidKey(r.Key) || !validMultipartUploadID(r.ProviderUploadID) || r.PartNumberMarker < 0 || r.PartNumberMarker > api.MaxMultipartParts || r.Limit < 1 || r.Limit > api.MaxObjectS3ListItems {
 		return MultipartPartsPage{}, ErrInvalid
 	}
 	query := url.Values{
@@ -930,20 +889,7 @@ func (p *GCS) ListMultipartParts(ctx context.Context, bucket string, r Multipart
 	if err := p.xmlRequest(ctx, http.MethodGet, bucket, r.Key, query, nil, nil, &listed); err != nil {
 		return MultipartPartsPage{}, normalizeGCS(err)
 	}
-	page := MultipartPartsPage{Items: make([]MultipartPart, 0, len(listed.Parts))}
-	for _, part := range listed.Parts {
-		if part.PartNumber < 1 || part.PartNumber > 10000 || part.ETag == "" || len(part.ETag) > 256 || part.Size < 1 || part.Size > api.MaxObjectSinglePutBytes {
-			return MultipartPartsPage{}, ErrUnavailable
-		}
-		page.Items = append(page.Items, MultipartPart{PartNumber: part.PartNumber, ETag: part.ETag, SizeBytes: part.Size, LastModified: part.LastModified})
-	}
-	if listed.IsTruncated {
-		if listed.NextPartNumberMarker < 1 || listed.NextPartNumberMarker > 10000 || listed.NextPartNumberMarker <= r.PartNumberMarker {
-			return MultipartPartsPage{}, ErrUnavailable
-		}
-		page.NextPartNumberMarker = listed.NextPartNumberMarker
-	}
-	return page, nil
+	return gcsMultipartPartsPage(listed, bucket, r)
 }
 
 func (p *GCS) CompleteMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest) error {
@@ -1021,7 +967,8 @@ func (p *GCS) AbortMultipartUpload(ctx context.Context, bucket string, r Multipa
 }
 
 type gcsInitiateMultipartUploadResult struct {
-	UploadID string `xml:"UploadId"`
+	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+	UploadID string   `xml:"UploadId"`
 }
 
 type gcsMultipartUpload struct {
@@ -1030,10 +977,14 @@ type gcsMultipartUpload struct {
 }
 
 type gcsListMultipartUploadsResult struct {
-	IsTruncated        bool                 `xml:"IsTruncated"`
+	XMLName            xml.Name             `xml:"ListBucketMultipartUploadsResult"`
+	Encoding           []string             `xml:"EncodingType"`
+	NativeEncoding     []string             `xml:"Encoding-Type"`
+	IsTruncated        *bool                `xml:"IsTruncated"`
 	NextKeyMarker      string               `xml:"NextKeyMarker"`
 	NextUploadIDMarker string               `xml:"NextUploadIdMarker"`
 	Uploads            []gcsMultipartUpload `xml:"Upload"`
+	CommonPrefixes     []struct{}           `xml:"CommonPrefixes"`
 }
 
 type gcsMultipartPart struct {
@@ -1044,7 +995,11 @@ type gcsMultipartPart struct {
 }
 
 type gcsListPartsResult struct {
-	IsTruncated          bool               `xml:"IsTruncated"`
+	XMLName              xml.Name           `xml:"ListPartsResult"`
+	Bucket               string             `xml:"Bucket"`
+	Key                  string             `xml:"Key"`
+	UploadID             string             `xml:"UploadId"`
+	IsTruncated          *bool              `xml:"IsTruncated"`
 	NextPartNumberMarker int32              `xml:"NextPartNumberMarker"`
 	Parts                []gcsMultipartPart `xml:"Part"`
 }
@@ -1103,8 +1058,9 @@ func (p *GCS) xmlRequest(ctx context.Context, method, bucket, key string, query 
 		}
 		return failure
 	}
-	if out != nil && len(data) > 0 {
-		if err := xml.Unmarshal(data, out); err != nil {
+	if out != nil {
+		decoder := xml.NewDecoder(bytes.NewReader(data))
+		if decoder.Decode(out) != nil || !errors.Is(decoder.Decode(new(any)), io.EOF) {
 			return ErrUnavailable
 		}
 	}

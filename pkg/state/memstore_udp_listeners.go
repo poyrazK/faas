@@ -83,10 +83,11 @@ func (m *MemStore) UDPListenerByAppAndName(_ context.Context, appID, listenerNam
 func (m *MemStore) UDPListenerByPublicPort(_ context.Context, publicPort int) (UDPListener, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	quarantined := m.rawIngressQuarantinedAppsLocked()
 	for _, listener := range m.udpListeners {
 		app, exists := m.apps[listener.AppID]
 		owner, owned := m.appResourceAccountLocked(app)
-		if listener.PublicPort == publicPort && listener.Enabled && exists && owned && owner.Active() && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && api.DeclaresPublicWorkloadPort(app.Manifest.Ports, listener.ListenerName, api.WorkloadPortUDP, listener.GuestPort) {
+		if listener.PublicPort == publicPort && listener.Enabled && exists && owned && owner.Active() && !quarantined[app.ID] && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && api.DeclaresPublicWorkloadPort(app.Manifest.Ports, listener.ListenerName, api.WorkloadPortUDP, listener.GuestPort) {
 			return listener, nil
 		}
 	}
@@ -116,11 +117,12 @@ func (m *MemStore) ListUDPListenersForApp(_ context.Context, appID string) ([]UD
 func (m *MemStore) ListEnabledUDPListeners(_ context.Context) ([]UDPListener, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	quarantined := m.rawIngressQuarantinedAppsLocked()
 	listeners := make([]UDPListener, 0)
 	for _, listener := range m.udpListeners {
 		app, exists := m.apps[listener.AppID]
 		owner, owned := m.appResourceAccountLocked(app)
-		if listener.Enabled && exists && owned && owner.Active() && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && api.DeclaresPublicWorkloadPort(app.Manifest.Ports, listener.ListenerName, api.WorkloadPortUDP, listener.GuestPort) {
+		if listener.Enabled && exists && owned && owner.Active() && !quarantined[app.ID] && app.Status != AppDeleted && app.Visibility != api.AppVisibilityInternal && app.AccountID == listener.AccountID && api.DeclaresPublicWorkloadPort(app.Manifest.Ports, listener.ListenerName, api.WorkloadPortUDP, listener.GuestPort) {
 			listeners = append(listeners, listener)
 		}
 	}

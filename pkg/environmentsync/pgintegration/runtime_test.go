@@ -207,6 +207,9 @@ func TestEnvironmentGitOpsRuntimeColdConvergence(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
 		store, lease, desired, app, deployment, _ := runtimeFixture(t, basic, false)
 		// An unrelated resident environment must not force production to wake.
+		if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: app.AccountID, ProjectID: app.ProjectID, Slug: "staging"}); err != nil {
+			t.Fatal(err)
+		}
 		neighbor, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage,
 			ImageDigest: "sha256:" + strings.Repeat("d", 64), Status: state.DeployLive})
 		if err != nil {

@@ -32,4 +32,6 @@ var (
 	_ state.ObjectBucketObjectLockStore      = (*state.EdgeStore)(nil)
 	_ state.PlatformTenantHostBindingReader  = (*state.EdgeStore)(nil)
 	_ state.CustomDomainTLSKnownHostReader   = (*state.EdgeStore)(nil)
+	_ state.CustomDomainTLSRecentHostReader  = (*state.EdgeStore)(nil)
+	_ state.APIKeyProjectLimitReader         = (*state.EdgeStore)(nil)
 )

@@ -45,6 +45,12 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if dep.DeletedAt != nil {
+		return ErrInvalidStateTransition
+	}
+	if err := lockProjectDeploymentEnvironment(ctx, tx, dep.AppID, normalizedDeploymentScope(dep.Scope)); err != nil {
+		return err
+	}
 	// Graph activation owns deployment promotion for every managed workload in
 	// the scope, including after the temporary hold has been lifted.
 	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, dep.AppID, dep.Scope)
@@ -96,6 +102,12 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	dep, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if dep.DeletedAt != nil {
+		return ErrInvalidStateTransition
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[dep.AppID], normalizedDeploymentScope(dep.Scope)); err != nil {
+		return err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(dep)); err != nil {
 		return err

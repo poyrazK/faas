@@ -26,7 +26,7 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 	if m.activeProjectReleaseSets[releaseKey(projectID, op.SourceEnvironment)] != op.SourceReleaseSetID {
 		return nil, ErrConflict
 	}
-	apps := m.projectCloneAppsLocked(projectID)
+	apps := m.projectCloneAppsLocked(projectID, op.SourceEnvironment)
 	if len(apps) == 0 {
 		return nil, ErrConflict
 	}

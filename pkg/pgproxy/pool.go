@@ -218,6 +218,8 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 		return nil, err
 	}
 	srv := &serverConn{rw: rw, fe: pgproto3.NewFrontend(rw, rw), prepared: map[string]bool{}, key: backendKey{target: target, databaseID: pl.key.databaseID}}
+	finishSetup := interruptSetup(wakeCtx, rw)
+	defer func() { _ = finishSetup() }()
 	if err := loginBackend(srv.fe, pl.params, pl.clientKey, pl.serverKey); err != nil {
 		srv.close()
 		return nil, err
@@ -243,6 +245,10 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 			srv.close()
 			return nil, &fatal{m.Code, m.Message}
 		case *pgproto3.ReadyForQuery:
+			if err := finishSetup(); err != nil {
+				srv.close()
+				return nil, err
+			}
 			pl.mu.Lock()
 			if pl.status == nil {
 				pl.status = status

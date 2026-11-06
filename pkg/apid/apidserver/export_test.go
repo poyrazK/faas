@@ -67,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -284,6 +285,7 @@ var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
+var ErrCDNCert = &errCDNCert
 var ErrCertFailure = &errCertFailure
 var ErrClassifierHostHashFailed = &errClassifierHostHashFailed
 var ErrClassifierInsert = &errClassifierInsert
@@ -2127,6 +2129,13 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 	return resolved.command, resolved.shell, problem
 }
 
+// ProjectWorkloadReleaseCommand exposes a project workload's release command
+// resolution (ADR-20261019120007 amendment 1).
+func ProjectWorkloadReleaseCommand(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, manifest)
+	return resolved.command, resolved.shell, problem
+}
+
 // ResolveSourceReleaseCommandWithPhase resolves a source deployment's release
 // command with the release phase on or off (FAAS_RELEASE_PHASE_ENABLED).
 func ResolveSourceReleaseCommandWithPhase(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, enabled bool) ([]string, *api.Problem) {
@@ -2176,3 +2185,11 @@ var RouteProbeAccountQueues = routeProbeAccountQueues
 // ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
 // enforcement.
 var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
+
+func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentRollbackReceipt(w, r, acct)
+}
+
+func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentPromotionReceipt(w, r, acct)
+}

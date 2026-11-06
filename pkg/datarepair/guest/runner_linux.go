@@ -17,8 +17,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	core "github.com/onebox-faas/faas/pkg/datarepair"
+	"github.com/onebox-faas/faas/pkg/pgpoolbounds"
 )
 
 const postgresBin = "/usr/lib/postgresql/16/bin"
@@ -96,6 +98,7 @@ func Run(parent context.Context, in core.RehearsalInput, workspace string) (resu
 	}
 	cfg.ConnConfig.Host, cfg.ConnConfig.Database = socket, in.Database
 	cfg.MaxConns = 2
+	pgpoolbounds.ConfigureTimeouts(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return fail("database_connect")

@@ -44,7 +44,9 @@ rate-limited per plan.
 
 Enable WebSockets on an app with `gregale app APP_SLUG --websocket-enabled`.
 An open WebSocket counts as an in-flight request, so its instance stays
-running past the idle timeout for as long as the connection is open.
+running past the idle timeout for as long as the connection is open. For long
+connections with sparse messages, [managed realtime](realtime.md#long-lived-connections-and-scale-to-zero)
+holds the socket instead, so the app can park between messages.
 
 The public edge closes a WebSocket that carries no frames for about 100
 seconds. Send a ping or an application heartbeat at least every 60 seconds,

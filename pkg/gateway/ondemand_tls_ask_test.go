@@ -242,12 +242,12 @@ func TestOnDemandTLSPolicyLookupBudget(t *testing.T) {
 			t.Fatalf("lookup %d within burst = %q, want %q", i, decision, OnDemandTLSDenyUnknown)
 		}
 	}
-	if ok, decision := p.Decide(ctx, "shop.example.com"); ok || decision != OnDemandTLSDenyOverload {
+	if ok, decision := p.Decide(ctx, "overflow.example.org"); ok || decision != OnDemandTLSDenyOverload {
 		t.Fatalf("lookup past burst = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyOverload)
 	}
 	now = now.Add(time.Second)
-	if ok, decision := p.Decide(ctx, "shop.example.com"); !ok {
-		t.Fatalf("lookup after refill = %q, want allow", decision)
+	if ok, decision := p.Decide(ctx, "overflow.example.org"); ok || decision != OnDemandTLSDenyUnknown {
+		t.Fatalf("lookup after refill = %v, %q, want an authoritative unknown denial", ok, decision)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestOnDemandTLSPolicyLookupBudgetSparesKnownHosts(t *testing.T) {
 			t.Fatalf("first ask for %s = %q, want allow", host, decision)
 		}
 	}
-	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
+	for i := 0; i < api.OnDemandTLSAskLookupBurst; i++ {
 		p.Decide(ctx, fmt.Sprintf("flood-%d.example.org", i))
 	}
 	if _, decision := p.Decide(ctx, "new.example.com"); decision != OnDemandTLSDenyOverload {
@@ -283,7 +283,7 @@ func TestOnDemandTLSPolicyLookupBudgetSparesKnownHosts(t *testing.T) {
 		t.Fatalf("known host after its domain was deleted = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyUnknown)
 	}
 	now = now.Add(time.Duration(api.OnDemandTLSAskKnownHostSeconds)*time.Second + time.Second)
-	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
+	for i := 0; i < api.OnDemandTLSAskLookupBurst; i++ {
 		p.Decide(ctx, fmt.Sprintf("flood-again-%d.example.org", i))
 	}
 	if allowed, decision := p.Decide(ctx, "a.tenants.example.net"); !allowed {
@@ -305,11 +305,84 @@ func TestOnDemandTLSPolicyNegativeCache(t *testing.T) {
 	if ok, err := s.MarkDomainVerifiedIfChallenge(ctx, "late.example.com", "tok"); err != nil || !ok {
 		t.Fatalf("verify = %v, %v", ok, err)
 	}
-	if ok, _ := p.Decide(ctx, "late.example.com"); ok {
-		t.Fatal("negative cache did not hold within its TTL")
-	}
-	now = now.Add(time.Duration(api.OnDemandTLSAskNegativeCacheSeconds)*time.Second + time.Second)
 	if ok, decision := p.Decide(ctx, "late.example.com"); !ok {
-		t.Fatalf("host after negative-cache TTL = %q, want allow", decision)
+		t.Fatalf("newly verified host behind negative cache = %q, want allow", decision)
+	}
+}
+
+func TestOnDemandTLSPolicyRecentlyVerifiedWildcardClearsCachedMiss(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	ctx := context.Background()
+	p.SetNow(time.Now)
+	host := "a.late-wildcard.example.org"
+	if ok, decision := p.Decide(ctx, host); ok || decision != OnDemandTLSDenyUnknown {
+		t.Fatalf("initial lookup = %v, %s", ok, decision)
+	}
+	owner, err := s.DomainByName(ctx, "shop.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.late-wildcard.example.org", owner.AppID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MarkDomainVerifiedIfChallenge(ctx, "*.late-wildcard.example.org", "tok"); err != nil || !ok {
+		t.Fatalf("verify wildcard = %v, %v", ok, err)
+	}
+	if ok, decision := p.Decide(ctx, host); !ok || decision != OnDemandTLSAllowWildcard {
+		t.Fatalf("newly verified wildcard behind cached miss = %v, %s", ok, decision)
+	}
+}
+
+func TestOnDemandTLSWildcardMissRecoveryStillUsesLookupBudget(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+	p.SetNow(func() time.Time { return now })
+	host := "a.budget-wildcard.example.org"
+	if ok, decision := p.Decide(ctx, host); ok || decision != OnDemandTLSDenyUnknown {
+		t.Fatalf("initial lookup = %v, %s", ok, decision)
+	}
+	owner, err := s.DomainByName(ctx, "shop.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.budget-wildcard.example.org", owner.AppID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MarkDomainVerifiedIfChallenge(ctx, "*.budget-wildcard.example.org", "tok"); err != nil || !ok {
+		t.Fatalf("verify wildcard = %v, %v", ok, err)
+	}
+	p.mu.Lock()
+	p.tokens = 0
+	p.refilled = now
+	p.mu.Unlock()
+	if ok, decision := p.Decide(ctx, host); ok || decision != OnDemandTLSDenyOverload {
+		t.Fatalf("wildcard recovery bypassed the lookup budget = %v, %s", ok, decision)
+	}
+}
+
+func TestOnDemandTLSWildcardMissRecoveryRespectsExactReservation(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	ctx := context.Background()
+	p.SetNow(time.Now)
+	host := "a.reserved-wildcard.example.org"
+	if ok, decision := p.Decide(ctx, host); ok || decision != OnDemandTLSDenyUnknown {
+		t.Fatalf("initial lookup = %v, %s", ok, decision)
+	}
+	owner, err := s.DomainByName(ctx, "shop.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, host, owner.AppID, "exact-token"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.reserved-wildcard.example.org", owner.AppID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MarkDomainVerifiedIfChallenge(ctx, "*.reserved-wildcard.example.org", "tok"); err != nil || !ok {
+		t.Fatalf("verify wildcard = %v, %v", ok, err)
+	}
+	if ok, decision := p.Decide(ctx, host); ok || decision != OnDemandTLSDenyUnverified {
+		t.Fatalf("pending exact reservation must still shadow wildcard = %v, %s", ok, decision)
 	}
 }

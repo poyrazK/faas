@@ -162,3 +162,26 @@ func TestRetryableBootError(t *testing.T) {
 		}
 	}
 }
+
+func TestBootWaitOptInWithoutNotifySocket(t *testing.T) {
+	t.Setenv("NOTIFY_SOCKET", "")
+	t.Setenv(BootWaitEnv, "")
+	if defaultBootWaiter(context.Background()).enabled {
+		t.Fatal("ordinary non-systemd callers must fail fast")
+	}
+	ctx := WithBootWait(context.Background())
+	w := defaultBootWaiter(ctx)
+	if !w.enabled {
+		t.Fatal("explicit worker opt-in did not enable startup retry")
+	}
+	w.minBackoff, w.maxBackoff = time.Millisecond, 2*time.Millisecond
+	w.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	ping, calls := failingPing(2, syscall.ECONNREFUSED)
+	if err := w.ping(ctx, ping); err != nil || *calls != 3 {
+		t.Fatalf("startup did not recover: calls=%d err=%v", *calls, err)
+	}
+	t.Setenv(BootWaitEnv, "0")
+	if defaultBootWaiter(ctx).enabled {
+		t.Fatal("explicit disable must override the worker opt-in")
+	}
+}
