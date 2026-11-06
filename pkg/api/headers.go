@@ -38,6 +38,12 @@ const (
 	// from TenantIDHeader (the app's owning account). Empty for anonymous or
 	// unlinked requests; clients cannot author this claim.
 	PlatformTenantIDHeader = "X-Faas-Platform-Tenant-Id"
+	// EdgeJWTSubjectHeader and EdgeJWTIssuerHeader carry the caller a
+	// kind=jwt edge rule verified, on direct requests and on the async route
+	// invocations they enqueue (ADR-091 amendment 2026-11-04, round 11). Only
+	// the gateway authors them; a client's copies never reach the guest.
+	EdgeJWTSubjectHeader = "X-Faas-Edge-Jwt-Subject"
+	EdgeJWTIssuerHeader  = "X-Faas-Edge-Jwt-Issuer"
 	// InstanceIDHeader identifies the VM that handled the request.
 	InstanceIDHeader = "X-Faas-Instance-Id"
 	// NodeIDHeader identifies the compute node hosting the VM.

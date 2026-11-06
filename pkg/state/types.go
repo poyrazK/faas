@@ -4857,6 +4857,12 @@ type Invocation struct {
 	QuotaReserved bool `json:"-"`
 	// AsyncQuotaSubjectID captures the reserved counter independently of storage ownership.
 	AsyncQuotaSubjectID string `json:"-"`
+	// EdgeJWTIssuer and EdgeJWTSubject are the caller a kind=jwt edge rule
+	// verified when an async route admitted the request (ADR-091 amendment
+	// 2026-11-04, round 11). Only the gateway sets them; delivery renders
+	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
+	EdgeJWTIssuer  string `json:"-"`
+	EdgeJWTSubject string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`

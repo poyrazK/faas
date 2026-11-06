@@ -8743,6 +8743,8 @@
       "deadline_at",
       "deployment_scope",
       "due_at",
+      "edge_jwt_issuer",
+      "edge_jwt_subject",
       "environment_id",
       "failure_rules",
       "headers",
