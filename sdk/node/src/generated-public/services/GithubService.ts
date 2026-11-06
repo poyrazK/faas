@@ -2,7 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { GitHubAccountConnections } from '../models/GitHubAccountConnections.js';
 import type { GitHubActivityRetryResponse } from '../models/GitHubActivityRetryResponse.js';
+import type { GitHubConnectionManageRequest } from '../models/GitHubConnectionManageRequest.js';
+import type { GitHubConnectionVerification } from '../models/GitHubConnectionVerification.js';
 import type { GitHubDeploymentPolicy } from '../models/GitHubDeploymentPolicy.js';
 import type { GitHubDeploymentPolicyPatch } from '../models/GitHubDeploymentPolicyPatch.js';
 import type { GitHubInstallMutationRequest } from '../models/GitHubInstallMutationRequest.js';
@@ -14,6 +17,69 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class GithubService {
+  /**
+   * List this account's GitHub deployment connections.
+   * @returns GitHubAccountConnections Deployment installations and a fresh management CSRF token; credentials are never returned.
+   * @throws ApiError
+   */
+  public static listGitHubAccountConnections(): CancelablePromise<GitHubAccountConnections> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/install/connections',
+    });
+  }
+  /**
+   * Remove only this account's deployment access and bindings. Preserve login and other accounts.
+   * @returns void
+   * @throws ApiError
+   */
+  public static disconnectGitHubAccountConnection({
+    installationId,
+    requestBody,
+  }: {
+    installationId: number,
+    requestBody: GitHubConnectionManageRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/install/connections/{installationID}',
+      path: {
+        'installationID': installationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Missing or invalid management CSRF token.`,
+      },
+    });
+  }
+  /**
+   * Verify live GitHub repository access and installation permissions.
+   * @returns GitHubConnectionVerification Current access granted on GitHub.
+   * @throws ApiError
+   */
+  public static verifyGitHubAccountConnection({
+    installationId,
+    requestBody,
+  }: {
+    installationId: number,
+    requestBody: GitHubConnectionManageRequest,
+  }): CancelablePromise<GitHubConnectionVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/install/connections/{installationID}/verify',
+      path: {
+        'installationID': installationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Missing or invalid management CSRF token.`,
+        404: `Installation not connected to this account.`,
+        503: `GitHub verification temporarily unavailable.`,
+      },
+    });
+  }
   /**
    * List repos the user's GitHub App installation can see.
    * Cookie-session-authenticated (NOT API-key). Hydrates the
