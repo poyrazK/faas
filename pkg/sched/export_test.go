@@ -1308,3 +1308,6 @@ type KeyedLocks = keyedLocks
 
 func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
 func (k *keyedLocks) Size() int              { return k.size() }
+
+// DrainWithdrawsRoutes exposes drainWithdrawsRoutes to package sched_test.
+func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes(ins) }
