@@ -559,6 +559,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mfa":                                           true, // HTML form, TOTP challenge
 	"GET /dashboard/account/export":                                 true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/mfa":                                    true, // ADR-20261103202000: browser-only session form over the documented /v1/account/mfa actions
+	"GET /dashboard/invitations/{token}":                            true, // ADR-20261106210000: browser-only review page over the documented invitation peek/accept APIs
 	"GET /dashboard/account/dpa":                                    true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                             true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                       true, // HTML form (hosted-checkout hand-off)
@@ -1024,6 +1025,10 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Browser management envelopes are anonymous structs in
+	// handlers_github_accounts.go and middleware's named-CSRF decoder.
+	"GitHubAccountConnections":      true,
+	"GitHubConnectionManageRequest": true,
 	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
 	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
 	"AutomationLiveBaselinePolicy":          true,
@@ -2116,6 +2121,19 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	for name, schema := range map[string]string{"Table": "ScenarioPostgresTable", "Spec": "ScenarioPostgresSpec", "CreateRequest": "CreateScenarioPostgresRequest", "SealRequest": "SealScenarioPostgresRequest", "Receipt": "ScenarioPostgresReceipt", "Snapshot": "ScenarioPostgresSnapshot", "Delta": "ScenarioPostgresDelta", "Evidence": "ScenarioPostgresEvidence"} {
 		dtos[schema] = postgresDTOs[name]
 	}
+
+	// Browser connection DTOs live in their domain and state packages, rather
+	// than pkg/api. Check those actual JSON fields under the OpenAPI names.
+	connectionDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "apid", "githubconnect", "accounts.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub connection DTOs: %v", err)
+	}
+	verificationDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "state", "github_account_connections.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub verification DTOs: %v", err)
+	}
+	dtos["GitHubAccountConnection"] = connectionDTOs["Connection"]
+	dtos["GitHubConnectionVerification"] = verificationDTOs["GitHubConnectionVerification"]
 
 	// Git approval evidence is shared with githubd and the state transaction
 	// without importing pkg/api there. Check its actual JSON fields under the

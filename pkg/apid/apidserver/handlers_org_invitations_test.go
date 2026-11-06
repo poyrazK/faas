@@ -578,15 +578,17 @@ func TestSeatUsage_FreePlanReturnsZero(t *testing.T) {
 //  2. cookie + expired step-up stamp  → 403 + reason="expired"
 //  3. cookie + fresh step-up stamp    → 200 (happy path)
 //
-// Bearer-key principals skip the gate (an API key is step-up-
-// equivalent proof). The existing PR-7 tests at line 109 / 151
-// already cover the bearer-bypass path; PR-8 doesn't re-pin it.
+// These stale-session cases use an MFA-enrolled invitee. Optional-MFA
+// invitees can accept in a browser without enrollment; bearer keys are refused.
 func TestAcceptInvitation_RequiresStepUp(t *testing.T) {
 	ensureRecoveryTestSecret(t)
 
 	// --- Subtest 1: cookie with no step-up stamp → 403 -----------------
 	t.Run("missing_step_up_returns_403", func(t *testing.T) {
 		e, _, cookie := setupWithSessionForTest(t)
+		if err := e.store.MarkMFAEnrolled(t.Context(), e.acct.ID); err != nil {
+			t.Fatal(err)
+		}
 		// setupWithSession issues via IssueWithSession which has
 		// no StepUpAt — the cookie decodes with StepUpAt zero,
 		// which RequireStepUp classifies as "missing" (the pre-
@@ -648,6 +650,9 @@ func TestAcceptInvitation_RequiresStepUp(t *testing.T) {
 	// --- Subtest 2: cookie with EXPIRED step-up stamp → 403 -------------
 	t.Run("expired_step_up_returns_403", func(t *testing.T) {
 		e, mgr, cookie := setupWithSessionForTest(t)
+		if err := e.store.MarkMFAEnrolled(t.Context(), e.acct.ID); err != nil {
+			t.Fatal(err)
+		}
 		org := seedSharedOrgWithOutsideOwner(t, e, "acme-pr8-stp-exp", "Acme PR8 Step-up Expired", api.PlanPro)
 		wireToken, _ := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, e.acct.Email, state.OrgRoleDeveloper)
 
@@ -714,6 +719,29 @@ func TestAcceptInvitation_RequiresStepUp(t *testing.T) {
 			t.Errorf("org.member.added missing on fresh-stamp happy path")
 		}
 	})
+}
+
+func TestCustomerMFAInvitationBrowserHandoff(t *testing.T) {
+	e, _, cookie := setupWithSessionForTest(t)
+	if err := e.store.MarkAccountEmailVerified(t.Context(), e.acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	org := seedSharedOrgWithOutsideOwner(t, e, "optional-invite", "Optional invite", api.PlanPro)
+	token, invitation := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, e.acct.Email, state.OrgRoleDeveloper)
+	path := "/dashboard/invitations/" + token
+	page := e.doWithCookie(t, http.MethodGet, path, cookie)
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Accept invitation") {
+		t.Fatalf("invitation browser page = %d %s", page.Code, page.Body)
+	}
+	// Visiting the page must not accept a link on behalf of the customer.
+	peek := e.doWithCookie(t, http.MethodGet, "/v1/invitations/"+token, cookie)
+	if peek.Code != 200 || !strings.Contains(peek.Body.String(), `"status":"pending"`) {
+		t.Fatalf("invitation %s changed on GET: %d %s", invitation.ID, peek.Code, peek.Body)
+	}
+	accepted := e.doWithCookie(t, http.MethodPost, "/v1/invitations/"+token+"/accept", cookie)
+	if accepted.Code != 200 {
+		t.Fatalf("optional-MFA invitee = %d %s", accepted.Code, accepted.Body)
+	}
 }
 
 // TestAcceptInvitation_BearerKey_RequiresStepUp (PR-9 §4) — pin

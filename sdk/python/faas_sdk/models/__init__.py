@@ -883,9 +883,15 @@ from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
 from .get_worker_rollout_observation_scope import GetWorkerRolloutObservationScope
+from .git_hub_account_connection import GitHubAccountConnection
+from .git_hub_account_connection_health import GitHubAccountConnectionHealth
+from .git_hub_account_connections import GitHubAccountConnections
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
+from .git_hub_connection_manage_request import GitHubConnectionManageRequest
+from .git_hub_connection_verification import GitHubConnectionVerification
+from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
@@ -3495,9 +3501,15 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GetRuntimePolicyStatusEdgeRulesScope",
     "GetWorkerRolloutObservationScope",
+    "GitHubAccountConnection",
+    "GitHubAccountConnectionHealth",
+    "GitHubAccountConnections",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
+    "GitHubConnectionManageRequest",
+    "GitHubConnectionVerification",
+    "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",

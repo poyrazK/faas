@@ -7638,6 +7638,27 @@
     "kind": "operational"
   },
   {
+    "table": "github_connection_verifications",
+    "columns": [
+      "access",
+      "account_id",
+      "installation_id",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "github_delivery_targets",
+    "columns": [
+      "account_id",
+      "delivery_id",
+      "skip_reason",
+      "status",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "github_deploy_branches",
     "columns": [
       "branch",
@@ -7700,6 +7721,16 @@
       "token_expires_at"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "github_transport_recoveries",
+    "columns": [
+      "attempts",
+      "created_at",
+      "delivery_guid",
+      "next_attempt_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "github_webhook_deliveries",
@@ -14831,6 +14862,7 @@
   {
     "table": "pr_preview_sets",
     "columns": [
+      "account_id",
       "closed_at",
       "commit_sha",
       "installation_id",

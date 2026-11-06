@@ -1651,6 +1651,7 @@ func newServerWithDeps(
 		// handler falls back to the store directly.
 		graceWindowCache: newGraceWindowCache(),
 	}
+	s.authMw.MandatoryMFA = s.isOperator
 	// Issue #270 / ADR-101 / PR-A: build the OIDC exchange
 	// handler after the struct is wired so the handler can read
 	// the apiAuthLimiter / audit / store / log / sessions
@@ -1928,7 +1929,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("GET /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresOverage))))
-	mux.HandleFunc("PUT /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.putManagedPostgresOverage))))
+	mux.HandleFunc("PUT /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireStepUp(5*time.Minute)(s.putManagedPostgresOverage)))))
 	mux.HandleFunc("POST /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresDatabase))))))
 	// Resize UUIDs are persisted by the lifecycle store; progress must not be
 	// frozen by the generic HTTP idempotency response cache.
@@ -2114,19 +2115,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.removeOrgMember)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
 	mux.HandleFunc("GET /v1/invitations/{token}", s.authLimited(s.peekInvitation))
-	// PR-8 + PR-9 §4: accept-invitation sits behind requireStepUpStrict
-	// (5m). PR-9 flips the bearer-key branch from "bypass" to
-	// "reject" — a leaked invitation token alone is sufficient to
-	// grant org membership, so the bearer path is no longer
-	// step-up-equivalent. The cookie path keeps its original
-	// reject-on-missing-stamp behavior. The other 8 requireStepUp
-	// mounts (server.go:655, 671, 700, 892, ...) keep the v1
-	// bypass until each route's threat model is re-audited.
-	// Compose order mirrors POST /v1/orgs/{slug}/transfer_ownership
-	// (server.go:655): authLimited → requireMFA → requireStepUpStrict.
-	// requireVerifiedEmail makes the invitation's email match a binding:
-	// an unverified account could otherwise claim the invitee's address.
-	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireStepUpStrict(5*time.Minute)(s.requireVerifiedEmail(s.acceptInvitation)))))
+	// Invitation acceptance requires the invitee's verified browser session.
+	// Bearer keys remain refused; recent MFA follows the invitee's policy.
+	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireInvitationSession(5*time.Minute)(s.requireVerifiedEmail(s.acceptInvitation)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{invitation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.revokeInvitation)))))
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
@@ -5123,7 +5114,7 @@ func (s *server) handler() http.Handler {
 	// OAuth-only customers and the change-password path for everyone
 	// else. Behind sessionAuth so the call is anchored to a known
 	// account. NOT behind requireStepUpHandler (ADR-140): the only
-	// writer of a step-up stamp is TOTP verify, so a blanket gate
+	// proof may be a password or recent MFA, so a blanket gate
 	// locked out the OAuth-only, no-MFA customers the route exists
 	// for. The handler picks the proof itself — fresh step-up,
 	// current_password, or a 403 when an explicit MFA policy is
@@ -5234,6 +5225,9 @@ func (s *server) handler() http.Handler {
 	// under /v1/* so cmd/gatewayd-internal/proxy.go:isApidPath already
 	// forwards them; the §11 anti-takeover proof (session.github_login
 	// == install.account.login) is enforced in the handlers.
+	mux.Handle("GET /v1/install/connections", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
+	mux.Handle("DELETE /v1/install/connections/{installationID}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
+	mux.Handle("POST /v1/install/connections/{installationID}/verify", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
 	mux.Handle("POST /v1/install/repos/list", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listInstallableRepos))))
 	mux.Handle("POST /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.bindAppToRepo))))
 	// Customer-facing connection management. GET returns the current
@@ -5304,6 +5298,7 @@ func (s *server) handler() http.Handler {
 	// 10/min/IP budget like /login does.
 	mux.Handle("GET /dashboard/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFA))))
 	mux.Handle("GET /dashboard/account/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFASettings))))
+	mux.Handle("GET /dashboard/invitations/{token}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardInvitation))))
 	mux.Handle("POST /dashboard/mfa", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{http.StatusUnauthorized},
 	}, s.sessionAuth(http.HandlerFunc(s.dashboardMFAVerify))))
@@ -5315,7 +5310,7 @@ func (s *server) handler() http.Handler {
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
 	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
-	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardAccountPlan))))))
+	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardAccountPlan)))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
 	// Step-up gate matches dashboardDelete: a hostile actor with a

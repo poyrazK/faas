@@ -5545,24 +5545,34 @@ func (s *PgStore) ProjectBySlug(ctx context.Context, accountID, slug string) (Pr
 	return scanProject(row)
 }
 
-// ProjectByRepo is the push-dispatch lookup. install_id is non-null on
-// bound projects only; we surface ErrNotFound when the row is gone
-// rather than swallowing it as an empty result. The account_id filter
-// is only applied when a non-empty accountID is supplied — passing ""
-// (the cross-account push dispatch, or a test that hasn't bound an
-// account yet) skips the account predicate so the uuid→text coercion
-// in `account_id = ”` doesn't trip on an empty string.
+// ProjectByRepo resolves a repository within its account. Legacy unscoped
+// lookups return ErrConflict when multiple accounts imported the repository;
+// they must never choose another account's project arbitrarily.
 func (s *PgStore) ProjectByRepo(ctx context.Context, accountID string, installID int64, repoFullName string) (Project, error) {
 	if accountID == "" {
-		row := s.pool.QueryRow(ctx, `
+		rows, err := s.pool.Query(ctx, `
 			select id, account_id, slug, coalesce(repo_full_name,''),
 			       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
 			       created_at, updated_at, org_id
 			  from projects
 			 where install_id = $1 and repo_full_name = $2
-			 limit 1
+			 limit 2
 		`, installID, repoFullName)
-		return scanProject(row)
+		if err != nil {
+			return Project{}, err
+		}
+		defer rows.Close()
+		projects, err := scanProjects(rows)
+		if err != nil {
+			return Project{}, err
+		}
+		if len(projects) == 0 {
+			return Project{}, ErrNotFound
+		}
+		if len(projects) > 1 {
+			return Project{}, ErrConflict
+		}
+		return projects[0], nil
 	}
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
@@ -7299,7 +7309,7 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 		 where old_set.installation_id = $1 and old_set.repo_full_name = $2
 		   and not exists (select 1 from pr_preview_sets renamed
 		     where renamed.installation_id = $1 and renamed.repo_full_name = $3
-		       and renamed.pr_number = old_set.pr_number)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		       and renamed.pr_number = old_set.pr_number and renamed.account_id = old_set.account_id)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename PR preview environments: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -7351,7 +7361,7 @@ func (s *PgStore) RenameGitHubAccount(ctx context.Context, installationID int64,
 		   and not exists (select 1 from pr_preview_sets renamed
 		     where renamed.installation_id = $1
 		       and renamed.repo_full_name = $3 || '/' || split_part(old_set.repo_full_name, '/', 2)
-		       and renamed.pr_number = old_set.pr_number)`, installationID, oldLogin, newLogin); err != nil {
+		       and renamed.pr_number = old_set.pr_number and renamed.account_id = old_set.account_id)`, installationID, oldLogin, newLogin); err != nil {
 		return fmt.Errorf("state: rename GitHub account PR preview environments: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -27954,7 +27964,7 @@ func (s *PgStore) DeleteAccountPassword(ctx context.Context, accountID string) e
 // re-bind by the SAME account updates email/email_verified in place
 // (ON CONFLICT ... DO UPDATE with WHERE account_id = excluded.account_id,
 // so a different account attempting to claim the same (provider, sub)
-// pair triggers the unique-violation → ErrConflict path). The
+// pair affects zero rows and returns ErrConflict). The
 // account_id equality check inside the WHERE clause is the load-bearing
 // bit: without it, an attacker with the same email could overwrite
 // the victim's link row. The dashboard refreshes its own email on
@@ -27963,7 +27973,7 @@ func (s *PgStore) UpsertOAuthLink(ctx context.Context, accountID, provider, prov
 	if accountID == "" || provider == "" || providerSubject == "" {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`insert into oauth_links (provider, provider_subject, account_id, email, email_verified)
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (provider, provider_subject) do update
@@ -27971,7 +27981,13 @@ func (s *PgStore) UpsertOAuthLink(ctx context.Context, accountID, provider, prov
 		       email_verified = excluded.email_verified
 		 where oauth_links.account_id = excluded.account_id`,
 		provider, providerSubject, accountID, email, emailVerified)
-	return mapErr(err)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 // OAuthLinkByProviderSubject returns the link for a (provider, sub)

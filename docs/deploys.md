@@ -316,8 +316,9 @@ repository.
 ### Deploy tokens
 
 Other CI systems deploy with a deploy token: a credential that can only deploy
-one app. Minting and rotating one needs an MFA step-up from the last five
-minutes, so run `gregale account mfa verify` first. The token is shown once;
+one app. Browser sessions with MFA enabled need verification from the last
+five minutes when minting or rotating one. CLI requests use their scoped
+bearer credential. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
