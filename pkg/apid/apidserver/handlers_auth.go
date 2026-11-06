@@ -353,6 +353,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
 		// Dashboard verification uses the same live account policy as /v1.
+		//nolint:contextcheck // WithPrincipal derives from r.Context(), preserving the session and MFA stamps above.
 		r = r.WithContext(authmw.WithPrincipal(r.Context(), acct, nil, nil))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
