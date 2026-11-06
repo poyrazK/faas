@@ -1863,6 +1863,12 @@ const (
 	// fails before serving VMs are booted so the command cannot be silently
 	// skipped.
 	CodeReleasePhaseUnavailable = "release_phase_unavailable"
+	// CodeReleaseOutcomeUncertain means an earlier release command of the
+	// app scope started but ended without an exit code, so its effect on the
+	// database is unknown. The deployment fails before its own release
+	// command runs; a person checks the database and records it with
+	// POST /v1/deployments/{id}/release-outcome (ADR-1448 amendment 1).
+	CodeReleaseOutcomeUncertain = "release_outcome_uncertain"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -2369,7 +2375,8 @@ func StatusForCode(code string) int {
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
-		CodeReleasePhaseUnavailable:
+		CodeReleasePhaseUnavailable,
+		CodeReleaseOutcomeUncertain:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail

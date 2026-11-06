@@ -32934,6 +32934,33 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/release-outcome:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [deployments]
+      operationId: recordReleaseOutcomeCheck
+      summary: Record a database check after a release command with an unknown outcome.
+      description: "A release command that started but ended without an exit code (its worker was lost, it timed out or it was cancelled while running) may have changed the database partly. Until a person checks the database and records it here, or a later release command of the same scope succeeds, the app's next release fails with `release_outcome_uncertain` before its own command runs. 409 when this release's command never ran, ended with a known exit, or was checked already."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordReleaseOutcomeCheckRequest' }
+            example: {"note": "migration 0042 applied completely; schema matches"}
+      responses:
+        '200':
+          description: The recorded check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseOutcomeCheck' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}/diff:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -113701,6 +113728,23 @@ components:
         comment: { type: string }
         counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
         decided_at: { type: string, format: date-time }
+    RecordReleaseOutcomeCheckRequest:
+      description: "What a person checked in the database after a release command with an unknown outcome."
+      type: object
+      required: [note]
+      properties:
+        note: { type: string, minLength: 1, maxLength: 1000, description: "What was checked, for example which migrations are applied." }
+    ReleaseOutcomeCheck:
+      description: "A recorded database check after a release command with an unknown outcome. Later release commands of the scope run again."
+      type: object
+      required: [deployment_id, task_id, task_status, checked_by, note, checked_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid, description: "The release command's task." }
+        task_status: { type: string, enum: [failed, timed_out, cancelled], description: "How the release command ended, without an exit code." }
+        checked_by: { type: string, description: "The person or API key that recorded the check." }
+        note: { type: string, description: "What the person recorded about the database." }
+        checked_at: { type: string, format: date-time }
     DatabaseSwitch:
       description: "A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
       type: object

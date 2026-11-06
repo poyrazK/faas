@@ -13819,6 +13819,16 @@ type ReleaseGateProbeResult struct {
 	Failures     int32
 }
 
+type ReleaseOutcomeCheck struct {
+	TaskID       pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	CheckedBy    string
+	Note         string
+	CheckedAt    pgtype.Timestamptz
+}
+
 type ReleaseSecretKeyRetirement struct {
 	Kid       string
 	RetiredAt pgtype.Timestamptz
