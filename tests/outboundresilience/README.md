@@ -2,9 +2,9 @@
 
 `make test-outbound-resilience` runs regression checks for deadline propagation,
 bounded pool saturation, recovery, stalled AMQP calls and capped/cancellable
-retry waits. It also checks daemon pool floors, dial pacing, warm-up timeout
-connection reuse and acquisition metrics. Postgres integration checks use
-`DATABASE_URL`; a missing URL skips
+retry waits. It also checks daemon pool floors, dial pacing, startup warm-up
+ordering, warm-up timeout connection reuse and acquisition metrics. Postgres
+integration checks use `DATABASE_URL`; a missing URL skips
 those checks in the ordinary unit suite.
 
 The separate load gate requires explicit isolated Postgres and Redis endpoints:

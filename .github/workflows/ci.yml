@@ -777,12 +777,15 @@ jobs:
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit debug metadata for API and newly instrumented state; keep optimization.
-        # Serialized backends retain the existing memory and test budgets.
+        # Serialize packages to avoid competing template/database operations.
+        # GOGC=10 made the API suite several times slower under race/coverage;
+        # retain the same 2 GiB memory and package/job deadlines with less GC
+        # churn, as the isolated clone jobs already do below.
         env:
           GREGALE_OBJECT_STORAGE_E2E_CLI: ${{ runner.temp }}/gregale
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
-          GOGC: 10
+          GOGC: 50
           GOMAXPROCS: 2
         run: |
           mkdir -p coverage
@@ -792,7 +795,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=90m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 1 -timeout=90m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: application-standard ledger recovery tests
