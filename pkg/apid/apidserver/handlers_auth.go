@@ -331,7 +331,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		// ignored the flag, so MFA protected only /v1: the password or
 		// inbox alone opened every page. Until the TOTP challenge is
 		// passed, only the challenge itself is reachable.
-		mfaPending := session.IsMFAPending(env)
+		mfaPending := session.IsMFAPending(env) && s.sessionMFAPending(acct)
 		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
 			target := dashboardMFAPath
 			if r.Method == http.MethodGet {
@@ -352,6 +352,8 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		r = r.WithContext(authmw.WithMFAPending(r.Context(), mfaPending))
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
+		// Dashboard verification uses the same live account policy as /v1.
+		r = r.WithContext(authmw.WithPrincipal(r.Context(), acct, nil, nil))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
 		// r.Context() so requireStepUpHandler can read it. The

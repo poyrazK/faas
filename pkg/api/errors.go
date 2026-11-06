@@ -819,6 +819,8 @@ const (
 	// the dashboard can pivot the message from "your key is wrong"
 	// to "complete enrollment or step-up to continue".
 	CodeMFARequired = "mfa_required"
+	// The remaining code can reset the factor, preserving a way back in.
+	CodeMFALastRecoveryCode = "mfa_last_recovery_code"
 	// CodeStepUpRequired is returned by RequireStepUp (ADR-077 +
 	// PR-8 acceptance) when a session-cookie principal's
 	// Envelope.StepUpAt stamp is missing or older than the route's
