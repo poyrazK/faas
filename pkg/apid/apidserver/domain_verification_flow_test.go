@@ -166,11 +166,11 @@ func TestDomainManualCheckRejectsProofForReplacementClaim(t *testing.T) {
 	}
 	before := *apidserver.TxtLookupFunc
 	t.Cleanup(func() { *apidserver.TxtLookupFunc = before })
-	*apidserver.TxtLookupFunc = func(context.Context, string) ([]string, error) {
-		if err := store.DeleteCustomDomain(t.Context(), d.Domain); err != nil {
+	*apidserver.TxtLookupFunc = func(ctx context.Context, _ string) ([]string, error) {
+		if err := store.DeleteCustomDomain(ctx, d.Domain); err != nil {
 			return nil, err
 		}
-		if _, err := store.CreateCustomDomain(t.Context(), d.Domain, app, "replacement-proof"); err != nil {
+		if _, err := store.CreateCustomDomain(ctx, d.Domain, app, "replacement-proof"); err != nil {
 			return nil, err
 		}
 		return []string{d.ChallengeToken}, nil
