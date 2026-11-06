@@ -51,8 +51,8 @@ The customer is not billed for this work.
    whether the app's live snapshot would restore there. A new
    scheduler-only vmmd RPC, `SnapshotBackingCurrent`, runs ADR-510's check
    (recorded `…/backing` identity against the files a wake would attach)
-   without starting a VM and answers `current`, `changed` or `unknown`.
-   Only `changed` is refreshed. The check stays exact: a pass that asks too
+   without starting a VM and answers `current`, `stale` or `unknown`.
+   Only `stale` is refreshed. The check stays exact: a pass that asks too
    often costs a lookup, never a wrong restore.
 3. **Skipped.** schedd does not refresh:
    - apps with a live instance (they are recaptured after they park);
@@ -195,7 +195,7 @@ The property tests gain `refresh` instances in their generators.
   - parked or destroyed on every exit;
   - `shadow` boots nothing.
 - **Postgres tests:** no billing interval opens for mode `refresh`.
-- **vmmd:** `SnapshotBackingCurrent` answers `current`, `changed` and
+- **vmmd:** `SnapshotBackingCurrent` answers `current`, `stale` and
   `unknown` exactly as the restore check would; it is refused on the local
   data socket.
 - **Metal:** replace a node's base. A refresh pass captures on the new base,
