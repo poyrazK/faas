@@ -83,3 +83,16 @@ Not decided here: recording the approving principal (session or key ID)
 and refusing an approval whose principal also applies the promotion, and a
 TOTP step-up on the approval itself. Both need the approval row and the CLI
 flow to carry the principal; the route keeps today's MFA requirement.
+
+## Amendment 2 (2026-11-06): approvals record the approving credential
+
+Bug hunt H70, second half. A protected-environment approval now records the
+credential that gave it in `project_environment_approvals.approved_by_principal`
+("session:<id>" or "key:<id>", migration 20261106154818002) and in the
+`project.environment.approved` audit event, beside the approving account.
+
+An approval is not refused when the credential that applies the release is the
+one that approved it. Since amendment 1 only a person's sign-in approves, and
+`gregale deploy` approves and applies with the same person's cli-login key; the
+person is the gate. Refusing that pair would block the CLI without stopping CI,
+which can no longer approve.

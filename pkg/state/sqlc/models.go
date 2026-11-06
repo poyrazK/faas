@@ -12310,6 +12310,7 @@ type ProjectEnvironmentApproval struct {
 	TokenKind           string
 	ConsumedAt          pgtype.Timestamptz
 	ApprovedByAccountID pgtype.UUID
+	ApprovedByPrincipal pgtype.Text
 }
 
 type ProjectEnvironmentCleanupJob struct {
