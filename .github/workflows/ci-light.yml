@@ -737,20 +737,28 @@ jobs:
             GOMEMLIMIT=5GiB GOGC=50 GOMAXPROCS=2 go test -race -p 1 -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
-            # The complete GitOps PostgreSQL suite reached test 157 of 195
-            # before a 10m package deadline. Whichever shard the diff assigns
-            # it to keeps every test and the bounded job (~13m of race
-            # builds, then the run) with a bounded 18m package deadline.
+            # The complete GitOps PostgreSQL suite exceeds 18m with GOGC=10
+            # beside other packages. Keep all tests and its 18m deadline,
+            # but run it alone with less GC churn under the same 2 GiB bound.
+            race_pkgs=()
+            for pkg in $PKGS; do
+              if [[ "$pkg" == ./pkg/environmentsync/pgintegration ]]; then
+                GOMEMLIMIT=2GiB GOGC=50 GOMAXPROCS=2 go test -race -count=1 -p 1 -timeout=18m "$pkg" || status=1
+              else
+                race_pkgs+=("$pkg")
+              fi
+            done
             # cmd/gatewayd-internal reached its 754th test at the 18m
             # deadline on a light runner. Give its full race suite 24m while
             # retaining a 50m job limit and running every test.
             # mcpmanagement's full protocol suite also exceeds 10m under
             # this shard's 2 GiB / GOGC=10 race-test bounds.
             package_timeout=10m
-            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* || " $PKGS " == *" ./pkg/mcpmanagement "* ]]; then package_timeout=18m; fi
+            if [[ " $PKGS " == *" ./pkg/mcpmanagement "* ]]; then package_timeout=18m; fi
             if [[ " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=24m; fi
-            # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
+            if (( ${#race_pkgs[@]} )); then
+              GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" "${race_pkgs[@]}" || status=1
+            fi
           fi
           for pkg in $LARGE; do
             runs="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --batch-size 50 --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
