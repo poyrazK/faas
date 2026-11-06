@@ -44,6 +44,9 @@ type managedPostgresHooks struct {
 	// RestoreSlotExpired records a copy whose delete was scheduled because
 	// its restore slot ended without room (ADR-20261031123259).
 	RestoreSlotExpired func(context.Context, managedpostgres.Database)
+	// BranchExpired records a branch whose purge started because its TTL
+	// ended (ADR-20261106103654).
+	BranchExpired func(context.Context, managedpostgres.Database)
 	// NotifyRestoreSlot queues a restore slot email (ADR-20261031123259).
 	NotifyRestoreSlot func(context.Context, managedpostgres.RestoreSlotNotice) error
 	// NotifyPlanExcess queues the email for a database suspended past its
@@ -63,6 +66,13 @@ func (h *managedPostgresHooks) restoreSlotExpired() func(context.Context, manage
 		return nil
 	}
 	return h.RestoreSlotExpired
+}
+
+func (h *managedPostgresHooks) branchExpired() func(context.Context, managedpostgres.Database) {
+	if h == nil {
+		return nil
+	}
+	return h.BranchExpired
 }
 
 func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managedpostgres.RestoreSlotNotice) error {
@@ -298,6 +308,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	reconciler.SetRestoreSlots(restoreSlots)
+	branchExpiry, err := managedpostgres.NewBranchExpirySweeper(service, bindingService, managedpostgres.BranchExpirySweeperOptions{
+		Purged: hooks.branchExpired(),
+		Logger: log,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	reconciler.SetBranchExpiry(branchExpiry)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {

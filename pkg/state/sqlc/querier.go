@@ -3766,6 +3766,10 @@ type Querier interface {
 	ListManagedPostgresDrainPlanInventory(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanInventoryParams) ([]ListManagedPostgresDrainPlanInventoryRow, error)
 	ListManagedPostgresDrainPlanMembers(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanMembersParams) ([]ListManagedPostgresDrainPlanMembersRow, error)
 	ListManagedPostgresEgressEndpoints(ctx context.Context, db DBTX) ([]ListManagedPostgresEgressEndpointsRow, error)
+	// ADR-20261106103654: copies whose TTL has ended, soonest first, after a
+	// stable (expires_at, id) cursor. A copy already being purged (deleting with
+	// no undo deadline) is left to that purge.
+	ListManagedPostgresExpiredDatabasePage(ctx context.Context, db DBTX, arg ListManagedPostgresExpiredDatabasePageParams) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
 	ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresLifecycleUsageDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresLifecycleUsageDatabasesParams) ([]ManagedPostgresDatabase, error)
@@ -7308,6 +7312,9 @@ type Querier interface {
 	// Durable links follow mfa_revision; the legacy inline requests carry no
 	// revision, so each statement consumes them too (bug hunt 2026-10-28 H98).
 	SetMFASecret(ctx context.Context, db DBTX, arg SetMFASecretParams) (int64, error)
+	// ADR-20261106103654: a restore with a TTL records when it ends, in the
+	// reservation's transaction.
+	SetManagedPostgresDatabaseExpiry(ctx context.Context, db DBTX, arg SetManagedPostgresDatabaseExpiryParams) (ManagedPostgresDatabase, error)
 	SetManagedPostgresOverage(ctx context.Context, db DBTX, arg SetManagedPostgresOverageParams) error
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)

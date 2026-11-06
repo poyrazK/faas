@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -72,6 +72,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUpgradeStatus(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
+	case "branch":
+		return cmdPostgresBranch(args[1:])
 	case "cutover":
 		return cmdPostgresCutover(args[1:])
 	case "bindings":
@@ -847,6 +849,12 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	}
 	if database.RestoreSlotUntil != "" {
 		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; purge a database or upgrade to keep it)\n", database.RestoreSlotUntil)
+	}
+	if database.RestoreSourceDatabaseID != "" {
+		_, _ = fmt.Fprintf(w, "  restored_from:    %s at %s\n", database.RestoreSourceDatabaseID, database.RestorePointInTime)
+	}
+	if database.ExpiresAt != "" {
+		_, _ = fmt.Fprintf(w, "  expires_at:       %s (bindings revoked and purged then)\n", database.ExpiresAt)
 	}
 	if note := postgresPlanExcessNote(database); note != "" {
 		_, _ = fmt.Fprintf(w, "  plan_excess:      %s (%s)\n", database.PlanExcess, note)

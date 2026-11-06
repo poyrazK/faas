@@ -8441,6 +8441,7 @@ type ManagedPostgresDatabase struct {
 	PurgeAfter                  pgtype.Timestamptz
 	RestoreSlotUntil            pgtype.Timestamptz
 	Labels                      []byte
+	ExpiresAt                   pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabaseEndpoint struct {

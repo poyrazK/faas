@@ -128,6 +128,13 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 			return Database{}, false, mapPostgresError(err)
 		}
 	}
+	if !database.ExpiresAt.IsZero() {
+		row, err = q.SetManagedPostgresDatabaseExpiry(ctx, tx, sqlc.SetManagedPostgresDatabaseExpiryParams{
+			ID: databaseID, ExpiresAt: databaseNullableTime(database.ExpiresAt)})
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
@@ -363,6 +370,9 @@ func validateReservation(database Database, limit int) error {
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
 		database.ProviderResourceID != "" || database.DataResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" || database.AccountingRequired {
+		return ErrInvalid
+	}
+	if !validReservationExpiry(database) {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {

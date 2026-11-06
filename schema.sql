@@ -44606,6 +44606,7 @@ CREATE TABLE public.managed_postgres_databases (
     purge_after timestamp with time zone,
     restore_slot_until timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    expires_at timestamp with time zone,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -77188,6 +77189,13 @@ CREATE INDEX managed_postgres_databases_account_state_idx ON public.managed_post
 --
 
 CREATE INDEX managed_postgres_databases_backend_idx ON public.managed_postgres_databases USING btree (backend_id) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: managed_postgres_databases_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_databases_expires_at_idx ON public.managed_postgres_databases USING btree (expires_at, id) WHERE (expires_at IS NOT NULL);
 
 
 --

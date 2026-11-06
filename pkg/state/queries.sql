@@ -15402,6 +15402,23 @@ ORDER BY d.restore_slot_until, d.id LIMIT sqlc.arg(batch_size);
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND restore_slot_until IS NOT NULL;
 
+-- name: SetManagedPostgresDatabaseExpiry :one
+-- ADR-20261106103654: a restore with a TTL records when it ends, in the
+-- reservation's transaction.
+UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid RETURNING *;
+
+-- name: ListManagedPostgresExpiredDatabasePage :many
+-- ADR-20261106103654: copies whose TTL has ended, soonest first, after a
+-- stable (expires_at, id) cursor. A copy already being purged (deleting with
+-- no undo deadline) is left to that purge.
+SELECT * FROM managed_postgres_databases d
+WHERE d.expires_at IS NOT NULL AND d.expires_at<=sqlc.arg(now)::timestamptz AND d.state<>'deleted'
+  AND NOT (d.state='deleting' AND d.purge_after IS NULL)
+  AND (sqlc.narg(after_expires_at)::timestamptz IS NULL
+    OR (d.expires_at,d.id)>(sqlc.narg(after_expires_at)::timestamptz,sqlc.narg(after_id)::uuid))
+ORDER BY d.expires_at, d.id LIMIT sqlc.arg(batch_size);
+
 -- name: RecordManagedPostgresRestoreSlotNotice :execrows
 -- ADR-20261031123259: one notice per copy and kind; the first sweep to reach
 -- it records it and later sweeps leave it alone.

@@ -100,6 +100,9 @@ func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
 	if row.RestoreSlotUntil.Valid {
 		database.RestoreSlotUntil = row.RestoreSlotUntil.Time
 	}
+	if row.ExpiresAt.Valid {
+		database.ExpiresAt = row.ExpiresAt.Time
+	}
 	return database
 }
 
