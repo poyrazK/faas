@@ -6252,6 +6252,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parentCtx = withTrafficDecision(parentCtx, false)
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
+	requestAttrs := collectSpanAttributes(requestSpan)
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	requestCtx = WithEdgeRuleMethodOverride(requestCtx, r)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
@@ -6270,10 +6271,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(requestCtx)
 	defer func() { //nolint:contextcheck // inspect the final rebound request context, including later admission and lifetime fences.
 		decision := trafficDecisionEvidence(r.Context(), rec.status, true)
-		requestSpan.SetAttributes(decision.attributes()...)
+		requestAttrs.addDecision(decision)
 		h.metrics.observeTrafficDecision(decision)
 		statusHooks.run(rec.status)
-		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		requestAttrs.add(attribute.Int("http.status_code", rec.status))
+		requestAttrs.flush()
 		requestSpan.End()
 	}()
 
@@ -6434,7 +6436,7 @@ haveApp:
 	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 		rec.trafficPolicyRevision = revision
-		requestSpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", revision))
+		requestAttrs.add(attribute.String("gregale.traffic.policy_revision", revision))
 	}
 	// Edge-rule matching from here on ignores rules another account
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
@@ -6493,7 +6495,7 @@ haveApp:
 	// internal path a rewrite rule may later produce.
 	declaredPath, declaredMethod := r.URL.Path, r.Method
 	r = withLifecycleRequestRoute(r, declaredPath, declaredMethod)
-	requestSpan.SetAttributes(
+	requestAttrs.add(
 		attribute.String("app_id", app.ID),
 		attribute.String("app_plan", string(app.Plan)),
 	)
@@ -7081,7 +7083,7 @@ haveApp:
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
 		}
 		rec.trafficPolicyRevision = TrafficPolicyRevision(r.Context())
-		requestSpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", rec.trafficPolicyRevision),
+		requestAttrs.add(attribute.String("gregale.traffic.policy_revision", rec.trafficPolicyRevision),
 			attribute.String("gregale.traffic.selected_deployment_id", routing.SelectedDeploymentID),
 			attribute.String("gregale.traffic.deployment_selection", routing.SelectionReason))
 	}
@@ -7954,21 +7956,23 @@ haveApp:
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
 	r, identity = stampTargetIdentity(r, app, target)
-	requestSpan.SetAttributes(pkgtrace.PlatformIdentityAttributes(identity)...)
+	requestAttrs.addIdentity(identity)
 
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and
 	// the guest-side bridge remain children of this span. Stable identifiers
 	// are used here; request paths and headers are intentionally excluded.
-	forwardAttrs := pkgtrace.PlatformIdentityAttributes(identity)
+	forwardAttrs := pkgtrace.AppendPlatformIdentityAttributes(make([]attribute.KeyValue, 0, 14), identity)
 	forwardAttrs = append(forwardAttrs,
 		attribute.String("protocol", decideProtocol(app)),
 		attribute.Bool("cold", cold),
 	)
 	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
+	forwardSpanAttrs := collectSpanAttributes(forwardSpan)
 	r = r.WithContext(h.instanceNodesContext(forwardCtx, app.ID))
 	defer func() {
-		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		forwardSpanAttrs.add(attribute.Int("http.status_code", rec.status))
+		forwardSpanAttrs.flush()
 		forwardSpan.End()
 	}()
 
@@ -8372,9 +8376,8 @@ haveApp:
 	}
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
-	completionAttrs := completionTargetAttributes(completionTarget)
-	requestSpan.SetAttributes(completionAttrs...)
-	forwardSpan.SetAttributes(completionAttrs...)
+	requestAttrs.addTarget(completionTarget)
+	forwardSpanAttrs.addTarget(completionTarget)
 	// ADR-733: a serving instance that answered 5xx may be captured for a
 	// crash snapshot. Asynchronous and throttled; never affects this
 	// response.
