@@ -3343,8 +3343,8 @@ const (
 type CustomDomain struct {
 	// BindingVersion fences reviewed plans across moves without changing DNS proof.
 	BindingVersion string
-	Domain string
-	AppID  string
+	Domain         string
+	AppID          string
 	// RedirectAppID mirrors the legacy redirect FK used by app purge.
 	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
