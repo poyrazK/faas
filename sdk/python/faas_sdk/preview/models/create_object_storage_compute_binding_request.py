@@ -22,9 +22,10 @@ class CreateObjectStorageComputeBindingRequest:
     label: str | Unset = "compute"
     prefix: str | Unset = UNSET
     key_prefix: str | Unset = UNSET
-    """Limit the binding's key to object keys under this literal prefix, such as segments/L0/. Patterns such as *
-    are refused. Requests outside it, unscoped listings and bucket-wide settings are denied. 403
-    object_storage_key_scopes_unavailable until key-scoped bindings are released to the account."""
+    """Limit the binding's key to object keys under this literal prefix, such as segments/L0/. It must end in / and
+    may not contain *, ? or [, empty segments, or . and .. segments. Requests outside it, unscoped listings and
+    bucket-wide settings are denied. 403 object_storage_key_scopes_unavailable until key-scoped bindings are
+    released to the account."""
 
     def to_dict(self) -> dict[str, Any]:
         permission: str = self.permission
