@@ -613,6 +613,9 @@ export class DeploymentsService {
        * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
        */
       healthcheck?: string;
+      /**
+       * Build directory within the developer-source archive. Empty or omitted inherits the app's configured root; '.' selects the archive root.
+       */
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.

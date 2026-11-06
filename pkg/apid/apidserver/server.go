@@ -183,9 +183,13 @@ type server struct {
 	configGuardCursor    state.ConfigGuardCursor
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
-	postReleaseTelemetry rollbackOn5xxTelemetry
-	outboundAI           outboundai.Service     // ADR-977; Host wired in newServer
-	profileCaptures      profilecapture.Service // ADR-1155; Host wired in newServer
+	postReleaseTelemetry   rollbackOn5xxTelemetry
+	postReleaseScanMu      sync.Mutex
+	postReleaseCursor      state.ReleaseScanCursor
+	scheduledReleaseMu     sync.Mutex
+	scheduledReleaseCursor state.ReleaseScanCursor
+	outboundAI             outboundai.Service     // ADR-977; Host wired in newServer
+	profileCaptures        profilecapture.Service // ADR-1155; Host wired in newServer
 	// releaseGateEvidence overrides the store's release gate evidence
 	// reader for the post-release watch (ADR-20261019071734; tests).
 	releaseGateEvidence   state.ReleaseGateEvidenceStore

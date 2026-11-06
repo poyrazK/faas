@@ -692,9 +692,9 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
 	}
-	// F8 fixup: shared default-seeding helper — same rule the
-	// registry pull path applies in manifestFromImageConfig.
-	applyContainerDefaults(&manifest)
+	// Seed health defaults before reviewed fields, which may explicitly
+	// clear the HTTP path for TCP readiness. PORT follows the final contract.
+	applyContainerHealthDefault(&manifest)
 	manifest = applyAppStartCommand(manifest, app)
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
@@ -704,15 +704,22 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
 	manifest = h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct)
+	manifest, err = state.ApplyDeploymentRuntime(manifest, *dep)
+	if err != nil {
+		return fmt.Errorf("imaged: scoped source runtime: %w", err)
+	}
+	// Seed PORT from the final guest contract, after reviewed runtime fields
+	// and explicit environment values have been applied.
+	applyContainerEnvDefaults(&manifest)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}
 	if err := checkCompanionPorts(manifest, *dep); err != nil {
 		return fmt.Errorf("imaged: workload ports: %w", err)
 	}
-	// The built image's command HEALTHCHECK gates readiness whether it came
-	// from the Dockerfile or a Compose override (ADR-20261024100000).
-	if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+	// Publish the built image's runtime contract before the scheduler can
+	// prime it, including ports inherited from the base image.
+	if err := h.recordSourceRuntimeProfile(ctx, dep, manifest); err != nil {
 		return err
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {

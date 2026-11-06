@@ -154,7 +154,10 @@ type Loop struct {
 	ownedAppsMu  sync.Mutex
 	ownedApps    map[string]struct{}
 	primeMetrics *snapshotPrimeMetrics
-	cronMetrics  *commandCronMetrics
+	// primeRecoveryOffset is owned by the coalesced fleet recovery work item.
+	// It lets bounded sweeps progress beyond persistent older blocked rows.
+	primeRecoveryOffset int
+	cronMetrics         *commandCronMetrics
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
 	// dispatched (runCronSweep).
@@ -2172,7 +2175,7 @@ func (l *Loop) runRecentLoad(ctx context.Context) {
 // takes a per-app lock (Engine.Prime → lockApp), so concurrent primes
 // for one app serialize anyway; this bounds the fan-out across apps and
 // keeps goroutine growth from a notify burst bounded.
-const maxConcurrentPrimes = 4
+const maxConcurrentPrimes = api.SnapshotPrimeConcurrentSlots
 
 const maxSnapshotPrimeAttempts = 2
 
@@ -2255,7 +2258,11 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
 			attempts = attempt
 			err = l.engine.Prime(ctx, appID, deploymentID)
-			if err == nil {
+			if err == nil || errors.Is(err, state.ErrSnapshotPrimeStale) {
+				return
+			}
+			if errors.Is(err, errPrimeActivationPending) {
+				l.log.Warn("sched: prime activation handoff pending; recovery will retry", "app", appID, "deployment", deploymentID, "err", err)
 				return
 			}
 			if attempt == maxSnapshotPrimeAttempts || !retryableSnapshotPrimeError(err) || ctx.Err() != nil {

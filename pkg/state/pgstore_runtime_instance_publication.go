@@ -52,7 +52,8 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	}
 	// ADR-1741: a boot's guarded publication is one statement when the
 	// database has the admission functions.
-	if guarded && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
+	_, prime := ctx.Value(snapshotPrimeAttemptKey{}).(snapshotPrimeAttempt)
+	if guarded && !prime && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
 		p.ExpectedState != string(StateFrozen) && s.admissionFunctionsUsable(ctx) {
 		instance, err := s.publishOnGenerationFunction(ctx, p, guard)
 		if err != nil {
@@ -69,6 +70,9 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 		if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 			return Instance{}, fmt.Errorf("runtime publication: app config fence: %w", err)
 		}
+	}
+	if err := checkSnapshotPrimeAttemptTx(ctx, tx, p.AppID, p.Fence.DeploymentID); err != nil {
+		return Instance{}, err
 	}
 	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
 		fresh, err := sqlc.New().InstanceSnapshotRecoveryFresh(ctx, tx, mustPgUUID(p.InstanceID))

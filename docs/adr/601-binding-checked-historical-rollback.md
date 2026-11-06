@@ -24,3 +24,32 @@ Completed deployments use a readiness-gated historical rollback path, distinct f
 Memory/PostgreSQL tests cover exact selectors, concurrent intent/releases, dark readiness, generic-write bypass, stale/wrong-recipient/expired evidence, service capacity, completion barriers, failed readiness redelivery, and late status writes. API tests cover accepted receipts, idempotency, binding blockers and replacement-APID recovery. CLI tests cover one POST followed by GET-only waits, receipt mismatch, timeout blockers and invalid flags. Existing readiness/smoke and service ACK/drain regressions run alongside the new tests.
 
 Native x86_64 Linux KVM `test-metal` and `leakcheck` acceptance remains unrun from this macOS workspace.
+
+### Deployment-owned rollback protocol (2026-11-05)
+
+The target deployment's pinned environment settings and frozen runtime select
+the service or request rollback protocol. Shared app edits and a newer desired
+head cannot replace that decision. Commit verifies that the durable operation
+still matches the target contract before routing, including operations created
+by an older process with an incorrect protocol flag. A mismatch fails closed
+without moving traffic. Services retain ready-cohort, gateway ACK and drain
+barriers; request releases do not wait for service-mode replicas.
+
+Worker readiness also belongs to a particular preparation attempt. imaged passes
+the expected deployment stage and worker identity into the activation write. The
+store rechecks the stage clock, a matching RUNNING worker, its start time and its
+persisted runtime configuration proof against current deployed values before
+changing lifecycle or traffic. A retained worker from a previous attempt cannot
+satisfy a new rollback, even when its deployment ID is unchanged. Completed
+activation notifications remain idempotent; ordinary binding, dependency and
+rollback admission checks continue to apply.
+
+Final checked worker cutover repeats readiness under the traffic transaction:
+at least one RUNNING worker must have started in the current preparation and
+carry a runtime configuration proof matching the target's current inputs. A
+stopped worker, missing proof, or stale configuration leaves the predecessor
+serving and reports `worker_rollback_not_ready`; a current replacement worker
+allows the same operation to continue. Pool reconciliation preserves the
+qualification worker while its operation is ready or blocked, and retains the
+exact serving predecessor until commit. Holds release after completion or
+failure and do not grant additional worker admission.

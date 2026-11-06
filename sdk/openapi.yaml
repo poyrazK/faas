@@ -4953,7 +4953,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
+                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -5151,6 +5151,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                  description: "Build directory within the developer-source archive. Empty or omitted inherits the app's configured root; '.' selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -28021,7 +28022,7 @@ components:
         runtime: {type: string}
         handler: {type: string}
         dockerfile: {type: boolean}
-        source_root: {type: string}
+        source_root: {type: string, description: "Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.' selects the archive root."}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default."}
         source_url: {type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by the API."}
         commit_sha: {type: string, minLength: 7, maxLength: 64, pattern: '^[0-9a-f]+$', description: "Lowercase hexadecimal Git commit identifier."}
@@ -28262,9 +28263,20 @@ components:
         retry_restart_reason:
           type: string
           description: Why a retry restarted from source_download rather than retry_requested_stage.
+        retry_intent: {$ref: '#/components/schemas/DeploymentRetryIntent'}
         dependency_gate: {$ref: '#/components/schemas/DeploymentDependencyGate'}
         build_dependency_gate: {$ref: '#/components/schemas/DeploymentBuildDependencyGate'}
         hosting_verification: {$ref: '#/components/schemas/DeploymentHostingVerification'}
+    DeploymentRetryIntent:
+      type: object
+      readOnly: true
+      description: Admission-time release intent retained across routing, failure and stage changes. Absent on legacy deployments.
+      required: [version, traffic_percent, traffic_percent_explicit, service_rollout]
+      properties:
+        version: {type: string, enum: [v1]}
+        traffic_percent: {type: integer, minimum: 0, maximum: 100}
+        traffic_percent_explicit: {type: boolean}
+        service_rollout: {type: boolean}
     DeploymentStageHistoryEntry:
       type: object
       description: One closed stage with server-measured duration.
@@ -28685,6 +28697,11 @@ components:
       description: "Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."
       required: [request_id, action, deployment_id, status]
       properties:
+        traffic_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full cutover.
         request_id: {type: string, format: uuid}
         action: {type: string, enum: [promote, abort]}
         deployment_id: {type: string, format: uuid}

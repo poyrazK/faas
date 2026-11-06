@@ -62,7 +62,15 @@ func (s *server) serviceRolloutBindingCheck(ctx context.Context, candidate state
 		var writeErr error
 		switch gate.Action {
 		case state.ServiceRolloutActionPromote:
-			updated, writeErr = s.store.BeginServiceRolloutCutover(writeCtx, candidate.ID)
+			if gate.TrafficPercent > 0 && gate.TrafficPercent < 100 {
+				steps, ok := s.store.(state.ServiceRolloutStepStore)
+				if !ok {
+					return state.ErrServiceRolloutInvalid
+				}
+				updated, writeErr = steps.BeginServiceRolloutStep(writeCtx, candidate.ID, gate.TrafficPercent)
+			} else {
+				updated, writeErr = s.store.BeginServiceRolloutCutover(writeCtx, candidate.ID)
+			}
 		case state.ServiceRolloutActionAbort:
 			updated, writeErr = s.store.BeginServiceRolloutAbort(writeCtx, candidate.ID)
 		default:

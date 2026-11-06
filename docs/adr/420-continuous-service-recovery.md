@@ -18,12 +18,13 @@ desired capacity until another event or customer request arrives.
 
 schedd discovers due active services on startup and every five seconds.
 Discovery includes unassigned apps and apps owned by this scheduler; evicted,
-deleted, request/job/worker-mode apps and inactive or abuse-held accounts are
-excluded. Past-due accounts retain service during their existing billing grace.
+deleted, request/job/worker-mode deployments and inactive or abuse-held accounts
+are excluded. Execution mode comes from pinned live deployment settings and
+frozen runtime: a shared request-mode app can still own a service deployment. Past-due accounts retain service during their existing billing grace.
 Reconciliation rereads ownership and intent before admission and uses the
 existing app-level allocation, capacity, readiness and handoff controllers.
-Starting and draining rows continue to hold managed capacity; their presence
-does not justify a duplicate replacement. Mirror generations keep their
+Starting, draining, and readiness-withdrawn running rows continue to hold managed
+capacity; their presence does not justify a duplicate replacement. Mirror generations keep their
 separate lifecycle.
 
 Desired replicas zero keeps the service stopped. Stopping an individual
@@ -44,8 +45,10 @@ seconds. Progress (`starting`, `draining`, `rolling_out`) checks again in five
 seconds. Capacity, startup and dependency failures persist bounded status
 values and exponential retry delays of 5, 10, 20, 40, 80, 160, then 300 seconds.
 The delay stays capped; failures do not exhaust service recovery. Failure
-counts saturate at 32. New desired configuration or generation metadata can
-reset cooldown when its notification arrives. Failed instance IDs are not
+counts saturate at 32. New deployed configuration or generation metadata can
+reset cooldown when its notification arrives. Pinned generations derive their
+revision from immutable deployment inputs; shared app and desired-head edits do
+not reset their cooldown. Legacy deployments without pins retain app settings. Failed instance IDs are not
 part of the revision, so a failed boot cannot reset its own cooldown. If a
 configuration notification is lost, the next due sweep reads the new intent.
 
@@ -79,3 +82,9 @@ before fleet rollout. This controller fills deficits after existing failure
 controllers retire an instance. It does not independently assert VM death,
 move ownership after host loss, supply missing host capacity, or repair invalid
 application code.
+
+A service rollout retains the serving generation's full declared target while
+preparing a dark candidate cohort. Insufficient overlap capacity produces the
+existing waiting-capacity status and bounded retry schedule. Candidate readiness
+loss during a published handoff persists and resumes the reverse route/drain
+protocol rather than waiting for the ordinary readiness deadline.

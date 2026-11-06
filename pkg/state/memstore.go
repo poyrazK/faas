@@ -8802,6 +8802,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 		}
 		d.StagedReview = &review
 	}
+	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
 }
 
@@ -10195,6 +10196,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if err = m.checkDatabaseSwitchLeaseLocked(ctx, d); err != nil {
 		return err
 	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, d); err != nil {
+		return err
+	}
+	if err := m.checkWorkerDeploymentActivationLocked(ctx, d); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
 		return ErrConflict
 	}
@@ -11023,7 +11030,11 @@ func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string
 		return Deployment{}, ErrNotFound
 	}
 	now := time.Now().UTC()
-	newDep, err := retryDeploymentInput(src, now)
+	legacyService := m.apps[src.AppID].Manifest.ExecutionMode == api.ExecutionModeService
+	if spec, ok := m.projectEnvironmentWorkloadSpecs[m.projectEnvironmentWorkloadDeploymentSpecs[failedID]]; ok {
+		legacyService = spec.Settings.Manifest.ExecutionMode == api.ExecutionModeService
+	}
+	newDep, err := retryDeploymentInput(src, now, legacyService)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -11077,7 +11088,16 @@ func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string
 		}
 	}
 	m.publicBuildURLs[newDep.ID] = maps.Clone(m.publicBuildURLs[failedID])
+	// A retry executes the original immutable workload revision. Retain its
+	// environment lifetime even if the pin was removed by environment deletion.
+	if ownerID := m.deploymentRuntimeEnvironmentOwners[failedID]; ownerID != "" {
+		m.deploymentRuntimeEnvironmentOwners[newDep.ID] = ownerID
+	}
+	if specID := m.projectEnvironmentWorkloadDeploymentSpecs[failedID]; specID != "" {
+		m.projectEnvironmentWorkloadDeploymentSpecs[newDep.ID] = specID
+	}
 	m.putDeploymentLocked(newDep.ID, newDep)
+	newDep.StageState = m.deployments[newDep.ID].StageState
 	return newDep, nil
 }
 
@@ -12313,9 +12333,12 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 // status pinned to 'failed'; error_code is the RFC 7807 code lifted
 // from pkg/api.SentinelToCode; error keeps the free-text message.
 // Returns the refreshed row.
-func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message string) (Deployment, error) {
+func (m *MemStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkDeploymentActivationFailureLocked(ctx, m.deployments[id]); err != nil {
+		return Deployment{}, err
+	}
 	return m.setDeploymentFailedLocked(id, code, message)
 }
 
@@ -12368,13 +12391,19 @@ func (m *MemStore) ClaimDeployFailedEmail(_ context.Context, appID string, at ti
 // migration 00290. The unit-test suite that exercises MemStore stays
 // aligned with PgStore.
 func (m *MemStore) SetDeploymentFailedEx(
-	_ context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
+	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
+	}
+	if err := m.checkDeploymentActivationFailureLocked(ctx, d); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkSnapshotPrimeFailure(ctx, d); err != nil {
+		return Deployment{}, err
 	}
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
@@ -17568,12 +17597,18 @@ func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, e
 	return m.createSnapshotLocked(snap)
 }
 
-func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
+func (m *MemStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	dep, ok := m.deployments[snap.DeploymentID]
 	if !ok {
 		return Snapshot{}, ErrNotFound
+	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, dep); err != nil {
+		return Snapshot{}, err
+	}
+	if err := checkActivationSnapshotSource(ctx, sourceStartedAt); err != nil {
+		return Snapshot{}, err
 	}
 	app, found := m.apps[dep.AppID]
 	if !found {

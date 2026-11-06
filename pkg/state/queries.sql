@@ -711,7 +711,8 @@ FROM owned
 WHERE o.id = owned.id AND owned.lease_until > clock_timestamp();
 
 -- name: LockDeploymentHostingFailure :one
-SELECT app_id, status FROM deployments
+SELECT app_id, status, coalesce(rootfs_key,'')::text AS rootfs_key,
+ coalesce(rootfs_path,'')::text AS rootfs_path, stage_state FROM deployments
 WHERE id = sqlc.arg(deployment_id)::uuid
 FOR UPDATE;
 
@@ -2044,7 +2045,8 @@ WITH proof AS (
     FROM instances WHERE id=sqlc.arg(instance_id)::uuid
     ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
         deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint,
+        prime_activation_handoff=NULL
     RETURNING deployment_id
 ), transition_event AS (
     INSERT INTO events(actor,kind,subject,data)
@@ -12090,7 +12092,14 @@ AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS d
 -- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
 LEFT JOIN service_recovery r ON r.app_id = a.id
-WHERE a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
+WHERE a.status = 'active' AND (a.manifest->>'execution_mode' = 'service' OR EXISTS (
+    SELECT 1 FROM deployments d
+    LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+    WHERE d.app_id=a.id AND d.status='live'
+      AND coalesce(d.environment_workload_runtime->'runtime'->>'execution_mode',
+        d.environment_workload_runtime->'baseline'->>'execution_mode',
+        s.settings::jsonb->'manifest'->>'execution_mode',a.manifest->>'execution_mode')='service'))
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
   AND (sqlc.arg(owner_node_id)::text = '' OR a.node_id IS NULL OR a.node_id::text = sqlc.arg(owner_node_id)::text)
   AND coalesce(r.lease_until, '1970-01-01'::timestamptz) <= sqlc.arg(sampled_at)::timestamptz
@@ -12103,7 +12112,14 @@ INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status,
 SELECT a.id, sqlc.arg(revision)::text, sqlc.arg(claim_token)::uuid, sqlc.arg(lease_until)::timestamptz,
        'reconciling', sqlc.arg(sampled_at)::timestamptz, sqlc.arg(sampled_at)::timestamptz
 FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
-WHERE a.id = sqlc.arg(app_id)::uuid AND a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status = 'active' AND (a.manifest->>'execution_mode' = 'service' OR EXISTS (
+    SELECT 1 FROM deployments d
+    LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+    WHERE d.app_id=a.id AND d.status='live'
+      AND coalesce(d.environment_workload_runtime->'runtime'->>'execution_mode',
+        d.environment_workload_runtime->'baseline'->>'execution_mode',
+        s.settings::jsonb->'manifest'->>'execution_mode',a.manifest->>'execution_mode')='service'))
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
 ON CONFLICT (app_id) DO UPDATE SET
  revision = EXCLUDED.revision, claim_token = EXCLUDED.claim_token, lease_until = EXCLUDED.lease_until,
@@ -20603,7 +20619,7 @@ SELECT id FROM apps WHERE id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id
 SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,'traffic_percent',d.traffic_percent,
  'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
  'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,'rollout_completed_at',d.rollout_completed_at,
- 'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
+ 'service_rollout_handoff',d.service_rollout_handoff,'stage_state',d.stage_state) FROM deployments d
  WHERE d.id=sqlc.arg(deployment_id) AND d.app_id=sqlc.arg(app_id) AND d.deleted_at IS NULL FOR UPDATE;
 
 -- name: CheckedRollbackCurrentMatches :one
@@ -23169,6 +23185,18 @@ WHERE t.deployment_id=sqlc.arg(deployment_id)::uuid;
 INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
 SELECT sqlc.arg(target_deployment_id)::uuid,release_id,source_sha256,source_root,source_bytes,kind,handler
 FROM deployment_runtime_upgrade_targets WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;
+
+-- name: CopyRetryDeploymentEnvironmentOwner :exec
+INSERT INTO deployment_runtime_environment_owners(deployment_id, environment_id)
+SELECT sqlc.arg(target_deployment_id)::uuid, environment_id
+FROM deployment_runtime_environment_owners
+WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;
+
+-- name: CopyRetryDeploymentWorkloadSpec :exec
+INSERT INTO project_environment_workload_deployment_specs(deployment_id, spec_id)
+SELECT sqlc.arg(target_deployment_id)::uuid, spec_id
+FROM project_environment_workload_deployment_specs
+WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;
 
 -- name: LockRuntimeUpgradeBaselineCandidate :one
 SELECT d.id FROM deployments d
@@ -28770,6 +28798,118 @@ WHERE d.verified_at IS NOT NULL AND d.domain=sqlc.arg(hostname)::text::citext
   <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
     THEN 'org:'||claimant.org_id::text ELSE 'account:'||claimant.account_id::text END));
 
+-- name: ServiceRolloutRecipientReadinessConfig :one
+WITH recipient AS (
+ SELECT d.override_readiness_probe, d.sidecars,
+  CASE WHEN d.environment_workload_runtime IS NOT NULL THEN
+   coalesce(d.environment_workload_runtime->'baseline','{}'::jsonb) || coalesce(d.environment_workload_runtime->'runtime','{}'::jsonb)
+  WHEN s.id IS NOT NULL THEN coalesce(s.settings::jsonb->'manifest','{}'::jsonb)
+  ELSE coalesce(a.manifest,'{}'::jsonb) END AS manifest
+ FROM deployments d JOIN apps a ON a.id=d.app_id
+ LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+ LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+ WHERE d.id=sqlc.arg(deployment_id)::uuid
+)
+SELECT override_readiness_probe, sidecars,
+ coalesce(nullif(manifest->>'execution_mode',''),'request')::text AS execution_mode,
+ coalesce((manifest->'service_replicas'->>'desired')::integer,1)::integer AS desired
+FROM recipient;
+
+-- name: ServiceRolloutRecipientInstances :many
+SELECT i.id::text AS id, i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id
+FROM instances i WHERE i.deployment_id=sqlc.arg(deployment_id)::uuid AND i.mode='service' AND i.state='running'
+FOR SHARE;
+
+-- name: SetServiceRolloutStepTraffic :exec
+UPDATE deployments SET traffic_percent = CASE
+ WHEN id=sqlc.arg(deployment_id)::uuid THEN sqlc.arg(traffic_percent)::integer
+ WHEN id=sqlc.arg(predecessor_id)::uuid THEN 100-sqlc.arg(traffic_percent)::integer
+ ELSE 0 END
+WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live';
+
+-- name: LockServiceRolloutReadyReplicas :many
+SELECT i.id::text AS id, i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id
+FROM instances i WHERE i.deployment_id=sqlc.arg(deployment_id)::uuid AND i.mode='service' AND i.state='running'
+ORDER BY i.id FOR UPDATE;
+
+-- name: DrainServiceRolloutReplica :execrows
+UPDATE instances SET state='draining'
+WHERE id=sqlc.arg(instance_id)::uuid AND mode='service' AND state='running';
+
+-- name: LockServiceRolloutRetiringStates :many
+SELECT id::text AS id, state FROM instances
+WHERE id=ANY(sqlc.arg(instance_ids)::text[]::uuid[])
+ORDER BY id FOR UPDATE;
+
+-- name: LockSnapshotPrimeAttempt :one
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, d.status,
+ coalesce(d.rootfs_key,'')::text AS rootfs_key, coalesce(d.rootfs_path,'')::text AS rootfs_path,
+ d.stage_state
+FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
+FOR SHARE;
+
+-- name: LockSnapshotPrimeFailure :one
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, d.status,
+ coalesce(d.rootfs_key,'')::text AS rootfs_key, coalesce(d.rootfs_path,'')::text AS rootfs_path,
+ d.stage_state, coalesce(d.error,'')::text AS error, coalesce(d.error_code,'')::text AS error_code
+FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
+FOR UPDATE;
+
+-- name: LockWorkerDeploymentActivationInstance :one
+SELECT i.id::text AS id, i.app_id::text AS app_id, i.deployment_id::text AS deployment_id,
+ i.mode, i.state, i.started_at, a.account_id::text AS account_id
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=sqlc.arg(instance_id)::uuid
+FOR SHARE OF i;
+
+-- name: CheckedRollbackWorkerInstances :many
+SELECT i.id::text AS id, a.account_id::text AS account_id
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.deployment_id=sqlc.arg(deployment_id)::uuid AND i.mode='worker' AND i.state='running'
+ AND i.started_at>=sqlc.arg(prepared_at)::timestamptz
+ORDER BY i.id
+FOR SHARE OF i;
+
+-- name: LockPrimeRecoveryWorker :one
+SELECT i.id::text AS id, i.app_id::text AS app_id, i.deployment_id::text AS deployment_id,
+ i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id,
+ i.mode, i.state, i.started_at, coalesce(a.node_id::text,'')::text AS app_node_id, a.status AS app_status, a.account_id::text AS account_id
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=sqlc.arg(instance_id)::uuid
+FOR UPDATE OF i;
+
+-- name: DrainPrimeRecoveryWorker :execrows
+UPDATE instances SET state='draining'
+WHERE id=sqlc.arg(instance_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+ AND wake_id=sqlc.arg(wake_id)::uuid AND mode='worker' AND state IN ('running','draining');
+
+
+-- name: TrySnapshotPrimeLock :one
+SELECT pg_try_advisory_lock(hashtextextended('snapshot-prime:' || sqlc.arg(deployment_id)::text, 0));
+
+-- name: UnlockSnapshotPrime :one
+SELECT pg_advisory_unlock(hashtextextended('snapshot-prime:' || sqlc.arg(deployment_id)::text, 0));
+
+-- name: ListSnapshotPrimeInstances :many
+SELECT i.id::text AS instance_id FROM instances i
+WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.deployment_id=sqlc.arg(deployment_id)::uuid
+ AND i.started_at>=sqlc.arg(prepared_at)::timestamptz
+ AND (i.state IN ('waking','cold_booting','running','snapshotting','parking','draining','parked')
+  OR (i.state='stopped' AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs p
+      WHERE p.instance_id=i.id AND p.prime_activation_handoff IS NOT NULL)))
+ORDER BY i.started_at DESC,i.id;
+
+-- name: SaveSnapshotPrimeHandoff :execrows
+UPDATE runtime_instance_config_proofs SET prime_activation_handoff=sqlc.arg(handoff)::jsonb
+WHERE instance_id=sqlc.arg(instance_id)::uuid AND wake_id=sqlc.arg(wake_id)::uuid
+ AND node_id=sqlc.arg(node_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ReadSnapshotPrimeHandoff :one
+SELECT p.prime_activation_handoff, i.wake_id::text AS wake_id, i.node_id::text AS node_id, i.started_at FROM runtime_instance_config_proofs p
+JOIN instances i ON i.id=p.instance_id AND i.wake_id=p.wake_id AND i.node_id=p.node_id AND i.deployment_id=p.deployment_id
+JOIN apps a ON a.id=i.app_id
+WHERE i.id=sqlc.arg(instance_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+ AND a.status<>'deleted' AND p.prime_activation_handoff IS NOT NULL;
 -- name: ReadRetainedDeploymentOpenAPISnapshot :one
 SELECT app_id, scope, snapshot, sha256, schema_version, captured_at
 FROM deployment_openapi_snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
