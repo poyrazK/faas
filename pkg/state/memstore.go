@@ -589,7 +589,8 @@ type MemStore struct {
 	githubBindings map[string]GitHubBinding
 	// githubInstalls is keyed by accountID + NUL + installationID so an
 	// account can retain personal and organization installations.
-	githubInstalls map[string]GitHubInstall
+	githubInstalls      map[string]GitHubInstall
+	githubVerifications map[string]GitHubConnectionVerification
 	// githubWebhookSecrets is the per-tenant webhook secret
 	// store (PR-D / ADR-012 §7 amendment). Keyed by
 	// installation_id so the resolver cache at
@@ -1521,11 +1522,12 @@ type MemStore struct {
 	resourceLabels map[LabelKind]map[string]map[string]string
 }
 
-// installRepoKey mirrors the projects_install_repo_uniq partial index
-// (install_id, repo_full_name) from migration 00073. Standalone
+// installRepoKey mirrors the projects_account_install_repo_uniq partial index
+// (account_id, install_id, repo_full_name). Standalone
 // projects (install_id == nil, repo_full_name == "") never enter this
 // map; the indexed lookups are bound-only.
 type installRepoKey struct {
+	AccountID    string
 	InstallID    int64
 	RepoFullName string
 }
@@ -3804,11 +3806,11 @@ func (m *MemStore) CreateProject(ctx context.Context, p Project) (Project, error
 			return Project{}, ErrConflict
 		}
 	}
-	// (install_id, repo_full_name) uniqueness — mirrors
-	// projects_install_repo_uniq. Standalone projects
+	// (account_id, install_id, repo_full_name) uniqueness — mirrors
+	// projects_account_install_repo_uniq. Standalone projects
 	// (InstallID == 0 or empty RepoFullName) skip this check entirely.
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		key := installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName}
+		key := installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName}
 		if _, taken := m.projectsByInstallRepo[key]; taken {
 			return Project{}, ErrConflict
 		}
@@ -3827,7 +3829,7 @@ func (m *MemStore) CreateProject(ctx context.Context, p Project) (Project, error
 	}
 	m.projectsByAccountSlug[p.AccountID][p.Slug] = p.ID
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		m.projectsByInstallRepo[installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName}] = p.ID
+		m.projectsByInstallRepo[installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName}] = p.ID
 	}
 	m.seedProjectProductionEnvironmentLocked(p)
 	return p, nil
@@ -3880,25 +3882,36 @@ func (m *MemStore) ProjectBySlug(_ context.Context, accountID, slug string) (Pro
 	return p, nil
 }
 
-// ProjectByRepo looks up by (install_id, repo_full_name). The
-// accountID filter is optional — passing "" matches the first hit
-// across accounts (mirrors the SQL `($3 = ”)` clause in pgstore).
-// This is the push-dispatch lookup Phase 5 wires to githubd.
+// ProjectByRepo resolves a repository within one account. An unscoped lookup
+// fails closed when more than one account has imported the repository.
 func (m *MemStore) ProjectByRepo(_ context.Context, accountID string, installID int64, repoFullName string) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id, ok := m.projectsByInstallRepo[installRepoKey{InstallID: installID, RepoFullName: repoFullName}]
-	if !ok {
+	if accountID != "" {
+		id, ok := m.projectsByInstallRepo[installRepoKey{AccountID: accountID, InstallID: installID, RepoFullName: repoFullName}]
+		if !ok {
+			return Project{}, ErrNotFound
+		}
+		project, ok := m.projects[id]
+		if !ok {
+			return Project{}, ErrNotFound
+		}
+		return project, nil
+	}
+	var found Project
+	for _, p := range m.projects {
+		if p.InstallID != installID || p.RepoFullName != repoFullName {
+			continue
+		}
+		if found.ID != "" {
+			return Project{}, ErrConflict
+		}
+		found = p
+	}
+	if found.ID == "" {
 		return Project{}, ErrNotFound
 	}
-	p, ok := m.projects[id]
-	if !ok {
-		return Project{}, ErrNotFound
-	}
-	if accountID != "" && p.AccountID != accountID {
-		return Project{}, ErrNotFound
-	}
-	return p, nil
+	return found, nil
 }
 
 func (m *MemStore) ListProjectsForAccount(_ context.Context, accountID string) ([]Project, error) {
@@ -3994,7 +4007,7 @@ func (m *MemStore) UpdateProjectBinding(ctx context.Context, accountID, projectI
 		return Project{}, ErrNotFound
 	}
 	if installID != 0 && repoFullName != "" {
-		key := installRepoKey{InstallID: installID, RepoFullName: repoFullName}
+		key := installRepoKey{AccountID: p.AccountID, InstallID: installID, RepoFullName: repoFullName}
 		if existing, exists := m.projectsByInstallRepo[key]; exists && existing != projectID {
 			return Project{}, ErrConflict
 		}
@@ -4003,10 +4016,10 @@ func (m *MemStore) UpdateProjectBinding(ctx context.Context, accountID, projectI
 	// update must leave the prior binding reachable, matching PostgreSQL's
 	// statement-atomic UPDATE behavior.
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		delete(m.projectsByInstallRepo, installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName})
+		delete(m.projectsByInstallRepo, installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName})
 	}
 	if installID != 0 && repoFullName != "" {
-		key := installRepoKey{InstallID: installID, RepoFullName: repoFullName}
+		key := installRepoKey{AccountID: p.AccountID, InstallID: installID, RepoFullName: repoFullName}
 		m.projectsByInstallRepo[key] = projectID
 	}
 	p.RepoFullName = repoFullName
@@ -4085,7 +4098,7 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 	// the installRepoKey struct; only present for projects
 	// bound to a GitHub install.
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		delete(m.projectsByInstallRepo, installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName})
+		delete(m.projectsByInstallRepo, installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName})
 	}
 	// Walk apps and null project_id where it points here. This
 	// mirrors the PG trigger ON DELETE SET NULL on the
@@ -8198,8 +8211,8 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 // (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
-// PgStore holds. Installation ownership is globally exclusive, just as the
-// PostgreSQL unique index requires.
+// PgStore holds. Each account has an independent deployment authorization;
+// GitHub login identity ownership is enforced separately by UpsertOAuthLink.
 func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) error {
 	if inst.AccountID == "" {
 		return ErrNotFound
@@ -8212,11 +8225,6 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, existing := range m.githubInstalls {
-		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
-			return ErrConflict
-		}
-	}
 	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
@@ -8276,8 +8284,8 @@ func (m *MemStore) GitHubInstallForAccountInstallation(_ context.Context, accoun
 }
 
 // RecordGitHubInstallationSync mirrors PgStore's health projection for the
-// on-demand dashboard sync path. The installation ID is globally unique, so
-// the account key can be found without widening the public Store interface.
+// installation-wide sync path. Every independently authorized account gets
+// the same remote installation health projection.
 func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationID int64, syncedAt time.Time, syncErr string, remoteRepoCount, detachedCount int) error {
 	if installationID <= 0 {
 		return nil
@@ -8300,7 +8308,6 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 		inst.LastReconcileRepositoryCount = remoteRepoCount
 		inst.LastReconcileDetachedCount = detachedCount
 		m.githubInstalls[key] = inst
-		return nil
 	}
 	return nil
 }
