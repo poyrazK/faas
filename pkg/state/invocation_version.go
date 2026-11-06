@@ -280,7 +280,7 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 			}
 			stageCron = true
 		}
-		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !(stageQueueInvocationShape(inv) || stageCron))) ||
+		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv) && !stageCron)) ||
 			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}

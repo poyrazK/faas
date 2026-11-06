@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/google/uuid"
 )
@@ -91,6 +92,13 @@ func stageCronEnvironment(ctx context.Context, store invocationAppReader, inv In
 		return ProjectEnvironment{}, false, nil
 	}
 	cronAppID, cronScope, err := crons.CronEnvironmentScope(ctx, *inv.CronID)
+	if errors.Is(err, ErrNotFound) {
+		// A deleted cron owns no environment; the drain cancels its runs.
+		if inv.EnvironmentID != "" || !ProductionDeploymentScope(inv.DeploymentScope) {
+			return ProjectEnvironment{}, false, ErrInvocationEnvironmentWorkIsolation
+		}
+		return ProjectEnvironment{}, false, nil
+	}
 	if err != nil {
 		return ProjectEnvironment{}, false, err
 	}

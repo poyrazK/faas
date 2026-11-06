@@ -4334,6 +4334,12 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
 	m.deleteEnvironmentBudgetConfigsLocked(environmentID)
+	// The environment's crons go with it (ADR-20261104120000).
+	for cronID, cron := range m.crons {
+		if app, ok := m.apps[cron.AppID]; ok && app.ProjectID == projectID && cron.DeploymentScope == slug {
+			delete(m.crons, cronID)
+		}
+	}
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
