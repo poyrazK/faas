@@ -858,6 +858,7 @@ type Manager struct {
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
+	scanRefresh               scanRefreshCoalescer // O36: one canonical scan re-read per refusal burst
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
 	nativeRecoveryFlight      *nativeRecoveryInitFlight
@@ -6038,7 +6039,9 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
-	if gateErr != nil && m.refreshCachedScan(ctx, baseKey, scanKey) {
+	if gateErr != nil && m.scanRefresh.do(ctx, scanKey, time.Now(), func(ctx context.Context) bool {
+		return m.refreshCachedScan(ctx, baseKey, scanKey)
+	}) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
 		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
