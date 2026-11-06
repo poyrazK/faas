@@ -404,8 +404,12 @@ export type { FinancialPriceContract } from './models/FinancialPriceContract.js'
 export type { FireCronRequestResponse } from './models/FireCronRequestResponse.js';
 export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.js';
+export type { GitHubAccountConnection } from './models/GitHubAccountConnection.js';
+export type { GitHubAccountConnections } from './models/GitHubAccountConnections.js';
 export type { GitHubActivityRetryResponse } from './models/GitHubActivityRetryResponse.js';
 export type { GitHubCheckActivity } from './models/GitHubCheckActivity.js';
+export type { GitHubConnectionManageRequest } from './models/GitHubConnectionManageRequest.js';
+export type { GitHubConnectionVerification } from './models/GitHubConnectionVerification.js';
 export type { GitHubDeploymentPolicy } from './models/GitHubDeploymentPolicy.js';
 export type { GitHubDeploymentPolicyPatch } from './models/GitHubDeploymentPolicyPatch.js';
 export type { GitHubInstallActivity } from './models/GitHubInstallActivity.js';

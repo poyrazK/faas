@@ -5221,6 +5221,9 @@ func (s *server) handler() http.Handler {
 	// under /v1/* so cmd/gatewayd-internal/proxy.go:isApidPath already
 	// forwards them; the §11 anti-takeover proof (session.github_login
 	// == install.account.login) is enforced in the handlers.
+	mux.Handle("GET /v1/install/connections", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
+	mux.Handle("DELETE /v1/install/connections/{installationID}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
+	mux.Handle("POST /v1/install/connections/{installationID}/verify", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
 	mux.Handle("POST /v1/install/repos/list", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listInstallableRepos))))
 	mux.Handle("POST /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.bindAppToRepo))))
 	// Customer-facing connection management. GET returns the current

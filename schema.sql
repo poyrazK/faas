@@ -23261,6 +23261,20 @@ END; $$;
 
 
 --
+-- Name: pr_preview_set_account(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pr_preview_set_account() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ SELECT account_id INTO NEW.account_id FROM apps WHERE id=NEW.root_app_id;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: preserve_api_key_runs_principal(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -40910,6 +40924,32 @@ CREATE TABLE public.github_check_updates (
 
 
 --
+-- Name: github_connection_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.github_connection_verifications (
+    account_id uuid NOT NULL,
+    installation_id bigint NOT NULL,
+    verified_at timestamp with time zone NOT NULL,
+    access jsonb NOT NULL
+);
+
+
+--
+-- Name: github_delivery_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.github_delivery_targets (
+    delivery_id text NOT NULL,
+    account_id uuid NOT NULL,
+    status text NOT NULL,
+    skip_reason text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT github_delivery_targets_status_check CHECK ((status = ANY (ARRAY['succeeded'::text, 'pending'::text, 'dead'::text])))
+);
+
+
+--
 -- Name: github_deploy_branches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40981,6 +41021,19 @@ CREATE TABLE public.github_installations (
     last_reconcile_detached_count integer DEFAULT 0 NOT NULL,
     CONSTRAINT github_installations_reconcile_detached_count_ck CHECK ((last_reconcile_detached_count >= 0)),
     CONSTRAINT github_installations_reconcile_repository_count_ck CHECK ((last_reconcile_repository_count >= 0))
+);
+
+
+--
+-- Name: github_transport_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.github_transport_recoveries (
+    delivery_guid text NOT NULL,
+    attempts integer NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT github_transport_recoveries_attempts_check CHECK (((attempts >= 1) AND (attempts <= 3)))
 );
 
 
@@ -50733,6 +50786,8 @@ CREATE TABLE public.pr_preview_sets (
     closed_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     setup_error text,
+    account_id uuid NOT NULL,
+    CONSTRAINT pr_preview_sets_account_not_null CHECK ((account_id IS NOT NULL)),
     CONSTRAINT pr_preview_sets_commit_sha_check CHECK ((commit_sha ~ '^[0-9a-f]{7,64}$'::text)),
     CONSTRAINT pr_preview_sets_installation_id_check CHECK ((installation_id > 0)),
     CONSTRAINT pr_preview_sets_member_app_ids_check CHECK ((cardinality(member_app_ids) > 0)),
@@ -63681,6 +63736,22 @@ ALTER TABLE ONLY public.github_check_updates
 
 
 --
+-- Name: github_connection_verifications github_connection_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.github_connection_verifications
+    ADD CONSTRAINT github_connection_verifications_pkey PRIMARY KEY (account_id, installation_id);
+
+
+--
+-- Name: github_delivery_targets github_delivery_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.github_delivery_targets
+    ADD CONSTRAINT github_delivery_targets_pkey PRIMARY KEY (delivery_id, account_id);
+
+
+--
 -- Name: github_deploy_branches github_deploy_branches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63710,6 +63781,14 @@ ALTER TABLE ONLY public.github_deployments
 
 ALTER TABLE ONLY public.github_installations
     ADD CONSTRAINT github_installations_pkey PRIMARY KEY (account_id, installation_id);
+
+
+--
+-- Name: github_transport_recoveries github_transport_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.github_transport_recoveries
+    ADD CONSTRAINT github_transport_recoveries_pkey PRIMARY KEY (delivery_guid);
 
 
 --
@@ -67837,7 +67916,7 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
 --
 
 ALTER TABLE ONLY public.pr_preview_sets
-    ADD CONSTRAINT pr_preview_sets_pkey PRIMARY KEY (installation_id, repo_full_name, pr_number);
+    ADD CONSTRAINT pr_preview_sets_pkey PRIMARY KEY (account_id, installation_id, repo_full_name, pr_number);
 
 
 --
@@ -75846,10 +75925,10 @@ CREATE INDEX github_installations_account_recent_idx ON public.github_installati
 
 
 --
--- Name: github_installations_installation_id_uidx; Type: INDEX; Schema: public; Owner: -
+-- Name: github_installations_installation_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX github_installations_installation_id_uidx ON public.github_installations USING btree (installation_id);
+CREATE INDEX github_installations_installation_id_idx ON public.github_installations USING btree (installation_id);
 
 
 --
@@ -79990,10 +80069,17 @@ CREATE INDEX project_worker_release_pins_release ON public.project_worker_releas
 
 
 --
--- Name: projects_install_repo_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: projects_account_install_repo_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX projects_install_repo_uniq ON public.projects USING btree (install_id, repo_full_name) WHERE ((install_id IS NOT NULL) AND (repo_full_name IS NOT NULL));
+CREATE UNIQUE INDEX projects_account_install_repo_uniq ON public.projects USING btree (account_id, install_id, repo_full_name) WHERE ((install_id IS NOT NULL) AND (repo_full_name IS NOT NULL));
+
+
+--
+-- Name: projects_install_repo_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX projects_install_repo_idx ON public.projects USING btree (install_id, repo_full_name) WHERE ((install_id IS NOT NULL) AND (repo_full_name IS NOT NULL));
 
 
 --
@@ -87666,6 +87752,13 @@ CREATE TRIGGER postgres_capacity_source_mapping_guard BEFORE UPDATE ON public.po
 --
 
 CREATE TRIGGER postgres_capacity_target_mapping_guard BEFORE UPDATE ON public.postgres_capacity_targets FOR EACH ROW EXECUTE FUNCTION public.postgres_capacity_mapping_guard();
+
+
+--
+-- Name: pr_preview_sets pr_preview_set_account_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER pr_preview_set_account_trg BEFORE INSERT OR UPDATE OF root_app_id ON public.pr_preview_sets FOR EACH ROW EXECUTE FUNCTION public.pr_preview_set_account();
 
 
 --
@@ -95879,6 +95972,30 @@ ALTER TABLE ONLY public.github_check_updates
 
 
 --
+-- Name: github_connection_verifications github_connection_verifications_account_id_installation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.github_connection_verifications
+    ADD CONSTRAINT github_connection_verifications_account_id_installation_id_fkey FOREIGN KEY (account_id, installation_id) REFERENCES public.github_installations(account_id, installation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: github_delivery_targets github_delivery_targets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.github_delivery_targets
+    ADD CONSTRAINT github_delivery_targets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: github_delivery_targets github_delivery_targets_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.github_delivery_targets
+    ADD CONSTRAINT github_delivery_targets_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.github_webhook_deliveries(delivery_id) ON DELETE CASCADE;
+
+
+--
 -- Name: github_deploy_branches github_deploy_branches_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -100444,6 +100561,14 @@ ALTER TABLE ONLY public.postgres_capacity_targets
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_imports
     ADD CONSTRAINT postgres_imports_original_preparation FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
+-- Name: pr_preview_sets pr_preview_sets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pr_preview_sets
+    ADD CONSTRAINT pr_preview_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
 
 
 --

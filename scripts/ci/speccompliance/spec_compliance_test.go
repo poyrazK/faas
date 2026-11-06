@@ -1025,6 +1025,10 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Browser management envelopes are anonymous structs in
+	// handlers_github_accounts.go and middleware's named-CSRF decoder.
+	"GitHubAccountConnections":      true,
+	"GitHubConnectionManageRequest": true,
 	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
 	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
 	"AutomationLiveBaselinePolicy":          true,
@@ -2115,6 +2119,19 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	for name, schema := range map[string]string{"Table": "ScenarioPostgresTable", "Spec": "ScenarioPostgresSpec", "CreateRequest": "CreateScenarioPostgresRequest", "SealRequest": "SealScenarioPostgresRequest", "Receipt": "ScenarioPostgresReceipt", "Snapshot": "ScenarioPostgresSnapshot", "Delta": "ScenarioPostgresDelta", "Evidence": "ScenarioPostgresEvidence"} {
 		dtos[schema] = postgresDTOs[name]
 	}
+
+	// Browser connection DTOs live in their domain and state packages, rather
+	// than pkg/api. Check those actual JSON fields under the OpenAPI names.
+	connectionDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "apid", "githubconnect", "accounts.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub connection DTOs: %v", err)
+	}
+	verificationDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "state", "github_account_connections.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub verification DTOs: %v", err)
+	}
+	dtos["GitHubAccountConnection"] = connectionDTOs["Connection"]
+	dtos["GitHubConnectionVerification"] = verificationDTOs["GitHubConnectionVerification"]
 
 	// Git approval evidence is shared with githubd and the state transaction
 	// without importing pkg/api there. Check its actual JSON fields under the

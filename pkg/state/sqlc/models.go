@@ -6326,6 +6326,21 @@ type GithubCheckUpdate struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type GithubConnectionVerification struct {
+	AccountID      pgtype.UUID
+	InstallationID int64
+	VerifiedAt     pgtype.Timestamptz
+	Access         []byte
+}
+
+type GithubDeliveryTarget struct {
+	DeliveryID string
+	AccountID  pgtype.UUID
+	Status     string
+	SkipReason string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type GithubDeployBranch struct {
 	ProjectID pgtype.UUID
 	Branch    string
@@ -6368,6 +6383,13 @@ type GithubInstallation struct {
 	LastReconcileError           string
 	LastReconcileRepositoryCount int32
 	LastReconcileDetachedCount   int32
+}
+
+type GithubTransportRecovery struct {
+	DeliveryGuid  string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 type GithubWebhookDelivery struct {
@@ -11747,6 +11769,7 @@ type PrPreviewSet struct {
 	ClosedAt       pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	SetupError     pgtype.Text
+	AccountID      pgtype.UUID
 }
 
 type PrewarmIntent struct {

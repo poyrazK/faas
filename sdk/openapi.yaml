@@ -6215,6 +6215,64 @@ paths:
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ConflictRename'}
+  /v1/install/connections:
+    get:
+      tags: [github]
+      operationId: listGitHubAccountConnections
+      summary: List this account's GitHub deployment connections.
+      security: [{cookieAuth: []}]
+      responses:
+        '200':
+          description: Deployment installations and a fresh management CSRF token; credentials are never returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GitHubAccountConnections'}
+  /v1/install/connections/{installationID}:
+    parameters:
+      - name: installationID
+        in: path
+        required: true
+        description: GitHub installation whose deployment connection should be removed from this account.
+        schema: {type: integer, format: int64, minimum: 1}
+    delete:
+      tags: [github]
+      operationId: disconnectGitHubAccountConnection
+      summary: Remove only this account's deployment access and bindings. Preserve login and other accounts.
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GitHubConnectionManageRequest'}
+      responses:
+        '204': {description: Disconnected. Safe to repeat.}
+        '400': {description: Missing or invalid management CSRF token.}
+  /v1/install/connections/{installationID}/verify:
+    parameters:
+      - name: installationID
+        in: path
+        required: true
+        description: Connected GitHub installation whose current access should be verified for this account.
+        schema: {type: integer, format: int64, minimum: 1}
+    post:
+      tags: [github]
+      operationId: verifyGitHubAccountConnection
+      summary: Verify live GitHub repository access and installation permissions.
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GitHubConnectionManageRequest'}
+      responses:
+        '200':
+          description: Current access granted on GitHub.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GitHubConnectionVerification'}
+        '400': {description: Verification requires a valid management CSRF token and installation identifier.}
+        '404': {description: Installation not connected to this account.}
+        '503': {description: GitHub verification temporarily unavailable.}
   /v1/install/repos/list:
     post:
       tags: [github]
@@ -24744,6 +24802,44 @@ components:
       required: [csrf_token]
       properties:
         csrf_token: {type: string}
+    GitHubConnectionManageRequest:
+      description: Named CSRF token required to manage this account's GitHub deployment connections.
+      type: object
+      required: [csrf_token]
+      properties:
+        csrf_token: {type: string}
+    GitHubAccountConnection:
+      description: Credential-free health and access summary for one account-owned deployment authorization.
+      type: object
+      required: [installation_id, github_login, health, repository_count]
+      properties:
+        access: {$ref: '#/components/schemas/GitHubConnectionVerification'}
+        installation_id: {type: integer, format: int64}
+        github_login: {type: string}
+        health: {type: string, enum: [unknown, healthy, degraded]}
+        repository_count: {type: integer}
+        last_verified_at: {type: string, format: date-time}
+    GitHubAccountConnections:
+      description: This account's deployment connections and the CSRF token for subsequent management actions.
+      type: object
+      required: [connections, csrf_token]
+      properties:
+        csrf_token: {type: string}
+        connections:
+          type: array
+          items: {$ref: '#/components/schemas/GitHubAccountConnection'}
+    GitHubConnectionVerification:
+      description: Live GitHub installation permissions, repository selection and verification time.
+      type: object
+      required: [account_type, repository_selection, permissions, verified_at, repository_count]
+      properties:
+        account_type: {type: string}
+        repository_selection: {type: string}
+        permissions:
+          type: object
+          additionalProperties: {type: string}
+        verified_at: {type: string, format: date-time}
+        repository_count: {type: integer}
     GitHubInstallStatus:
       description: |
         Account-scoped GitHub installation and app binding health. Sealed

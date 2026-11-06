@@ -433,6 +433,9 @@ var routeExclude = map[string]bool{
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
 	"POST /v1/install/repos/list":                                true, // bind picker hydrates from this; browser-only
+	"GET /v1/install/connections":                                true, // account connection manager; session-cookie-only
+	"DELETE /v1/install/connections/{installationID}":            true, // account disconnect; session-cookie + named CSRF-only
+	"POST /v1/install/connections/{installationID}/verify":       true, // account access verification; session-cookie + named CSRF-only
 	"POST /v1/apps/{slug}/install/bind":                          true, // bind picker writes through this; browser-only
 	"GET /v1/apps/{slug}/install/bind":                           true, // dashboard connection status; session-cookie-only
 	"GET /v1/apps/{slug}/install":                                true, // canonical dashboard connection status; session-cookie-only
