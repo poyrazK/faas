@@ -57,7 +57,7 @@ func validateDomainPlanInput(in DomainPlanInput) error {
 	}
 	for i, d := range m.Domains {
 		if err := ValidateCustomDomainClaim(d.Domain); err != nil {
-			return fmt.Errorf("%w: %s", ErrInvalidArgument, err)
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 		if in.Targets[i].AppID == "" || in.Targets[i].App != d.App || in.Targets[i].Environment != d.Environment {
 			return ErrInvalidArgument

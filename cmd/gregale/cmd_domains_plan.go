@@ -43,7 +43,7 @@ func readDomainArtifact(path string, out any, asJSON bool) error {
 		return err
 	}
 	var extra any
-	if err := decode(&extra); err != io.EOF {
+	if err := decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("domain file must contain exactly one document")
 	}
 	return nil
