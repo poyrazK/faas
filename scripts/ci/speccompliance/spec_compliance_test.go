@@ -1127,6 +1127,7 @@ var schemaSpecOnly = map[string]bool{
 	// pkg/apihostingreceipt structs, not pkg/api DTOs.
 	// TestSpecComplianceDeploymentStageState checks their fields and enums.
 	"DeploymentStageState":          true,
+	"DeploymentRetryIntent":         true,
 	"DeploymentStageHistoryEntry":   true,
 	"DeploymentDependencyGate":      true,
 	"DeploymentDependencyPin":       true,
