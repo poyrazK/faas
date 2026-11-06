@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -120,24 +121,52 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 		dependency gregalemanifest.DatabaseDependency
 		database   api.ManagedPostgresDatabase
 		scope      string
+		create     string // name of a database this deploy creates first
+	}
+	// Every database the manifest creates, so an entry without `create` may
+	// bind one another entry creates (ADR-20261106105015 §1).
+	creates := map[string]gregalemanifest.DatabaseCreate{}
+	for _, dependency := range manifest.Databases {
+		if dependency.Create != nil {
+			creates[strings.TrimSpace(dependency.Database)] = *dependency.Create
+		}
 	}
 	// Resolve and validate every dependency before creating the first
-	// binding. A typo or a still-provisioning database must not leave an
-	// earlier dependency attached when the command is retried.
+	// database or binding. A typo or a still-provisioning database must not
+	// leave an earlier dependency attached when the command is retried.
 	plans := make([]bindingPlan, 0, len(matching))
 	for i, dependency := range matching {
+		name := strings.TrimSpace(dependency.Database)
+		_, declaresCreate := creates[name]
 		database, err := resolveManagedPostgresDatabase(ctx, catalog, dependency.Database)
 		if err != nil {
-			return fmt.Errorf("database dependency %d (%q): %w", i+1, dependency.Database, err)
-		}
-		if database.State != "ready" {
+			switch {
+			case strings.Contains(err.Error(), "ambiguous"):
+				return fmt.Errorf("database dependency %d (%q): %w", i+1, dependency.Database, err)
+			case !declaresCreate:
+				return fmt.Errorf("database dependency %d (%q): %w; add `create: true` to create it on deploy", i+1, dependency.Database, err)
+			}
+		} else if database.State != "ready" && (!declaresCreate || database.State != "provisioning") {
 			return fmt.Errorf("database dependency %d (%q): database is %s; retry after provisioning completes", i+1, dependency.Database, database.State)
 		}
 		scope, err := manifestDependencyScope(dependency, environment)
 		if err != nil {
 			return fmt.Errorf("database dependency %d (%q): %w", i+1, dependency.Database, err)
 		}
-		plans = append(plans, bindingPlan{dependency: dependency, database: database, scope: scope})
+		plan := bindingPlan{dependency: dependency, database: database, scope: scope}
+		if database.ID == "" || database.State != "ready" {
+			plan.create = name
+		}
+		plans = append(plans, plan)
+	}
+	ready, err := ensureManifestDatabases(ctx, client, creates, plans, func(p bindingPlan) string { return p.create })
+	if err != nil {
+		return err
+	}
+	for i := range plans {
+		if plans[i].create != "" {
+			plans[i].database = ready[plans[i].create]
+		}
 	}
 	for i, plan := range plans {
 		dependency := plan.dependency
@@ -152,6 +181,12 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 			return fmt.Errorf("database dependency %d (%q): create binding: %w", i+1, dependency.Database, err)
 		}
 		if binding.State != "ready" {
+			if plan.create != "" && binding.State == "provisioning" {
+				// The reconciler injects the key once the new database is
+				// ready; the app reads it on its next start.
+				PrintWarn(osStderr, "%s: database %s is still provisioning; %s arrives when it is ready and the app reads it on its next start", slug, database.Name, binding.EnvironmentKey)
+				continue
+			}
 			return fmt.Errorf("database dependency %d (%q): binding %s is %s; retry after the database becomes ready", i+1, dependency.Database, binding.ID, binding.State)
 		}
 		if !jsonOutput {
@@ -215,4 +250,78 @@ type managedPostgresCatalog struct {
 
 func (c managedPostgresCatalog) ListManagedPostgresDatabases(context.Context) (api.ManagedPostgresDatabaseList, error) {
 	return api.ManagedPostgresDatabaseList{Items: c.items}, nil
+}
+
+// manifestPostgresCreator is the optional client surface for `create`
+// declarations; fakes without it refuse them.
+type manifestPostgresCreator interface {
+	GetManagedPostgresCapabilities(context.Context, string) (api.ManagedPostgresCapabilities, error)
+	CreateManagedPostgresDatabase(context.Context, api.CreateManagedPostgresDatabaseRequest) (api.ManagedPostgresDatabase, error)
+	GetManagedPostgresDatabase(context.Context, string) (api.ManagedPostgresDatabase, error)
+}
+
+// manifestDatabaseReadyWait bounds how long a deploy waits for a database
+// it just created before binding it pending.
+var (
+	manifestDatabaseReadyWait = 3 * time.Minute
+	manifestDatabasePoll      = 2 * time.Second
+)
+
+// ensureManifestDatabases creates each database the plans need (once per
+// name) and waits for it to become ready, so the deployment that follows
+// starts with its key. It returns the latest view of each.
+func ensureManifestDatabases[P any](ctx context.Context, client any, creates map[string]gregalemanifest.DatabaseCreate, plans []P, createName func(P) string) (map[string]api.ManagedPostgresDatabase, error) {
+	out := map[string]api.ManagedPostgresDatabase{}
+	for _, plan := range plans {
+		name := createName(plan)
+		if name == "" || out[name].ID != "" {
+			continue
+		}
+		creator, ok := client.(manifestPostgresCreator)
+		if !ok {
+			return nil, fmt.Errorf("database %q: creating databases is unavailable", name)
+		}
+		request := creates[name].Request(name)
+		if request.Region == "" || request.PostgresMajor == 0 {
+			capabilities, err := creator.GetManagedPostgresCapabilities(ctx, request.Region)
+			if err != nil {
+				return nil, fmt.Errorf("database %q: read managed PostgreSQL capabilities: %w", name, err)
+			}
+			if request.Region == "" {
+				request.Region = capabilities.Region
+			}
+			if creates[name].PostgresMajor == 0 {
+				// The newest offered major, as a project deploy picks it.
+				for _, major := range capabilities.PostgresMajors {
+					request.PostgresMajor = max(request.PostgresMajor, major)
+				}
+			}
+		}
+		database, err := creator.CreateManagedPostgresDatabase(ctx, request)
+		if readRefused(err) {
+			return nil, fmt.Errorf("gregale.yaml creates database %q, which needs a credential with postgres:manage: %w", name, err)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("create database %q: %w", name, err)
+		}
+		if !jsonOutput {
+			PrintProgress(osStderr, "Creating database %s (PostgreSQL %d, %s)", database.Name, database.PostgresMajor, database.Region)
+		}
+		deadline := time.Now().Add(manifestDatabaseReadyWait)
+		for database.State == "provisioning" && time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(manifestDatabasePoll):
+			}
+			if latest, err := creator.GetManagedPostgresDatabase(ctx, database.ID); err == nil {
+				database = latest
+			}
+		}
+		if database.State != "ready" && database.State != "provisioning" {
+			return nil, fmt.Errorf("database %q is %s after creation", name, database.State)
+		}
+		out[name] = database
+	}
+	return out, nil
 }

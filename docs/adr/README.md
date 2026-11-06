@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261106105015: gregale.yaml creates what it binds, `postgres connect`, and SDK lifecycle hooks](20261106105015-declarative-resources-connect-and-lifecycle-helpers.md) — accepted; `create` on gregale.yaml databases and buckets (project and single-app deploys; project deploys now apply root `buckets:`), `gregale postgres connect` through a bound app's task VM, and Go/Node/Python helpers for the before_checkpoint/after_restore hooks
+
 - [ADR-20261105181403: Bound outbound work and pace retries without an explicit policy](20261105181403-outbound-reliability-defaults.md)
 
 - [ADR-20261105180352: Preserve PostgreSQL hold ownership and fresh plan lifetimes](20261105180352-managed-postgres-hold-publication-and-plan-lifetimes.md) — durable mirror pins, independent mirror uploads, fresh named plans, and lifecycle-fenced cap holds

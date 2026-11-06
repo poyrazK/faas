@@ -111,6 +111,62 @@ databases:
 - In a project with several apps, give each entry an `app`.
 - All of one deployment's database entries use the same scope.
 
+Add `create` to have the deploy create the database when none with that name
+exists, so a new project needs no `gregale postgres create` first
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)):
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:                # or `create: true` for the defaults
+      postgres_major: 17
+      class: development   # development (default), burstable or production
+      scale_to_zero: true  # default
+      region: us-east-1    # defaults to your default region
+  - database: chronolake-db
+    app: gateway
+    env: MIGRATION_DATABASE_URL
+    access: migration
+```
+
+- `create` applies only when the database is missing: an existing database
+  keeps its settings, and the deploy never changes or deletes one.
+- Declare `create` once per database; other entries for the same name bind it.
+- A project deploy lists the database under **Managed PostgreSQL (provided by
+  this deploy)** before you apply. The database counts against your plan's
+  limit, and the plan stops before creating anything when it would not fit.
+- `gregale deploy` of a single app waits up to three minutes for the new
+  database. A project deploy reserves the bindings right away and delivers each
+  key once the database is ready, usually before the first build ends.
+- Creating a database needs a credential with `postgres:manage`. Deploy
+  tokens and `deploy:write` keys can bind existing databases but not create
+  them.
+
+## Connect from your laptop
+
+`gregale postgres connect` opens `psql` on your machine against a managed
+database, through an app that is bound to it:
+
+```sh
+gregale postgres connect orders
+gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'
+gregale postgres connect orders --proxy --port 5433   # for a GUI client
+```
+
+It starts a task VM of a bound app to read that binding and relays a local
+port to the database through
+[`gregale app port-forward`](apps.md). TLS still verifies the database's own
+host name, and the password reaches `psql` in its environment, so it is never
+printed or put on the command line. With `--proxy` the tunnel stays open for
+another client; take the password from the app's binding.
+
+- It picks a `ready` binding, preferring `read_write`, then `migration`, then
+  `read_only`. Choose one with `--app`, `--env` or `--access`.
+- It needs [app tasks](apps.md) on your plan and `psql` on your machine (or
+  `--proxy`). The app's image needs `printenv`, which Debian, Ubuntu and
+  Alpine images include.
+
 Choose the credential with `--access`:
 
 | Access | Use it for |

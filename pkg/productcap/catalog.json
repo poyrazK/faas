@@ -468,7 +468,8 @@
       "cli": [
         "app cp",
         "app exec",
-        "app port-forward"
+        "app port-forward",
+        "postgres connect"
       ]
     },
     {
