@@ -22,11 +22,14 @@ T = TypeVar("T", bound="GitHubAccountConnection")
 
 @_attrs_define
 class GitHubAccountConnection:
+    """Credential-free health and access summary for one account-owned deployment authorization."""
+
     installation_id: int
     github_login: str
     health: GitHubAccountConnectionHealth
     repository_count: int
     access: GitHubConnectionVerification | Unset = UNSET
+    """Live GitHub installation permissions, repository selection and verification time."""
     last_verified_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

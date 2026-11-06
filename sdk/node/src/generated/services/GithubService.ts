@@ -37,6 +37,9 @@ export class GithubService {
     installationId,
     requestBody,
   }: {
+    /**
+     * GitHub installation whose deployment connection should be removed from this account.
+     */
     installationId: number,
     requestBody: GitHubConnectionManageRequest,
   }): CancelablePromise<void> {
@@ -62,6 +65,9 @@ export class GithubService {
     installationId,
     requestBody,
   }: {
+    /**
+     * Connected GitHub installation whose current access should be verified for this account.
+     */
     installationId: number,
     requestBody: GitHubConnectionManageRequest,
   }): CancelablePromise<GitHubConnectionVerification> {
@@ -74,7 +80,7 @@ export class GithubService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Missing or invalid management CSRF token.`,
+        400: `Verification requires a valid management CSRF token and installation identifier.`,
         404: `Installation not connected to this account.`,
         503: `GitHub verification temporarily unavailable.`,
       },

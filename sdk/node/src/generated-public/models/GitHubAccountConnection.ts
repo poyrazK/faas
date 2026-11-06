@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { GitHubConnectionVerification } from './GitHubConnectionVerification.js';
+/**
+ * Credential-free health and access summary for one account-owned deployment authorization.
+ */
 export type GitHubAccountConnection = {
   access?: GitHubConnectionVerification;
   installation_id: number;

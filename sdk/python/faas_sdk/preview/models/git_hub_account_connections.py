@@ -15,6 +15,8 @@ T = TypeVar("T", bound="GitHubAccountConnections")
 
 @_attrs_define
 class GitHubAccountConnections:
+    """This account's deployment connections and the CSRF token for subsequent management actions."""
+
     csrf_token: str
     connections: list[GitHubAccountConnection]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

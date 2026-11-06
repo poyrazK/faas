@@ -16,6 +16,8 @@ T = TypeVar("T", bound="GitHubConnectionVerification")
 
 @_attrs_define
 class GitHubConnectionVerification:
+    """Live GitHub installation permissions, repository selection and verification time."""
+
     account_type: str
     repository_selection: str
     permissions: GitHubConnectionVerificationPermissions

@@ -11,6 +11,8 @@ T = TypeVar("T", bound="GitHubConnectionManageRequest")
 
 @_attrs_define
 class GitHubConnectionManageRequest:
+    """Named CSRF token required to manage this account's GitHub deployment connections."""
+
     csrf_token: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -80,7 +80,8 @@ def sync_detailed(
 
     Args:
         installation_id (int):
-        body (GitHubConnectionManageRequest):
+        body (GitHubConnectionManageRequest): Named CSRF token required to manage this account's
+            GitHub deployment connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,7 +113,8 @@ def sync(
 
     Args:
         installation_id (int):
-        body (GitHubConnectionManageRequest):
+        body (GitHubConnectionManageRequest): Named CSRF token required to manage this account's
+            GitHub deployment connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,7 +141,8 @@ async def asyncio_detailed(
 
     Args:
         installation_id (int):
-        body (GitHubConnectionManageRequest):
+        body (GitHubConnectionManageRequest): Named CSRF token required to manage this account's
+            GitHub deployment connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,7 +172,8 @@ async def asyncio(
 
     Args:
         installation_id (int):
-        body (GitHubConnectionManageRequest):
+        body (GitHubConnectionManageRequest): Named CSRF token required to manage this account's
+            GitHub deployment connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

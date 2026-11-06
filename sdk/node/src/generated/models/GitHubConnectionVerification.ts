@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Live GitHub installation permissions, repository selection and verification time.
+ */
 export type GitHubConnectionVerification = {
   account_type: string;
   repository_selection: string;
