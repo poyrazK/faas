@@ -6,6 +6,10 @@ SET LOCAL lock_timeout = '5s';
 -- runtime facts. Borrowed artifacts and reviewed runtime/source inputs retain
 -- their existing immutable comparisons in the candidate trigger.
 -- +goose StatementBegin
+DO $install$
+BEGIN
+ IF to_regprocedure('environment_source_imaging_metadata_update_valid(deployments,deployments)') IS NULL THEN
+ EXECUTE $function$
 CREATE FUNCTION environment_source_imaging_metadata_update_valid(before_row deployments, after_row deployments) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
  SELECT coalesce(
@@ -36,6 +40,10 @@ LANGUAGE sql IMMUTABLE AS $$
    AND (NOT (after_row.inferred_profile ? 'image_healthcheck_required') OR jsonb_typeof(after_row.inferred_profile->'image_healthcheck_required')='boolean')
   )),false);
 $$;
+$function$;
+ END IF;
+END;
+$install$;
 -- +goose StatementEnd
 
 -- Change only the two derived-field comparisons; all provenance, deployment
@@ -49,6 +57,9 @@ BEGIN
  original_identity:='ROW(NEW.app_id,NEW.scope,NEW.kind,NEW.image_digest,NEW.commit_sha';
  derived_identity:='ROW(NEW.app_id,NEW.scope,NEW.kind,CASE WHEN environment_source_imaging_metadata_update_valid(OLD,NEW) THEN OLD.image_digest ELSE NEW.image_digest END,NEW.commit_sha';
  definition:=pg_get_functiondef('guard_environment_workload_candidate()'::regprocedure);
+ IF position(derived_profile IN definition)>0 AND position(derived_identity IN definition)>0 THEN
+  RETURN; -- Preserve the installed guard, including later strengthening.
+ END IF;
  IF position(original_profile IN definition)=0 OR position(original_identity IN definition)=0 THEN
   RAISE EXCEPTION 'candidate immutability guard differs from the expected imaging migration contract';
  END IF;

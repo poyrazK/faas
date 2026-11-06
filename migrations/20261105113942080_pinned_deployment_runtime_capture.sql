@@ -5,6 +5,10 @@ SET LOCAL lock_timeout = '5s';
 -- Resolve only VM shape from immutable deployment inputs. Enrollment, signer,
 -- egress and artifact authorization remain on their existing locked sources.
 -- +goose StatementBegin
+DO $install$
+BEGIN
+ IF to_regprocedure('application_standard_deployment_runtime(apps,deployments)') IS NULL THEN
+ EXECUTE $function$
 CREATE FUNCTION application_standard_deployment_runtime(a apps, d deployments) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE settings jsonb;
@@ -19,6 +23,10 @@ BEGIN
   'ram_mb',coalesce(settings->'ram_mb',to_jsonb(a.ram_mb)),
   'app_protocol',coalesce(settings->'app_protocol',to_jsonb(a.app_protocol)));
 END $$;
+$function$;
+ END IF;
+END;
+$install$;
 -- +goose StatementEnd
 
 -- Patch the established locked snapshot, preserving every control fence and
@@ -36,6 +44,12 @@ BEGIN
   producers:=application_standard_runtime_producers(a,d);
  END IF;';
  definition:=pg_get_functiondef('application_standard_runtime_snapshot(uuid,uuid)'::regprocedure);
+ IF position('a.type := application_standard_deployment_runtime(a,d)' IN definition)>0
+    AND position('a.runtime := application_standard_deployment_runtime(a,d)' IN definition)>0
+    AND position('a.ram_mb := (application_standard_deployment_runtime(a,d)' IN definition)>0
+    AND position('a.app_protocol := application_standard_deployment_runtime(a,d)' IN definition)>0 THEN
+  RETURN; -- The later scoped-controls patch may also be present.
+ END IF;
  IF position(original IN definition)=0 THEN
   RAISE EXCEPTION 'runtime capture differs from the expected deployment shape contract';
  END IF;

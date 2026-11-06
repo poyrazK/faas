@@ -7,6 +7,10 @@ SET LOCAL lock_timeout = '5s';
 -- Existing active rows capture OLD before a failure clears traffic/rollout.
 -- Terminal legacy rows have already lost that information and are not guessed.
 -- +goose StatementBegin
+DO $install$
+BEGIN
+ IF to_regprocedure('preserve_deployment_retry_intent()') IS NULL THEN
+ EXECUTE $function$
 CREATE FUNCTION preserve_deployment_retry_intent() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE intent jsonb;
@@ -31,11 +35,23 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+$function$;
+ END IF;
+END;
+$install$;
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+DO $install$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='deployments'::regclass AND tgname='deployments_retry_intent') THEN
 CREATE TRIGGER deployments_retry_intent
 BEFORE INSERT OR UPDATE OF status, stage_state ON deployments
 FOR EACH ROW EXECUTE FUNCTION preserve_deployment_retry_intent();
+ END IF;
+END;
+$install$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

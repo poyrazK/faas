@@ -6,6 +6,10 @@ SET LOCAL lock_timeout = '5s';
 -- Current enrollment sources keep their existing exact materialized values;
 -- a pin cannot override a standard, including a retained default or exception.
 -- +goose StatementBegin
+DO $install$
+BEGIN
+ IF to_regprocedure('application_standard_deployment_controls(apps,deployments,app_application_standards)') IS NULL THEN
+ EXECUTE $function$
 CREATE FUNCTION application_standard_deployment_controls(a apps, d deployments, e app_application_standards) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE settings jsonb; controls jsonb; projection jsonb; field text;
@@ -35,6 +39,10 @@ BEGIN
  END LOOP;
  RETURN controls;
 END $$;
+$function$;
+ END IF;
+END;
+$install$;
 -- +goose StatementEnd
 
 -- Keep the original ownership locks, enrollment/exception fencing, native
@@ -48,6 +56,9 @@ BEGIN
  replacement:='a := jsonb_populate_record(a,application_standard_deployment_controls(a,d,e));
   producers:=application_standard_runtime_producers(a,d);';
  definition:=pg_get_functiondef('application_standard_runtime_snapshot(uuid,uuid)'::regprocedure);
+ IF position(replacement IN definition)>0 THEN
+  RETURN; -- Never replace a guard already extended by this migration.
+ END IF;
  IF position(original IN definition)=0 OR position('application_standard_deployment_controls' IN definition)>0 THEN
   RAISE EXCEPTION 'runtime snapshot differs from expected scoped-policy migration contract';
  END IF;
