@@ -1526,7 +1526,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		keyLookups:        newKeyLookupLimiter(),
 		publicAuthGuesses: newPublicAuthGuessLimiter(),
 		coldWakeClients:   newColdWakeClientBudget(),
-		bodyMemoryBudget:  newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
+		bodyMemoryBudget:  newRequestBodyMemoryBudget(),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -2604,6 +2604,7 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if preparer, ok := h.backend.(RouteTargetPreparer); ok {
 		preparer.PrepareRouteTarget(r.Context(), target)
 	}
+	*r = *r.WithContext(withEdgeRouteSource(r.Context(), hostApp))
 	*app = target
 	return true
 }
@@ -3978,15 +3979,19 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// platform cap (spec §4.1.2) even on plans that accept larger
 	// bodies through the spooled proxy path.
 	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
-	lease, ok := h.holdValidateBody(r, int64(cap))
+	lease, ok := h.holdValidateBody(r, app, int64(cap))
 	if !ok {
 		api.WriteProblem(w, api.ErrRequestBodyBudget())
 		return true
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(&budgetedBodyReader{r: r.Body, lease: lease})
 	_ = r.Body.Close()
-	lease.shrink(int64(cap) - int64(len(body)))
+	lease.shrink(lease.bytes - int64(len(body)))
+	if errors.Is(err, errRequestBodyBudget) {
+		api.WriteProblem(w, api.ErrRequestBodyBudget())
+		return true
+	}
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -4038,17 +4043,25 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	return false
 }
 
-// holdValidateBody reserves heap budget for a validate rule's buffered body:
-// the declared length when the client sent one under the cap, else the cap.
-// The hold lasts until the request finishes, since the buffered bytes are
-// forwarded.
-func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
-	lease, _ := h.bodyMemoryBudget.lease("", "")
-	want := cap
-	if r.ContentLength >= 0 && r.ContentLength < cap {
+// holdValidateBody reserves heap budget for a validate rule's buffered body
+// under the client's and the app owner's shares (ADR-091 amendment
+// 2026-11-04, round 12): the declared length when the client sent one under
+// the cap, else one step, grown by budgetedBodyReader as bytes arrive. It
+// used to reserve the whole cap for a body of unknown length under no share,
+// so a few slow chunked uploads to any app spent the node's budget and every
+// other tenant's validate rules answered 503. The hold lasts until the
+// request finishes, since the buffered bytes are forwarded.
+func (h *Handler) holdValidateBody(r *http.Request, app App, cap int64) (*requestBodyLease, bool) {
+	lease, ok := h.bodyMemoryBudget.lease(requestBodyClient(r), requestBodyOwner(app))
+	if !ok {
+		return nil, false
+	}
+	want := min(cap, api.RequestBodyMemoryReserveStep)
+	if r.ContentLength >= 0 && r.ContentLength <= cap {
 		want = r.ContentLength
 	}
 	if !lease.grow(want) {
+		lease.release()
 		return nil, false
 	}
 	context.AfterFunc(r.Context(), lease.release)
@@ -7025,6 +7038,11 @@ haveApp:
 	// before cache lookup or backend wake/admission.
 	if h.applyEdgeRuleRespond(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// The health path and a parked app's HEAD / are answered here, past the
+	// access gates (ADR-091 amendment 2026-11-04, round 12).
+	if h.serveGatedEdgeAnswer(w, r, app, declaredPath) {
 		return
 	}
 	managedVersionSetCookie := ""

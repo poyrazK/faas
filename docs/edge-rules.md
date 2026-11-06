@@ -72,8 +72,11 @@ its own code. An inherited `throttle` rule shares production's buckets.
 Edge rules do not run for managed realtime connections
 (`/__gregale/realtime/`), which authenticate with their own tokens, for
 requests to a production fork, which carry the fork's token, or for the
-`robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
-when your manifest configures them.
+`robots.txt` and `favicon.ico` answers the gateway serves itself when your
+manifest configures them. The health-check answer and a parked app's `HEAD /`
+answer come after the access rules (`ip`, `geo`, `jwt`, `maintenance`,
+`challenge` and attack mode), so an uptime monitor of a gated app must be
+admitted by those rules.
 
 Edge rules apply to requests that arrive at your public hosts. A call from one
 of your apps to another over the internal service network goes straight to the
@@ -274,7 +277,8 @@ token, or another credential bound to one app, may write a route rule only
 to that app itself; routing to another app needs an account API key.
 
 The rest of a routed request runs as the target app's: its `@app` rules
-apply, and the source app's `@app` rules do not. Rules written for the host
+apply, and the source app's `@app` rules do not, except the source app's
+attack mode, which challenges routed requests too. Rules written for the host
 itself (an exact host, `*` or a glob) still apply. To gate routed paths too,
 put the gate on the host, or on the target app's `@app`.
 
@@ -517,9 +521,11 @@ id>` to the response. A `Content-Type` outside `content_types` gets 415.
 
 The body is read into memory to validate it, up to `max_body_bytes`. Unset,
 the cap is 25 MiB, or your plan's request body cap if that is lower. Each
-gateway bounds the request bodies it holds in memory at once; when that bound
-is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
-before its body is read. Set
+gateway bounds the request bodies it holds in memory at once, and one
+customer's apps hold at most a third of that bound and one client address at
+most four bodies, so other customers' uploads cannot use it up. A body sent
+without `Content-Length` is held as it arrives. When a bound is reached, a
+request gets 503 `capacity_unavailable` with `Retry-After`. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
 and `apply_while_streaming` to validate a WebSocket handshake too. Path,
 query and header parameters are always checked, and so is any body sent with

@@ -235,7 +235,15 @@ const (
 	RequestBodySpoolOwnerShareDivisor       = 4
 	RequestBodySpoolClientIPv6Prefix        = 56
 	RequestBodyMemoryNodeBytes        int64 = 96 << 20
-	RequestBodyBudgetRetryAfter             = 5 * time.Second
+	// One app owner holds at most a third of RequestBodyMemoryNodeBytes
+	// (32 MiB, above the 25 MiB validate cap), one client IP (an IPv6 /56)
+	// at most RequestBodyMemoryPerClient bodies, and a body of unknown
+	// length reserves RequestBodyMemoryReserveStep at a time as it is read
+	// (ADR-091 amendment 2026-11-04, round 12).
+	RequestBodyMemoryOwnerShareDivisor       = 3
+	RequestBodyMemoryPerClient               = 4
+	RequestBodyMemoryReserveStep       int64 = 64 << 10
+	RequestBodyBudgetRetryAfter              = 5 * time.Second
 )
 
 // The project scan reads Kubernetes manifests under k8s/, kubernetes/,
