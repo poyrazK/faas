@@ -1186,6 +1186,8 @@ Retry a failed deployment from a specific stage
 
 Choose the stage with --from.
 
+A retry is a new deployment. Stage outputs are not kept between deployments, so a source build restarts from the original source; the build cache makes unchanged layers fast.
+
 ### release resume
 
 Reconnect to a saved app or project deploy and finish pending checks
