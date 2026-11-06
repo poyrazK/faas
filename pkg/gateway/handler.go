@@ -4473,6 +4473,12 @@ func applyPlanRequestBodyLimit(w http.ResponseWriter, r *http.Request, app App) 
 		api.WriteProblem(w, api.ErrRequestBodyTooLarge(cap, r.ContentLength))
 		return true
 	}
+	if r.Body == nil || r.Body == http.NoBody {
+		// Nothing to cap. Wrapping http.NoBody hid it from every later
+		// "no body" fast path, so each GET paid for body admission and a
+		// request-body pump to vmmd.
+		return false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, cap)
 	return false
 }
