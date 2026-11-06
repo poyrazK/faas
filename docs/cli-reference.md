@@ -4474,7 +4474,7 @@ gregale app binding verify my-api --release v12 --release-policy --object-storag
 
 Manage per-app deploy tokens for CI
 
-Adding or rotating a token needs an MFA step-up from the last 5 minutes: run `gregale account mfa verify` first.
+When MFA is enabled, browser token creation or rotation needs verification from the last 5 minutes. CLI bearer credentials retain their configured scopes.
 
 #### app deploy-token list
 
