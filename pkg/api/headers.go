@@ -252,21 +252,49 @@ func IsGuestIdentityHeader(name string) bool {
 	if IsReservedOperationHeader(name) {
 		return true
 	}
-	// Every name below starts x-; the gate spares other headers ToLower's copy.
+	// Every name in the set starts x-; the gate spares other headers the lookup.
 	if !HasLowerPrefix(name, "x-") {
 		return false
 	}
-	switch strings.ToLower(name) {
-	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
-		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
-		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
-		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
-		"x-gregale-operation-id", "x-gregale-operation-generation", "x-gregale-operation-result-version",
-		"x-gregale-customer-operation-id", "x-gregale-operation-attempt", "x-gregale-operation-capability":
-		return true
-	default:
-		return false
+	return hasLowerKey(guestIdentityHeaderNames, name)
+}
+
+// guestIdentityHeaderNames is IsGuestIdentityHeader's set, in lowercase.
+var guestIdentityHeaderNames = map[string]struct{}{
+	"x-faas-request-id": {}, "x-faas-app-id": {}, "x-faas-deployment-id": {},
+	"x-faas-tenant-id": {}, "x-faas-platform-tenant-id": {}, "x-faas-instance-id": {}, "x-faas-node-id": {},
+	"x-faas-region": {}, "x-faas-commit-sha": {}, "x-faas-deployment-tag": {},
+	"x-faas-deployment-created-at": {}, "x-faas-image-digest": {}, "x-faas-flag-context": {},
+	"x-gregale-operation-id": {}, "x-gregale-operation-generation": {}, "x-gregale-operation-result-version": {},
+	"x-gregale-customer-operation-id": {}, "x-gregale-operation-attempt": {}, "x-gregale-operation-capability": {},
+}
+
+// hasLowerKey reports whether strings.ToLower(name) is in set. The gateway
+// classifies every header of a request several times, and ToLower copies any
+// name with capitals, which every canonical header name has: about 1% of
+// gatewayd-internal CPU (2026-11-06 profile). An ASCII name of up to 64 bytes
+// is lowered on the stack, where a map lookup of string(bytes) does not copy
+// it; any other name falls back to strings.ToLower, so the answer is always
+// the same.
+func hasLowerKey(set map[string]struct{}, name string) bool {
+	var lowered [64]byte
+	if len(name) > len(lowered) {
+		_, ok := set[strings.ToLower(name)]
+		return ok
 	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= utf8.RuneSelf {
+			_, ok := set[strings.ToLower(name)]
+			return ok
+		}
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		lowered[i] = c
+	}
+	_, ok := set[string(lowered[:len(name)])]
+	return ok
 }
 
 // outboundWebhookHeaders are the headers Gregale's own signed webhooks carry
@@ -293,8 +321,7 @@ var outboundWebhookHeaders = map[string]struct{}{
 // IsOutboundWebhookHeader reports a header of a Gregale-signed outbound
 // webhook, which may reach a guest unchanged.
 func IsOutboundWebhookHeader(name string) bool {
-	_, ok := outboundWebhookHeaders[strings.ToLower(name)]
-	return ok
+	return hasLowerKey(outboundWebhookHeaders, name)
 }
 
 // Platform identity variables are injected by schedd into the workload's
