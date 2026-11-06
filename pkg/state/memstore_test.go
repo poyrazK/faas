@@ -6196,8 +6196,8 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	if got.AppID != failed.AppID {
 		t.Errorf("AppID not copied: got %q, want %q", got.AppID, failed.AppID)
 	}
-	if got.ImageDigest != failed.ImageDigest {
-		t.Errorf("ImageDigest not copied: got %q, want %q", got.ImageDigest, failed.ImageDigest)
+	if got.ImageDigest != "" {
+		t.Errorf("source retry retained the previous build output digest: %q", got.ImageDigest)
 	}
 	if got.Kind != failed.Kind {
 		t.Errorf("Kind not copied: got %q, want %q", got.Kind, failed.Kind)

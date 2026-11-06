@@ -10670,6 +10670,12 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
 	}
+	if err := checkDeploymentActivationAttemptTx(ctx, tx, dep); err != nil {
+		return err
+	}
+	if err := checkWorkerDeploymentActivationTx(ctx, tx, dep); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 {
 		if err := deploymentActivationServingMatchesTx(ctx, tx, dep, expectedServingID[0]); err != nil {
 			return err
@@ -10800,6 +10806,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			`update deployments set
 				status = $2,
 				error = '',
+    rollout_started_at = case
+     when status <> 'live' and canary_total_steps = 0 and rollout_state = 'rolling_out' then clock_timestamp()
+     else rollout_started_at end,
 				rollout_state = case
 					when canary_total_steps = 0 and coalesce(nullif(rollout_state, ''), 'pending') <> 'rolling_out' then 'complete'
 					else rollout_state
@@ -11844,6 +11853,18 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 	if err != nil {
 		return Deployment{}, err
 	}
+	legacyService := false
+	intent, err := readDeploymentRetryIntent(src)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if intent == nil {
+		app, err := AppForDeployment(ctx, s, src)
+		if err != nil {
+			return Deployment{}, err
+		}
+		legacyService = app.Manifest.ExecutionMode == api.ExecutionModeService
+	}
 	tx, err := s.beginAppTrafficMutation(ctx, src.AppID)
 	if err != nil {
 		return Deployment{}, err
@@ -11857,7 +11878,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 	// state. The helper is shared with MemStore so canary/service-rollout and
 	// annotation semantics cannot drift between production and tests.
 	retryStartedAt := time.Now().UTC()
-	newDep, err := retryDeploymentInput(src, retryStartedAt)
+	newDep, err := retryDeploymentInput(src, retryStartedAt, legacyService)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -11890,7 +11911,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
 		                          override_readiness_probe, override_main_depends_on,
-		                          github_source_ref, github_installation_id)
+		                          github_source_ref, github_installation_id, disable_startup_cpu_boost)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -11904,7 +11925,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0))
+		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -11935,7 +11956,7 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
 		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
-		newDep.GitHubSourceRef, newDep.GitHubInstallationID)
+		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.DisableStartupCPUBoost)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -11947,6 +11968,19 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 	targetID, err := operationUUID(created.ID)
 	if err != nil {
 		return Deployment{}, err
+	}
+	// Copy ownership before the spec: the spec insert's trigger verifies that
+	// it still belongs to the original environment lifetime. A deleted pin must
+	// retain its owner so the retry cannot fall back to replacement scope data.
+	if err := sqlc.New().CopyRetryDeploymentEnvironmentOwner(ctx, tx, sqlc.CopyRetryDeploymentEnvironmentOwnerParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	if err := sqlc.New().CopyRetryDeploymentWorkloadSpec(ctx, tx, sqlc.CopyRetryDeploymentWorkloadSpecParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
 	}
 	if err := sqlc.New().CopyDeploymentRuntimeUpgradeTarget(ctx, tx, sqlc.CopyDeploymentRuntimeUpgradeTargetParams{
 		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
@@ -13243,6 +13277,9 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 // setDeploymentFailedTx keeps the existing failure side effects in the
 // caller's transaction, including when hosting evidence must commit with it.
 func setDeploymentFailedTx(ctx context.Context, tx pgx.Tx, id, code, message string) (Deployment, error) {
+	if err := checkDeploymentActivationFailureTx(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err
@@ -13336,6 +13373,12 @@ func (s *PgStore) SetDeploymentFailedEx(
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := checkDeploymentActivationFailureTx(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkSnapshotPrimeFailureTx(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err

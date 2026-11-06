@@ -69,6 +69,11 @@ type Loop struct {
 	securityScanRunning atomic.Bool
 	// prep prepares deployments' images off the loop; nil prepares inline.
 	prep *imagePrepWorkers
+	// releaseApprovalOffset rotates the bounded approval recovery scan.
+	releaseApprovalOffset int
+	// staleDeploymentOffset rotates past active builds and intentional holds.
+	// Both offsets are owned by the loop goroutine.
+	staleDeploymentOffset int
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
@@ -432,10 +437,18 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		CreatedBefore:  cutoff,
 		OldestFirst:    true,
 		Limit:          staleDeploymentBatchSize,
+		Offset:         l.staleDeploymentOffset,
 	})
 	if err != nil {
 		l.log.Warn("imaged: list stale deployments", "err", err)
 		return
+	}
+	// Skipped rows stay in the candidate set. Resume after this batch on the
+	// next tick, then wrap so removals and newly eligible older rows are revisited.
+	if len(rows) < staleDeploymentBatchSize {
+		l.staleDeploymentOffset = 0
+	} else {
+		l.staleDeploymentOffset += len(rows)
 	}
 	for _, deployment := range rows {
 		hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)

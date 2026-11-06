@@ -1530,8 +1530,8 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 
 // DeployMultipartWithSourceRoot is the workspace-aware source upload path.
 // sourceRoot is a repository-relative directory inside the uploaded archive;
-// an empty value means the archive root. The legacy DeployMultipart method
-// delegates here with an empty root so existing callers remain unchanged.
+// an empty value uses the app's configured root (the archive root for standalone
+// apps). An explicit "." selects the archive root even for a nested app.
 func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
 	ctx = deploymentSubmissionContext(ctx)
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
@@ -1665,14 +1665,13 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	if _, err := io.Copy(fw, tarball); err != nil {
 		return DeploymentResponse{}, fmt.Errorf("copy tarball: %w", err)
 	}
-	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
-	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers || sidecar.OverrideFreeze != "" {
-		sidecarJSON, err := json.Marshal(sidecar)
-		if err != nil {
-			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
-		}
+	// Derive presence from the wire object so every supplied option, including
+	// scheduling fields, survives without a separate field allowlist.
+	sidecarJSON, err := json.Marshal(sidecar)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
+	}
+	if string(sidecarJSON) != "{}" {
 		if err := w.WriteField("sidecar", string(sidecarJSON)); err != nil {
 			return DeploymentResponse{}, fmt.Errorf("write sidecar: %w", err)
 		}

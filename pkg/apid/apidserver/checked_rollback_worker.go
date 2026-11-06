@@ -100,6 +100,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if errors.Is(err, state.ErrServiceRolloutNotReady) {
 		return "blocked", "service_rollout_not_ready", []api.BindingCheckFinding{{Code: "service_rollout_not_ready", DeploymentID: target.ID, Message: "The rollback target needs ready service capacity before traffic can move."}}, nil
 	}
+	if errors.Is(err, state.ErrWorkerRollbackNotReady) {
+		return "blocked", "worker_rollback_not_ready", []api.BindingCheckFinding{{Code: "worker_rollback_not_ready", DeploymentID: target.ID, Message: "The rollback target needs a running worker with the current configuration before it can become active."}}, nil
+	}
 	if state.IsMCPReadinessRequired(err) {
 		return "blocked", api.CodeMCPReadinessRequired, []api.BindingCheckFinding{{Code: api.CodeMCPReadinessRequired, DeploymentID: target.ID, Message: "Refresh platform MCP readiness or create an audited emergency override before moving traffic."}}, nil
 	}

@@ -31,15 +31,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
-	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -161,37 +160,13 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	}
 	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze, ReleaseAt: sidecar.ReleaseAt, ReleaseNotify: sidecar.ReleaseNotify}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
-	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	_, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
 		api.WriteProblem(w, healthProblem)
 		return
 	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
-		return
-	}
-	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
-	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
-		api.WriteProblem(w, ap)
-		return
-	}
-	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	sched.park(rolloutReq)
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
-	if rolloutProblem != nil {
-		api.WriteProblem(w, rolloutProblem)
 		return
 	}
 
@@ -250,6 +225,17 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	if app.RootDir != "" {
+		present, rootErr := archiveHasSourceRoot(spoolPath, app.RootDir)
+		if rootErr != nil {
+			api.WriteProblem(w, api.ErrSourceInvalid(rootErr.Error()))
+			return
+		}
+		if !present {
+			api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", app.RootDir)))
+			return
+		}
+	}
 	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -266,21 +252,12 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	}
 	kind := state.DeploymentKindTarball
 	if hasSourceBuild {
-		// This route records no source root, so the Dockerfile is named
-		// from the archive root.
-		kind, sourceBuild.path = state.DeploymentKindDockerfile, path.Join(app.RootDir, sourceBuild.path)
+		kind = state.DeploymentKindDockerfile
 	}
-	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
-	if workloadProblem != nil {
-		api.WriteProblem(w, workloadProblem)
+	rollout, sched, prob := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if workloadsApplied {
-		rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
-		if rolloutProblem != nil {
-			api.WriteProblem(w, rolloutProblem)
-			return
-		}
 	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
 	if releaseProblem != nil {
@@ -318,6 +295,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		Kind:                      kind,
 		SourcePath:                spoolPath,
 		SourceBytes:               spoolBytes,
+		SourceRoot:                app.RootDir,
 		DockerfilePath:            sourceBuild.path,
 		DockerfileBuild:           sourceBuild.options,
 		SourceURL:                 sourceURL,
@@ -335,27 +313,29 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		ActorFromIP: middleware.ClientIP(r),
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row from the request's annotationForm.
-		Reason:                 ann.Reason,
-		Tag:                    ann.Tag,
-		DeployedBy:             ann.DeployedBy,
-		PRNumber:               ann.PRNumber,
-		TrafficPercent:         rollout.TrafficPercent,
-		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
-		RollbackOn5xx:          rollout.RollbackOn5xx,
-		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-		CanaryPreset:           rollout.CanaryPreset,
-		CanaryStep:             rollout.CanaryStep,
-		CanaryTotalSteps:       rollout.CanaryTotalSteps,
-		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
-		CanaryStages:           rollout.CanaryStages,
-		ReleaseCommand:         releaseCommand.command,
-		ReleaseCommandShell:    releaseCommand.shell,
-		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
-		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
-		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
-		HostingObserver:        s.ops,
-		HostingFlow:            "first_deploy",
-		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,
+		Reason:                   ann.Reason,
+		Tag:                      ann.Tag,
+		DeployedBy:               ann.DeployedBy,
+		PRNumber:                 ann.PRNumber,
+		TrafficPercent:           rollout.TrafficPercent,
+		TrafficPercentExplicit:   rollout.TrafficPercentExplicit,
+		RollbackOn5xx:            rollout.RollbackOn5xx,
+		DisableStartupCPUBoost:   rollout.DisableStartupCPUBoost,
+		MCPTaskMigrationOverride: rollout.MCPTaskMigrationOverride,
+		CanaryPreset:             rollout.CanaryPreset,
+		CanaryStep:               rollout.CanaryStep,
+		CanaryTotalSteps:         rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:      rollout.CanaryStepStartedAt,
+		CanaryStages:             rollout.CanaryStages,
+		ReleaseCommand:           releaseCommand.command,
+		ReleaseCommandShell:      releaseCommand.shell,
+		Workflows:                append(json.RawMessage(nil), rollout.Workflows...),
+		Sidecars:                 append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:      append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:    append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		HostingObserver:          s.ops,
+		HostingFlow:              "first_deploy",
+		ServiceRollout:           state.IsServiceRollout(rollout),
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)

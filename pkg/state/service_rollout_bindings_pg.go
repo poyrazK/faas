@@ -67,15 +67,50 @@ func (s *PgStore) prepareServiceBinding(ctx context.Context, tx pgx.Tx, target D
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return target, err
 	}
-	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID != "" {
-		ready, err := q.ServiceRolloutRecipientReady(ctx, tx, sqlc.ServiceRolloutRecipientReadyParams{AppID: mustPgUUID(target.AppID), DeploymentID: mustPgUUID(recipientID), Action: action})
+	facts, err := q.ServiceRolloutRecipientReadinessConfig(ctx, tx, mustPgUUID(recipientID))
+	if err != nil {
+		return target, err
+	}
+	recipient := Deployment{OverrideReadinessProbe: facts.OverrideReadinessProbe, Sidecars: facts.Sidecars}
+	sources, err := DeploymentReadinessSources(recipient)
+	if err != nil {
+		return target, err
+	}
+	// A probe-free service still needs a RUNNING recipient before reversing
+	// weights, and again before abort finalization removes candidate capacity.
+	reversing := action == ServiceRolloutActionAbort && facts.ExecutionMode == api.ExecutionModeService &&
+		(traffic < 100 || target.ServiceRolloutHandoff.Action == ServiceRolloutActionAbort)
+	if requestID != "" || len(sources) > 0 || reversing {
+		rows, err := q.ServiceRolloutRecipientInstances(ctx, tx, mustPgUUID(recipientID))
 		if err != nil {
 			return target, err
 		}
-		if !ready {
+		targets := make([]ReadinessTarget, 0, len(rows))
+		for _, row := range rows {
+			targets = append(targets, ReadinessTarget{AppID: target.AppID, InstanceID: row.ID, NodeID: row.NodeID, WakeID: row.WakeID})
+		}
+		ready := 0
+		for start := 0; start < len(targets); start += api.TrafficReadinessBatchSize {
+			end := min(start+api.TrafficReadinessBatchSize, len(targets))
+			signals, err := latestInstanceReadinessForTargets(ctx, tx, targets[start:end])
+			if err != nil {
+				return target, err
+			}
+			for _, instance := range targets[start:end] {
+				if serviceReplicaReady(sources, signals[instance.InstanceID]) {
+					ready++
+				}
+			}
+		}
+		desired := 1
+		if action == ServiceRolloutActionPromote {
+			desired = int(facts.Desired)
+		}
+		if ready < desired {
 			return target, ErrServiceRolloutNotReady
 		}
 	}
+
 	return target, nil
 }
 

@@ -4217,7 +4217,7 @@ const checkedRollbackTargetFacts = `-- name: CheckedRollbackTargetFacts :one
 SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,'traffic_percent',d.traffic_percent,
  'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
  'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,
- 'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
+ 'service_rollout_handoff',d.service_rollout_handoff,'stage_state',d.stage_state) FROM deployments d
  WHERE d.id=$1 AND d.app_id=$2 FOR UPDATE
 `
 
@@ -4231,6 +4231,45 @@ func (q *Queries) CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg C
 	var jsonb_build_object []byte
 	err := row.Scan(&jsonb_build_object)
 	return jsonb_build_object, err
+}
+
+const checkedRollbackWorkerInstances = `-- name: CheckedRollbackWorkerInstances :many
+SELECT i.id::text AS id, a.account_id::text AS account_id
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.deployment_id=$1::uuid AND i.mode='worker' AND i.state='running'
+ AND i.started_at>=$2::timestamptz
+ORDER BY i.id
+FOR SHARE OF i
+`
+
+type CheckedRollbackWorkerInstancesParams struct {
+	DeploymentID pgtype.UUID
+	PreparedAt   pgtype.Timestamptz
+}
+
+type CheckedRollbackWorkerInstancesRow struct {
+	ID        string
+	AccountID string
+}
+
+func (q *Queries) CheckedRollbackWorkerInstances(ctx context.Context, db DBTX, arg CheckedRollbackWorkerInstancesParams) ([]CheckedRollbackWorkerInstancesRow, error) {
+	rows, err := db.Query(ctx, checkedRollbackWorkerInstances, arg.DeploymentID, arg.PreparedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CheckedRollbackWorkerInstancesRow{}
+	for rows.Next() {
+		var i CheckedRollbackWorkerInstancesRow
+		if err := rows.Scan(&i.ID, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const checkpointApplicationStandardObservation = `-- name: CheckpointApplicationStandardObservation :execrows
@@ -7789,7 +7828,14 @@ INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status,
 SELECT a.id, $1::text, $2::uuid, $3::timestamptz,
        'reconciling', $4::timestamptz, $4::timestamptz
 FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
-WHERE a.id = $5::uuid AND a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
+WHERE a.id = $5::uuid AND a.status = 'active' AND (a.manifest->>'execution_mode' = 'service' OR EXISTS (
+    SELECT 1 FROM deployments d
+    LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+    WHERE d.app_id=a.id AND d.status='live'
+      AND coalesce(d.environment_workload_runtime->'runtime'->>'execution_mode',
+        d.environment_workload_runtime->'baseline'->>'execution_mode',
+        s.settings::jsonb->'manifest'->>'execution_mode',a.manifest->>'execution_mode')='service'))
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
 ON CONFLICT (app_id) DO UPDATE SET
  revision = EXCLUDED.revision, claim_token = EXCLUDED.claim_token, lease_until = EXCLUDED.lease_until,
@@ -10629,6 +10675,40 @@ func (q *Queries) CopyProjectEnvironmentSecretSuppressions(ctx context.Context, 
 		arg.ProjectID,
 		arg.SourceSlug,
 	)
+	return err
+}
+
+const copyRetryDeploymentEnvironmentOwner = `-- name: CopyRetryDeploymentEnvironmentOwner :exec
+INSERT INTO deployment_runtime_environment_owners(deployment_id, environment_id)
+SELECT $1::uuid, environment_id
+FROM deployment_runtime_environment_owners
+WHERE deployment_id=$2::uuid
+`
+
+type CopyRetryDeploymentEnvironmentOwnerParams struct {
+	TargetDeploymentID pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+}
+
+func (q *Queries) CopyRetryDeploymentEnvironmentOwner(ctx context.Context, db DBTX, arg CopyRetryDeploymentEnvironmentOwnerParams) error {
+	_, err := db.Exec(ctx, copyRetryDeploymentEnvironmentOwner, arg.TargetDeploymentID, arg.SourceDeploymentID)
+	return err
+}
+
+const copyRetryDeploymentWorkloadSpec = `-- name: CopyRetryDeploymentWorkloadSpec :exec
+INSERT INTO project_environment_workload_deployment_specs(deployment_id, spec_id)
+SELECT $1::uuid, spec_id
+FROM project_environment_workload_deployment_specs
+WHERE deployment_id=$2::uuid
+`
+
+type CopyRetryDeploymentWorkloadSpecParams struct {
+	TargetDeploymentID pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+}
+
+func (q *Queries) CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, arg CopyRetryDeploymentWorkloadSpecParams) error {
+	_, err := db.Exec(ctx, copyRetryDeploymentWorkloadSpec, arg.TargetDeploymentID, arg.SourceDeploymentID)
 	return err
 }
 
@@ -16012,6 +16092,26 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.EnvironmentID,
 	)
 	return i, err
+}
+
+const drainPrimeRecoveryWorker = `-- name: DrainPrimeRecoveryWorker :execrows
+UPDATE instances SET state='draining'
+WHERE id=$1::uuid AND node_id=$2::uuid
+ AND wake_id=$3::uuid AND mode='worker' AND state IN ('running','draining')
+`
+
+type DrainPrimeRecoveryWorkerParams struct {
+	InstanceID pgtype.UUID
+	NodeID     pgtype.UUID
+	WakeID     pgtype.UUID
+}
+
+func (q *Queries) DrainPrimeRecoveryWorker(ctx context.Context, db DBTX, arg DrainPrimeRecoveryWorkerParams) (int64, error) {
+	result, err := db.Exec(ctx, drainPrimeRecoveryWorker, arg.InstanceID, arg.NodeID, arg.WakeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const dropTriggerRecordByOperator = `-- name: DropTriggerRecordByOperator :execrows
@@ -54330,7 +54430,14 @@ func (q *Queries) ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHou
 const listServiceRecoveryApps = `-- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
 LEFT JOIN service_recovery r ON r.app_id = a.id
-WHERE a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
+WHERE a.status = 'active' AND (a.manifest->>'execution_mode' = 'service' OR EXISTS (
+    SELECT 1 FROM deployments d
+    LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+    WHERE d.app_id=a.id AND d.status='live'
+      AND coalesce(d.environment_workload_runtime->'runtime'->>'execution_mode',
+        d.environment_workload_runtime->'baseline'->>'execution_mode',
+        s.settings::jsonb->'manifest'->>'execution_mode',a.manifest->>'execution_mode')='service'))
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
   AND ($1::text = '' OR a.node_id IS NULL OR a.node_id::text = $1::text)
   AND coalesce(r.lease_until, '1970-01-01'::timestamptz) <= $2::timestamptz
@@ -54567,6 +54674,42 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSnapshotPrimeInstances = `-- name: ListSnapshotPrimeInstances :many
+SELECT i.id::text AS instance_id FROM instances i
+WHERE i.app_id=$1::uuid AND i.deployment_id=$2::uuid
+ AND i.started_at>=$3::timestamptz
+ AND (i.state IN ('waking','cold_booting','running','snapshotting','parking','draining','parked')
+  OR (i.state='stopped' AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs p
+      WHERE p.instance_id=i.id AND p.prime_activation_handoff IS NOT NULL)))
+ORDER BY i.started_at DESC,i.id
+`
+
+type ListSnapshotPrimeInstancesParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	PreparedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListSnapshotPrimeInstances(ctx context.Context, db DBTX, arg ListSnapshotPrimeInstancesParams) ([]string, error) {
+	rows, err := db.Query(ctx, listSnapshotPrimeInstances, arg.AppID, arg.DeploymentID, arg.PreparedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var instance_id string
+		if err := rows.Scan(&instance_id); err != nil {
+			return nil, err
+		}
+		items = append(items, instance_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -57784,20 +57927,30 @@ func (q *Queries) LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg L
 }
 
 const lockDeploymentHostingFailure = `-- name: LockDeploymentHostingFailure :one
-SELECT app_id, status FROM deployments
+SELECT app_id, status, coalesce(rootfs_key,'')::text AS rootfs_key,
+ coalesce(rootfs_path,'')::text AS rootfs_path, stage_state FROM deployments
 WHERE id = $1::uuid
 FOR UPDATE
 `
 
 type LockDeploymentHostingFailureRow struct {
-	AppID  pgtype.UUID
-	Status string
+	AppID      pgtype.UUID
+	Status     string
+	RootfsKey  string
+	RootfsPath string
+	StageState []byte
 }
 
 func (q *Queries) LockDeploymentHostingFailure(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingFailureRow, error) {
 	row := db.QueryRow(ctx, lockDeploymentHostingFailure, deploymentID)
 	var i LockDeploymentHostingFailureRow
-	err := row.Scan(&i.AppID, &i.Status)
+	err := row.Scan(
+		&i.AppID,
+		&i.Status,
+		&i.RootfsKey,
+		&i.RootfsPath,
+		&i.StageState,
+	)
 	return i, err
 }
 
@@ -59645,6 +59798,48 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPrimeRecoveryWorker = `-- name: LockPrimeRecoveryWorker :one
+SELECT i.id::text AS id, i.app_id::text AS app_id, i.deployment_id::text AS deployment_id,
+ i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id,
+ i.mode, i.state, i.started_at, coalesce(a.node_id::text,'')::text AS app_node_id, a.status AS app_status, a.account_id::text AS account_id
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=$1::uuid
+FOR UPDATE OF i
+`
+
+type LockPrimeRecoveryWorkerRow struct {
+	ID           string
+	AppID        string
+	DeploymentID string
+	NodeID       string
+	WakeID       string
+	Mode         string
+	State        string
+	StartedAt    pgtype.Timestamptz
+	AppNodeID    string
+	AppStatus    string
+	AccountID    string
+}
+
+func (q *Queries) LockPrimeRecoveryWorker(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockPrimeRecoveryWorkerRow, error) {
+	row := db.QueryRow(ctx, lockPrimeRecoveryWorker, instanceID)
+	var i LockPrimeRecoveryWorkerRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.Mode,
+		&i.State,
+		&i.StartedAt,
+		&i.AppNodeID,
+		&i.AppStatus,
+		&i.AccountID,
+	)
+	return i, err
 }
 
 const lockPrivateNetworkMemberAttachment = `-- name: LockPrivateNetworkMemberAttachment :one
@@ -61695,6 +61890,72 @@ func (q *Queries) LockSafeProjectSubmission(ctx context.Context, db DBTX, arg Lo
 	return i, err
 }
 
+const lockSnapshotPrimeAttempt = `-- name: LockSnapshotPrimeAttempt :one
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, d.status,
+ coalesce(d.rootfs_key,'')::text AS rootfs_key, coalesce(d.rootfs_path,'')::text AS rootfs_path,
+ d.stage_state
+FROM deployments d WHERE d.id=$1::uuid
+FOR SHARE
+`
+
+type LockSnapshotPrimeAttemptRow struct {
+	DeploymentID string
+	AppID        string
+	Status       string
+	RootfsKey    string
+	RootfsPath   string
+	StageState   []byte
+}
+
+func (q *Queries) LockSnapshotPrimeAttempt(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockSnapshotPrimeAttemptRow, error) {
+	row := db.QueryRow(ctx, lockSnapshotPrimeAttempt, deploymentID)
+	var i LockSnapshotPrimeAttemptRow
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.AppID,
+		&i.Status,
+		&i.RootfsKey,
+		&i.RootfsPath,
+		&i.StageState,
+	)
+	return i, err
+}
+
+const lockSnapshotPrimeFailure = `-- name: LockSnapshotPrimeFailure :one
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, d.status,
+ coalesce(d.rootfs_key,'')::text AS rootfs_key, coalesce(d.rootfs_path,'')::text AS rootfs_path,
+ d.stage_state, coalesce(d.error,'')::text AS error, coalesce(d.error_code,'')::text AS error_code
+FROM deployments d WHERE d.id=$1::uuid
+FOR UPDATE
+`
+
+type LockSnapshotPrimeFailureRow struct {
+	DeploymentID string
+	AppID        string
+	Status       string
+	RootfsKey    string
+	RootfsPath   string
+	StageState   []byte
+	Error        string
+	ErrorCode    string
+}
+
+func (q *Queries) LockSnapshotPrimeFailure(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockSnapshotPrimeFailureRow, error) {
+	row := db.QueryRow(ctx, lockSnapshotPrimeFailure, deploymentID)
+	var i LockSnapshotPrimeFailureRow
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.AppID,
+		&i.Status,
+		&i.RootfsKey,
+		&i.RootfsPath,
+		&i.StageState,
+		&i.Error,
+		&i.ErrorCode,
+	)
+	return i, err
+}
+
 const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one
 SELECT id FROM apps WHERE id = $1::uuid AND account_id = $2::uuid
 FOR UPDATE
@@ -61975,6 +62236,39 @@ func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, ar
 		&i.UpdatedAt,
 		&i.PreviousSigningSecretSealed,
 		&i.PreviousSigningSecretExpiresAt,
+	)
+	return i, err
+}
+
+const lockWorkerDeploymentActivationInstance = `-- name: LockWorkerDeploymentActivationInstance :one
+SELECT i.id::text AS id, i.app_id::text AS app_id, i.deployment_id::text AS deployment_id,
+ i.mode, i.state, i.started_at, a.account_id::text AS account_id
+FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=$1::uuid
+FOR SHARE OF i
+`
+
+type LockWorkerDeploymentActivationInstanceRow struct {
+	ID           string
+	AppID        string
+	DeploymentID string
+	Mode         string
+	State        string
+	StartedAt    pgtype.Timestamptz
+	AccountID    string
+}
+
+func (q *Queries) LockWorkerDeploymentActivationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockWorkerDeploymentActivationInstanceRow, error) {
+	row := db.QueryRow(ctx, lockWorkerDeploymentActivationInstance, instanceID)
+	var i LockWorkerDeploymentActivationInstanceRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Mode,
+		&i.State,
+		&i.StartedAt,
+		&i.AccountID,
 	)
 	return i, err
 }
@@ -89706,6 +90000,39 @@ func (q *Queries) ReadSnapshotInvocationEnvironmentQueueAdmission(ctx context.Co
 	return i, err
 }
 
+const readSnapshotPrimeHandoff = `-- name: ReadSnapshotPrimeHandoff :one
+SELECT p.prime_activation_handoff, i.wake_id::text AS wake_id, i.node_id::text AS node_id, i.started_at FROM runtime_instance_config_proofs p
+JOIN instances i ON i.id=p.instance_id AND i.wake_id=p.wake_id AND i.node_id=p.node_id AND i.deployment_id=p.deployment_id
+JOIN apps a ON a.id=i.app_id
+WHERE i.id=$1::uuid AND a.id=$2::uuid AND a.account_id=$3::uuid
+ AND a.status<>'deleted' AND p.prime_activation_handoff IS NOT NULL
+`
+
+type ReadSnapshotPrimeHandoffParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+type ReadSnapshotPrimeHandoffRow struct {
+	PrimeActivationHandoff []byte
+	WakeID                 string
+	NodeID                 string
+	StartedAt              pgtype.Timestamptz
+}
+
+func (q *Queries) ReadSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg ReadSnapshotPrimeHandoffParams) (ReadSnapshotPrimeHandoffRow, error) {
+	row := db.QueryRow(ctx, readSnapshotPrimeHandoff, arg.InstanceID, arg.AppID, arg.AccountID)
+	var i ReadSnapshotPrimeHandoffRow
+	err := row.Scan(
+		&i.PrimeActivationHandoff,
+		&i.WakeID,
+		&i.NodeID,
+		&i.StartedAt,
+	)
+	return i, err
+}
+
 const readSnapshotPublicationConfigChange = `-- name: ReadSnapshotPublicationConfigChange :one
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
 `
@@ -101640,7 +101967,8 @@ WITH proof AS (
     FROM instances WHERE id=$5::uuid
     ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
         deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint,
+        prime_activation_handoff=NULL
     RETURNING deployment_id
 ), transition_event AS (
     INSERT INTO events(actor,kind,subject,data)
@@ -101711,6 +102039,34 @@ type SaveServiceRolloutHandoffParams struct {
 func (q *Queries) SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error {
 	_, err := db.Exec(ctx, saveServiceRolloutHandoff, arg.Handoff, arg.DeploymentID)
 	return err
+}
+
+const saveSnapshotPrimeHandoff = `-- name: SaveSnapshotPrimeHandoff :execrows
+UPDATE runtime_instance_config_proofs SET prime_activation_handoff=$1::jsonb
+WHERE instance_id=$2::uuid AND wake_id=$3::uuid
+ AND node_id=$4::uuid AND deployment_id=$5::uuid
+`
+
+type SaveSnapshotPrimeHandoffParams struct {
+	Handoff      []byte
+	InstanceID   pgtype.UUID
+	WakeID       pgtype.UUID
+	NodeID       pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SaveSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg SaveSnapshotPrimeHandoffParams) (int64, error) {
+	result, err := db.Exec(ctx, saveSnapshotPrimeHandoff,
+		arg.Handoff,
+		arg.InstanceID,
+		arg.WakeID,
+		arg.NodeID,
+		arg.DeploymentID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const saveWebhookAutomationBinding = `-- name: SaveWebhookAutomationBinding :one
@@ -102093,6 +102449,75 @@ func (q *Queries) ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, ar
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const serviceRolloutRecipientInstances = `-- name: ServiceRolloutRecipientInstances :many
+SELECT i.id::text AS id, i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id
+FROM instances i WHERE i.deployment_id=$1::uuid AND i.mode='service' AND i.state='running'
+FOR SHARE
+`
+
+type ServiceRolloutRecipientInstancesRow struct {
+	ID     string
+	NodeID string
+	WakeID string
+}
+
+func (q *Queries) ServiceRolloutRecipientInstances(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]ServiceRolloutRecipientInstancesRow, error) {
+	rows, err := db.Query(ctx, serviceRolloutRecipientInstances, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceRolloutRecipientInstancesRow{}
+	for rows.Next() {
+		var i ServiceRolloutRecipientInstancesRow
+		if err := rows.Scan(&i.ID, &i.NodeID, &i.WakeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const serviceRolloutRecipientReadinessConfig = `-- name: ServiceRolloutRecipientReadinessConfig :one
+WITH recipient AS (
+ SELECT d.override_readiness_probe, d.sidecars,
+  CASE WHEN d.environment_workload_runtime IS NOT NULL THEN
+   coalesce(d.environment_workload_runtime->'baseline','{}'::jsonb) || coalesce(d.environment_workload_runtime->'runtime','{}'::jsonb)
+  WHEN s.id IS NOT NULL THEN coalesce(s.settings::jsonb->'manifest','{}'::jsonb)
+  ELSE coalesce(a.manifest,'{}'::jsonb) END AS manifest
+ FROM deployments d JOIN apps a ON a.id=d.app_id
+ LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+ LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+ WHERE d.id=$1::uuid
+)
+SELECT override_readiness_probe, sidecars,
+ coalesce(nullif(manifest->>'execution_mode',''),'request')::text AS execution_mode,
+ coalesce((manifest->'service_replicas'->>'desired')::integer,1)::integer AS desired
+FROM recipient
+`
+
+type ServiceRolloutRecipientReadinessConfigRow struct {
+	OverrideReadinessProbe []byte
+	Sidecars               []byte
+	ExecutionMode          string
+	Desired                int32
+}
+
+func (q *Queries) ServiceRolloutRecipientReadinessConfig(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ServiceRolloutRecipientReadinessConfigRow, error) {
+	row := db.QueryRow(ctx, serviceRolloutRecipientReadinessConfig, deploymentID)
+	var i ServiceRolloutRecipientReadinessConfigRow
+	err := row.Scan(
+		&i.OverrideReadinessProbe,
+		&i.Sidecars,
+		&i.ExecutionMode,
+		&i.Desired,
+	)
+	return i, err
 }
 
 const serviceRolloutRecipientReady = `-- name: ServiceRolloutRecipientReady :one
@@ -105747,6 +106172,17 @@ func (q *Queries) TryPrivateNetworkScopeLock(ctx context.Context, db DBTX, scope
 	return column_1, err
 }
 
+const trySnapshotPrimeLock = `-- name: TrySnapshotPrimeLock :one
+SELECT pg_try_advisory_lock(hashtextextended('snapshot-prime:' || $1::text, 0))
+`
+
+func (q *Queries) TrySnapshotPrimeLock(ctx context.Context, db DBTX, deploymentID string) (bool, error) {
+	row := db.QueryRow(ctx, trySnapshotPrimeLock, deploymentID)
+	var pg_try_advisory_lock bool
+	err := row.Scan(&pg_try_advisory_lock)
+	return pg_try_advisory_lock, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -105845,6 +106281,17 @@ func (q *Queries) UnlockPrivateNetworkScope(ctx context.Context, db DBTX, scopeK
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const unlockSnapshotPrime = `-- name: UnlockSnapshotPrime :one
+SELECT pg_advisory_unlock(hashtextextended('snapshot-prime:' || $1::text, 0))
+`
+
+func (q *Queries) UnlockSnapshotPrime(ctx context.Context, db DBTX, deploymentID string) (bool, error) {
+	row := db.QueryRow(ctx, unlockSnapshotPrime, deploymentID)
+	var pg_advisory_unlock bool
+	err := row.Scan(&pg_advisory_unlock)
+	return pg_advisory_unlock, err
 }
 
 const unlockTrafficPolicySession = `-- name: UnlockTrafficPolicySession :one

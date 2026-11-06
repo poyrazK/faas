@@ -48,7 +48,8 @@ func desiredServiceReplicas(manifest state.AppManifest) int {
 // service deployment. A service target is about healthy serving capacity, not
 // merely rows that still hold a RAM reservation:
 //
-//   - ready replicas are RUNNING after the boot readiness gate;
+//   - ready replicas are RUNNING and pass every configured ingress probe;
+//   - unready running replicas reserve capacity while readiness recovers;
 //   - starting replicas are still in WAKING/COLD_BOOTING;
 //   - draining replicas are leaving service (SNAPSHOTTING/MIGRATING); and
 //   - unavailable replicas are paused (WARM/FROZEN); parked and terminal
@@ -60,6 +61,7 @@ func desiredServiceReplicas(manifest state.AppManifest) int {
 // duplicate replacements for work already in flight.
 type serviceReplicaStatus struct {
 	ready       int
+	unready     int
 	starting    int
 	draining    int
 	unavailable int
@@ -70,7 +72,7 @@ func (s serviceReplicaStatus) inFlight() int {
 }
 
 func (s serviceReplicaStatus) managed() int {
-	return s.ready + s.inFlight()
+	return s.ready + s.unready + s.inFlight()
 }
 
 func normalizedInstanceMode(mode string) string {
@@ -130,6 +132,22 @@ func classifyServiceReplicas(replicas []state.Instance) serviceReplicaStatus {
 	return status
 }
 
+// Unready running replicas still reserve capacity, but cannot replace serving traffic.
+func (e *Engine) classifyServiceReplicas(ctx context.Context, dep state.Deployment, replicas []state.Instance) (serviceReplicaStatus, error) {
+	ready, err := state.ReadyServiceReplicas(ctx, e.store, dep, replicas)
+	if err != nil {
+		return serviceReplicaStatus{}, err
+	}
+	status := classifyServiceReplicas(replicas)
+	for _, replica := range replicas {
+		if state.State(replica.State) == state.StateRunning && !ready[replica.ID] {
+			status.ready--
+			status.unready++
+		}
+	}
+	return status, nil
+}
+
 // observeServiceReplicaStatus projects the current serving capacity of an
 // app onto the scheduler metrics registry. Terminal and parked rows remain
 // in the instance table for reconciliation and retention, so unavailable is
@@ -141,41 +159,35 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 		return
 	}
 	desired := 0
-	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		targets, err := e.serviceReplicaTargets(ctx, app, deployments)
-		if err != nil {
-			e.log.Warn("sched: observe deployed service targets", "app", app.ID, "err", err)
-			return
-		}
-		for _, target := range targets {
-			desired += target
-		}
+	targets, err := e.serviceReplicaTargets(ctx, app, deployments)
+	if err != nil {
+		e.log.Warn("sched: observe deployed service targets", "app", app.ID, "err", err)
+		return
+	}
+	for _, target := range targets {
+		desired += target
 	}
 	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		e.log.Warn("sched: observe service replica status", "app", app.ID, "err", err)
 		return
 	}
-	liveDeployments := make(map[string]struct{}, len(deployments))
-	for _, deployment := range deployments {
-		liveDeployments[deployment.ID] = struct{}{}
-	}
 	var status serviceReplicaStatus
-	for _, instance := range instances {
-		if instance.Mode != string(state.InstanceModeService) {
-			continue
+	for _, dep := range deployments {
+		var replicas []state.Instance
+		for _, ins := range instances {
+			if ins.DeploymentID == dep.ID && ins.Mode == string(state.InstanceModeService) {
+				replicas = append(replicas, ins)
+			}
 		}
-		if _, ok := liveDeployments[instance.DeploymentID]; !ok {
-			continue
+		actual, err := e.classifyServiceReplicas(ctx, dep, replicas)
+		if err != nil {
+			e.log.Warn("sched: observe service readiness", "deployment", dep.ID, "err", err)
+			return
 		}
-		switch state.State(instance.State) {
-		case state.StateRunning:
-			status.ready++
-		case state.StateWaking, state.StateColdBooting:
-			status.starting++
-		case state.StateDraining, state.StateSnapshotting, state.StateMigrating:
-			status.draining++
-		}
+		status.ready += actual.ready
+		status.starting += actual.starting
+		status.draining += actual.draining
 	}
 	status.unavailable = desired - status.ready - status.starting - status.draining
 	if status.unavailable < 0 {
@@ -433,6 +445,10 @@ func (e *Engine) serviceReplicaTargetApp(ctx context.Context, app state.App, dep
 	for _, deployment := range deployments {
 		if deployment.ID == selected.ID {
 			resolved, err := state.ResolveAppForDeployment(ctx, e.store, app, deployment)
+			if err != nil {
+				return state.App{}, false, err
+			}
+			resolved, err = state.AppForDeploymentRuntime(resolved, deployment)
 			return resolved, true, err
 		}
 	}
@@ -830,6 +846,12 @@ func (e *Engine) waitForServiceRouteConvergenceForRollout(ctx context.Context, a
 	defer retry.Stop()
 	seen := make(map[string]struct{}, len(expected))
 	for len(seen) < len(expected) {
+		if action == state.ServiceRolloutActionPromote && e.serviceRolloutReadinessLost(waitCtx, rolloutID) {
+			e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "candidate_readiness_withdrawn", expectedNames)
+			e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
+			return time.Time{}, true, false
+		}
+
 		select {
 		case <-waitCtx.Done():
 			missing := make([]string, 0, len(expected)-len(seen))
@@ -927,6 +949,12 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 	ticker := time.NewTicker(time.Duration(api.ServiceReplicaDrainPollMilliseconds) * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if action == state.ServiceRolloutActionPromote && e.serviceRolloutReadinessLost(drainCtx, rolloutID) {
+			e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseDraining, "candidate_readiness_withdrawn", nil)
+			e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseDraining, "error", time.Since(started).Seconds())
+			return false
+		}
+
 		now := time.Now()
 		allQuiet := true
 		for _, instanceID := range ids {
@@ -975,6 +1003,67 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 	}
 }
 
+// Route/drain waits must observe readiness changes while the app reconcile
+// mutex is held; queued notifications alone cannot interrupt those waits.
+func (e *Engine) serviceRolloutReadinessLost(ctx context.Context, rolloutID string) bool {
+	if rolloutID == "" {
+		return false
+	}
+	dep, err := e.store.DeploymentByID(ctx, rolloutID)
+	if err != nil || dep.Status != state.DeployLive || !state.IsServiceRollout(dep) || dep.TrafficPercent == 0 || dep.ServiceRolloutHandoff.ActiveAbort() {
+		return false
+	}
+	app, err := state.AppForDeployment(ctx, e.store, dep)
+	if err != nil {
+		return false
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return false
+	}
+	replicas, err := listServiceReplicas(ctx, e.store, dep.AppID, dep.ID)
+	if err != nil {
+		return false
+	}
+	actual, err := e.classifyServiceReplicas(ctx, dep, replicas)
+	return err == nil && actual.ready < desiredServiceReplicas(app.Manifest)
+}
+
+// A promotion can lose readiness after publishing weights but before its route
+// and drain barriers finish. Persist the reverse direction before any traffic
+// write so restarts and binding workers resume the same fenced abort.
+func (e *Engine) recoverServiceRolloutReadiness(ctx context.Context, app state.App, rollout state.Deployment) bool {
+	current, err := e.store.DeploymentByID(ctx, rollout.ID)
+	if err != nil || current.Status != state.DeployLive || !state.IsServiceRollout(current) || current.TrafficPercent == 0 || current.ServiceRolloutHandoff.ActiveAbort() {
+		return false
+	}
+	replicas, err := listServiceReplicas(ctx, e.store, app.ID, current.ID)
+	if err != nil {
+		return false
+	}
+	actual, err := e.classifyServiceReplicas(ctx, current, replicas)
+	if err != nil || actual.ready >= desiredServiceReplicas(app.Manifest) {
+		return false
+	}
+	handoff := current.ServiceRolloutHandoff
+	if handoff.PredecessorDeploymentID == "" {
+		return false
+	}
+	now := e.now().UTC()
+	handoff.Action, handoff.Phase = state.ServiceRolloutActionAbort, state.ServiceRolloutPhasePending
+	handoff.Reason, handoff.LastError = "candidate readiness withdrawn", ""
+	handoff.Generation, handoff.AcknowledgedAt, handoff.CompletedAt = 0, nil, nil
+	handoff.ExpectedGateways, handoff.AcknowledgedGateways, handoff.MissingGateways = nil, nil, nil
+	handoff.UpdatedAt = &now
+	updated, err := e.store.UpdateServiceRolloutHandoff(ctx, current.ID, handoff)
+	if err != nil {
+		e.log.Warn("sched: persist readiness withdrawal recovery", "deployment", current.ID, "err", err)
+		return false
+	}
+	e.reverseServiceRollout(ctx, app, updated)
+	return true
+}
+
 func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollout, previous state.Deployment) bool {
 	if pinned := rollout.ServiceRolloutHandoff.PredecessorDeploymentID; pinned != "" && previous.ID != pinned {
 		e.failServiceRolloutHandoff(ctx, rollout.ID, state.ServiceRolloutPhasePending, "predecessor_missing", nil)
@@ -986,13 +1075,18 @@ func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollou
 			if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
 				e.log.Warn("sched: begin service rollout cutover", "app", app.ID, "deployment", rollout.ID, "err", err)
 			}
+			if errors.Is(err, state.ErrServiceRolloutNotReady) {
+				e.recoverServiceRolloutReadiness(ctx, app, rollout)
+			}
 			return false
 		}
 		acknowledgedAt, fleetBarrier, converged := e.waitForServiceRouteConvergenceForRollout(ctx, app.ID, rollout.ID, rollout.ID, state.ServiceRolloutActionPromote)
 		if !converged {
+			e.recoverServiceRolloutReadiness(ctx, app, rollout)
 			return false
 		}
 		if fleetBarrier && !e.waitForServiceDeploymentDrain(ctx, app.ID, rollout.ID, previous.ID, state.ServiceRolloutActionPromote, acknowledgedAt) {
+			e.recoverServiceRolloutReadiness(ctx, app, rollout)
 			return false
 		}
 	}
@@ -1000,6 +1094,9 @@ func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollou
 	if err != nil {
 		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: finalize service rollout", "app", app.ID, "deployment", rollout.ID, "err", err)
+		}
+		if errors.Is(err, state.ErrServiceRolloutNotReady) {
+			e.recoverServiceRolloutReadiness(ctx, app, rollout)
 		}
 		return false
 	}
@@ -1011,6 +1108,11 @@ func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollou
 }
 
 func (e *Engine) reverseServiceRollout(ctx context.Context, app state.App, rollout state.Deployment) bool {
+	if err := e.prepareServiceAbortRecipient(ctx, rollout); err != nil {
+		e.failServiceRolloutHandoff(ctx, rollout.ID, state.ServiceRolloutPhasePending, "abort_recipient_not_ready", nil)
+		e.log.Warn("sched: restore service abort recipient", "deployment", rollout.ID, "err", err)
+		return false
+	}
 	updated, err := e.store.BeginServiceRolloutAbort(ctx, rollout.ID)
 	if err != nil {
 		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
@@ -1043,6 +1145,54 @@ func (e *Engine) reverseServiceRollout(ctx context.Context, app state.App, rollo
 	return true
 }
 
+// Reversing weights cannot replace a surviving candidate with an empty service
+// generation. Repair the recipient under the normal admission gates first.
+// A partial repair may be sufficient to route safely; the remaining replicas
+// can recover after candidate teardown releases their overlap reservations.
+func (e *Engine) prepareServiceAbortRecipient(ctx context.Context, rollout state.Deployment) error {
+	id := rollout.ServiceRolloutHandoff.PredecessorDeploymentID
+	if id == "" {
+		return state.ErrServiceRolloutInvalid
+	}
+	previous, err := e.store.DeploymentByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if previous.AppID != rollout.AppID || serviceRolloutScope(previous) != serviceRolloutScope(rollout) || previous.Status != state.DeployLive {
+		return state.ErrServiceRolloutInvalid
+	}
+	deployed, err := state.AppForDeployment(ctx, e.store, previous)
+	if err != nil {
+		return err
+	}
+	deployed, err = state.AppForDeploymentRuntime(deployed, previous)
+	if err != nil || instanceModeForApp(deployed) != string(state.InstanceModeService) {
+		return err
+	}
+	ready := func() (serviceReplicaStatus, error) {
+		replicas, err := listServiceReplicas(ctx, e.store, rollout.AppID, id)
+		if err != nil {
+			return serviceReplicaStatus{}, err
+		}
+		return e.classifyServiceReplicas(ctx, previous, replicas)
+	}
+	status, err := ready()
+	if err != nil || status.ready > 0 {
+		return err
+	}
+	// Do not park existing reservations or exceed the declared target just
+	// because an admitted replica has not completed its readiness gate.
+	admitErr := e.convergeServiceReplicasToTarget(ctx, id, max(desiredServiceReplicas(deployed.Manifest), status.managed()), true)
+	status, err = ready()
+	if err != nil {
+		return err
+	}
+	if status.ready > 0 {
+		return nil
+	}
+	return errors.Join(state.ErrServiceRolloutNotReady, admitErr)
+}
+
 func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, reason string) bool {
 	updated, err := e.store.AbortServiceRollout(ctx, rollout.ID, reason)
 	if err != nil {
@@ -1061,9 +1211,9 @@ func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout
 	return true
 }
 
-// reconcileServiceRollout advances one scope by at most one ready replica per
-// pass. The old generation keeps the remainder of the desired capacity until
-// the new generation proves readiness; the total temporary surge is one.
+// reconcileServiceRollout retains the traffic-bearing generation's full target
+// until the complete candidate cohort proves readiness. Normal concurrency and
+// physical-capacity gates bound admissions; insufficient headroom holds safely.
 func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) error {
 	if rollout.ServiceRolloutHandoff.ActiveAbort() {
 		e.reverseServiceRollout(ctx, app, rollout)
@@ -1076,40 +1226,52 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		e.log.Warn("sched: list new service rollout replicas", "app", app.ID, "deployment", rollout.ID, "err", err)
 		return err
 	}
-	status := classifyServiceReplicas(replicas)
+	status, err := e.classifyServiceReplicas(ctx, rollout, replicas)
+	if err != nil {
+		return err
+	}
 	if status.ready >= desired {
 		e.finishServiceRollout(ctx, app, rollout, previous)
 		return nil
 	}
-	if serviceRolloutTimedOut(rollout, time.Now().UTC()) {
+	if rollout.TrafficPercent > 0 && e.recoverServiceRolloutReadiness(ctx, app, rollout) {
+		return nil
+	}
+	if serviceRolloutTimedOut(rollout, e.now().UTC()) {
 		e.abortServiceRollout(ctx, app, rollout, "readiness timeout")
 		return nil
 	}
-	if previous.ID == "" {
-		if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true); err != nil {
+	if previous.ID != "" {
+		previousApp, err := state.AppForDeployment(ctx, e.store, previous)
+		if err != nil {
 			return err
 		}
-	} else {
-		newTarget := status.ready + 1
-		if newTarget > desired {
-			newTarget = desired
-		}
-		oldTarget := desired - status.ready
-		if oldTarget < 0 {
-			oldTarget = 0
-		}
-		if err := e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false); err != nil {
+		previousApp, err = state.AppForDeploymentRuntime(previousApp, previous)
+		if err != nil {
 			return err
 		}
-		if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true); err != nil {
-			return err
+		// A dark candidate does not serve any of the predecessor's load. Repair
+		// the serving generation first and never subtract candidate readiness.
+		if instanceModeForApp(previousApp) == string(state.InstanceModeService) {
+			if err := e.convergeServiceReplicasToTarget(ctx, previous.ID, desiredServiceReplicas(previousApp.Manifest), true); err != nil {
+				return err
+			}
 		}
+	}
+	if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true); err != nil {
+		return err
 	}
 	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
 	// complete the rollout without waiting for a second notification.
 	ready, readErr := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
-	if readErr == nil && classifyServiceReplicas(ready).ready >= desired {
-		e.finishServiceRollout(ctx, app, rollout, previous)
+	if readErr == nil {
+		status, err := e.classifyServiceReplicas(ctx, rollout, ready)
+		if err != nil {
+			return err
+		}
+		if status.ready >= desired {
+			e.finishServiceRollout(ctx, app, rollout, previous)
+		}
 	}
 	return readErr
 }
@@ -1159,39 +1321,37 @@ func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) erro
 	}
 	defer e.observeServiceReplicaStatus(ctx, app, deployments)
 	handledScopes := make(map[string]struct{})
-	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		rollouts := activeServiceRollouts(deployments)
-		scopes := make([]string, 0, len(rollouts))
-		for scope := range rollouts {
-			scopes = append(scopes, scope)
+	rollouts := activeServiceRollouts(deployments)
+	scopes := make([]string, 0, len(rollouts))
+	for scope := range rollouts {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	for _, scope := range scopes {
+		rollout := rollouts[scope]
+		deployed, err := state.ResolveAppForDeployment(ctx, e.store, app, rollout)
+		if err != nil {
+			return err
 		}
-		sort.Strings(scopes)
-		for _, scope := range scopes {
-			handledScopes[scope] = struct{}{}
-			if err := e.reconcileServiceRollout(ctx, app, rollouts[scope], deployments); err != nil {
-				return err
-			}
+		deployed, err = state.AppForDeploymentRuntime(deployed, rollout)
+		if err != nil {
+			return err
+		}
+		if instanceModeForApp(deployed) != string(state.InstanceModeService) {
+			continue
+		}
+		handledScopes[scope] = struct{}{}
+		if err := e.reconcileServiceRollout(ctx, deployed, rollout, deployments); err != nil {
+			return err
 		}
 	}
-	targets := make(map[string]int, len(deployments))
-	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		var targetErr error
-		targets, targetErr = e.serviceReplicaTargets(ctx, app, deployments)
-		if targetErr != nil {
-			e.log.Warn("sched: allocate service replicas", "app", appID, "err", targetErr)
-			return targetErr
-		}
-		for _, dep := range deployments {
-			if _, handled := handledScopes[serviceRolloutScope(dep)]; handled {
-				delete(targets, dep.ID)
-			}
-		}
-	} else {
-		// A mode switch away from service still needs to drain the old
-		// service rows. Non-service instances are intentionally ignored by
-		// convergeServiceReplicasToTarget's service-row filter.
-		for _, dep := range deployments {
-			targets[dep.ID] = 0
+	targets, err := e.serviceReplicaTargets(ctx, app, deployments)
+	if err != nil {
+		return err
+	}
+	for _, dep := range deployments {
+		if _, handled := handledScopes[serviceRolloutScope(dep)]; handled {
+			delete(targets, dep.ID)
 		}
 	}
 	admissions, err := e.serviceAdmissionOrder(ctx, app, deployments)
@@ -1278,18 +1438,10 @@ func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID strin
 		e.log.Warn("sched: list live service deployments", "app", dep.AppID, "err", err)
 		return
 	}
-	targets := make(map[string]int, len(deployments))
-	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		var targetErr error
-		targets, targetErr = e.serviceReplicaTargets(ctx, app, deployments)
-		if targetErr != nil {
-			e.log.Warn("sched: allocate service replicas", "app", dep.AppID, "err", targetErr)
-			return
-		}
-	} else {
-		for _, liveDep := range deployments {
-			targets[liveDep.ID] = 0
-		}
+	targets, err := e.serviceReplicaTargets(ctx, app, deployments)
+	if err != nil {
+		e.log.Warn("sched: allocate service replicas", "app", dep.AppID, "err", err)
+		return
 	}
 	desired, ok := targets[deploymentID]
 	if !ok {
@@ -1328,6 +1480,15 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	if app.Status != state.AppActive {
 		return nil
 	}
+	allocationApp := app
+	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err != nil {
+		return err
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
+	}
 	serviceMode := instanceModeForApp(app) == string(state.InstanceModeService)
 	if serviceMode {
 		mirror, mirrorErr := e.isMirrorDeployment(ctx, dep.AppID, dep.ID)
@@ -1352,12 +1513,19 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		e.log.Warn("sched: list service replicas", "deployment", deploymentID, "err", err)
 		return err
 	}
-	status := classifyServiceReplicas(serviceReplicas)
+	status, err := e.classifyServiceReplicas(ctx, dep, serviceReplicas)
+	if err != nil {
+		return err
+	}
 	// Never trade away healthy capacity while a replacement is still
 	// booting. A deployment can temporarily exceed desired during a
 	// scale-down, but it must not temporarily fall below desired because a
 	// not-yet-ready replica was counted as equivalent to RUNNING.
-	if excess := status.ready - desired; excess > 0 {
+	excess := status.ready - desired
+	if desired == 0 {
+		excess += status.unready
+	}
+	if excess > 0 {
 		parked := e.parkSurplusServiceReplicas(ctx, serviceReplicas, excess)
 		status.ready -= parked
 	}
@@ -1387,7 +1555,7 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 			if err != nil {
 				return err
 			}
-			current, err := e.serviceReplicaTargets(ctx, app, live)
+			current, err := e.serviceReplicaTargets(ctx, allocationApp, live)
 			if err != nil {
 				return err
 			}
@@ -1413,11 +1581,9 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 			e.log.Debug("sched: service replica admission at capacity", "app", dep.AppID, "deployment", dep.ID)
 			return errServiceCapacity
 		}
-		// AdmitInstanceForDeployment returns only after the new replica has
-		// reached RUNNING (or has failed), so count the successful result as
-		// ready for this pass. A later asynchronous transition will trigger
-		// another reconciliation for failures and replacements.
-		status.ready++
+		// Admission reserves capacity; continuous probe evidence is re-read
+		// before this replica can advance the rollout.
+		status.unready++
 	}
 	return nil
 }

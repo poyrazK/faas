@@ -33,11 +33,6 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 	if err != nil || !e.ownsApp(app) || app.Status != state.AppActive {
 		return
 	}
-	if instanceModeForApp(app) != string(state.InstanceModeService) {
-		// Mode changes still drain old service replicas through the same controller.
-		_ = e.reconcileServiceAppOnce(ctx, appID)
-		return
-	}
 	account, err := state.AppResourceAccount(readCtx, e.store, app)
 	if err != nil || !account.Active() {
 		return
@@ -55,9 +50,40 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 			return
 		}
 	}
+	hasService := instanceModeForApp(app) == string(state.InstanceModeService)
+	revisions := make(map[string]string, len(deps))
+	for _, dep := range deps {
+		deployed, err := state.ResolveAppForDeployment(readCtx, e.store, app, dep)
+		if err != nil {
+			return
+		}
+		deployed, err = state.AppForDeploymentRuntime(deployed, dep)
+		if err != nil {
+			return
+		}
+		hasService = hasService || instanceModeForApp(deployed) == string(state.InstanceModeService)
+		revisions[dep.ID] = serviceRecoveryRevision(deployed, []state.Deployment{dep})
+	}
+	if !hasService {
+		readCancel()
+		_ = e.reconcileServiceAppOnce(ctx, appID)
+		return
+	}
+	revisionData, _ := json.Marshal(revisions)
+	if len(deps) == 0 {
+		revisionData = []byte(serviceRecoveryRevision(app, deps))
+	}
+	revisionHash := sha256.Sum256(revisionData)
+	revision := hex.EncodeToString(revisionHash[:])
+	revisionData, _ = json.Marshal(struct {
+		Revision string
+		Targets  map[string]int
+	}{revision, readiness})
+	revisionHash = sha256.Sum256(revisionData)
+	revision = hex.EncodeToString(revisionHash[:])
 	now := e.now().UTC()
 	token := uuid.NewString()
-	lease, claimed, err := e.store.ClaimServiceRecovery(readCtx, appID, serviceRecoveryReadinessRevision(app, deps, readiness), token,
+	lease, claimed, err := e.store.ClaimServiceRecovery(readCtx, appID, revision, token,
 		now, now.Add(time.Duration(api.ServiceRecoveryAttemptTimeoutSeconds)*time.Second))
 	if err != nil {
 		e.log.Warn("service recovery: claim", "app", appID, "err", err)
@@ -144,7 +170,7 @@ func (e *Engine) serviceRecoveryStatus(ctx context.Context, appID string) (strin
 	if err != nil {
 		return "waiting_dependency", err
 	}
-	if app.Status != state.AppActive || instanceModeForApp(app) != string(state.InstanceModeService) {
+	if app.Status != state.AppActive {
 		return "ready", nil
 	}
 	deps, err := e.store.LiveDeployments(ctx, appID)
@@ -152,7 +178,7 @@ func (e *Engine) serviceRecoveryStatus(ctx context.Context, appID string) (strin
 		return "waiting_dependency", err
 	}
 	if len(deps) == 0 {
-		if desiredServiceReplicas(app.Manifest) == 0 {
+		if instanceModeForApp(app) != string(state.InstanceModeService) || desiredServiceReplicas(app.Manifest) == 0 {
 			return "ready", nil
 		}
 		return "waiting_dependency", nil
@@ -176,8 +202,12 @@ func (e *Engine) serviceRecoveryStatus(ctx context.Context, appID string) (strin
 		if err != nil {
 			return "waiting_dependency", err
 		}
-		actual, target := classifyServiceReplicas(replicas), targets[dep.ID]
-		if actual.starting > 0 {
+		actual, err := e.classifyServiceReplicas(ctx, dep, replicas)
+		if err != nil {
+			return "waiting_dependency", err
+		}
+		target := targets[dep.ID]
+		if actual.starting > 0 || actual.unready > 0 {
 			outcome = "starting"
 			continue
 		}

@@ -4223,6 +4223,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
+		// The CLI already selected the build directory while packing. Preserve
+		// an archive-root selection explicitly instead of inheriting a remote
+		// app's configured root for an already cropped source archive.
+		uploadRoot := sourceRoot
+		if uploadRoot == "" {
+			uploadRoot = "."
+		}
 		ann := api.DeployAnnotations{
 			Scope:                  manifestScope,
 			SourceURL:              sourceURL,
@@ -4252,17 +4259,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if developerSync != nil {
 			var deployErr error
 			sourceSyncStarted := time.Now()
-			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, developerSync)
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, developerSync)
 			if execution.onSourceSync != nil {
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
 			if deployErr != nil {
 				return submissionFailed("Source submission failed", dep, deployErr, "")
 			}
-		} else if canUseResumableUpload(resolvedShape, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		} else if canUseResumableUpload(resolvedShape, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
-				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
+				SourceRoot: uploadRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
@@ -4292,7 +4299,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					return printErr("Could not save source submission", err)
 				}
 				multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
-				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
+				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann)
 			}
 			if uploadErr != nil {
 				return submissionFailed("Source submission failed", dep, uploadErr, deployKey)
@@ -4303,7 +4310,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Could not save source submission", err)
 			}
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
-			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
+			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann)
 			if deployErr != nil {
 				return submissionFailed("Source submission failed", dep, deployErr, deployKey)
 			}

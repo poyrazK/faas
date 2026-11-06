@@ -174,6 +174,7 @@ func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 // client, and nothing fails loudly — so a new pinned Acquire has to be a
 // deliberate decision rather than something a reviewer has to notice.
 var sessionScopedAcquire = map[string]string{
+	"pkg/edgecert/serve.go":                     "LISTEN: edge certificate refresh needs a session on the direct pool",
 	"pkg/state/pgstore_org_access.go":           "authorization pool facade routes LISTEN acquisitions to the direct session pool",
 	"pkg/db/notify_hub.go":                      "LISTEN: the hub parks one connection per daemon",
 	"pkg/db/notify.go":                          "LISTEN: legacy per-subscriber path",
@@ -189,6 +190,7 @@ var sessionScopedAcquire = map[string]string{
 // pool. Acquiring a connection is not by itself session-scoped; what matters
 // is whether anything session-scoped happens on it before release.
 var pooledAcquireOK = map[string]string{
+	"pkg/state/private_network_coordination.go":          "Acquire is a memory semaphore; PostgreSQL scope locks use acquireSessionAdvisoryLockConn on the direct pool",
 	"pkg/db/warmup.go":                                   "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
 	"pkg/db/pgtest/pgtest.go":                            "test harness; never runs against a pooler",
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
@@ -342,7 +344,8 @@ func TestDirectMaxConnsFollowsNotifyHubMode(t *testing.T) {
 		appName string
 		want    int32
 	}{
-		{"hub on is the small pooled budget", "", "faas-schedd", directHubOnMaxConns},
+		{"hub on reserves concurrent primes", "", "faas-schedd", directSchedulerHubOnMaxConns},
+		{"hub on reserves concurrent primes, unprefixed", "1", "schedd", directSchedulerHubOnMaxConns},
 		{"hub on, unprefixed", "1", "gatewayd-internal", directHubOnMaxConns},
 		{"hub on reserves apid's nested guard", "", "faas-apid", directNestedGuardHubOnMaxConns},
 		{"hub on reserves apid's nested guard, unprefixed", "1", "apid", directNestedGuardHubOnMaxConns},

@@ -22,8 +22,9 @@ type UploadDeployOptions struct {
 	Runtime     string                 `json:"runtime,omitempty"`
 	Handler     string                 `json:"handler,omitempty"`
 	Dockerfile  bool                   `json:"dockerfile,omitempty"`
-	SourceRoot  string                 `json:"source_root,omitempty"`
-	Scope       string                 `json:"scope,omitempty"`
+	// SourceRoot defaults to the app's configured root; "." selects the archive root.
+	SourceRoot string `json:"source_root,omitempty"`
+	Scope      string `json:"scope,omitempty"`
 	// SourceURL and CommitSHA preserve local Git provenance across the
 	// resumable session boundary. The values are informational only; the
 	// uploaded archive remains the source of truth and apid never fetches

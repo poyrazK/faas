@@ -95,7 +95,11 @@ func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, t
 	if !ok || d.AppID != app {
 		return api.RollbackOperation{}, ErrNoRollbackTarget
 	}
-	r := newCheckedRollback(app, d.Scope, target, current, reason, a.Manifest.ExecutionMode == api.ExecutionModeService)
+	deployed, err := m.serviceAppForDeploymentLocked(a, d)
+	if err != nil {
+		return api.RollbackOperation{}, err
+	}
+	r := newCheckedRollback(app, d.Scope, target, current, reason, deployed.Manifest.ExecutionMode == api.ExecutionModeService)
 	if id != "" {
 		r.ID = id
 	}
@@ -107,7 +111,7 @@ func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, t
 			return r, ErrConflict
 		}
 	}
-	d, err := m.prepareDeploymentRollbackLocked(ctx, app, target)
+	d, err = m.prepareDeploymentRollbackLocked(ctx, app, target)
 	if err != nil {
 		return r, err
 	}
@@ -161,6 +165,18 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 	d := m.deployments[r.TargetDeploymentID]
 	if d.Status != DeployLive || d.TrafficPercent != 0 || !rollbackPairValid(r, d, m.deployments[r.CurrentDeploymentID], m.rollbackRowsLocked(r)) {
 		return r, ErrCheckedRollbackChanged
+	}
+	deployed, err := m.serviceAppForDeploymentLocked(m.apps[r.AppID], d)
+	if err != nil {
+		return r, err
+	}
+	if r.Service != (deployed.Manifest.ExecutionMode == api.ExecutionModeService) {
+		return r, ErrCheckedRollbackChanged
+	}
+	if deployed.Manifest.ExecutionMode == api.ExecutionModeWorker {
+		if err := m.checkRollbackWorkerLocked(d, r); err != nil {
+			return r, err
+		}
 	}
 	ctx = withCheckedRollback(ctx, r.ID)
 	if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{d.ID: 100}); err != nil {

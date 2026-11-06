@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -280,7 +281,7 @@ func (s *Served) listen(ctx context.Context, pool *pgxpool.Pool, notices chan<- 
 }
 
 func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) error {
-	conn, err := pool.Acquire(ctx)
+	conn, err := db.DirectPool(pool).Acquire(ctx)
 	if err != nil {
 		return err
 	}

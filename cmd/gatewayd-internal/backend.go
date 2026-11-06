@@ -856,28 +856,7 @@ type deploymentCompanionRoute struct {
 }
 
 func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
-	sources := make([]string, 0, 2)
-	if len(deployment.OverrideReadinessProbe) > 0 {
-		var probe api.DeploymentReadinessProbe
-		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
-			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
-		}
-		if probe.Path != "" || probe.GRPC != nil {
-			sources = append(sources, "primary_app")
-		}
-	}
-	var companions []deploymentCompanionRoute
-	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
-		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
-			return nil, fmt.Errorf("decode deployment companions: %w", err)
-		}
-	}
-	for _, companion := range companions {
-		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
-			sources = append(sources, "sidecar:"+companion.Name)
-		}
-	}
-	return sources, nil
+	return state.DeploymentReadinessSources(deployment)
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a

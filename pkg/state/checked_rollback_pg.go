@@ -61,10 +61,11 @@ func rollbackFacts(ctx context.Context, tx pgx.Tx, app, id string) (Deployment, 
 		RootfsKey        string                `json:"rootfs_key"`
 		ImageDigest      string                `json:"image_digest"`
 		Runtime          json.RawMessage       `json:"environment_workload_runtime"`
+		StageState       json.RawMessage       `json:"stage_state"`
 		Handoff          ServiceRolloutHandoff `json:"service_rollout_handoff"`
 	}
 	err = json.Unmarshal(raw, &facts)
-	d := Deployment{ID: facts.ID, AppID: facts.AppID, Scope: facts.Scope, Status: facts.Status, TrafficPercent: facts.TrafficPercent, CanaryTotalSteps: facts.CanaryTotalSteps, CanaryStep: facts.CanaryStep, RolloutState: facts.RolloutState, RootfsKey: facts.RootfsKey, ImageDigest: facts.ImageDigest, ServiceRolloutHandoff: facts.Handoff}
+	d := Deployment{ID: facts.ID, AppID: facts.AppID, Scope: facts.Scope, Status: facts.Status, TrafficPercent: facts.TrafficPercent, CanaryTotalSteps: facts.CanaryTotalSteps, CanaryStep: facts.CanaryStep, RolloutState: facts.RolloutState, RootfsKey: facts.RootfsKey, ImageDigest: facts.ImageDigest, ServiceRolloutHandoff: facts.Handoff, StageState: facts.StageState}
 	if len(facts.Runtime) > 0 && string(facts.Runtime) != "null" && string(facts.Runtime) != "{}" {
 		d.EnvironmentWorkloadRuntime = string(facts.Runtime)
 	}
@@ -133,11 +134,11 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target); err != nil {
 		return api.RollbackOperation{}, err
 	}
-	a, err := s.AppByID(ctx, app)
+	facts, err := q.ServiceRolloutRecipientReadinessConfig(ctx, tx, mustPgUUID(target))
 	if err != nil {
-		return api.RollbackOperation{}, err
+		return api.RollbackOperation{}, mapErr(err)
 	}
-	r := newCheckedRollback(app, d.Scope, target, current, reason, a.Manifest.ExecutionMode == api.ExecutionModeService)
+	r := newCheckedRollback(app, d.Scope, target, current, reason, facts.ExecutionMode == api.ExecutionModeService)
 	if id != "" {
 		r.ID = id
 	}
@@ -227,6 +228,18 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	}
 	if err = rollbackCurrentMatches(ctx, tx, r); err != nil {
 		return r, err
+	}
+	facts, err := q.ServiceRolloutRecipientReadinessConfig(ctx, tx, mustPgUUID(d.ID))
+	if err != nil {
+		return r, mapErr(err)
+	}
+	if r.Service != (facts.ExecutionMode == api.ExecutionModeService) {
+		return r, ErrCheckedRollbackChanged
+	}
+	if facts.ExecutionMode == api.ExecutionModeWorker {
+		if err := checkRollbackWorkerTx(ctx, tx, d, r); err != nil {
+			return r, err
+		}
 	}
 	ctx = withCheckedRollback(ctx, r.ID)
 	if _, err = q.AuthorizeCheckedRollback(ctx, tx, r.ID); err != nil {

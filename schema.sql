@@ -1383,127 +1383,6 @@ $$;
 
 
 --
--- Name: application_standard_deployment_guard(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.application_standard_deployment_guard() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    PERFORM 1 FROM apps WHERE id = NEW.app_id FOR UPDATE;
-    IF EXISTS (SELECT 1 FROM app_application_standards WHERE app_id = NEW.app_id
-               AND state IN ('pending', 'applying', 'blocked')) THEN
-        RAISE EXCEPTION 'application standards enrollment is not persisted'
-            USING ERRCODE = '23514', CONSTRAINT = 'application_standards_pending';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-
---
--- Name: application_standard_drain_projection_guard(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.application_standard_drain_projection_guard() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE app uuid; logical uuid; e jsonb; expected record; backup jsonb; desired jsonb;
-BEGIN
-    IF TG_OP = 'DELETE' THEN app := OLD.app_id; ELSE app := NEW.app_id; END IF;
-    IF NOT EXISTS (SELECT 1 FROM apps WHERE id = app AND status <> 'deleted') THEN
-        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
-        RETURN NEW;
-    END IF;
-    SELECT effective INTO e FROM app_application_standards WHERE app_id = app;
-    IF coalesce(jsonb_array_length(e->'sources'->'log_destinations'), 0) = 0 THEN
-        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
-        RETURN NEW;
-    END IF;
-    IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
-    SELECT resource_id INTO logical FROM application_standard_control_bindings
-    WHERE app_id = app AND field = 'log_destinations' AND physical_id = logical::text;
-    IF logical IS NULL THEN
-        IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
-    END IF;
-    desired := coalesce(e->'values'->'log_destinations', '[]'::jsonb);
-    IF TG_OP = 'DELETE' THEN
-        IF NOT desired ? logical::text THEN RETURN OLD; END IF;
-    ELSIF desired ? logical::text THEN
-        SELECT d.* INTO expected FROM application_standard_log_destinations d
-        JOIN apps a ON a.org_id = d.org_id AND a.id = app
-        JOIN application_standard_control_bindings b ON b.app_id = app AND b.field = 'log_destinations'
-            AND b.resource_id = d.id AND b.physical_id = NEW.id::text
-        WHERE d.id = logical;
-        IF FOUND AND NEW.app_id = app AND NEW.account_id = (SELECT account_id FROM apps WHERE id = app)
-            AND NEW.kind = expected.kind AND NEW.target_url = expected.target_url
-            AND coalesce(NEW.auth_header_sealed, ''::bytea) = coalesce(expected.auth_header_sealed, ''::bytea)
-            AND NEW.enabled THEN RETURN NEW; END IF;
-        SELECT body INTO backup FROM application_standard_control_backups
-        WHERE app_id = app AND field = 'log_destinations' AND logical_id = logical;
-        IF backup IS NOT NULL AND NEW.id::text = backup->>'ID' AND NEW.app_id::text = backup->>'AppID'
-            AND NEW.account_id::text = backup->>'AccountID' AND NEW.kind = backup->>'Kind'
-            AND NEW.target_url = backup->>'TargetURL' AND NEW.enabled = (backup->>'Enabled')::boolean
-            AND coalesce(NEW.auth_header_sealed, ''::bytea) = decode(coalesce(backup->>'AuthHeaderSealed', ''), 'base64') THEN RETURN NEW; END IF;
-    END IF;
-    RAISE EXCEPTION 'application standard manages this control'
-        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
-END;
-$$;
-
-
---
--- Name: application_standard_effective_incarnation(uuid, text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.application_standard_effective_incarnation(instance uuid, issued text) RETURNS text
-    LANGUAGE plpgsql STABLE
-    AS $_$
-DECLARE held text := issued; nxt uuid; hops integer := 0;
-BEGIN
- IF held IS NULL OR held !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN RETURN held; END IF;
- LOOP
-  SELECT to_incarnation INTO nxt FROM instance_application_standard_rebinds
-   WHERE instance_id = instance AND from_incarnation = held::uuid;
-  EXIT WHEN NOT FOUND OR hops >= 4096;
-  held := nxt::text; hops := hops + 1;
- END LOOP;
- RETURN held;
-END;
-$_$;
-
-
---
--- Name: application_standard_egress_guard(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.application_standard_egress_guard() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE actual jsonb;
-BEGIN
- IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
-  RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
- END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
- JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
- PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
- PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
-  AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
- actual:=application_standard_egress_target(NEW.app_id,NEW.node_id);
- IF actual IS NULL OR actual<>NEW.target OR actual->>'org_id'<>NEW.org_id::text
-  OR actual->'identity'->>'ProtocolVersion'<>'2' OR actual->'identity'->>'Incarnation'=''
-  OR NEW.receipt<>jsonb_build_object('identity',actual->'identity','app_id',actual->>'app_id',
-   'revision',actual->'policy'->'revision','policy_hash',actual->>'policy_hash') THEN
-  RAISE EXCEPTION 'standard egress process or inputs changed' USING ERRCODE='40001',CONSTRAINT='application_standard_egress_current';
- END IF;
- NEW.observed_at:=clock_timestamp();
- RETURN NEW;
-END;
-$$;
-
-
---
 -- Name: apps_streaming_owner_allowed(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1517,6 +1396,51 @@ CREATE FUNCTION public.apps_streaming_owner_allowed(namespace_id uuid, organizat
  SELECT EXISTS(SELECT 1 FROM accounts a WHERE a.id=namespace_id AND a.plan<>'free')
  WHERE organization_id IS NULL;
 $$;
+
+
+--
+-- Name: app_application_standards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_application_standards (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    project_id uuid,
+    base_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    local_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    additional_log_destinations uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    adoptions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    effective jsonb DEFAULT '{}'::jsonb NOT NULL,
+    effective_hash text DEFAULT ''::text NOT NULL,
+    desired_revision bigint DEFAULT 1 NOT NULL,
+    persisted_revision bigint DEFAULT 0 NOT NULL,
+    observed_revision bigint DEFAULT 0 NOT NULL,
+    state text DEFAULT 'unmanaged'::text NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_owner text DEFAULT ''::text NOT NULL,
+    lease_generation bigint DEFAULT 0 NOT NULL,
+    lease_until timestamp with time zone,
+    materialized_fields text[] DEFAULT '{}'::text[] NOT NULL,
+    exception_expires_at timestamp with time zone,
+    observation_checked_at timestamp with time zone,
+    observation_revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
+    CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
+    CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
+    CONSTRAINT app_application_standards_check1 CHECK (((observed_revision >= 0) AND (observed_revision <= persisted_revision))),
+    CONSTRAINT app_application_standards_check2 CHECK (((observation_revision >= 0) AND (observation_revision <= desired_revision))),
+    CONSTRAINT app_application_standards_desired_revision_check CHECK ((desired_revision > 0)),
+    CONSTRAINT app_application_standards_effective_check CHECK ((jsonb_typeof(effective) = 'object'::text)),
+    CONSTRAINT app_application_standards_effective_hash_check CHECK (((effective_hash = ''::text) OR (effective_hash ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT app_application_standards_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT app_application_standards_lease_check CHECK (((lease_owner = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT app_application_standards_lease_generation_check CHECK ((lease_generation >= 0)),
+    CONSTRAINT app_application_standards_lease_owner_check CHECK ((octet_length(lease_owner) <= 128)),
+    CONSTRAINT app_application_standards_local_settings_check CHECK ((jsonb_typeof(local_settings) = 'object'::text)),
+    CONSTRAINT app_application_standards_materialized_fields_check CHECK ((materialized_fields <@ ARRAY['log_destinations'::text, 'require_signed'::text, 'security_policy'::text, 'trusted_publishers'::text, 'egress_cidrs'::text, 'egress_extra_ports'::text])),
+    CONSTRAINT app_application_standards_state_check CHECK ((state = ANY (ARRAY['unmanaged'::text, 'pending'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text])))
+);
 
 
 --
@@ -1714,6 +1638,349 @@ COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge 
 --
 
 COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
+
+
+--
+-- Name: deployments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    build_id uuid,
+    image_digest text NOT NULL,
+    rootfs_path text,
+    rootfs_bytes bigint,
+    status text NOT NULL,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text DEFAULT 'image'::text NOT NULL,
+    source_path text,
+    source_bytes bigint,
+    handler text,
+    log_path text,
+    error_code text,
+    rootfs_key text DEFAULT ''::text NOT NULL,
+    source_url text,
+    commit_sha text,
+    override_entrypoint text[],
+    override_cmd text[],
+    override_env jsonb,
+    override_env_secrets jsonb,
+    override_port integer,
+    override_healthcheck jsonb,
+    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
+    min_instances integer DEFAULT 0 NOT NULL,
+    scan_result jsonb,
+    scan_status text,
+    scanned_at timestamp with time zone,
+    override_liveness_probe jsonb,
+    parked_reason text,
+    parked_at timestamp with time zone,
+    traffic_percent integer DEFAULT 100 NOT NULL,
+    scope text DEFAULT 'default'::text NOT NULL,
+    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    secret_scanned_at timestamp with time zone,
+    error_hint text,
+    error_why text,
+    error_fix text,
+    error_relevant_logs jsonb,
+    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
+    deployed_by_user_id uuid,
+    deployed_via text DEFAULT 'api'::text NOT NULL,
+    deployed_from_ip inet,
+    pusher_login text,
+    reason text,
+    tag text,
+    deployed_by text,
+    pr_number integer,
+    rollback_on_5xx boolean DEFAULT false NOT NULL,
+    first_wake_at timestamp with time zone,
+    first_5xx_window_ends_at timestamp with time zone,
+    first_5xx_count integer DEFAULT 0 NOT NULL,
+    last_auto_rollback_at timestamp with time zone,
+    last_auto_rollback_reason text,
+    liveness_restart_count integer DEFAULT 0 NOT NULL,
+    canary_preset text DEFAULT 'none'::text NOT NULL,
+    canary_step integer DEFAULT 0 NOT NULL,
+    canary_total_steps integer DEFAULT 0 NOT NULL,
+    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollout_state text DEFAULT 'pending'::text NOT NULL,
+    rollout_started_at timestamp with time zone,
+    rollout_completed_at timestamp with time zone,
+    rollout_aborted_at timestamp with time zone,
+    rollout_aborted_reason text,
+    cancelled_at timestamp with time zone,
+    cancelled_by_principal text,
+    cancel_reason text,
+    deleted_at timestamp with time zone,
+    deleted_by_principal text,
+    priority integer DEFAULT 100 NOT NULL,
+    reordered_at timestamp with time zone,
+    reordered_by_principal text,
+    canary_stages jsonb,
+    snapshot_miss_count integer DEFAULT 0 NOT NULL,
+    snapshot_miss_last_at timestamp with time zone,
+    snapshot_miss_backoff_until timestamp with time zone,
+    workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
+    source_root text,
+    full_rootfs_allow_auto boolean DEFAULT false NOT NULL,
+    full_rootfs_override boolean,
+    source_sha256 text,
+    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
+    inferred_profile jsonb,
+    traffic_percent_explicit boolean DEFAULT false NOT NULL,
+    revision integer DEFAULT 0 NOT NULL,
+    service_rollout_handoff jsonb DEFAULT '{}'::jsonb NOT NULL,
+    release_command text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    release_command_shell boolean DEFAULT false NOT NULL,
+    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
+    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
+    override_readiness_probe jsonb,
+    secret_reload_signal text,
+    github_source_ref text,
+    github_installation_id bigint,
+    environment_workload_runtime jsonb,
+    serving_ended_at timestamp with time zone,
+    runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
+    environment_workload_held boolean DEFAULT false NOT NULL,
+    rollback_prepared_at timestamp with time zone,
+    rollout_decision jsonb,
+    snapshot_recovery_generation bigint DEFAULT 0 NOT NULL,
+    runtime_base text DEFAULT ''::text NOT NULL,
+    mail_failure_revision bigint DEFAULT 1 NOT NULL,
+    mail_failed_at timestamp with time zone,
+    mail_failure_account_id uuid,
+    mail_failure_account_revision bigint,
+    mail_failure_app_revision bigint,
+    mail_failure_success_revision bigint,
+    promoted_at timestamp with time zone,
+    CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
+    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
+    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
+    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
+    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
+    CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
+    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
+    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
+    CONSTRAINT deployments_environment_workload_held_requires_runtime CHECK (((NOT environment_workload_held) OR (environment_workload_runtime IS NOT NULL))),
+    CONSTRAINT deployments_environment_workload_runtime_shape CHECK (((environment_workload_runtime IS NULL) OR ((jsonb_typeof(environment_workload_runtime) = 'object'::text) AND (environment_workload_runtime ?& ARRAY['source_id'::text, 'environment_id'::text, 'revision_id'::text, 'generation'::text, 'intent_version'::text, 'resource'::text, 'plan_hash'::text, 'app_id'::text, 'scope'::text, 'baseline'::text, 'start_command'::text, 'runtime'::text]) AND (jsonb_typeof((environment_workload_runtime -> 'runtime'::text)) = 'object'::text) AND (jsonb_typeof((environment_workload_runtime -> 'baseline'::text)) = 'object'::text) AND (((environment_workload_runtime ->> 'generation'::text))::bigint > 0) AND (((environment_workload_runtime ->> 'intent_version'::text))::bigint >= 0) AND ((environment_workload_runtime ->> 'plan_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((environment_workload_runtime ->> 'resource'::text) ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))),
+    CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
+    CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
+    CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
+    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])) OR (last_auto_rollback_reason = 'post_release_regression'::text))),
+    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_mail_failed_at_check CHECK (((mail_failed_at IS NULL) OR isfinite(mail_failed_at))),
+    CONSTRAINT deployments_mail_failure_account_revision_check CHECK (((mail_failure_account_revision IS NULL) OR (mail_failure_account_revision > 0))),
+    CONSTRAINT deployments_mail_failure_app_revision_check CHECK (((mail_failure_app_revision IS NULL) OR (mail_failure_app_revision > 0))),
+    CONSTRAINT deployments_mail_failure_revision_check CHECK ((mail_failure_revision > 0)),
+    CONSTRAINT deployments_mail_failure_success_revision_check CHECK (((mail_failure_success_revision IS NULL) OR (mail_failure_success_revision >= 0))),
+    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
+    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
+    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
+    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
+    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
+    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
+    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
+    CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
+    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
+    CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
+    CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
+    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
+    CONSTRAINT deployments_service_rollout_handoff_object_chk CHECK ((jsonb_typeof(service_rollout_handoff) = 'object'::text)),
+    CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
+    CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
+    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
+    CONSTRAINT deployments_snapshot_recovery_generation_check CHECK ((snapshot_recovery_generation >= 0)),
+    CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
+    CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
+    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
+    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
+    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
+);
+
+
+--
+-- Name: application_standard_deployment_controls(public.apps, public.deployments, public.app_application_standards); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_deployment_controls(a public.apps, d public.deployments, e public.app_application_standards) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE settings jsonb; controls jsonb; projection jsonb; field text;
+BEGIN
+ SELECT s.settings::jsonb INTO settings
+ FROM project_environment_workload_deployment_specs p
+ JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=a.id
+ WHERE p.deployment_id=d.id;
+ IF settings IS NULL THEN
+  controls:=jsonb_build_object('require_signed',a.require_signed,'security_policy',a.security_policy,
+   'egress_allowlist',to_jsonb(a.egress_allowlist::text[]),'egress_ports',to_jsonb(a.egress_ports));
+ ELSE
+  controls:=jsonb_build_object(
+   'require_signed',coalesce(settings->'require_signed','false'::jsonb),
+   'security_policy',CASE WHEN settings->>'security_policy' IN ('off','warn','enforce') THEN settings->>'security_policy' ELSE 'off' END,
+   'egress_allowlist',coalesce(nullif(settings->'egress_allowlist','null'::jsonb),'[]'::jsonb),
+   'egress_ports',coalesce(nullif(settings->'egress_ports','null'::jsonb),'[]'::jsonb));
+ END IF;
+ projection:=jsonb_build_object('require_signed',controls->'require_signed','security_policy',controls->'security_policy',
+  'egress_cidrs',controls->'egress_allowlist','egress_extra_ports',controls->'egress_ports');
+ FOREACH field IN ARRAY ARRAY['require_signed','security_policy','egress_cidrs','egress_extra_ports'] LOOP
+  IF coalesce(jsonb_array_length(e.effective->'sources'->field),0)>0
+     AND projection->field IS DISTINCT FROM e.effective->'values'->field THEN
+   RAISE EXCEPTION 'scoped runtime setting conflicts with current application standard'
+    USING ERRCODE='23514',CONSTRAINT='application_standards_pending';
+  END IF;
+ END LOOP;
+ RETURN controls;
+END $$;
+
+
+--
+-- Name: application_standard_deployment_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_deployment_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM apps WHERE id = NEW.app_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM app_application_standards WHERE app_id = NEW.app_id
+               AND state IN ('pending', 'applying', 'blocked')) THEN
+        RAISE EXCEPTION 'application standards enrollment is not persisted'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standards_pending';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_deployment_runtime(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_deployment_runtime(a public.apps, d public.deployments) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE settings jsonb;
+BEGIN
+ SELECT s.settings::jsonb INTO settings
+ FROM project_environment_workload_deployment_specs p
+ JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=a.id
+ WHERE p.deployment_id=d.id;
+ RETURN jsonb_build_object(
+  'type',coalesce(d.environment_workload_runtime->>'app_type',settings->>'type',a.type),
+  'runtime',coalesce(d.environment_workload_runtime->>'runtime_base',settings->>'runtime',a.runtime,''),
+  'ram_mb',coalesce(settings->'ram_mb',to_jsonb(a.ram_mb)),
+  'app_protocol',coalesce(settings->'app_protocol',to_jsonb(a.app_protocol)));
+END $$;
+
+
+--
+-- Name: application_standard_drain_projection_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_drain_projection_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid; logical uuid; e jsonb; expected record; backup jsonb; desired jsonb;
+BEGIN
+    IF TG_OP = 'DELETE' THEN app := OLD.app_id; ELSE app := NEW.app_id; END IF;
+    IF NOT EXISTS (SELECT 1 FROM apps WHERE id = app AND status <> 'deleted') THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = app;
+    IF coalesce(jsonb_array_length(e->'sources'->'log_destinations'), 0) = 0 THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
+    SELECT resource_id INTO logical FROM application_standard_control_bindings
+    WHERE app_id = app AND field = 'log_destinations' AND physical_id = logical::text;
+    IF logical IS NULL THEN
+        IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
+    END IF;
+    desired := coalesce(e->'values'->'log_destinations', '[]'::jsonb);
+    IF TG_OP = 'DELETE' THEN
+        IF NOT desired ? logical::text THEN RETURN OLD; END IF;
+    ELSIF desired ? logical::text THEN
+        SELECT d.* INTO expected FROM application_standard_log_destinations d
+        JOIN apps a ON a.org_id = d.org_id AND a.id = app
+        JOIN application_standard_control_bindings b ON b.app_id = app AND b.field = 'log_destinations'
+            AND b.resource_id = d.id AND b.physical_id = NEW.id::text
+        WHERE d.id = logical;
+        IF FOUND AND NEW.app_id = app AND NEW.account_id = (SELECT account_id FROM apps WHERE id = app)
+            AND NEW.kind = expected.kind AND NEW.target_url = expected.target_url
+            AND coalesce(NEW.auth_header_sealed, ''::bytea) = coalesce(expected.auth_header_sealed, ''::bytea)
+            AND NEW.enabled THEN RETURN NEW; END IF;
+        SELECT body INTO backup FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'log_destinations' AND logical_id = logical;
+        IF backup IS NOT NULL AND NEW.id::text = backup->>'ID' AND NEW.app_id::text = backup->>'AppID'
+            AND NEW.account_id::text = backup->>'AccountID' AND NEW.kind = backup->>'Kind'
+            AND NEW.target_url = backup->>'TargetURL' AND NEW.enabled = (backup->>'Enabled')::boolean
+            AND coalesce(NEW.auth_header_sealed, ''::bytea) = decode(coalesce(backup->>'AuthHeaderSealed', ''), 'base64') THEN RETURN NEW; END IF;
+    END IF;
+    RAISE EXCEPTION 'application standard manages this control'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+END;
+$$;
+
+
+--
+-- Name: application_standard_effective_incarnation(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_effective_incarnation(instance uuid, issued text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE held text := issued; nxt uuid; hops integer := 0;
+BEGIN
+ IF held IS NULL OR held !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN RETURN held; END IF;
+ LOOP
+  SELECT to_incarnation INTO nxt FROM instance_application_standard_rebinds
+   WHERE instance_id = instance AND from_incarnation = held::uuid;
+  EXIT WHEN NOT FOUND OR hops >= 4096;
+  held := nxt::text; hops := hops + 1;
+ END LOOP;
+ RETURN held;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_egress_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+ JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
+ PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
+ PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
+  AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
+ actual:=application_standard_egress_target(NEW.app_id,NEW.node_id);
+ IF actual IS NULL OR actual<>NEW.target OR actual->>'org_id'<>NEW.org_id::text
+  OR actual->'identity'->>'ProtocolVersion'<>'2' OR actual->'identity'->>'Incarnation'=''
+  OR NEW.receipt<>jsonb_build_object('identity',actual->'identity','app_id',actual->>'app_id',
+   'revision',actual->'policy'->'revision','policy_hash',actual->>'policy_hash') THEN
+  RAISE EXCEPTION 'standard egress process or inputs changed' USING ERRCODE='40001',CONSTRAINT='application_standard_egress_current';
+ END IF;
+ NEW.observed_at:=clock_timestamp();
+ RETURN NEW;
+END;
+$$;
 
 
 --
@@ -4066,171 +4333,6 @@ $$;
 
 
 --
--- Name: deployments; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    build_id uuid,
-    image_digest text NOT NULL,
-    rootfs_path text,
-    rootfs_bytes bigint,
-    status text NOT NULL,
-    error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    kind text DEFAULT 'image'::text NOT NULL,
-    source_path text,
-    source_bytes bigint,
-    handler text,
-    log_path text,
-    error_code text,
-    rootfs_key text DEFAULT ''::text NOT NULL,
-    source_url text,
-    commit_sha text,
-    override_entrypoint text[],
-    override_cmd text[],
-    override_env jsonb,
-    override_env_secrets jsonb,
-    override_port integer,
-    override_healthcheck jsonb,
-    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
-    min_instances integer DEFAULT 0 NOT NULL,
-    scan_result jsonb,
-    scan_status text,
-    scanned_at timestamp with time zone,
-    override_liveness_probe jsonb,
-    parked_reason text,
-    parked_at timestamp with time zone,
-    traffic_percent integer DEFAULT 100 NOT NULL,
-    scope text DEFAULT 'default'::text NOT NULL,
-    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
-    secret_scanned_at timestamp with time zone,
-    error_hint text,
-    error_why text,
-    error_fix text,
-    error_relevant_logs jsonb,
-    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
-    deployed_by_user_id uuid,
-    deployed_via text DEFAULT 'api'::text NOT NULL,
-    deployed_from_ip inet,
-    pusher_login text,
-    reason text,
-    tag text,
-    deployed_by text,
-    pr_number integer,
-    rollback_on_5xx boolean DEFAULT false NOT NULL,
-    first_wake_at timestamp with time zone,
-    first_5xx_window_ends_at timestamp with time zone,
-    first_5xx_count integer DEFAULT 0 NOT NULL,
-    last_auto_rollback_at timestamp with time zone,
-    last_auto_rollback_reason text,
-    liveness_restart_count integer DEFAULT 0 NOT NULL,
-    canary_preset text DEFAULT 'none'::text NOT NULL,
-    canary_step integer DEFAULT 0 NOT NULL,
-    canary_total_steps integer DEFAULT 0 NOT NULL,
-    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
-    rollout_state text DEFAULT 'pending'::text NOT NULL,
-    rollout_started_at timestamp with time zone,
-    rollout_completed_at timestamp with time zone,
-    rollout_aborted_at timestamp with time zone,
-    rollout_aborted_reason text,
-    cancelled_at timestamp with time zone,
-    cancelled_by_principal text,
-    cancel_reason text,
-    deleted_at timestamp with time zone,
-    deleted_by_principal text,
-    priority integer DEFAULT 100 NOT NULL,
-    reordered_at timestamp with time zone,
-    reordered_by_principal text,
-    canary_stages jsonb,
-    snapshot_miss_count integer DEFAULT 0 NOT NULL,
-    snapshot_miss_last_at timestamp with time zone,
-    snapshot_miss_backoff_until timestamp with time zone,
-    workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
-    source_root text,
-    full_rootfs_allow_auto boolean DEFAULT false NOT NULL,
-    full_rootfs_override boolean,
-    source_sha256 text,
-    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
-    inferred_profile jsonb,
-    traffic_percent_explicit boolean DEFAULT false NOT NULL,
-    revision integer DEFAULT 0 NOT NULL,
-    service_rollout_handoff jsonb DEFAULT '{}'::jsonb NOT NULL,
-    release_command text[] DEFAULT ARRAY[]::text[] NOT NULL,
-    release_command_shell boolean DEFAULT false NOT NULL,
-    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
-    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
-    override_readiness_probe jsonb,
-    secret_reload_signal text,
-    github_source_ref text,
-    github_installation_id bigint,
-    environment_workload_runtime jsonb,
-    serving_ended_at timestamp with time zone,
-    runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
-    environment_workload_held boolean DEFAULT false NOT NULL,
-    rollback_prepared_at timestamp with time zone,
-    rollout_decision jsonb,
-    snapshot_recovery_generation bigint DEFAULT 0 NOT NULL,
-    runtime_base text DEFAULT ''::text NOT NULL,
-    mail_failure_revision bigint DEFAULT 1 NOT NULL,
-    mail_failed_at timestamp with time zone,
-    mail_failure_account_id uuid,
-    mail_failure_account_revision bigint,
-    mail_failure_app_revision bigint,
-    mail_failure_success_revision bigint,
-    promoted_at timestamp with time zone,
-    CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
-    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
-    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
-    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
-    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
-    CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
-    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
-    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
-    CONSTRAINT deployments_environment_workload_held_requires_runtime CHECK (((NOT environment_workload_held) OR (environment_workload_runtime IS NOT NULL))),
-    CONSTRAINT deployments_environment_workload_runtime_shape CHECK (((environment_workload_runtime IS NULL) OR ((jsonb_typeof(environment_workload_runtime) = 'object'::text) AND (environment_workload_runtime ?& ARRAY['source_id'::text, 'environment_id'::text, 'revision_id'::text, 'generation'::text, 'intent_version'::text, 'resource'::text, 'plan_hash'::text, 'app_id'::text, 'scope'::text, 'baseline'::text, 'start_command'::text, 'runtime'::text]) AND (jsonb_typeof((environment_workload_runtime -> 'runtime'::text)) = 'object'::text) AND (jsonb_typeof((environment_workload_runtime -> 'baseline'::text)) = 'object'::text) AND (((environment_workload_runtime ->> 'generation'::text))::bigint > 0) AND (((environment_workload_runtime ->> 'intent_version'::text))::bigint >= 0) AND ((environment_workload_runtime ->> 'plan_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((environment_workload_runtime ->> 'resource'::text) ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))),
-    CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
-    CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
-    CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
-    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
-    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])) OR (last_auto_rollback_reason = 'post_release_regression'::text))),
-    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
-    CONSTRAINT deployments_mail_failed_at_check CHECK (((mail_failed_at IS NULL) OR isfinite(mail_failed_at))),
-    CONSTRAINT deployments_mail_failure_account_revision_check CHECK (((mail_failure_account_revision IS NULL) OR (mail_failure_account_revision > 0))),
-    CONSTRAINT deployments_mail_failure_app_revision_check CHECK (((mail_failure_app_revision IS NULL) OR (mail_failure_app_revision > 0))),
-    CONSTRAINT deployments_mail_failure_revision_check CHECK ((mail_failure_revision > 0)),
-    CONSTRAINT deployments_mail_failure_success_revision_check CHECK (((mail_failure_success_revision IS NULL) OR (mail_failure_success_revision >= 0))),
-    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
-    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
-    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
-    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
-    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
-    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
-    CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
-    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
-    CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
-    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
-    CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
-    CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
-    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
-    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
-    CONSTRAINT deployments_service_rollout_handoff_object_chk CHECK ((jsonb_typeof(service_rollout_handoff) = 'object'::text)),
-    CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
-    CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
-    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
-    CONSTRAINT deployments_snapshot_recovery_generation_check CHECK ((snapshot_recovery_generation >= 0)),
-    CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
-    CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
-    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
-    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
-    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
-);
-
-
---
 -- Name: application_standard_runtime_producers(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4371,7 +4473,14 @@ BEGIN
    RAISE EXCEPTION 'runtime artifact children are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
   END IF;
  END IF;
- IF artifact_id IS NOT NULL THEN producers:=application_standard_runtime_producers(a,d); END IF;
+ IF artifact_id IS NOT NULL THEN
+  a.type := application_standard_deployment_runtime(a,d)->>'type';
+  a.runtime := application_standard_deployment_runtime(a,d)->>'runtime';
+  a.ram_mb := (application_standard_deployment_runtime(a,d)->>'ram_mb')::integer;
+  a.app_protocol := application_standard_deployment_runtime(a,d)->>'app_protocol';
+  a := jsonb_populate_record(a,application_standard_deployment_controls(a,d,e));
+  producers:=application_standard_runtime_producers(a,d);
+ END IF;
  RETURN application_standard_stable_runtime_input(jsonb_build_object(
   'app_id',a.id::text,'org_id',a.org_id::text,'project_id',coalesce(a.project_id::text,''),'account_id',a.account_id::text,
   'account_plan',acct.plan,'account_egress_allowlist_extra',acct.egress_allowlist_extra,
@@ -10264,6 +10373,43 @@ $$;
 
 
 --
+-- Name: environment_source_imaging_metadata_update_valid(public.deployments, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_source_imaging_metadata_update_valid(before_row public.deployments, after_row public.deployments) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+ SELECT coalesce(
+  jsonb_typeof(before_row.environment_workload_runtime->'source_archive')='object'
+  AND NOT (before_row.environment_workload_runtime ? 'built_artifact')
+  AND before_row.environment_workload_runtime->'source'->>'kind' IN ('source','dockerfile','function')
+  AND before_row.kind IN ('github','tarball')
+  AND before_row.status IN ('pending','building','imaging','snapshotting')
+  AND after_row.status=before_row.status
+  AND coalesce(before_row.rootfs_path,'')<>''
+  AND after_row.rootfs_path=before_row.rootfs_path
+  AND before_row.build_id::text=before_row.environment_workload_runtime->'source_archive'->>'build_id'
+  AND after_row.image_digest ~ '^sha256:[a-f0-9]{64}$'
+  AND (coalesce(before_row.image_digest,'')='' OR after_row.image_digest=before_row.image_digest)
+  AND (after_row.inferred_profile IS NOT DISTINCT FROM before_row.inferred_profile OR (
+   before_row.status IN ('pending','building','imaging')
+   AND jsonb_typeof(after_row.inferred_profile)='object'
+   AND (coalesce(before_row.inferred_profile,'{}'::jsonb) - ARRAY['port','image_healthcheck_required']
+    || CASE WHEN before_row.inferred_profile ? 'version' THEN '{}'::jsonb ELSE '{"version":"v1"}'::jsonb END
+    || CASE WHEN before_row.inferred_profile ? 'framework' THEN '{}'::jsonb ELSE '{"framework":"unknown"}'::jsonb END)
+     = (after_row.inferred_profile - ARRAY['port','image_healthcheck_required'])
+   AND (NOT coalesce(before_row.inferred_profile ? 'port',false) OR after_row.inferred_profile ? 'port')
+   AND (NOT (after_row.inferred_profile ? 'port') OR (
+    jsonb_typeof(after_row.inferred_profile->'port')='number'
+    AND after_row.inferred_profile->>'port' ~ '^[0-9]{1,5}$'
+    AND (after_row.inferred_profile->>'port')::numeric BETWEEN 1 AND 65535))
+   AND (NOT coalesce(before_row.inferred_profile ? 'image_healthcheck_required',false) OR after_row.inferred_profile ? 'image_healthcheck_required')
+   AND (NOT (after_row.inferred_profile ? 'image_healthcheck_required') OR jsonb_typeof(after_row.inferred_profile->'image_healthcheck_required')='boolean')
+  )),false);
+$_$;
+
+
+--
 -- Name: environment_workload_activation_authorized(public.deployments); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15975,13 +16121,13 @@ BEGIN
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL THEN
   IF NEW.environment_workload_runtime IS DISTINCT FROM OLD.environment_workload_runtime OR
-   ((OLD.environment_workload_runtime ? 'source_archive' OR OLD.environment_workload_runtime ? 'built_artifact') AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,NEW.inferred_profile,NEW.github_source_ref,NEW.github_installation_id)
+   ((OLD.environment_workload_runtime ? 'source_archive' OR OLD.environment_workload_runtime ? 'built_artifact') AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,CASE WHEN environment_source_imaging_metadata_update_valid(OLD,NEW) THEN OLD.inferred_profile ELSE NEW.inferred_profile END,NEW.github_source_ref,NEW.github_installation_id)
     IS DISTINCT FROM ROW(OLD.source_bytes,OLD.source_url,OLD.log_path,OLD.inferred_profile,OLD.github_source_ref,OLD.github_installation_id)) OR
    (NEW.build_id IS DISTINCT FROM OLD.build_id AND (OLD.build_id IS NOT NULL OR frozen->'source_archive' IS NULL OR
     NEW.build_id IS DISTINCT FROM (frozen->'source_archive'->>'build_id')::uuid OR NOT EXISTS(
      SELECT 1 FROM builds b WHERE b.id=NEW.build_id AND b.deployment_id=NEW.id AND b.kind=NEW.kind AND b.source_bytes=NEW.source_bytes))) OR
    environment_workload_deployment_inputs(NEW) IS DISTINCT FROM environment_workload_deployment_inputs(OLD) OR
-   ROW(NEW.app_id,NEW.scope,NEW.kind,NEW.image_digest,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
+   ROW(NEW.app_id,NEW.scope,NEW.kind,CASE WHEN environment_source_imaging_metadata_update_valid(OLD,NEW) THEN OLD.image_digest ELSE NEW.image_digest END,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
        NEW.override_entrypoint,NEW.override_cmd,NEW.override_env,NEW.override_env_secrets,NEW.override_port,NEW.override_healthcheck,
        NEW.override_liveness_probe,NEW.override_readiness_probe,NEW.override_main_depends_on,NEW.release_command,NEW.release_command_shell)
    IS DISTINCT FROM
@@ -22993,6 +23139,37 @@ $$;
 
 
 --
+-- Name: preserve_deployment_retry_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_deployment_retry_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE intent jsonb;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  intent:=jsonb_build_object('version','v1','traffic_percent',NEW.traffic_percent,
+   'traffic_percent_explicit',NEW.traffic_percent_explicit,
+   'service_rollout',NEW.canary_total_steps=0 AND coalesce(NEW.rollout_state,'pending')='rolling_out');
+ ELSE
+  intent:=OLD.stage_state->'retry_intent';
+  IF intent IS NULL AND OLD.status NOT IN ('failed','cancelled','superseded') THEN
+   intent:=jsonb_build_object('version','v1','traffic_percent',OLD.traffic_percent,
+    'traffic_percent_explicit',OLD.traffic_percent_explicit,
+    'service_rollout',OLD.canary_total_steps=0 AND coalesce(OLD.rollout_state,'pending')='rolling_out');
+  END IF;
+ END IF;
+ IF intent IS NULL THEN
+  NEW.stage_state:=coalesce(NEW.stage_state,'{}'::jsonb)-'retry_intent';
+ ELSE
+  NEW.stage_state:=jsonb_set(coalesce(NEW.stage_state,'{}'::jsonb),'{retry_intent}',intent,true);
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: preserve_fixed_multipart_capacity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28034,6 +28211,22 @@ END $$;
 
 
 --
+-- Name: start_service_rollout_readiness_clock(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.start_service_rollout_readiness_clock() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.status <> 'live' AND NEW.status = 'live'
+    AND NEW.canary_total_steps = 0 AND NEW.rollout_state = 'rolling_out' THEN
+  NEW.rollout_started_at := clock_timestamp();
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: sync_app_task_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -30519,51 +30712,6 @@ CREATE TABLE public.app_api_routes (
     CONSTRAINT app_api_routes_check CHECK ((last_seen >= first_seen)),
     CONSTRAINT app_api_routes_request_count_check CHECK ((request_count > 0)),
     CONSTRAINT app_api_routes_route_template_check CHECK (((length(route_template) >= 1) AND (length(route_template) <= 256)))
-);
-
-
---
--- Name: app_application_standards; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_application_standards (
-    app_id uuid NOT NULL,
-    org_id uuid NOT NULL,
-    project_id uuid,
-    base_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
-    local_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
-    additional_log_destinations uuid[] DEFAULT '{}'::uuid[] NOT NULL,
-    adoptions jsonb DEFAULT '[]'::jsonb NOT NULL,
-    effective jsonb DEFAULT '{}'::jsonb NOT NULL,
-    effective_hash text DEFAULT ''::text NOT NULL,
-    desired_revision bigint DEFAULT 1 NOT NULL,
-    persisted_revision bigint DEFAULT 0 NOT NULL,
-    observed_revision bigint DEFAULT 0 NOT NULL,
-    state text DEFAULT 'unmanaged'::text NOT NULL,
-    error_code text DEFAULT ''::text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    lease_owner text DEFAULT ''::text NOT NULL,
-    lease_generation bigint DEFAULT 0 NOT NULL,
-    lease_until timestamp with time zone,
-    materialized_fields text[] DEFAULT '{}'::text[] NOT NULL,
-    exception_expires_at timestamp with time zone,
-    observation_checked_at timestamp with time zone,
-    observation_revision bigint DEFAULT 0 NOT NULL,
-    CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
-    CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
-    CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
-    CONSTRAINT app_application_standards_check1 CHECK (((observed_revision >= 0) AND (observed_revision <= persisted_revision))),
-    CONSTRAINT app_application_standards_check2 CHECK (((observation_revision >= 0) AND (observation_revision <= desired_revision))),
-    CONSTRAINT app_application_standards_desired_revision_check CHECK ((desired_revision > 0)),
-    CONSTRAINT app_application_standards_effective_check CHECK ((jsonb_typeof(effective) = 'object'::text)),
-    CONSTRAINT app_application_standards_effective_hash_check CHECK (((effective_hash = ''::text) OR (effective_hash ~ '^[a-f0-9]{64}$'::text))),
-    CONSTRAINT app_application_standards_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
-    CONSTRAINT app_application_standards_lease_check CHECK (((lease_owner = ''::text) = (lease_until IS NULL))),
-    CONSTRAINT app_application_standards_lease_generation_check CHECK ((lease_generation >= 0)),
-    CONSTRAINT app_application_standards_lease_owner_check CHECK ((octet_length(lease_owner) <= 128)),
-    CONSTRAINT app_application_standards_local_settings_check CHECK ((jsonb_typeof(local_settings) = 'object'::text)),
-    CONSTRAINT app_application_standards_materialized_fields_check CHECK ((materialized_fields <@ ARRAY['log_destinations'::text, 'require_signed'::text, 'security_policy'::text, 'trusted_publishers'::text, 'egress_cidrs'::text, 'egress_extra_ports'::text])),
-    CONSTRAINT app_application_standards_state_check CHECK ((state = ANY (ARRAY['unmanaged'::text, 'pending'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text])))
 );
 
 
@@ -55096,9 +55244,11 @@ CREATE TABLE public.runtime_instance_config_proofs (
     scope text NOT NULL,
     secret_fingerprint text NOT NULL,
     config_fingerprint text NOT NULL,
+    prime_activation_handoff jsonb,
     CONSTRAINT runtime_instance_config_proofs_config_fingerprint_check CHECK ((config_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT runtime_instance_config_proofs_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_instance_config_proofs_prime_activation_handoff_check CHECK (((prime_activation_handoff IS NULL) OR (jsonb_typeof(prime_activation_handoff) = 'object'::text))),
     CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
     CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
@@ -84031,6 +84181,13 @@ CREATE TRIGGER deployments_record_traffic_change_trg AFTER UPDATE OF traffic_per
 
 
 --
+-- Name: deployments deployments_retry_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_retry_intent BEFORE INSERT OR UPDATE OF status, stage_state ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.preserve_deployment_retry_intent();
+
+
+--
 -- Name: deployments deployments_rollout_outcome_webhooks; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -84049,6 +84206,13 @@ CREATE TRIGGER deployments_runtime_upgrade_routing_token BEFORE INSERT OR UPDATE
 --
 
 CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_upgrade_traffic_fence();
+
+
+--
+-- Name: deployments deployments_service_readiness_clock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_service_readiness_clock BEFORE UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.start_service_rollout_readiness_clock();
 
 
 --

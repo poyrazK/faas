@@ -103,7 +103,7 @@ func (h *Handler) resumeReleaseApprovalHold(ctx context.Context, dep state.Deplo
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return err
 	}
@@ -136,10 +136,19 @@ func (l *Loop) resumeReleaseApprovalHolds(ctx context.Context) {
 		Statuses:            []state.DeploymentStatus{state.DeploySnapshotting},
 		OldestFirst:         true,
 		Limit:               staleDeploymentBatchSize,
+		Offset:              l.releaseApprovalOffset,
 	})
 	if err != nil {
 		l.log.Warn("imaged: list releases held for approval", "err", err)
 		return
+	}
+	// Advance even when every row still waits for approval or has no release
+	// command. Wrap at the end so persistent older holds cannot starve newer
+	// approvals, and rows removed during a pass are revisited on the next pass.
+	if len(rows) < staleDeploymentBatchSize {
+		l.releaseApprovalOffset = 0
+	} else {
+		l.releaseApprovalOffset += len(rows)
 	}
 	var work []state.BuildImageWork
 	for _, d := range rows {
@@ -161,7 +170,7 @@ func (l *Loop) releaseApprovalPending(ctx context.Context, d state.Deployment) b
 	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting {
 		return false
 	}
-	app, err := l.store.AppByID(ctx, d.AppID)
+	app, err := state.AppForDeployment(ctx, l.store, d)
 	if err != nil {
 		return false
 	}

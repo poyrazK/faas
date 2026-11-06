@@ -14325,14 +14325,15 @@ type RuntimeEnvironmentScalingState struct {
 }
 
 type RuntimeInstanceConfigProof struct {
-	InstanceID        pgtype.UUID
-	WakeID            pgtype.UUID
-	NodeID            pgtype.UUID
-	DeploymentID      pgtype.UUID
-	EnvironmentID     pgtype.UUID
-	Scope             string
-	SecretFingerprint string
-	ConfigFingerprint string
+	InstanceID             pgtype.UUID
+	WakeID                 pgtype.UUID
+	NodeID                 pgtype.UUID
+	DeploymentID           pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	Scope                  string
+	SecretFingerprint      string
+	ConfigFingerprint      string
+	PrimeActivationHandoff []byte
 }
 
 type RuntimeRelease struct {

@@ -81,7 +81,8 @@ func DeployTarball(c *Client, ctx context.Context, slug, path, runtime, handler 
 
 // DeployTarballWithSourceRoot is the workspace-aware counterpart to
 // DeployTarball. sourceRoot is relative to the uploaded repository context;
-// an empty value preserves the legacy archive-root behavior.
+// an empty value uses the app's configured root. The CLI sends an explicit "."
+// when it selected the archive root while packing.
 func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations) (api.DeploymentResponse, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
