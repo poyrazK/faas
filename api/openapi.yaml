@@ -26465,7 +26465,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
+                  description: "Build directory within the developer-source archive. Empty or omitted inherits the app's configured root; '.' selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -95172,7 +95172,7 @@ components:
         runtime: { type: string }
         handler: { type: string }
         dockerfile: { type: boolean }
-        source_root: { type: string, description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root." }
+        source_root: { type: string, description: "Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.' selects the archive root." }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by the API." }

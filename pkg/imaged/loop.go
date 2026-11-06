@@ -483,23 +483,23 @@ func staleDeploymentFilter(cutoff time.Time) state.OperatorDeploymentFilter {
 	}
 }
 
-// operatorDeploymentPages bounds one sweep's listing; a backlog past it is
-// reached on the next sweep.
+// operatorDeploymentPages bounds read-only backlog observations. Mutating
+// recovery carries its cursor between ticks and uses a single page.
 const operatorDeploymentPages = 64
 
 // pageOperatorDeployments lists filter page by page. visit returns how many
 // of a page's rows it left in place (did not move out of the filter), so the
-// next page starts after them and none is visited twice in a pass.
-func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int, offsets ...*int) error {
-	var cursor *int
-	if len(offsets) > 0 {
-		cursor = offsets[0]
-	}
+// next page starts after them and none is visited twice in a pass. A cursor
+// limits mutating recovery to one batch per tick and continues on the next
+// tick; read-only observations without a cursor can scan multiple pages.
+func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int, cursor *int) error {
+	pages := operatorDeploymentPages
 	if cursor != nil {
 		filter.Offset = *cursor
+		pages = 1
 	}
 
-	for page := 0; page < operatorDeploymentPages && ctx.Err() == nil; page++ {
+	for page := 0; page < pages && ctx.Err() == nil; page++ {
 		rows, err := l.store.ListDeploymentsForOperator(ctx, filter)
 		if err != nil {
 			return err
@@ -594,7 +594,7 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 			}
 		}
 		return len(rows)
-	})
+	}, nil)
 	if err != nil {
 		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
 		return

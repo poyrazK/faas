@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -71,14 +72,29 @@ func TestReleaseApprovalRecoveryReachesLaterBatches(t *testing.T) {
 			fx.requireApprovals(t)
 			fx.decide(t, state.ReleaseApprovalApprove)
 			fx.decide(t, state.ReleaseApprovalApprove)
-			var held state.Deployment
+			var held releaseGateFixture
 			if crowded {
 				for i := 0; i < 64; i++ {
+					// Use independent apps: newer revisions of the same app must
+					// supersede an older release before its migration can run.
+					held = fx
 					var err error
-					held, err = fx.store.CreateDeployment(ctx, state.Deployment{AppID: fx.app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:older-held", Status: state.DeploySnapshotting, ReleaseCommand: []string{"bin/migrate"}, CreatedAt: fx.candidate.CreatedAt.Add(-30 * time.Minute)})
+					held.app, err = fx.store.CreateApp(ctx, state.App{AccountID: fx.account.ID, Slug: fmt.Sprintf("older-held-%d", i), RAMMB: 256, Status: state.AppActive})
 					if err != nil {
 						t.Fatal(err)
 					}
+					held.previous, err = fx.store.CreateDeployment(ctx, state.Deployment{AppID: held.app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:previous", Status: state.DeploySnapshotting})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := fx.store.MarkDeploymentLive(ctx, held.previous.ID); err != nil {
+						t.Fatal(err)
+					}
+					held.candidate, err = fx.store.CreateDeployment(ctx, state.Deployment{AppID: held.app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:older-held", Status: state.DeploySnapshotting, ReleaseCommand: []string{"bin/migrate"}, CreatedAt: fx.candidate.CreatedAt.Add(-30 * time.Minute)})
+					if err != nil {
+						t.Fatal(err)
+					}
+					held.requireApprovals(t)
 				}
 			}
 			loop := NewLoop(LoopConfig{Handler: fx.handler, Store: fx.store, Log: silentLogger()})
@@ -102,17 +118,15 @@ func TestReleaseApprovalRecoveryReachesLaterBatches(t *testing.T) {
 				t.Fatal(err)
 			}
 			if crowded {
-				previous := fx
-				previous.candidate = held
-				if err := fx.store.SetDeploymentRootfs(ctx, held.ID, "/tmp/"+held.ID+".ext4", "apps/release-gate/"+held.ID+".ext4", 4096); err != nil {
+				if err := fx.store.SetDeploymentRootfs(ctx, held.candidate.ID, "/tmp/"+held.candidate.ID+".ext4", "apps/release-gate/"+held.candidate.ID+".ext4", 4096); err != nil {
 					t.Fatal(err)
 				}
-				previous.decide(t, state.ReleaseApprovalApprove)
-				previous.decide(t, state.ReleaseApprovalApprove)
+				held.decide(t, state.ReleaseApprovalApprove)
+				held.decide(t, state.ReleaseApprovalApprove)
 				for i := 0; i < 2; i++ {
 					loop.resumeReleaseApprovalHolds(ctx)
 				}
-				if _, err := fx.store.ReleaseAppTaskByDeployment(ctx, held.ID); err != nil {
+				if _, err := fx.store.ReleaseAppTaskByDeployment(ctx, held.candidate.ID); err != nil {
 					t.Fatalf("recovery did not wrap to an older newly approved release: %v", err)
 				}
 			}
