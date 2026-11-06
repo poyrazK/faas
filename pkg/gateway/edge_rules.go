@@ -627,6 +627,27 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	return cloneHostEntry(entry), true
 }
 
+// PinnableHost returns a current host entry, sealed, for a request to pin,
+// without the copy of every rule kind GetHost makes. Cached entries are never
+// modified after Put and a pin keeps only the entry's sealed snapshot, so a
+// sealed entry is returned as is; the caller must not modify it. An unsealed
+// one (production seals before Put; fixtures may not) is sealed on a private
+// copy. GetHost plus a copy for the seal cost about 4 KB per request.
+func (c *EdgeRuleCache) PinnableHost(host string) (*HostEntry, bool, error) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false, nil
+	}
+	if entry.snapshot != nil {
+		return entry, true, nil
+	}
+	sealed := *entry
+	if err := sealed.SealPolicy(); err != nil {
+		return nil, false, err
+	}
+	return &sealed, true, nil
+}
+
 // HostRules returns a copy of one kind's compiled rules for a current host,
 // without copying the rest of the host's set as GetHost does. A request asks
 // for each kind separately, so copying the whole set per kind cost about
