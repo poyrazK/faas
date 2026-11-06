@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apptaskmux"
 )
 
 const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|read_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
@@ -112,7 +111,7 @@ func cmdPostgresConnect(args []string) int {
 	}
 	defer closeSession()
 	forward := func(forwardCtx context.Context) error {
-		return apptaskmux.Forward(forwardCtx, ln, session, session.stdout)
+		return forwardAppTaskSession(forwardCtx, ln, session, session.stdout, closeSession)
 	}
 	hostAddr, localPort := tunnelEndpoint(ln.Addr())
 	if *proxy {

@@ -2733,3 +2733,6 @@ func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, veri
 	got := resolveSourceUploadCap(ctx, c)
 	return got.mb, got.verified, got.warning(), got.explain
 }
+
+// ForwardAppTaskSession is the shared port-forward / postgres connect relay.
+var ForwardAppTaskSession = forwardAppTaskSession
