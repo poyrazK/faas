@@ -7307,6 +7307,23 @@ $$;
 
 
 --
+-- Name: custom_domain_binding_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.custom_domain_binding_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (OLD.app_id, OLD.environment_id, OLD.challenge_token) IS DISTINCT FROM
+       (NEW.app_id, NEW.environment_id, NEW.challenge_token) THEN
+        NEW.binding_version := gen_random_uuid();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: customer_operation_backend_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34870,9 +34887,9 @@ CREATE TABLE public.custom_domains (
     cert_retry_at timestamp with time zone,
     verification_manual_check_at timestamp with time zone,
     binding_version uuid DEFAULT gen_random_uuid(),
-    CONSTRAINT custom_domains_manual_check_at_check CHECK (((verification_manual_check_at IS NULL) OR isfinite(verification_manual_check_at))),
     CONSTRAINT custom_domains_cert_retry_at_check CHECK (((cert_retry_at IS NULL) OR isfinite(cert_retry_at))),
-    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
+    CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text]))),
+    CONSTRAINT custom_domains_manual_check_at_check CHECK (((verification_manual_check_at IS NULL) OR isfinite(verification_manual_check_at)))
 );
 
 
@@ -84459,6 +84476,13 @@ CREATE TRIGGER crons_schedule_revision BEFORE UPDATE ON public.crons FOR EACH RO
 
 
 --
+-- Name: custom_domains custom_domain_binding_version; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER custom_domain_binding_version BEFORE UPDATE OF app_id, environment_id, challenge_token ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.custom_domain_binding_version();
+
+
+--
 -- Name: customer_operation_executions customer_operation_backend_identity; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -105031,18 +105055,6 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
-
-CREATE FUNCTION public.custom_domain_binding_version() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF (OLD.app_id, OLD.environment_id, OLD.challenge_token) IS DISTINCT FROM
-       (NEW.app_id, NEW.environment_id, NEW.challenge_token) THEN
-        NEW.binding_version := gen_random_uuid();
-    END IF;
-    RETURN NEW;
-END;
-$$;
-CREATE TRIGGER custom_domain_binding_version BEFORE UPDATE OF app_id, environment_id, challenge_token
-ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.custom_domain_binding_version();
 
 
 --
