@@ -15149,6 +15149,9 @@ const (
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
+	// AppHealthCollectorWorkers collect due apps concurrently in each sweep
+	// (bug hunt O35); each claims up to AppHealthCollectorBatch apps.
+	AppHealthCollectorWorkers       = 4
 	AppHealthHistoryPageSize        = 20
 	AppHealthHistoryMaxPage         = 100
 	AppHealthHistoryMaxEntries      = 100

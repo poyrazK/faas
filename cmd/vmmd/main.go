@@ -106,6 +106,10 @@ type signalAdapter struct {
 	*fcvm.Manager
 }
 
+// vmmd checks snapshot keys against the instance's deployment through this
+// lookup; a wrapper that hid it would turn the check off (bug hunt H95).
+var _ vmmdgrpc.InstanceDeploymentLookup = signalAdapter{}
+
 func (a signalAdapter) SignalAndKill(ctx context.Context, instance string, signal int32, graceSeconds int32) (bool, int32, error) {
 	return a.Manager.SignalAndKill(ctx, instance, syscall.Signal(signal), time.Duration(graceSeconds)*time.Second)
 }

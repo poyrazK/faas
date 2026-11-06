@@ -51645,6 +51645,7 @@ CREATE TABLE public.project_environment_approvals (
     token_kind text DEFAULT 'plan'::text NOT NULL,
     consumed_at timestamp with time zone,
     approved_by_account_id uuid,
+    approved_by_principal text,
     CONSTRAINT project_environment_approvals_approval_credhash_chk CHECK ((approval_token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
     CONSTRAINT project_environment_approvals_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
     CONSTRAINT project_environment_approvals_plan_credhash_chk CHECK ((plan_token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),

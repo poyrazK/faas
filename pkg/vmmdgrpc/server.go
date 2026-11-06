@@ -1117,6 +1117,10 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if err := s.snapshotKeysOwned(req.GetInstance(), req.GetStorageKey(), req.GetVmstateStorageKey()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	if s.diverged.Has(req.GetInstance()) {
 		// The caller expects the VM to be gone after PauseAndSnapshot; destroy
 		// it instead of capturing a snapshot of patched, non-artifact source.
@@ -1177,6 +1181,10 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if err := s.snapshotKeysOwned(req.GetInstance(), req.GetStorageKey(), req.GetVmstateStorageKey()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
 	}
 	if s.diverged.Has(req.GetInstance()) {
 		// Refuse before pausing. The scheduler's warm-capture failure path

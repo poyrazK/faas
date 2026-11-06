@@ -1,10 +1,12 @@
 package apidserver
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 )
 
 // humanApprovalKeyLabels name the keys an interactive sign-in mints for a
@@ -28,6 +30,20 @@ func humanApprovalProblem(r *http.Request) *api.Problem {
 	return api.NewProblem(http.StatusForbidden, api.CodeForbidden,
 		"A person must approve this environment",
 		"protected environments are approved by a person signed in with MFA (the dashboard or `gregale login`), not by an API key, deploy token or agent key; ask an approver, or request a browser review")
+}
+
+// approvalPrincipal names the credential that gives an approval, for the
+// approval row and its audit trail (bug hunt H70): "key:<id>" for an
+// interactive sign-in key, "session:<id>" for a browser session, "" when the
+// request carries neither (internal callers and tests).
+func approvalPrincipal(ctx context.Context) string {
+	if _, key, ok := middleware.AccountFromCtx(ctx); ok && key != nil && key.ID != "" {
+		return "key:" + key.ID
+	}
+	if sess, ok := middleware.SessionFromCtx(ctx); ok && sess.ID != "" {
+		return "session:" + sess.ID
+	}
+	return ""
 }
 
 // reservedKeyLabelProblem refuses a customer-chosen key label that names an

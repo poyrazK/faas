@@ -7939,6 +7939,10 @@ type ProjectEnvironmentApproval struct {
 	// ApprovedByAccountID is who gave the approval; "" for approvals made
 	// before it was recorded (ADR-20261020085706 amendment 2).
 	ApprovedByAccountID string
+	// ApprovedByPrincipal is the credential that gave the approval:
+	// "session:<id>" for a browser session or "key:<id>" for an interactive
+	// sign-in key (bug hunt H70); "" before it was recorded.
+	ApprovedByPrincipal string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret

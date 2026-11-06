@@ -15413,6 +15413,7 @@
       "account_id",
       "approval_token_hash",
       "approved_by_account_id",
+      "approved_by_principal",
       "consumed_at",
       "created_at",
       "environment_slug",
