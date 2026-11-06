@@ -1719,6 +1719,12 @@ func (s *server) scanService(
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 	}
+	// gregale.yaml buckets, resolved before mutation like databases
+	// (ADR-20261106105015 §1).
+	manifestBuckets, bucketProblem := s.resolveProjectManifestBuckets(r, acct, req.ScanDir, filteredW, req.Environment)
+	if bucketProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, bucketProblem
+	}
 	var stalePersistedSlugs []string
 	if len(req.Exclude) > 0 {
 		scanNames := make(map[string]bool, len(result.Workloads)*2)
@@ -2129,6 +2135,10 @@ func (s *server) scanService(
 				m.Name, m.Kind, strings.Join(respManaged[i].Unbound, ", "), m.Kind))
 		}
 	}
+	// Databases gregale.yaml creates are reviewed with the Compose ones
+	// (ADR-20261106105015 §1).
+	respManaged = append(respManaged, manifestDatabasePlan(resolvedManifest.PostgresBindings)...)
+	respManaged = append(respManaged, manifestBucketPlan(manifestBuckets)...)
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
 		ProjectSlug:           req.ProjectSlug,
@@ -2718,6 +2728,15 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
 		}
 		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if len(manifestBuckets) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project bucket targets")
+		}
+		if problem := s.applyProjectManifestBuckets(r.Context(), acct, manifestBuckets, apps); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

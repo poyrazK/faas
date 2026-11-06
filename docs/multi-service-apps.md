@@ -536,6 +536,53 @@ See [cold wake](cold-wake.md#refresh-application-state-after-restore).
 Before [ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md) project deploys and GitHub pushes ignored
 these settings.
 
+## Databases and buckets in gregale.yaml
+
+A Compose `postgres` service already becomes a managed database. To declare
+resources by name instead, list them in the `gregale.yaml` at the repository
+root, give each entry the service it binds to, and add `create` for any that
+do not exist yet:
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:
+      postgres_major: 17
+buckets:
+  - bucket: segments
+    app: store
+    create: true
+```
+
+The plan lists them before you apply: databases under **Managed PostgreSQL
+(provided by this deploy)**, buckets under **Object storage (from
+gregale.yaml)**. Apply creates whatever is missing and binds it to its service
+after the services exist and before they build, so the first deployment
+starts with its keys. An entry without `create` binds an existing resource, and
+a missing one stops the plan before anything changes
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+Deploys never delete a database or bucket. See
+[managed PostgreSQL](postgres.md#connect-an-app) for the database fields;
+object-storage bindings inject the bucket's S3 settings under
+`GREGALE_S3_<BUCKET>_*` unless the entry sets `prefix`. Binding a bucket
+needs a credential with `storage:manage`, and creating a database needs
+`postgres:manage`. Organization projects attach buckets with
+`gregale add bucket` for now; a project deploy refuses `buckets:` there.
+
+## Debugging a project
+
+- `gregale logs --project shop --follow` streams every service's logs, each
+  line prefixed with its service.
+- `gregale debug trace <trace-id>` joins one request's hops across services,
+  with how each was woken. See [tracing](tracing.md).
+- `gregale postgres connect <database>` opens `psql` on your machine through
+  a bound service. See [managed PostgreSQL](postgres.md#connect-from-your-laptop).
+- `gregale app port-forward <service> 5433:<host>:<port>` reaches anything else
+  on a service's network.
+- `gregale dev bridge` runs one service on your machine against the rest of
+  the project in a remote development environment.
+
 ## Cold starts and tracing
 
 Parked services wake on their first request, so a chain of cold services wakes
