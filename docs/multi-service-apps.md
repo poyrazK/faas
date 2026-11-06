@@ -25,6 +25,13 @@ prompt:
 gregale deploy --yes
 ```
 
+Every service the deploy builds or redeploys counts once against your
+account's hourly deploy limit (`GET /v1/account/rate-limits` shows what is
+left). When the deploy needs more than remain, none of its services deploy,
+so the project never ends up half on the new release; the plan warns first.
+Deploy again after the reset, or deploy fewer services with `--only`. A
+GitHub push that does not fit fails every service's check the same way.
+
 `gregale deploy --project` asks for a project deploy explicitly, for example
 when the root is also an app. `gregale start` offers **All of them, as one
 project** when it finds two or more services. A repository connected to GitHub
@@ -172,7 +179,9 @@ the next push deploys them
 ([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
 
 - `condition: service_healthy` on another service holds this service's new
-  release until that service's deployment is live.
+  release until that service's deployment is live: the one being deployed
+  with it, or the one already serving. A failed or rolled-back release of the
+  dependency does not block it.
 - `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
   a plain dependency, because Gregale does not run the datastore as a service.
   The plan says so; have the service retry its connection until the database
@@ -313,6 +322,27 @@ services a workload declares in `depends_on`, set
 whole file at the top level. [Networking](networking.md) covers caller
 allowlists, per-route scopes, HTTPS between services and timeouts.
 
+### gRPC services
+
+A service that serves gRPC declares it in Compose, so the platform reaches it
+over HTTP/2 from the internet and from its siblings:
+
+```yaml
+services:
+  orders:
+    build: ./orders
+    x-gregale-app-protocol: grpc   # http1 (default), http2 or grpc
+```
+
+Each deploy sets the app's protocol to the declared value; a service that
+declares none keeps the protocol set with
+`gregale app update <app> --app-protocol`. gRPC needs the Hobby plan or
+above, and the plan refuses it on Free.
+
+Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
+is off unless your operator has enabled it; see
+[private TCP](networking.md#private-tcp-between-services).
+
 ## Without a Compose file
 
 A repository without Compose declares the same things in
@@ -399,7 +429,9 @@ never overwrites a value already set on the app, never imports secret-looking
 values, other Docker addresses, `${…}` interpolation or `env_file` values, and
 never shows values in the plan.
 Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
-`--repo … --project`); a GitHub push deploy imports nothing. Values in
+`--repo … --project`). A GitHub push imports only the sibling service
+addresses, which a service added by the push needs to call its siblings, and
+leaves every other value to a reviewed deploy. Values in
 `compose.override.yaml` are imported too, so keep local-only settings out of an
 opted-in project.
 See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
@@ -454,20 +486,30 @@ Each service rolls back on its own, to its previous live deployment:
 gregale rollback shop-api
 ```
 
-To roll the whole project back, preview the order and then run it:
+To roll the project's latest deploy back, preview the plan and then run it:
 
 ```sh
 gregale project rollback shop --dry-run
 gregale project rollback shop --yes
 ```
 
-Every service rolls back to its previous live deployment, one at a time, after
-the services it depends on, as a deploy brings them up. Each step waits until
-the service serves its previous release. The command stops at the first
-service that fails, and names the services already rolled back and those still
-on their current release; roll those back with `gregale rollback <slug>`. A
-rollback across a release command (a migration) needs
-`--acknowledge-releases`, as for one app.
+The services that deploy changed roll back to the release each served before
+it, one at a time, callers first: a service rolls back before the services it
+depends on, the reverse of a deploy, so a caller is never left calling an API
+that has already gone back. Each step waits until the service serves its
+previous release. The plan shows each service's revisions (`v4 -> v3`) and
+which services it leaves as they are:
+
+- a service the latest deploy did not change (it serves another commit, or a
+  release more than 15 minutes older); `--all` rolls those back too;
+- a service added by the latest deploy, which has no earlier release;
+- a service already rolled back.
+
+The command stops at the first service that fails and names the services
+already rolled back and those still on their current release. Fix the cause
+and run it again: the services already rolled back are skipped, so a rerun
+finishes the rollback instead of undoing it. A rollback across a release
+command (a migration) needs `--acknowledge-releases`, as for one app.
 
 A project rollback is a sequence of per-service rollbacks, not one atomic
 switch: for a moment, a rolled-back service can receive calls from a service
@@ -592,4 +634,6 @@ under the `project` policy: the first wake restores the services an app lists in
 `depends_on`, and the gateways then learn which siblings it calls after waking.
 `gregale app wake-ahead <app> off` turns it off. See
 [wake-ahead](service-wake-ahead.md). Traces follow a request across services;
-see [tracing](tracing.md) and the [service map](service-map.md).
+see [tracing](tracing.md), a preview on Hobby and above, and the
+[service map](service-map.md), an internal preview available only where your
+operator has enabled it.

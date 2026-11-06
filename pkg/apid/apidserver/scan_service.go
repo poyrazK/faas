@@ -925,8 +925,16 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	}
 	out := make([]appliedBuild, 0, len(touched))
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
+	// The whole selection deploys or none of it: a budget that runs out
+	// part-way left the project on mixed releases.
+	rateShortfall := s.projectDeployRateShortfall(ctx, acct, len(touched), timeNow().UTC())
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		if rateShortfall != "" {
+			res.Error = rateShortfall
+			out = append(out, res)
+			continue
+		}
 		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
 			res.Error = blocker
 			out = append(out, res)
@@ -2119,6 +2127,9 @@ func (s *server) scanService(
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
 		respWorkloads[i] = pw
+	}
+	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
+		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
 	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {

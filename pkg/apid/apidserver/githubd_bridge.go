@@ -571,6 +571,24 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		app = updated
 		params.ServiceRollout = app.Manifest.ExecutionMode == api.ExecutionModeService
 	}
+	if kind == state.DeploymentKindGitHub {
+		imported, importErr := g.importPushSiblingAddresses(ctx, resource, app, req.DeploymentScope, req.GetComposeServiceAddresses())
+		if importErr != nil {
+			undoSettings(context.WithoutCancel(ctx))
+			if spooled != req.SourcePath {
+				_ = os.Remove(spooled)
+			}
+			code := codes.Unavailable
+			var limit *siblingAddressLimitError
+			if errors.As(importErr, &limit) {
+				code = codes.FailedPrecondition
+			}
+			return nil, status.Errorf(code, "EnqueueBuild: service addresses: %v", importErr)
+		}
+		if len(imported) > 0 {
+			g.log.Info("githubd bridge: imported sibling service addresses", notifyAppField, app.ID, "keys", imported)
+		}
+	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
 		undoSettings(context.WithoutCancel(ctx))
