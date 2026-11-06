@@ -10,11 +10,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func queueAlertServiceRollback(r api.AlertRollback, target Deployment) (api.AlertRollback, Deployment, error) {
+func queueAlertServiceRollback(ctx context.Context, r api.AlertRollback, target Deployment) (api.AlertRollback, Deployment, error) {
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return r, target, ErrAlertRollbackChanged
 	}
-	target = queueServiceBindingCheck(target, ServiceRolloutActionAbort, r.PredecessorDeploymentID, r.PredecessorDeploymentID, r.Reason)
+	target = queueServiceBindingCheck(ctx, target, ServiceRolloutActionAbort, r.PredecessorDeploymentID, r.PredecessorDeploymentID, r.Reason)
 	target.ServiceRolloutHandoff.BindingsCheck.RequestID = r.ID
 	r = alertRollbackProgress(r, "pending", "", nil)
 	r.ServiceRequestID, r.ServicePhase = r.ID, ServiceRolloutPhasePending

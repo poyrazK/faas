@@ -146,3 +146,42 @@ match `(tableoid, ctid)`, as the raw sweep does.
   no view across nodes, and the plan gate lives in apid.
 - **Upsert rollups per row in the insert transaction.** Exact under replay,
   but five upserts per request is more write load than the raw insert.
+
+## Amendment 1 (2026-11-04): hardening after the first review
+
+A review of the shipped rollups found two faults in them and one in the
+telemetry path they read from:
+
+1. **One client could stop an apid's rollups.** The aggregator cut text
+   dimensions at 512 bytes, through a multi-byte rune when a value was
+   longer. A `Referer` host of 253 three-byte runes passes the gateway's
+   normalization, so any client could send one. Postgres refused the whole
+   flush (`invalid byte sequence for encoding "UTF8"`), the aggregator kept
+   the rows for retry, and every later flush on that apid failed, for every
+   app. Coverage was already recorded, so analytics under-reported silently.
+   Now text is cut on a rune boundary (invalid UTF-8 and NUL removed), a
+   flush that Postgres refuses for its data (SQLSTATE class 22 or 23) is split
+   until the refused rows stand alone and those are dropped, and only other
+   errors keep the rows for retry.
+2. **Lost rollups were invisible.** apid now records each app minute whose
+   rollups it lost (refused rows, or a full buffer) in
+   `request_analytics_rollup_gaps`. Analytics answered from rollups report a
+   window holding such a minute as incomplete with `telemetry_window_incomplete`.
+   meterd sweeps markers after 15 days.
+3. **The route deployment split mixed stores.** Each route's total came from
+   the rollups but its per-deployment counts from the capped raw rows, so
+   past the cap "other deployments" absorbed the missing requests and their
+   compute cost. Both deployment splits now take their counts from the
+   rollups (`RequestAnalyticsRollupRouteDeployments`) when rollups answer;
+   commit, tag and CPU still come from raw rows.
+4. **The busiest values were not the ones kept.** A flush kept the first 50
+   values per app minute and kind, so a busy consumer that arrived late went
+   to `__other__`. The buffer now holds up to 200 values and the flush keeps
+   the 50 with the most requests.
+
+The gateway publisher drained one 256-row batch per tick. Its wake hook
+re-arms only when a drain leaves the recorder under half full, so once rows
+arrived faster than one batch could ship, delivery fell to the 5 s ticker,
+256 rows per 5 s. At 1.25 times ship capacity 6% of rows were delivered. A
+tick now keeps draining while a full batch waits, bounded by one pass over
+the ring.

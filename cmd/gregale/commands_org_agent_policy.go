@@ -44,7 +44,8 @@ func cmdOrgsAgentPolicy(args []string) int {
 	if args[0] == "set" {
 		allowed, scopes := agents == "allow", policy.AllowedScopes
 		if flagWasSet(fs, "capabilities") {
-			scopes = splitCapabilities(capabilities)
+			// Never nil: --capabilities "" sends [] (read-only), not null.
+			scopes = append([]string{}, splitList(capabilities)...)
 		}
 		if policy, err = client.SetOrgAgentPolicy(ctx, *slug, api.OrgAgentPolicyRequest{AgentsAllowed: &allowed, AllowedScopes: &scopes}); err != nil {
 			return printErr("Could not set the agent policy", err)
@@ -55,16 +56,6 @@ func cmdOrgsAgentPolicy(args []string) int {
 	}
 	printAgentPolicy(policy)
 	return 0
-}
-
-func splitCapabilities(list string) []string {
-	out := []string{}
-	for _, capability := range strings.Split(list, ",") {
-		if capability = strings.TrimSpace(capability); capability != "" {
-			out = append(out, capability)
-		}
-	}
-	return out
 }
 
 func printAgentPolicy(policy api.OrgAgentPolicyResponse) {

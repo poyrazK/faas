@@ -2501,6 +2501,8 @@ export class OrgsService {
    * the organization bills to cannot be removed while the organization
    * has a billing customer (409 `billing_contact_member`); set another
    * billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+   * If the billing-contact check cannot complete, returns retryable 503
+   * without removing the member.
    *
    * @returns void
    * @throws ApiError
@@ -2555,6 +2557,10 @@ export class OrgsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }
@@ -2565,7 +2571,9 @@ export class OrgsService {
    * (a single PostgreSQL tx with `FOR UPDATE` locks on both
    * rows). The exactly-one-owner invariant is enforced by the
    * partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-   * member of the org.
+   * member of the org. For a Free organization, the recipient must have
+   * available Free-organization ownership capacity; admission is serialized
+   * with organization creation and other incoming transfers.
    *
    * @returns OrgResponse The org (post-transfer).
    * @throws ApiError
@@ -2595,8 +2603,9 @@ export class OrgsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `\`403 Forbidden\` — caller is authenticated but is not the
-        active owner of the target org. Stable code
-        \`org_role_forbidden\`.
+        active owner of the target org (\`org_role_forbidden\`), or the
+        recipient already owns the maximum number of Free organizations
+        (\`org_free_limit_exceeded\`, with limit and observed count).
         `,
         404: `code: NotFound (new owner is not a member)`,
         409: `code: org_last_owner (caller not the active owner OR new owner already owner)`,

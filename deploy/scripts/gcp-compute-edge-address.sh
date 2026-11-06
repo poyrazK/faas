@@ -30,7 +30,8 @@
 #
 # Nothing is written unless APPLY=1; without it each change is printed. Needs
 # GCP_PROJECT and gcloud signed in with compute admin rights on it
-# (GCLOUD_ACCOUNT picks the account).
+# (GCLOUD_ACCOUNT picks the account). entry creates its rule in the node's own
+# VPC; NETWORK overrides that.
 set -euo pipefail
 
 : "${GCP_PROJECT:?set GCP_PROJECT to the project of the compute nodes}"
@@ -40,7 +41,7 @@ REGION=${GCP_REGION:-us-east1}
 ORIGIN_TAG=${ORIGIN_TAG:-gregale-origin}
 ENTRY_TAG=${ENTRY_TAG:-gregale-entry}
 ENTRY_RULE=${ENTRY_RULE:-gregale-direct-entry-v4}
-NETWORK=${NETWORK:-default}
+NETWORK=${NETWORK:-}
 APPLY=${APPLY:-0}
 if (($# == 0)); then
   echo "usage: $0 plan|apply|delete|entry|unentry NODE..." >&2
@@ -67,6 +68,12 @@ write() {
 
 zone_of() {
   g compute instances list --filter="name=($1)" --format='value(zone.basename())'
+}
+# network_of prints the VPC of the node's first interface: the network its
+# entry rule must live in. A guessed default created the rule in a network the
+# node is not on (2026-11-05: prod's VPC is not "default").
+network_of() {
+  g compute instances describe "$1" --zone "$2" --format='value(networkInterfaces[0].network.basename())'
 }
 has_tag() {
   g compute instances describe "$1" --zone "$2" --format='value(tags.items)' | tr ';' '\n' | grep -x "${3:-$ORIGIN_TAG}" >/dev/null
@@ -116,9 +123,14 @@ for node in "$@"; do
         echo "$node: no forwarding rule $node-edge-https; run apply first" >&2
         exit 1
       fi
+      network=${NETWORK:-$(network_of "$node" "$zone")}
+      if [[ -z "$network" ]]; then
+        echo "$node: no network on its first interface; set NETWORK" >&2
+        exit 1
+      fi
       entry_rule_exists ||
-        write "firewall $ENTRY_RULE: tcp/443 from 0.0.0.0/0 to tag $ENTRY_TAG" compute firewall-rules create "$ENTRY_RULE" \
-          --network "$NETWORK" --direction INGRESS --action ALLOW --rules tcp:443 \
+        write "firewall $ENTRY_RULE in $network: tcp/443 from 0.0.0.0/0 to tag $ENTRY_TAG" compute firewall-rules create "$ENTRY_RULE" \
+          --network "$network" --direction INGRESS --action ALLOW --rules tcp:443 \
           --source-ranges 0.0.0.0/0 --target-tags "$ENTRY_TAG"
       has_tag "$node" "$zone" "$ENTRY_TAG" ||
         write "tag $node $ENTRY_TAG" compute instances add-tags "$node" --zone "$zone" --tags "$ENTRY_TAG"

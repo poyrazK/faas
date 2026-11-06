@@ -78,3 +78,68 @@ func TestServiceRolloutBindingWorkerAndExactAbort(t *testing.T) {
 		t.Fatalf("worker bypassed acknowledgement/drain: %+v", stillLive)
 	}
 }
+
+// adr: 208 — every partial step has its own binding request and readiness target.
+func TestServiceRolloutBindingWorkerAdvancesExactTrafficSteps(t *testing.T) {
+	e, app, predecessor, candidate := apidserver.PromotionFixture(t)
+	ctx := t.Context()
+	manifest := app.Manifest
+	manifest.ExecutionMode = api.ExecutionModeService
+	manifest.ServiceReplicas = &state.ServiceReplicas{Min: 1, Max: 2, Desired: 2}
+	updatedApp, err := (*e.Store()).UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app = updatedApp
+	if err := (*e.Store()).SetDeploymentCanaryState(ctx, candidate.ID, "none", 0, 0, time.Now(), "rolling_out"); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	if _, err := (*e.Store()).SetBindingReleasePolicy(ctx, (*e.Acct()).ID, app.ID, "default", api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: &zero}); err != nil {
+		t.Fatal(err)
+	}
+	running := func() {
+		t.Helper()
+		ins, err := (*e.Store()).CreateInstanceWithMode(ctx, app.ID, candidate.ID, "running", 512, state.DefaultLocalNodeName, uuid.NewString(), "service")
+		if err != nil {
+			t.Fatal(err)
+		}
+		(*e.Store()).BackdateForTest(ins.ID, time.Now())
+	}
+	if _, err := (*e.Store()).CreateInstanceWithMode(ctx, app.ID, predecessor.ID, "running", 512, state.DefaultLocalNodeName, uuid.NewString(), "service"); err != nil {
+		t.Fatal(err)
+	}
+	running()
+	queued, err := (*e.Store()).BeginServiceRolloutStep(ctx, candidate.ID, 50)
+	if !state.IsBindingReleaseRequired(err) {
+		t.Fatalf("queue step: %v", err)
+	}
+	request := queued.ServiceRolloutHandoff.BindingsCheck.RequestID
+	apidserver.CompletePromotionProbe(t, e, app, candidate, apidserver.PassedPostgresVerification)
+	cursor := 0
+	if err := (*e.S()).ServiceRolloutBindingSweep(ctx, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.AssertPromotionWeights(t, e, predecessor, candidate, 50)
+	routed, err := (*e.Store()).DeploymentByID(ctx, candidate.ID)
+	if err != nil || routed.ServiceRolloutHandoff.BindingsCheck.Status != "passed" || routed.ServiceRolloutHandoff.BindingsCheck.TrafficPercent != 50 {
+		t.Fatalf("exact step: %+v %v", routed, err)
+	}
+	queued, err = (*e.Store()).BeginServiceRolloutCutover(ctx, candidate.ID)
+	if !state.IsBindingReleaseRequired(err) || queued.ServiceRolloutHandoff.BindingsCheck.RequestID == request {
+		t.Fatalf("full cutover reused step approval: %+v %v", queued, err)
+	}
+	if err := (*e.S()).ServiceRolloutBindingSweep(ctx, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.AssertPromotionWeights(t, e, predecessor, candidate, 50)
+	blocked, err := (*e.Store()).DeploymentByID(ctx, candidate.ID)
+	if err != nil || blocked.ServiceRolloutHandoff.BindingsCheck.Code != "service_rollout_not_ready" {
+		t.Fatalf("incomplete cohort gained full traffic: %+v %v", blocked, err)
+	}
+	running()
+	if err := (*e.S()).ServiceRolloutBindingSweep(ctx, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.AssertPromotionWeights(t, e, predecessor, candidate, 100)
+}

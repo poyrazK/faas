@@ -2,7 +2,6 @@
 package apphealth
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -49,7 +48,10 @@ type Evidence struct {
 	// flag); Memory is the app's memory-pressure rollup (ADR-20261102124306).
 	AssessMemory bool
 	Memory       MemoryEvidence
-	Now          time.Time
+	// Plan is the account's plan; with it the memory check says how much RAM
+	// the app needs (ADR-20261102124306 step 3).
+	Plan api.Plan
+	Now  time.Time
 }
 
 func Evaluate(e Evidence) api.AppHealthResponse {
@@ -262,33 +264,7 @@ func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deploym
 // Match the gateway's independent primary-app and primary-ingress gates.
 // Decode only routing fields, never companion environment or probe output.
 func requiredSources(d state.Deployment) ([]string, error) {
-	var sources []string
-	if len(d.OverrideReadinessProbe) > 0 {
-		var p api.DeploymentReadinessProbe
-		if err := json.Unmarshal(d.OverrideReadinessProbe, &p); err != nil {
-			return nil, fmt.Errorf("decode readiness: %w", err)
-		}
-		if p.Path != "" || p.GRPC != nil {
-			sources = append(sources, "primary_app")
-		}
-	}
-	var companions []struct {
-		Name           string            `json:"name"`
-		Type           api.SidecarType   `json:"type"`
-		PrimaryIngress bool              `json:"primary_ingress"`
-		ReadinessProbe *api.SidecarProbe `json:"readiness_probe"`
-	}
-	if len(d.Sidecars) > 0 {
-		if err := json.Unmarshal(d.Sidecars, &companions); err != nil {
-			return nil, fmt.Errorf("decode companions: %w", err)
-		}
-	}
-	for _, c := range companions {
-		if c.Type == api.SidecarTypeSidecar && c.PrimaryIngress && c.ReadinessProbe != nil && c.Name != "" {
-			sources = append(sources, "sidecar:"+c.Name)
-		}
-	}
-	return sources, nil
+	return state.DeploymentReadinessSources(d)
 }
 
 func add(out *api.AppHealthResponse, code, status, detail, action, deploymentID string) {

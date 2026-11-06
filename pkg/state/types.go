@@ -1245,6 +1245,12 @@ type APIKey struct {
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
 	AppID string
+	// ProjectLimited and ProjectIDs: an agent or mcp-login key limited to
+	// projects of its organization (ADR-20261104085712). The middleware
+	// stamps them on the principal's copy when it authenticates the key;
+	// stores' key reads leave them unset.
+	ProjectLimited bool
+	ProjectIDs     []string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -1336,6 +1342,8 @@ type App struct {
 	// scaling input or the owning scheduler node changes; schedulers
 	// acknowledge observing this revision without creating a deployment.
 	ScalingPolicyRevision int64
+	// ScalingRevision guards RAM, CPU, concurrency and instance-floor edits.
+	ScalingRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -3180,6 +3188,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	RetryIntent         *DeploymentRetryIntent       `json:"retry_intent,omitempty"`
 	BuildDependencyGate *BuildDependencyGate         `json:"build_dependency_gate,omitempty"`
 	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
@@ -7230,6 +7239,10 @@ type CliAuthCode struct {
 	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
 	// approval; "" is the personal one (ADR-20261101225122).
 	OrgID string
+	// ProjectIDs are the projects the sign-in was limited to at approval;
+	// nil is every project (ADR-20261104085712). MemStore only: the Pg
+	// store reads it through CliAuthCodeProjects.
+	ProjectIDs []string
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
@@ -7932,6 +7945,10 @@ type ProjectEnvironmentApproval struct {
 	// ApprovedByAccountID is who gave the approval; "" for approvals made
 	// before it was recorded (ADR-20261020085706 amendment 2).
 	ApprovedByAccountID string
+	// ApprovedByPrincipal is the credential that gave the approval:
+	// "session:<id>" for a browser session or "key:<id>" for an interactive
+	// sign-in key (bug hunt H70); "" before it was recorded.
+	ApprovedByPrincipal string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret
@@ -8216,6 +8233,10 @@ type CreateAccountWithPersonalOrgParams struct {
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.
 	RequireEmailVerification bool
+	// InitialPasswordHash is an optional precomputed PHC hash. Password signup
+	// commits it with the account, personal organization and owner membership.
+	// The credential is never included when creation parameters are serialized.
+	InitialPasswordHash string `json:"-"`
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

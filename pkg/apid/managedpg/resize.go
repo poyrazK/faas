@@ -81,6 +81,9 @@ func ResizeView(operation managedpostgres.ResizeOperation) api.ManagedPostgresRe
 		TargetClass: string(target.Class), FromStorageLimitBytes: operation.SourceSpec.StorageLimitBytes, TargetStorageLimitBytes: target.StorageLimitBytes,
 		Generation: operation.Generation, State: string(operation.State), ConnectionInterruptionExpected: true,
 		LastErrorCode: operation.LastErrorCode, CreatedAt: operation.CreatedAt.UTC().Format(time.RFC3339Nano)}
+	if operation.State == managedpostgres.ResizeFailed {
+		out.LastErrorCode = operation.ErrorCode
+	}
 	if !operation.CompletedAt.IsZero() {
 		out.CompletedAt = operation.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}

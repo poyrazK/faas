@@ -63,6 +63,23 @@ make -C "$repo_root" \
   BINDIR="$work_root/$git_sha/bin" \
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 VERSION="$git_sha" build-release-batch
 
+# Every runtime base embeds guest-init as PID 1, and ADR-510 refuses to restore
+# a snapshot onto a base whose bytes changed, so a guest-init that is rebuilt
+# with different bytes but runs the same code retires every snapshot for
+# nothing. When the previous signed release's guest-init runs the same code as
+# the one just built, ship its bytes instead (ADR-20261105150000). Only the
+# release workflow asks for this: it needs gh, cosign and the release history.
+if [[ "${REUSE_GUEST_INIT:-}" == "true" ]]; then
+  if "$repo_root/scripts/reuse-release-guest-init.sh" \
+    --init "$work_root/$git_sha/bin/init" \
+    --git-sha "$git_sha"; then
+    :
+  else
+    status=$?
+    [[ "$status" == 3 ]] || exit "$status"
+  fi
+fi
+
 # Validate with the exact gregalectl binary that will be signed into the
 # release. The tag workflow used to invoke `go run ./cmd/gregalectl` before
 # this build, compiling and linking the same large command graph twice on a

@@ -2,8 +2,7 @@
 Description=Gregale private data pipeline worker (ADR-1591)
 Documentation=https://gregale.dev/docs/ops/apid
 After=network.target postgresql.service faas-cp.slice faas-apid.service
-Wants=faas-cp.slice
-Requires=postgresql.service
+Wants=faas-cp.slice postgresql.service
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 

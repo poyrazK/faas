@@ -15,8 +15,14 @@ func TestDebugReplayRequestPath(t *testing.T) {
 		want   string
 		ok     bool
 	}{
-		{name: "method-prefixed normalized route", method: "GET", route: "GET /profiles/{id}", want: "/profiles/{id}", ok: true},
+		{name: "method-prefixed path", method: "GET", route: "GET /profiles/me", want: "/profiles/me", ok: true},
 		{name: "legacy path", method: "GET", route: "/health", want: "/health", ok: true},
+		{name: "custom-method segment", method: "POST", route: "POST /v1/items:batchGet", want: "/v1/items:batchGet", ok: true},
+		// A declared route's label is its template; the original path is not
+		// retained, so the template would be requested literally.
+		{name: "braced template", method: "GET", route: "GET /profiles/{id}"},
+		{name: "colon template", method: "GET", route: "GET /orders/:id"},
+		{name: "wildcard template", method: "GET", route: "GET /files/*"},
 		{name: "overflow route", method: "GET", route: "__route_other__"},
 		{name: "absolute URL", method: "GET", route: "https://example.test/health"},
 		{name: "network path", method: "GET", route: "//example.test/health"},
@@ -32,6 +38,28 @@ func TestDebugReplayRequestPath(t *testing.T) {
 				t.Fatalf("debugReplayRequestPath(%q, %q) = (%q, %t), want (%q, %t)", tt.method, tt.route, got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+// A debugger route filter that is a bare path matches the path under every
+// method; a method-qualified filter matches only that method.
+func TestDebugRouteMatches(t *testing.T) {
+	for _, tc := range []struct {
+		filter, label string
+		want          bool
+	}{
+		{"", "GET /checkout", true},
+		{"GET /checkout", "GET /checkout", true},
+		{"/checkout", "GET /checkout", true},
+		{"/checkout", "POST /checkout", true},
+		{"POST /checkout", "GET /checkout", false},
+		{"/checkout", "GET /checkout/items", false},
+		{"/checkout", "/checkout", true}, // legacy rows stored a bare path
+		{"checkout", "GET checkout", false},
+	} {
+		if got := apidserver.DebugRouteMatches(tc.filter, tc.label); got != tc.want {
+			t.Errorf("debugRouteMatches(%q, %q) = %t, want %t", tc.filter, tc.label, got, tc.want)
+		}
 	}
 }
 

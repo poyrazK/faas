@@ -276,6 +276,8 @@ from .app_operational_recovery import AppOperationalRecovery
 from .app_operational_rollback import AppOperationalRollback
 from .app_operational_summary import AppOperationalSummary
 from .app_operational_summary_version import AppOperationalSummaryVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_private_network_attachment import AppPrivateNetworkAttachment
 from .app_private_network_attachment_request import AppPrivateNetworkAttachmentRequest
 from .app_private_network_attachment_response import AppPrivateNetworkAttachmentResponse
@@ -309,6 +311,9 @@ from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
 from .app_routes_response_source import AppRoutesResponseSource
+from .app_scaling_receipt import AppScalingReceipt
+from .app_scaling_settings import AppScalingSettings
+from .app_scaling_snapshot import AppScalingSnapshot
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
@@ -443,6 +448,7 @@ from .application_standard_version import ApplicationStandardVersion
 from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_app_scaling_request import ApplyAppScalingRequest
 from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_durable_entity_quota_policy_body import ApplyDurableEntityQuotaPolicyBody
 from .apply_durable_entity_quota_policy_body_limits import ApplyDurableEntityQuotaPolicyBodyLimits
@@ -781,6 +787,7 @@ from .config_revision_detail import ConfigRevisionDetail
 from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
 from .config_revision_detail_variables import ConfigRevisionDetailVariables
 from .config_revision_source import ConfigRevisionSource
+from .config_rollback_receipt import ConfigRollbackReceipt
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
@@ -1114,6 +1121,11 @@ from .data_api_change_event import DataAPIChangeEvent
 from .data_api_change_event_batch import DataAPIChangeEventBatch
 from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
 from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
+from .data_api_change_hook_report import DataAPIChangeHookReport
+from .data_api_change_hook_report_publishing import DataAPIChangeHookReportPublishing
+from .data_api_change_hook_report_version import DataAPIChangeHookReportVersion
+from .data_api_change_hook_status import DataAPIChangeHookStatus
+from .data_api_change_hook_status_publishing import DataAPIChangeHookStatusPublishing
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -1126,6 +1138,8 @@ from .data_api_server_key import DataAPIServerKey
 from .data_api_server_key_permission_set import DataAPIServerKeyPermissionSet
 from .data_api_server_key_permission_set_access import DataAPIServerKeyPermissionSetAccess
 from .data_api_server_key_slot import DataAPIServerKeySlot
+from .data_api_status import DataAPIStatus
+from .data_api_status_runtime_reports import DataAPIStatusRuntimeReports
 from .data_api_usage import DataAPIUsage
 from .data_api_usage_bucket import DataAPIUsageBucket
 from .data_api_usage_counts import DataAPIUsageCounts
@@ -1250,6 +1264,7 @@ from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_status_deployment import DebugStatusDeployment
 from .debug_status_health import DebugStatusHealth
+from .debug_status_memory import DebugStatusMemory
 from .debug_status_oom_kill import DebugStatusOOMKill
 from .debug_status_response import DebugStatusResponse
 from .debug_status_response_verdict import DebugStatusResponseVerdict
@@ -1328,6 +1343,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -1347,6 +1363,8 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_tag import DeploymentResponseTag
+from .deployment_retry_intent import DeploymentRetryIntent
+from .deployment_retry_intent_version import DeploymentRetryIntentVersion
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
@@ -1627,11 +1645,15 @@ from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
+from .environment_promotion_receipt import EnvironmentPromotionReceipt
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_rollback_receipt import EnvironmentRollbackReceipt
+from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
+from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
@@ -2183,6 +2205,7 @@ from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
+from .get_environment_route_budget_receipt_scope import GetEnvironmentRouteBudgetReceiptScope
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
@@ -3078,6 +3101,8 @@ from .object_bucket_object_lock_configuration import ObjectBucketObjectLockConfi
 from .object_bucket_object_lock_last_error_code import ObjectBucketObjectLockLastErrorCode
 from .object_bucket_object_lock_request import ObjectBucketObjectLockRequest
 from .object_bucket_object_lock_state import ObjectBucketObjectLockState
+from .object_bucket_retry import ObjectBucketRetry
+from .object_bucket_retry_reason import ObjectBucketRetryReason
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
 from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
@@ -5612,6 +5637,7 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
+from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -6575,6 +6601,7 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyAppScalingRequest",
     "ApplyCachedProjectPlanRequest",
     "ApplyDurableEntityQuotaPolicyBody",
     "ApplyDurableEntityQuotaPolicyBodyLimits",
@@ -6651,6 +6678,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppPrivateNetworkAttachment",
     "AppPrivateNetworkAttachmentRequest",
     "AppPrivateNetworkAttachmentResponse",
@@ -6693,6 +6722,9 @@ __all__ = (
     "ApproveRouteLifecycleRequest",
     "ApproveRouteRemovalRequest",
     "ApproveRouteRemovalRequestMappingsItem",
+    "AppScalingReceipt",
+    "AppScalingSettings",
+    "AppScalingSnapshot",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
@@ -7050,6 +7082,7 @@ __all__ = (
     "ConfigRevisionDetailSecretVersions",
     "ConfigRevisionDetailVariables",
     "ConfigRevisionSource",
+    "ConfigRollbackReceipt",
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
@@ -7363,6 +7396,11 @@ __all__ = (
     "DataAPIChangeEventBatch",
     "DataAPIChangeEventBatchResponse",
     "DataAPIChangeEventBatchVersion",
+    "DataAPIChangeHookReport",
+    "DataAPIChangeHookReportPublishing",
+    "DataAPIChangeHookReportVersion",
+    "DataAPIChangeHookStatus",
+    "DataAPIChangeHookStatusPublishing",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -7375,6 +7413,8 @@ __all__ = (
     "DataAPIServerKeyPermissionSet",
     "DataAPIServerKeyPermissionSetAccess",
     "DataAPIServerKeySlot",
+    "DataAPIStatus",
+    "DataAPIStatusRuntimeReports",
     "DataAPIUsage",
     "DataAPIUsageBucket",
     "DataAPIUsageCounts",
@@ -7499,6 +7539,7 @@ __all__ = (
     "DebugRunningResponse",
     "DebugStatusDeployment",
     "DebugStatusHealth",
+    "DebugStatusMemory",
     "DebugStatusOOMKill",
     "DebugStatusResponse",
     "DebugStatusResponseVerdict",
@@ -7574,6 +7615,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",
@@ -7593,6 +7635,8 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
     "DeploymentResponseTag",
+    "DeploymentRetryIntent",
+    "DeploymentRetryIntentVersion",
     "DeploymentRoutePolicySnapshotResponse",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
@@ -7872,11 +7916,15 @@ __all__ = (
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
+    "EnvironmentPromotionReceipt",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRollbackReceipt",
+    "EnvironmentRouteBudgetReceipt",
+    "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
@@ -8394,6 +8442,7 @@ __all__ = (
     "GetDeploymentOpenAPIDocResponse200",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
+    "GetEnvironmentRouteBudgetReceiptScope",
     "GetEnvironmentRouteBudgetsScope",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
@@ -9221,6 +9270,8 @@ __all__ = (
     "ObjectBucketObjectLockLastErrorCode",
     "ObjectBucketObjectLockRequest",
     "ObjectBucketObjectLockState",
+    "ObjectBucketRetry",
+    "ObjectBucketRetryReason",
     "ObjectBucketState",
     "ObjectBucketVersioning",
     "ObjectBucketVersioningDesiredStatus",
@@ -11575,6 +11626,7 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
+    "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",

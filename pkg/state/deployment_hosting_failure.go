@@ -44,6 +44,9 @@ func (s *PgStore) FailDeploymentWithHostingReceipt(ctx context.Context, id strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if err := lockDeploymentActivationParentsTx(ctx, tx); err != nil {
+		return false, err
+	}
 	locked, err := q.LockDeploymentHostingFailure(ctx, tx, deploymentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
@@ -60,6 +63,13 @@ func (s *PgStore) FailDeploymentWithHostingReceipt(ctx context.Context, id strin
 	}
 	if status != DeploySnapshotting {
 		return false, ErrInvalidStateTransition
+	}
+	d := Deployment{ID: id, AppID: receipt.AppID, Status: status, RootfsKey: locked.RootfsKey, RootfsPath: locked.RootfsPath, StageState: locked.StageState}
+	if err := checkDeploymentActivationAttemptTx(ctx, tx, d); err != nil {
+		if errors.Is(err, ErrDeploymentActivationStale) {
+			return false, nil
+		}
+		return false, err
 	}
 	rows, err := q.WriteDeploymentHostingFailureReceipt(ctx, tx, sqlc.WriteDeploymentHostingFailureReceiptParams{DeploymentID: deploymentID, Receipt: raw})
 	if err != nil {
@@ -101,6 +111,12 @@ func (m *MemStore) FailDeploymentWithHostingReceipt(ctx context.Context, id stri
 	}
 	if d.Status != DeploySnapshotting {
 		return false, ErrInvalidStateTransition
+	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, d); err != nil {
+		if errors.Is(err, ErrDeploymentActivationStale) {
+			return false, nil
+		}
+		return false, err
 	}
 	if len(d.StageState) > 0 {
 		var stages StageState

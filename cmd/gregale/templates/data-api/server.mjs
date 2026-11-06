@@ -21,7 +21,7 @@ import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
-import { changeEventsTable, createChangeRelay, checkChangeEvents } from './changes.mjs'
+import { changeEventsTable, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -78,6 +78,17 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       config.lifecycle.afterRestore()
       res.writeHead(204)
       return res.end()
+    }
+    // A drain schedule's platform cron (ADR-20261022121642 amendment 1) wakes
+    // a parked API so changes other writers recorded meanwhile publish. Only
+    // invocations the platform dispatches carry x-faas-cron; the answer is
+    // delivery counts, and a drain publishes nothing that would not publish.
+    if (req.method === 'POST' && req.url === changeHooksDrainPath && req.headers['x-faas-cron'] === 'true') {
+      if (!changes) return problem(res, 409, 'data_api_change_hooks_off')
+      const state = await changes.drain(limits.changeHooksDrainWaitMs)
+      if (!state) return problem(res, 503, 'data_api_change_hooks_unavailable')
+      return healthResponse(res, state.publishing === 'retrying' ? 503 : 200, { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
+        ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}) })
     }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)

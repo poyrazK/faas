@@ -79,6 +79,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -1863,6 +1864,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// gateway_tenant_surface_cert_total counter ticks
 		// from boot.
 		WithCertIssuer(gateCertIssuer(tenantSurfacesFlag.Load, certIssuerFor(pgStore, nil, true, dnsTokenLookupFromEnv, log)))
+	// Every app slug and verified custom domain skips the new-host lookup
+	// budget, so after a restart random names cannot starve real apps this
+	// gateway has not yet served (ADR-20261103163954 §4).
+	knownHosts := knownhosts.New(appsDomain)
+	backend.PreloadKnownHosts(knownHosts)
+	go knownhosts.Run(ctx, knownHosts, pgStore, log)
 
 	// Phase 2 / Gate A: gate the resolveSched legacy fallback on the
 	// active fleet. Single-box posture (only default-local active)
@@ -2184,6 +2191,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// gatewayd-internal.
 	renewer := gateway.NewSurfaceCertRenewer(pgStore, log).SetEnabled(tenantSurfacesFlag.Load)
 	go renewer.Run(handoffCtx)
+	// Custom wildcard claims have a separate lifecycle and keep recovering
+	// while tenant surfaces are disabled. Caddy mode skips legacy work.
+	go gateway.NewCustomDomainCertRenewer(pgStore, backend, log).Run(handoffCtx)
 
 	// ADR-132: routing and certificate lifecycle consume the same durable
 	// runtime flag as apid. The watcher applies only acknowledged values and
@@ -3513,6 +3523,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WakeId:                               row.WakeID,
 					TraceInferred:                        row.TraceInferred,
 					PlatformRefusal:                      row.PlatformRefusal,
+					DeploymentPinned:                     row.DeploymentPinned,
+					LongLived:                            row.LongLived,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,
@@ -4601,8 +4613,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// ADR-20261026150000: a bound managed database's answer also
 				// opens its port for the calling app.
 				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
-						newDatabaseEgressIndex(deps.pgStore), guestServiceCallerResolver))
+					dnsHandler.WithResolvedEgressPreparation(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
+						newDatabaseEgressIndex(deps.pgStore)))
 				}
 				// ADR-576: answer service names with service addresses only once
 				// the TCP proxy behind them is configured.

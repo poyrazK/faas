@@ -19,6 +19,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // pinnedSettings fixes the session settings that output functions and STABLE
@@ -627,6 +628,9 @@ const roundLockAttempts = 10
 // the round try again.
 func (e *Engine) beginRound(ctx context.Context) (pgx.Tx, string, error) {
 	for attempt := 1; ; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt-1); err != nil {
+			return nil, "", err
+		}
 		tables, locked, err := e.resolveLocks(ctx)
 		if err != nil {
 			return nil, "", err

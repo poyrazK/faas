@@ -65,6 +65,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -97,7 +102,9 @@ def sync_detailed(
     """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
-    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
+    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`. Reviewed
+    requests may pin the current revision and immutable targets, and provide a private proof and request
+    ID for passive receipt recovery.
 
     Args:
         slug (str):
@@ -135,7 +142,9 @@ def sync(
     """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
-    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
+    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`. Reviewed
+    requests may pin the current revision and immutable targets, and provide a private proof and request
+    ID for passive receipt recovery.
 
     Args:
         slug (str):
@@ -168,7 +177,9 @@ async def asyncio_detailed(
     """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
-    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
+    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`. Reviewed
+    requests may pin the current revision and immutable targets, and provide a private proof and request
+    ID for passive receipt recovery.
 
     Args:
         slug (str):
@@ -204,7 +215,9 @@ async def asyncio(
     """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
-    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
+    cannot be restored from a revision; those that differ are listed in `secrets_not_restored`. Reviewed
+    requests may pin the current revision and immutable targets, and provide a private proof and request
+    ID for passive receipt recovery.
 
     Args:
         slug (str):

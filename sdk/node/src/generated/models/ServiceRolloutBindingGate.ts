@@ -7,6 +7,10 @@ import type { BindingCheckFinding } from './BindingCheckFinding.js';
  * Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase.
  */
 export type ServiceRolloutBindingGate = {
+  /**
+   * Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full cutover.
+   */
+  traffic_percent?: number;
   request_id: string;
   action: 'promote' | 'abort';
   deployment_id: string;

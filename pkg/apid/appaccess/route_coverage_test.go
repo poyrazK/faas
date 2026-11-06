@@ -18,7 +18,13 @@ var appAddressedPrefixes = []string{
 	"/v1/domains/{domain}", "/v1/edge-rules/{id}", "/v1/invocations/{id}",
 }
 
-var registeredRoute = regexp.MustCompile(`mux\.Handle(?:Func)?\("([A-Z]+ /v1/[^"]+)"`)
+var registeredRoute = regexp.MustCompile(`mux\.Handle(?:Func)?\("([A-Z]+ /(?:v1|dashboard)/[^"]+)"`)
+
+// dashboardAppWrite reports a session-only dashboard write on an app. Its
+// reads take OrgActionReadApp (dashboardRead); its writes need a review.
+func dashboardAppWrite(method, path string) bool {
+	return method != "GET" && method != "HEAD" && strings.HasPrefix(path, "/dashboard/apps/{slug}/")
+}
 
 // An app endpoint missing from the reviewed maps falls back to the creator
 // alone, so a company app's other members cannot use it (bug hunt 37). Every
@@ -42,8 +48,8 @@ func TestEveryAppRouteIsReviewed(t *testing.T) {
 		}
 		for _, m := range registeredRoute.FindAllStringSubmatch(string(src), -1) {
 			pattern := m[1]
-			_, path, _ := strings.Cut(pattern, " ")
-			if !appAddressed(path) {
+			method, path, _ := strings.Cut(pattern, " ")
+			if !appAddressed(path) && !dashboardAppWrite(method, path) {
 				continue
 			}
 			seen++

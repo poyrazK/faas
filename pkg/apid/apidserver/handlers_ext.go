@@ -26,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/appwake"
 	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -2053,6 +2054,10 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.appDependentsProblem(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Read pending work before scheduling deletion, but cancel it only after
 	// the intent transaction accepts the delete. A Git ownership rejection
 	// must preserve the live app and its queued work.
@@ -2299,6 +2304,20 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	promotionID, promotionProblem := s.promotionAttempt(guardCtx, r, app, d, req)
+	if promotionProblem != nil {
+		api.WriteProblem(w, promotionProblem)
+		return
+	}
+	if promotionID != "" {
+		guardCtx = state.ContextWithDeploymentPromotion(guardCtx, promotionID, req)
+	}
+	r = r.WithContext(guardCtx)
 	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
 	if req.TrafficPercent > d.TrafficPercent {
 		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
@@ -2306,12 +2325,6 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	r = r.WithContext(guardCtx)
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -2381,6 +2394,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
 		case trafficguard.PromotionProblem(err) != nil:
 			api.WriteProblem(w, trafficguard.PromotionProblem(err))
+		case promotionAttemptProblem(err) != nil:
+			api.WriteProblem(w, promotionAttemptProblem(err))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -2460,6 +2475,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	attempt, problem := s.rollbackAttempt(r.Context(), r, acct, app, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.RestoreDatabases {
 		// The switch belongs to database-rollbacks (ADR-20261023181931, split
 		// from postgres-restore by ADR-20261031091607): while that capability
@@ -2474,7 +2494,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	if req.ExpectedCurrentDeploymentID != nil {
-		s.startCheckedRollback(w, r, acct, app, req)
+		checkedRequest := r
+		if attempt != "" {
+			checkedRequest = r.WithContext(state.ContextWithCheckedRollbackAttempt(r.Context(), attempt))
+		}
+		s.startCheckedRollback(w, checkedRequest, acct, app, req)
 		return
 	}
 	if req.Reason != "" {
@@ -2493,8 +2517,24 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.revalidateRolledBackSignature(r.Context(), app)
 	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// revalidateRolledBackSignature asks imaged to verify the app's live signed
+// images again after a rollback (ADR-20261020085706 amendment 14). A rollback
+// target was verified when it was built, against the trusted signers of the
+// time; a signer removed since (a leaked key) or signing turned on since must
+// not bring it back into service. imaged's revalidation reads the trust table
+// and quarantines an image that no longer verifies; its periodic sweep is the
+// durable fallback when this wake-up is lost.
+func (s *server) revalidateRolledBackSignature(ctx context.Context, app state.App) {
+	if s.notif == nil || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
+		return
+	}
+	_ = s.notif.Notify(ctx, db.NotifyTrustedSignerChanged,
+		fmt.Sprintf(`{"kind":"rollback","app_id":"%s"}`, app.ID))
 }
 
 // warnRollbackCrons tells the caller which crons outlive a rollback
@@ -2675,6 +2715,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	target, current, mode, crossed := plan.target, plan.current, plan.mode, plan.crossed
 	var err error
 	priorTargetStatus := target.Status
+	if req.AcknowledgeReleases {
+		ctx = state.WithRollbackReleaseReview(ctx, crossed)
+	}
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrCheckedRollbackChanged) {
@@ -2846,8 +2889,8 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 			"Gregale could not load the current deployment right now.",
 			"Retry the request in a moment; if it continues, contact support.", err)
 	}
-	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
-		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
+		check, gateErr := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, current.ID, target.Scope)
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
 			return rollbackPlan{}, api.ErrCapacity("could not evaluate API contract")
 		}
@@ -3045,7 +3088,8 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
-	if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {
+	dep, problem := s.explicitWakeDeployment(r.Context(), app)
+	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -3062,58 +3106,95 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not read the app's running instances"))
 		return
 	}
-	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
+	// A frozen VM thaws under its own wake_id, so the new wake id never
+	// reaches an instance. Name the VM so schedd thaws that one and the
+	// caller can wait on it (#6639).
+	resume := s.frozenInstanceToResume(r.Context(), app.ID, dep.ID)
+	wakeID, err := s.enqueueExplicitAppWakeFor(r.Context(), acct, app, resume)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
 		return
 	}
-	writeJSON(w, http.StatusAccepted, api.AppWakeResponse{WakeID: wakeID})
+	writeJSON(w, http.StatusAccepted, api.AppWakeResponse{WakeID: wakeID, InstanceID: resume})
 }
 
 func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
+	_, problem := s.explicitWakeDeployment(ctx, app)
+	return problem
+}
+
+// explicitWakeDeployment returns the live deployment an explicit wake starts,
+// or the problem that refuses the wake.
+func (s *server) explicitWakeDeployment(ctx context.Context, app state.App) (state.Deployment, *api.Problem) {
 	dep, err := s.store.LiveDeployment(ctx, app.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
 				"App has no live deployment", "deploy the app before requesting a wake")
 		}
-		return api.ErrCapacity("could not resolve the app's live deployment")
+		return state.Deployment{}, api.ErrCapacity("could not resolve the app's live deployment")
 	}
 	if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
-		return api.NewProblem(http.StatusConflict, api.CodeSecurityPostureBlocked,
+		return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeSecurityPostureBlocked,
 			"App is security quarantined",
 			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before requesting a wake")
 	}
 	if app.Status == state.AppEvictedCold {
 		if err := waitForAppInstancesDrained(ctx, s.store, app.ID, 0, 0); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				return api.NewProblem(http.StatusConflict, api.CodeConflict,
+				return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeConflict,
 					"App is still draining", "wait for the preceding park operation to finish before requesting a wake")
 			}
-			return api.ErrCapacity("could not verify app instance drain")
+			return state.Deployment{}, api.ErrCapacity("could not verify app instance drain")
 		}
 	}
-	return nil
+	return dep, nil
+}
+
+// frozenInstanceToResume names the frozen VM of the live deployment that a
+// queued wake resumes, or "". A failed read only drops the hint: schedd still
+// thaws a frozen VM or boots one.
+func (s *server) frozenInstanceToResume(ctx context.Context, appID, deploymentID string) string {
+	instances, err := state.ListLiveInstancesForApp(ctx, s.store, appID)
+	if err != nil {
+		s.log.WarnContext(ctx, "app wake: list live instances", slog.String("app", appID), slog.String("err", err.Error()))
+		return ""
+	}
+	frozen, ok := appwake.ResumableFrozenInstance(instances, deploymentID)
+	if !ok {
+		return ""
+	}
+	return frozen.ID
 }
 
 func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account, app state.App) (string, error) {
+	return s.enqueueExplicitAppWakeFor(ctx, acct, app, "")
+}
+
+// enqueueExplicitAppWakeFor queues an explicit wake. instanceID, when set, is
+// the frozen VM schedd should thaw for it.
+func (s *server) enqueueExplicitAppWakeFor(ctx context.Context, acct state.Account, app state.App, instanceID string) (string, error) {
 	wakeUUID, err := uuid.NewV7()
 	if err != nil {
 		wakeUUID = uuid.New()
 		s.log.Warn("app wake: uuid.NewV7 failed, fell back to v4", "app", app.ID, "err", err)
 	}
 	wakeID := wakeUUID.String()
-	payload, err := json.Marshal(map[string]string{"app_id": app.ID, "wake_id": wakeID})
+	request := map[string]string{"app_id": app.ID, "wake_id": wakeID}
+	audit := map[string]any{"app_id": app.ID, "slug": app.Slug, "wake_id": wakeID}
+	if instanceID != "" {
+		request["instance_id"] = instanceID
+		audit["instance_id"] = instanceID
+	}
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return "", fmt.Errorf("marshal app wake: %w", err)
 	}
 	if err := s.notif.Notify(ctx, db.NotifyAppWake, string(payload)); err != nil {
 		return "", err
 	}
-	s.audit.Emit(ctx, "app.wake_requested", &acct.ID, map[string]any{
-		"app_id": app.ID, "slug": app.Slug, "wake_id": wakeID,
-	})
-	s.log.Info("app wake requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
+	s.audit.Emit(ctx, "app.wake_requested", &acct.ID, audit)
+	s.log.Info("app wake requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID, "instance", instanceID)
 	return wakeID, nil
 }
 
@@ -3452,7 +3533,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, problem)
 		return
 	}
-	if err := state.ValidateCustomDomainName(domain); err != nil {
+	if err := state.ValidateCustomDomainClaim(domain); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid domain", err.Error()))
 		return
@@ -3779,7 +3860,12 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("default domain storage unavailable"))
 		return
 	}
-	if err := setter.SetDefaultCustomDomain(r.Context(), d.AppID, d.Domain); err != nil {
+	if err := setter.SetDefaultCustomDomain(s.defaultDomainContext(r.Context()), d.AppID, d.Domain); err != nil {
+		if errors.Is(err, state.ErrCustomDomainNotRoutable) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Domain unavailable as default", "This hostname currently routes to another app or a suspended tenant."))
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrDomainNotVerified(d.Domain))
 			return
@@ -3898,11 +3984,17 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 		return resp, nil
 	}
 	dialDomain, _ := state.WildcardProbeHost(d.Domain)
-	if points := checkPointsToGregale(ctx, dialDomain); points.Status == probeFail {
+	points, routingProbe := checkDomainRouting(ctx, d.Domain)
+	if points.Status == probeFail {
 		err := fmt.Errorf("%w: %w", errCertFailure, errCertRoutingMismatch)
 		resp.CertStatus = classifyCertError(err)
 		resp.CertLastError = errCertRoutingMismatch.Error()
 		return resp, err
+	}
+	if routingProbe != dialDomain {
+		resp.CertStatus = certStatusPending
+		resp.CertLastError = ""
+		return resp, nil
 	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
@@ -3944,7 +4036,7 @@ func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDo
 		IsDefaultCustomDomain(context.Context, string, string) (bool, error)
 	}
 	if lookup, ok := s.store.(defaultLookup); ok {
-		if isDefault, err := lookup.IsDefaultCustomDomain(ctx, d.AppID, d.Domain); err == nil {
+		if isDefault, err := lookup.IsDefaultCustomDomain(s.defaultDomainContext(ctx), d.AppID, d.Domain); err == nil {
 			resp.Default = isDefault
 		}
 	}
@@ -4262,6 +4354,23 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		Observed: ipObs, Remediation: ipRem,
 		CheckedAt: obs.DNSCheckedAt.UTC().Format(time.RFC3339),
 	})
+	if obs.DNSCheckedAt.IsZero() {
+		// At least one DNS probe was inconclusive. The legacy row stores only
+		// booleans, so conservatively mark all three DNS checks pending.
+		for i := range report.Checks {
+			check := &report.Checks[i]
+			if check.Name == "caa_permits" {
+				check.CheckedAt = obs.ObservedAt.UTC().Format(time.RFC3339)
+			}
+			if check.Name == "dns_record" || check.Name == "points_to_gregale" || check.Name == "ipv6_conflict" {
+				check.Status = string(probePending)
+				check.Detail = "DNS routing could not be confirmed; retry the check"
+				check.Remediation = ""
+				check.CheckedAt = obs.ObservedAt.UTC().Format(time.RFC3339)
+			}
+		}
+		report.Healthy = false
+	}
 	return report
 }
 
@@ -4878,6 +4987,10 @@ func cronRunFromInvocation(inv state.Invocation) api.CronRun {
 func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	scopes, err := api.NormalizeCreateKeyScopes(req.Scopes)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -4937,6 +5050,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	bindIP := clientIPFromRequest(r)
 	bindUA := logsanitize.Field(r.UserAgent())
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
+	projects, prob := s.keyProjects(r.Context(), acct, org.ID, scopes, req.Projects)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	var k state.APIKey
 	switch {
 	case perr == nil:
@@ -4960,6 +5078,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
+		return
+	}
+	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
@@ -5010,6 +5132,9 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		resp.ExpiresAt = k.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	resp.Plaintext = plaintext
+	if len(projects) > 0 {
+		resp.Projects = projectSlugs(projects)
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 

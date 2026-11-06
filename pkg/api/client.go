@@ -190,7 +190,9 @@ const DefaultClientTimeout = 30 * time.Second
 // settings without coupling this client to that global lifecycle.
 func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return transport.Clone()
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = DefaultClientTimeout
+		return clone
 	}
 	return http.DefaultTransport
 }
@@ -1530,8 +1532,8 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 
 // DeployMultipartWithSourceRoot is the workspace-aware source upload path.
 // sourceRoot is a repository-relative directory inside the uploaded archive;
-// an empty value means the archive root. The legacy DeployMultipart method
-// delegates here with an empty root so existing callers remain unchanged.
+// an empty value uses the app's configured root (the archive root for standalone
+// apps). An explicit "." selects the archive root even for a nested app.
 func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
 	ctx = deploymentSubmissionContext(ctx)
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
@@ -1665,14 +1667,13 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	if _, err := io.Copy(fw, tarball); err != nil {
 		return DeploymentResponse{}, fmt.Errorf("copy tarball: %w", err)
 	}
-	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
-	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers || sidecar.OverrideFreeze != "" {
-		sidecarJSON, err := json.Marshal(sidecar)
-		if err != nil {
-			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
-		}
+	// Derive presence from the wire object so every supplied option, including
+	// scheduling fields, survives without a separate field allowlist.
+	sidecarJSON, err := json.Marshal(sidecar)
+	if err != nil {
+		return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
+	}
+	if string(sidecarJSON) != "{}" {
 		if err := w.WriteField("sidecar", string(sidecarJSON)); err != nil {
 			return DeploymentResponse{}, fmt.Errorf("write sidecar: %w", err)
 		}
@@ -2389,7 +2390,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx con
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.do(ctx, http.MethodPost, path, req, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, req, &out, environmentPromotionHeaders(ctx))
 }
 
 // PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
@@ -2397,7 +2398,7 @@ func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, tar
 func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+	return out, c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, path, req, &out, idempotencyKey, environmentPromotionHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
@@ -2453,7 +2454,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx c
 func (c *Client) RollbackProjectEnvironmentPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
 	var out ProjectEnvironmentPromotionStatusResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID) + "/rollback"
-	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, nil, &out, environmentRollbackHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback is the
@@ -2739,7 +2740,7 @@ func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string,
 // PatchDeploymentTrafficIfServingWithMCPAccess atomically fences serving and stored access policy.
 func (c *Client) PatchDeploymentTrafficIfServingWithMCPAccess(ctx context.Context, id string, percent int, servingID string, policy *MCPAccessPolicyExpectation) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	err := c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out)
+	err := c.doWithHeaders(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out, deploymentPromotionHeaders(ctx))
 	return out, err
 }
 
@@ -4558,9 +4559,12 @@ func (c *Client) ListKeys(ctx context.Context) ([]APIKeyResponse, error) {
 	var out []APIKeyResponse
 	return out, c.do(ctx, "GET", "/v1/keys", nil, &out)
 }
-func (c *Client) CreateKey(ctx context.Context, label string, scopes []string) (APIKeyResponse, error) {
+
+// CreateKey mints an account key; projects limits an agent key to those
+// projects' apps (ADR-20261104085712).
+func (c *Client) CreateKey(ctx context.Context, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
@@ -4618,10 +4622,11 @@ func (c *Client) ListOrgAPIKeys(ctx context.Context, slug string) (ListOrgAPIKey
 // CreateOrgAPIKey mints a new API key against the org. Returns the
 // standard APIKeyResponse — plaintext is present on this single
 // response and never returned again. `scopes` is optional; nil
-// defaults to ["admin"] on the server side (mirrors CreateKey).
-func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string) (APIKeyResponse, error) {
+// defaults to ["admin"] on the server side (mirrors CreateKey). projects
+// limits an agent key to those projects' apps (ADR-20261104085712).
+func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 
 // GetOrgAPIKey fetches a single key by id within the org. Cross-org
@@ -5205,9 +5210,26 @@ func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (Config
 
 // RollbackConfig restores a scope's variables to a config revision.
 func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	return c.RollbackConfigReviewed(ctx, slug, scope, ConfigRollbackRequest{Revision: revision})
+}
+
+// RollbackConfigReviewed submits the original revision and optional native guards.
+func (c *Client) RollbackConfigReviewed(ctx context.Context, slug, scope string, request ConfigRollbackRequest) (ConfigRollbackResponse, error) {
 	var out ConfigRollbackResponse
 	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
-		ConfigRollbackRequest{Revision: revision}, &out)
+		request, &out)
+}
+
+// GetConfigRollbackReceipt reads an original reviewed rollback without replaying it.
+func (c *Client) GetConfigRollbackReceipt(ctx context.Context, slug, scope, requestID, proof string) (ConfigRollbackReceipt, error) {
+	var out ConfigRollbackReceipt
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/rollback/requests/" + url.PathEscape(requestID)
+	headers := http.Header{}
+	if proof != "" {
+		headers.Set(EnvBatchReceiptProofHeader, proof)
+	}
+	err := c.doWithHeaders(ctx, http.MethodGet, c.scopeQuery(path, scope), nil, &out, headers)
+	return out, err
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is

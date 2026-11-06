@@ -3,6 +3,8 @@ package sched
 
 import (
 	"context"
+	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -10,6 +12,27 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+func TestAMQPCallInterruptsStalledBroker(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	err := amqpCall(ctx, client, func() error {
+		var frame [1]byte
+		_, err := client.Read(frame[:])
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled RPC: %v", err)
+	}
+	// The peer must see the closed transport, so the library's outstanding
+	// RPCs can unwind and the scheduler can replace the closed poller.
+	if _, err := server.Write([]byte{1}); err == nil {
+		t.Fatal("timed-out AMQP transport remained open")
+	}
+}
 
 type fakeAMQPBrokerOp struct {
 	messages []amqp.Delivery
@@ -21,11 +44,11 @@ type fakeAMQPBrokerOp struct {
 	closed   bool
 }
 
-func (f *fakeAMQPBrokerOp) QueueInspect(name string) (amqp.Queue, error) {
+func (f *fakeAMQPBrokerOp) QueueInspect(_ context.Context, name string) (amqp.Queue, error) {
 	return f.queue, nil
 }
 
-func (f *fakeAMQPBrokerOp) Get(queue string, autoAck bool) (amqp.Delivery, bool, error) {
+func (f *fakeAMQPBrokerOp) Get(_ context.Context, queue string, autoAck bool) (amqp.Delivery, bool, error) {
 	if f.index >= len(f.messages) {
 		return amqp.Delivery{}, false, nil
 	}
@@ -34,12 +57,12 @@ func (f *fakeAMQPBrokerOp) Get(queue string, autoAck bool) (amqp.Delivery, bool,
 	return msg, true, nil
 }
 
-func (f *fakeAMQPBrokerOp) Ack(tag uint64, multiple bool) error {
+func (f *fakeAMQPBrokerOp) Ack(_ context.Context, tag uint64, multiple bool) error {
 	f.acked = append(f.acked, tag)
 	return nil
 }
 
-func (f *fakeAMQPBrokerOp) Nack(tag uint64, multiple bool, requeue bool) error {
+func (f *fakeAMQPBrokerOp) Nack(_ context.Context, tag uint64, multiple bool, requeue bool) error {
 	f.nacked = append(f.nacked, tag)
 	f.requeued = append(f.requeued, requeue)
 	return nil
