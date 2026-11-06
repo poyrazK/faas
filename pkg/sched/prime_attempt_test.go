@@ -44,9 +44,8 @@ func primeAttemptWorker(t *testing.T, s state.Store) (state.App, state.Deploymen
 	}
 	return app, d
 }
-func primeAttemptReplace(t *testing.T, s state.Store, app state.App) {
+func primeAttemptReplace(ctx context.Context, t *testing.T, s state.Store, app state.App) {
 	t.Helper()
-	ctx := t.Context()
 	next, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("b", 64)})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +72,7 @@ func TestPrimeIgnoresDelayedTerminalDeployment(t *testing.T) {
 						if err = s.MarkDeploymentLive(ctx, d.ID); err != nil {
 							t.Fatal(err)
 						}
-						primeAttemptReplace(t, s, app)
+						primeAttemptReplace(ctx, t, s, app)
 					}
 					if err != nil {
 						t.Fatal(err)
@@ -119,7 +118,7 @@ func TestPrimeRetiresAttemptChangedDuringBoot(t *testing.T) {
 					*e.WorkerReconcileSubmit() = func(context.Context, string) {}
 					*v.ColdBootHook() = func() {
 						if change == "superseded" {
-							primeAttemptReplace(t, s, app)
+							primeAttemptReplace(ctx, t, s, app)
 						} else {
 							if err := s.MarkDeploymentSuperseded(ctx, d.ID); err != nil {
 								t.Fatal(err)

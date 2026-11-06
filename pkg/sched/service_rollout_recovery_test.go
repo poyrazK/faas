@@ -126,10 +126,15 @@ func (f rolloutRecoveryFixture) running(t *testing.T, dep state.Deployment) stat
 }
 func (f rolloutRecoveryFixture) observe(t *testing.T, i state.Instance, status string) {
 	t.Helper()
+	f.observeContext(t.Context(), t, i, status)
+}
+
+func (f rolloutRecoveryFixture) observeContext(ctx context.Context, t *testing.T, i state.Instance, status string) {
+	t.Helper()
 	body, _ := json.Marshal(map[string]string{"app_id": f.app.ID, "instance_id": i.ID, "node_id": i.NodeID, "wake_id": i.WakeID, "status": status})
 	err := f.store.(interface {
 		AppendEventAt(context.Context, string, string, *string, []byte, time.Time) error
-	}).AppendEventAt(t.Context(), "vmmd", "wake.app_readiness", nil, body, time.Now().UTC())
+	}).AppendEventAt(ctx, "vmmd", "wake.app_readiness", nil, body, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,11 +307,11 @@ func TestServiceReadinessWithdrawalDuringFinalization(t *testing.T) {
 			next := f.running(t, f.next)
 			f.observe(t, next, "ready")
 			withdrew := false
-			n := rolloutWithdrawalNotifier{hook: func(_ context.Context, _ string, _ string) {
-				current, err := s.DeploymentByID(t.Context(), f.next.ID)
+			n := rolloutWithdrawalNotifier{hook: func(ctx context.Context, _ string, _ string) {
+				current, err := s.DeploymentByID(ctx, f.next.ID)
 				if err == nil && !withdrew && current.TrafficPercent == 100 {
 					withdrew = true
-					f.observe(t, next, "unready")
+					f.observeContext(ctx, t, next, "unready")
 				}
 			}}
 			e, err := sched.NewEngine(t.Context(), s, sched.NewNodeLedger(), f.vm, n, "1.10.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -459,8 +464,8 @@ func TestServiceReadinessWithdrawalInterruptsFleetHandoff(t *testing.T) {
 						body, _ := json.Marshal(db.DeploymentRouteAckPayload{Node: node.Name, Generation: p.Generation})
 						n.events <- db.Notification{Channel: db.NotifyDeploymentRouteAck, Payload: string(body)}
 					}
-					waitPhase := func(action string) error {
-						ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					waitPhase := func(ctx context.Context, action string) error {
+						ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 						defer cancel()
 						ticker := time.NewTicker(5 * time.Millisecond)
 						defer ticker.Stop()
@@ -490,27 +495,31 @@ func TestServiceReadinessWithdrawalInterruptsFleetHandoff(t *testing.T) {
 							if phase == "routing" {
 								// No ACK is emitted for the now-unavailable candidate. The wait must
 								// observe readiness rather than consume its full timeout.
-								f.observe(t, next, "unready")
+								f.observeContext(ctx, t, next, "unready")
 								if err := s.UpdateInstanceState(ctx, next.ID, "stopped"); err != nil {
 									t.Error(err)
 								}
 							} else {
 								ack(p)
 								go func() {
-									if err := waitPhase(state.ServiceRolloutActionPromote); err != nil {
+									// Observe the reverse handoff after the forward notification
+									// returns, retaining its values under a bounded lifetime.
+									asyncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+									defer cancel()
+									if err := waitPhase(asyncCtx, state.ServiceRolloutActionPromote); err != nil {
 										async <- err
 										return
 									}
 									body, _ := json.Marshal(map[string]string{"app_id": f.app.ID, "instance_id": next.ID, "wake_id": next.WakeID, "node_id": next.NodeID, "status": "unready"})
 									err := s.(interface {
 										AppendEventAt(context.Context, string, string, *string, []byte, time.Time) error
-									}).AppendEventAt(t.Context(), "vmmd", "wake.app_readiness", nil, body, time.Now().UTC())
+									}).AppendEventAt(asyncCtx, "vmmd", "wake.app_readiness", nil, body, time.Now().UTC())
 									if err == nil {
-										err = waitPhase(state.ServiceRolloutActionAbort)
+										err = waitPhase(asyncCtx, state.ServiceRolloutActionAbort)
 									}
 									// The failing process exits only after the reverse route is ACKed.
 									if err == nil {
-										err = s.UpdateInstanceState(t.Context(), next.ID, "stopped")
+										err = s.UpdateInstanceState(asyncCtx, next.ID, "stopped")
 									}
 									async <- err
 								}()

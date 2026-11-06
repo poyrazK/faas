@@ -247,12 +247,3 @@ func (l *Loop) runServiceRecovery(ctx context.Context) {
 func (l *Loop) submitServiceRecovery(ctx context.Context, appID string) {
 	l.submitWork(workServiceRecovery, appID, func() { l.engine.ReconcileServiceApp(ctx, appID) })
 }
-
-func serviceRecoveryReadinessRevision(app state.App, deps []state.Deployment, targets map[string]int) string {
-	data, _ := json.Marshal(struct {
-		Revision string
-		Targets  map[string]int
-	}{serviceRecoveryRevision(app, deps), targets})
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
-}
