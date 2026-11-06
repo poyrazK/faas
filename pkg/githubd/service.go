@@ -798,6 +798,11 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return result, fmt.Errorf("githubd: order dependency admission: %w", err)
 	}
 	selected, accepted := reconcile.ProjectDeploymentSelection(toEnqueue), make(map[string]bool, len(toEnqueue))
+	var siblingAddresses map[string]map[string]string
+	if deployProject {
+		s.holdPushOverDeployRate(ctx, project, toEnqueue, held)
+		siblingAddresses = s.pushSiblingAddresses(ctx, tree.FS(), project, scan)
+	}
 	// App-bound apps have no project dependency graph and deploy to their
 	// production scope, whichever scope the branch maps the project's to.
 	toEnqueue = append(toEnqueue, boundToEnqueue...)
@@ -869,6 +874,8 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			// PRNumber + SenderLogin stay zero — push events don't
 			// carry a pull_request webhook payload.
 			EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
+			// App-bound apps have no project siblings.
+			ComposeServiceAddresses: projectSiblingAddresses(siblingAddresses, app, appBound[app.ID]),
 		})
 		if err != nil {
 			// Direct compatibility callers keep partial-success. Durable

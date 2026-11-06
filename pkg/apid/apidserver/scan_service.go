@@ -925,8 +925,16 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	}
 	out := make([]appliedBuild, 0, len(touched))
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
+	// The whole selection deploys or none of it: a budget that runs out
+	// part-way left the project on mixed releases.
+	rateShortfall := s.projectDeployRateShortfall(ctx, acct, len(touched), timeNow().UTC())
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		if rateShortfall != "" {
+			res.Error = rateShortfall
+			out = append(out, res)
+			continue
+		}
 		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
 			res.Error = blocker
 			out = append(out, res)
@@ -1088,6 +1096,18 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// deployment row exists, so imaged bakes the hooks into it.
 		settings := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 		if manifest != nil {
+			// The settings writes are guarded by the deployment they were
+			// read against, as on the single-app and GitHub paths; without
+			// the baseline every guarded write of an app that had deployed
+			// conflicted, and the service's settings were rejected.
+			baseline, baselineErr := s.store.LatestDeployment(ctx, app.ID)
+			if baselineErr != nil && !errors.Is(baselineErr, state.ErrNotFound) {
+				_ = os.Remove(staged)
+				res.Error = "gregale.yaml settings rejected: could not read deployment before manifest settings"
+				out = append(out, res)
+				continue
+			}
+			settings.baselineDeploymentID = baseline.ID
 			if problem := s.applySourceManifestSettings(ctx, acct, app, manifest, &settings); problem != nil {
 				_ = os.Remove(staged)
 				if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
@@ -2119,6 +2139,9 @@ func (s *server) scanService(
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
 		respWorkloads[i] = pw
+	}
+	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
+		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
 	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
