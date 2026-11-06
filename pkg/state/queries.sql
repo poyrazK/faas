@@ -6093,8 +6093,8 @@ DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1;
 
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix,issuer_account_id,issuer_access_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,''),sqlc.narg(issuer_account_id)::uuid,sqlc.narg(issuer_access_revision)::bigint) RETURNING *;
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix,issuer_account_id,issuer_access_revision,key_prefix)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,''),sqlc.narg(issuer_account_id)::uuid,sqlc.narg(issuer_access_revision)::bigint,NULLIF(sqlc.arg(key_prefix)::text,'')) RETURNING *;
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
@@ -6121,8 +6121,8 @@ WHERE account_id=$1 AND bucket_id=$2 AND rotation_parent_id=$3 AND status='activ
 
 -- name: ObjectS3CredentialRotationStage :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,rotation_parent_id,rotation_wake_id,key_prefix)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,sqlc.narg(key_prefix)::text)
 RETURNING *;
 
 -- name: ObjectS3CredentialRotationReplace :one
@@ -7249,7 +7249,10 @@ SELECT jsonb_build_object(
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
-            'managed_prefix', coalesce(c.managed_prefix, '')) ORDER BY c.id)
+            'managed_prefix', coalesce(c.managed_prefix, ''))
+            -- ADR-20261106114500: present only on a key-scoped binding, as
+            -- the Go capture omits it when empty.
+            || CASE WHEN c.key_prefix IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('key_prefix', c.key_prefix) END ORDER BY c.id)
         FROM object_storage_s3_credentials c
         WHERE c.bucket_id = b.id AND c.account_id = b.account_id AND c.status = 'active' AND c.rotation_parent_id IS NULL
     ), '[]'::jsonb),

@@ -1507,6 +1507,36 @@ Show live deployment traffic weights for an app
 
 `gregale release traffic status <slug>`
 
+#### release traffic rollback
+
+Undo a traffic split: all traffic back to the earlier release
+
+`gregale release traffic rollback [--app <SLUG>] [--env <SCOPE>] [--to <ID>] [--reason <TEXT>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--env <SCOPE>` | environment whose split to undo |  |
+| `--to <ID>` | release to give all traffic; default: the largest share |  |
+| `--reason <TEXT>` | reason recorded when a canary rollout is aborted |  |
+
+Examples:
+
+```sh
+gregale release traffic rollback my-api
+gregale release traffic rollback my-api --to v6
+```
+
+It acts on one environment: --env, or the only one the app is live in.
+
+While a canary rollout runs there, this aborts it, as gregale rollouts recover --action abort does.
+
+Otherwise the release with the largest share of the split gets 100%; --to names another live release, and a tie needs it.
+
+It refuses if the traffic changes between reading and writing; run it again after checking release traffic status.
+
+When one release already serves everything, use gregale rollback to go back to an earlier one.
+
 
 ## preview
 

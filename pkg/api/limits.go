@@ -17874,3 +17874,7 @@ const (
 	DomainVerificationPassTimeout    = 25 * time.Second
 	DomainVerificationCleanupTimeout = 3 * time.Second
 )
+
+// MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
+// (ADR-20261106114500); the catalog CHECK enforces the same bound.
+const MaxObjectKeyScopeBytes = 512

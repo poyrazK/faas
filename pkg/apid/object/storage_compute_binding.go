@@ -82,7 +82,7 @@ func (s *Service) ObjectStorageSecretSealReady() bool {
 
 func viewObjectStorageComputeBinding(c state.ObjectS3Credential) api.ObjectStorageComputeBinding {
 	return api.ObjectStorageComputeBinding{
-		ID: c.ID, BucketID: c.BucketID, Scope: c.ManagedScope, Prefix: c.ManagedPrefix,
+		ID: c.ID, BucketID: c.BucketID, Scope: c.ManagedScope, Prefix: c.ManagedPrefix, KeyPrefix: c.KeyPrefix,
 		Credential: viewObjectS3Credential(c), SecretKeys: ObjectStorageBindingSecretKeys(c.ManagedPrefix),
 	}
 }
@@ -146,6 +146,12 @@ func (s *Service) CreateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 	if !validObjectStorageBindingPrefix(req.Prefix) {
 		BucketProblem(w, objectstorage.ErrInvalid)
 		return
+	}
+	if req.KeyPrefix != "" {
+		if problem := s.keyScopeProblem(acct, app, req.KeyPrefix); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	rows, err := store.ListObjectS3Credentials(r.Context(), acct.ID, bucket.ID)
 	if err != nil {
@@ -228,6 +234,7 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: kid, Label: req.Label, Permission: req.Permission,
 		Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: bucket.Scope, ManagedPrefix: req.Prefix,
+		KeyPrefix: req.KeyPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		return state.ObjectS3Credential{}, nil, err
@@ -237,7 +244,7 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 
 func (s *Service) publishObjectStorageComputeBinding(ctx context.Context, acct state.Account, app state.App, bucket state.ObjectBucket, credential state.ObjectS3Credential) {
 	s.Host.NotifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "binding_created", bucket.Scope, "")
-	s.Host.EmitAudit(ctx, "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": credential.ManagedPrefix})
+	s.Host.EmitAudit(ctx, "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": credential.ManagedPrefix, "key_prefix": credential.KeyPrefix})
 }
 
 func (s *Service) SealObjectStorageBindingValues(acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) ([]state.AppSecret, *api.Problem) {
