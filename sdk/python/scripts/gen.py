@@ -179,6 +179,7 @@ ROOT_WRAPPER_MODULES = (
     "pre_auth_target.py",
     "secret_reload_runtime.py",
     "async_secret_reload_runtime.py",
+    "lifecycle_runtime.py",
     "workflows.py",
     "_binding_client_runtime.py",
     "_async_binding_client_runtime.py",
