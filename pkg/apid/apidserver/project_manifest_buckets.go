@@ -32,8 +32,11 @@ type resolvedManifestBucket struct {
 // and a bucket that is not created must already exist on an existing app.
 func (s *server) resolveProjectManifestBuckets(r *http.Request, acct state.Account, dir string, workloads []reposcan.Workload, environment string) ([]resolvedManifestBucket, *api.Problem) {
 	manifest, present, err := gregalemanifest.Load(dir)
-	if err != nil || !present || manifest == nil || len(manifest.Buckets) == 0 {
-		// An unreadable manifest is reported by loadAndResolveProjectManifest.
+	if err != nil {
+		// loadAndResolveProjectManifest reports this first; same problem here.
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+	}
+	if !present || manifest == nil || len(manifest.Buckets) == 0 {
 		return nil, nil
 	}
 	invalid := func(format string, a ...any) *api.Problem {
