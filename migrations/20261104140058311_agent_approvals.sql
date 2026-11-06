@@ -43,8 +43,20 @@ CREATE INDEX IF NOT EXISTS agent_approval_requests_pending_org_idx ON agent_appr
 -- ADR-20261104140058: categories every agent acting in the organization must
 -- have approved, whatever its connection chose. The previous release ignores it.
 ALTER TABLE org_agent_policies
-    ADD COLUMN IF NOT EXISTS approval_categories text[] NOT NULL DEFAULT '{}'::text[]
-    CHECK (approval_categories <@ ARRAY['delete', 'production', 'credentials', 'billing']::text[]);
+    ADD COLUMN IF NOT EXISTS approval_categories text[] NOT NULL DEFAULT '{}'::text[];
+-- +goose StatementEnd
+-- +goose StatementBegin
+-- NOT VALID: new writes are checked at once; existing rows all hold the
+-- default '{}', so a later migration can VALIDATE without finding any.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'org_agent_policies_approval_categories_check') THEN
+        ALTER TABLE org_agent_policies
+            ADD CONSTRAINT org_agent_policies_approval_categories_check
+            CHECK (approval_categories <@ ARRAY['delete', 'production', 'credentials', 'billing']::text[]) NOT VALID;
+    END IF;
+END
+$$;
 -- +goose StatementEnd
 COMMENT ON TABLE api_key_approval_categories IS
     'ADR-20261104140058 the action categories an agent key must have a person approve; apid is the only writer.';

@@ -48347,8 +48347,7 @@ CREATE TABLE public.org_agent_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by uuid,
     approval_categories text[] DEFAULT '{}'::text[] NOT NULL,
-    CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text])),
-    CONSTRAINT org_agent_policies_approval_categories_check CHECK ((approval_categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))
+    CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text]))
 );
 
 
@@ -66405,6 +66404,14 @@ ALTER TABLE ONLY public.org_activity
 
 ALTER TABLE ONLY public.org_activity
     ADD CONSTRAINT org_activity_source_unique UNIQUE (org_id, source_type, source_id);
+
+
+--
+-- Name: org_agent_policies org_agent_policies_approval_categories_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.org_agent_policies
+    ADD CONSTRAINT org_agent_policies_approval_categories_check CHECK ((approval_categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text])) NOT VALID;
 
 
 --
