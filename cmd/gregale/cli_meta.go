@@ -2939,7 +2939,10 @@ var cliCommands = []cliCommand{
 			// (default = the failing stage on the row, fetched
 			// via the existing GET /v1/deployments/{id}/stages
 			// read surface).
-			{Name: "retry", Short: "Retry a failed deployment from a specific stage", Notes: []string{"Choose the stage with --from."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
+			{Name: "retry", Short: "Retry a failed deployment from a specific stage", Notes: []string{
+				"Choose the stage with --from.",
+				"A retry is a new deployment. Stage outputs are not kept between deployments, so a source build restarts from the original source; the build cache makes unchanged layers fast.",
+			}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "from", Short: "retry from this stage (defaults to the failing stage)", Value: "STAGE", ClosedSet: stageNamesForCLIValues()},
 			}},
 		},

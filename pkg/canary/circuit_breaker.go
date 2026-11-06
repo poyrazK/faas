@@ -235,6 +235,18 @@ func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservat
 	return o.Candidate.ServerErrors == 0 && o.Candidate.ProbeServerErrors == 0 && quietSignalsClean(o)
 }
 
+// NoTrafficStage reports whether neither the candidate nor its predecessor
+// answered a single request, organic or probe, during the stage. Holding such
+// a stage for api.CanaryLowTrafficMaxHold gathers no evidence and protects no
+// request: an internal service is never probed through the public edge, so
+// every stage of its rollout used to wait the full bound (ChronoLake report:
+// a four-stage rollout outlasted the 20-minute deploy wait). The bounded
+// advance's other conditions still apply (LowTrafficAdvanceAllowed).
+func NoTrafficStage(o CircuitBreakerObservation) bool {
+	return o.Candidate.Requests == 0 && o.Candidate.ProbeRequests == 0 &&
+		o.Stable.Requests == 0 && o.Stable.ProbeRequests == 0
+}
+
 // ProbeEvidenceAdvanceAllowed reports whether synthetic probes cover a
 // request-sample hold (ADR-1446): organic plus probe responses meet the
 // request floor on both sides, the candidate shows no 5xx regression against
