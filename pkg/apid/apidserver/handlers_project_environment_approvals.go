@@ -191,6 +191,7 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 	}
 	approval, err := s.store.CreateProjectEnvironmentApproval(ctx, state.ProjectEnvironmentApproval{
 		ApprovedByAccountID: approver,
+		ApprovedByPrincipal: approvalPrincipal(ctx),
 		AccountID:           acct.ID,
 		ProjectSlug:         projectSlug,
 		EnvironmentSlug:     environment,
@@ -210,6 +211,7 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 		"plan_token_hash": approval.PlanTokenHash,
 		"token_kind":      tokenKind,
 		"expires_at":      approval.ExpiresAt.UTC().Format(time.RFC3339),
+		"approved_by":     approval.ApprovedByPrincipal,
 	})
 	return approvalToken, approval, nil
 }

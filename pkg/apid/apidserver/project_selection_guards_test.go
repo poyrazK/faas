@@ -201,6 +201,11 @@ func TestProjectProtectedApprovalBindsSelectedService(t *testing.T) {
 	if approved.Code != http.StatusCreated || json.Unmarshal(approved.Body.Bytes(), &approval) != nil {
 		t.Fatalf("approval: %d %s", approved.Code, approved.Body)
 	}
+	// The approval names the person's sign-in key, not only the account.
+	stored, err := (*e.Store()).ProjectEnvironmentApprovalByID(t.Context(), (*e.Acct()).ID, "environment-shop", "staging", approval.ApprovalID)
+	if err != nil || !strings.HasPrefix(stored.ApprovedByPrincipal, "key:") {
+		t.Fatalf("approval principal = %q, %v; want the cli-login key", stored.ApprovedByPrincipal, err)
+	}
 	// Same source, unmodified plan token, and legitimate approval; only selection changes.
 	applyReq := scanAuditRegressionRequest(t, *e.Key(), archive, map[string]string{"project_slug": "environment-shop", "environment": "staging", "only": "beta", "plan_token": plan.PlanToken, "approval_token": approval.ApprovalToken})
 	applyReq.URL.Path = "/v1/projects"
