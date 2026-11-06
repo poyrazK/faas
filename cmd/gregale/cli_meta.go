@@ -2873,6 +2873,10 @@ var cliCommands = []cliCommand{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
+			{Name: "resolve", Short: "Record a database check after a release command was lost", Notes: []string{"Use it when a release command ended without an exit code: the next release command of the scope waits for this check."}, Examples: []string{"gregale release resolve v41 --app my-api --note \"migration 42 applied; schema matches\""}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "note", Value: "TEXT", Short: "what you checked in the database", Req: true},
+				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
+			}},
 			{Name: "timeline", Short: "Show a release's rollout, gates, approvals and history", Examples: []string{"gregale release timeline v42 --app my-api", "gregale release timeline v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
@@ -6469,9 +6473,10 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "confirm project deletion"},
 				{Name: "detach-services", Short: "delete even though its services call each other by name", Bool: true},
 			}},
-			{Name: "rollback", Short: "Roll every service back to its previous deployment, dependencies first", Notes: []string{"Stops at the first service that fails and names the rest."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
-				{Name: "dry-run", Short: "print the rollback order", Bool: true},
-				{Name: "yes", Short: "roll every service back", Bool: true},
+			{Name: "rollback", Short: "Roll the latest project deploy back, callers first", Notes: []string{"Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.", "Stops at the first service that fails; run it again to finish."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "print the rollback plan", Bool: true},
+				{Name: "yes", Short: "roll the latest deploy back", Bool: true},
+				{Name: "all", Short: "roll back every service, not only those the latest deploy changed", Bool: true},
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},

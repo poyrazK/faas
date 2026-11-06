@@ -2810,6 +2810,9 @@ type Querier interface {
 	// No row when the account already runs max_active unfinished switches
 	// (api.DatabaseSwitchesActivePerAccount).
 	InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg InsertReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
+	// ADR-1448 amendment 1: records that a person checked the database after a
+	// release command with an unknown outcome. Only such a command can be checked.
+	InsertReleaseOutcomeCheck(ctx context.Context, db DBTX, arg InsertReleaseOutcomeCheckParams) (InsertReleaseOutcomeCheckRow, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
 	//
@@ -7606,6 +7609,11 @@ type Querier interface {
 	UDPListenerByAppAndName(ctx context.Context, db DBTX, arg UDPListenerByAppAndNameParams) (AppUdpListener, error)
 	UDPListenerByID(ctx context.Context, db DBTX, id string) (AppUdpListener, error)
 	UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error)
+	// ADR-1448 amendment 1: the newest release command of the app scope that
+	// started but ended without an exit code, which nobody has checked and no
+	// later release command in the scope has succeeded after. The predicate is
+	// repeated in ClaimNextUnfencedAppTask.
+	UncertainReleaseTask(ctx context.Context, db DBTX, arg UncertainReleaseTaskParams) (AppTask, error)
 	UnfenceCancelledManagedPostgresCutover(ctx context.Context, db DBTX, cutoverID string) error
 	UnlockPrivateNetworkScope(ctx context.Context, db DBTX, scopeKey string) (bool, error)
 	UnlockSnapshotPrime(ctx context.Context, db DBTX, deploymentID string) (bool, error)

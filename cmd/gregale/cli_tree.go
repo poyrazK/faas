@@ -108,6 +108,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
 	{"release timeline", "deployment timeline"},
+	{"release resolve", "deployment resolve"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},

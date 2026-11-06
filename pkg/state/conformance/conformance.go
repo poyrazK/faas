@@ -196,6 +196,8 @@ func Run(t *testing.T, open Open) {
 		{"deployment_outcomes_exclude_customer_caused_failures", testDeploymentOutcomesExcludeCustomerCausedFailures},
 		{"deployment_served_before_tracks_traffic", testDeploymentServedBefore},
 		{"outpaced_release_is_superseded_before_its_command", testSupersedeOutpacedRelease},
+		{"release_commands_run_one_at_a_time_per_scope", testReleaseCommandOrder},
+		{"outpaced_queued_release_command_is_cancelled", testOutpacedQueuedReleaseCancelled},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"keyed_invocation_replacement_and_completion_are_fenced", testKeyedInvocationReplacementAndCompletion},

@@ -1254,6 +1254,25 @@ gregale release timeline v42 --app my-api
 gregale release timeline v42 --app my-api --json
 ```
 
+### release resolve
+
+Record a database check after a release command was lost
+
+`gregale release resolve --note <TEXT> [--app <SLUG>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--note <TEXT>` | what you checked in the database | required |
+| `--app <SLUG>` | app slug, to resolve vN revisions |  |
+
+Examples:
+
+```sh
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+Use it when a release command ended without an exit code: the next release command of the scope waits for this check.
+
 ### release hide
 
 Hide one deployment from the list
@@ -1888,18 +1907,21 @@ Preview or delete a project
 
 ### project rollback
 
-Roll every service back to its previous deployment, dependencies first
+Roll the latest project deploy back, callers first
 
-`gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+`gregale project rollback [--dry-run] [--yes] [--all] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--dry-run` | print the rollback order |  |
-| `--yes` | roll every service back |  |
+| `--dry-run` | print the rollback plan |  |
+| `--yes` | roll the latest deploy back |  |
+| `--all` | roll back every service, not only those the latest deploy changed |  |
 | `--acknowledge-releases` | accept rolling back across release commands |  |
 | `--timeout <DURATION>` | wait per service (default 10m) |  |
 
-Stops at the first service that fails and names the rest.
+Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.
+
+Stops at the first service that fails; run it again to finish.
 
 
 ## build

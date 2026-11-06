@@ -369,6 +369,8 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentDiff(args[1:])
 	case "timeline":
 		return cmdDeploymentTimeline(args[1:])
+	case "resolve":
+		return cmdDeploymentResolve(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	case subStatus:

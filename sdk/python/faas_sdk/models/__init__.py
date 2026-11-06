@@ -1967,6 +1967,7 @@ from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
 from .realtime_trigger_config import RealtimeTriggerConfig
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .release_approval_decision import ReleaseApprovalDecision
@@ -1993,6 +1994,8 @@ from .release_freeze_weekly import ReleaseFreezeWeekly
 from .release_freeze_weekly_days_item import ReleaseFreezeWeeklyDaysItem
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
+from .release_outcome_check import ReleaseOutcomeCheck
+from .release_outcome_check_task_status import ReleaseOutcomeCheckTaskStatus
 from .release_restore_point import ReleaseRestorePoint
 from .release_timeline import ReleaseTimeline
 from .release_timeline_event import ReleaseTimelineEvent
@@ -4427,6 +4430,7 @@ __all__ = (
     "RaiseOverageCapRequest",
     "RealtimeTriggerConfig",
     "ReceiveInboundWebhookBody",
+    "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
     "ReleaseApprovalDecision",
@@ -4453,6 +4457,8 @@ __all__ = (
     "ReleaseFreezeWeeklyDaysItem",
     "ReleaseGateResult",
     "ReleaseGateResultKind",
+    "ReleaseOutcomeCheck",
+    "ReleaseOutcomeCheckTaskStatus",
     "ReleaseRestorePoint",
     "ReleaseTimeline",
     "ReleaseTimelineEvent",

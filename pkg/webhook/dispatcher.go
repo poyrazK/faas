@@ -24,7 +24,9 @@
 //     another claim immediately, so a backlog drains at delivery speed
 //     within the slot limit rather than at one DefaultCap batch per tick
 //     (spec Appendix D V12 measured that ceiling at 6.2 deliveries/s).
-//     An empty claim hands pacing back to the ticker.
+//     An empty claim hands pacing back to the ticker once none of this
+//     dispatcher's deliveries is still running; until then the in-flight
+//     caps may be what held due rows back (see settleBacklog).
 //
 //   - A process-wide slot limit bounds claimed and in-flight deliveries
 //     across ticks. In-flight goroutines track through d.inflight (sync.WaitGroup).
@@ -483,8 +485,9 @@ func (d *Dispatcher) cycle(ctx context.Context) {
 }
 
 // claim reserves dispatch capacity, claims due deliveries and starts them.
-// Finding any due rows marks a backlog (see Dispatcher.backlog); an empty or
-// failed claim clears it, so the Tick drives the next attempt. When no
+// Finding any due rows marks a backlog (see Dispatcher.backlog). A failed
+// claim clears it, and so does an empty one with no delivery running (see
+// settleBacklog), so the Tick drives the next attempt. When no
 // capacity is free the backlog flag is left as is: a finishing delivery
 // frees a slot and wakes the next claim.
 func (d *Dispatcher) claim(ctx context.Context) {
@@ -508,7 +511,7 @@ func (d *Dispatcher) claim(ctx context.Context) {
 	}
 	d.inflight.Add(len(claimed))
 	d.finishClaim(limit, len(claimed))
-	d.setBacklog(len(claimed) > 0)
+	d.settleBacklog(len(claimed))
 	for _, row := range claimed {
 		// Capture the loop variable — Go 1.22+ per-loop semantics
 		// make this explicit; we do it the explicit way for
@@ -553,6 +556,22 @@ func (d *Dispatcher) finishDelivery() {
 		default:
 		}
 	}
+}
+
+// settleBacklog records what a successful claim found. Rows mean a backlog.
+// An empty claim during a backlog does not always mean the backlog is gone:
+// the account and subscription in-flight caps (ADR-20261101093517) hold due
+// rows back while this dispatcher's own deliveries fill them. Clearing the
+// flag then left those rows to the next Tick, five seconds per cap's worth,
+// and one account's backlog drained at 18 deliveries/s instead of 120. So
+// the flag stays while deliveries are in flight, whose completions free the
+// caps and claim again, and clears once an empty claim finds none running.
+// That costs at most one empty claim per running delivery, and wakes
+// coalesce.
+func (d *Dispatcher) settleBacklog(claimed int) {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	d.backlog = claimed > 0 || (d.backlog && d.active > 0)
 }
 
 func (d *Dispatcher) setBacklog(backlog bool) {
