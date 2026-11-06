@@ -246,7 +246,7 @@ func TestServicePartialRolloutPreservesServingCapacity(t *testing.T) {
 	}
 }
 
-func TestServiceCohortWaitsWithinConcurrencyGrant(t *testing.T) {
+func TestServiceCohortProgressesWithinConcurrencyGrant(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			s := rolloutRecoveryStore(t, backend)
@@ -273,12 +273,12 @@ func TestServiceCohortWaitsWithinConcurrencyGrant(t *testing.T) {
 				}
 			}
 			boots, parks := f.vm.counts()
-			if oldRunning != 2 || live > limit+api.RolloutConcurrencyGrant || parks != 0 || boots != 0 {
+			if oldRunning != 1 || live > limit+api.RolloutConcurrencyGrant || parks != 0 || boots != 0 {
 				t.Fatalf("bounded rollout: old=%d live=%d boots=%d parks=%d", oldRunning, live, boots, parks)
 			}
 			dep, err := s.DeploymentByID(t.Context(), f.next.ID)
-			if err != nil || dep.TrafficPercent != 0 || dep.RolloutState != "rolling_out" {
-				t.Fatalf("capacity hold: %+v %v", dep, err)
+			if err != nil || dep.TrafficPercent != 50 || dep.RolloutState != "rolling_out" {
+				t.Fatalf("bounded traffic step: %+v %v", dep, err)
 			}
 		})
 	}

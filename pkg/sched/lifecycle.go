@@ -938,6 +938,11 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 			ids = append(ids, replica.ID)
 		}
 	}
+	return e.waitForServiceReplicaDrain(ctx, appID, rolloutID, deploymentID, action, acknowledgedAt, ids)
+}
+
+func (e *Engine) waitForServiceReplicaDrain(ctx context.Context, appID, rolloutID, deploymentID, action string, acknowledgedAt time.Time, ids []string) bool {
+	started := time.Now()
 	if len(ids) == 0 {
 		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseDraining, "success", time.Since(started).Seconds())
 		return true
@@ -959,7 +964,7 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rollo
 		allQuiet := true
 		for _, instanceID := range ids {
 			fresh, loadErr := e.store.InstanceByID(drainCtx, instanceID)
-			if errors.Is(loadErr, state.ErrNotFound) || (loadErr == nil && state.State(fresh.State) != state.StateRunning) {
+			if errors.Is(loadErr, state.ErrNotFound) || (loadErr == nil && state.State(fresh.State) != state.StateRunning && state.State(fresh.State) != state.StateDraining) {
 				continue
 			}
 			if loadErr != nil {
@@ -1026,7 +1031,7 @@ func (e *Engine) serviceRolloutReadinessLost(ctx context.Context, rolloutID stri
 		return false
 	}
 	actual, err := e.classifyServiceReplicas(ctx, dep, replicas)
-	return err == nil && actual.ready < desiredServiceReplicas(app.Manifest)
+	return err == nil && actual.ready < state.ServiceRolloutReadyTarget(desiredServiceReplicas(app.Manifest), dep.TrafficPercent)
 }
 
 // A promotion can lose readiness after publishing weights but before its route
@@ -1042,7 +1047,7 @@ func (e *Engine) recoverServiceRolloutReadiness(ctx context.Context, app state.A
 		return false
 	}
 	actual, err := e.classifyServiceReplicas(ctx, current, replicas)
-	if err != nil || actual.ready >= desiredServiceReplicas(app.Manifest) {
+	if err != nil || actual.ready >= state.ServiceRolloutReadyTarget(desiredServiceReplicas(app.Manifest), current.TrafficPercent) {
 		return false
 	}
 	handoff := current.ServiceRolloutHandoff
@@ -1132,6 +1137,9 @@ func (e *Engine) reverseServiceRollout(ctx context.Context, app state.App, rollo
 	if fleetBarrier && !e.waitForServiceDeploymentDrain(ctx, app.ID, rollout.ID, rollout.ID, state.ServiceRolloutActionAbort, acknowledgedAt) {
 		return false
 	}
+	if !e.finishServiceRolloutReplicaDrains(ctx, app.ID, updated, state.ServiceRolloutActionAbort) {
+		return false
+	}
 	final, err := e.store.AbortServiceRollout(ctx, rollout.ID, updated.ServiceRolloutHandoff.Reason)
 	if err != nil {
 		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
@@ -1211,13 +1219,24 @@ func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout
 	return true
 }
 
-// reconcileServiceRollout retains the traffic-bearing generation's full target
-// until the complete candidate cohort proves readiness. Normal concurrency and
-// physical-capacity gates bound admissions; insufficient headroom holds safely.
+// reconcileServiceRollout retains the full predecessor while the candidate is
+// dark. At capacity it shifts verified traffic shares and drains the replaced
+// predecessor replicas before admitting the next candidate replicas.
 func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) error {
 	if rollout.ServiceRolloutHandoff.ActiveAbort() {
 		e.reverseServiceRollout(ctx, app, rollout)
 		return nil
+	}
+	if len(rollout.ServiceRolloutHandoff.RetiringInstanceIDs) > 0 {
+		if !e.finishServiceRolloutReplicaDrains(ctx, app.ID, rollout, state.ServiceRolloutActionPromote) {
+			e.recoverServiceRolloutReadiness(ctx, app, rollout)
+			return nil
+		}
+		current, err := e.store.DeploymentByID(ctx, rollout.ID)
+		if err != nil {
+			return err
+		}
+		rollout = current
 	}
 	desired := desiredServiceReplicas(app.Manifest)
 	previous := previousServiceDeployment(rollout, deployments)
@@ -1238,7 +1257,11 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		return nil
 	}
 	if serviceRolloutTimedOut(rollout, e.now().UTC()) {
-		e.abortServiceRollout(ctx, app, rollout, "readiness timeout")
+		if rollout.TrafficPercent > 0 {
+			e.requestServiceRolloutTimeoutAbort(ctx, app, rollout)
+		} else {
+			e.abortServiceRollout(ctx, app, rollout, "readiness timeout")
+		}
 		return nil
 	}
 	if previous.ID != "" {
@@ -1250,17 +1273,27 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		if err != nil {
 			return err
 		}
-		// A dark candidate does not serve any of the predecessor's load. Repair
-		// the serving generation first and never subtract candidate readiness.
+		// Repair the predecessor allocation backed by its current traffic share.
 		if instanceModeForApp(previousApp) == string(state.InstanceModeService) {
-			if err := e.convergeServiceReplicasToTarget(ctx, previous.ID, desiredServiceReplicas(previousApp.Manifest), true); err != nil {
+			target := desiredServiceReplicas(previousApp.Manifest)
+			if rollout.TrafficPercent > 0 {
+				replicas, err := listServiceReplicas(ctx, e.store, app.ID, previous.ID)
+				if err != nil {
+					return err
+				}
+				actual, err := e.classifyServiceReplicas(ctx, previous, replicas)
+				if err != nil {
+					return err
+				}
+				// Only the durable withdrawal handoff may remove replicas.
+				target = max(actual.managed(), state.ServiceRolloutPredecessorTarget(target, rollout.TrafficPercent))
+			}
+			if err := e.convergeServiceReplicasToTarget(ctx, previous.ID, target, true); err != nil {
 				return err
 			}
 		}
 	}
-	if err := e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true); err != nil {
-		return err
-	}
+	admitErr := e.convergeServiceReplicasToTarget(ctx, rollout.ID, desired, true)
 	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
 	// complete the rollout without waiting for a second notification.
 	ready, readErr := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
@@ -1271,9 +1304,11 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		}
 		if status.ready >= desired {
 			e.finishServiceRollout(ctx, app, rollout, previous)
+		} else if previous.ID != "" && errors.Is(admitErr, errServiceCapacity) && e.advanceServiceRolloutStep(ctx, app, rollout, status.ready, desired) {
+			return nil
 		}
 	}
-	return readErr
+	return errors.Join(readErr, admitErr)
 }
 
 // ReconcileServiceDeployment restores the app's service allocation after a

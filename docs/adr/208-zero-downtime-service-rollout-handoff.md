@@ -7,8 +7,9 @@
   predecessor as live, collect a generation-tagged acknowledgement from every
   active serving gateway, observe every predecessor instance at zero in-flight
   requests for a post-ack quiet window, then supersede and park the
-  predecessor. A rollout never parks healthy predecessor capacity to make room
-  for its candidate.
+  predecessor. When two complete cohorts do not fit, verified traffic steps
+  withdraw only the predecessor replicas whose capacity has been replaced,
+  through the same acknowledgement and drain barriers.
 - **Why:** Readiness alone proves that the candidate can serve; it does not
   prove that every gateway has stopped selecting the predecessor or that
   requests selected before the route refresh have finished. The old code
@@ -19,6 +20,32 @@
   surge cannot fit. Both paths create avoidable outage windows.
 
 ## Handoff protocol
+
+With enough admission headroom, the complete cohort follows the protocol below.
+At a concurrency or physical-capacity ceiling, a partially ready cohort instead
+uses `BeginServiceRolloutStep`. The candidate receives
+`floor(100 * ready / desired)` percent; its pinned predecessor retains the
+complement. The traffic writer repeats readiness and policy checks for this
+exact step. Each binding request records its percentage and a fresh request ID,
+so an earlier check cannot authorize a larger share or the final cutover.
+
+Candidate readiness rounds its weighted target up; predecessor allocation
+rounds its complementary target down, retaining at least one ready predecessor
+until the final cutover. The store locks the generations and replica identities,
+rechecks both cohorts, and atomically records excess ready predecessor replicas
+as `draining` with their IDs in the durable handoff. Those rows stop accepting
+new routes but keep their RAM and concurrency reservations. Only after gateway
+acknowledgements and fresh quiet telemetry for those specific replicas may
+schedd destroy them and admit the next candidate replicas. A restart repeats
+these barriers for the recorded identities. Merely publishing a smaller
+predecessor traffic weight never authorizes an ordinary surplus park.
+
+An abort retains outstanding withdrawals until reverse routing and drains
+complete. The predecessor always retains a ready recipient; final promotion
+still requires the full candidate target. Missing capacity, ACKs, readiness,
+telemetry or successful destruction holds reservations for retry. Converge the APID and schedd fleet before admitting new bounded service
+rollouts. Percentage-specific requests require the updated APID worker; current
+writers reject a full-cutover call against a pending partial-step request.
 
 1. `BeginServiceRolloutCutover` atomically sets the ready candidate to 100%
    traffic and its live siblings in the same scope to 0%. It does not change
@@ -95,8 +122,8 @@ headroom by parking the instance that currently carries production traffic.
   cannot distinguish an idle predecessor from missing telemetry.
 - **Finalize, notify, then drain:** an asynchronous cache refresh leaves a
   window where a gateway selects a deployment whose instances are retiring.
-- **Park one predecessor to admit the candidate:** restores progress on an
-  exact-fit node by creating the outage the rollout exists to avoid and
+- **Park a predecessor before the candidate serves verified traffic:** restores
+  progress on an exact-fit node by creating the outage the rollout exists to avoid and
   violates ADR-199's capacity-pressure semantics.
 - **Treat connection count as the barrier:** open keep-alive or unrelated
   connections are not the same as active requests; vmmd's per-instance
@@ -127,14 +154,17 @@ RAM/runtime/protocol edit cannot invalidate a scoped replacement boot. Current
 application-standard enrollment, control settings, signers and artifact fences
 retain their existing authorization sources.
 
-## Preserving capacity and readiness during handoff (2026-11-05)
+## Preserving capacity and readiness during handoff (2026-11-05, amended 2026-11-06)
 
 A dark candidate contributes no serving capacity. Its ready replicas must not
 reduce the predecessor's declared target. The controller repairs the serving
-generation first and prepares the candidate's full desired cohort under the
-existing concurrency grant, node, CPU and physical-memory gates. When both
-generations cannot fit those gates, the rollout remains capacity-blocked with
-the predecessor serving. Candidate readiness never manufactures extra quota.
+generation first under the existing concurrency grant, node, CPU and physical-
+memory gates. When two complete cohorts cannot fit, a ready partial candidate
+may take a verified traffic share. Only then may the durable withdrawal, route
+ACK and request-drain barriers retire the replaced predecessor capacity. The
+first surge must still fit, and final promotion requires the complete candidate
+cohort. Candidate readiness never manufactures extra quota or requires room for
+two complete cohorts.
 
 Readiness remains reversible after weights are published. Route-ACK and drain
 waits monitor the candidate's required probes. A withdrawal persists an abort

@@ -1130,6 +1130,7 @@ type Querier interface {
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	DrainEnvironmentWorkloadRetirementDeployments(ctx context.Context, db DBTX, arg DrainEnvironmentWorkloadRetirementDeploymentsParams) (int64, error)
 	DrainPrimeRecoveryWorker(ctx context.Context, db DBTX, arg DrainPrimeRecoveryWorkerParams) (int64, error)
+	DrainServiceRolloutReplica(ctx context.Context, db DBTX, instanceID pgtype.UUID) (int64, error)
 	// Deletes one record of the addressed trigger on the caller's app.
 	DropTriggerRecordByOperator(ctx context.Context, db DBTX, arg DropTriggerRecordByOperatorParams) (int64, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
@@ -4431,6 +4432,8 @@ type Querier interface {
 	LockScheduledRelease(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduledRelease, error)
 	LockSecretEncryptionKeyRetirement(ctx context.Context, db DBTX) error
 	LockSecretRekeyApp(ctx context.Context, db DBTX, arg LockSecretRekeyAppParams) error
+	LockServiceRolloutReadyReplicas(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]LockServiceRolloutReadyReplicasRow, error)
+	LockServiceRolloutRetiringStates(ctx context.Context, db DBTX, instanceIds []string) ([]LockServiceRolloutRetiringStatesRow, error)
 	// Account lock serializes Free organization creation across apid processes.
 	LockSharedOrgCreator(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockSnapshotPrimeAttempt(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockSnapshotPrimeAttemptRow, error)
@@ -7207,6 +7210,7 @@ type Querier interface {
 	SetRoutePriorities(ctx context.Context, db DBTX, arg SetRoutePrioritiesParams) (SetRoutePrioritiesRow, error)
 	SetScenarioRecorderStatus(ctx context.Context, db DBTX, arg SetScenarioRecorderStatusParams) error
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
+	SetServiceRolloutStepTraffic(ctx context.Context, db DBTX, arg SetServiceRolloutStepTrafficParams) error
 	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error)
 	SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error)

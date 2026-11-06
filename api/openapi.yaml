@@ -95343,6 +95343,11 @@ components:
       description: "Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."
       required: [request_id, action, deployment_id, status]
       properties:
+        traffic_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full cutover.
         request_id: { type: string, format: uuid }
         action: { type: string, enum: [promote, abort] }
         deployment_id: { type: string, format: uuid }

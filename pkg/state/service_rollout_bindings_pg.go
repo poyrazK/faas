@@ -25,7 +25,7 @@ func (s *PgStore) prepareServiceBinding(ctx context.Context, tx pgx.Tx, target D
 	if err := serviceBindingRequestMatches(ctx, target, action, recipientID, predecessorID); err != nil {
 		return target, err
 	}
-	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID == "" && target.ServiceRolloutHandoff.BindingsCheck != nil && target.ServiceRolloutHandoff.BindingsCheck.Action == action && target.ServiceRolloutHandoff.BindingsCheck.Status != "passed" {
+	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID == "" && target.ServiceRolloutHandoff.BindingsCheck != nil && target.ServiceRolloutHandoff.BindingsCheck.Action == action && target.ServiceRolloutHandoff.BindingsCheck.Status != "passed" && serviceBindingTraffic(target.ServiceRolloutHandoff.BindingsCheck) == serviceRolloutTraffic(ctx) {
 		return target, ErrBindingReleaseRequired
 	}
 	if recipientID == "" {
@@ -49,7 +49,7 @@ func (s *PgStore) prepareServiceBinding(ctx context.Context, tx pgx.Tx, target D
 			}
 		}
 		if enforced && !hasRecipientFence {
-			target = queueServiceBindingCheck(target, action, recipientID, predecessorID, reason)
+			target = queueServiceBindingCheck(ctx, target, action, recipientID, predecessorID, reason)
 			if err := saveServiceHandoff(ctx, tx, target); err != nil {
 				return target, err
 			}
@@ -80,7 +80,7 @@ func (s *PgStore) prepareServiceBinding(ctx context.Context, tx pgx.Tx, target D
 	// weights, and again before abort finalization removes candidate capacity.
 	reversing := action == ServiceRolloutActionAbort && facts.ExecutionMode == api.ExecutionModeService &&
 		(traffic < 100 || target.ServiceRolloutHandoff.Action == ServiceRolloutActionAbort)
-	if requestID != "" || len(sources) > 0 || reversing {
+	if requestID != "" || len(sources) > 0 || reversing || serviceRolloutTraffic(ctx) < 100 {
 		rows, err := q.ServiceRolloutRecipientInstances(ctx, tx, mustPgUUID(recipientID))
 		if err != nil {
 			return target, err
@@ -104,7 +104,7 @@ func (s *PgStore) prepareServiceBinding(ctx context.Context, tx pgx.Tx, target D
 		}
 		desired := 1
 		if action == ServiceRolloutActionPromote {
-			desired = int(facts.Desired)
+			desired = ServiceRolloutReadyTarget(int(facts.Desired), serviceRolloutTraffic(ctx))
 		}
 		if ready < desired {
 			return target, ErrServiceRolloutNotReady
@@ -183,7 +183,7 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 	if !found || previous.id != predecessorID {
 		return target, 0, ErrServiceRolloutInvalid
 	}
-	target = queueServiceBindingCheck(target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
+	target = queueServiceBindingCheck(ctx, target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	if err := saveServiceHandoff(ctx, tx, target); err != nil {
 		return target, 0, err
 	}

@@ -10890,10 +10890,7 @@ func (e *Engine) rolloutGrantAppliesForEnvironment(appID, deploymentID, environm
 	if deploymentID == "" || e.ledger == nil {
 		return false
 	}
-	if e.ledger.ConcurrencyForDeployment(appID, deploymentID) != 0 {
-		return false
-	}
-	return e.ledger.servingEnvironmentConcurrency(appID, environmentKey, production) >= 1
+	return e.ledger.servingEnvironmentConcurrency(appID, environmentKey, production) > e.ledger.ConcurrencyForDeployment(appID, deploymentID)
 }
 
 // wakeServingCapacity applies the environment ceiling and shared plan budget

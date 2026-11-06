@@ -16114,6 +16114,19 @@ func (q *Queries) DrainPrimeRecoveryWorker(ctx context.Context, db DBTX, arg Dra
 	return result.RowsAffected(), nil
 }
 
+const drainServiceRolloutReplica = `-- name: DrainServiceRolloutReplica :execrows
+UPDATE instances SET state='draining'
+WHERE id=$1::uuid AND mode='service' AND state='running'
+`
+
+func (q *Queries) DrainServiceRolloutReplica(ctx context.Context, db DBTX, instanceID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, drainServiceRolloutReplica, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dropTriggerRecordByOperator = `-- name: DropTriggerRecordByOperator :execrows
 delete from trigger_records r using triggers t
 where r.id=$1::uuid and r.trigger_id=$2::uuid
@@ -61890,6 +61903,69 @@ func (q *Queries) LockSafeProjectSubmission(ctx context.Context, db DBTX, arg Lo
 	return i, err
 }
 
+const lockServiceRolloutReadyReplicas = `-- name: LockServiceRolloutReadyReplicas :many
+SELECT i.id::text AS id, i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id
+FROM instances i WHERE i.deployment_id=$1::uuid AND i.mode='service' AND i.state='running'
+ORDER BY i.id FOR UPDATE
+`
+
+type LockServiceRolloutReadyReplicasRow struct {
+	ID     string
+	NodeID string
+	WakeID string
+}
+
+func (q *Queries) LockServiceRolloutReadyReplicas(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]LockServiceRolloutReadyReplicasRow, error) {
+	rows, err := db.Query(ctx, lockServiceRolloutReadyReplicas, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockServiceRolloutReadyReplicasRow{}
+	for rows.Next() {
+		var i LockServiceRolloutReadyReplicasRow
+		if err := rows.Scan(&i.ID, &i.NodeID, &i.WakeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockServiceRolloutRetiringStates = `-- name: LockServiceRolloutRetiringStates :many
+SELECT id::text AS id, state FROM instances
+WHERE id=ANY($1::text[]::uuid[])
+ORDER BY id FOR UPDATE
+`
+
+type LockServiceRolloutRetiringStatesRow struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) LockServiceRolloutRetiringStates(ctx context.Context, db DBTX, instanceIds []string) ([]LockServiceRolloutRetiringStatesRow, error) {
+	rows, err := db.Query(ctx, lockServiceRolloutRetiringStates, instanceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockServiceRolloutRetiringStatesRow{}
+	for rows.Next() {
+		var i LockServiceRolloutRetiringStatesRow
+		if err := rows.Scan(&i.ID, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockSnapshotPrimeAttempt = `-- name: LockSnapshotPrimeAttempt :one
 SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, d.status,
  coalesce(d.rootfs_key,'')::text AS rootfs_key, coalesce(d.rootfs_path,'')::text AS rootfs_path,
@@ -103301,6 +103377,33 @@ func (q *Queries) SetServiceCapacityProtection(ctx context.Context, db DBTX, ena
 	var snapshot []byte
 	err := row.Scan(&snapshot)
 	return snapshot, err
+}
+
+const setServiceRolloutStepTraffic = `-- name: SetServiceRolloutStepTraffic :exec
+UPDATE deployments SET traffic_percent = CASE
+ WHEN id=$1::uuid THEN $2::integer
+ WHEN id=$3::uuid THEN 100-$2::integer
+ ELSE 0 END
+WHERE app_id=$4::uuid AND scope=$5::text AND status='live'
+`
+
+type SetServiceRolloutStepTrafficParams struct {
+	DeploymentID   pgtype.UUID
+	TrafficPercent int32
+	PredecessorID  pgtype.UUID
+	AppID          pgtype.UUID
+	Scope          string
+}
+
+func (q *Queries) SetServiceRolloutStepTraffic(ctx context.Context, db DBTX, arg SetServiceRolloutStepTrafficParams) error {
+	_, err := db.Exec(ctx, setServiceRolloutStepTraffic,
+		arg.DeploymentID,
+		arg.TrafficPercent,
+		arg.PredecessorID,
+		arg.AppID,
+		arg.Scope,
+	)
+	return err
 }
 
 const setSyntheticCheckEnabled = `-- name: SetSyntheticCheckEnabled :one

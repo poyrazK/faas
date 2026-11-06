@@ -28339,6 +28339,27 @@ SELECT i.id::text AS id, i.node_id::text AS node_id, coalesce(i.wake_id::text,''
 FROM instances i WHERE i.deployment_id=sqlc.arg(deployment_id)::uuid AND i.mode='service' AND i.state='running'
 FOR SHARE;
 
+-- name: SetServiceRolloutStepTraffic :exec
+UPDATE deployments SET traffic_percent = CASE
+ WHEN id=sqlc.arg(deployment_id)::uuid THEN sqlc.arg(traffic_percent)::integer
+ WHEN id=sqlc.arg(predecessor_id)::uuid THEN 100-sqlc.arg(traffic_percent)::integer
+ ELSE 0 END
+WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live';
+
+-- name: LockServiceRolloutReadyReplicas :many
+SELECT i.id::text AS id, i.node_id::text AS node_id, coalesce(i.wake_id::text,'')::text AS wake_id
+FROM instances i WHERE i.deployment_id=sqlc.arg(deployment_id)::uuid AND i.mode='service' AND i.state='running'
+ORDER BY i.id FOR UPDATE;
+
+-- name: DrainServiceRolloutReplica :execrows
+UPDATE instances SET state='draining'
+WHERE id=sqlc.arg(instance_id)::uuid AND mode='service' AND state='running';
+
+-- name: LockServiceRolloutRetiringStates :many
+SELECT id::text AS id, state FROM instances
+WHERE id=ANY(sqlc.arg(instance_ids)::text[]::uuid[])
+ORDER BY id FOR UPDATE;
+
 -- name: LockSnapshotPrimeAttempt :one
 SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, d.status,
  coalesce(d.rootfs_key,'')::text AS rootfs_key, coalesce(d.rootfs_path,'')::text AS rootfs_path,
