@@ -15,5 +15,9 @@ export type CreateKeyRequest = {
    * Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project.
    */
   projects?: Array<string>;
+  /**
+   * Kinds of action an agent key must have a person approve before apid lets the request through. Omit for every kind; send an empty list for none. Only agent keys take this field.
+   */
+  approval_categories?: Array<'delete' | 'production' | 'credentials' | 'billing'>;
 };
 

@@ -45,11 +45,15 @@ func Normalize(pattern string) string {
 
 // exempt DELETE routes undo nothing a person relies on: an agent
 // disconnecting itself, aborting its own upload, its developer sandboxes,
-// and cancelling a scheduled release.
+// and cancelling a scheduled release. Revoking agent connections needs an
+// admin credential, which an agent key never holds: the route refuses the
+// agent, so asking a person first would only lead to that refusal.
 var exempt = map[string]bool{
-	"DELETE /v1/agent-connections/self":  true,
-	"DELETE /v1/uploads/{}":              true,
-	"DELETE /v1/deployments/{}/schedule": true,
+	"DELETE /v1/agent-connections/self":       true,
+	"DELETE /v1/uploads/{}":                   true,
+	"DELETE /v1/deployments/{}/schedule":      true,
+	"DELETE /v1/agent-connections/{}":         true,
+	"DELETE /v1/orgs/{}/agent-connections/{}": true,
 }
 
 // exemptPrefixes are developer sandboxes (gregale dev) an agent creates and

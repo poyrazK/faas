@@ -237,7 +237,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		resp.Projects = projectSlugs(projects)
 	}
 	if approvalsSet {
-		resp.ApprovalCategories = approvals
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }

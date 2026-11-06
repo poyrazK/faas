@@ -5032,7 +5032,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		resp.Projects = projectSlugs(projects)
 	}
 	if approvalsSet {
-		resp.ApprovalCategories = approvals
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }

@@ -4373,7 +4373,7 @@ type APIKeyResponse struct {
 	Projects []string `json:"projects,omitempty"`
 	// ApprovalCategories are the kinds of action a person must approve for
 	// an agent key, when it chose them (ADR-20261104140058).
-	ApprovalCategories []string `json:"approval_categories,omitempty"`
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI

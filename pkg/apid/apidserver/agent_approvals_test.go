@@ -161,11 +161,12 @@ func TestHandlers_AgentKeyChoosesItsApprovals(t *testing.T) {
 	}
 	rec := call(`{"label":"agent","scopes":["agent"],"approval_categories":["billing","delete","delete"]}`)
 	var created api.APIKeyResponse
-	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &created) != nil || strings.Join(created.ApprovalCategories, ",") != "delete,billing" {
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &created) != nil || created.ApprovalCategories == nil || strings.Join(*created.ApprovalCategories, ",") != "delete,billing" {
 		t.Fatalf("agent key with approvals = %d %s", rec.Code, rec.Body)
 	}
+	created = api.APIKeyResponse{}
 	rec = call(`{"label":"alone","scopes":["agent"],"approval_categories":[]}`)
-	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &created) != nil || created.ApprovalCategories == nil || len(created.ApprovalCategories) != 0 {
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &created) != nil || created.ApprovalCategories == nil || len(*created.ApprovalCategories) != 0 {
 		t.Fatalf("agent key with no approvals = %d %s", rec.Code, rec.Body)
 	}
 }
