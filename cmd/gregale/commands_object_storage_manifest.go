@@ -236,7 +236,7 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 			continue
 		}
 
-		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("manifest-bucket-binding", slug, plan.bucket.ID, plan.scope, plan.prefix))
+		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("manifest-bucket-binding", bucketBindingKeyParts(slug, plan.bucket.ID, plan.scope, plan.prefix, plan.dependency.KeyPrefix)...))
 		binding, err := client.CreateObjectStorageComputeBinding(bindingCtx, slug, plan.bucket.ID, api.CreateObjectStorageComputeBindingRequest{
 			Label: strings.TrimSpace(plan.dependency.EffectiveLabel()), Permission: plan.permission, Prefix: plan.prefix,
 			KeyPrefix: plan.dependency.KeyPrefix,

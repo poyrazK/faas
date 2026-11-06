@@ -9,9 +9,12 @@
   - While reading the gateway: a compute binding's previous key during rotation lives in a rotation stage row without the binding's app ID. `can(bucketSettingsPermission)` treated it as a customer-created `read_write` key, so during the overlap it could change bucket-wide settings (object lock, lifecycle, notifications, encryption, versioning).
 - **Decision:**
   1. **`key_prefix` on compute bindings.** `POST …/compute-bindings` takes an optional `key_prefix`.
-     - It is a literal prefix of 1 to 512 bytes that must be a valid object key. Pattern characters (`*`, `?`, `[`) are refused, so `v1/*/L0/` is an error rather than a prefix that matches nothing.
+     - It is a literal prefix of 2 to 512 bytes (`api.MaxObjectKeyScopeBytes`, in `limits.go`) that ends with `/` and is a valid object key. The trailing `/` keeps `tenant1/` from reaching `tenant10/`. Pattern characters (`*`, `?`, `[`) are refused, so `v1/*/L0/` is an error rather than a prefix that matches nothing.
+     - One validator, `api.ValidObjectKeyScope`, serves the API and `gregale.yaml` validation.
      - The credential row records it in a new nullable column, `object_storage_s3_credentials.key_prefix`. The binding view shows it.
-     - `gregale add bucket --key-prefix` and `key_prefix` under `buckets:` in `gregale.yaml` set it. An existing binding with a different key prefix is an error, not a silent reuse.
+     - A CHECK (added NOT VALID, so it checks new writes without scanning; a later migration validates it) bounds the column the same way. It also allows the column only on a compute binding or its rotation stage, never on a signed-URL credential.
+     - `gregale add bucket --key-prefix` and `key_prefix` under `buckets:` in `gregale.yaml` set it, on both the CLI path and the server-side apply.
+     - An existing binding with a different key prefix is an error, not a silent reuse. The binding idempotency keys include the prefix, so re-creating a binding with another prefix never replays the old response.
      - For different access to different prefixes, an app takes several bindings with different environment-variable prefixes.
   2. **The gateway enforces it before any route.** A key-scoped credential may make only these requests:
      - an object request whose key is under the prefix; for a copy (including UploadPartCopy), the source must be in the same bucket and under the prefix too;

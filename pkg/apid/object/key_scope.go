@@ -1,8 +1,8 @@
 package object
 
 import (
+	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -16,12 +16,10 @@ type CapabilityHost interface {
 	CapabilityEnabledFor(capability string, acct state.Account, app state.App) bool
 }
 
-// validObjectKeyScope admits a literal key prefix: a valid object key of at
-// most MaxObjectKeyScopeBytes, with no pattern characters, so "segments/*"
-// is refused instead of matching keys that start with "*".
+// validObjectKeyScope admits the shared key-scope rule that is also a valid
+// object key prefix.
 func validObjectKeyScope(prefix string) bool {
-	return len(prefix) <= api.MaxObjectKeyScopeBytes && objectstorage.ValidRequestKey(prefix) &&
-		!strings.ContainsAny(prefix, "*?[")
+	return api.ValidObjectKeyScope(prefix) && objectstorage.ValidRequestKey(prefix)
 }
 
 // keyScopeProblem refuses an invalid key prefix, and any key prefix before
@@ -30,7 +28,7 @@ func validObjectKeyScope(prefix string) bool {
 func (s *Service) keyScopeProblem(acct state.Account, app state.App, prefix string) *api.Problem {
 	if !validObjectKeyScope(prefix) {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid key prefix",
-			"key_prefix must be a literal object key prefix such as segments/L0/, up to 512 bytes; patterns such as * are not supported")
+			fmt.Sprintf("key_prefix must be a literal object key prefix ending in /, such as segments/L0/, up to %d bytes; patterns such as * are not supported", api.MaxObjectKeyScopeBytes))
 	}
 	host, ok := s.Host.(CapabilityHost)
 	if !ok || !host.CapabilityEnabledFor(api.ObjectStorageKeyScopesCapability, acct, app) {

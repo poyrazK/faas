@@ -85727,9 +85727,9 @@ components:
         prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', maxLength: 48 }
         key_prefix:
           type: string
-          minLength: 1
+          minLength: 2
           maxLength: 512
-          description: "Limit the binding's key to object keys under this literal prefix, such as segments/L0/. Patterns such as * are refused. Requests outside it, unscoped listings and bucket-wide settings are denied. 403 object_storage_key_scopes_unavailable until key-scoped bindings are released to the account."
+          description: "Limit the binding's key to object keys under this literal prefix, such as segments/L0/. It must end in / and may not contain *, ? or [, empty segments, or . and .. segments. Requests outside it, unscoped listings and bucket-wide settings are denied. 403 object_storage_key_scopes_unavailable until key-scoped bindings are released to the account."
     ObjectStorageComputeBindingSecretKeys:
       description: Names of sealed app secrets written for a compute binding; values are never returned.
       type: object

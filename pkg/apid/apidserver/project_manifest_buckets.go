@@ -87,6 +87,7 @@ func (s *server) resolveProjectManifestBuckets(r *http.Request, acct state.Accou
 			Name: strings.TrimSpace(dependency.Bucket), Scope: scope, Prefix: prefix,
 			Permission: dependency.EffectivePermission(), Label: strings.TrimSpace(dependency.EffectiveLabel()),
 			Create: dependency.Create != nil, Region: createRegion(dependency.Create), Triggers: dependency.Triggers,
+			KeyPrefix: dependency.KeyPrefix,
 		}})
 	}
 	if len(out) == 0 {

@@ -66542,6 +66542,14 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 
 --
+-- Name: object_storage_s3_credentials object_storage_s3_credentials_key_prefix_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.object_storage_s3_credentials
+    ADD CONSTRAINT object_storage_s3_credentials_key_prefix_check CHECK (((key_prefix IS NULL) OR (((length(key_prefix) >= 2) AND (length(key_prefix) <= 512)) AND ("right"(key_prefix, 1) = '/'::text) AND ("left"(key_prefix, 1) <> '/'::text) AND (url_request IS NULL) AND ((managed_app_id IS NOT NULL) OR (rotation_parent_id IS NOT NULL))))) NOT VALID;
+
+
+--
 -- Name: object_storage_s3_credentials object_storage_s3_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 

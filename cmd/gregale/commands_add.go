@@ -172,7 +172,7 @@ func cmdAddBucket(args []string) int {
 	}
 	bindingCreated := false
 	if !bindingFound {
-		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", appName, bucket.ID, bucket.Scope, bindingPrefix))
+		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", bucketBindingKeyParts(appName, bucket.ID, bucket.Scope, bindingPrefix, *keyPrefix)...))
 		binding, err = client.CreateObjectStorageComputeBinding(bindingCtx, appName, bucket.ID, api.CreateObjectStorageComputeBindingRequest{
 			Label: strings.TrimSpace(*label), Permission: *permission, Prefix: bindingPrefix, KeyPrefix: *keyPrefix,
 		})
@@ -595,4 +595,16 @@ func addResourceIdempotencyKey(kind string, parts ...string) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "gregale:add:%s:%s", kind, strings.Join(parts, "\x00"))
 	return "gregale-add-" + kind + "-" + hex.EncodeToString(h.Sum(nil))
+}
+
+// bucketBindingKeyParts names a bucket binding for its idempotency key. A key
+// prefix joins the key only when set, so retries of an unscoped binding keep
+// the key they always had, and a binding re-created with another prefix
+// (ADR-20261106114500) never replays the earlier response.
+func bucketBindingKeyParts(app, bucketID, scope, envPrefix, keyPrefix string) []string {
+	parts := []string{app, bucketID, scope, envPrefix}
+	if keyPrefix != "" {
+		parts = append(parts, "key-prefix", keyPrefix)
+	}
+	return parts
 }

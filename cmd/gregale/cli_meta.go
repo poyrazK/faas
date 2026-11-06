@@ -6798,8 +6798,10 @@ var cliCommands = []cliCommand{
 				Short:       "Undo a traffic split: all traffic back to the earlier release",
 				Positionals: []string{"<slug>"},
 				Notes: []string{
-					"While a canary rollout runs, this aborts it, as gregale rollouts recover --action abort does.",
-					"Otherwise the oldest release in the split gets 100%; --to names another live release.",
+					"It acts on one environment: --env, or the only one the app is live in.",
+					"While a canary rollout runs there, this aborts it, as gregale rollouts recover --action abort does.",
+					"Otherwise the release with the largest share of the split gets 100%; --to names another live release, and a tie needs it.",
+					"It refuses if the traffic changes between reading and writing; run it again after checking release traffic status.",
 					"When one release already serves everything, use gregale rollback to go back to an earlier one.",
 				},
 				Examples: []string{
@@ -6808,7 +6810,8 @@ var cliCommands = []cliCommand{
 				},
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug", Value: "SLUG"},
-					{Name: "to", Short: "release to give all traffic; default: the oldest release in the split", Value: "ID"},
+					{Name: "env", Short: "environment whose split to undo", Value: "SCOPE"},
+					{Name: "to", Short: "release to give all traffic; default: the largest share", Value: "ID"},
 					{Name: "reason", Short: "reason recorded when a canary rollout is aborted", Value: "TEXT"},
 				},
 			},

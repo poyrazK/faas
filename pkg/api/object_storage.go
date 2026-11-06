@@ -1,6 +1,10 @@
 package api
 
-import "time"
+import (
+	"strings"
+	"time"
+	"unicode/utf8"
+)
 
 // ObjectBucket is a customer-owned logical bucket. Physical upstream names,
 // operator identities, credentials and operation leases are not public fields.
@@ -253,8 +257,29 @@ type CreateObjectStorageComputeBindingRequest struct {
 	KeyPrefix string `json:"key_prefix,omitempty"`
 }
 
-// MaxObjectKeyScopeBytes bounds a binding's key_prefix (ADR-20261106114500).
-const MaxObjectKeyScopeBytes = 512
+// ValidObjectKeyScope reports whether prefix can scope a binding
+// (ADR-20261106114500): a literal key prefix of at most
+// MaxObjectKeyScopeBytes that ends with "/", so "tenant1/" never reaches
+// "tenant10/". It has no leading "/", no empty, "." or ".." segment, no
+// control character and no pattern character (*, ?, [), so "v1/*/L0/" is
+// refused instead of matching nothing. apid also requires a valid object key.
+func ValidObjectKeyScope(prefix string) bool {
+	if len(prefix) < 2 || len(prefix) > MaxObjectKeyScopeBytes || !utf8.ValidString(prefix) ||
+		!strings.HasSuffix(prefix, "/") || strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, "*?[") {
+		return false
+	}
+	for _, r := range prefix {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	for _, segment := range strings.Split(strings.TrimSuffix(prefix, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
 
 // ObjectStorageKeyScopesCapability releases key-scoped bindings to an
 // account once its S3 gateway enforces them (ADR-20261106114500).

@@ -306,7 +306,8 @@ buckets:
 
 Or `gregale add bucket segments --app store --permission write --key-prefix v1/L0/ --prefix GREGALE_S3_L0`.
 
-- The prefix is literal: `v1/L0/` matches `v1/L0/a.gz` but not `v1/L0x/`.
+- The prefix is literal and ends with `/`: `v1/L0/` matches `v1/L0/a.gz` but
+  not `v1/L0x/a.gz`, and `tenant1` is refused so it cannot reach `tenant10/`.
   Patterns such as `v1/*/L0/` are refused.
 - Object reads, writes, deletes and multipart uploads work only on keys under
   it. A copy's source must be in the same bucket and under it too.

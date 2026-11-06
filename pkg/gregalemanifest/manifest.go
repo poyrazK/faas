@@ -2683,9 +2683,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if dependency.Prefix != "" && !validManifestBucketPrefix(dependency.Prefix) {
 			return fmt.Errorf("bucket[%d]: prefix must match [A-Z][A-Z0-9_]{0,47}", i)
 		}
-		if dependency.KeyPrefix != "" && (len(dependency.KeyPrefix) > api.MaxObjectKeyScopeBytes || strings.ContainsAny(dependency.KeyPrefix, "*?[") ||
-			strings.HasPrefix(dependency.KeyPrefix, "/")) {
-			return fmt.Errorf("bucket[%d]: key_prefix must be a literal object key prefix such as segments/L0/ (no patterns, at most %d bytes)", i, api.MaxObjectKeyScopeBytes)
+		if dependency.KeyPrefix != "" && !api.ValidObjectKeyScope(dependency.KeyPrefix) {
+			return fmt.Errorf("bucket[%d]: key_prefix must be a literal object key prefix ending in /, such as segments/L0/ (no patterns, at most %d bytes)", i, api.MaxObjectKeyScopeBytes)
 		}
 		if dependency.Create != nil && !validCreatedBucketName(dependency.Bucket) {
 			return fmt.Errorf("bucket[%d]: create: bucket must be a name matching [a-z][a-z0-9-]{0,62}, not an ID", i)
