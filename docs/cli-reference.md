@@ -1507,6 +1507,31 @@ Show live deployment traffic weights for an app
 
 `gregale release traffic status <slug>`
 
+#### release traffic rollback
+
+Undo a traffic split: all traffic back to the earlier release
+
+`gregale release traffic rollback [--app <SLUG>] [--to <ID>] [--reason <TEXT>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--to <ID>` | release to give all traffic; default: the oldest release in the split |  |
+| `--reason <TEXT>` | reason recorded when a canary rollout is aborted |  |
+
+Examples:
+
+```sh
+gregale release traffic rollback my-api
+gregale release traffic rollback my-api --to v6
+```
+
+While a canary rollout runs, this aborts it, as gregale rollouts recover --action abort does.
+
+Otherwise the oldest release in the split gets 100%; --to names another live release.
+
+When one release already serves everything, use gregale rollback to go back to an earlier one.
+
 
 ## preview
 

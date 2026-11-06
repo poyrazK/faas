@@ -6776,6 +6776,25 @@ var cliCommands = []cliCommand{
 				Short:       "Show live deployment traffic weights for an app",
 				Positionals: []string{"<slug>"},
 			},
+			{
+				Name:        "rollback",
+				Short:       "Undo a traffic split: all traffic back to the earlier release",
+				Positionals: []string{"<slug>"},
+				Notes: []string{
+					"While a canary rollout runs, this aborts it, as gregale rollouts recover --action abort does.",
+					"Otherwise the oldest release in the split gets 100%; --to names another live release.",
+					"When one release already serves everything, use gregale rollback to go back to an earlier one.",
+				},
+				Examples: []string{
+					"gregale release traffic rollback my-api",
+					"gregale release traffic rollback my-api --to v6",
+				},
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug", Value: "SLUG"},
+					{Name: "to", Short: "release to give all traffic; default: the oldest release in the split", Value: "ID"},
+					{Name: "reason", Short: "reason recorded when a canary rollout is aborted", Value: "TEXT"},
+				},
+			},
 		},
 	},
 	{
