@@ -62,7 +62,7 @@ func TestSnapshotActivationDoesNotConsumeReplacementRollbackAttempt(t *testing.T
 							return err
 						}
 						// Let the production outcome sweep withdraw attempt 1 after its timeout.
-						if err := (release.Rollbacks{Store: s, Log: readyAttemptLog()}).Sweep(ctx, recorded.RequestedAt.Add(api.RollbackOutcomeTimeout+time.Second)); err != nil {
+						if err := (&release.Rollbacks{Store: s, Log: readyAttemptLog()}).Sweep(ctx, recorded.RequestedAt.Add(api.RollbackOutcomeTimeout+time.Second)); err != nil {
 							return err
 						}
 						outcome, err := outcomes.RollbackRecordByID(ctx, app.AccountID, app.ID, recorded.ID)

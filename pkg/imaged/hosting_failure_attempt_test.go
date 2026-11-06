@@ -86,7 +86,7 @@ func TestDelayedHostingFailureDoesNotConsumeReplacementAttempt(t *testing.T) {
 							}
 							return
 						}
-						if err := (release.Rollbacks{Store: s, Log: readyAttemptLog()}).Sweep(ctx, first.RequestedAt.Add(api.RollbackOutcomeTimeout+time.Second)); err != nil {
+						if err := (&release.Rollbacks{Store: s, Log: readyAttemptLog()}).Sweep(ctx, first.RequestedAt.Add(api.RollbackOutcomeTimeout+time.Second)); err != nil {
 							t.Fatal(err)
 						}
 						if change == "withdrawn" {
@@ -127,7 +127,7 @@ func TestDelayedHostingFailureDoesNotConsumeReplacementAttempt(t *testing.T) {
 					}
 					newStatus := ""
 					if retried.ID != "" {
-						if err := (release.Rollbacks{Store: s, Log: readyAttemptLog()}).Sweep(ctx, time.Now().UTC()); err != nil {
+						if err := (&release.Rollbacks{Store: s, Log: readyAttemptLog()}).Sweep(ctx, time.Now().UTC()); err != nil {
 							t.Fatal(err)
 						}
 						latest, err := outcomes.RollbackRecordByID(ctx, app.AccountID, app.ID, retried.ID)

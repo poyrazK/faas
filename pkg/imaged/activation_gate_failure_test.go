@@ -134,7 +134,7 @@ func TestContractFailurePreservesNewRollback(t *testing.T) {
 									}
 									return
 								}
-								if err := (release.Rollbacks{Store: s, Log: activationGateLog()}).Sweep(ctx, first.RequestedAt.Add(api.RollbackOutcomeTimeout+time.Second)); err != nil {
+								if err := (&release.Rollbacks{Store: s, Log: activationGateLog()}).Sweep(ctx, first.RequestedAt.Add(api.RollbackOutcomeTimeout+time.Second)); err != nil {
 									t.Fatal(err)
 								}
 								if change == "requeued-config" {
@@ -162,7 +162,7 @@ func TestContractFailurePreservesNewRollback(t *testing.T) {
 							activationErr := blocked.HandleNotification(ctx, ready)
 							retryStatus := "none"
 							if retried.ID != "" {
-								if err := (release.Rollbacks{Store: s, Log: activationGateLog()}).Sweep(ctx, time.Now()); err != nil {
+								if err := (&release.Rollbacks{Store: s, Log: activationGateLog()}).Sweep(ctx, time.Now()); err != nil {
 									t.Fatal(err)
 								}
 								row, err := outcomes.RollbackRecordByID(ctx, app.AccountID, app.ID, retried.ID)
