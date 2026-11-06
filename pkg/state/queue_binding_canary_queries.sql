@@ -75,7 +75,8 @@ SELECT EXISTS(SELECT 1 FROM queue_binding_canaries c JOIN invocations i ON i.id=
 -- name: ReadInvocationDispatchAuthority :one
 SELECT coalesce(i.environment_id::text,'')::text AS environment_id, i.app_id, i.account_id,
  coalesce(i.queue_binding_id::text,'')::text AS queue_binding_id,i.queue_name,i.deployment_scope,
- EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary
+ EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary,
+ coalesce(i.edge_jwt_issuer,'')::text AS edge_jwt_issuer, coalesce(i.edge_jwt_subject,'')::text AS edge_jwt_subject
 FROM invocations i WHERE i.id=sqlc.arg(invocation_id)::uuid;
 
 -- name: QueueCanaryManagedAuthority :one

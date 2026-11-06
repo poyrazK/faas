@@ -112,6 +112,13 @@ func TestCommandCapabilityPath(t *testing.T) {
 		{[]string{"app", "my-app", "exec", "--", "ls"}, "app exec", "app-tasks"},
 		{[]string{"app", "my-app", "cp", "/tmp/x", "-"}, "app cp", "app-tasks"},
 		{[]string{"app", "my-app", "port-forward", "5432:db:5432"}, "app port-forward", "app-tasks"},
+		// ChronoLake report: `app network show` and `doctor` inspect any
+		// app's network (docs/networking.md); only attaching a private
+		// network is the private-networks preview.
+		{[]string{"app", "my-app", "network", "show"}, "app network show", "apps"},
+		{[]string{"app", "my-app", "network", "doctor"}, "app network doctor", "apps"},
+		{[]string{"app", "my-app", "network", "attach", "net", "--region", "r", "--cidrs", "10.0.0.0/24"}, "app network attach", "private-networks"},
+		{[]string{"app", "my-app", "network", "detach"}, "app network detach", "private-networks"},
 		{[]string{"deploy"}, "deploy", ""},
 	} {
 		path := main.CommandCapabilityPath(tc.args)

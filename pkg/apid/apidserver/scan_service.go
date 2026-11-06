@@ -925,8 +925,16 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	}
 	out := make([]appliedBuild, 0, len(touched))
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
+	// The whole selection deploys or none of it: a budget that runs out
+	// part-way left the project on mixed releases.
+	rateShortfall := s.projectDeployRateShortfall(ctx, acct, len(touched), timeNow().UTC())
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		if rateShortfall != "" {
+			res.Error = rateShortfall
+			out = append(out, res)
+			continue
+		}
 		if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
 			res.Error = blocker
 			out = append(out, res)
@@ -1046,10 +1054,6 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
-		releaseCommand := deploymentReleaseCommand{
-			command: append([]string(nil), workload.ReleaseCommand...),
-			shell:   workload.ReleaseCommandShell,
-		}
 		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan, s.agentStepsAllowed(acct))
 		if manifestProblem != nil {
 			_ = os.Remove(staged)
@@ -1065,24 +1069,20 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		if manifest != nil {
 			workflowDefinitions = manifest.Workflows
 		}
-		// A single-workload project has no ownership ambiguity, so it may
-		// also use the explicit gregale.yaml release.command declaration.
-		// Multi-workload Procfiles are already assigned exactly once by
-		// reposcan (web first, otherwise deterministic process order).
-		if len(workloads) == 1 {
-			var releaseProblem *api.Problem
-			var sourceRelease deploymentReleaseCommand
-			sourceRelease, releaseProblem = resolveSourceReleaseDeclaration(staged, sourceApp, manifest)
-			if releaseProblem != nil {
-				_ = os.Remove(staged)
-				res.Error = "release declaration invalid (server logs carry the detail)"
-				s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
-				out = append(out, res)
-				continue
+		// The service's own gregale.yaml release.command (or Procfile
+		// release: in its own directory) applies as on a single-app deploy
+		// unless another service builds from the same directory
+		// (ADR-20261019120007 amendment 1).
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		if releaseProblem != nil {
+			_ = os.Remove(staged)
+			res.Error = "release declaration invalid (server logs carry the detail)"
+			if releaseProblem.Status == http.StatusUnprocessableEntity {
+				res.Error = "release declaration invalid: " + releaseProblem.Detail
 			}
-			if len(sourceRelease.command) > 0 {
-				releaseCommand = sourceRelease
-			}
+			s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
+			out = append(out, res)
+			continue
 		}
 		if s.releasePhaseOff && len(releaseCommand.command) > 0 {
 			_ = os.Remove(staged)
@@ -1096,6 +1096,18 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// deployment row exists, so imaged bakes the hooks into it.
 		settings := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 		if manifest != nil {
+			// The settings writes are guarded by the deployment they were
+			// read against, as on the single-app and GitHub paths; without
+			// the baseline every guarded write of an app that had deployed
+			// conflicted, and the service's settings were rejected.
+			baseline, baselineErr := s.store.LatestDeployment(ctx, app.ID)
+			if baselineErr != nil && !errors.Is(baselineErr, state.ErrNotFound) {
+				_ = os.Remove(staged)
+				res.Error = "gregale.yaml settings rejected: could not read deployment before manifest settings"
+				out = append(out, res)
+				continue
+			}
+			settings.baselineDeploymentID = baseline.ID
 			if problem := s.applySourceManifestSettings(ctx, acct, app, manifest, &settings); problem != nil {
 				_ = os.Remove(staged)
 				if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
@@ -1727,6 +1739,12 @@ func (s *server) scanService(
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 	}
+	// gregale.yaml buckets, resolved before mutation like databases
+	// (ADR-20261106105015 §1).
+	manifestBuckets, bucketProblem := s.resolveProjectManifestBuckets(r, acct, req.ScanDir, filteredW, req.Environment)
+	if bucketProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, bucketProblem
+	}
 	var stalePersistedSlugs []string
 	if len(req.Exclude) > 0 {
 		scanNames := make(map[string]bool, len(result.Workloads)*2)
@@ -2122,6 +2140,9 @@ func (s *server) scanService(
 		}
 		respWorkloads[i] = pw
 	}
+	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {
+		warnings = append(warnings, "deploy rate: "+strings.TrimPrefix(shortfall, "not deployed: "))
+	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
@@ -2137,6 +2158,10 @@ func (s *server) scanService(
 				m.Name, m.Kind, strings.Join(respManaged[i].Unbound, ", "), m.Kind))
 		}
 	}
+	// Databases gregale.yaml creates are reviewed with the Compose ones
+	// (ADR-20261106105015 §1).
+	respManaged = append(respManaged, manifestDatabasePlan(resolvedManifest.PostgresBindings)...)
+	respManaged = append(respManaged, manifestBucketPlan(manifestBuckets)...)
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
 		ProjectSlug:           req.ProjectSlug,
@@ -2726,6 +2751,15 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
 		}
 		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if len(manifestBuckets) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project bucket targets")
+		}
+		if problem := s.applyProjectManifestBuckets(r.Context(), acct, manifestBuckets, apps); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

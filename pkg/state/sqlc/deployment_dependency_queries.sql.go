@@ -19,6 +19,7 @@ LEFT JOIN LATERAL (
     SELECT id FROM deployments
     WHERE app_id = a.id AND scope = $1::text
       AND environment_workload_runtime IS NULL
+      AND status NOT IN ('failed', 'superseded', 'cancelled')
     ORDER BY revision DESC, created_at DESC, id DESC LIMIT 1
 ) d ON true
 WHERE a.account_id = $2::uuid AND a.project_id = $3::uuid

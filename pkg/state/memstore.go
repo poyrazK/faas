@@ -211,6 +211,8 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	checkedRollbackReleaseReviews        map[string][]ReleaseRun
+	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
 	alertHistoricalClaims                map[string]string
 	recoveryPredecessors                 map[string]string
@@ -615,6 +617,8 @@ type MemStore struct {
 	deployFailedEmailAt          map[string]time.Time
 	deployments                  map[string]Deployment
 	deploymentSubmissionReceipts map[string]api.DeploymentSubmissionReceipt
+	environmentRollbackReceipts  map[string]api.EnvironmentRollbackReceipt
+	environmentPromotionReceipts map[string]api.EnvironmentPromotionReceipt
 	deploymentPromotionReceipts  map[string]api.DeploymentPromotionReceipt
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
@@ -1047,6 +1051,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
+	// amendment 1), keyed by task id.
+	releaseOutcomeChecks map[string]ReleaseOutcomeCheck
 	// appForks are production fork intents (ADR-732), keyed by fork id.
 	appForks map[string]AppFork
 	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
@@ -4052,7 +4059,17 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			detachedApps[appID] = app
 		}
 	}
+	for id, receipt := range m.environmentPromotionReceipts {
+		if receipt.ProjectID == projectID {
+			delete(m.environmentPromotionReceipts, id)
+		}
+	}
 	delete(m.projects, projectID)
+	for id, receipt := range m.environmentRollbackReceipts {
+		if receipt.ProjectID == projectID {
+			delete(m.environmentRollbackReceipts, id)
+		}
+	}
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.ProjectID == projectID {
 			delete(m.environmentGitOps, sourceID)
@@ -8785,6 +8802,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 		}
 		d.StagedReview = &review
 	}
+	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
 }
 
@@ -10175,6 +10193,15 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if !ok {
 		return ErrNotFound
 	}
+	if err = m.checkDatabaseSwitchLeaseLocked(ctx, d); err != nil {
+		return err
+	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, d); err != nil {
+		return err
+	}
+	if err := m.checkWorkerDeploymentActivationLocked(ctx, d); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
 		return ErrConflict
 	}
@@ -10270,6 +10297,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		delete(m.rollbackPrepared, id)
 		return ErrDeploymentSuperseded
+	}
+	if err = m.checkPlainRollbackReleasesLocked(ctx, d); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -10429,11 +10459,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
 			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-				if other.TrafficPercent > 0 {
-					if _, exists := m.revisionPins[otherID]; !exists {
-						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-					}
-				}
+				m.retainServingRevisionLocked(other, time.Now().UTC())
 				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
@@ -11004,7 +11030,11 @@ func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string
 		return Deployment{}, ErrNotFound
 	}
 	now := time.Now().UTC()
-	newDep, err := retryDeploymentInput(src, now)
+	legacyService := m.apps[src.AppID].Manifest.ExecutionMode == api.ExecutionModeService
+	if spec, ok := m.projectEnvironmentWorkloadSpecs[m.projectEnvironmentWorkloadDeploymentSpecs[failedID]]; ok {
+		legacyService = spec.Settings.Manifest.ExecutionMode == api.ExecutionModeService
+	}
+	newDep, err := retryDeploymentInput(src, now, legacyService)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -11058,7 +11088,16 @@ func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string
 		}
 	}
 	m.publicBuildURLs[newDep.ID] = maps.Clone(m.publicBuildURLs[failedID])
+	// A retry executes the original immutable workload revision. Retain its
+	// environment lifetime even if the pin was removed by environment deletion.
+	if ownerID := m.deploymentRuntimeEnvironmentOwners[failedID]; ownerID != "" {
+		m.deploymentRuntimeEnvironmentOwners[newDep.ID] = ownerID
+	}
+	if specID := m.projectEnvironmentWorkloadDeploymentSpecs[failedID]; specID != "" {
+		m.projectEnvironmentWorkloadDeploymentSpecs[newDep.ID] = specID
+	}
 	m.putDeploymentLocked(newDep.ID, newDep)
+	newDep.StageState = m.deployments[newDep.ID].StageState
 	return newDep, nil
 }
 
@@ -11265,6 +11304,12 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[target.AppID], normalizedDeploymentScope(target.Scope)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.checkAppRollbackGraphLocked(appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkDatabaseSwitchLeaseLocked(ctx, target); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if !rollbackPairValid(r, target, m.deployments[current], m.rollbackRowsLocked(r)) {
@@ -11281,6 +11326,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(target)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.preserveRollbackSuccessLocked(target); err != nil {
+		return Deployment{}, err
+	}
+
 	now := time.Now().UTC()
 	var prior StageState
 	if len(target.StageState) > 0 {
@@ -11318,6 +11367,11 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 		m.rollbackPrepared = map[string]time.Time{}
 	}
 	m.rollbackPrepared[targetDeploymentID] = now
+	if m.plainRollbackReleaseReviews == nil {
+		m.plainRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.plainRollbackReleaseReviews[targetDeploymentID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
+
 	return target, nil
 }
 
@@ -12279,9 +12333,12 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 // status pinned to 'failed'; error_code is the RFC 7807 code lifted
 // from pkg/api.SentinelToCode; error keeps the free-text message.
 // Returns the refreshed row.
-func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message string) (Deployment, error) {
+func (m *MemStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkDeploymentActivationFailureLocked(ctx, m.deployments[id]); err != nil {
+		return Deployment{}, err
+	}
 	return m.setDeploymentFailedLocked(id, code, message)
 }
 
@@ -12334,13 +12391,19 @@ func (m *MemStore) ClaimDeployFailedEmail(_ context.Context, appID string, at ti
 // migration 00290. The unit-test suite that exercises MemStore stays
 // aligned with PgStore.
 func (m *MemStore) SetDeploymentFailedEx(
-	_ context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
+	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
+	}
+	if err := m.checkDeploymentActivationFailureLocked(ctx, d); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkSnapshotPrimeFailure(ctx, d); err != nil {
+		return Deployment{}, err
 	}
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
@@ -17460,7 +17523,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
+		if ins.AppID != appID || ins.State != "running" || NeverServes(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
@@ -17534,12 +17597,18 @@ func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, e
 	return m.createSnapshotLocked(snap)
 }
 
-func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
+func (m *MemStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	dep, ok := m.deployments[snap.DeploymentID]
 	if !ok {
 		return Snapshot{}, ErrNotFound
+	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, dep); err != nil {
+		return Snapshot{}, err
+	}
+	if err := checkActivationSnapshotSource(ctx, sourceStartedAt); err != nil {
+		return Snapshot{}, err
 	}
 	app, found := m.apps[dep.AppID]
 	if !found {
@@ -24716,6 +24785,16 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	for promotionID := range m.environmentPromotionReceipts {
+		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
+			delete(m.environmentPromotionReceipts, promotionID)
+		}
+	}
+	for promotionID := range m.environmentRollbackReceipts {
+		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
+			delete(m.environmentRollbackReceipts, promotionID)
+		}
+	}
 	if m.internalCI != nil {
 		m.internalCI.RemoveAccount(id)
 	}

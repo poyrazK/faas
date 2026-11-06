@@ -5517,6 +5517,7 @@
       "revision",
       "rollback_on_5xx",
       "rollback_prepared_at",
+      "rollback_release_review",
       "rollout_aborted_at",
       "rollout_aborted_reason",
       "rollout_completed_at",
@@ -8742,6 +8743,8 @@
       "deadline_at",
       "deployment_scope",
       "due_at",
+      "edge_jwt_issuer",
+      "edge_jwt_subject",
       "environment_id",
       "failure_rules",
       "headers",
@@ -9219,6 +9222,7 @@
       "assigned_account_id",
       "assigned_team_id",
       "attempt",
+      "attempt_claim_id",
       "channel_id",
       "claim_id",
       "claim_until",
@@ -10301,11 +10305,21 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_live_login_attempts",
+    "columns": [
+      "attempted_at",
+      "database_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_live_logins",
     "columns": [
       "account_id",
+      "authorized_identity_id",
       "awake",
       "created_at",
+      "data_resource_id",
       "database_id",
       "provider_identity_id",
       "recipient",
@@ -12910,6 +12924,7 @@
       "id",
       "issuer_access_revision",
       "issuer_account_id",
+      "key_prefix",
       "kid",
       "label",
       "last_used_at",
@@ -15400,6 +15415,7 @@
       "account_id",
       "approval_token_hash",
       "approved_by_account_id",
+      "approved_by_principal",
       "consumed_at",
       "created_at",
       "environment_slug",
@@ -16607,6 +16623,21 @@
     ]
   },
   {
+    "table": "project_environment_promotion_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "attempt_id",
+      "environment_id",
+      "from_environment_id",
+      "project_id",
+      "promotion_hash",
+      "promotion_id",
+      "request_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_promotion_release_config",
     "kind": "operational",
     "columns": [
@@ -16741,6 +16772,21 @@
       "settings_hash",
       "state",
       "workload_spec_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_rollback_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "attempt_id",
+      "environment_id",
+      "from_environment_id",
+      "project_id",
+      "promotion_hash",
+      "promotion_id",
+      "request_hash"
     ],
     "kind": "operational"
   },
@@ -16998,6 +17044,7 @@
       "deactivation",
       "environment_slug",
       "expires_at",
+      "fallback_hidden_at",
       "id",
       "project_id",
       "rollback_previous_release_id",
@@ -17833,6 +17880,7 @@
       "environment_id",
       "instance_id",
       "node_id",
+      "prime_activation_handoff",
       "scope",
       "secret_fingerprint",
       "wake_id"
@@ -19760,6 +19808,19 @@
       "decision",
       "deployment_id",
       "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_outcome_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checked_at",
+      "checked_by",
+      "deployment_id",
+      "note",
+      "task_id"
     ],
     "kind": "operational"
   },

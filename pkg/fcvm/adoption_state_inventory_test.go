@@ -179,6 +179,7 @@ var adoptionInstanceInventory = map[string]string{
 	"networkPolicyMu":                 "reset",
 	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
 	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
+	"awaitingExit":                    "reset",   // only set while a teardown call waits on the guest
 	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
 	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
 	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes

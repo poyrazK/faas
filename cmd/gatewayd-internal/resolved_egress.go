@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -229,8 +230,19 @@ func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, hos
 	for _, a := range addrs {
 		req.Addresses = append(req.Addresses, a.String())
 	}
-	if _, err := cli.AllowResolvedEgress(ctx, req); err != nil && status.Code(err) != codes.Unimplemented {
+	ack, err := cli.AllowResolvedEgress(ctx, req)
+	if status.Code(err) == codes.Unimplemented {
+		return nil
+	}
+	if err != nil {
 		return err
+	}
+	if !ack.GetMatched() {
+		return fmt.Errorf("%w: instance %s", errResolvedEgressRefused, owner.instance)
 	}
 	return nil
 }
+
+// errResolvedEgressRefused: vmmd refused the grant, so the guest's
+// connections to the answer are dropped. vmmd logs the check that refused it.
+var errResolvedEgressRefused = errors.New("vmmd refused the DNS grant to the query's network owner")

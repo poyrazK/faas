@@ -5,7 +5,8 @@
 // It runs on the control plane. It holds the zone's DNS: Edit token, which
 // never reaches a compute node or an internet-facing process, and listens
 // only for metrics. Every tick it reads the node registry, probes each
-// node's edge on the private network, and lets pkg/edgedns move the records.
+// node's edge on the private network, shakes hands with each node's public
+// address for every DNS-only name, and lets pkg/edgedns move the records.
 // It starts in dry run: it logs and counts what it would change until
 // FAAS_EDGEDNS_DRY_RUN=0.
 //
@@ -74,6 +75,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		probe:    edgedns.HTTPProbe{Client: &http.Client{Timeout: edgedns.ProbeTimeout}},
 		public:   cfg.public,
 		edgePort: cfg.edgePort,
+		// A staging certificate chains to a root no client trusts; the probe
+		// then checks the names alone.
+		direct:      edgedns.TLSProbe{NameOnly: cfg.cert.enabled() && cfg.cert.ca == edgecert.CALetsEncryptStaging},
+		directHosts: dnsOnlyHosts(cfg.names),
 	}
 	certStore := edgecert.NewPgStore(pool)
 	if cfg.cert.enabled() {
@@ -104,6 +109,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// dnsOnlyHosts lists the DNS-only names, whose clients connect to the nodes'
+// public addresses themselves.
+func dnsOnlyHosts(names []edgedns.Name) []string {
+	var hosts []string
+	for _, name := range names {
+		if name.DNSOnly {
+			hosts = append(hosts, name.Host)
+		}
+	}
+	return hosts
 }
 
 // tick is one reconcile. A failed registry read or record write is logged and

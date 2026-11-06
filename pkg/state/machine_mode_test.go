@@ -28,8 +28,10 @@ func TestIsMeteredSkippableMode(t *testing.T) {
 		{"worker", false},
 		{"service", false},
 		{"job", false},
-		{"", false},      // empty defaults to non-skip
-		{"bogus", false}, // unknown mode is not skipped (fail-open at the meter layer; CHECK is the load-bearing defence)
+		{"fork", false},   // ADR-732: a fork bills like a live instance
+		{"refresh", true}, // ADR-20261106214916: the release caused it
+		{"", false},       // empty defaults to non-skip
+		{"bogus", false},  // unknown mode is not skipped (fail-open at the meter layer; CHECK is the load-bearing defence)
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
@@ -92,5 +94,22 @@ func TestInstanceModeConstants(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("InstanceMode %q: string value %q, want %q", k, got[k], v)
 		}
+	}
+}
+
+// TestNeverServes pins which modes every target loader, wake reuse and
+// replica count skips: a fork (ADR-732) and a platform snapshot refresh
+// (ADR-20261106214916).
+func TestNeverServes(t *testing.T) {
+	for mode, want := range map[string]bool{
+		"normal": false, "mirror": false, "worker": false, "service": false, "job": false, "": false,
+		"fork": true, "refresh": true,
+	} {
+		if got := state.NeverServes(mode); got != want {
+			t.Errorf("NeverServes(%q) = %v, want %v", mode, got, want)
+		}
+	}
+	if !state.IsRefresh(string(state.InstanceModeRefresh)) || state.IsRefresh(string(state.InstanceModeFork)) {
+		t.Error("IsRefresh must match exactly the refresh mode")
 	}
 }

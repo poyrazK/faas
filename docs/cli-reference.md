@@ -1186,6 +1186,8 @@ Retry a failed deployment from a specific stage
 
 Choose the stage with --from.
 
+A retry is a new deployment. Stage outputs are not kept between deployments, so a source build restarts from the original source; the build cache makes unchanged layers fast.
+
 ### release resume
 
 Reconnect to a saved app or project deploy and finish pending checks
@@ -1251,6 +1253,25 @@ Examples:
 gregale release timeline v42 --app my-api
 gregale release timeline v42 --app my-api --json
 ```
+
+### release resolve
+
+Record a database check after a release command was lost
+
+`gregale release resolve --note <TEXT> [--app <SLUG>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--note <TEXT>` | what you checked in the database | required |
+| `--app <SLUG>` | app slug, to resolve vN revisions |  |
+
+Examples:
+
+```sh
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+Use it when a release command ended without an exit code: the next release command of the scope waits for this check.
 
 ### release hide
 
@@ -1504,6 +1525,36 @@ gregale release traffic promote --app my-api --release v7 --at 09:00
 Show live deployment traffic weights for an app
 
 `gregale release traffic status <slug>`
+
+#### release traffic rollback
+
+Undo a traffic split: all traffic back to the earlier release
+
+`gregale release traffic rollback [--app <SLUG>] [--env <SCOPE>] [--to <ID>] [--reason <TEXT>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--env <SCOPE>` | environment whose split to undo |  |
+| `--to <ID>` | release to give all traffic; default: the largest share |  |
+| `--reason <TEXT>` | reason recorded when a canary rollout is aborted |  |
+
+Examples:
+
+```sh
+gregale release traffic rollback my-api
+gregale release traffic rollback my-api --to v6
+```
+
+It acts on one environment: --env, or the only one the app is live in.
+
+While a canary rollout runs there, this aborts it, as gregale rollouts recover --action abort does.
+
+Otherwise the release with the largest share of the split gets 100%; --to names another live release, and a tie needs it.
+
+It refuses if the traffic changes between reading and writing; run it again after checking release traffic status.
+
+When one release already serves everything, use gregale rollback to go back to an earlier one.
 
 
 ## preview
@@ -1856,18 +1907,21 @@ Preview or delete a project
 
 ### project rollback
 
-Roll every service back to its previous deployment, dependencies first
+Roll the latest project deploy back, callers first
 
-`gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+`gregale project rollback [--dry-run] [--yes] [--all] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--dry-run` | print the rollback order |  |
-| `--yes` | roll every service back |  |
+| `--dry-run` | print the rollback plan |  |
+| `--yes` | roll the latest deploy back |  |
+| `--all` | roll back every service, not only those the latest deploy changed |  |
 | `--acknowledge-releases` | accept rolling back across release commands |  |
 | `--timeout <DURATION>` | wait per service (default 10m) |  |
 
-Stops at the first service that fails and names the rest.
+Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.
+
+Stops at the first service that fails; run it again to finish.
 
 
 ## build
@@ -2864,6 +2918,22 @@ Remove one allowed destination
 Clear the configured egress policy
 
 `gregale app egress-ports clear [<app>]`
+
+### app network
+
+Inspect networking or manage private-network attachments
+
+#### app network show
+
+Show network configuration and captured upstream telemetry
+
+`gregale app network show [<app>]`
+
+#### app network doctor
+
+Check observed network health without sending probe traffic
+
+`gregale app network doctor [<app>]`
 
 ### app traffic-status
 
@@ -6002,13 +6072,14 @@ Show app metrics, request breakdowns and the service map
 
 Break down past requests by route, country, referrer or status
 
-`gregale metric requests [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>] [<slug>]`
+`gregale metric requests [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>] [--range <WINDOW>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--since <WINDOW>` | lookback window |  |
 | `--until <TIMESTAMP>` | exclusive RFC3339 end |  |
 | `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` · `consumer_id` |
+| `--range <WINDOW>` | lookback window; same as --since (gregale metric --range) |  |
 
 
 ## debug

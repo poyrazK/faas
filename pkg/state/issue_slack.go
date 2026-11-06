@@ -54,6 +54,8 @@ type IssueSlackResult struct {
 	ResponseCode             int
 	RetryAt                  time.Time
 	ResetThread              bool
+	// Attempted is set only once the HTTP transport was invoked.
+	Attempted bool
 }
 type IssueSlackStore interface {
 	ListIssueSlackDestinations(context.Context, string, string) ([]IssueSlackDestination, error)

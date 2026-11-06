@@ -531,6 +531,12 @@ message EnqueueBuildRequest {
   // github_installation_id identifies the installation used to validate
   // github_source_ref. Zero means no mutable branch provenance was supplied.
   int64 github_installation_id = 18;
+  // compose_service_addresses are this service's Compose environment values
+  // that call a sibling project service, already rewritten to that service's
+  // Gregale address (ADR-20261105104500). apid sets each key the app has no
+  // value for in deployment_scope before the build, as a reviewed project
+  // deploy does; a value already set is kept. Push events only.
+  map<string, string> compose_service_addresses = 19;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for

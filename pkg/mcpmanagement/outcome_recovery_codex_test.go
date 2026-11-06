@@ -142,7 +142,8 @@ func seedCodexPromotionOutcome(remote *remoteServer) (api.DeploymentPromotionRec
 }
 
 // Seed historical native metadata only; this fixture performs no native writes.
-func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, error) {
+func seedCodexRollbackOutcome(remote *remoteServer, serviceMode ...bool) (api.RollbackOperation, error) {
+	service := len(serviceMode) > 0 && serviceMode[0]
 	remote.mu.Lock()
 	var managers []*management
 	for _, grant := range remote.grants {
@@ -152,6 +153,9 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 	}
 	remote.mu.Unlock()
 	id := strings.Repeat("b", 64)
+	if service {
+		id = strings.Repeat("3", 64)
+	}
 	for _, m := range managers {
 		m.mu.Lock()
 		if _, found := m.actions[id]; !found {
@@ -161,6 +165,9 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 				}
 				seed := *p
 				seed.ID, seed.Action, seed.RolloutMode = id, "rollback", api.ExecutionModeRequest
+				if service {
+					seed.RolloutMode = api.ExecutionModeService
+				}
 				seed.TargetDeploymentID, seed.ExpectedCurrentID = "rollback-target", "rollback-serving"
 				seed.Reason, seed.Source, seed.attempted, seed.result = "PRIVATE_ROLLBACK_REASON", nil, false, nil
 				seed.ExpiresAt = time.Now().Add(-time.Minute)
@@ -179,8 +186,11 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 		}
 		entry, found := m.actions[id]
 		ref := m.rollbackOutcomes[id]
+		if service {
+			ref = m.serviceRollbackOutcomes[id]
+		}
 		if found && validRollbackOutcomeLookup(ref) {
-			operation := api.RollbackOperation{ID: uuid.MustParse(ref.AttemptID).String(), AppID: entry.AppID, Scope: entry.Scope, TargetDeploymentID: ref.TargetID, CurrentDeploymentID: ref.CurrentID, Reason: "PRIVATE_ROLLBACK_REASON", Status: "failed", Code: "later_failure", CreatedAt: entry.RecordedAt, UpdatedAt: time.Now().UTC()}
+			operation := api.RollbackOperation{ID: uuid.MustParse(ref.AttemptID).String(), AppID: entry.AppID, Scope: entry.Scope, Service: service, TargetDeploymentID: ref.TargetID, CurrentDeploymentID: ref.CurrentID, Reason: "PRIVATE_ROLLBACK_REASON", Status: "failed", Code: "later_failure", CreatedAt: entry.RecordedAt, UpdatedAt: time.Now().UTC()}
 			m.mu.Unlock()
 			return operation, nil
 		}
@@ -252,4 +262,90 @@ func seedCodexServiceAbortOutcome(remote *remoteServer, named bool) (api.Service
 		m.mu.Unlock()
 	}
 	return api.ServiceAbortReceipt{}, errors.New("missing service abort fixture plan")
+}
+
+func seedCodexEnvironmentRollbackOutcome(remote *remoteServer) (api.EnvironmentRollbackReceipt, error) {
+	remote.mu.Lock()
+	var managers []*management
+	for _, grant := range remote.grants {
+		if !grant.revoked && grant.management != nil {
+			managers = append(managers, grant.management)
+		}
+	}
+	remote.mu.Unlock()
+	id := strings.Repeat("4", 64)
+	for _, m := range managers {
+		m.mu.Lock()
+		if _, found := m.environmentActions[id]; !found {
+			for _, p := range m.environmentPlans {
+				if p.Action != "environment_promotion" {
+					continue
+				}
+				seed := &environmentPlan{ID: id, Action: "environment_rollback", AccountID: p.AccountID, APIBase: p.APIBase, Project: p.Project, ProjectID: p.ProjectID, FromEnvironment: p.FromEnvironment, FromID: p.FromID, Environment: p.Environment, EnvironmentID: p.EnvironmentID, PromotionID: "promotion-one", PromotionHash: p.PromotionHash, Reason: "PRIVATE_ENV_ROLLBACK_REASON", ExpiresAt: time.Now().Add(-time.Minute)}
+				if _, err := m.prepareEnvironmentRollbackOutcome(context.Background(), seed); err != nil {
+					m.mu.Unlock()
+					return api.EnvironmentRollbackReceipt{}, err
+				}
+				seed.attempted = true
+				m.environmentPlans[id] = seed
+				if err := m.persistPlans(); err != nil {
+					m.mu.Unlock()
+					return api.EnvironmentRollbackReceipt{}, err
+				}
+				break
+			}
+		}
+		entry, found := m.environmentActions[id]
+		ref := m.environmentRollbackOutcomes[id]
+		if found && validEnvironmentRollbackLookup(ref) {
+			receipt := api.EnvironmentRollbackReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, PromotionHash: ref.PromotionHash, PromotionID: entry.PromotionID, ProjectID: entry.ProjectID, FromEnvironmentID: entry.FromID, EnvironmentID: entry.EnvironmentID, AcceptedAt: entry.RecordedAt}
+			m.mu.Unlock()
+			return receipt, nil
+		}
+		m.mu.Unlock()
+	}
+	return api.EnvironmentRollbackReceipt{}, errors.New("missing environment promotion fixture plan")
+}
+
+func seedCodexEnvironmentPromotionOutcome(remote *remoteServer) (api.EnvironmentPromotionReceipt, error) {
+	remote.mu.Lock()
+	var managers []*management
+	for _, grant := range remote.grants {
+		if !grant.revoked && grant.management != nil {
+			managers = append(managers, grant.management)
+		}
+	}
+	remote.mu.Unlock()
+	id := strings.Repeat("6", 64)
+	for _, m := range managers {
+		m.mu.Lock()
+		if _, found := m.environmentActions[id]; !found {
+			for _, p := range m.environmentPlans {
+				if p.Action != "environment_promotion" {
+					continue
+				}
+				seed := &environmentPlan{ID: id, Action: "environment_promotion", AccountID: p.AccountID, APIBase: p.APIBase, Project: p.Project, ProjectID: p.ProjectID, FromEnvironment: p.FromEnvironment, FromID: p.FromID, Environment: p.Environment, EnvironmentID: p.EnvironmentID, PromotionHash: p.PromotionHash, Reason: "PRIVATE_ENV_ROLLBACK_REASON", ExpiresAt: time.Now().Add(-time.Minute)}
+				if _, err := m.prepareEnvironmentPromotionOutcome(context.Background(), seed); err != nil {
+					m.mu.Unlock()
+					return api.EnvironmentPromotionReceipt{}, err
+				}
+				seed.attempted = true
+				m.environmentPlans[id] = seed
+				if err := m.persistPlans(); err != nil {
+					m.mu.Unlock()
+					return api.EnvironmentPromotionReceipt{}, err
+				}
+				break
+			}
+		}
+		entry, found := m.environmentActions[id]
+		ref := m.environmentPromotionOutcomes[id]
+		if found && validEnvironmentRollbackLookup(ref) {
+			receipt := api.EnvironmentPromotionReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, PromotionHash: ref.PromotionHash, PromotionID: "3e9f323a-ade6-442b-8444-c91da107fe44", ProjectID: entry.ProjectID, FromEnvironmentID: entry.FromID, EnvironmentID: entry.EnvironmentID, AcceptedAt: entry.RecordedAt}
+			m.mu.Unlock()
+			return receipt, nil
+		}
+		m.mu.Unlock()
+	}
+	return api.EnvironmentPromotionReceipt{}, errors.New("missing environment promotion fixture plan")
 }

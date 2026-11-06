@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // This file is the CLI's thin facade over the public SDK client in
@@ -81,7 +82,8 @@ func DeployTarball(c *Client, ctx context.Context, slug, path, runtime, handler 
 
 // DeployTarballWithSourceRoot is the workspace-aware counterpart to
 // DeployTarball. sourceRoot is relative to the uploaded repository context;
-// an empty value preserves the legacy archive-root behavior.
+// an empty value uses the app's configured root. The CLI sends an explicit "."
+// when it selected the archive root while packing.
 func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations) (api.DeploymentResponse, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
@@ -114,6 +116,9 @@ func ExportAccountFile(c *Client, ctx context.Context, outPath string, includeSe
 	requestID := newExportRequestID()
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		tmp, err := os.CreateTemp(dir, ".gregale-export-*.tmp")
 		if err != nil {
 			return fmt.Errorf("create export file: %w", err)

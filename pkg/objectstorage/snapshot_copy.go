@@ -21,6 +21,18 @@ type ObjectSnapshotCopier interface {
 	VersionedObjectReader
 }
 
+// RecoverableSnapshotCopier creates a destination once and adopts that same
+// copy after uncertain acknowledgments or lost durable checkpoints.
+type RecoverableSnapshotCopier interface {
+	CopySnapshotObject(context.Context, string, string, ObjectVersion) (CopyObjectResult, error)
+}
+
+// SnapshotCopyValidator qualifies every selected object before the clone
+// commits its copy plan. Limits apply to selected live objects, not old history.
+type SnapshotCopyValidator interface {
+	ValidateSnapshotCopy(ObjectVersion) error
+}
+
 var ErrObjectSnapshotCopyMismatch = errors.New("object storage: copied object differs from pinned source version")
 
 type VerifiedObjectCopy struct {
@@ -37,10 +49,16 @@ func CopyAndVerifyObjectVersion(ctx context.Context, provider ObjectSnapshotCopi
 		!ValidKey(item.Key) || item.VersionID == "" || item.Size < 0 || item.Deleted {
 		return VerifiedObjectCopy{}, ErrInvalid
 	}
-	result, err := provider.CopyObjectBetweenBuckets(ctx, sourceBucket, destinationBucket, CopyObjectRequest{
-		SourceKey: item.Key, SourceVersion: item.VersionID, SourceMetadataVersion: item.MetadataVersion,
-		DestinationKey: item.Key,
-	})
+	var result CopyObjectResult
+	var err error
+	if copier, ok := provider.(RecoverableSnapshotCopier); ok {
+		result, err = copier.CopySnapshotObject(ctx, sourceBucket, destinationBucket, item)
+	} else {
+		result, err = provider.CopyObjectBetweenBuckets(ctx, sourceBucket, destinationBucket, CopyObjectRequest{
+			SourceKey: item.Key, SourceVersion: item.VersionID, SourceMetadataVersion: item.MetadataVersion,
+			DestinationKey: item.Key,
+		})
+	}
 	if err != nil {
 		return VerifiedObjectCopy{}, err
 	}
@@ -52,7 +70,12 @@ func CopyAndVerifyObjectVersion(ctx context.Context, provider ObjectSnapshotCopi
 	if sourceErr != nil {
 		return VerifiedObjectCopy{}, sourceErr
 	}
-	destination, err := provider.ReadObject(ctx, destinationBucket, item.Key)
+	var destination io.ReadCloser
+	if result.ProviderVersionID != "" {
+		destination, err = provider.ReadObjectVersion(ctx, destinationBucket, item.Key, result.ProviderVersionID)
+	} else {
+		destination, err = provider.ReadObject(ctx, destinationBucket, item.Key)
+	}
 	if err != nil {
 		return VerifiedObjectCopy{}, err
 	}

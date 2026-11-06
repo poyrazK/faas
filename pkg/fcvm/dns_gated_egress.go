@@ -10,9 +10,48 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ErrResolvedEgressNoInstance is returned when no live instance owns the
-// resolver query's source address.
+// ErrResolvedEgressNoInstance is returned when the captured owner no longer
+// holds the resolver query's source address. ResolvedEgressRefusal names the
+// check that refused it.
 var ErrResolvedEgressNoInstance = errors.New("fcvm: no live instance for the resolver source address")
+
+// resolvedEgressRefused is ErrResolvedEgressNoInstance with the refusing check.
+type resolvedEgressRefused struct{ reason string }
+
+func (e resolvedEgressRefused) Error() string {
+	return ErrResolvedEgressNoInstance.Error() + ": " + e.reason
+}
+
+func (e resolvedEgressRefused) Unwrap() error { return ErrResolvedEgressNoInstance }
+
+// ResolvedEgressRefusal returns the check that refused a DNS grant, or "".
+func ResolvedEgressRefusal(err error) string {
+	var refused resolvedEgressRefused
+	if errors.As(err, &refused) {
+		return refused.reason
+	}
+	return ""
+}
+
+// resolvedEgressRefusalLocked names the check that refuses owner's grant for
+// source, or returns "" when owner still holds it. Teardown that is only
+// waiting for the guest to exit (a builder finishing its build) has not
+// started: the guest keeps its grants until it exits. Caller holds m.mu.
+func (m *Manager) resolvedEgressRefusalLocked(inst *Instance, source netip.Addr, owner ServiceCallerIdentity) string {
+	switch {
+	case owner.InstanceID == "" || owner.NetworkGeneration == "":
+		return "owner not captured"
+	case inst == nil || m.live[owner.InstanceID] != inst:
+		return "instance is not live"
+	case m.pendingCleanup[owner.InstanceID] != nil && !inst.awaitingExit:
+		return "teardown started"
+	case inst.Net.HostIP != source:
+		return "source address changed"
+	case inst.resolvedEgressGeneration != owner.NetworkGeneration:
+		return "network generation changed"
+	}
+	return ""
+}
 
 // databaseEgressKey is one address . port pair of a bound managed database
 // (ADR 20261026150000).
@@ -48,17 +87,17 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 	m.mu.Lock()
 	id := owner.InstanceID
 	inst := m.live[id]
-	if inst == nil || m.pendingCleanup[id] != nil || inst.Net.HostIP != source || owner.NetworkGeneration == "" || inst.resolvedEgressGeneration != owner.NetworkGeneration {
+	if reason := m.resolvedEgressRefusalLocked(inst, source, owner); reason != "" {
 		m.mu.Unlock()
-		return ErrResolvedEgressNoInstance
+		return resolvedEgressRefused{reason}
 	}
 	m.mu.Unlock()
 	unlock := m.lockInstanceNetworkPolicy(inst)
 	defer unlock()
 	m.mu.Lock()
-	if m.live[id] != inst || m.pendingCleanup[id] != nil || inst.Net.HostIP != source || inst.resolvedEgressGeneration != owner.NetworkGeneration {
+	if reason := m.resolvedEgressRefusalLocked(inst, source, owner); reason != "" {
 		m.mu.Unlock()
-		return ErrResolvedEgressNoInstance
+		return resolvedEgressRefused{reason}
 	}
 	gated := inst.Net.DNSGated && inst.Net.Netns != ""
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""

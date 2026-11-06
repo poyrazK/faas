@@ -109,10 +109,12 @@ func CaptureObjectManifest(ctx context.Context, provider VersionedObjectLister, 
 // ObjectManifestHash pins the ordered, non-secret object identities in a
 // clone receipt. The manifest is sorted by CaptureObjectManifest.
 func ObjectManifestHash(manifest []ObjectVersion) (string, error) {
-	for i, item := range manifest {
-		if !ValidKey(item.Key) || item.VersionID == "" || item.Deleted || (i > 0 && manifest[i-1].Key >= item.Key) {
+	previous := ""
+	for _, item := range manifest {
+		if !ValidKey(item.Key) || item.VersionID == "" || item.Deleted || previous != "" && previous >= item.Key {
 			return "", ErrInvalid
 		}
+		previous = item.Key
 	}
 	raw, err := json.Marshal(manifest)
 	if err != nil {

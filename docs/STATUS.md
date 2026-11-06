@@ -7,6 +7,116 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP environment promotion outcomes — 2026-11-05 (branch, not released)
+
+Project promotion acceptance now has a separate original-attempt journal and
+native receipt contract. The existing outcome tool recovers the assigned native
+ID after lost replies, restart and plan expiry, with explicit separate progress
+and workload health reads. Legacy retries retain their guards; unknown recipes
+do not guess native IDs or grant write authority. Catalog counts are unchanged.
+
+Focused API/domain/MCP checks and native MemStore/PostgreSQL race checks pass,
+including concurrent admission, stale intent, terminal retries, replaced scopes,
+legacy non-adoption and atomic receipt-storage failures. HTTP race checks pass
+in 56.115s, including a protected promotion with a lost accepted reply and
+personal/company PostgreSQL ownership checks.
+
+The full MCP race suite passed in 330.218s. All three pinned Codex profiles pass
+promotion acceptance recovery through restart and expiry, refresh and revocation,
+with zero model requests and zero native writes. Recorded uncertainty remains
+unchanged; expired history retains only the exact read-only outcome lookup.
+Local full discovery remains 77 read tools; remote fixtures retain 74 read tools
+(84 with writes), and core remains 18. Node generation/build and four transport
+tests pass; Python generation and four transport tests pass. Go SDK full tests
+and vet pass. Node/Python regeneration is clean.
+
+Fresh canonical schema/SQLC generation, full migration apply/walk, populated
+legacy history and receipt-preserving replay, and standard replay safety pass;
+the migration suite completed in 284.019s. Serial lint passes for all nine changed
+packages. Spec/docs parity, typed SDK coverage, SDK spec generation, SQLC,
+migration expand/contract lint, scope guards, shared runner sync, capability
+coverage, problem-detail, text-encoding, store-test and test-citation gates pass.
+Version-skew checks pass against base `377a11809`; no release tag is an ancestor
+of that base. The ADR-number gate still fails on `20261104143000` and
+`20261104170000`, with the duplicate set verified identical to that base; this
+slice adds no collision. Initial HTTP and APID lint attempts exhausted build
+space; unchanged reruns pass after recovering headroom. Provider deployment
+qualification remains separate from portable fixtures.
+See [ADR-20261105153007](adr/20261105153007-management-mcp-environment-promotion-outcomes.md).
+
+## Management MCP environment rollback outcomes — 2026-11-05 (branch, not released)
+
+Project-level rollback now has an original-attempt acceptance contract and an
+immutable receipt committed with native rollback admission. The receipt pins
+promotion/project/source/target identities and cannot authorize another execution.
+Retained encrypted bridge references expose a read-only environment outcome tool
+and passive history/prompt/resource recovery after restart and plan expiry.
+Acceptance, restoration, per-workload handoff and health remain separate.
+
+Focused API/MCP checks and native MemStore/PostgreSQL race checks pass, including
+concurrent admission, receipt insertion failure, legacy original-key continuation,
+scope replacement and lost HTTP replies. Personal/company PostgreSQL ownership
+and release checks pass. Previously storable scoped keys retain their spelling;
+overlength company keys use a stable digest within the existing ledger limit.
+
+The full MCP race suite passed in 325.224s. All three pinned Codex profiles pass
+expired environment rollback recovery through restart, refresh and revocation,
+with zero model requests and zero native writes. Full local discovery has 77 read
+tools; the remote read fixture has 74 (84 with writes). Core remains 18. Node
+generation/build and six transport tests pass; Python generation and four
+transport tests pass. Go SDK preview receipt transport and fixed fingerprint
+vectors pass, as do the full Go SDK tests and vet. Node/Python regeneration is
+clean. Serial lint passes for all changed packages. The final HTTP race rerun
+passed in 55.567s, including lost replies and personal/company ownership; an
+earlier rerun hit linker disk exhaustion and was repeated with unchanged checks
+after restoring headroom.
+
+Fresh canonical schema/SQLC generation, full migration apply/walk, populated
+legacy history and receipt-preserving replay, standard replay safety, migration
+expand/contract lint and capability coverage pass. Spec/docs parity, typed SDK
+coverage, SDK spec generation, SQLC, scope guards, shared runner sync, store-test,
+text-encoding, problem-detail and test-citation gates pass. Version-skew checks
+pass against base `72a924288`; no release tag is an ancestor of that base. The
+repository ADR-number gate still fails on `20261104143000` and `20261104170000`,
+reproduced from that base; this slice adds no collision. Provider deployment
+qualification remains separate from portable fixtures.
+See [ADR-20261105102920](adr/20261105102920-management-mcp-environment-rollback-outcomes.md).
+
+## Management MCP default-scope service rollback outcomes — 2026-11-05 (branch, not released)
+
+Checked service rollback now persists an original attempt identity with its
+native operation, target readiness and handoff preparation. Default-scope
+request and service attempts share the existing header and native ledger;
+workers, named scopes, release acknowledgement and database restoration remain
+excluded. Matching accepted attempts cannot repeat the original operation.
+
+The bridge saves service-tagged lookup references in an independent encrypted
+namespace. History, resources and prompts recover acceptance after lost replies,
+restart and expiry, with separate exact rollback, rollout and health observation
+calls. Recovery never replays, changes history or renews write authority. Older
+request-lookup formats remain unchanged, and revocation/retention cover service
+references. No migration, endpoint, DTO, tool, prompt or template count changes.
+
+Focused and full MCP race checks pass, including both protocols, encrypted
+restart/expiry, malformed receipts, final guards, legacy non-backfill, older
+journal rewrites and grant cleanup. The full suite, with pinned Codex acceptance,
+completed in 332.859s. All three real-client profiles passed service rollback
+recovery with zero model requests and zero native writes in their read-only
+fixtures. Memory/PostgreSQL and HTTP race tests pass, including concurrent
+acceptance, stale CAS, insertion failure, terminal replay and a lost native reply.
+Node build and six rollback/rollout transport tests pass; pinned Node/Python
+generation and five Python receipt tests pass. Go SDK tests and full vet pass.
+Serial MCP/state/API package lint reports zero issues. Spec/docs parity, typed
+SDK coverage, SDK spec generation, sealed-env/seal-domain scope, shared runner
+sync, capability coverage and store-test convention gates pass. Version-skew
+checks pass against base `bde453f0c`; no release tag is an ancestor of that base.
+Main at `bde453f0c` already contains two unrelated ADR-number collisions
+(`20261104143000`, `20261104170000`), so the repository uniqueness gate still
+fails; this slice adds no collision. No migration was added, and the test-citation
+gate passes.
+Native/provider execution qualification remains separate from portable fixtures.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
+
 ## Management MCP PR #6601 main integration — 2026-11-05 (branch, not released)
 
 The recovery branch integrates main through `8cc557447`. Operation receipts retain
@@ -421,6 +531,94 @@ Open evidence:
   capacity setting changes
   ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md),
   not released).
+
+The 2026-11-05 code review fixes uncertain deletion holds and worker-crash
+recovery without letting an older reconciler purge early. Storage caps retain
+the sizes of deleted sources kept for restore copies, and restore-slot sweeps
+page past copies waiting for deletion. These fixes do not replace the pending
+production journey and provider qualification evidence above.
+
+Local verification passes the new regressions with race detection and real
+PostgreSQL. The durable restart/SQL and reused-run qualification tests also pass
+on an isolated TLS/SCRAM fixture; the plaintext development fixture cannot run
+those credential checks. Two existing catalog tests still block a completely
+green suite: `TestAccountingReconciliationAuditReplayAndAccountErasure` and
+`TestUsageImportEvidenceAllowsFinalAccountErasure`. Both reproduce at
+`46aad2a12` without these fixes: their append-only evidence triggers reject final
+account erasure. They remain separate account-erasure work.
+
+The follow-up review fixes four more managed PostgreSQL issues. Overage
+billing resolves compute and storage allowances from the billed month's
+recorded plans, preserving included usage after a later downgrade; missing
+closed-month terms defer new charges without blocking immutable pending
+steps. A compute read or write failure no longer skips storage enforcement.
+Restore retries adopt their existing copy while the source is updating or
+being deleted. A ready restore copy's expiry notice commits with its deletion
+schedule, and sweeps repair notices missed by an older worker before releasing
+the slot. No additional migration is needed. The targeted race-enabled
+regressions include a real PostgreSQL notice-insert failure that proves the
+deletion schedule rolls back with it; production qualification remains open.
+
+This review closes temporary-copy adoption by database rollbacks, storage
+growth bypassing usage and fleet spend admission, and ordinary resize requests
+remaining pinned after a confirmed rejection. Cutover admission and activation
+also have catalog protection for N-1 workers; a bounded migration clears the
+expiry of still-live targets already activated by an older worker. Rejected
+resizes require settled provider observation before releasing their pins and
+retain an immutable failed receipt; uncertain outcomes continue recovery.
+Targeted regressions pass with race detection and real PostgreSQL, including
+legacy cutover writes and the activated-target repair.
+Publishing the expanded resize outcome check requires the full-release data
+step (`20261105141918763`, a contract migration). Production qualification and
+the separate account-erasure failures above remain open.
+
+The next two review fixes make managed PostgreSQL credential rotations retain
+their runtime-refresh handoff through provider failures and worker restarts,
+with recovery for legacy ready receipts and terminal scheduler events
+([ADR-20261105081859](adr/20261105081859-managed-postgres-rotation-refresh-recovery.md)).
+Deletion holds and releases address the pinned Neon branch and reject an
+unpinned project selector; legacy root rows need a verified dataset identity
+before these holds can proceed. An expand migration indexes the recovery lookup.
+Local race-enabled PostgreSQL and API regressions pass, including failed
+outbox inserts, legacy recovery, and the index migration on a fresh catalog.
+Provider qualification and the earlier account-erasure work remain open.
+
+The following review fixes credential retirement after a verified Neon dataset
+backfill, pending storage-charge recovery after overage opt-out, and health
+checks following a project's changed default branch. Credential retirement
+includes historical project-scoped names on the pinned branch. Pending billing
+steps remain discoverable without a compute cap event or delivery receipt.
+Health targets, cached samples and leases follow the concrete dataset, including
+discarding alias-based samples from older collectors. No additional migration
+is needed. Local service regressions, the Neon and native provider suites, and
+HTTP health/overage tests pass with race detection. Static analysis, sqlc
+generation, documentation links and compatibility checks pass. Production
+qualification and the separate account-erasure work above remain open.
+
+The latest review pins live-query login authorization and storage observations
+to the catalog dataset. Existing root live logins are discovered and replaced
+through the missing-login worker, preserving live keys and replication slots;
+new nullable authorization receipts distinguish legacy writes from repaired
+entries ([ADR-20261105102924](adr/20261105102924-managed-postgres-live-login-dataset-recovery.md)).
+Reserved billing steps are paged and settled independently of the seven-day
+window for new charges, without starving later entries behind a failed one.
+Apply the live-login expand and validation migrations and the concurrent pending
+recovery index before upgrading the control plane. Local race-enabled service,
+provider and HTTP regressions pass, including slot-position preservation with
+logical decoding and the final migrations on a fresh catalog. Static analysis,
+SQL generation, migration lint, documentation and compatibility checks pass.
+Production qualification and the separate account-erasure work above remain open.
+
+The following recovery fixes resolve a native restore's historical PostgreSQL
+major before reserving its target, bound proxy backend setup through readiness,
+and order live-login repair by durable attempts so a failing page cannot starve
+later databases ([ADR-20261105111902](adr/20261105111902-managed-postgres-recovery-and-proxy-setup.md)).
+Apply expand migration `20261105141918820` before apid. Historical restores of
+upgraded native databases need the scheduler's new complete-history metadata.
+Local race-enabled catalog regressions and the provider, proxy, live-key and
+scheduler RPC suites pass. Fresh migrations, runtime grants, static analysis,
+SQL/protobuf generation, migration lint and compatibility checks pass. Native
+hardware qualification and the separate account-erasure work remain open.
 
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 

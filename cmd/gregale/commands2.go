@@ -3345,14 +3345,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Invalid deploy manifest", manifestErr)
 			}
 		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function, strings.TrimSpace(*executionMode))
+		plan, planWarnings, planErr := resolveSimpleAppPlanWithWarnings(sourceDir, slug, *profile, sourceKind, *app, *function, strings.TrimSpace(*executionMode))
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		preview := newCLIPreview("local inference", slug, *environment, source, changes, "No login or remote state checked; resource defaults and runtime inference are not a deployment guarantee.")
 		deploymentPreviewTargetSources(preview, contextDir, *name != "", explicit["environment"])
-		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON, preview)
+		return renderSimpleAppPlanWithWarnings(osStdout, plan, planWarnings, jsonOutput || *diffJSON, preview)
 	}
 	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
 		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction
@@ -3414,7 +3414,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			return 1
 		}
-		if *doctorStrict && rep.HasWarnings() && !jsonOutput {
+		if *doctorStrict && rep.HasStrictWarnings() && !jsonOutput {
 			renderDoctorHuman(osStderr, rep)
 		}
 		if !*doctorStrict && (rep.HasErrors() || rep.HasWarnings() || rep.HasProfileWarnings()) {
@@ -3842,7 +3842,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// non-TTY invocations fail closed after rendering the plan.
 	if projectRequested {
 		if *createOnly {
-			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
+			// A project deploy creates and binds what gregale.yaml declares
+			// with `create` before the first build (ADR-20261106105015 §1),
+			// so there is nothing to bootstrap with an empty app first.
+			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug; to have resources ready before the first build, declare them in gregale.yaml with `create: true`"))
 		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("%s applies to a single app and cannot be combined with --project, --only, or --project-slug", resourceSizeSpelling(explicit)))
@@ -4233,6 +4236,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
+		// The CLI already selected the build directory while packing. Preserve
+		// an archive-root selection explicitly instead of inheriting a remote
+		// app's configured root for an already cropped source archive.
+		uploadRoot := sourceRoot
+		if uploadRoot == "" {
+			uploadRoot = "."
+		}
 		ann := api.DeployAnnotations{
 			Scope:                  manifestScope,
 			SourceURL:              sourceURL,
@@ -4262,17 +4272,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if developerSync != nil {
 			var deployErr error
 			sourceSyncStarted := time.Now()
-			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, developerSync)
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, developerSync)
 			if execution.onSourceSync != nil {
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
 			if deployErr != nil {
 				return submissionFailed("Source submission failed", dep, deployErr, "")
 			}
-		} else if canUseResumableUpload(resolvedShape, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		} else if canUseResumableUpload(resolvedShape, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
-				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
+				SourceRoot: uploadRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
@@ -4302,7 +4312,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					return printErr("Could not save source submission", err)
 				}
 				multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
-				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
+				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann)
 			}
 			if uploadErr != nil {
 				return submissionFailed("Source submission failed", dep, uploadErr, deployKey)
@@ -4313,7 +4323,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Could not save source submission", err)
 			}
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
-			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
+			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann)
 			if deployErr != nil {
 				return submissionFailed("Source submission failed", dep, deployErr, deployKey)
 			}
@@ -4830,9 +4840,11 @@ func cmdWake(args []string) int {
 		return printErr("Wake did not start a replica", errors.New(idleWorker))
 	}
 	status := "waking"
-	instanceID := ""
+	// A wake that resumes a frozen VM names it: the VM keeps its own wake_id
+	// when it thaws, so it is waited on by id (#6639).
+	instanceID := response.InstanceID
 	if *wait {
-		instance, waitErr := waitForAppWake(context.Background(), client, slug, response.WakeID, *waitTimeout, *pollInterval)
+		instance, waitErr := waitForAppWakeOrInstance(context.Background(), client, slug, response.WakeID, response.InstanceID, *waitTimeout, *pollInterval)
 		if waitErr != nil {
 			return printErr("Wake failed", waitErr)
 		}
@@ -4876,6 +4888,14 @@ func idleScaleToZeroWorker(ctx context.Context, client *Client, slug string) str
 }
 
 func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
+	return waitForAppWakeOrInstance(ctx, client, slug, wakeID, "", timeout, pollInterval)
+}
+
+// waitForAppWakeOrInstance waits for the instance a wake stamped with wakeID
+// to run or, when resumeID is set, for that frozen instance to run under its
+// own wake_id. Only the wake's own instance can fail the wait: a frozen VM
+// schedd parks instead of thawing is replaced by a boot under wakeID.
+func waitForAppWakeOrInstance(ctx context.Context, client *Client, slug, wakeID, resumeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -4894,6 +4914,11 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 			}
 		} else {
 			for _, instance := range instances {
+				if resumeID != "" && instance.ID == resumeID && instance.State == "running" {
+					return instance, nil
+				}
+			}
+			for _, instance := range instances {
 				if instance.WakeID != wakeID {
 					continue
 				}
@@ -4908,10 +4933,14 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 
 		select {
 		case <-waitCtx.Done():
-			if lastReadErr != nil {
-				return api.InstanceResponse{}, fmt.Errorf("wake %s did not reach running within %s (last status read failed: %w)", wakeID, timeout, lastReadErr)
+			subject := "wake " + wakeID
+			if resumeID != "" {
+				subject += " (resuming frozen instance " + resumeID + ")"
 			}
-			return api.InstanceResponse{}, fmt.Errorf("wake %s did not reach running within %s", wakeID, timeout)
+			if lastReadErr != nil {
+				return api.InstanceResponse{}, fmt.Errorf("%s did not reach running within %s (last status read failed: %w)", subject, timeout, lastReadErr)
+			}
+			return api.InstanceResponse{}, fmt.Errorf("%s did not reach running within %s", subject, timeout)
 		case <-ticker.C:
 		}
 	}
@@ -5303,7 +5332,7 @@ func explicitAppFlag(fs *flag.FlagSet) bool {
 // cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status|rollback> [args]", "traffic")
 		return 1
 	}
 	switch args[0] {
@@ -5313,8 +5342,10 @@ func cmdTraffic(args []string) int {
 		return cmdTrafficPromote(args[1:])
 	case "status":
 		return cmdTrafficStatus(args[1:])
+	case "rollback":
+		return cmdTrafficRollback(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status|rollback> [args]", "traffic")
 		return 1
 	}
 }

@@ -95,6 +95,7 @@ const (
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	releaseOutcomeFile               = "release_outcome.go"      // ADR-1448 amendment 1 release outcome checks
 	releaseTimelineFile              = "release_timeline.go"     // ADR-20261022120744 release page timeline
 	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	databaseSwitchFile               = "database_switch.go"      // ADR-20261023181931 rollbacks that restore the database
@@ -1127,6 +1128,7 @@ var schemaSpecOnly = map[string]bool{
 	// pkg/apihostingreceipt structs, not pkg/api DTOs.
 	// TestSpecComplianceDeploymentStageState checks their fields and enums.
 	"DeploymentStageState":          true,
+	"DeploymentRetryIntent":         true,
 	"DeploymentStageHistoryEntry":   true,
 	"DeploymentDependencyGate":      true,
 	"DeploymentDependencyPin":       true,
@@ -1814,7 +1816,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
 		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
 		filepath.Join(root, "pkg", "api", "deployment_promotion_receipts.go"),
-		filepath.Join(root, "pkg", "api", "service_abort_attempts.go"), // ADR-20261104144000
+		filepath.Join(root, "pkg", "api", "environment_promotion_receipts.go"), // ADR-20261105153007
+		filepath.Join(root, "pkg", "api", "environment_rollback_receipts.go"),  // ADR-20261105102920
+		filepath.Join(root, "pkg", "api", "service_abort_attempts.go"),         // ADR-20261104144000
 		filepath.Join(root, "pkg", "api", "environment_route_budget_receipts.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
@@ -1939,6 +1943,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", releaseOutcomeFile),
 		filepath.Join(root, "pkg", "api", releaseTimelineFile),
 		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", databaseSwitchFile),

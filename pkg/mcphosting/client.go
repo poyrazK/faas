@@ -73,8 +73,9 @@ type InputRequest struct {
 
 // InputResponse contains the user's decision for one form request.
 type InputResponse struct {
-	Action  string         `json:"action"`
-	Content map[string]any `json:"content,omitempty"`
+	Action string `json:"action"`
+	// Preserve a non-nil empty object for consent forms; omit absent content.
+	Content map[string]any `json:"content,omitzero"`
 }
 
 // InputResponder gathers one form response. Return decline or cancel without

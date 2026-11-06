@@ -3188,6 +3188,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	RetryIntent         *DeploymentRetryIntent       `json:"retry_intent,omitempty"`
 	BuildDependencyGate *BuildDependencyGate         `json:"build_dependency_gate,omitempty"`
 	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
@@ -4856,6 +4857,12 @@ type Invocation struct {
 	QuotaReserved bool `json:"-"`
 	// AsyncQuotaSubjectID captures the reserved counter independently of storage ownership.
 	AsyncQuotaSubjectID string `json:"-"`
+	// EdgeJWTIssuer and EdgeJWTSubject are the caller a kind=jwt edge rule
+	// verified when an async route admitted the request (ADR-091 amendment
+	// 2026-11-04, round 11). Only the gateway sets them; delivery renders
+	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
+	EdgeJWTIssuer  string `json:"-"`
+	EdgeJWTSubject string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -5527,12 +5534,31 @@ const (
 	// snapshotted or drained, and is destroyed only by the fork
 	// coordinator at its TTL.
 	InstanceModeFork InstanceMode = "fork"
+	// InstanceModeRefresh tags a platform snapshot refresh
+	// (ADR-20261106214916): after a node takes a release that made an
+	// app's snapshot stale, schedd boots the app's current deployment,
+	// captures a fresh snapshot and parks it before a user asks. It is
+	// never routed, never counted toward max_concurrency (it admits as a
+	// snapshot prime), counts toward the RAM ceiling, is never
+	// idle-reaped, and is not billed: the release, not the customer,
+	// caused it.
+	InstanceModeRefresh InstanceMode = "refresh"
 )
 
 // IsFork reports whether mode is the ADR-732 production-fork mode. Every
 // path that routes to, counts, parks or snapshots instances must skip
 // these rows.
 func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
+
+// IsRefresh reports whether mode is a platform snapshot refresh
+// (ADR-20261106214916).
+func IsRefresh(mode string) bool { return mode == string(InstanceModeRefresh) }
+
+// NeverServes reports an instance mode that must never receive traffic or
+// stand in for a serving replica: a production fork (ADR-732) or a platform
+// snapshot refresh (ADR-20261106214916). Every target loader, wake reuse and
+// replica count skips these rows.
+func NeverServes(mode string) bool { return IsFork(mode) || IsRefresh(mode) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.
@@ -7938,6 +7964,10 @@ type ProjectEnvironmentApproval struct {
 	// ApprovedByAccountID is who gave the approval; "" for approvals made
 	// before it was recorded (ADR-20261020085706 amendment 2).
 	ApprovedByAccountID string
+	// ApprovedByPrincipal is the credential that gave the approval:
+	// "session:<id>" for a browser session or "key:<id>" for an interactive
+	// sign-in key (bug hunt H70); "" before it was recorded.
+	ApprovedByPrincipal string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret

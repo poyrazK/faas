@@ -337,6 +337,14 @@ type CapSweepSummary struct {
 	PlanExcessScopesShared    int
 	PlanExcessNoticed         int
 	PlanExcessNotifyFailed    int
+
+	// Compute holds (ADR-20261025094915 amendment 2026-11-05): databases
+	// held after the sweep, and the holds it placed, released or only
+	// logged in shadow mode.
+	HeldDatabases int
+	HoldsApplied  int
+	HoldsReleased int
+	HoldsShadowed int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -443,8 +451,9 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		limits, err := e.ceiling(ctx, accountID)
+		limits, limitsErr := e.ceiling(ctx, accountID)
 		if e.mode != CapEnforcementOff {
+			err := limitsErr
 			summary.Accounts++
 			if err == nil {
 				err = e.enforceAccount(ctx, accountID, accounts[accountID], limits, &summary)
@@ -455,6 +464,9 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 			}
 		}
 		if e.storageMode != CapEnforcementOff {
+			// The two guards share entitlements, but a failed compute read or
+			// write must not prevent an independent storage limit update.
+			err := limitsErr
 			summary.StorageAccounts++
 			if err == nil {
 				err = e.enforceStoragePool(ctx, accountID, accounts[accountID], limits, &summary)
@@ -469,9 +481,9 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 	return summary, errors.Join(failures...)
 }
 
-// liveDatabasesBySubject groups running databases by the subject the ledger
-// pools their usage by: an organization that owns resources pools every
-// namespace's databases under its own ID.
+// liveDatabasesBySubject groups running databases and retained source storage
+// by the ledger's usage subject. Organization ownership pools every namespace's
+// databases under its own ID.
 func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]Database, error) {
 	var live []Database
 	seen := make(map[string]bool)
@@ -482,10 +494,17 @@ func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]
 			return nil, err
 		}
 		for _, database := range databases {
-			if seen[database.ID] || !capEnforceable(database) {
+			if seen[database.ID] {
 				continue
 			}
 			seen[database.ID] = true
+			included, err := e.includeCapDatabase(ctx, database)
+			if err != nil {
+				return nil, err
+			}
+			if !included {
+				continue
+			}
 			live = append(live, database)
 		}
 		if len(databases) < e.batchSize {
@@ -516,6 +535,22 @@ func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]
 	return grouped, nil
 }
 
+// A deleted source kept for its copies still holds storage. Include it in
+// storage planning even though its endpoint must stay out of compute work.
+func (e *CapEnforcer) includeCapDatabase(ctx context.Context, database Database) (bool, error) {
+	if capEnforceable(database) {
+		return true, nil
+	}
+	if database.State != StateDeleting || database.ProviderResourceID == "" || database.DeletedAt != nil {
+		return false, nil
+	}
+	store, ok := e.store.(RestoreCopiesStore)
+	if !ok {
+		return false, nil
+	}
+	return store.HasRestoreCopies(ctx, database.ID)
+}
+
 // capEnforceable keeps databases whose provider resource can be running.
 func capEnforceable(database Database) bool {
 	if database.ProviderResourceID == "" || database.DeletedAt != nil {
@@ -538,7 +573,9 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		ceiling = 1
 	case ceiling <= 0:
 		summary.Uncapped++
-		return nil
+		// An uncapped subject has nothing to stop: a hold left from
+		// before is released.
+		return e.holdDatabases(ctx, accountID, databases, capHoldNone, nil, summary)
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -589,6 +626,18 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		}
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
+	}
+	// The hold is what stops a database; the quota is a backstop, so a
+	// failed quota write does not skip it.
+	all := capHoldNone
+	switch {
+	case limits.Inactive:
+		all = capHoldInactive
+	case plan.suspended():
+		all = capHoldCeiling
+	}
+	if err := e.holdDatabases(ctx, accountID, databases, all, suspended, summary); err != nil {
+		failures = append(failures, err)
 	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)
@@ -655,6 +704,9 @@ func (e *CapEnforcer) observeScopes(ctx context.Context, databases []Database, n
 	var order []string
 	month := monthStart(now)
 	for _, database := range databases {
+		if !capEnforceable(database) {
+			continue
+		}
 		backend, err := e.registry.Resolve(database.BackendID, database.BackendFingerprint)
 		if err != nil {
 			return nil, nil, err

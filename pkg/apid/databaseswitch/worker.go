@@ -98,6 +98,10 @@ type Worker struct {
 }
 
 func (w *Worker) promoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	if _, err := w.currentLease(ctx, sw); err != nil {
+		return err
+	}
+	ctx = state.WithDatabaseSwitchLease(ctx, sw)
 	if w.PromoteRelease != nil {
 		return w.PromoteRelease(ctx, sw, id)
 	}
@@ -168,8 +172,16 @@ func (w *Worker) Tick(ctx context.Context) {
 
 // Advance runs one step of a leased switch and saves the result.
 func (w *Worker) Advance(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
+	leased, leaseErr := w.currentLease(ctx, sw)
+	if leaseErr != nil {
+		return sw
+	}
+	sw = leased
+	stepParent, cancel := context.WithTimeout(ctx, sw.LeaseUntil.Sub(w.now()))
+	defer cancel()
+	stepParent = state.WithDatabaseSwitchLease(stepParent, sw)
 	var next state.DatabaseSwitch
-	stepCtx, err := w.ownership(ctx, sw)
+	stepCtx, err := w.ownership(stepParent, sw)
 	if err != nil {
 		w.log().Warn("database switch: app ownership", "switch", sw.ID, "app", sw.AppID, "err", err)
 		next = w.retry(sw, errorCode(err))
@@ -345,4 +357,26 @@ func errorCode(err error) string {
 		return "invalid"
 	}
 	return "unavailable"
+}
+
+// Recheck at each code mutation as a lease can expire during a guard/provider read.
+func (w *Worker) currentLease(ctx context.Context, sw state.DatabaseSwitch) (state.DatabaseSwitch, error) {
+	if err := ctx.Err(); err != nil {
+		return state.DatabaseSwitch{}, err
+	}
+	current, err := w.Store.DatabaseSwitch(ctx, sw.AccountID, sw.ID)
+	if err != nil {
+		return current, err
+	}
+	if sw.LeaseToken == "" || current.LeaseToken != sw.LeaseToken || current.LeaseUntil == nil || !current.LeaseUntil.After(w.now()) || current.Phase != sw.Phase || state.DatabaseSwitchTerminal(current.Phase) {
+		return current, state.ErrDatabaseSwitchLeaseLost
+	}
+	return current, nil
+}
+func (w *Worker) prepareRelease(ctx context.Context, sw state.DatabaseSwitch, id, current string) (state.Deployment, error) {
+	if _, err := w.currentLease(ctx, sw); err != nil {
+		return state.Deployment{}, err
+	}
+	ctx = state.WithDatabaseSwitchLease(state.WithExpectedRollbackCurrent(ctx, current), sw)
+	return w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, id)
 }

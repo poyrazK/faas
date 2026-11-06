@@ -9,6 +9,14 @@ failover:
 - it comes back after 5 answers in a row;
 - the last record is never removed.
 
+A DNS-only name's clients connect to the nodes' public addresses themselves,
+so for those names a node must also complete a verified TLS handshake on its
+public address, port 443, for every DNS-only name (ADR-20261102081618
+amendment 2026-11-05). A node rolled back to a release without direct entry
+still answers `/readyz` but fails this, and leaves the DNS-only names while
+staying behind the proxied ones. Check it from the control plane with
+`curl -sv --resolve <name>:443:<public address> https://<name>/ -o /dev/null`.
+
 Useful series: `edge_dns_node_in{node}`, `edge_dns_records{name}`,
 `edge_dns_probe_failures_total{node}`, `edge_dns_errors_total{op}` and
 `edge_dns_changes_total{name,action,dry_run}`. Logs:
@@ -33,7 +41,10 @@ the last ones, so Cloudflare still sends app traffic to edges that may fail.
 
 One node's edge stopped answering, and edgednsd removed its address. The other
 nodes carry its traffic. Check that node's edge as in step 1 above. Its record
-returns by itself after five answers in a row.
+returns by itself after five answers in a row. When only the DNS-only names
+lost the node, its edge is ready but its public address does not serve them:
+check the handshake above, the node's release (direct entry needs `front:
+none`) and the GCP entry rule and forwarding rule.
 
 ## FaasEdgeDNSWritesFailing
 

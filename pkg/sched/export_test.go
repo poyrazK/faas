@@ -436,6 +436,9 @@ func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
 func (r *Engine) Now() *func() time.Time              { return &r.now }
 func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
 func (r *Engine) Owners() *ownerCache                 { return &r.owners }
+func (r *Engine) WorkerReconcileSubmit() *func(context.Context, string) {
+	return &r.workerReconcileSubmit
+}
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }
@@ -1310,3 +1313,6 @@ func (k *keyedLocks) Size() int              { return k.size() }
 func VMMRequestConcurrency(app state.App, limits api.Limits) int32 {
 	return vmmRequestConcurrency(app, limits)
 }
+
+// DrainWithdrawsRoutes exposes drainWithdrawsRoutes to package sched_test.
+func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes(ins) }

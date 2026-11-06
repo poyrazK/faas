@@ -75,6 +75,26 @@ type TaskInputRequest struct {
 	} `json:"params"`
 }
 
+func (request *TaskInputRequest) UnmarshalJSON(data []byte) error {
+	type plain TaskInputRequest
+	var decoded plain
+	decoded.Params.Mode = "form"
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if mode, present := fields.Params["mode"]; present && bytes.Equal(bytes.TrimSpace(mode), []byte("null")) {
+		return errors.New("MCP elicitation mode must be a string")
+	}
+	*request = TaskInputRequest(decoded)
+	return nil
+}
+
 // GetTask reads one task. Streamable HTTP requests carry taskId in Mcp-Name
 // as required by the Tasks extension routing contract.
 func (c *Client) GetTask(ctx context.Context, taskID string) (Task, Exchange, error) {
@@ -712,7 +732,7 @@ func parseTaskInputRequests(tool string, inputRequests map[string]TaskInputReque
 			return nil, errors.New("MCP task contains an unsupported input request")
 		}
 		properties, ok := form.Params.RequestedSchema["properties"].(map[string]any)
-		if !ok || len(properties) == 0 || len(properties) > 100 {
+		if !ok || len(properties) > 100 {
 			return nil, errors.New("MCP task contains an invalid input form schema")
 		}
 		schemaBytes, err := json.Marshal(form.Params.RequestedSchema)

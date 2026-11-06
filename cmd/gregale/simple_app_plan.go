@@ -16,27 +16,37 @@ import (
 // and hosting override file as the real deploy path, while keeping the
 // resulting contract independent of authentication and remote state.
 func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool, executionMode string) (simpleapp.Plan, error) {
+	plan, _, err := resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile, source, explicitApp, explicitFunction, executionMode)
+	return plan, err
+}
+
+// resolveSimpleAppPlanWithWarnings also returns the source's actionable
+// profile warnings, which --plan did not show for a malformed package.json
+// (#6640).
+func resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool, executionMode string) (simpleapp.Plan, []frameworkprofile.Warning, error) {
+	var warnings []frameworkprofile.Warning
 	frameworkName := ""
 	port, health := 0, ""
 	if source == simpleapp.SourceDirectory {
 		resolved, _, _, err := resolveDeployShape(sourceDir, explicitFunction, explicitApp, true)
 		if err != nil {
-			return simpleapp.Plan{}, err
+			return simpleapp.Plan{}, nil, err
 		}
 		if resolved == shapeFunction {
 			// production-us hunt #4: the old text ("use the normal function
 			// path") named no command, for four of the built-in templates.
-			return simpleapp.Plan{}, fmt.Errorf("--plan previews HTTP apps; this source is a function. Preview it with `gregale deploy --diff` or `gregale deploy --dry-run`, then deploy with `gregale deploy`")
+			return simpleapp.Plan{}, nil, fmt.Errorf("--plan previews HTTP apps; this source is a function. Preview it with `gregale deploy --diff` or `gregale deploy --dry-run`, then deploy with `gregale deploy`")
 		}
 		inferred, err := frameworkprofile.AnalyzeDir(sourceDir)
 		if err != nil {
-			return simpleapp.Plan{}, fmt.Errorf("analyze deploy source: %w", err)
+			return simpleapp.Plan{}, nil, fmt.Errorf("analyze deploy source: %w", err)
 		}
 		frameworkName = inferred.Framework
 		port = inferred.Port
 		health = inferred.HealthPath
+		warnings = filterActionableProfileWarnings(inferred.Warnings)
 	}
-	return simpleapp.Resolve(simpleapp.Spec{
+	plan, err := simpleapp.Resolve(simpleapp.Spec{
 		Slug:          slug,
 		Source:        source,
 		Framework:     frameworkName,
@@ -45,6 +55,7 @@ func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.Sour
 		HealthPath:    health,
 		ExecutionMode: executionMode,
 	})
+	return plan, warnings, err
 }
 
 // applySimpleAppPlanToCreateRequest keeps the real deploy path aligned with
@@ -64,6 +75,10 @@ func applySimpleAppPlanToCreateRequest(req *api.CreateAppRequest, plan simpleapp
 }
 
 func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool, previews ...*cliPreviewSummary) int {
+	return renderSimpleAppPlanWithWarnings(w, plan, nil, jsonMode, previews...)
+}
+
+func renderSimpleAppPlanWithWarnings(w io.Writer, plan simpleapp.Plan, warnings []frameworkprofile.Warning, jsonMode bool, previews ...*cliPreviewSummary) int {
 	var preview *cliPreviewSummary
 	if len(previews) > 0 {
 		preview = previews[0]
@@ -71,8 +86,9 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool, previe
 	if jsonMode {
 		return jsonOut(writeJSONTo(w, struct {
 			simpleapp.Plan
-			Preview *cliPreviewSummary `json:"preview,omitempty"`
-		}{plan, preview}))
+			ProfileWarnings []frameworkprofile.Warning `json:"profile_warnings,omitempty"`
+			Preview         *cliPreviewSummary         `json:"preview,omitempty"`
+		}{plan, warnings, preview}))
 	}
 	renderCLIPreview(w, preview)
 	// Mark each row that came from a default instead of repeating the
@@ -115,6 +131,9 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool, previe
 		if key, _, _ := strings.Cut(applied, "="); !marked[key] {
 			_, _ = fmt.Fprintf(w, "  default:            %s\n", applied)
 		}
+	}
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(w, "  warning:            %s — %s\n", warning.Code, warning.Message)
 	}
 	_, _ = fmt.Fprintln(w, "No remote state changed. This is local inference, not a saved apply plan; deploy rechecks the source and remote state.")
 	return 0

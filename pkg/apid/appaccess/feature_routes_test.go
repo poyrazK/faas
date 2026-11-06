@@ -23,6 +23,10 @@ func TestFeatureRoutesFollowOrganizationRoles(t *testing.T) {
 		{"POST /v1/apps/{slug}/deployments/source-ref", ok, ok, ok, no}, // deploy
 		{"POST /v1/apps/{slug}/deployments/dev-source", ok, ok, ok, no}, // deploy
 		{"GET /v1/apps/{slug}/instances", ok, ok, ok, ok},               // read
+		{"GET /v1/apps/{slug}/data-api/status", ok, ok, ok, ok},
+		{"GET /v1/apps/{slug}/postgres-bindings", ok, ok, ok, ok},
+		{"GET /v1/apps/{slug}/env/batch/requests/{request_id}", ok, ok, ok, ok},
+		{"GET /v1/apps/{slug}/config/rollback/requests/{request_id}", ok, ok, ok, ok},
 		{"GET /v1/apps/{slug}/debug/requests/{req_id}", ok, ok, ok, ok}, // read logs
 		{"PUT /v1/apps/{slug}/work-policies/{name}", ok, ok, ok, no},    // configure
 		{"PUT /v1/apps/{slug}/recovery-policy", ok, ok, no, no},         // policy

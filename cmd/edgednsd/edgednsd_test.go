@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -199,6 +200,63 @@ func TestNodeSourceJoinsRegistryAddressesAndProbes(t *testing.T) {
 	}
 	if len(probe.urls) != 2 {
 		t.Fatalf("probed %v, want the two nodes with a private address", probe.urls)
+	}
+}
+
+type fakeDirect struct {
+	mu     sync.Mutex
+	serves map[string]bool // "<addr> <host>"
+	probed []string
+}
+
+func (p *fakeDirect) Serves(_ context.Context, addr netip.Addr, host string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := addr.String() + " " + host
+	p.probed = append(p.probed, key)
+	return p.serves[key]
+}
+
+// TestNodeSourceProbesEachPublicAddressForEveryDNSOnlyName: a node serves
+// direct entry only when its public address completes a handshake for every
+// DNS-only name; a node without a public address is not probed.
+func TestNodeSourceProbesEachPublicAddressForEveryDNSOnlyName(t *testing.T) {
+	direct := &fakeDirect{serves: map[string]bool{
+		"203.0.113.1 a.gregale.dev": true, "203.0.113.1 b.gregale.dev": true,
+		"203.0.113.2 a.gregale.dev": true,
+	}}
+	src := nodeSource{
+		registry: fakeRegistry{
+			{Name: "n1", TargetURL: "tcp://10.10.0.1:50051", Active: true},
+			{Name: "n2", TargetURL: "tcp://10.10.0.2:50051", Active: true},
+			{Name: "n3", TargetURL: "tcp://10.10.0.3:50051", Active: true},
+		},
+		probe: &fakeProbe{ready: map[string]bool{}},
+		public: map[string]netip.Addr{
+			"n1": netip.MustParseAddr("203.0.113.1"), "n2": netip.MustParseAddr("203.0.113.2"),
+		},
+		edgePort:    "9109",
+		direct:      direct,
+		directHosts: dnsOnlyHosts([]edgedns.Name{{Host: "*.gregale.dev"}, {Host: "a.gregale.dev", DNSOnly: true}, {Host: "b.gregale.dev", DNSOnly: true}}),
+	}
+	nodes, err := src.nodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []bool{nodes[0].Direct, nodes[1].Direct, nodes[2].Direct}; !slices.Equal(got, []bool{true, false, false}) {
+		t.Fatalf("direct = %v, want only the node serving both DNS-only names", got)
+	}
+	if len(direct.probed) != 4 {
+		t.Fatalf("probed %v, want both DNS-only names on the two nodes with a public address", direct.probed)
+	}
+
+	src.directHosts = nil
+	direct.probed = nil
+	if _, err := src.nodes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(direct.probed) != 0 {
+		t.Fatalf("probed %v with no DNS-only name", direct.probed)
 	}
 }
 

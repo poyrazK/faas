@@ -10312,3 +10312,10 @@ snapshot guard. Both paths must refuse admission. Customer-platform acceptance
 retains its entire suite and existing compiler memory bounds, with a forty-five
 minute cold-build budget after the thirty-minute job completed state/API tests
 but expired while compiling remaining packages.
+
+Runtime admission captures environment-owned egress, signing and scan-policy
+values from the deployment pin. Those values are also used for native producer
+authorization. Current application-standard enrollment, revision, expiry,
+signer and log-drain sources remain authoritative. A currently materialized
+standard-controlled scalar field must match its effective projection; a scoped
+pin cannot override it. Uncontrolled fields may differ between environments.
