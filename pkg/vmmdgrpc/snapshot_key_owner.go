@@ -27,8 +27,10 @@ func (s *Server) snapshotKeysOwned(instance string, keys ...string) error {
 	if !ok {
 		return nil
 	}
-	deploymentID, _, err := lookup.InstanceDeploymentIDAndAppID(instance)
-	if err != nil || deploymentID == "" {
+	// An instance that is not live has no deployment to check against; the
+	// capture itself refuses it, with the error the caller already handles.
+	deploymentID := liveInstanceDeployment(lookup, instance)
+	if deploymentID == "" {
 		return nil
 	}
 	prefix := "snap/" + deploymentID + "/"
@@ -41,4 +43,14 @@ func (s *Server) snapshotKeysOwned(instance string, keys ...string) error {
 		}
 	}
 	return nil
+}
+
+// liveInstanceDeployment is the instance's deployment, or "" when it is not
+// live or was woken without one.
+func liveInstanceDeployment(lookup InstanceDeploymentLookup, instance string) string {
+	deploymentID, _, err := lookup.InstanceDeploymentIDAndAppID(instance)
+	if err == nil {
+		return deploymentID
+	}
+	return ""
 }
