@@ -3842,7 +3842,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// non-TTY invocations fail closed after rendering the plan.
 	if projectRequested {
 		if *createOnly {
-			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
+			// A project deploy creates and binds what gregale.yaml declares
+			// with `create` before the first build (ADR-20261106105015 §1),
+			// so there is nothing to bootstrap with an empty app first.
+			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug; to have resources ready before the first build, declare them in gregale.yaml with `create: true`"))
 		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("%s applies to a single app and cannot be combined with --project, --only, or --project-slug", resourceSizeSpelling(explicit)))
