@@ -1805,6 +1805,30 @@ func (q *Queries) PipelineSetupByName(ctx context.Context, db DBTX, arg Pipeline
 	return i, err
 }
 
+const pipelineSetupCheckOwner = `-- name: PipelineSetupCheckOwner :one
+SELECT phase,database_id::text AS database_id FROM data_pipeline_setups
+WHERE account_id=$1::text::uuid AND source_connection_id=$2::text::uuid
+ AND state='working' AND phase IN ('checking_source','provisioning','checking_mirror','starting') AND pipeline_id=''
+FOR UPDATE
+`
+
+type PipelineSetupCheckOwnerParams struct {
+	AccountID    string
+	ConnectionID string
+}
+
+type PipelineSetupCheckOwnerRow struct {
+	Phase      string
+	DatabaseID string
+}
+
+func (q *Queries) PipelineSetupCheckOwner(ctx context.Context, db DBTX, arg PipelineSetupCheckOwnerParams) (PipelineSetupCheckOwnerRow, error) {
+	row := db.QueryRow(ctx, pipelineSetupCheckOwner, arg.AccountID, arg.ConnectionID)
+	var i PipelineSetupCheckOwnerRow
+	err := row.Scan(&i.Phase, &i.DatabaseID)
+	return i, err
+}
+
 const pipelineSetupClaim = `-- name: PipelineSetupClaim :one
 WITH candidate AS (
  SELECT id FROM data_pipeline_setups WHERE state='working' AND retry_at<=clock_timestamp()

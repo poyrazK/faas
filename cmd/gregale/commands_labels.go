@@ -226,8 +226,7 @@ func cmdAppWaitSelected(args []string) int {
 	for _, app := range apps {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			_ = printErr("Wait timed out", fmt.Errorf("%s did not hold on every app within %s", want, *timeout))
-			return exitWaitTimeout
+			return printWaitTimeout(fmt.Sprintf("%s did not hold on every app within %s", want, *timeout))
 		}
 		read := func(ctx context.Context) (api.ResourceStatus, error) {
 			status, err := client.GetAppStatus(ctx, app.Slug, "")

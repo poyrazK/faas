@@ -63,7 +63,7 @@ func TestRollbackOutcomeLostReplyExpiry(t *testing.T) {
 				f.serveHTTP(w, r)
 			}))
 			defer backend.Close()
-			opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "rollback"}
+			opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, Toolsets: []string{ToolsetCore}, planStore: store, planNamespace: "rollback"}
 			_, m, err := newHistoryTestManagementServer(api.NewClient(backend.URL, testToken), opts)
 			if err != nil {
 				t.Fatal(err)
@@ -106,6 +106,11 @@ func TestRollbackOutcomeLostReplyExpiry(t *testing.T) {
 			cs, ctx := connectConfiguredTestServer(t, backend, opts, protocol)
 			args := getActionArgs{App: "alpha", PlanID: planID}
 			before, _ := os.ReadFile(path)
+			page := callTool(t, ctx, cs, "gregale_list_actions", listActionsArgs{App: "alpha"}, false)
+			var items []actionView
+			if json.Unmarshal(page["items"], &items) != nil || len(items) != 1 || items[0].PlanID != planID {
+				t.Fatalf("action history=%s", page)
+			}
 			history := callTool(t, ctx, cs, "gregale_get_action", args, false)
 			var view actionView
 			if json.Unmarshal(history["action"], &view) != nil || view.Apply.State != "outcome_unknown" || view.PlanAvailable || view.Recovery == nil || view.Recovery.Outcome == nil {
@@ -139,6 +144,22 @@ func TestRollbackOutcomeLostReplyExpiry(t *testing.T) {
 			again := callTool(t, ctx, cs, "gregale_get_action", args, false)
 			if json.Unmarshal(again["action"], &view) != nil || view.Apply.State != "outcome_unknown" {
 				t.Fatal("recovery rewrote history")
+			}
+			otherOpts := opts
+			otherOpts.planNamespace = "another-grant"
+			other, otherCtx := connectConfiguredTestServer(t, backend, otherOpts, protocol)
+			beforeDenied := reads.Load()
+			if code := toolCode(t, callTool(t, otherCtx, other, "gregale_get_action_outcome", args, true)); code != "action_not_found" {
+				t.Fatalf("other grant: code=%s", code)
+			}
+			deniedOpts := opts
+			deniedOpts.AllowedApps = map[string]string{"alpha": "different-app-id"}
+			denied, deniedCtx := connectConfiguredTestServer(t, backend, deniedOpts, protocol)
+			if code := toolCode(t, callTool(t, deniedCtx, denied, "gregale_get_action_outcome", args, true)); code != "app_access_denied" {
+				t.Fatalf("changed app identity: code=%s", code)
+			}
+			if reads.Load() != beforeDenied {
+				t.Fatal("denied recovery read the native receipt")
 			}
 			after, _ := os.ReadFile(path)
 			if !bytes.Equal(before, after) || writes.Load() != 1 {

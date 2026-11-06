@@ -97,7 +97,15 @@ type githubdBridge struct {
 	// releasePhaseOff refuses a push that declares a release command while
 	// FAAS_RELEASE_PHASE_ENABLED is off on apid.
 	releasePhaseOff bool
+	// applySettings applies the source gregale.yaml's app settings (lifecycle
+	// hooks, restart policy, timeouts, scaling, retries) before the deployment
+	// row exists, and returns their undo for a failed enqueue
+	// (ADR-20261104221217). Nil skips them.
+	applySettings bridgeSettingsApplier
 }
+
+// bridgeSettingsApplier is server.applyBridgeSourceSettings.
+type bridgeSettingsApplier func(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem)
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
 // account's plan limit. githubd fetches every push with Scale's limits, so
@@ -550,8 +558,22 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
 	}
 	params.SourcePath = spooled
+	undoSettings := func(context.Context) {}
+	if g.applySettings != nil && manifest != nil {
+		updated, undo, problem := g.applySettings(ctx, resource, app, manifest)
+		if problem != nil {
+			if spooled != req.SourcePath {
+				_ = os.Remove(spooled)
+			}
+			return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: gregale.yaml settings: %s", problem.Detail)
+		}
+		undoSettings = undo
+		app = updated
+		params.ServiceRollout = app.Manifest.ExecutionMode == api.ExecutionModeService
+	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
+		undoSettings(context.WithoutCancel(ctx))
 		if spooled != req.SourcePath {
 			_ = os.Remove(spooled)
 		}
@@ -835,7 +857,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -847,6 +869,7 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		agentSteps:  agentSteps,
 
 		releasePhaseOff: releasePhaseOff,
+		applySettings:   applySettings,
 	})
 }
 

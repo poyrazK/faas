@@ -39,11 +39,12 @@ SELECT a.id::text FROM apps a
 WHERE a.account_id = sqlc.arg(account_id) AND a.project_id = sqlc.arg(project_id)
   AND a.preview_of_slug IS NULL AND a.status <> 'deleted'
   AND coalesce(a.manifest->>'project_source_sha256', '') = ''
-  AND EXISTS (
+  AND (EXISTS (SELECT 1 FROM project_app_stage_admissions origin
+    WHERE origin.app_id = a.id AND origin.project_id = a.project_id) OR EXISTS (
     SELECT 1 FROM project_environment_workload_heads h
     JOIN project_environments e ON e.id = h.environment_id
     WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug <> 'production'
-  )
+  ))
   AND NOT EXISTS (
     SELECT 1 FROM project_environment_workload_heads h
     JOIN project_environments e ON e.id = h.environment_id
@@ -60,11 +61,12 @@ WHERE a.account_id = sqlc.arg(account_id) AND a.project_id = sqlc.arg(project_id
   AND a.preview_of_slug IS NULL AND a.status <> 'deleted'
   AND CASE WHEN sqlc.arg(environment)::text = 'production' THEN NOT (
     coalesce(a.manifest->>'project_source_sha256', '') = ''
-    AND EXISTS (
+    AND (EXISTS (SELECT 1 FROM project_app_stage_admissions origin
+      WHERE origin.app_id = a.id AND origin.project_id = a.project_id) OR EXISTS (
       SELECT 1 FROM project_environment_workload_heads h
       JOIN project_environments e ON e.id = h.environment_id
       WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug <> 'production'
-    )
+    ))
     AND NOT EXISTS (
       SELECT 1 FROM project_environment_workload_heads h
       JOIN project_environments e ON e.id = h.environment_id
@@ -76,6 +78,6 @@ WHERE a.account_id = sqlc.arg(account_id) AND a.project_id = sqlc.arg(project_id
       SELECT 1 FROM project_environment_workload_heads h
       JOIN project_environments e ON e.id = h.environment_id
       WHERE h.app_id = a.id AND e.project_id = a.project_id AND e.slug = sqlc.arg(environment)::text
-    ) OR EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.scope = sqlc.arg(environment)::text)
+    ) OR EXISTS (SELECT 1 FROM deployments d WHERE d.app_id = a.id AND d.scope = sqlc.arg(environment)::text AND d.deleted_at IS NULL)
   ) END
 ORDER BY a.id;

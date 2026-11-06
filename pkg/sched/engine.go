@@ -446,7 +446,12 @@ type Engine struct {
 	// notifyInPublication sends a wake's instance_changed from its RUNNING
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
-	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
+	// asyncWakeFinalize runs a published boot's bookkeeping after the wake
+	// answers (WithAsyncWakeFinalize, ADR-20261105090246); wakeFinalizers
+	// counts the bookkeeping still running.
+	asyncWakeFinalize atomic.Bool
+	wakeFinalizers    wakeFinalizerSet
+	fcVer             string // running Firecracker version — snapshots load only on a match (ADR-005)
 	// capabilities holds a capability's background work while its platform
 	// flag is off for the owning account (ADR-20261023115741); nil allows all.
 	capabilities *capflags.Decider
@@ -535,6 +540,9 @@ type Engine struct {
 	// (the window check is skipped; production cmd/schedd wires a
 	// real tracker via WithLivenessWindow).
 	livenessWindow *LivenessWindow
+	// oomBackoff bounds the OOM kill loop of a release that OOMs on every
+	// request (bug hunt H34).
+	oomBackoff oomBackoff
 
 	// jobLeaser (issue #1184 Workstream A / ADR-099) is the token-only
 	// lease primitive that WakeJob + HandleJobExit
@@ -709,9 +717,13 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
-	// guestVCPUApps (schedd `guest_vcpu_from_cpu_apps`) lists the apps whose
-	// guest vCPU count follows their CPU quota (ADR-20261101160231).
+	// guestVCPUApps (runtime config `guest_vcpu_from_cpu_apps`) lists the
+	// apps whose guest vCPU count follows their CPU quota
+	// (ADR-20261101160231, ADR-20261101215228).
 	guestVCPUApps atomic.Pointer[guestVCPUAppSet]
+	// cpuShape holds the runtime-config values that shape a listed app's CPU
+	// (ADR-20261101215228); nil is the compiled shape.
+	cpuShape atomic.Pointer[api.CPUShape]
 	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
 	// freeze its surplus workers and thaw them before booting new ones
 	// (ADR-20261019103000).
@@ -1974,7 +1986,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		insErr               error
 	)
 	appFromCache := false
-	if entry, ok := e.ownerEntryForPhaseOne(ctx, appID, deploymentID); ok {
+	if entry, ok := e.ownerEntryForPhaseOne(ctx, appID, deploymentID, trigger); ok {
 		// ADR-1741: the owner cache holds the app (its standards check
 		// passed) and the production deployment; only the instances are read.
 		app, appFromCache = entry.app, true
@@ -3113,7 +3125,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	barrier := make(chan error, 1)
 	// ADR-1741: an owner cache entry exists only while the barrier is clear
 	// at its generation, and the admission insert rechecks that generation.
-	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID)
+	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID, trigger)
 	if !useCache {
 		// A wake that held its retirement gate for the cache, and decides
 		// from fresh reads after all (a stale entry's retry), runs it now.
@@ -3180,7 +3192,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, err
 	}
-	if deploymentID != "" {
+	// An explicit deployment the owner cache serves is the entry's own: its
+	// status, app and scope are in the generation the insert will check.
+	if deploymentID != "" && !useCache {
 		explicitDep, depErr := e.store.DeploymentByID(ctx, deploymentID)
 		if depErr != nil {
 			release()
@@ -3502,6 +3516,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	var snapshotReads wakeSnapshotReads
 	if !secretPolicyBlocksSnapshots {
 		snapshotReads = e.readWakeSnapshotInputs(ctx, dep.ID, string(acct.Plan), true)
+	}
+	// A release whose instances keep OOMing backs off its wakes instead of
+	// cold-booting into the same kill (bug hunt H34).
+	if retryAfter, active := e.oomBackoff.active(dep.ID, time.Now()); active && !bypassGates {
+		release()
+		return WakeResult{}, errWorkloadOOMBackoff(retryAfter)
 	}
 	var backoff state.Deployment
 	var backoffActive bool
@@ -4599,58 +4619,18 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", applicationStandardRuntimeProblem(publishErr))
 	}
 
-	// ADR-051 Phase 4 / PR-D: persist the workload class the
-	// characterize probe observed on the cold boot. On restore we
-	// inherit from the apps row (no observation here — the warm
-	// path runs the same scan-hint class the original cold boot
-	// committed). On cold-boot timeouts the report is empty and we
-	// keep the scan-hint class (no row mutation). Best-effort:
-	// a failed write doesn't block the RUNNING transition — the
-	// class is metadata, not the boot path. The class is part of
-	// the runtime configuration this boot's proof covers, so the
-	// same write moves the proof to the class it observed (ADR-051
-	// amendment 2026-10-22); otherwise the instance could never
-	// freeze, thaw or be promoted from the warm pool.
-	if out.Characterization.ObservedClass != "" {
-		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
-		if shouldPersistObservedClass(bootInput.appType, bootInput.spec.ExecutionMode, observedClass) {
-			if _, err := e.store.RecordObservedWorkloadClass(ctx, bootInput.accountID, bootInput.appID, bootInput.insID, observedClass); err != nil {
-				e.log.Warn("wake: record observed workload class", "app", logsanitize.Field(bootInput.appID), "err", err)
-			}
-		} else {
-			e.log.Warn("wake: ignoring incompatible characterization",
-				"app", logsanitize.Field(bootInput.appID), "app_type", bootInput.appType,
-				"execution_mode", bootInput.spec.ExecutionMode, "observed_class", observedClass)
-		}
-		// PR-D review finding #6: emit an `app.characterized` audit
-		// row so an operator tailing events can pin the observed
-		// class back to the boot that surfaced it. Carries the
-		// guest's class hint, the observed port, exit code, and
-		// the chosen portnorm rung — enough to reconstruct "why is
-		// this app now classed http" from the event log alone
-		// (no vmmd slog archaeology). Best-effort per ADR-035:
-		// audit.Emit never returns an error and never blocks the
-		// RUNNING transition. nil auditor (pre-PR-D fixtures) is
-		// tolerated via the nil check.
-		if e.audit != nil {
-			e.audit.Emit(ctx, "app.characterized", nil, map[string]any{
-				"app_id":          bootInput.appID,
-				"wake_id":         bootInput.wakeID,
-				"observed_class":  out.Characterization.ObservedClass,
-				"observed_port":   out.Characterization.ObservedPort,
-				"exit_code":       out.Characterization.ExitCode,
-				"listening_addrs": out.Characterization.ListeningAddrs,
-				"port_norm_mode":  out.Characterization.PortNormalizationMode,
-				"log_tail_chars":  len(out.Characterization.LogTail),
-			})
-		}
-	}
-
 	// A completed wake proves that the deployment can boot again: a recorded
 	// snapshot-miss backoff is cleared so a later miss starts a fresh
 	// sequence, without delaying the newly routable target.
 	e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, bootInput.appID, bootInput.depID, bookkeeping)
-	e.recordAppSecretDelivery(ctx, bootInput, state.SecretDeliveryDelivered, "")
+	// ADR-20261105090246: what the boot proved (its observed workload class
+	// and the secrets it delivered) is recorded before the wake answers, or
+	// after it when async_wake_finalize is on. Both records are best-effort.
+	finalized, characterization := bootInput, out.Characterization
+	e.finalizeBootedWake(ctx, func(ctx context.Context) {
+		e.recordBootCharacterization(ctx, finalized, characterization)
+		e.recordAppSecretDelivery(ctx, finalized, state.SecretDeliveryDelivered, "")
+	})
 	deliveryFinalized = true
 	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
@@ -4767,6 +4747,57 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	bootInput.identity.InstanceID = fresh.ID
 	bootInput.identity.NodeID = fresh.NodeID
 	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
+}
+
+// recordBootCharacterization persists the workload class a cold boot's
+// characterize probe observed and audits it (ADR-051 Phase 4 / PR-D).
+func (e *Engine) recordBootCharacterization(ctx context.Context, boot bootInput, c api.CharacterizationReport) {
+	// ADR-051 Phase 4 / PR-D: persist the workload class the
+	// characterize probe observed on the cold boot. On restore we
+	// inherit from the apps row (no observation here — the warm
+	// path runs the same scan-hint class the original cold boot
+	// committed). On cold-boot timeouts the report is empty and we
+	// keep the scan-hint class (no row mutation). Best-effort:
+	// a failed write doesn't block the RUNNING transition — the
+	// class is metadata, not the boot path. The class is part of
+	// the runtime configuration this boot's proof covers, so the
+	// same write moves the proof to the class it observed (ADR-051
+	// amendment 2026-10-22); otherwise the instance could never
+	// freeze, thaw or be promoted from the warm pool.
+	if c.ObservedClass != "" {
+		observedClass := state.WorkloadClass(c.ObservedClass)
+		if shouldPersistObservedClass(boot.appType, boot.spec.ExecutionMode, observedClass) {
+			if _, err := e.store.RecordObservedWorkloadClass(ctx, boot.accountID, boot.appID, boot.insID, observedClass); err != nil {
+				e.log.Warn("wake: record observed workload class", "app", logsanitize.Field(boot.appID), "err", err)
+			}
+		} else {
+			e.log.Warn("wake: ignoring incompatible characterization",
+				"app", logsanitize.Field(boot.appID), "app_type", boot.appType,
+				"execution_mode", boot.spec.ExecutionMode, "observed_class", observedClass)
+		}
+		// PR-D review finding #6: emit an `app.characterized` audit
+		// row so an operator tailing events can pin the observed
+		// class back to the boot that surfaced it. Carries the
+		// guest's class hint, the observed port, exit code, and
+		// the chosen portnorm rung — enough to reconstruct "why is
+		// this app now classed http" from the event log alone
+		// (no vmmd slog archaeology). Best-effort per ADR-035:
+		// audit.Emit never returns an error and never blocks the
+		// RUNNING transition. nil auditor (pre-PR-D fixtures) is
+		// tolerated via the nil check.
+		if e.audit != nil {
+			e.audit.Emit(ctx, "app.characterized", nil, map[string]any{
+				"app_id":          boot.appID,
+				"wake_id":         boot.wakeID,
+				"observed_class":  c.ObservedClass,
+				"observed_port":   c.ObservedPort,
+				"exit_code":       c.ExitCode,
+				"listening_addrs": c.ListeningAddrs,
+				"port_norm_mode":  c.PortNormalizationMode,
+				"log_tail_chars":  len(c.LogTail),
+			})
+		}
+	}
 }
 
 // markRuntimeArtifactMissing closes a live deployment that cannot ever boot
@@ -8536,6 +8567,21 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// snapshot on its next park.
 	app, err := state.AppForInstance(ctx, e.store, ins)
 	if err != nil {
+		// A deleted environment tombstones its deployments before its VMs
+		// finish retiring. Such a VM must never publish into a recreated
+		// environment with the same slug. Only a confirmed tombstone permits
+		// this path; an unavailable policy still returns the original error.
+		if errors.Is(err, state.ErrConflict) {
+			deployment, readErr := e.store.DeploymentByID(ctx, ins.DeploymentID)
+			if readErr == nil && deployment.AppID == ins.AppID && deployment.DeletedAt != nil {
+				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); destroyErr != nil {
+					return fmt.Errorf("sched: park: destroy deleted-environment instance %s: %w", ins.ID, destroyErr)
+				}
+				e.ledger.Release(ins.ID)
+				e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_environment_deleted", "environment_deleted")
+				return nil
+			}
+		}
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
 	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")
@@ -10218,8 +10264,18 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// OOM'd at the plan cap may have a snap that encoded the
 	// same blast radius; the next cold boot is a fresh chance.
 	// Both warm + init tiers are flipped (mirrors the liveness
-	// path).
+	// path). Only the first kill in the OOM window does it, and
+	// repeated kills back off the deployment's wakes (bug hunt H34).
+	staleSnapshots, backingOff := e.oomBackoff.record(deploymentID, time.Now())
+	if backingOff {
+		e.log.Warn("workload_oom: repeated OOM kills; backing off wakes",
+			"instance", instanceID, "deployment_id", deploymentID,
+			"kills", api.WorkloadOOMBackoffKills, "window", api.WorkloadOOMBackoffWindow)
+	}
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if !staleSnapshots {
+			break
+		}
 		// Every CPU platform's row (ADR-20261024225612 amendment 1).
 		rows, terr := state.LiveSnapshotsForTier(ctx, e.store, deploymentID, tier)
 		if terr != nil {

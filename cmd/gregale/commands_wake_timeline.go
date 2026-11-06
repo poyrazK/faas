@@ -483,6 +483,12 @@ func renderRestoreBreakdown(ev api.WakeTimelineEvent) string {
 		{label: "env_prepare", key: "env_prepare_ms"},
 		{label: "pre_network", key: "pre_network_ms"},
 		{label: "setup_network", key: "setup_network_ms"},
+		// ADR-510: the snapshot backing check between the network and
+		// the restore window. Absent when it took no measurable time.
+		{label: "backing_check", key: "backing_check_ms"},
+		{label: "backing_sidecar", key: "backing_sidecar_ms"},
+		{label: "backing_fetch", key: "backing_fetch_ms"},
+		{label: "backing_hash", key: "backing_hash_ms"},
 		{label: "restore_gate_wait", key: "restore_gate_wait_ms"},
 		{label: "chroot", key: "chroot_ms"},
 		{label: "materialize_mem", key: "materialize_mem_ms"},
@@ -555,6 +561,12 @@ func renderColdBootBreakdown(ev api.WakeTimelineEvent) string {
 		key   string
 	}{
 		{label: "total", key: "total_ms"},
+		// ADR-510: the backing check that refused (or preceded a failed)
+		// restore before this cold boot. Outside total.
+		{label: "backing_check", key: "backing_check_ms"},
+		{label: "backing_sidecar", key: "backing_sidecar_ms"},
+		{label: "backing_fetch", key: "backing_fetch_ms"},
+		{label: "backing_hash", key: "backing_hash_ms"},
 		{label: "resolve_images", key: "resolve_images_ms"},
 		{label: "chroot", key: "chroot_ms"},
 		{label: "provision", key: "provision_ms"},

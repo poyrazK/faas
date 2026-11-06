@@ -659,6 +659,24 @@ func emitPersistedExcludedAuditRows(
 	}
 }
 
+// unboundDatastoreKeys lists each selected service's key that points at the
+// Compose datastore m and stays unset in the plan ("api.REDIS_URL").
+func unboundDatastoreKeys(env reposcan.ComposeEnv, workloads []reposcan.Workload, planned []api.PlanWorkload, m reposcan.Managed) []string {
+	unset := make(map[string]bool)
+	for _, w := range planned {
+		for _, key := range w.UnsetEnvKeys {
+			unset[strings.ToLower(w.Name)+"."+key] = true
+		}
+	}
+	var out []string
+	for _, consumer := range projectsetup.ManagedConsumers(env, workloads, m.Name, m.EnvHint) {
+		if unset[strings.ToLower(consumer.Workload)+"."+consumer.EnvKey] {
+			out = append(out, consumer.Workload+"."+consumer.EnvKey)
+		}
+	}
+	return out
+}
+
 // toPlanManaged translates a reposcan.Managed into the wire-shape
 // DTO. Pure field copy — the reposcan and DTO fields align
 // one-to-one; this helper exists so the carrier conversion is
@@ -1028,10 +1046,6 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
-		releaseCommand := deploymentReleaseCommand{
-			command: append([]string(nil), workload.ReleaseCommand...),
-			shell:   workload.ReleaseCommandShell,
-		}
 		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan, s.agentStepsAllowed(acct))
 		if manifestProblem != nil {
 			_ = os.Remove(staged)
@@ -1047,30 +1061,49 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		if manifest != nil {
 			workflowDefinitions = manifest.Workflows
 		}
-		// A single-workload project has no ownership ambiguity, so it may
-		// also use the explicit gregale.yaml release.command declaration.
-		// Multi-workload Procfiles are already assigned exactly once by
-		// reposcan (web first, otherwise deterministic process order).
-		if len(workloads) == 1 {
-			var releaseProblem *api.Problem
-			var sourceRelease deploymentReleaseCommand
-			sourceRelease, releaseProblem = resolveSourceReleaseDeclaration(staged, sourceApp, manifest)
-			if releaseProblem != nil {
-				_ = os.Remove(staged)
-				res.Error = "release declaration invalid (server logs carry the detail)"
-				s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
-				out = append(out, res)
-				continue
+		// The service's own gregale.yaml release.command (or Procfile
+		// release: in its own directory) applies as on a single-app deploy
+		// unless another service builds from the same directory
+		// (ADR-20261019120007 amendment 1).
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		if releaseProblem != nil {
+			_ = os.Remove(staged)
+			res.Error = "release declaration invalid (server logs carry the detail)"
+			if releaseProblem.Status == http.StatusUnprocessableEntity {
+				res.Error = "release declaration invalid: " + releaseProblem.Detail
 			}
-			if len(sourceRelease.command) > 0 {
-				releaseCommand = sourceRelease
-			}
+			s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
+			out = append(out, res)
+			continue
 		}
 		if s.releasePhaseOff && len(releaseCommand.command) > 0 {
 			_ = os.Remove(staged)
 			res.Error = releasePhaseOffProblem().Detail
 			out = append(out, res)
 			continue
+		}
+		// A service's own gregale.yaml settings (lifecycle hooks, restart
+		// policy, timeouts, scaling, retries) apply as on a single-app deploy
+		// of its directory (ADR-20261104221217). They apply before the
+		// deployment row exists, so imaged bakes the hooks into it.
+		settings := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+		if manifest != nil {
+			if problem := s.applySourceManifestSettings(ctx, acct, app, manifest, &settings); problem != nil {
+				_ = os.Remove(staged)
+				if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
+					s.log.Warn("apid: roll back project service settings", "app_id", app.ID, "err", rbErr)
+				}
+				res.Error = "gregale.yaml settings rejected: " + problem.Detail
+				out = append(out, res)
+				continue
+			}
+			if settings.lifecycleChanged || settings.scalingChanged || settings.retryPolicyChanged {
+				// Later manifest writes (the source checkpoint) start from
+				// the app as it is now, not as it was before the settings.
+				if reloaded, err := s.store.AppByID(ctx, app.ID); err == nil {
+					app = reloaded
+				}
+			}
 		}
 		// Enqueue via the shared helper. The helper does CreateDeployment
 		// + build.log spool + UpdateDeploymentStatus(building) + CreateBuild
@@ -1183,6 +1216,9 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			// customer, log the full error (which can carry
 			// pgx field names, row IDs, spool paths) to
 			// slog only.
+			if rbErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), settings); rbErr != nil {
+				s.log.Warn("apid: roll back project service settings", "app_id", app.ID, "err", rbErr)
+			}
 			s.log.Warn("apid: apply enqueue build failed", "app_id", app.ID, "slug", app.Slug, "project_id", project.ID, "err", enqErr)
 			res.Error = "enqueue failed (server logs carry the detail)"
 			out = append(out, res)
@@ -1683,6 +1719,12 @@ func (s *server) scanService(
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 	}
+	// gregale.yaml buckets, resolved before mutation like databases
+	// (ADR-20261106105015 §1).
+	manifestBuckets, bucketProblem := s.resolveProjectManifestBuckets(r, acct, req.ScanDir, filteredW, req.Environment)
+	if bucketProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, bucketProblem
+	}
 	var stalePersistedSlugs []string
 	if len(req.Exclude) > 0 {
 		scanNames := make(map[string]bool, len(result.Workloads)*2)
@@ -2083,10 +2125,20 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 		if provision, ok := composePostgres[m.Name]; ok {
 			respManaged[i].Provision = planManagedProvision(provision)
-		} else {
-			respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+			continue
+		}
+		respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		respManaged[i].Unbound = unboundDatastoreKeys(composeEnv, filteredW, respWorkloads, m)
+		if m.Kind != "postgres" && len(respManaged[i].Unbound) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s (%s) is not run on Gregale and has no managed equivalent; %s will have no value. Set each to an external %s before the first request",
+				m.Name, m.Kind, strings.Join(respManaged[i].Unbound, ", "), m.Kind))
 		}
 	}
+	// Databases gregale.yaml creates are reviewed with the Compose ones
+	// (ADR-20261106105015 §1).
+	respManaged = append(respManaged, manifestDatabasePlan(resolvedManifest.PostgresBindings)...)
+	respManaged = append(respManaged, manifestBucketPlan(manifestBuckets)...)
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
 		ProjectSlug:           req.ProjectSlug,
@@ -2676,6 +2728,15 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
 		}
 		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if len(manifestBuckets) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project bucket targets")
+		}
+		if problem := s.applyProjectManifestBuckets(r.Context(), acct, manifestBuckets, apps); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

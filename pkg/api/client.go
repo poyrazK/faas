@@ -190,7 +190,9 @@ const DefaultClientTimeout = 30 * time.Second
 // settings without coupling this client to that global lifecycle.
 func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return transport.Clone()
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = DefaultClientTimeout
+		return clone
 	}
 	return http.DefaultTransport
 }
@@ -2389,7 +2391,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx con
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.do(ctx, http.MethodPost, path, req, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, req, &out, environmentPromotionHeaders(ctx))
 }
 
 // PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
@@ -2397,7 +2399,7 @@ func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, tar
 func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
 	var out ProjectEnvironmentPromotionResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
-	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+	return out, c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, path, req, &out, idempotencyKey, environmentPromotionHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
@@ -2453,7 +2455,7 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx c
 func (c *Client) RollbackProjectEnvironmentPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
 	var out ProjectEnvironmentPromotionStatusResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID) + "/rollback"
-	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, c.doWithHeaders(ctx, http.MethodPost, path, nil, &out, environmentRollbackHeaders(ctx))
 }
 
 // PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback is the
@@ -5209,9 +5211,26 @@ func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (Config
 
 // RollbackConfig restores a scope's variables to a config revision.
 func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	return c.RollbackConfigReviewed(ctx, slug, scope, ConfigRollbackRequest{Revision: revision})
+}
+
+// RollbackConfigReviewed submits the original revision and optional native guards.
+func (c *Client) RollbackConfigReviewed(ctx context.Context, slug, scope string, request ConfigRollbackRequest) (ConfigRollbackResponse, error) {
 	var out ConfigRollbackResponse
 	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
-		ConfigRollbackRequest{Revision: revision}, &out)
+		request, &out)
+}
+
+// GetConfigRollbackReceipt reads an original reviewed rollback without replaying it.
+func (c *Client) GetConfigRollbackReceipt(ctx context.Context, slug, scope, requestID, proof string) (ConfigRollbackReceipt, error) {
+	var out ConfigRollbackReceipt
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/rollback/requests/" + url.PathEscape(requestID)
+	headers := http.Header{}
+	if proof != "" {
+		headers.Set(EnvBatchReceiptProofHeader, proof)
+	}
+	err := c.doWithHeaders(ctx, http.MethodGet, c.scopeQuery(path, scope), nil, &out, headers)
+	return out, err
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is

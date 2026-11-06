@@ -32,10 +32,12 @@ func (s *guestVCPUAppSet) includes(appID string) bool {
 }
 
 // SetGuestVCPUFromCPUApps makes the listed apps boot one guest vCPU per
-// 1,000 sustained millicores instead of their plan's count
-// (ADR-20261101160231). An entry is an app ID or "*" for every app; an empty
-// list keeps every app on its plan. Snapshots captured at the other count are
-// refused by vmmd at restore, so a listed app cold-boots once.
+// guest_vcpu_millicores of CPU ceiling instead of their plan's count, and book
+// their plan's baseline (ADR-20261101160231). An entry is an app ID or "*"
+// for every app; an empty list keeps every app on its plan. Snapshots
+// captured at the other count are refused by vmmd at restore, so a listed
+// app cold-boots once. schedd sets it from the `guest_vcpu_from_cpu_apps`
+// runtime-config key (ADR-20261101215228).
 func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
 	set := &guestVCPUAppSet{ids: map[string]struct{}{}}
 	for _, entry := range entries {
@@ -60,22 +62,39 @@ func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
 	return nil
 }
 
+// SetCPUShape applies the runtime-config values that shape a listed app's
+// CPU (ADR-20261101215228). The zero shape is the compiled one. A wake reads
+// the shape once it starts, so instances booted before a change keep theirs
+// until they park.
+func (e *Engine) SetCPUShape(shape api.CPUShape) {
+	e.cpuShape.Store(&shape)
+}
+
+func (e *Engine) loadCPUShape() api.CPUShape {
+	if shape := e.cpuShape.Load(); shape != nil {
+		return *shape
+	}
+	return api.CPUShape{}
+}
+
 // guestVCPUs is the guest vCPU count app boots and books with: the plan's,
-// or for a listed app one per core of its CPU ceiling (appCPUMillicores).
+// or for a listed app one per guest_vcpu_millicores of its CPU ceiling
+// (appCPUMillicores), never more than the plan's.
 func (e *Engine) guestVCPUs(app state.App, limits api.Limits) int {
 	if !e.guestVCPUApps.Load().includes(app.ID) {
 		return limits.VCPU
 	}
-	return api.GuestVCPUsForCPUMillicores(e.appCPUMillicores(app, limits))
+	return e.loadCPUShape().VCPUs(e.appCPUMillicores(app, limits), limits.VCPU)
 }
 
 // appCPUMillicores is the sustained CPU ceiling (cpu.max) app boots, books
 // and is policed with. A listed app on the app default gets its plan's burst
-// ceiling: one core on Free, Hobby and Pro, two on Scale. An app that chose
-// less than a core keeps its choice (ADR-20261101160231 decision 1). Every
-// other app keeps its configured value.
+// ceiling: as compiled, one core on Free, Hobby and Pro, two on Scale. An app
+// that chose less than a core keeps its choice (ADR-20261101160231 decision
+// 1), unless the ceiling is lower still. Every other app keeps its configured
+// value.
 func (e *Engine) appCPUMillicores(app state.App, limits api.Limits) int {
-	return listedAppCPUMillicores(e.guestVCPUApps.Load().includes(app.ID), effectiveAppCPUMillicores(app), limits)
+	return listedAppCPUMillicores(e.guestVCPUApps.Load().includes(app.ID), effectiveAppCPUMillicores(app), limits, e.loadCPUShape())
 }
 
 // appCPUBookingMillicores is what an instance of app books against a node's
@@ -88,7 +107,7 @@ func (e *Engine) appCPUBookingMillicores(app state.App, limits api.Limits) int {
 	if !e.guestVCPUApps.Load().includes(app.ID) || limits.RAMMB <= 0 {
 		return ceiling
 	}
-	return max(1, min(ceiling, api.AppCPUBaselineMillicoresForPlanRAM(limits.RAMMB)))
+	return max(1, min(ceiling, e.loadCPUShape().BaselineForPlanRAM(limits.RAMMB), api.AppCPUBookingMaxMillicores))
 }
 
 // appCPUBookingStamp is the booking a new instance of app stores on its row:
@@ -101,19 +120,25 @@ func (e *Engine) appCPUBookingStamp(app state.App, limits api.Limits) int {
 	return e.appCPUBookingMillicores(app, limits)
 }
 
-// listedAppCPUMillicores maps an app's configured CPU to its ceiling.
-func listedAppCPUMillicores(listed bool, configured int, limits api.Limits) int {
-	if !listed || configured < api.DefaultAppCPUMillicores || limits.RAMMB <= 0 {
+// listedAppCPUMillicores maps an app's configured CPU to its ceiling: an app
+// on the default gets the plan ceiling, and a smaller choice is kept unless
+// the ceiling is lower.
+func listedAppCPUMillicores(listed bool, configured int, limits api.Limits, shape api.CPUShape) int {
+	if !listed || limits.RAMMB <= 0 {
 		return configured
 	}
-	return max(configured, api.AppCPUCeilingMillicoresForPlanRAM(limits.RAMMB))
+	ceiling := shape.CeilingForPlanRAM(limits.RAMMB)
+	if configured < api.DefaultAppCPUMillicores {
+		return min(configured, ceiling)
+	}
+	return ceiling
 }
 
 // policyAppCPUMillicores maps a live CPU policy's configured value to the
 // ceiling the app's instances boot with, so the policy push and the wake
 // agree. Only a listed app needs its account's plan.
 func (e *Engine) policyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
-	if !e.guestVCPUApps.Load().includes(appID) || configured < api.DefaultAppCPUMillicores {
+	if !e.guestVCPUApps.Load().includes(appID) {
 		return configured, nil
 	}
 	app, err := e.store.AppByID(ctx, appID)
@@ -128,5 +153,5 @@ func (e *Engine) policyAppCPUMillicores(ctx context.Context, appID string, confi
 	if !ok {
 		return 0, fmt.Errorf("sched: app CPU policy: app %s has unknown plan %q", appID, acct.Plan)
 	}
-	return listedAppCPUMillicores(true, configured, limits), nil
+	return listedAppCPUMillicores(true, configured, limits, e.loadCPUShape()), nil
 }

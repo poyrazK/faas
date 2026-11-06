@@ -62,6 +62,8 @@ export type { AppManifestHealthcheck } from './models/AppManifestHealthcheck.js'
 export type { AppMetricsResponse } from './models/AppMetricsResponse.js';
 export type { AppOperationCheck } from './models/AppOperationCheck.js';
 export type { AppOperationPreview } from './models/AppOperationPreview.js';
+export type { AppPostgresBinding } from './models/AppPostgresBinding.js';
+export type { AppPostgresBindingList } from './models/AppPostgresBindingList.js';
 export type { AppRegistryCredentialListResponse } from './models/AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './models/AppRegistryCredentialResponse.js';
 export type { AppReleaseReview } from './models/AppReleaseReview.js';
@@ -162,6 +164,7 @@ export type { ConfigGuardQuery } from './models/ConfigGuardQuery.js';
 export type { ConfigGuardSummary } from './models/ConfigGuardSummary.js';
 export type { ConfigRevision } from './models/ConfigRevision.js';
 export type { ConfigRevisionDetail } from './models/ConfigRevisionDetail.js';
+export type { ConfigRollbackReceipt } from './models/ConfigRollbackReceipt.js';
 export type { ConfigRollbackRequest } from './models/ConfigRollbackRequest.js';
 export type { ConfigRollbackResponse } from './models/ConfigRollbackResponse.js';
 export type { ConfigSecretDifference } from './models/ConfigSecretDifference.js';

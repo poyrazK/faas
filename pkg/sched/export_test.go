@@ -722,6 +722,9 @@ var LiftErr = liftErr
 // NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
 func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
 
+func (r *fakeVMM) Characterization() *api.CharacterizationReport {
+	return &r.characterization
+}
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -789,7 +792,8 @@ func (r *notifyEvent) Payload() *string { return &r.payload }
 func (r *ownerCache) Lookup(p0 string) (ownerEntry, bool) { return r.lookup(p0) }
 
 // Members of ownerEntry
-func (r *ownerEntry) Generation() *int64 { return &r.generation }
+func (r *ownerEntry) Generation() *int64                         { return &r.generation }
+func (r *ownerEntry) ServesDeployment(p0 string, p1 string) bool { return r.servesDeployment(p0, p1) }
 
 // Members of queuePoller
 func (r *queuePoller) ItemsInFlight() *map[string]queueDeliveryClaim { return &r.itemsInFlight }

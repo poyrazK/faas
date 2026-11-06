@@ -5404,6 +5404,7 @@ func scanProjectEnvironmentApproval(row pgx.Row) (ProjectEnvironmentApproval, er
 		&approval.ID, &approval.AccountID, &approval.ProjectSlug, &approval.EnvironmentSlug,
 		&approval.TokenKind, &approval.PlanTokenHash, &approval.ApprovalTokenHash,
 		&approval.ExpiresAt, &approval.ConsumedAt, &approval.CreatedAt, &approval.ApprovedByAccountID,
+		&approval.ApprovedByPrincipal,
 	); err != nil {
 		return ProjectEnvironmentApproval{}, mapErr(err)
 	}
@@ -5418,16 +5419,16 @@ func (s *PgStore) CreateProjectEnvironmentApproval(ctx context.Context, approval
 	approval.ApprovalTokenHash = storedApprovalTokenHash(credTagPromotionApprovalToken, approval.ApprovalTokenHash)
 	row := s.pool.QueryRow(ctx, `
 		insert into project_environment_approvals
-			(account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, approved_by_account_id)
-		values ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid)
-		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
-	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.TokenKind, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt, approval.ApprovedByAccountID)
+			(account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, approved_by_account_id, approved_by_principal)
+		values ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid, nullif($9, ''))
+		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
+	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.TokenKind, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt, approval.ApprovedByAccountID, approval.ApprovedByPrincipal)
 	return scanProjectEnvironmentApproval(row)
 }
 
 func (s *PgStore) ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
 		  from project_environment_approvals
 		 where id = $1 and account_id = $2 and project_slug = $3 and environment_slug = $4
 	`, id, accountID, projectSlug, environmentSlug)
@@ -5437,7 +5438,7 @@ func (s *PgStore) ProjectEnvironmentApprovalByID(ctx context.Context, accountID,
 func (s *PgStore) ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
 	for _, pair := range approvalTokenPairs(planTokenHash, approvalTokenHash) {
 		approval, err := scanProjectEnvironmentApproval(s.pool.QueryRow(ctx, `
-			select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+			select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
 			  from project_environment_approvals
 			 where account_id = $1 and project_slug = $2 and environment_slug = $3
 			   and plan_token_hash = $4 and approval_token_hash = $5 and consumed_at is null and expires_at > now()
@@ -5462,7 +5463,7 @@ func (s *PgStore) ConsumeProjectEnvironmentApproval(ctx context.Context, account
 			 where account_id = $1 and project_slug = $2 and environment_slug = $3
 			   and plan_token_hash = $4 and approval_token_hash = $5
 			   and consumed_at is null and expires_at > now()
-			returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+			returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, ''), coalesce(approved_by_principal, '')
 		`, accountID, projectSlug, environmentSlug, pair[0], pair[1], consumedAt))
 		if !errors.Is(err, ErrNotFound) {
 			return approval, err
@@ -5867,18 +5868,13 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
-	var hasLiveRelease bool
-	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			  from apps a
-			  join deployments d on d.app_id = a.id
-			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
-		)
-	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
+	hasActiveDeployment, err := sqlc.New().ProjectEnvironmentHasActiveDeployments(ctx, tx, sqlc.ProjectEnvironmentHasActiveDeploymentsParams{
+		ProjectID: mustPgUUID(projectID), Scope: slug,
+	})
+	if err != nil {
 		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
-	if hasLiveRelease {
+	if hasActiveDeployment {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 	if err := cleanupEnvironmentInvocationsDB(ctx, tx, accountID, projectID, slug); err != nil {
@@ -5917,8 +5913,13 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 // deleteProjectEnvironmentRowsTx removes an environment's scoped values,
 // configuration and approvals, then the environment row, whose foreign keys
 // cascade to its workload specifications and flags. Deployments stay as
-// history; callers first make sure none is live.
+// history; callers first make sure every deployment is terminal.
 func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, projectID, projectSlug, slug string) error {
+	if err := sqlc.New().RetireProjectEnvironmentDeployments(ctx, tx, sqlc.RetireProjectEnvironmentDeploymentsParams{
+		ProjectID: mustPgUUID(projectID), Scope: slug,
+	}); err != nil {
+		return mapErr(err)
+	}
 	if _, err := tx.Exec(ctx, `
 		delete from app_envs e using apps a
 		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
@@ -7657,6 +7658,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if err := lockProjectDeploymentEnvironment(ctx, tx, d.AppID, d.Scope); err != nil {
+		return Deployment{}, 0, err
+	}
 	var cloneOperation ProjectEnvironmentCloneOperation
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
@@ -8474,6 +8478,9 @@ func (s *PgStore) GetDeploymentByIDScopedToSuperseded(ctx context.Context, appID
 			return Deployment{}, fmt.Errorf("state: rollback target %q for app %q: %w", deploymentID, appID, ErrNoRollbackTarget)
 		}
 		return Deployment{}, fmt.Errorf("state: get deployment by id scoped to superseded: %w", scanErr)
+	}
+	if d.DeletedAt != nil {
+		return Deployment{}, ErrNoRollbackTarget
 	}
 	if d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q has status %q: %w",
@@ -9873,6 +9880,7 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')
+		   and (deleted_at is null or $2 in ('failed', 'superseded', 'cancelled'))
 		   and not ($2 = 'live' and status <> 'live' and (environment_workload_runtime is not null or exists (
 		     select 1 from deployments managed where managed.app_id=deployments.app_id
 		       and managed.scope=deployments.scope and environment_workload_ownership_active(managed))))
@@ -9897,9 +9905,14 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 // rollout with no 100% fallback.
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
 	var held bool
+	var retired bool
 	var failedTraffic int
 	scope := DefaultEnvScope
-	if err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent, scope FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic, &scope); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent, scope, deleted_at IS NOT NULL FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic, &scope, &retired)
+	if errors.Is(err, pgx.ErrNoRows) || retired {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	// A held GitOps candidate has never been allowed to serve traffic. Its
@@ -10590,6 +10603,13 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture route policy for %s: %w", dep.ID, err)
 	}
+	retained, err := sqlc.New().ReadRetainedDeploymentOpenAPISnapshot(ctx, tx, mustPgUUID(dep.ID))
+	if err == nil {
+		return OpenAPISnapshot{DeploymentID: dep.ID, AppID: uuidString(retained.AppID), Scope: retained.Scope, Snapshot: retained.Snapshot, SHA256: retained.Sha256, SchemaVersion: int(retained.SchemaVersion), CapturedAt: retained.CapturedAt.Time}, policySnapshot, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read retained deployment contract: %w", err)
+	}
 	var importedDoc []byte
 	err = tx.QueryRow(ctx, `
 		select doc
@@ -10706,6 +10726,15 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
 	}
+	if err := lockProjectDeploymentEnvironment(ctx, tx, dep.AppID, normalizedDeploymentScope(dep.Scope)); err != nil {
+		return err
+	}
+	if dep.DeletedAt != nil {
+		return ErrInvalidStateTransition
+	}
+	if err := checkDatabaseSwitchLeaseTx(ctx, tx, dep); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 {
 		if err := deploymentActivationServingMatchesTx(ctx, tx, dep, expectedServingID[0]); err != nil {
 			return err
@@ -10785,6 +10814,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			}
 			return ErrDeploymentSuperseded
 		}
+	}
+	if err := checkPlainRollbackReleasesTx(ctx, tx, dep); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!dep.Kind.RequiresLatestRevision() || dep.Revision <= 0) {
@@ -10952,11 +10984,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
 			// Only traffic-bearing siblings receive a new deadline. Already
 			// retained revisions keep the original cutover deadline.
-			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-				select id, app_id, now() + ($4::integer * interval '1 second')
-				  from deployments
-				 where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
-				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
+			if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
 				return fmt.Errorf("state: retain replaced revisions: %w", err)
 			}
 		}
@@ -12266,6 +12294,18 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
 	}
+	if target.DeletedAt != nil {
+		return Deployment{}, ErrNoRollbackTarget
+	}
+	if err := lockProjectDeploymentEnvironment(ctx, tx, target.AppID, normalizedDeploymentScope(target.Scope)); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkDatabaseSwitchLeaseTx(ctx, tx, target); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkAppRollbackGraphTx(ctx, tx, appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
@@ -12285,6 +12325,10 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	// A target whose layers were reclaimed cannot cold boot; refuse it here
 	// rather than fail its readiness prime later (Hunt 21 H21-1).
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
+
+	if err := preserveRollbackSuccessTx(ctx, tx, target); err != nil {
 		return Deployment{}, err
 	}
 
@@ -12317,6 +12361,9 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 		targetDeploymentID, appID, now))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback update target: %w", err)
+	}
+	if err := persistPlainRollbackReview(ctx, tx, targetDeploymentID); err != nil {
+		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback commit: %w", err)

@@ -276,6 +276,8 @@ from .app_operational_recovery import AppOperationalRecovery
 from .app_operational_rollback import AppOperationalRollback
 from .app_operational_summary import AppOperationalSummary
 from .app_operational_summary_version import AppOperationalSummaryVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_private_network_attachment import AppPrivateNetworkAttachment
 from .app_private_network_attachment_request import AppPrivateNetworkAttachmentRequest
 from .app_private_network_attachment_response import AppPrivateNetworkAttachmentResponse
@@ -785,6 +787,7 @@ from .config_revision_detail import ConfigRevisionDetail
 from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
 from .config_revision_detail_variables import ConfigRevisionDetailVariables
 from .config_revision_source import ConfigRevisionSource
+from .config_rollback_receipt import ConfigRollbackReceipt
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
@@ -1118,6 +1121,11 @@ from .data_api_change_event import DataAPIChangeEvent
 from .data_api_change_event_batch import DataAPIChangeEventBatch
 from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
 from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
+from .data_api_change_hook_report import DataAPIChangeHookReport
+from .data_api_change_hook_report_publishing import DataAPIChangeHookReportPublishing
+from .data_api_change_hook_report_version import DataAPIChangeHookReportVersion
+from .data_api_change_hook_status import DataAPIChangeHookStatus
+from .data_api_change_hook_status_publishing import DataAPIChangeHookStatusPublishing
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -1130,6 +1138,8 @@ from .data_api_server_key import DataAPIServerKey
 from .data_api_server_key_permission_set import DataAPIServerKeyPermissionSet
 from .data_api_server_key_permission_set_access import DataAPIServerKeyPermissionSetAccess
 from .data_api_server_key_slot import DataAPIServerKeySlot
+from .data_api_status import DataAPIStatus
+from .data_api_status_runtime_reports import DataAPIStatusRuntimeReports
 from .data_api_usage import DataAPIUsage
 from .data_api_usage_bucket import DataAPIUsageBucket
 from .data_api_usage_counts import DataAPIUsageCounts
@@ -1633,11 +1643,13 @@ from .environment_job_smoke import EnvironmentJobSmoke
 from .environment_policy import EnvironmentPolicy
 from .environment_policy_kind import EnvironmentPolicyKind
 from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
+from .environment_promotion_receipt import EnvironmentPromotionReceipt
 from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_rollback_receipt import EnvironmentRollbackReceipt
 from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
 from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
@@ -6667,6 +6679,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppPrivateNetworkAttachment",
     "AppPrivateNetworkAttachmentRequest",
     "AppPrivateNetworkAttachmentResponse",
@@ -7069,6 +7083,7 @@ __all__ = (
     "ConfigRevisionDetailSecretVersions",
     "ConfigRevisionDetailVariables",
     "ConfigRevisionSource",
+    "ConfigRollbackReceipt",
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
@@ -7382,6 +7397,11 @@ __all__ = (
     "DataAPIChangeEventBatch",
     "DataAPIChangeEventBatchResponse",
     "DataAPIChangeEventBatchVersion",
+    "DataAPIChangeHookReport",
+    "DataAPIChangeHookReportPublishing",
+    "DataAPIChangeHookReportVersion",
+    "DataAPIChangeHookStatus",
+    "DataAPIChangeHookStatusPublishing",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -7394,6 +7414,8 @@ __all__ = (
     "DataAPIServerKeyPermissionSet",
     "DataAPIServerKeyPermissionSetAccess",
     "DataAPIServerKeySlot",
+    "DataAPIStatus",
+    "DataAPIStatusRuntimeReports",
     "DataAPIUsage",
     "DataAPIUsageBucket",
     "DataAPIUsageCounts",
@@ -7893,11 +7915,13 @@ __all__ = (
     "EnvironmentPolicy",
     "EnvironmentPolicyKind",
     "EnvironmentPolicyMatchHeaders",
+    "EnvironmentPromotionReceipt",
     "EnvironmentQueueBinding",
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRollbackReceipt",
     "EnvironmentRouteBudgetReceipt",
     "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",

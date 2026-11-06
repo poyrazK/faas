@@ -651,6 +651,9 @@ It reports:
 
 A section shows as unknown when its history is gone: config history keeps
 the last 100 revisions per scope, and image releases have no build SBOM.
+A release whose build made no artifact (failed, cancelled or still running)
+has no runtime base yet: the runtime base is not listed as a changed setting,
+and the summary ends with `runtime base unknown: v2 made no build artifact`.
 The approval page and the "approval needed" message show the same
 comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
@@ -1106,7 +1109,12 @@ replaced. The check runs every 15 seconds, and the release keeps serving until
 the previous one is ready again. While a rollout runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
-`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale release traffic rollback my-api` (the same as
+`gregale rollouts recover my-api --action abort`). For a split you set by
+hand with `release traffic set`, the same command gives the release with the
+largest share all traffic; `--to v6` names another, and a tie needs it. It
+acts on one environment (`--env`, or the only one the app is live in), and
+refuses if traffic changes while it runs. If a rollout wedges,
 `gregale rollouts recover my-api --action advance|promote|abort` is the manual
 escape hatch.
 

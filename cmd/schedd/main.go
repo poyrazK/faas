@@ -809,8 +809,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
+	// ADR-20261101215228: the values that shape a listed app's CPU, and the
+	// list itself, are runtime config.
+	cpuShape := &cpuShapeConfig{engine: engine}
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			if handled, err := cpuShape.apply(key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
 				return err
@@ -1824,12 +1833,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
-	if err := engine.SetGuestVCPUFromCPUApps(cfg.GuestVCPUFromCPUApps); err != nil {
-		return err
-	}
-	if len(cfg.GuestVCPUFromCPUApps) > 0 {
-		log.Info("guest vCPUs follow CPU quota for listed apps (ADR-20261101160231)", "apps", cfg.GuestVCPUFromCPUApps)
-	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -1862,6 +1865,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 		log.Info("owner cache enabled (ADR-1741)")
+	}
+	if cfg.AsyncWakeFinalize {
+		engine.WithAsyncWakeFinalize()
+		log.Info("async wake finalize enabled (ADR-20261105090246)")
 	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
@@ -2552,7 +2559,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
 		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
-			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
+			Enabled: true, Owner: owner, NodeID: strings.TrimSpace(ownerNodeID), MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
@@ -2831,6 +2838,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
+	// ADR-20261105090246: keep the records of wakes that already answered.
+	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
+	if err := engine.WaitWakeFinalize(stopCtx); err != nil {
+		log.Warn("schedd: wake bookkeeping still running at shutdown", "err", err)
+	}
 	if httpSrv != nil {
 		//nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		_ = httpSrv.Shutdown(stopCtx)

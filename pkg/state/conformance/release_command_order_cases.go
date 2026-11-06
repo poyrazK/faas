@@ -59,15 +59,17 @@ func testReleaseCommandOrder(t *testing.T, fx *Fixture) {
 	if !ok {
 		t.Skip("store has no release outcome checks")
 	}
-	r := releaseOrderFixture{t: t, fx: fx, base: time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)}
+	// Times run from now: a store may start a release command at its own
+	// clock when that is later than the worker's.
+	r := releaseOrderFixture{t: t, fx: fx, base: time.Now().UTC().Truncate(time.Microsecond)}
 	v1, v2, staging := r.deploy("production"), r.deploy("production"), r.deploy("staging")
 	first, second, other := r.task(v1, 0), r.task(v2, time.Second), r.task(staging, 2*time.Second)
 
-	got, err := r.claim(3*time.Second, time.Second)
+	got, err := r.claim(3*time.Second, time.Minute)
 	if err != nil || got.ID != first.ID {
 		t.Fatalf("first claim = %s (err=%v), want the oldest release command %s", got.ID, err, first.ID)
 	}
-	if got, err = r.claim(3*time.Second, time.Minute); err != nil || got.ID != other.ID {
+	if got, err = r.claim(3*time.Second, time.Hour); err != nil || got.ID != other.ID {
 		t.Fatalf("second claim = %s (err=%v), want the other scope's command %s", got.ID, err, other.ID)
 	}
 	if got, err = r.claim(3*time.Second, time.Minute); !errors.Is(err, state.ErrNotFound) {
@@ -77,10 +79,10 @@ func testReleaseCommandOrder(t *testing.T, fx *Fixture) {
 		t.Fatalf("MarkAppTaskRunning: %v", err)
 	}
 	// The worker is lost: the running command fails without an exit code.
-	if _, err := fx.Store.SweepExpiredAppTasks(fx.Ctx, r.base.Add(6*time.Second)); err != nil {
+	if _, err := fx.Store.SweepExpiredAppTasks(fx.Ctx, r.base.Add(2*time.Minute)); err != nil {
 		t.Fatalf("SweepExpiredAppTasks: %v", err)
 	}
-	if got, err = r.claim(7*time.Second, time.Minute); !errors.Is(err, state.ErrNotFound) {
+	if got, err = r.claim(2*time.Minute+time.Second, time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("claim after a lost command = %s (err=%v), want it held until checked", got.ID, err)
 	}
 	uncertain, err := outcomes.UncertainReleaseTask(fx.Ctx, fx.Account.ID, fx.App.ID, "production", v2.ID)
@@ -90,7 +92,7 @@ func testReleaseCommandOrder(t *testing.T, fx *Fixture) {
 	if _, err := outcomes.UncertainReleaseTask(fx.Ctx, fx.Account.ID, fx.App.ID, "staging", ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("UncertainReleaseTask(other scope) = %v, want ErrNotFound", err)
 	}
-	check := state.ReleaseOutcomeCheck{AccountID: fx.Account.ID, CheckedBy: "ops@example.com", Note: "migration applied", CheckedAt: r.base.Add(8 * time.Second)}
+	check := state.ReleaseOutcomeCheck{AccountID: fx.Account.ID, CheckedBy: "ops@example.com", Note: "migration applied", CheckedAt: r.base.Add(2*time.Minute + 2*time.Second)}
 	check.TaskID = second.ID
 	if _, err := outcomes.RecordReleaseOutcomeCheck(fx.Ctx, check); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("check of a queued command = %v, want ErrConflict", err)
@@ -102,7 +104,7 @@ func testReleaseCommandOrder(t *testing.T, fx *Fixture) {
 	if _, err := outcomes.RecordReleaseOutcomeCheck(fx.Ctx, check); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("second check = %v, want ErrConflict", err)
 	}
-	if got, err = r.claim(9*time.Second, time.Minute); err != nil || got.ID != second.ID {
+	if got, err = r.claim(2*time.Minute+3*time.Second, time.Minute); err != nil || got.ID != second.ID {
 		t.Fatalf("claim after the check = %s (err=%v), want %s", got.ID, err, second.ID)
 	}
 }

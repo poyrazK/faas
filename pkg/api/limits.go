@@ -323,29 +323,37 @@ const (
 
 // Product Control internal contract bounds. Customer quotas are explicit grants.
 const (
-	ProductControlMaxFeatures                             = 32
-	ProductControlAccessMaxRoles                          = 32
-	ProductControlAccessRoleMaxBytes                      = 32
-	ProductControlAccessMaxPermissions                    = 6
-	ProductControlTeamMaxMembers                          = 500
-	ProductControlTeamMaxInvitations                      = 500
-	ProductControlTeamMaxAuthRoles                        = 64
-	ProductControlTeamMaxAuthPermissions                  = 64
-	ProductControlTeamAuthPermissionMaxBytes              = 64
-	ProductControlTeamResponseMaxBytes                    = 1 << 20
-	ProductControlTeamEmailMaxBytes                       = 320
-	ProductControlTeamContextMaxBytes                     = 4096
-	ProductControlTeamInvitationMinSeconds                = 300
-	ProductControlTeamInvitationMaxSeconds                = 14 * 24 * 60 * 60
-	ProductControlTeamInvitationDefaultSeconds            = 7 * 24 * 60 * 60
-	ProductControlTeamHistoryPageSize                     = 100
-	ProductControlPlanPolicyMaxSources                    = 32
-	ProductControlPlanPolicyMaxTargets                    = 32
-	ProductControlAuthBodyBytes                           = 16 << 10
-	ProductControlCookieTokenMaxBytes                     = 3500
-	ProductControlAuthResponseBytes                       = 256 << 10
-	ProductControlAuthMaxOrganizations                    = 100
-	ProductControlAuthTimeoutSeconds                      = 10
+	ProductControlMaxFeatures                  = 32
+	ProductControlAccessMaxRoles               = 32
+	ProductControlAccessRoleMaxBytes           = 32
+	ProductControlAccessMaxPermissions         = 6
+	ProductControlTeamMaxMembers               = 500
+	ProductControlTeamMaxInvitations           = 500
+	ProductControlTeamMaxAuthRoles             = 64
+	ProductControlTeamMaxAuthPermissions       = 64
+	ProductControlTeamAuthPermissionMaxBytes   = 64
+	ProductControlTeamResponseMaxBytes         = 1 << 20
+	ProductControlTeamEmailMaxBytes            = 320
+	ProductControlTeamContextMaxBytes          = 4096
+	ProductControlTeamInvitationMinSeconds     = 300
+	ProductControlTeamInvitationMaxSeconds     = 14 * 24 * 60 * 60
+	ProductControlTeamInvitationDefaultSeconds = 7 * 24 * 60 * 60
+	ProductControlTeamHistoryPageSize          = 100
+	ProductControlPlanPolicyMaxSources         = 32
+	ProductControlPlanPolicyMaxTargets         = 32
+	ProductControlAuthBodyBytes                = 16 << 10
+	ProductControlCookieTokenMaxBytes          = 3500
+	ProductControlAuthResponseBytes            = 256 << 10
+	ProductControlAuthMaxOrganizations         = 100
+	ProductControlAuthTimeoutSeconds           = 10
+	// ProductPortalSignInFailuresPerEmail failed sign-ins for one email
+	// address on one product's portal within ProductPortalSignInFailureWindow
+	// refuse the next with 429 before the product's login service is asked;
+	// ProductPortalSignInFailureKeysMax bounds the addresses tracked (bug hunt
+	// H81).
+	ProductPortalSignInFailuresPerEmail                   = 10
+	ProductPortalSignInFailureWindow                      = 15 * time.Minute
+	ProductPortalSignInFailureKeysMax                     = 50_000
 	ProductControlSessionMaxSeconds                       = 7 * 24 * 60 * 60
 	ProductControlReceiptMaxBytes                         = 8192
 	ProductControlRecoveryMaxEntries                      = 64
@@ -2699,6 +2707,19 @@ const ObjectOwnedCleanupBucketBatch = 20
 
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
+// Operator usage evidence is bounded independently of customer plan allowances.
+// Access-log identities remain in memory only for one complete export attempt.
+const (
+	MaxObjectStorageUsageReportBytes       = 4 << 20
+	MaxObjectStorageUsageReportRows        = 10_000
+	MaxObjectStorageUsagePriceBytes        = 128
+	MaxObjectStorageAccessLogObjects       = 10_000
+	MaxObjectStorageAccessLogBytes         = 64 << 20
+	MaxObjectStorageAccessLogRecords       = 1_000_000
+	MaxObjectStorageAccessLogLineBytes     = 1 << 20
+	MaxObjectStorageAccessLogCoverageBytes = 8 << 20
+)
+
 // Permanent immutable deletion is a single bounded provider attempt. Its
 // durable public selector makes retry safe after an uncertain acknowledgment.
 const ObjectVersionDeleteOperationTimeout = time.Minute
@@ -3371,6 +3392,108 @@ func ValidAnyAppCPUCeilingMillicores(v int) bool {
 	return false
 }
 
+// Runtime-config bounds for the values that shape a listed app's CPU
+// (ADR-20261101215228): `app_cpu_baseline_millicores_per_gb`,
+// `app_cpu_ceiling_floor_millicores` and `guest_vcpu_millicores`. An unset
+// key takes the compiled value above, which is also each key's default.
+const (
+	AppCPUBaselineMillicoresPerGBMin = 125
+	AppCPUBaselineMillicoresPerGBMax = 2000
+	AppCPUCeilingFloorMillicoresMin  = 250
+	AppCPUCeilingFloorMillicoresMax  = 2000
+	GuestVCPUMillicoresMin           = 500
+	GuestVCPUMillicoresMax           = 2000
+)
+
+// ValidAppCPUBaselineMillicoresPerGB reports whether v is a valid
+// `app_cpu_baseline_millicores_per_gb`.
+func ValidAppCPUBaselineMillicoresPerGB(v int) bool {
+	return v >= AppCPUBaselineMillicoresPerGBMin && v <= AppCPUBaselineMillicoresPerGBMax
+}
+
+// ValidAppCPUCeilingFloorMillicores reports whether v is a valid
+// `app_cpu_ceiling_floor_millicores`: a ceiling the host and guest cgroups
+// enforce, so a customer shape or whole cores, within the key's bounds.
+func ValidAppCPUCeilingFloorMillicores(v int) bool {
+	if v < AppCPUCeilingFloorMillicoresMin || v > AppCPUCeilingFloorMillicoresMax {
+		return false
+	}
+	return ValidAppCPUMillicores(v) || v%1000 == 0
+}
+
+// ValidGuestVCPUMillicores reports whether v is a valid `guest_vcpu_millicores`.
+func ValidGuestVCPUMillicores(v int) bool {
+	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
+}
+
+// CPUShape holds the runtime-config values that shape the CPU of an app on
+// schedd's `guest_vcpu_from_cpu_apps` list (ADR-20261101215228). A zero field
+// takes the compiled value, so the zero CPUShape is ADR-20261101160231 as
+// compiled.
+//
+// A ceiling is never above the plan's compiled ceiling
+// (AppCPUCeilingMillicores), which vmmd and guest-init of this release
+// accept, and vCPUs never above the plan's compiled count. Config can lower a
+// plan's CPU or move its booking; raising a ceiling past the compiled one
+// needs a release whose vmmd accepts it.
+type CPUShape struct {
+	BaselineMillicoresPerGB int
+	CeilingFloorMillicores  int
+	VCPUMillicores          int
+}
+
+func (s CPUShape) baselinePerGB() int {
+	if s.BaselineMillicoresPerGB > 0 {
+		return s.BaselineMillicoresPerGB
+	}
+	return AppCPUBaselineMillicoresPerGB
+}
+
+func (s CPUShape) ceilingFloor() int {
+	if s.CeilingFloorMillicores > 0 {
+		return s.CeilingFloorMillicores
+	}
+	return AppCPUCeilingFloorMillicores
+}
+
+func (s CPUShape) vcpuMillicores() int {
+	if s.VCPUMillicores > 0 {
+		return s.VCPUMillicores
+	}
+	return GuestVCPUMillicores
+}
+
+// BaselineForPlanRAM is the CPU an instance of a plan with planRAMMB books.
+func (s CPUShape) BaselineForPlanRAM(planRAMMB int) int {
+	return planRAMMB * s.baselinePerGB() / 1024
+}
+
+// CeilingForPlanRAM is the burst ceiling (cpu.max) of a plan with planRAMMB:
+// max(floor, baseline), rounded up to a value the cgroups enforce and capped
+// at the plan's compiled ceiling.
+func (s CPUShape) CeilingForPlanRAM(planRAMMB int) int {
+	want := roundUpAppCPUCeiling(max(s.ceilingFloor(), s.BaselineForPlanRAM(planRAMMB)))
+	return min(want, AppCPUCeilingMillicoresForPlanRAM(planRAMMB))
+}
+
+// VCPUs is the guest vCPU count for a ceiling: one per VCPUMillicores, at
+// least one and at most planVCPUs.
+func (s CPUShape) VCPUs(ceilingMillicores, planVCPUs int) int {
+	per := s.vcpuMillicores()
+	return max(1, min(planVCPUs, (ceilingMillicores+per-1)/per))
+}
+
+// roundUpAppCPUCeiling rounds v up to the next customer shape, or past one
+// core to whole cores.
+func roundUpAppCPUCeiling(v int) int {
+	for _, shape := range []int{250, 500, DefaultAppCPUMillicores} {
+		if v <= shape {
+			return shape
+		}
+	}
+	return (v + 999) / 1000 * 1000
+}
+
 // BlockRateLimit is a VM's sustained limit on its writable app-layer drive
 // (ADR-910): Firecracker token buckets on bandwidth and on operations. It
 // keeps one tenant's disk flood from starving its neighbours' I/O; the
@@ -3806,7 +3929,17 @@ const (
 	// (ADR-20261103163954 §4).
 	PublicReadNewHostLookupsPerSecond = 25
 	PublicReadNewHostLookupBurst      = 500
-	PublicReadKnownHostsMax           = 100_000
+	// Wildcard recovery stays bounded while ordinary unknown-host floods cannot
+	// monopolize legacy wildcard customers' first lookup after a restart.
+	PublicReadWildcardRecoveryPerSecond = 5
+	PublicReadWildcardRecoveryBurst     = 50
+	PublicReadKnownHostsMax             = 100_000
+	// PublicReadHostLookupTimeout bounds one host's mount lookup (app and
+	// buckets). Concurrent misses for a host share that one lookup, so it runs
+	// apart from the request that started it; each waiting request still
+	// leaves at its own deadline. It covers dialing a fresh control-plane
+	// connection from a compute edge.
+	PublicReadHostLookupTimeout = 2 * time.Second
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -8845,6 +8978,11 @@ const (
 	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
 	// keeps per app to seed new instances of that app.
 	DNSGatedEgressAppSeedMax = 4096
+
+	// Timed egress grants are bounded per instance and address family by the
+	// corresponding kernel set capacities (ADR 20261105120000).
+	DNSGatedEgressInstanceFamilyMax = 65535
+	DatabaseEgressInstanceFamilyMax = 1024
 	// ADR-371 egress flow log: rows are kept EgressFlowLogRetentionDays
 	// (long enough to answer a provider abuse report, which can arrive
 	// weeks later) and an operator lookup returns at most
@@ -9499,6 +9637,11 @@ const (
 	OnDemandTLSAskKnownHostPageSize  = 1024
 	OnDemandTLSAskKnownHostRefresh   = 5 * time.Minute
 	OnDemandTLSAskKnownHostRetry     = time.Second
+	// The admission ledger retains one week, with at most 150 new hosts
+	// per three hours. One extra window covers boundary timestamps.
+	OnDemandTLSAskRecentHostRows    = OnDemandTLSFleetNewHostsPer3h * (7*24/3 + 1)
+	OnDemandTLSAskRecentHostRetry   = time.Second
+	OnDemandTLSAskRecentHostWaiters = 512
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -13021,22 +13164,23 @@ const (
 	// a restart, each host's first request, which the burst covers. A flood
 	// of random names under the apps wildcard spends this budget instead of
 	// control-plane Postgres reads. A read waits up to
-	// GatewayNewHostLookupMaxWait for budget; past that the request is
-	// answered 503 traffic_policy_unavailable with Retry-After, never 404
-	// (ADR-20261103163954 §4).
-	GatewayNewHostLookupsPerSecond = 25
-	GatewayNewHostLookupBurst      = 500
-	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// GatewayNewHostLookupMaxWait for budget; past that it may wait for a
+	// shared recent-host catch-up before returning 503 with Retry-After,
+	// never 404 (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond   = 25
+	GatewayNewHostLookupBurst        = 500
+	GatewayWildcardRecoveryPerSecond = 5
+	GatewayWildcardRecoveryBurst     = 50
+	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
 	// The gateway and the edge preload every app slug and verified custom
-	// domain (at most KnownRouteHostsMax of each), refreshed every
-	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
-	// new-host budgets above or PublicReadNewHostLookups*. Only names that
-	// are not an app's do: after a restart a flood of random names no longer
-	// answers 503 for apps the process has not yet served. Wildcard custom
-	// domains are not preloaded (ADR-20261103163954 §4).
+	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
+	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
+	// can skip the lookup budget; wildcard patterns only qualify for the
+	// separately bounded recovery budget (ADR-520 amendment 14).
 	KnownRouteHostsMax             = 1_000_000
 	KnownRouteHostsRefreshInterval = time.Minute
 	KnownRouteHostsRefreshTimeout  = 20 * time.Second
+	KnownRouteRecentHostTimeout    = 3 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -13770,12 +13914,57 @@ var tenantEgressForbiddenPorts = map[int]string{
 	53: "DNS is pinned to the platform resolver", 853: "DNS is pinned to the platform resolver",
 }
 
+// TenantEgressAllowlistBlockedPorts are the TCP ports that stay closed to an
+// app's allowlisted destinations, in ascending order: every forbidden port
+// but the SMTP submission ports 465 and 587, which ADR-031 opens to
+// explicitly listed mail providers. Allowlisted destinations used to skip
+// the ADR-361 port policy entirely, so a wide allowlist reopened SSH, SMB,
+// IRC and mining ports (bug hunt H69).
+func TenantEgressAllowlistBlockedPorts() []int {
+	ports := make([]int, 0, len(tenantEgressForbiddenPorts))
+	for port := range tenantEgressForbiddenPorts {
+		if port != 465 && port != 587 {
+			ports = append(ports, port)
+		}
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // TenantEgressForbiddenPort reports whether an app may not declare port as
 // extra egress (ADR-361), and why.
 func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	reason, forbidden = tenantEgressForbiddenPorts[port]
 	return reason, forbidden
 }
+
+// VmmdLogRingBudgetBytes bounds the customer log lines all live instances'
+// rings hold in one vmmd's memory, which the control-plane slice pays for,
+// split evenly across live instances but never below VmmdLogRingFloorBytes
+// each (bug hunt H47). Lines a ring evicts go to the log archive spool.
+const (
+	VmmdLogRingBudgetBytes int64 = 512 << 20
+	VmmdLogRingFloorBytes  int64 = 256 << 10
+)
+
+// A release that OOMs on every request looped forever: each kill re-staled
+// its snapshots and the next wake cold-booted into the same OOM (bug hunt
+// H34). Only the first kill in WorkloadOOMBackoffWindow re-stales them, and
+// WorkloadOOMBackoffKills kills in the window back off the deployment's
+// wakes with a 503, starting at WorkloadOOMBackoffInitial and doubling up
+// to WorkloadOOMBackoffMax while the kills continue.
+const (
+	WorkloadOOMBackoffWindow  = 5 * time.Minute
+	WorkloadOOMBackoffKills   = 5
+	WorkloadOOMBackoffInitial = 30 * time.Second
+	WorkloadOOMBackoffMax     = 5 * time.Minute
+)
+
+// VmmdScanRefusalRefreshTTL is how long one canonical re-read of a refused
+// base's scan sidecar answers the boots that follow it. Concurrent refusals
+// share the re-read, so a cold burst against a fail-closed sidecar costs one
+// object-store read per interval instead of one per wake (bug hunt O36).
+const VmmdScanRefusalRefreshTTL = 5 * time.Second
 
 // UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
 // a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
@@ -14010,6 +14199,21 @@ const (
 	// without chaos for ServiceDNSChaosBackoff instead of retrying per question.
 	ServiceDNSChaosLookupTimeout = 250 * time.Millisecond
 	ServiceDNSChaosBackoff       = 5 * time.Second
+	// ServiceDNSChaosCacheTTL is how long a node keeps one caller address and
+	// name's chaos policy, found or not, and ServiceDNSChaosCacheMax how many
+	// it keeps: every guest *.svc.gregale question read the control plane
+	// for a test-only feature almost no app uses (bug hunt H33). A new or
+	// ended scenario run takes effect within the TTL.
+	ServiceDNSChaosCacheTTL = 2 * time.Second
+	ServiceDNSChaosCacheMax = 4096
+	// PlatformTenantJWTCacheTTL is how long a gateway keeps a JWT customer
+	// claim's platform tenant, found or not; a suspended tenant is refused
+	// within it. While the store is unavailable the last answer serves for
+	// PlatformTenantJWTOutageGrace instead of refusing every request.
+	// PlatformTenantJWTCacheMax bounds the claims kept (bug hunt H29).
+	PlatformTenantJWTCacheTTL    = 5 * time.Second
+	PlatformTenantJWTOutageGrace = 5 * time.Minute
+	PlatformTenantJWTCacheMax    = 20_000
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
@@ -14548,9 +14752,15 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
-	RequestAnalyticsRollupFlushInterval  = 10 * time.Second
-	RequestAnalyticsRollupFlushRowsMax   = 1000
-	RequestAnalyticsRollupDimensionsMax  = 50
+	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupFlushRowsMax  = 1000
+	RequestAnalyticsRollupDimensionsMax = 50
+	// The buffer holds up to this many values of a kind per app minute
+	// before folding new ones into __other__; the flush keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them.
+	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// App minutes whose lost rollups wait to be recorded as gaps.
+	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
@@ -14935,6 +15145,9 @@ const (
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
+	// AppHealthCollectorWorkers collect due apps concurrently in each sweep
+	// (bug hunt O35); each claims up to AppHealthCollectorBatch apps.
+	AppHealthCollectorWorkers       = 4
 	AppHealthHistoryPageSize        = 20
 	AppHealthHistoryMaxPage         = 100
 	AppHealthHistoryMaxEntries      = 100
@@ -15092,6 +15305,11 @@ const (
 	// largest DATA_API_POOL an owner may set.
 	DataAPIDefaultPoolConnections = 2
 	DataAPIMaxPoolConnections     = 8
+	// A pool above the default needs an app of at least this much RAM. The
+	// runtime (Node gateway + PostgREST 14.3) measured 96 MB idle and 151 MB
+	// at peak with the default pool, 197 MB at peak with 8 connections, before
+	// guest overhead: the default fits a 256 MB app, a larger pool does not.
+	DataAPILargePoolMinRAMMB = 512
 	// Read-only connection-budget planning, not SQL quotas or reservations.
 	DataAPIConnectionBudgetMaxDatabases      = 100
 	DataAPIConnectionBudgetMaxBindings       = 1024
@@ -15148,6 +15366,23 @@ const (
 	DataAPIChangeEventsPublishTimeout = 10 * time.Second
 	DataAPIChangeEventsIdleMin        = time.Second
 	DataAPIChangeEventsIdleMax        = 30 * time.Second
+	// Change hook delivery reports, mirrored in the runtime's limits: the
+	// report body bound, the largest count it carries, the clock skew its
+	// times may show, how often a runtime reports a change in delivery and how
+	// often it reports while nothing changes.
+	DataAPIChangeHookReportMaxBytes  = 4 << 10
+	DataAPIChangeHookReportCountMax  = 1_000_000_000_000
+	DataAPIChangeHookReportClockSkew = 5 * time.Minute
+	DataAPIChangeHookReportInterval  = time.Minute
+	DataAPIChangeHookReportHeartbeat = 10 * time.Minute
+	// A drain schedule (a cron the CLI creates) wakes a parked Data API so
+	// changes recorded by other writers publish: each run waits at most
+	// DataAPIChangeHooksDrainWait for the backlog and the cron allows
+	// DataAPIChangeHooksDrainCronTimeout. DataAPIChangeHooksDrainPath is the
+	// runtime route, answered only for platform cron requests.
+	DataAPIChangeHooksDrainWait        = 45 * time.Second
+	DataAPIChangeHooksDrainCronTimeout = 60 * time.Second
+	DataAPIChangeHooksDrainPath        = "/__gregale/hooks/drain"
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
@@ -17334,6 +17569,7 @@ const (
 	DataPipelineCheckConcurrency           = 2
 	DataPipelineSetupConcurrency           = 2
 	DataPipelineWorkerIdleInterval         = time.Second
+	DataPipelineCatalogRetryMax            = 30 * time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17368,22 +17604,23 @@ const (
 // Pipeline health webhooks have one encrypted destination per pipeline. The
 // independent catalog worker debounces incidents and recovery before delivery.
 const (
-	DataPipelineAlertDebounce           = 2 * time.Minute
-	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
-	DataPipelineAlertCheckInterval      = 15 * time.Second
-	DataPipelineAlertWorkerInterval     = time.Second
-	DataPipelineAlertBatch              = 32
-	DataPipelineAlertHistoryMax         = 100
-	DataPipelineAlertPendingMax         = 100
-	DataPipelineAlertAttemptsMax        = 7
-	DataPipelineAlertAttemptTimeout     = 10 * time.Second
-	DataPipelineAlertLease              = 30 * time.Second
-	DataPipelineAlertRetryBase          = 30 * time.Second
-	DataPipelineAlertRetryMax           = 6 * time.Hour
-	DataPipelineAlertURLMaxBytes        = 2048
-	DataPipelineAlertSecretMinBytes     = 32
-	DataPipelineAlertSecretMaxBytes     = 256
-	DataPipelineAlertRetryAfterMaxBytes = 256
+	DataPipelineAlertDebounce            = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce    = 30 * time.Second
+	DataPipelineAlertCheckInterval       = 15 * time.Second
+	DataPipelineAlertWorkerInterval      = time.Second
+	DataPipelineAlertBatch               = 32
+	DataPipelineAlertDeliveryConcurrency = 8
+	DataPipelineAlertHistoryMax          = 100
+	DataPipelineAlertPendingMax          = 100
+	DataPipelineAlertAttemptsMax         = 7
+	DataPipelineAlertAttemptTimeout      = 10 * time.Second
+	DataPipelineAlertLease               = 30 * time.Second
+	DataPipelineAlertRetryBase           = 30 * time.Second
+	DataPipelineAlertRetryMax            = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes         = 2048
+	DataPipelineAlertSecretMinBytes      = 32
+	DataPipelineAlertSecretMaxBytes      = 256
+	DataPipelineAlertRetryAfterMaxBytes  = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
@@ -17640,3 +17877,7 @@ const (
 	DomainVerificationPassTimeout    = 25 * time.Second
 	DomainVerificationCleanupTimeout = 3 * time.Second
 )
+
+// MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
+// (ADR-20261106114500); the catalog CHECK enforces the same bound.
+const MaxObjectKeyScopeBytes = 512

@@ -113,6 +113,10 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// resident holds verified copies of the jailer and firecracker executables
+	// on the jail tmpfs (ADR-20261105100000), launched in place of the
+	// installed ones so a wake after an idle spell reads nothing from disk.
+	resident residentExecs
 	// guestDisk is the sandboxed editor every drive read and write goes
 	// through (ADR-20261025090100).
 	guestDisk guestDiskState
@@ -184,6 +188,8 @@ type JailerVMM struct {
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
 	// budget is released when the instance is gone (invariant §6.2-4).
 	rings map[string]*logbuf.Ring
+	// logBudget bounds the bytes every ring holds together (bug hunt H47).
+	logBudget *logbuf.Budget
 	// slowSubscriber (issue #309 / tier-2 DX) is the per-VMM
 	// callback installed at every ring that registerRing
 	// creates. Nil = no callback wired; registerRing skips the
@@ -312,13 +318,15 @@ type restoreTimingBreakdown struct {
 	MaterializeVMStateMs int64
 	ResolveImagesMs      int64
 	StageDrivesMs        int64
-	// TunWaitMntnsMs .. CgroupFenceMs split the bind_tun window so an
+	// TunJournalChecksMs .. CgroupFenceMs split the bind_tun window so an
 	// optimisation targets the right thing; see bindTunTimings. Operator-
-	// facing only: they ride the Debug record and are deliberately NOT on
+	// facing only: they ride the Debug record and the tun_* / cgroup_fence
+	// vmmd_restore_phase_duration_seconds phases, and are deliberately NOT on
 	// the wake.restore_breakdown event, which is a customer contract.
-	TunWaitMntnsMs  int64
-	TunWaitChrootMs int64
-	TunSetupJailMs  int64
+	TunJournalChecksMs int64
+	TunWaitMntnsMs     int64
+	TunWaitChrootMs    int64
+	TunSetupJailMs     int64
 	// TunSetupJailWorkUs is the helper's own in-namespace duration, self
 	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
 	TunSetupJailWorkUs int64
@@ -391,6 +399,8 @@ type restoreArtifactResolution struct {
 // of timings in one value prevents pre-guest storage work from disappearing
 // behind Manager's aggregate bring_up phase.
 type coldBootTimingBreakdown struct {
+	// Backing (ADR-510) ran before this boot window and is outside TotalMs.
+	Backing          BackingCheckTimings
 	ResolveImagesMs  int64
 	ChrootMs         int64
 	ProvisionMs      int64
@@ -824,6 +834,7 @@ func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string,
 		_ = old.Close()
 	}
 	r := logbuf.New(0) // 0 -> logbuf.DefaultMaxBytes (10 MiB)
+	r.SetBudget(v.logBudget)
 	if appID != "" {
 		r.SetHourlyByteAllowance(plan.LogBytesPerInstanceHour())
 	}
@@ -1066,6 +1077,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		characterizationReceipts: make(map[string]*characterizationReceipt),
 		recs:                     make(map[string]*instanceRecord),
 		rings:                    make(map[string]*logbuf.Ring),
+		logBudget:                logbuf.NewBudget(api.VmmdLogRingBudgetBytes, api.VmmdLogRingFloorBytes),
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
 		bindSourceModes:          make(map[bindSourceKey]bindSourceMode),
@@ -1277,7 +1289,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
 	}
-	breakdown := coldBootTimingBreakdown{}
+	breakdown := coldBootTimingBreakdown{Backing: spec.Backing}
 	kernelSrc, timing, err := v.resolveColdBootArtifact(ctx, l.Instance, "kernel", spec.KernelKey)
 	if err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
@@ -2431,6 +2443,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
 		StageDrivesMs:        tStageDrives.Sub(tResolve).Milliseconds(),
+		TunJournalChecksMs:   tunTimings.JournalChecksMs,
 		TunWaitMntnsMs:       tunTimings.WaitMntnsMs,
 		TunWaitChrootMs:      tunTimings.WaitChrootMs,
 		TunSetupJailMs:       tunTimings.SetupJailMs,
@@ -2496,6 +2509,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"start_jailer_ms", breakdown.StartJailerMs,
 		"network_wait_ms", breakdown.NetworkWaitMs,
 		"bind_tun_ms", breakdown.BindTunMs,
+		"tun_journal_checks_ms", breakdown.TunJournalChecksMs,
 		"tun_wait_mntns_ms", breakdown.TunWaitMntnsMs,
 		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
 		"tun_setup_jail_ms", breakdown.TunSetupJailMs,
@@ -5581,15 +5595,14 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
-	execFile, err := exec.LookPath(FirecrackerBin)
+	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
+	// (jailer follows the symlink); see resolveFCChrootName. The resident copy
+	// keeps that basename.
+	execFile, err := resolveExecutable(FirecrackerBin)
 	if err != nil {
 		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
 	}
-	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
-	// (jailer follows the symlink); see resolveFCChrootName.
-	if real, rErr := filepath.EvalSymlinks(execFile); rErr == nil {
-		execFile = real
-	}
+	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
 		Plan:        l.Plan,
@@ -5606,6 +5619,9 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			return int64(memoryMB) << 20
 		}(),
 	}), extraFCArgs...)
+	if jailerPath, err := resolveExecutable(argv[0]); err == nil {
+		argv[0] = v.residentExecutable("jailer", jailerPath)
+	}
 	// The caller's gRPC context often ends as soon as the boot RPC returns.
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
@@ -6325,6 +6341,9 @@ func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, 
 // the jailer twice, one nsenter process spawn, then the cgroup fence), so it
 // is split before anything is optimised.
 type bindTunTimings struct {
+	// JournalChecksMs is the native path's ownership and journal checks before
+	// it starts waiting for the jailer; zero on the legacy path.
+	JournalChecksMs int64
 	// WaitMntnsMs waits for jailer to unshare its mount namespace.
 	WaitMntnsMs int64
 	// WaitChrootMs waits for the jailed helper and /dev to appear, which
@@ -7399,6 +7418,10 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		EnvPrepareMs:         b.Prepare.EnvPrepareMs,
 		PreNetworkMs:         b.Prepare.PreNetworkMs,
 		SetupNetworkMs:       b.Prepare.SetupNetworkMs,
+		BackingCheckMs:       b.Prepare.Backing.TotalMs,
+		BackingSidecarMs:     b.Prepare.Backing.SidecarMs,
+		BackingFetchMs:       b.Prepare.Backing.FetchMs,
+		BackingHashMs:        b.Prepare.Backing.HashMs,
 		RestoreGateWaitMs:    b.RestoreGateWaitMs,
 		ChrootMs:             b.ChrootMs,
 		MaterializeMemMs:     b.MaterializeMemMs,
@@ -7452,6 +7475,10 @@ func (v *JailerVMM) emitColdBootBreakdown(ctx context.Context, l Lease, at time.
 		WakeID:           fields.WakeID,
 		AppID:            fields.AppID,
 		InstanceID:       l.Instance,
+		BackingCheckMs:   b.Backing.TotalMs,
+		BackingSidecarMs: b.Backing.SidecarMs,
+		BackingFetchMs:   b.Backing.FetchMs,
+		BackingHashMs:    b.Backing.HashMs,
 		ResolveImagesMs:  b.ResolveImagesMs,
 		ChrootMs:         b.ChrootMs,
 		ProvisionMs:      b.ProvisionMs,
@@ -7494,6 +7521,7 @@ func (v *JailerVMM) logColdBootBreakdown(ctx context.Context, l Lease, b coldBoo
 		"quota_restore_ms", b.QuotaRestoreMs,
 		"total_ms", b.TotalMs,
 	}
+	attrs = append(attrs, b.Backing.attrs()...)
 	if time.Duration(b.TotalMs)*time.Millisecond >= slowColdBootBreakdownThreshold {
 		slog.Default().Warn("slow cold boot timing breakdown", attrs...)
 		return

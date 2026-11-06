@@ -1,5 +1,6 @@
 import { protocolContext, observeProtocolRequest, observeServerTransport, toolLabel } from './protocol-telemetry.js';
 import { performance } from 'node:perf_hooks';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import express from 'express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
@@ -8,9 +9,10 @@ import * as z from 'zod/v4';
 import { createAuth, verifiedCallerIdentity } from './auth.js';
 import { createRuntimeCatalog } from './catalog.js';
 import { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from './tasks.js';
-import { createResourceUpdateHub, validResourceUpdateURI } from './resource-updates.js';
+import { createResourceUpdateHub, createSubscriptionOutput, validResourceUpdateURI } from './resource-updates.js';
 
 const MCP_PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
+const taskCallContext = new AsyncLocalStorage();
 const MCP_CLIENT_CAPABILITIES_META_KEY = 'io.modelcontextprotocol/clientCapabilities';
 const MCP_SUBSCRIPTION_ID_META_KEY = 'io.modelcontextprotocol/subscriptionId';
 const MCP_SERVER_INFO_META_KEY = 'io.modelcontextprotocol/serverInfo';
@@ -49,18 +51,12 @@ function isConfiguredResourceURI(uri, patterns) {
       if (!pattern.includes('{')) return true;
       continue;
     }
-    const pieces = pattern.split(/(\{[A-Za-z_][A-Za-z0-9_]*\})/g);
-    const source = pieces.map(piece => piece.startsWith('{')
-      ? '[^/?#]+'
-      : piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
-    if (new RegExp(`^${source}$`).test(uri)) return true;
+    try {
+      // Use the same template parser as resource reads, including dotted names.
+      if (new ResourceTemplate(pattern, { list: undefined }).uriTemplate.match(uri)) return true;
+    } catch { /* Invalid patterns cannot acknowledge a resource subscription. */ }
   }
   return false;
-}
-
-function writeSseMessage(response, message) {
-  response.protocolObservation?.response(message);
-  if (!response.writableEnded && !response.destroyed) response.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
 }
 
 function jsonRpcError(response, requestID, code, message, status = 200, data) {
@@ -221,6 +217,10 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     observeServerTransport(server, protocolContext.getStore());
     if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
     for (const entry of catalog.tools()) {
+      // Each SDK server serves one HTTP request. A Tasks call returns a handle,
+      // so final-output validation belongs to its worker. Discovery and ordinary
+      // calls retain the original advertised schema and SDK validation.
+      const taskCall = era === 'modern' && taskCallContext.getStore() === entry.name && taskRuntime?.canCreate?.(entry.name);
       const callback = async (args, ctx) => {
         if (typeof taskRuntime?.canCreate === 'function' && taskRuntime.canCreate(entry.name) && clientSupportsMcpTasks(ctx)) {
           const clientCapabilities = ctx.mcpReq.envelope?.[MCP_CLIENT_CAPABILITIES_META_KEY] || {};
@@ -230,11 +230,12 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
               return { isError: true, content: [{ type: 'text', text: 'request_approval requires client support for elicitation form requests.' }] };
             }
           }
-          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities);
+          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities, entry.definition.outputSchema);
         }
         return entry.handler(args, ctx, { authInfo, config, taskRuntime });
       };
-      const tool = server.registerTool(entry.name, entry.definition, auth.toolPolicy.guard(entry.name, observe(entry.name, callback)));
+      const definition = taskCall ? { ...entry.definition, outputSchema: undefined } : entry.definition;
+      const tool = server.registerTool(entry.name, definition, auth.toolPolicy.guard(entry.name, observe(entry.name, callback)));
       if (!auth.toolPolicy.canAccess(entry.name, authInfo)) tool.disable();
     }
     for (const entry of catalog.resources()) {
@@ -335,6 +336,8 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     let ready = false;
     let closeAfterSetup = false;
     const queued = [];
+    let queuedBytes = 0;
+    let output;
     const dispose = callback => {
       try { Promise.resolve(callback?.()).catch(() => {}); } catch { /* One failed disposal must not retain other registrations or capacity. */ }
     };
@@ -343,6 +346,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       ended = true;
       clearInterval(keepAlive);
       clearTimeout(authDeadline);
+      output?.close();
       res.removeListener('close', closeNow);
       req.removeListener('aborted', closeNow);
       taskSubscriptionStreams.delete(closeGracefully);
@@ -354,9 +358,25 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
       subscription = undefined;
       dispose(() => current?.close());
       queued.length = 0;
-      if (endResponse && !res.writableEnded && !res.destroyed) res.end();
+      queuedBytes = 0;
+      if (endResponse && !res.writableEnded && !res.destroyed) {
+        if (res.writableNeedDrain) res.destroy();
+        else res.end();
+      }
     };
     const closeNow = () => cleanup(true);
+    const abortOutput = () => { cleanup(false); res.destroy(); };
+    output = createSubscriptionOutput(res, abortOutput);
+    function sendMessage(message) {
+      if (ended) return;
+      const frame = `event: message\ndata: ${JSON.stringify(message)}\n\n`;
+      res.protocolObservation?.response(message);
+      if (ready) { output.write(frame); return; }
+      const bytes = Buffer.byteLength(frame);
+      if (queuedBytes + bytes > output.maxBufferedBytes) { abortOutput(); return; }
+      queued.push(frame);
+      queuedBytes += bytes;
+    }
     const closeGracefully = (closePending = false) => {
       if (ended) return;
       if (closePending && !ready) { closeNow(); return; }
@@ -368,18 +388,17 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
         },
       } };
       if (!ready) {
-        queued.push(result);
+        sendMessage(result);
         closeAfterSetup = true;
         return;
       }
-      writeSseMessage(res, result);
+      sendMessage(result);
       closeNow();
     };
     function deliver(message) {
       if (ended) return;
       if (req.auth?.expiresAt * 1000 <= Date.now()) { closeNow(); return; }
-      if (!ready) { queued.push(message); return; }
-      writeSseMessage(res, message);
+      sendMessage(message);
     }
     function sendTask(task) {
       const params = {
@@ -542,19 +561,24 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
         'X-Accel-Buffering': 'no',
       });
       res.flushHeaders?.();
-      writeSseMessage(res, { jsonrpc: '2.0', method: 'notifications/subscriptions/acknowledged', params: {
+      const acknowledged = { jsonrpc: '2.0', method: 'notifications/subscriptions/acknowledged', params: {
         notifications: honored,
         _meta: { [MCP_SUBSCRIPTION_ID_META_KEY]: requestID },
-      } });
+      } };
+      res.protocolObservation?.response(acknowledged);
+      output.write(`event: message\ndata: ${JSON.stringify(acknowledged)}\n\n`);
+      if (ended) return;
       for (const task of subscription?.tasks || []) {
         if (requestedTaskIDSet.has(task.taskId.toLowerCase())) sendTask(task);
       }
       ready = true;
-      for (const message of queued.splice(0)) writeSseMessage(res, message);
+      queuedBytes = 0;
+      for (const frame of queued.splice(0)) if (!output.write(frame)) break;
+      if (ended) return;
       if (closeAfterSetup) closeNow();
       else if (Object.keys(honored).length === 0) closeGracefully();
       else {
-        keepAlive = setInterval(() => { if (!ended && !res.destroyed) res.write(': keepalive\n\n'); }, TASK_SUBSCRIPTION_KEEPALIVE_MS);
+        keepAlive = setInterval(() => { if (!ended) output.write(': keepalive\n\n'); }, TASK_SUBSCRIPTION_KEEPALIVE_MS);
         keepAlive.unref?.();
       }
     } catch {
@@ -610,10 +634,19 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
         void serveTaskSubscription(req, res).catch(next);
         return;
       }
-      void nodeHandler(req, res, req.body).catch(next);
+      const taskName = req.body?.method === 'tools/call'
+        && clientSupportsMcpTasks({ mcpReq: { envelope: req.body?.params?._meta } }) ? req.body?.params?.name : undefined;
+      taskCallContext.run(taskName, () => { void nodeHandler(req, res, req.body).catch(next); });
     });
   });
-  app.use((_error, _req, res, _next) => {
+  app.use((error, _req, res, _next) => {
+    if (!res.headersSent) res.setHeader('Cache-Control', 'no-store');
+    if (!res.headersSent && error?.type === 'entity.parse.failed') {
+      return jsonRpcError(res, null, -32700, 'Parse error', 400);
+    }
+    if (!res.headersSent && error?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'request_too_large' });
+    }
     // Error messages can contain submitted values; use a stable, redacted event.
     console.error(JSON.stringify({ event: 'mcp_http_error' }));
     if (!res.headersSent) res.status(500).json({ error: 'internal_error' });

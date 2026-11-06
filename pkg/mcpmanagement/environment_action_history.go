@@ -53,6 +53,7 @@ type environmentActionDetail struct {
 }
 
 func registerEnvironmentActionHistory(s *mcp.Server, m *management) {
+	register(s, m, "gregale_get_environment_action_outcome", "Read the exact original environment promotion or rollback acceptance receipt from retained history, including after plan expiry. Requires current source/target and project-workload read consent. Missing evidence stays unresolved; acceptance is separate from restoration and health. Never replays, replans, changes history or renews authority.", m.getEnvironmentActionOutcome)
 	register(s, m, "gregale_list_environment_actions", "List this connection's bounded, redacted promotion/rollback history for an exact project and target environment. Both environments and all project workloads require current read consent. Approval states are recorded snapshots, never approval authority or native completion.", m.listEnvironmentActions)
 	register(s, m, "gregale_get_environment_action", "Inspect an original environment plan's recorded approval/attempt and promotion reference, including after expiry. Approval credentials, review links and workload payloads are excluded. Resume only through the original guarded apply tool; human approval remains mandatory.", m.getEnvironmentAction)
 }
@@ -256,5 +257,5 @@ func (m *management) environmentActionView(e environmentActionRecord, now time.T
 	if !view.PlanAvailable && e.Apply.State != "accepted" {
 		view.NextStep, view.RetryTool = "inspect_native_state_before_replanning", ""
 	}
-	return view
+	return m.addEnvironmentOutcomeRecovery(view, now)
 }

@@ -138,6 +138,8 @@ from .app_operation_preview_authorization import AppOperationPreviewAuthorizatio
 from .app_operation_preview_checks import AppOperationPreviewChecks
 from .app_operation_preview_operation import AppOperationPreviewOperation
 from .app_operation_preview_schema_version import AppOperationPreviewSchemaVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_release_review import AppReleaseReview
@@ -353,6 +355,7 @@ from .config_revision_detail import ConfigRevisionDetail
 from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
 from .config_revision_detail_variables import ConfigRevisionDetailVariables
 from .config_revision_source import ConfigRevisionSource
+from .config_rollback_receipt import ConfigRollbackReceipt
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
@@ -2749,6 +2752,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppReleaseReview",
@@ -2957,6 +2962,7 @@ __all__ = (
     "ConfigRevisionDetailSecretVersions",
     "ConfigRevisionDetailVariables",
     "ConfigRevisionSource",
+    "ConfigRollbackReceipt",
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",

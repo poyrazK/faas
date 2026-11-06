@@ -256,9 +256,9 @@ type Store interface {
 	// VM is active). The same shape again is a no-op; a smaller volume is
 	// ErrInvalid. The storage ledger moves to the new volume size.
 	// Turning replication on places the standby as Place does (else
-	// ErrNoCapacity); turning it off needs the standby retired (stopped,
-	// its volume gone; else ErrConflict) and owes the primary's slot
-	// (DropStandbySlot).
+	// ErrNoCapacity); turning it off needs the standby stopped (else
+	// ErrConflict). Its old volume is discarded after admission. The primary
+	// then owes a slot drop (DropStandbySlot).
 	Resize(ctx context.Context, id string, shape Shape, at time.Time) error
 	// ClearStandbySlotDrop records the primary's standby slot dropped.
 	ClearStandbySlotDrop(ctx context.Context, id string) error

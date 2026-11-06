@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // This file is the CLI's thin facade over the public SDK client in
@@ -114,6 +115,9 @@ func ExportAccountFile(c *Client, ctx context.Context, outPath string, includeSe
 	requestID := newExportRequestID()
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		tmp, err := os.CreateTemp(dir, ".gregale-export-*.tmp")
 		if err != nil {
 			return fmt.Errorf("create export file: %w", err)
