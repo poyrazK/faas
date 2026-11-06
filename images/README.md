@@ -30,7 +30,8 @@ residency, native KVM startup/memory measurements, and leak acceptance remain
 production rollout gates; wheel extraction alone does not measure these.
 
 `agent-base` is the shared, read-only drive0 for Gregale Agents runs
-(ADR-20261027090010 §2), on the same Node 22 Alpine digest as `runner-node22`. It holds
+(ADR-20261027090010 §2), on Node 22 Alpine (`runner-node22` is Debian since
+ADR-20261102133056). It holds
 the three preset harnesses: Codex CLI, OpenCode and Claude Code, the last as
 Anthropic's unmodified published binary. A preset is a binary here plus its
 command in `pkg/agentpresets/presets.json`, not an image of its own. The

@@ -1048,18 +1048,17 @@ type RuntimeBaseRef struct {
 // binary.
 //
 // ADR-053: the Debian-backed Node 24 and Python 3.12 rows declare ParentRef:
-// BaseRefDebianParent. Node 22 is standalone on Alpine, and Python 3.13 is
-// standalone on Wolfi; neither OCI chain can compose over the Debian parent.
-// Those full chains use the legacy (parentRef="") path. The shared parent is
+// BaseRefDebianParent. Node 22 is Debian but standalone (ADR-20261102133056:
+// its trixie layer need not match the parent's), and Python 3.13 is
+// standalone on Wolfi. Those full chains use the legacy (parentRef="") path. The shared parent is
 // staged first (index 0) so a parent re-stage failure aborts the loop
 // before any child is attempted — half-staged fleet is worse
 // than refuse. The parent row's ParentRef is "" (legacy path:
 // apply ALL its layers, no composition).
 var DefaultRuntimeBaseRefs = []RuntimeBaseRef{
 	{Runtime: RuntimeDebianParent, Ref: BaseRefDebianParent, EnvOverride: "FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT"},
-	// Node22 uses the Alpine/musl image and cannot share the Debian/glibc
-	// parent. Keep it on the full-chain path until a musl-specific parent is
-	// introduced; this is a deliberate security/runtime-compatibility split.
+	// Node22 is Debian/glibc but stays on the full-chain path
+	// (ADR-20261102133056); composing it over the parent is a separate change.
 	{Runtime: RuntimeNode22, Ref: BaseRefNode22, EnvOverride: "FAAS_DEPLOY_BASE_REF_NODE22"},
 	{Runtime: RuntimePython312, Ref: BaseRefPython312, EnvOverride: "FAAS_DEPLOY_BASE_REF_PYTHON312", ParentRef: BaseRefDebianParent},
 	{Runtime: RuntimeGo124, Ref: BaseRefGo124, EnvOverride: "FAAS_DEPLOY_BASE_REF_GO124"},
