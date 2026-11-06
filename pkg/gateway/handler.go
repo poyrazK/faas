@@ -1531,7 +1531,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		keyLookups:        newKeyLookupLimiter(),
 		publicAuthGuesses: newPublicAuthGuessLimiter(),
 		coldWakeClients:   newColdWakeClientBudget(),
-		bodyMemoryBudget:  newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
+		bodyMemoryBudget:  newRequestBodyMemoryBudget(),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -2141,6 +2141,16 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		return true
 	}
 	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
+	// Frameworks run a POST carrying X-HTTP-Method-Override: DELETE (or
+	// ?_method=DELETE) as DELETE, so the method the app will run must be
+	// declared too, as the protective gates already require (ADR-091
+	// amendment 2026-11-04, round 11).
+	if override := EdgeRuleMethodOverride(r.Context()); err == nil && allowed && override != "" && override != requestMethod {
+		allowed, err = h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, override)
+		if err == nil && !allowed {
+			requestMethod = requestMethod + " (as " + override + ")"
+		}
+	}
 	if err != nil {
 		if h.log != nil {
 			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
@@ -2599,6 +2609,7 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if preparer, ok := h.backend.(RouteTargetPreparer); ok {
 		preparer.PrepareRouteTarget(r.Context(), target)
 	}
+	*r = *r.WithContext(withEdgeRouteSource(r.Context(), hostApp))
 	*app = target
 	return true
 }
@@ -3270,7 +3281,8 @@ func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, a
 	if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
 		return true
 	}
-	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
+	ctx := withAuthenticated(r.Context(), authenticated)
+	*r = *r.WithContext(WithEdgeJWTIdentity(ctx, EdgeJWTIdentity{Issuer: rule.Issuer, Subject: claims.Subject}))
 	return false
 }
 
@@ -3972,15 +3984,19 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// platform cap (spec §4.1.2) even on plans that accept larger
 	// bodies through the spooled proxy path.
 	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
-	lease, ok := h.holdValidateBody(r, int64(cap))
+	lease, ok := h.holdValidateBody(r, app, int64(cap))
 	if !ok {
 		api.WriteProblem(w, api.ErrRequestBodyBudget())
 		return true
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(&budgetedBodyReader{r: r.Body, lease: lease})
 	_ = r.Body.Close()
-	lease.shrink(int64(cap) - int64(len(body)))
+	lease.shrink(lease.bytes - int64(len(body)))
+	if errors.Is(err, errRequestBodyBudget) {
+		api.WriteProblem(w, api.ErrRequestBodyBudget())
+		return true
+	}
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -4032,17 +4048,25 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	return false
 }
 
-// holdValidateBody reserves heap budget for a validate rule's buffered body:
-// the declared length when the client sent one under the cap, else the cap.
-// The hold lasts until the request finishes, since the buffered bytes are
-// forwarded.
-func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
-	lease, _ := h.bodyMemoryBudget.lease("", "")
-	want := cap
-	if r.ContentLength >= 0 && r.ContentLength < cap {
+// holdValidateBody reserves heap budget for a validate rule's buffered body
+// under the client's and the app owner's shares (ADR-091 amendment
+// 2026-11-04, round 12): the declared length when the client sent one under
+// the cap, else one step, grown by budgetedBodyReader as bytes arrive. It
+// used to reserve the whole cap for a body of unknown length under no share,
+// so a few slow chunked uploads to any app spent the node's budget and every
+// other tenant's validate rules answered 503. The hold lasts until the
+// request finishes, since the buffered bytes are forwarded.
+func (h *Handler) holdValidateBody(r *http.Request, app App, cap int64) (*requestBodyLease, bool) {
+	lease, ok := h.bodyMemoryBudget.lease(requestBodyClient(r), requestBodyOwner(app))
+	if !ok {
+		return nil, false
+	}
+	want := min(cap, api.RequestBodyMemoryReserveStep)
+	if r.ContentLength >= 0 && r.ContentLength <= cap {
 		want = r.ContentLength
 	}
 	if !lease.grow(want) {
+		lease.release()
 		return nil, false
 	}
 	context.AfterFunc(r.Context(), lease.release)
@@ -6259,6 +6283,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parentCtx = withTrafficDecision(parentCtx, false)
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
+	requestAttrs := collectSpanAttributes(requestSpan)
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	requestCtx = WithEdgeRuleMethodOverride(requestCtx, r)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
@@ -6277,10 +6302,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(requestCtx)
 	defer func() { //nolint:contextcheck // inspect the final rebound request context, including later admission and lifetime fences.
 		decision := trafficDecisionEvidence(r.Context(), rec.status, true)
-		requestSpan.SetAttributes(decision.attributes()...)
+		requestAttrs.addDecision(decision)
 		h.metrics.observeTrafficDecision(decision)
 		statusHooks.run(rec.status)
-		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		requestAttrs.add(attribute.Int("http.status_code", rec.status))
+		requestAttrs.flush()
 		requestSpan.End()
 	}()
 
@@ -6441,7 +6467,7 @@ haveApp:
 	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 		rec.trafficPolicyRevision = revision
-		requestSpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", revision))
+		requestAttrs.add(attribute.String("gregale.traffic.policy_revision", revision))
 	}
 	// Edge-rule matching from here on ignores rules another account
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
@@ -6500,7 +6526,7 @@ haveApp:
 	// internal path a rewrite rule may later produce.
 	declaredPath, declaredMethod := r.URL.Path, r.Method
 	r = withLifecycleRequestRoute(r, declaredPath, declaredMethod)
-	requestSpan.SetAttributes(
+	requestAttrs.add(
 		attribute.String("app_id", app.ID),
 		attribute.String("app_plan", string(app.Plan)),
 	)
@@ -7030,6 +7056,11 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// The health path and a parked app's HEAD / are answered here, past the
+	// access gates (ADR-091 amendment 2026-11-04, round 12).
+	if h.serveGatedEdgeAnswer(w, r, app, declaredPath) {
+		return
+	}
 	managedVersionSetCookie := ""
 	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
@@ -7088,7 +7119,7 @@ haveApp:
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
 		}
 		rec.trafficPolicyRevision = TrafficPolicyRevision(r.Context())
-		requestSpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", rec.trafficPolicyRevision),
+		requestAttrs.add(attribute.String("gregale.traffic.policy_revision", rec.trafficPolicyRevision),
 			attribute.String("gregale.traffic.selected_deployment_id", routing.SelectedDeploymentID),
 			attribute.String("gregale.traffic.deployment_selection", routing.SelectionReason))
 	}
@@ -7961,21 +7992,23 @@ haveApp:
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
 	r, identity = stampTargetIdentity(r, app, target)
-	requestSpan.SetAttributes(pkgtrace.PlatformIdentityAttributes(identity)...)
+	requestAttrs.addIdentity(identity)
 
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and
 	// the guest-side bridge remain children of this span. Stable identifiers
 	// are used here; request paths and headers are intentionally excluded.
-	forwardAttrs := pkgtrace.PlatformIdentityAttributes(identity)
+	forwardAttrs := pkgtrace.AppendPlatformIdentityAttributes(make([]attribute.KeyValue, 0, 14), identity)
 	forwardAttrs = append(forwardAttrs,
 		attribute.String("protocol", decideProtocol(app)),
 		attribute.Bool("cold", cold),
 	)
 	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
+	forwardSpanAttrs := collectSpanAttributes(forwardSpan)
 	r = r.WithContext(h.instanceNodesContext(forwardCtx, app.ID))
 	defer func() {
-		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
+		forwardSpanAttrs.add(attribute.Int("http.status_code", rec.status))
+		forwardSpanAttrs.flush()
 		forwardSpan.End()
 	}()
 
@@ -8379,9 +8412,8 @@ haveApp:
 	}
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
-	completionAttrs := completionTargetAttributes(completionTarget)
-	requestSpan.SetAttributes(completionAttrs...)
-	forwardSpan.SetAttributes(completionAttrs...)
+	requestAttrs.addTarget(completionTarget)
+	forwardSpanAttrs.addTarget(completionTarget)
 	// ADR-733: a serving instance that answered 5xx may be captured for a
 	// crash snapshot. Asynchronous and throttled; never affects this
 	// response.

@@ -1031,6 +1031,12 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
 	req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+	// An async route's caller, as a kind=jwt rule verified it at admission,
+	// read from the stored row by prepareInvocation (ADR-091 amendment
+	// 2026-11-04, round 11). The forwarder renders it as X-Faas-Edge-Jwt-*;
+	// copies in the persisted headers are x-faas-* and never cross.
+	//nolint:contextcheck // gateway.WithEdgeJWTIdentity inherits req.Context.
+	req = req.WithContext(gateway.WithEdgeJWTIdentity(req.Context(), gateway.EdgeJWTIdentity{Issuer: inv.EdgeJWTIssuer, Subject: inv.EdgeJWTSubject}))
 
 	rec := httptest.NewRecorder()
 	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
