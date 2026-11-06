@@ -125,6 +125,16 @@ POST /v1/apps/{app}/buckets/{bucket-id}/signed-url
 {"method": "PUT", "key": "avatars/42.png", "size_bytes": 18231, "content_type": "image/png", "expires_in": 300}
 ```
 
+From the CLI:
+
+```sh
+gregale bucket sign my-api BUCKET_ID v1/stream/segment.gz --expires 15m
+gregale bucket sign my-api BUCKET_ID avatars/42.png --method PUT --size-bytes 18231 --content-type image/png
+```
+
+It prints the URL, its headers and a `curl` command to send it with; `--json`
+prints the API response.
+
 The response holds a `url`, a `method` and `headers`. Send the request with
 exactly those headers and a body of exactly `size_bytes`. Use a plain HTTP
 client, never one that adds your Gregale credentials. For a download, request
@@ -271,6 +281,42 @@ Rotation keeps the secret names; running instances move to the new key before
 the old one is retired. Your app must be allowed to reach `s3.gregale.dev` under
 its egress rules. See [object storage from compute workloads](object-storage-compute.md)
 for SDK helpers.
+
+### Limit a binding to part of a bucket (preview)
+
+A binding can be limited to object keys under one prefix. Give each service
+only the keys it needs, with its own secret-name prefix:
+
+```yaml
+buckets:
+  - bucket: segments
+    app: store
+    permission: write
+    key_prefix: v1/L0/
+    prefix: GREGALE_S3_L0
+  - bucket: segments
+    app: query
+    permission: read
+    key_prefix: v1/
+  - bucket: segments
+    app: compactor
+    permission: read_write
+    key_prefix: v1/
+```
+
+Or `gregale add bucket segments --app store --permission write --key-prefix v1/L0/ --prefix GREGALE_S3_L0`.
+
+- The prefix is literal: `v1/L0/` matches `v1/L0/a.gz` but not `v1/L0x/`.
+  Patterns such as `v1/*/L0/` are refused.
+- Object reads, writes, deletes and multipart uploads work only on keys under
+  it. A copy's source must be in the same bucket and under it too.
+- Listings must pass a `prefix` under it. `DeleteObjects` fails with 403 if any
+  key is outside it, and then deletes nothing.
+- Bucket-wide requests (versioning, lifecycle, notifications, encryption,
+  Object Lock, listing every bucket) are refused.
+- The key keeps its prefix through rotation and environment clones.
+- Until key-scoped bindings are released to your account, a binding with
+  `key_prefix` is refused with `403 object_storage_key_scopes_unavailable`.
 
 ## API keys and bucket grants
 

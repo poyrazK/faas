@@ -3539,6 +3539,22 @@
       ]
     },
     {
+      "id": "object-storage-key-scopes",
+      "name": "Key-scoped bucket bindings",
+      "category": "data",
+      "description": "Limit an app's bucket binding to object keys under one prefix.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/object/key_scope_test.go::TestKeyScopedBindingsNeedTheCapability",
+      "parent": "object-storage"
+    },
+    {
       "id": "object-versioning",
       "name": "Object versioning",
       "category": "data",

@@ -165,6 +165,9 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 			if existing.Credential.Permission != "" && existing.Credential.Permission != plan.permission {
 				return fmt.Errorf("bucket dependency %d (%q): existing binding %q has permission %q, manifest requests %q; delete the binding and redeploy", i+1, plan.dependency.Bucket, existing.ID, existing.Credential.Permission, plan.permission)
 			}
+			if existing.KeyPrefix != plan.dependency.KeyPrefix {
+				return fmt.Errorf("bucket dependency %d (%q): existing binding %q has key_prefix %q, manifest requests %q; delete the binding and redeploy", i+1, plan.dependency.Bucket, existing.ID, existing.KeyPrefix, plan.dependency.KeyPrefix)
+			}
 			if !jsonOutput {
 				_, _ = fmt.Fprintf(osStdout, "  ✓ %s: bucket %s attached as %s\n", slug, plan.bucket.Name, plan.prefix)
 			}
@@ -177,6 +180,7 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("manifest-bucket-binding", slug, plan.bucket.ID, plan.scope, plan.prefix))
 		binding, err := client.CreateObjectStorageComputeBinding(bindingCtx, slug, plan.bucket.ID, api.CreateObjectStorageComputeBindingRequest{
 			Label: strings.TrimSpace(plan.dependency.EffectiveLabel()), Permission: plan.permission, Prefix: plan.prefix,
+			KeyPrefix: plan.dependency.KeyPrefix,
 		})
 		if err != nil {
 			return fmt.Errorf("bucket dependency %d (%q): create compute binding: %w", i+1, plan.dependency.Bucket, err)

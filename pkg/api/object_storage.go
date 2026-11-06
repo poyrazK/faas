@@ -247,7 +247,18 @@ type CreateObjectStorageComputeBindingRequest struct {
 	Label      string `json:"label,omitempty"`
 	Permission string `json:"permission"`
 	Prefix     string `json:"prefix,omitempty"`
+	// KeyPrefix limits the binding's key to object keys under it, for
+	// example "segments/L0/" (ADR-20261106114500). It is a literal prefix,
+	// not a pattern. Empty allows the whole bucket.
+	KeyPrefix string `json:"key_prefix,omitempty"`
 }
+
+// MaxObjectKeyScopeBytes bounds a binding's key_prefix (ADR-20261106114500).
+const MaxObjectKeyScopeBytes = 512
+
+// ObjectStorageKeyScopesCapability releases key-scoped bindings to an
+// account once its S3 gateway enforces them (ADR-20261106114500).
+const ObjectStorageKeyScopesCapability = "object-storage-key-scopes"
 
 // ObjectStorageComputeBindingSecretKeys names the sealed app secrets written
 // for a compute binding. Values are never returned by this API.
@@ -268,6 +279,7 @@ type ObjectStorageComputeBinding struct {
 	BucketID        string                                `json:"bucket_id"`
 	Scope           string                                `json:"scope"`
 	Prefix          string                                `json:"prefix"`
+	KeyPrefix       string                                `json:"key_prefix,omitempty"`
 	Credential      ObjectS3Credential                    `json:"credential"`
 	SecretKeys      ObjectStorageComputeBindingSecretKeys `json:"secret_keys"`
 	RotationPending bool                                  `json:"rotation_pending,omitempty"`

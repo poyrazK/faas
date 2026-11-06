@@ -22403,6 +22403,7 @@ CREATE TABLE public.object_storage_s3_credentials (
     url_receipt_id uuid,
     issuer_account_id uuid,
     issuer_access_revision bigint,
+    key_prefix text,
     CONSTRAINT object_s3_conditional_url_request CHECK (((url_request IS NULL) OR public.valid_object_conditional_url_request(url_request))),
     CONSTRAINT object_s3_issuer_pair CHECK ((((issuer_account_id IS NULL) AND (issuer_access_revision IS NULL)) OR ((issuer_account_id IS NOT NULL) AND (issuer_access_revision IS NOT NULL) AND (issuer_access_revision > 0)))),
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),

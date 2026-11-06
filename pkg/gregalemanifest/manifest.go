@@ -1414,6 +1414,9 @@ type BucketDependency struct {
 	Permission string                             `yaml:"permission,omitempty"`
 	Label      string                             `yaml:"label,omitempty"`
 	Prefix     string                             `yaml:"prefix,omitempty"`
+	// KeyPrefix limits the binding to object keys under it
+	// (ADR-20261106114500); empty binds the whole bucket.
+	KeyPrefix string `yaml:"key_prefix,omitempty"`
 }
 
 // EffectiveScope returns the scope used by the binding API when the manifest
@@ -2579,6 +2582,10 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		}
 		if dependency.Prefix != "" && !validManifestBucketPrefix(dependency.Prefix) {
 			return fmt.Errorf("bucket[%d]: prefix must match [A-Z][A-Z0-9_]{0,47}", i)
+		}
+		if dependency.KeyPrefix != "" && (len(dependency.KeyPrefix) > api.MaxObjectKeyScopeBytes || strings.ContainsAny(dependency.KeyPrefix, "*?[") ||
+			strings.HasPrefix(dependency.KeyPrefix, "/")) {
+			return fmt.Errorf("bucket[%d]: key_prefix must be a literal object key prefix such as segments/L0/ (no patterns, at most %d bytes)", i, api.MaxObjectKeyScopeBytes)
 		}
 		// One binding owns one (app, scope, prefix) target. An omitted
 		// prefix is resolved from the bucket name before the API call, so
