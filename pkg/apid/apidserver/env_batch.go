@@ -24,6 +24,22 @@ func (s *server) envBatchHandler() httpkit.AccountHandler {
 	})
 }
 
+func (s *server) envBatchReceiptHandler() httpkit.AccountHandler {
+	store, _ := s.store.(state.EnvBatchReceiptReader)
+	return envbatch.Receipt(store, func(w http.ResponseWriter, r *http.Request, account state.Account) (state.App, string, bool) {
+		app, scope, _, ok := s.configRevisionScope(w, r, account)
+		return app, scope, ok
+	})
+}
+
+func (s *server) configRollbackReceiptHandler() httpkit.AccountHandler {
+	store, _ := s.store.(state.ConfigRollbackReceiptReader)
+	return envbatch.ConfigRollbackReceipt(store, func(w http.ResponseWriter, r *http.Request, account state.Account) (state.App, string, bool) {
+		app, scope, _, ok := s.configRevisionScope(w, r, account)
+		return app, scope, ok
+	})
+}
+
 func (s *server) afterEnvBatch(r *http.Request, account state.Account, app state.App, scope string, request api.EnvBatchRequest, response api.EnvBatchResponse) {
 	// The transaction already recorded history and invalidated snapshots.
 	// These notifications and classifier updates may be repeated on replay.

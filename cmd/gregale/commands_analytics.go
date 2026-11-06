@@ -23,7 +23,7 @@ var analyticsGroupBys = map[string]struct{}{
 // analyticsValueFlags are the command's flags that take a value, so the
 // argument after one is never mistaken for the slug.
 var analyticsValueFlags = map[string]struct{}{
-	"since": {}, "until": {}, "by": {}, "app": {},
+	"since": {}, "until": {}, "by": {}, "app": {}, "range": {},
 }
 
 func cmdAnalytics(args []string) int {
@@ -32,8 +32,14 @@ func cmdAnalytics(args []string) int {
 	until := fs.String("until", "", "exclusive RFC3339 end timestamp")
 	by := fs.String("by", "route", "grouping dimension")
 	app := fs.String("app", "", appSlugFlagUsage)
+	// `gregale metric requests` runs this command, and the metric noun's
+	// help names --range for every view: accept it as the lookback window.
+	window := fs.String("range", "", "lookback window; same as --since")
 	if err := fs.Parse(normalizeAnalyticsArgs(args)); err != nil {
 		return 1
+	}
+	if *window != "" {
+		*since = *window
 	}
 	pos, err := mergeAppFlag(fs.Args(), *app, 1)
 	if err != nil || len(pos) > 1 {

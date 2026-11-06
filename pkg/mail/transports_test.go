@@ -210,12 +210,15 @@ func TestSenderFromEnv_UnsetOnProdWithFAAS_DEVZeroStillFailsClosed(t *testing.T)
 	}
 }
 
-// TestSenderFromEnv_PicksNoop confirms FAAS_MAIL_TRANSPORT=noop
-// returns a NoopSender.
+// TestSenderFromEnv_PicksNoop confirms FAAS_MAIL_TRANSPORT=noop on a
+// FAAS_DEV box returns the silent NoopSender.
 func TestSenderFromEnv_PicksNoop(t *testing.T) {
 	getenv := func(k string) string {
-		if k == "FAAS_MAIL_TRANSPORT" {
+		switch k {
+		case "FAAS_MAIL_TRANSPORT":
 			return "noop"
+		case "FAAS_DEV":
+			return "1"
 		}
 		return ""
 	}

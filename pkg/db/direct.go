@@ -189,6 +189,7 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
 		return nil, err
 	}
+	ConfigureTimeouts(cfg)
 	cfg.MaxConns = directMaxConns(appName)
 	cfg.MinConns = 0
 	// No MaxConnIdleTime: a LISTEN connection is idle by definition between
@@ -207,9 +208,11 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err != nil {
 		return nil, fmt.Errorf("db: open direct pool: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
+	if err := defaultBootWaiter(ctx).ping(ctx, func(ctx context.Context) error {
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		defer cancel()
+		return pool.Ping(pingCtx)
+	}); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("db: ping direct pool: %w", err)
 	}
@@ -224,20 +227,25 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 // transaction may land on a different server connection where that name was
 // never prepared, and the query fails with "prepared statement does not
 // exist". PgBouncer 1.21+ can track prepared statements itself, but relying
-// on that couples correctness to the pooler's version and configuration;
-// QueryExecModeExec sends the query and its parameters together every time,
-// which is safe through a transaction pooler but cannot infer ambiguous
-// PostgreSQL parameter types such as JSONB from a Go []byte alone.
+// on that couples correctness to the pooler's version and configuration.
+//
+// QueryExecModeCacheDescribe runs every query as an unnamed statement, so
+// nothing outlives a pooled transaction, and takes the parameter types from
+// the server's description of the statement, cached per connection.
+// QueryExecModeExec, used here before, guesses the types from the Go values
+// instead: sqlc passes every JSONB parameter as []byte, which it sends as
+// bytea, and PostgreSQL rejects it as invalid JSON. 267 of 294 compute-path
+// store tests failed that way; all pass under CacheDescribe.
 //
 // A separate session pool can also point at the same direct Postgres DSN as
 // the ordinary pool. That separates long-held LISTEN/advisory connections
 // without introducing a transaction pooler, so retain pgx's typed default
-// mode: QueryExecModeExec guesses []byte JSONB parameters as bytea text.
+// mode.
 func applyPooledExecMode(cfg *pgxpool.Config, ordinaryDSN string) {
 	if !pooledDSN(ordinaryDSN) {
 		return
 	}
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
 }
 
 // pooledDSN reports whether ordinaryDSN reaches a transaction-mode pooler:

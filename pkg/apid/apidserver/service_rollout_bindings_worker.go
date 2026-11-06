@@ -142,6 +142,12 @@ func (s *server) serviceRolloutBindingSweep(ctx context.Context, cursor *int) er
 			if problem.BindingsCheck != nil {
 				blockers = problem.BindingsCheck.Blockers
 			}
+		} else if errors.Is(err, state.ErrRollbackCrossesRelease) {
+			code = api.CodeRollbackCrossesRelease
+			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "A release command started after this predecessor last served. Review migrations before restoring old code."}}
+		} else if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+			code = api.CodeRollbackTargetDatabaseRestored
+			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "This predecessor release was undone by a database restore. Choose compatible code."}}
 		} else if errors.Is(err, state.ErrServiceRolloutNotReady) {
 			code = "service_rollout_not_ready"
 			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "The exact recipient must have ready service capacity before routing can change."}}

@@ -75,9 +75,12 @@ type ObjectVersionListRequest struct {
 type ListedObjectVersion struct {
 	Object
 	ProviderVersionID string `json:"-"`
-	IsLatest          bool
-	DeleteMarker      bool
-	StorageClass      string
+	// GCS records the instant a generation became noncurrent, even when no
+	// live generation remains. It is independent of mutable metadata times.
+	NoncurrentSince time.Time `json:"-"`
+	IsLatest        bool
+	DeleteMarker    bool
+	StorageClass    string
 }
 
 type ObjectVersionListPage struct {

@@ -1342,6 +1342,8 @@ type App struct {
 	// scaling input or the owning scheduler node changes; schedulers
 	// acknowledge observing this revision without creating a deployment.
 	ScalingPolicyRevision int64
+	// ScalingRevision guards RAM, CPU, concurrency and instance-floor edits.
+	ScalingRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -8221,6 +8223,10 @@ type CreateAccountWithPersonalOrgParams struct {
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.
 	RequireEmailVerification bool
+	// InitialPasswordHash is an optional precomputed PHC hash. Password signup
+	// commits it with the account, personal organization and owner membership.
+	// The credential is never included when creation parameters are serialized.
+	InitialPasswordHash string `json:"-"`
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

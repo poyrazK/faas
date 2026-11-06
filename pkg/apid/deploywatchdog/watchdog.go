@@ -6,13 +6,11 @@ package deploywatchdog
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -62,10 +60,11 @@ func (w *Watchdog) Sweep(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	failed := 0
+	// A release that may be waiting for approval before its release command
+	// is never listed (ADR-20261020085706 amendments 12-13): imaged closes it
+	// at the policy's timeout, and a Go-side skip let such releases fill the
+	// batch and hide stuck deployments behind them.
 	for _, d := range stuck {
-		if w.waitsForApproval(ctx, d, now) {
-			continue
-		}
 		code, message := Failure(d)
 		if _, ok, err := w.Store.FailStuckDeployment(ctx, d, queuedBefore, stalledBefore, code, message); err != nil {
 			w.log().Warn("deployment watchdog: fail stuck deployment", "deployment", d.ID, "app", d.AppID, "reason", d.Reason, "err", err)
@@ -78,45 +77,6 @@ func (w *Watchdog) Sweep(ctx context.Context) (int, error) {
 			"status", d.Status, "reason", d.Reason, "since", d.Since.UTC().Format(time.RFC3339), "code", code)
 	}
 	return failed, nil
-}
-
-// deploymentReader is what waitsForApproval reads to recognise a release
-// held for approval.
-type deploymentReader interface {
-	DeploymentByID(ctx context.Context, id string) (state.Deployment, error)
-	AppByID(ctx context.Context, id string) (state.App, error)
-}
-
-// waitsForApproval reports whether d is a release waiting for its approvals
-// before its release command (ADR-20261020085706 amendment 12). It is in
-// flight by design: the approval policy's timeout, not the stall bound,
-// closes it, and imaged does that. A read that fails leaves d for the next
-// sweep rather than failing a release someone may be about to approve.
-func (w *Watchdog) waitsForApproval(ctx context.Context, d state.StuckDeployment, now time.Time) bool {
-	if d.Status != state.DeploySnapshotting {
-		return false
-	}
-	reader, ok := w.Store.(deploymentReader)
-	if !ok {
-		return false
-	}
-	dep, err := reader.DeploymentByID(ctx, d.ID)
-	if err != nil {
-		return !errors.Is(err, state.ErrNotFound)
-	}
-	app, err := reader.AppByID(ctx, dep.AppID)
-	if err != nil {
-		return !errors.Is(err, state.ErrNotFound)
-	}
-	if app, err = state.AppForDeploymentRuntime(app, dep); err != nil {
-		return false
-	}
-	wait, err := approval.LoadReleaseCommandWait(ctx, w.Store, app, dep, now)
-	if err != nil {
-		w.log().Warn("deployment watchdog: read release approval", "deployment", d.ID, "err", err)
-		return true
-	}
-	return wait.Pending()
 }
 
 // Failure is the stable code and customer-readable message the watchdog

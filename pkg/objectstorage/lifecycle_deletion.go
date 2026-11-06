@@ -73,7 +73,7 @@ func (s DeletionService) lifecyclePreflight(ctx context.Context, b state.ObjectB
 		return err
 	}
 	now := time.Now().UTC()
-	o, err := lifecycleHistoryObject(versions, j.Lifecycle.ExpectedProviderVersionID, j.Lifecycle.ExpectedLastModified, now)
+	o, err := s.lifecycleObject(ctx, b, versions, j.Lifecycle.ExpectedProviderVersionID, j.Lifecycle.ExpectedLastModified, now, []api.ObjectLifecycleRule{rule})
 	if err != nil {
 		return err
 	}
@@ -94,6 +94,13 @@ func (s DeletionService) lifecyclePreflight(ctx context.Context, b state.ObjectB
 		return ErrLifecycleNotDue
 	}
 	return nil
+}
+
+func (s DeletionService) lifecycleHistoryObject(versions []ListedObjectVersion, native string, modified, now time.Time) (LifecycleObject, error) {
+	if _, gcs := s.Provider.(*GCS); gcs {
+		return gcsLifecycleHistoryObject(versions, native, modified, now)
+	}
+	return lifecycleHistoryObject(versions, native, modified, now)
 }
 
 func (s DeletionService) lifecycleTags(ctx context.Context, b state.ObjectBucket, j state.ObjectDeletion) (map[string]string, error) {

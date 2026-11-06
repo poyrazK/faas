@@ -71,16 +71,7 @@ func serviceBindingAudit(ctx context.Context, d Deployment) []byte {
 		"predecessor_deployment_id": d.ServiceRolloutHandoff.PredecessorDeploymentID,
 		"traffic_percent":           serviceRolloutTraffic(ctx),
 		"binding_fences":            bindingReleaseFences(ctx),
-	})
-	return payload
-}
-
-func serviceBindingIntentAudit(d Deployment, reason string) []byte {
-	payload, _ := json.Marshal(map[string]string{
-		"action": "abort_requested", "reason": normalizeRolloutReason(reason),
-		"deployment_id":             d.ID,
-		"predecessor_deployment_id": d.ServiceRolloutHandoff.PredecessorDeploymentID,
-		"request_id":                d.ServiceRolloutHandoff.BindingsCheck.RequestID,
+		"crossed_releases":          checkedRollbackCrossedReleaseIDs(ctx),
 	})
 	return payload
 }

@@ -495,10 +495,15 @@ func signedGatewayRequest(t *testing.T, method, target string, body []byte, payl
 	if method == http.MethodPut {
 		request.Header.Set("Content-Type", "application/octet-stream")
 	}
+	signGatewayRequest(t, request, payloadHash)
+	return request
+}
+
+func signGatewayRequest(t *testing.T, request *http.Request, payloadHash string) {
+	t.Helper()
 	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	return request
 }
 
 func presignedGatewayRequest(t *testing.T, method, target string, body []byte) *http.Request {
@@ -769,12 +774,10 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			request := signedGatewayRequest(t, test.method, test.target, nil, "UNSIGNED-PAYLOAD")
 			request.Header.Set(test.header, test.value)
+			signGatewayRequest(t, request, "UNSIGNED-PAYLOAD")
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			status, code := http.StatusNotImplemented, "NotImplemented"
-			if test.header == "X-Amz-Server-Side-Encryption" {
-				status, code = http.StatusBadRequest, "InvalidRequest"
-			}
 			if recorder.Code != status || !strings.Contains(recorder.Body.String(), code) {
 				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 			}
@@ -1230,6 +1233,7 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	initiateRequest.Header.Set("Content-Language", "en")
 	initiateRequest.Header.Set("X-Amz-Meta-Owner", "platform")
 	initiateRequest.Header.Set("X-Amz-Tagging", "env=prod&team=core")
+	signGatewayRequest(t, initiateRequest, "UNSIGNED-PAYLOAD")
 	handler.ServeHTTP(recorder, initiateRequest)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("initiate = %d %s", recorder.Code, recorder.Body.String())

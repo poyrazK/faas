@@ -252,7 +252,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, buildProblem)
 		return
 	}
-	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil)
+	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return

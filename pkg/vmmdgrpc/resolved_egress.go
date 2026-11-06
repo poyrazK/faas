@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -19,7 +20,7 @@ import (
 const maxResolvedEgressAddresses = 256
 
 type resolvedEgressAllower interface {
-	AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
+	AllowResolvedEgress(ctx context.Context, source netip.Addr, owner fcvm.ServiceCallerIdentity, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
 }
 
 // AllowResolvedEgress implements the ADR-373 DNS-gated egress hook: the
@@ -31,6 +32,9 @@ func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResol
 	allower, ok := s.vmm.(resolvedEgressAllower)
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "vmmd: AllowResolvedEgress not supported by this manager")
+	}
+	if req.GetInstanceId() == "" || req.GetNetworkGeneration() == "" {
+		return nil, status.Error(codes.InvalidArgument, "vmmd: resolved egress requires the original network owner")
 	}
 	source, err := netip.ParseAddr(req.GetSourceIp())
 	if err != nil {
@@ -55,11 +59,55 @@ func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResol
 	if _, forbidden := api.TenantEgressForbiddenPort(int(databasePort)); databasePort != 0 && forbidden {
 		return nil, status.Errorf(codes.InvalidArgument, "vmmd: AllowResolvedEgress: database_port %d is never opened", databasePort)
 	}
-	if err := allower.AllowResolvedEgress(ctx, source, addrs, ttl, uint16(databasePort)); err != nil {
+	owner := fcvm.ServiceCallerIdentity{InstanceID: req.GetInstanceId(), NetworkGeneration: req.GetNetworkGeneration()}
+	if err := allower.AllowResolvedEgress(ctx, source, owner, addrs, ttl, uint16(databasePort)); err != nil {
 		if errors.Is(err, fcvm.ErrResolvedEgressNoInstance) {
+			// A refused grant leaves the guest's connections to the answer
+			// dropped, so name the check that refused it.
+			reason := fcvm.ResolvedEgressRefusal(err)
+			if s.resolvedEgressRefusals.admit(owner.InstanceID+"\x00"+reason, time.Now()) {
+				s.log.Warn("vmmd: DNS answer not granted to its guest", "instance", owner.InstanceID, "source", source.String(), "addresses", len(addrs), "reason", reason)
+			}
 			return &vmmdpb.AllowResolvedEgressAck{Matched: false}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "vmmd: AllowResolvedEgress: %v", err)
 	}
 	return &vmmdpb.AllowResolvedEgressAck{Matched: true}, nil
+}
+
+// refusalLogInterval is how often one instance's refused DNS grants are
+// logged for each reason: a guest retries a refused lookup many times.
+const refusalLogInterval = time.Minute
+
+// refusalLogKeys bounds the keys refusalLog remembers.
+const refusalLogKeys = 4096
+
+// refusalLog admits one log line per key per refusalLogInterval. The zero
+// value is ready to use.
+type refusalLog struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *refusalLog) admit(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if last, ok := l.last[key]; ok && now.Sub(last) < refusalLogInterval {
+		return false
+	}
+	if len(l.last) >= refusalLogKeys {
+		for k, last := range l.last {
+			if now.Sub(last) >= refusalLogInterval {
+				delete(l.last, k)
+			}
+		}
+		if len(l.last) >= refusalLogKeys {
+			clear(l.last)
+		}
+	}
+	if l.last == nil {
+		l.last = make(map[string]time.Time)
+	}
+	l.last[key] = now
+	return true
 }

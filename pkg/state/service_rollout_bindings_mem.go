@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -122,6 +123,19 @@ func (m *MemStore) UpdateServiceRolloutBindingStatus(_ context.Context, id, requ
 func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, predecessorID, reason string) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if serviceAbortAttempt(ctx) != "" {
+		hash, err := serviceAbortHash(ctx, appID, id, predecessorID, reason)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		prior, err := m.serviceAbortAcceptanceLocked(appID, serviceAbortAttempt(ctx))
+		if err == nil {
+			return Deployment{}, 0, serviceAbortPrior(prior, hash)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Deployment{}, 0, err
+		}
+	}
 	target, rows, err := m.serviceRolloutTargetLocked(id)
 	if err != nil || target.AppID != appID {
 		if err == nil {
@@ -144,7 +158,7 @@ func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pr
 	}
 	target = queueServiceBindingCheck(ctx, target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	accountID := uuid.MustParse(m.apps[target.AppID].AccountID)
-	auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(id), AccountID: &accountID, Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: time.Now().UTC(), Data: serviceBindingIntentAudit(target, reason)})
+	auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(id), AccountID: &accountID, Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: time.Now().UTC(), Data: serviceAbortReceiptData(ctx, target, reason)})
 	if err != nil {
 		return target, 0, err
 	}

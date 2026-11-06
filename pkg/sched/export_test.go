@@ -725,6 +725,9 @@ var LiftErr = liftErr
 // NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
 func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
 
+func (r *fakeVMM) Characterization() *api.CharacterizationReport {
+	return &r.characterization
+}
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -792,7 +795,8 @@ func (r *notifyEvent) Payload() *string { return &r.payload }
 func (r *ownerCache) Lookup(p0 string) (ownerEntry, bool) { return r.lookup(p0) }
 
 // Members of ownerEntry
-func (r *ownerEntry) Generation() *int64 { return &r.generation }
+func (r *ownerEntry) Generation() *int64                         { return &r.generation }
+func (r *ownerEntry) ServesDeployment(p0 string, p1 string) bool { return r.servesDeployment(p0, p1) }
 
 // Members of queuePoller
 func (r *queuePoller) ItemsInFlight() *map[string]queueDeliveryClaim { return &r.itemsInFlight }
@@ -1089,6 +1093,23 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
+// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
+func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
+
+// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
+// bookings (ADR-20261101160231).
+func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUBookingMillicores(app, limits)
+}
+func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
+	return e.appCPUBookingStamp(app, limits)
+}
+
+// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
+func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUMillicores(app, limits)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
@@ -1281,3 +1302,9 @@ func RealtimeIdleDelays(sizes []int) []time.Duration {
 	}
 	return out
 }
+
+// KeyedLocks exposes keyedLocks to sched_test (ADR 20261104143005).
+type KeyedLocks = keyedLocks
+
+func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
+func (k *keyedLocks) Size() int              { return k.size() }

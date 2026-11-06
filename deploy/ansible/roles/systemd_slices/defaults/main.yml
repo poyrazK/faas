@@ -21,3 +21,13 @@ faas_obs_slice_memory_max: 3584M
 faas_obs_slice_cpu_weight: 20
 faas_obs_slice_cpu_quota: 100%
 faas_obs_slice_io_weight: 20
+
+# user.slice weights (ADR-20261023124955 amendment 2026-11-06). Operator and
+# Ansible SSH sessions run in user.slice, which at the default weight (100)
+# competed as an equal with all of system.slice, PostgreSQL included. On
+# production-us in the week to 2026-11-06, whenever the 2-vCPU control plane
+# was above 1.5 busy cores, user.slice averaged 0.42 cores, more than
+# PostgreSQL (0.36). A low weight lets PostgreSQL and the daemons win under
+# contention; an otherwise idle host still gives a session every core.
+faas_user_slice_cpu_weight: 20
+faas_user_slice_io_weight: 20

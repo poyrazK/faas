@@ -100,6 +100,14 @@ func (s *server) runScheduledRelease(ctx context.Context, store state.ScheduledR
 		return err
 	}
 	decision := schedule.Decide(sr, d, siblings, now)
+	if decision.Action == schedule.ActionWait || decision.State == state.ScheduledReleaseExpired {
+		// A release waiting for approval before its release command is not
+		// a build that did not finish (ADR-20261020085706 amendment 14).
+		// imaged closes it if the schedule ends first.
+		if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err == nil && wait.Pending() {
+			decision = schedule.WaitOrExpire(sr, now, "it was still waiting for approval before its release command")
+		}
+	}
 	var overridden []string
 	if decision.Action == schedule.ActionStart {
 		decision, overridden = s.scheduleStartChecks(ctx, sr, app, d, siblings, now)

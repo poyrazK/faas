@@ -4,18 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"math/rand/v2"
 	"sync/atomic"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // InstanceSource is the authoritative instance projection needed by the raw
 // TCP edge. Keeping it narrow lets tcpd use either PgStore or MemStore.
 type InstanceSource interface {
+	state.AppOwnerReader
 	AppByID(ctx context.Context, appID string) (state.App, error)
 	TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (state.TCPListener, error)
 	DomainByName(ctx context.Context, domain string) (state.CustomDomain, error)
@@ -67,11 +68,14 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	if app.Status == state.AppDeleted || (route.AccountID != "" && app.AccountID != route.AccountID) {
 		return errors.New("TCP app ownership no longer matches listener")
 	}
+	if err := ingressroute.RequireActiveOwner(ctx, r.Instances, app); err != nil {
+		return err
+	}
 	if app.MaintenanceMode {
 		return errors.New("TCP app is in maintenance mode")
 	}
-	if app.Visibility == api.AppVisibilityInternal || api.IsInternalWorkloadPort(app.Manifest.Ports, api.WorkloadPortTCP, route.GuestPort) {
-		return errors.New("TCP listener is internal")
+	if app.Visibility == api.AppVisibilityInternal || !api.DeclaresPublicWorkloadPort(app.Manifest.Ports, route.ListenerName, api.WorkloadPortTCP, route.GuestPort) {
+		return errors.New("TCP listener has no matching public declaration")
 	}
 	intent, err := r.Instances.TCPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {
@@ -113,6 +117,19 @@ func (r *StoreTargetResolver) resolveInstance(ctx context.Context, route Route) 
 		}
 	}
 	if len(running) > 0 {
+		running, err = ingressroute.ReadyInstances(ctx, r.Instances, route.AppID, deploymentID, running)
+		if err != nil {
+			return gateway.Target{}, err
+		}
+		if len(running) == 0 {
+			return gateway.Target{}, ingressroute.ErrNoReadyInstance
+		}
+		if err := r.validateIntent(ctx, route); err != nil {
+			return gateway.Target{}, err
+		}
+		if err := ingressroute.RequireDeployment(ctx, r.Instances, route.AppID, deploymentID); err != nil {
+			return gateway.Target{}, err
+		}
 		idx := (r.cursor.Add(1) - 1) % uint64(len(running))
 		instance := running[idx]
 		return gateway.Target{
@@ -136,8 +153,18 @@ func (r *StoreTargetResolver) resolveInstance(ctx context.Context, route Route) 
 	if atCapacity || instanceID == "" || nodeID == "" || deploymentID != selectedDeploymentID {
 		return gateway.Target{}, fmt.Errorf("app %q has no routable instance after TCP admission", route.AppID)
 	}
+	ready, err := ingressroute.ReadyInstances(ctx, r.Instances, route.AppID, deploymentID, []state.Instance{{ID: instanceID, AppID: route.AppID, DeploymentID: deploymentID, NodeID: nodeID, WakeID: wakeID}})
+	if err != nil {
+		return gateway.Target{}, err
+	}
+	if len(ready) == 0 {
+		return gateway.Target{}, ingressroute.ErrNoReadyInstance
+	}
 	// A cold wake can outlast a visibility or listener-policy change.
 	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
+	}
+	if err := ingressroute.RequireDeployment(ctx, r.Instances, route.AppID, deploymentID); err != nil {
 		return gateway.Target{}, err
 	}
 	return gateway.Target{

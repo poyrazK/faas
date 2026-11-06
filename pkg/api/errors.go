@@ -978,6 +978,9 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeProjectReleaseRollbackRequired means a graph still selects another
+	// deployment, so changing app weights cannot recover the environment.
+	CodeProjectReleaseRollbackRequired = "project_release_rollback_required"
 	// CodeRollbackTargetDatabaseRestored means a database switch restored
 	// the app's database to before the target's own release command
 	// (ADR-20261023181931). The target cannot run on that database; deploy
@@ -7156,6 +7159,13 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
+}
+
+// ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
+func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
+	p := ErrOrgFreeLimitExceeded(limit, observed)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	return p
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

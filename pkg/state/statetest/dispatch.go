@@ -76,6 +76,8 @@ var memDispatched = map[string]bool{
 	"ListInstancesForApp":                                     true,
 	"ListLiveInstancesForApps":                                true,
 	"AccountByID":                                             true,
+	"SetAccountKeyGraceWindow":                                true,
+	"RestoreAccount":                                          true,
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
@@ -1932,6 +1934,24 @@ func (s *Mem) AccountByID(p0 context.Context, p1 string) (state.Account, error) 
 	return s.MemStore.AccountByID(p0, p1)
 }
 
+func (s *Mem) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
+	if over, ok := s.over.(interface {
+		SetAccountKeyGraceWindow(context.Context, string, *int) error
+	}); ok {
+		return over.SetAccountKeyGraceWindow(ctx, accountID, days)
+	}
+	return s.MemStore.SetAccountKeyGraceWindow(ctx, accountID, days)
+}
+
+func (s *Mem) RestoreAccount(ctx context.Context, id string) error {
+	if o, ok := s.over.(interface {
+		RestoreAccount(context.Context, string) error
+	}); ok {
+		return o.RestoreAccount(ctx, id)
+	}
+	return s.MemStore.RestoreAccount(ctx, id)
+}
+
 func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]state.RecoveryInstance, error) {
 	if o, ok := s.over.(interface {
 		InstanceListByNodeForRecovery(context.Context, string) ([]state.RecoveryInstance, error)
@@ -1947,6 +1967,8 @@ var pgDispatched = map[string]bool{
 	"SetDeploymentFailed":                                                    true,
 	"CompleteSnapshotPrimeHandoff":                                           true,
 	"FailDeploymentWithHostingReceipt":                                       true,
+	"AccountByID":                                                            true,
+	"SetAccountKeyGraceWindow":                                               true,
 	"DeploymentByID":                                                         true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                                  true,
 	"ResolveInstanceMigrationCommit":                                         true,
@@ -2097,6 +2119,24 @@ func (s *Pg) FailDeploymentWithHostingReceipt(ctx context.Context, id string, ra
 		return o.FailDeploymentWithHostingReceipt(ctx, id, raw, code, message)
 	}
 	return s.PgStore.FailDeploymentWithHostingReceipt(ctx, id, raw, code, message)
+}
+
+func (s *Pg) AccountByID(ctx context.Context, accountID string) (state.Account, error) {
+	if over, ok := s.over.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	}); ok {
+		return over.AccountByID(ctx, accountID)
+	}
+	return s.PgStore.AccountByID(ctx, accountID)
+}
+
+func (s *Pg) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
+	if over, ok := s.over.(interface {
+		SetAccountKeyGraceWindow(context.Context, string, *int) error
+	}); ok {
+		return over.SetAccountKeyGraceWindow(ctx, accountID, days)
+	}
+	return s.PgStore.SetAccountKeyGraceWindow(ctx, accountID, days)
 }
 
 func (s *Pg) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {

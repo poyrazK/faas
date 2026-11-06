@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -37,10 +38,70 @@ type RequestAnalyticsCoverage struct {
 	CoveredSince time.Time
 }
 
+// RequestAnalyticsGap is an app minute whose rollups apid lost.
+type RequestAnalyticsGap struct {
+	AppID  uuid.UUID
+	Minute time.Time
+}
+
 // RequestAnalyticsRollupStore adds rollups. The write is additive and all
 // or nothing, so a writer that sees an error can keep the rows and retry.
+// RecordRequestAnalyticsRollupGaps marks the minutes it could not keep.
 type RequestAnalyticsRollupStore interface {
 	AddRequestAnalyticsRollups(context.Context, []RequestAnalyticsRollup, []RequestAnalyticsCoverage) error
+	RecordRequestAnalyticsRollupGaps(context.Context, []RequestAnalyticsGap) error
+}
+
+// IsRequestAnalyticsDataError reports whether Postgres refused a rollup
+// write for its data (SQLSTATE class 22 data exception or 23 integrity
+// violation). Retrying the same rows fails again, so a writer isolates and
+// drops them instead of keeping them.
+func IsRequestAnalyticsDataError(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || len(pgErr.Code) < 2 {
+		return false
+	}
+	class := pgErr.Code[:2]
+	return class == "22" || class == "23"
+}
+
+// RecordRequestAnalyticsRollupGaps marks app minutes whose rollups were lost.
+func (s *PgStore) RecordRequestAnalyticsRollupGaps(ctx context.Context, gaps []RequestAnalyticsGap) error {
+	if len(gaps) == 0 {
+		return nil
+	}
+	arg := sqlc.RecordRequestAnalyticsRollupGapsParams{
+		AppIds:       make([]pgtype.UUID, len(gaps)),
+		BucketStarts: make([]pgtype.Timestamptz, len(gaps)),
+	}
+	for i, g := range gaps {
+		arg.AppIds[i] = NewPgtypeUUID(g.AppID)
+		arg.BucketStarts[i] = pgtype.Timestamptz{Time: g.Minute.UTC().Truncate(time.Minute), Valid: true}
+	}
+	if err := sqlc.New().RecordRequestAnalyticsRollupGaps(ctx, s.pool, arg); err != nil {
+		return fmt.Errorf("record request analytics rollup gaps: %w", mapErr(err))
+	}
+	return nil
+}
+
+// RequestAnalyticsRollupHasGap reports whether apid lost rollups of a
+// minute starting inside [from, until).
+func (s *PgStore) RequestAnalyticsRollupHasGap(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error) {
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) (bool, error) {
+		return sqlc.New().RequestAnalyticsRollupHasGap(ctx, db, sqlc.RequestAnalyticsRollupHasGapParams{
+			AppID:       NewPgtypeUUID(appID),
+			WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+			WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+		})
+	})
+}
+
+// RequestAnalyticsRollupRouteDeployments reads requests per route, method
+// and deployment under the analytics statement budget.
+func (s *PgStore) RequestAnalyticsRollupRouteDeployments(ctx context.Context, arg sqlc.RequestAnalyticsRollupRouteDeploymentsParams) ([]sqlc.RequestAnalyticsRollupRouteDeploymentsRow, error) {
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestAnalyticsRollupRouteDeploymentsRow, error) {
+		return sqlc.New().RequestAnalyticsRollupRouteDeployments(ctx, db, arg)
+	})
 }
 
 var _ RequestAnalyticsRollupStore = (*PgStore)(nil)
@@ -138,6 +199,8 @@ func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddReques
 type RequestAnalyticsRollupReader interface {
 	RequestAnalyticsRollupCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error)
 	RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.RequestAnalyticsRollupGroupsParams) ([]sqlc.RequestAnalyticsRollupGroupsRow, error)
+	RequestAnalyticsRollupHasGap(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error)
+	RequestAnalyticsRollupRouteDeployments(ctx context.Context, arg sqlc.RequestAnalyticsRollupRouteDeploymentsParams) ([]sqlc.RequestAnalyticsRollupRouteDeploymentsRow, error)
 }
 
 var _ RequestAnalyticsRollupReader = (*PgStore)(nil)

@@ -3,8 +3,6 @@ package state
 import (
 	"context"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func deploymentPreferredForWake(candidate, current Deployment) bool {
@@ -101,12 +99,7 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 			continue
 		}
 		other := m.deployments[row.id]
-		ttl := m.apps[target.AppID].Manifest.RevisionPinTTLSeconds
-		if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-			if _, exists := m.revisionPins[row.id]; !exists {
-				m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-			}
-		}
+		m.retainServingRevisionLocked(other, time.Now().UTC())
 		if m.deploymentRevisionRetainedLocked(row.id) || m.deploymentInUsableReleaseLocked(row.id) {
 			other.Status = DeployLive
 		} else {
@@ -184,12 +177,7 @@ func (m *MemStore) beginServiceRolloutCutoverLocked(ctx context.Context, id stri
 		if row.id == id {
 			other.TrafficPercent = percent
 		} else {
-			ttl := m.apps[target.AppID].Manifest.RevisionPinTTLSeconds
-			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds && other.TrafficPercent > 0 {
-				if _, exists := m.revisionPins[row.id]; !exists {
-					m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-				}
-			}
+			m.retainServingRevisionLocked(other, time.Now().UTC())
 			other.TrafficPercent = 0
 			if row.id == previous.id {
 				other.TrafficPercent = 100 - percent
@@ -228,6 +216,9 @@ func (m *MemStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Dep
 	previous, found := previousMemServiceRolloutRow(target, rows)
 	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
 		return target, ErrServiceRolloutInvalid
+	}
+	if err := m.checkUnreviewedRollbackLocked(target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
 	}
 	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionAbort, previous.id, previous.id, target.ServiceRolloutHandoff.Reason)
 	if err != nil {
@@ -298,6 +289,9 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 		return target, ErrServiceRolloutInvalid
 	}
 	previous, _ := previousMemServiceRolloutRow(target, rows)
+	if err := m.checkUnreviewedRollbackLocked(target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
+	}
 	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionAbort, previous.id, previous.id, reason)
 	if err != nil {
 		return target, err

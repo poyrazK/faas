@@ -19,10 +19,7 @@ func (s *Service) configureObjectUploadRoute(ctx context.Context, b state.Object
 	if !validObjectUploadRouteName(req.Name) || !validObjectUploadPrefix(req.KeyPrefix) || req.Encryption != nil && (!req.Encryption.Valid() || req.Encryption.Empty()) {
 		return state.ObjectUploadRoute{}, 0, objectstorage.ErrInvalid
 	}
-	limit := s.Host.ObjectStorage().MaxUploadBytes
-	if req.Encryption != nil {
-		limit = min(limit, s.Host.ObjectStorage().MaxSinglePutBytes)
-	}
+	limit := min(s.Host.ObjectStorage().MaxUploadBytes, s.Host.ObjectStorage().MaxSinglePutBytes)
 	if req.MaxBytes == 0 {
 		req.MaxBytes = limit
 	}

@@ -81,10 +81,27 @@ func (m *MemStore) CreateCheckedRollback(ctx context.Context, acct, app, target,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	id, err := checkedRollbackAttemptID(ctx)
+	if err != nil {
+		return api.RollbackOperation{}, err
+	}
+	if id != "" {
+		a, ok := m.apps[app]
+		if !ok || a.AccountID != acct || a.Status == AppDeleted {
+			return api.RollbackOperation{}, ErrNotFound
+		}
+		if prior, ok := m.checkedRollbacks[id]; ok {
+			return api.RollbackOperation{}, checkedRollbackAttemptError(prior, app, target, current, reason)
+		}
+		d := m.deployments[target]
+		if !checkedRollbackAttemptMode(a.Manifest.ExecutionMode) || normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
+			return api.RollbackOperation{}, ErrInvalidArgument
+		}
+	}
 	if claim, ok := routeMonitorRollbackClaim(ctx); ok {
 		return m.createMonitorRollbackLocked(ctx, acct, app, target, current, reason, claim)
 	}
-	return m.createCheckedRollbackLocked(ctx, acct, app, target, current, reason, "")
+	return m.createCheckedRollbackLocked(ctx, acct, app, target, current, reason, id)
 }
 func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, target, current, reason, id string) (api.RollbackOperation, error) {
 	a, ok := m.apps[app]
@@ -106,26 +123,52 @@ func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, t
 	if !rollbackPairValid(r, d, m.deployments[current], m.rollbackRowsLocked(r)) {
 		return r, ErrCheckedRollbackChanged
 	}
+	if err := m.checkAppRollbackGraphLocked(app, r.Scope, target); err != nil {
+		return r, err
+	}
 	for _, existing := range m.checkedRollbacks {
 		if existing.AppID == app && existing.Scope == r.Scope && !rollbackTerminal(existing) {
 			return r, ErrConflict
 		}
 	}
-	d, err = m.prepareDeploymentRollbackLocked(ctx, app, target)
-	if err != nil {
-		return r, err
+	reuseLive := d.Status == DeployLive && (d.RolloutCompletedAt != nil && m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID) || m.deploymentInUsableReleaseLocked(d.ID))
+	if reuseLive {
+		if d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+			return r, ErrInvalidArgument
+		}
+		if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
+			return r, err
+		}
+		if err := m.preserveRollbackSuccessLocked(d); err != nil {
+			return r, err
+		}
+		r.Status = "ready"
+	} else {
+		var err error
+		d, err = m.prepareDeploymentRollbackLocked(ctx, app, target)
+		if err != nil {
+			return r, err
+		}
+		d.APIHostingReceipt = nil
 	}
 	d.TrafficPercentExplicit = true
-	d.APIHostingReceipt = nil
 	d.ServiceRolloutHandoff = rollbackHandoff(r)
 	if r.Service {
 		d.RolloutState = "rolling_out"
+		if reuseLive {
+			now := time.Now().UTC()
+			d.RolloutStartedAt = &now
+		}
 	}
 	m.putDeploymentLocked(target, d)
 	if m.checkedRollbacks == nil {
 		m.checkedRollbacks = map[string]api.RollbackOperation{}
 	}
 	m.checkedRollbacks[r.ID] = r
+	if m.checkedRollbackReleaseReviews == nil {
+		m.checkedRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.checkedRollbackReleaseReviews[r.ID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
 	return cloneRollback(r), nil
 }
 func (m *MemStore) markCheckedRollbackReadyLocked(ctx context.Context, d Deployment, r api.RollbackOperation) error {
@@ -178,6 +221,14 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 			return r, err
 		}
 	}
+	if err := m.checkAppRollbackGraphLocked(r.AppID, r.Scope, d.ID); err != nil {
+		return r, err
+	}
+	review := m.checkedRollbackReleaseReviews[r.ID]
+	if err := checkRollbackReleaseReview(d.ID, m.releaseRunsCrossedByLocked(r.AppID, d.ID), m.releasesUndoneByDatabaseSwitchesLocked(r.AppID, r.Scope), review); err != nil {
+		return r, err
+	}
+	ctx = WithCheckedRollbackReleaseReview(ctx, review)
 	ctx = withCheckedRollback(ctx, r.ID)
 	if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{d.ID: 100}); err != nil {
 		return r, err
@@ -195,22 +246,17 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 			return r, err
 		}
 		accountID := uuid.MustParse(m.apps[r.AppID].AccountID)
-		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx)})
+		data, _ := json.Marshal(map[string]any{"request_id": r.ID, "target_deployment_id": r.TargetDeploymentID, "current_deployment_id": r.CurrentDeploymentID, "phase": "complete", "reason": r.Reason, "binding_fences": bindingReleaseFences(ctx), "crossed_releases": checkedRollbackCrossedReleaseIDs(ctx)})
 		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(d.ID), AccountID: &accountID, Kind: DeployRolledBack, Actor: "apid:checked_rollback", At: time.Now().UTC(), Data: data})
 		if err != nil {
 			return r, err
 		}
 		now := time.Now().UTC()
-		ttl := m.apps[r.AppID].Manifest.RevisionPinTTLSeconds
 		for id, other := range m.deployments {
 			if id == d.ID || other.AppID != r.AppID || normalizedDeploymentScope(other.Scope) != r.Scope || other.Status != DeployLive {
 				continue
 			}
-			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds && other.TrafficPercent > 0 {
-				if _, ok := m.revisionPins[id]; !ok {
-					m.revisionPins[id] = now.Add(time.Duration(ttl) * time.Second)
-				}
-			}
+			m.retainServingRevisionLocked(other, now)
 			other.TrafficPercent = 0
 			if expiry, ok := m.revisionPins[id]; !ok || !now.Before(expiry) {
 				if !m.deploymentInUsableReleaseLocked(id) {
@@ -242,14 +288,26 @@ func (m *MemStore) UpdateCheckedRollback(_ context.Context, snapshot api.Rollbac
 		return ErrCheckedRollbackChanged
 	}
 	d := m.deployments[r.TargetDeploymentID]
-	if status == "complete" && (r.Status != "routing" || d.Status != DeployLive || d.TrafficPercent != 100 || d.RolloutState != "complete" || d.ServiceRolloutHandoff.Phase != "complete" || d.ServiceRolloutHandoff.Action != "promote" || d.ServiceRolloutHandoff.PredecessorDeploymentID != r.CurrentDeploymentID || d.ServiceRolloutHandoff.BindingsCheck == nil || d.ServiceRolloutHandoff.BindingsCheck.RequestID != r.ID || d.ServiceRolloutHandoff.BindingsCheck.AuditID != r.AuditID) {
+	done := CheckedRollbackCompleted(r, d)
+	if status == "complete" && !done {
 		return ErrCheckedRollbackChanged
 	}
+	if status == "failed" && done {
+		status, code, blockers = "complete", "", nil
+	}
+	m.checkedRollbacks[r.ID] = blockedRollback(r, status, code, blockers)
 	if status == "failed" && d.TrafficPercent == 0 {
-		d.Status = DeploySuperseded
+		if d.Status != DeployLive || !m.deploymentRevisionRetainedLocked(d.ID) && !m.deploymentInUsableReleaseLocked(d.ID) {
+			d.Status = DeploySuperseded
+		}
 		d.RolloutState = "pending"
 		m.putDeploymentLocked(d.ID, d)
 	}
-	m.checkedRollbacks[r.ID] = blockedRollback(r, status, code, blockers)
+	r = blockedRollback(r, status, code, blockers)
+	if status == "complete" && d.ServiceRolloutHandoff.CompletedAt != nil {
+		doneAt := *d.ServiceRolloutHandoff.CompletedAt
+		r.CompletedAt = &doneAt
+	}
+	m.checkedRollbacks[r.ID] = r
 	return nil
 }

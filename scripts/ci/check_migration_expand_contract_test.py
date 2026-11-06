@@ -36,6 +36,16 @@ def lint(up, referenced=no_refs, header="", down=""):
 
 
 LT = "SET LOCAL lock_timeout = '5s';\n"
+# A concurrent build of events_kind with the session statement_timeout and
+# the invalid-index guard (bug hunt H73).
+GUARDED_EVENTS_KIND = (
+    "SET statement_timeout = 0;\n"
+    "-- +goose StatementBegin\n"
+    "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+    "WHERE c.relname = 'events_kind' AND NOT i.indisvalid) THEN EXECUTE 'DROP INDEX events_kind'; END IF; END $$;\n"
+    "-- +goose StatementEnd\n"
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);"
+)
 
 
 class LockTimeoutTest(unittest.TestCase):
@@ -109,8 +119,21 @@ class IndexTest(unittest.TestCase):
     def test_concurrently_needs_no_transaction(self):
         self.assertEqual(lint("CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);"),
                          [("concurrently-in-transaction", "events_kind")])
-        self.assertEqual(lint("CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);",
-                              header="-- +goose NO TRANSACTION\n"), [])
+        self.assertEqual(lint(GUARDED_EVENTS_KIND, header="-- +goose NO TRANSACTION\n"), [])
+
+    def test_concurrent_build_needs_timeout_and_invalid_guard(self):
+        no_tx = "-- +goose NO TRANSACTION\n"
+        self.assertEqual(lint("CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);", header=no_tx),
+                         [("index-build-timeout", "events"), ("index-invalid-guard", "events_kind")])
+        # SET LOCAL ends with its own goose statement: it bounds nothing.
+        self.assertEqual(lint("SET LOCAL statement_timeout = 0;\n" + GUARDED_EVENTS_KIND.split("\n", 1)[1], header=no_tx),
+                         [("index-build-timeout", "events"), ("statement-timeout-local", "*")])
+        # Without IF NOT EXISTS a leftover fails the rerun loudly; only the timeout is needed.
+        self.assertEqual(lint("SET statement_timeout = '10min';\nCREATE INDEX CONCURRENTLY events_kind ON events (kind);",
+                              header=no_tx), [])
+        # A table the migration creates is exempt.
+        self.assertEqual(lint("CREATE TABLE widgets (id int);\nCREATE INDEX CONCURRENTLY IF NOT EXISTS w ON widgets (id);",
+                              header=no_tx), [])
 
     def test_add_primary_key_builds_an_index(self):
         self.assertEqual(lint(LT + "ALTER TABLE apps ADD PRIMARY KEY (id);"), [("index-build", "apps")])
@@ -637,8 +660,7 @@ class LaneVerdictTest(unittest.TestCase):
          marked("-- migration-lint: allow concurrently-in-transaction *: goose handles it\n"
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);"),
          False, ["waives concurrently-in-transaction"]),
-        ("concurrent index", marked("CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);",
-                                    header="-- +goose NO TRANSACTION\n"), True, []),
+        ("concurrent index", marked(GUARDED_EVENTS_KIND, header="-- +goose NO TRANSACTION\n"), True, []),
         ("contract statement", marked(LT + "TRUNCATE events;"), False, ["contract change contract-statement events"]),
         ("a waived no-downtime rule still blocks",
          marked("-- migration-lint: allow unbatched-write apps: small table\nUPDATE apps SET tier = 'free';"), False,

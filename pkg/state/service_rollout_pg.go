@@ -143,10 +143,7 @@ func (s *PgStore) FinalizeServiceRollout(ctx context.Context, id string) (Deploy
 		return Deployment{}, fmt.Errorf("state: finalize service rollout decode manifest: %w", err)
 	}
 	if manifest.RevisionPinTTLSeconds > 0 && manifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
-		if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-			select id, app_id, now() + ($4::integer * interval '1 second')
-			  from deployments where app_id = $1 and scope = $2 and status = 'live' and id <> $3
-			on conflict (deployment_id) do nothing`, target.AppID, target.Scope, target.ID, manifest.RevisionPinTTLSeconds); err != nil {
+		if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(target.AppID), Scope: target.Scope, TargetID: mustPgUUID(target.ID), Ttl: int32(manifest.RevisionPinTTLSeconds)}); err != nil {
 			return Deployment{}, fmt.Errorf("state: finalize service rollout retain siblings: %w", err)
 		}
 	}
@@ -247,10 +244,7 @@ func (s *PgStore) beginServiceRolloutCutoverTx(ctx context.Context, tx pgx.Tx, i
 		return Deployment{}, fmt.Errorf("state: begin service rollout decode manifest: %w", err)
 	}
 	if manifest.RevisionPinTTLSeconds > 0 && manifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
-		if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-			select id, app_id, now() + ($4::integer * interval '1 second')
-			  from deployments where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
-			on conflict (deployment_id) do nothing`, target.AppID, target.Scope, target.ID, manifest.RevisionPinTTLSeconds); err != nil {
+		if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(target.AppID), Scope: target.Scope, TargetID: mustPgUUID(target.ID), Ttl: int32(manifest.RevisionPinTTLSeconds)}); err != nil {
 			return Deployment{}, fmt.Errorf("state: begin service rollout retain predecessor: %w", err)
 		}
 	}
@@ -307,6 +301,9 @@ func (s *PgStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Depl
 	previous, found := previousServiceRolloutRow(target, rows)
 	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
 		return target, ErrServiceRolloutInvalid
+	}
+	if err := checkUnreviewedRollbackTx(ctx, tx, target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
 	}
 	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionAbort, previous.id, previous.id, target.ServiceRolloutHandoff.Reason)
 	if err != nil {
@@ -393,6 +390,9 @@ func (s *PgStore) AbortServiceRollout(ctx context.Context, id, reason string) (D
 		return target, ErrServiceRolloutInvalid
 	}
 	previous, _ := previousServiceRolloutRow(target, rows)
+	if err := checkUnreviewedRollbackTx(ctx, tx, target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
+	}
 	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionAbort, previous.id, previous.id, reason)
 	if err != nil {
 		return target, err

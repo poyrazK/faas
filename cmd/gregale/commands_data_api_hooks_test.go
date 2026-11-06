@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,12 +40,15 @@ func TestDataAPIHooksSQLRendersTheSchema(t *testing.T) {
 	}
 }
 
-// hooksAPI fakes the app, secret and restart routes.
+// hooksAPI fakes the app, secret, restart, Data API status and cron routes.
+// A nil status answers like a control plane without the route.
 type hooksAPI struct {
 	mu      sync.Mutex
 	secrets []api.AppSecretResponse
 	writes  []string
 	bodies  map[string]string
+	status  *api.DataAPIStatus
+	crons   []api.CronResponse
 }
 
 func newHooksClient(t *testing.T, fake *hooksAPI, base string) *api.Client {
@@ -73,6 +77,24 @@ func newHooksClient(t *testing.T, fake *hooksAPI, base string) *api.Client {
 			w.WriteHeader(http.StatusNoContent)
 		case strings.Contains(r.URL.Path, "restart"):
 			_, _ = w.Write([]byte(`{"wake_id":"wake-1"}`))
+		case r.URL.Path == "/v1/apps/shop-data/data-api/status" && fake.status != nil:
+			_ = json.NewEncoder(w).Encode(fake.status)
+		case r.URL.Path == "/v1/crons" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(fake.crons)
+		case r.URL.Path == "/v1/crons" && r.Method == http.MethodPost:
+			var req api.CreateCronRequest
+			_ = json.Unmarshal(body, &req)
+			cron := api.CronResponse{ID: "cron-1", AppID: req.AppID, Schedule: req.Schedule, Path: req.Path, TimeoutSeconds: req.TimeoutSeconds, Enabled: true}
+			fake.crons = append(fake.crons, cron)
+			_ = json.NewEncoder(w).Encode(cron)
+		case strings.HasPrefix(r.URL.Path, "/v1/crons/") && r.Method == http.MethodPatch:
+			var req api.UpdateCronRequest
+			_ = json.Unmarshal(body, &req)
+			fake.crons[0].Schedule = *req.Schedule
+			_ = json.NewEncoder(w).Encode(fake.crons[0])
+		case strings.HasPrefix(r.URL.Path, "/v1/crons/") && r.Method == http.MethodDelete:
+			fake.crons = nil
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -133,8 +155,104 @@ func TestDataAPIHooksNeedAnHTTPSPlatform(t *testing.T) {
 	}
 }
 
+// Status reports what the runtime last reported, without waking the API, and
+// says plainly when the installation accepts no runtime reports.
+func TestDataAPIHooksStatusReportsDelivery(t *testing.T) {
+	oldest := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	fake := &hooksAPI{secrets: []api.AppSecretResponse{{Key: "DATA_API_CHANGE_EVENTS_URL", Scope: "default"}},
+		crons: []api.CronResponse{{ID: "cron-1", Path: api.DataAPIChangeHooksDrainPath, Schedule: "*/5 * * * *", Enabled: true}},
+		status: &api.DataAPIStatus{RuntimeVersion: "0123456789abcdef", RuntimeReports: api.DataAPIRuntimeReportsAvailable, ChangeHooks: &api.DataAPIChangeHookStatus{
+			ReportedAt: oldest.Add(time.Minute), Pending: 3, Failed: 1, OldestPendingAt: &oldest, LastFailureCode: "event_schema_invalid", Publishing: api.DataAPIChangeHooksPublishingRetrying}}}
+	client := newHooksClient(t, fake, "https://api.gregale.example")
+	receipt, err := main.DataAPIHooksStatus(context.Background(), client, "shop-data", api.DefaultEnvScope)
+	if err != nil || receipt.DrainEvery != "5m" || receipt.Delivery == nil || receipt.Delivery.Pending != 3 {
+		t.Fatalf("status %+v %v", receipt, err)
+	}
+	line := main.DataAPIHooksDelivery(receipt)
+	for _, want := range []string{"3 waiting (oldest recorded 2026-11-02T12:00:00Z)", "1 rejected (event_schema_invalid", "gregale_hooks.retry_failed()", "failing and retrying"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("delivery %q lacks %q", line, want)
+		}
+	}
+	fake.status.RuntimeReports, fake.status.ChangeHooks = api.DataAPIRuntimeReportsUnavailable, nil
+	receipt, _ = main.DataAPIHooksStatus(context.Background(), client, "shop-data", api.DefaultEnvScope)
+	if line := main.DataAPIHooksDelivery(receipt); !strings.Contains(line, "workload identity is not configured") {
+		t.Fatalf("delivery without runtime reports %q", line)
+	}
+	fake.status = nil
+	receipt, err = main.DataAPIHooksStatus(context.Background(), client, "shop-data", api.DefaultEnvScope)
+	if err != nil || receipt.RuntimeReports != "" || receipt.Delivery != nil {
+		t.Fatalf("an older control plane %+v %v", receipt, err)
+	}
+}
+
+// Monthly caps count on platform totals that only runtime reports bring, so
+// an installation that accepts none refuses them; usage reporting is stored
+// with a warning, and an older control plane is not second-guessed.
+func TestDataAPIMonthlyCapsNeedRuntimeReports(t *testing.T) {
+	fake := &hooksAPI{status: &api.DataAPIStatus{RuntimeVersion: "0123456789abcdef", RuntimeReports: api.DataAPIRuntimeReportsUnavailable}}
+	client := newHooksClient(t, fake, "https://api.gregale.example")
+	ctx := context.Background()
+	if err := main.CheckDataAPIReportSettings(ctx, client, "shop-data", "requests=5", ""); err == nil || !strings.Contains(err.Error(), "workload identity is not configured") {
+		t.Fatalf("caps without runtime reports: %v", err)
+	}
+	for _, tc := range []struct{ caps, reporting string }{{"", "on"}, {"off", ""}, {"", "off"}} {
+		if err := main.CheckDataAPIReportSettings(ctx, client, "shop-data", tc.caps, tc.reporting); err != nil {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+	}
+	fake.status.RuntimeReports = api.DataAPIRuntimeReportsAvailable
+	if err := main.CheckDataAPIReportSettings(ctx, client, "shop-data", "requests=5", ""); err != nil {
+		t.Fatalf("caps with runtime reports: %v", err)
+	}
+	fake.status = nil
+	if err := main.CheckDataAPIReportSettings(ctx, client, "shop-data", "requests=5", ""); err != nil {
+		t.Fatalf("an older control plane: %v", err)
+	}
+	if len(fake.writes) != 0 {
+		t.Fatalf("the check wrote %v", fake.writes)
+	}
+}
+
+// A drain schedule is one cron on the drain path; enable creates or changes
+// it, off and disable remove it.
+func TestDataAPIHooksDrainSchedule(t *testing.T) {
+	fake := &hooksAPI{}
+	client := newHooksClient(t, fake, "https://api.gregale.example")
+	t.Setenv("FAAS_API", "https://api.gregale.example")
+	ctx := context.Background()
+	receipt, err := main.EnableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, false)
+	if err == nil {
+		err = main.ApplyDataAPIDrainSchedule(ctx, client, &receipt, "*/5 * * * *", "5m")
+	}
+	if err != nil || receipt.DrainEvery != "5m" || len(fake.crons) != 1 {
+		t.Fatalf("enable %+v %v %+v", receipt, err, fake.crons)
+	}
+	if cron := fake.crons[0]; cron.Path != api.DataAPIChangeHooksDrainPath || cron.AppID != "8c0a63d2-5a7e-4b8f-9a55-2f8a3c1d9e01" || cron.TimeoutSeconds != int(api.DataAPIChangeHooksDrainCronTimeout/time.Second) {
+		t.Fatalf("cron %+v", cron)
+	}
+	if err := main.ApplyDataAPIDrainSchedule(ctx, client, &receipt, "0 * * * *", "1h"); err != nil || len(fake.crons) != 1 || fake.crons[0].Schedule != "0 * * * *" {
+		t.Fatalf("change %v %+v", err, fake.crons)
+	}
+	off, err := main.DisableDataAPIHooks(ctx, client, "shop-data", api.DefaultEnvScope, false)
+	if err != nil || off.DrainEvery != "" || len(fake.crons) != 0 {
+		t.Fatalf("disable %+v %v %+v", off, err, fake.crons)
+	}
+	for every, want := range map[string]string{"1m": "* * * * *", "15m": "*/15 * * * *", "1h": "0 * * * *", "6h": "0 */6 * * *", "24h": "0 0 * * *"} {
+		if got, err := main.DataAPIDrainSchedule(every); err != nil || got != want || main.DataAPIDrainEvery(got) != every {
+			t.Fatalf("%s = %q %v", every, got, err)
+		}
+	}
+	for _, bad := range []string{"7m", "90s", "5h", "48h", "0m", "soon"} {
+		if _, err := main.DataAPIDrainSchedule(bad); err == nil {
+			t.Fatalf("%s accepted", bad)
+		}
+	}
+}
+
 func TestDataAPIHooksUsage(t *testing.T) {
-	for _, args := range [][]string{nil, {"publish"}, {"enable"}, {"enable", "Bad Name"}, {"status", "shop-data", "--no-restart"}, {"sql", "extra"}} {
+	for _, args := range [][]string{nil, {"publish"}, {"enable"}, {"enable", "Bad Name"}, {"status", "shop-data", "--no-restart"}, {"sql", "extra"},
+		{"status", "shop-data", "--drain-every", "5m"}, {"enable", "shop-data", "--drain-every", "7m"}, {"enable", "shop-data", "--drain-every", "5m", "--scope", "preview"}} {
 		_, _, restore := main.SwapIO(t)
 		code := main.CmdDataAPIHooks(args)
 		restore()

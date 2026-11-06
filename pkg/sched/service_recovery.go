@@ -24,9 +24,7 @@ var (
 func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 	ctx, cancel := context.WithTimeout(detachedServiceContext(ctx), time.Duration(api.ServiceRecoveryAttemptTimeoutSeconds)*time.Second)
 	defer cancel()
-	mu := e.serviceAppMutex(appID)
-	mu.Lock()
-	defer mu.Unlock()
+	defer e.lockServiceApp(appID)()
 	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer readCancel()
 	app, err := e.store.AppByID(readCtx, appID)

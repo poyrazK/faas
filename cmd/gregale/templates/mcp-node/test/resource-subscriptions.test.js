@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { createApp } from '../app.js';
 import { generateKeyPair, SignJWT } from 'jose';
 import { setTimeout as delay } from 'node:timers/promises';
+import { ResourceTemplate } from '@modelcontextprotocol/server';
 
 function taskSnapshot(taskID, status, result) {
   return {
@@ -221,4 +222,51 @@ test('task resource subscriptions do not acknowledge unknown task URIs', async t
   assert.equal(completion.result.resultType, 'complete');
   await messages.cancel();
   abort.abort();
+});
+
+test('dotted resource-template variables can be read and subscribed to', { timeout: 5000 }, async t => {
+  const api = createApp({
+    version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless', legacy: false,
+    allowed_origins: [], tasks: { enabled: false },
+    auth: { mode: 'open', resource_scopes: { 'review://dotted/{item.id}': [], 'review://simple/{itemId}': [] } },
+  }, { log() {} });
+  for (const [path, variable] of [['dotted', 'item.id'], ['simple', 'itemId']]) {
+    api.registerResource(path, new ResourceTemplate(`review://${path}/{${variable}}`, { list: undefined }), {},
+      async (uri, variables) => ({ contents: [{ uri: uri.href, text: variables[variable] }] }));
+  }
+  const server = api.app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    api.closeTaskSubscriptions();
+    await api.handler.close();
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  });
+  const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+  for (const path of ['simple', 'dotted']) {
+    const uri = `review://${path}/one`;
+    const read = await fetch(endpoint, {
+      method: 'POST', headers: protocolHeaders('resources/read', uri),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 41, method: 'resources/read', params: { uri, _meta: modernEnvelope() } }),
+    });
+    assert.equal(read.status, 200);
+    const resource = await streamMessages(read).next();
+    assert.equal(resource.result.contents[0].text, 'one');
+    const abort = new AbortController();
+    const response = await fetch(endpoint, {
+      method: 'POST', signal: abort.signal, headers: protocolHeaders('subscriptions/listen'),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 42, method: 'subscriptions/listen', params: {
+        notifications: { resourceSubscriptions: [uri] }, _meta: modernEnvelope(),
+      } }),
+    });
+    const messages = streamMessages(response);
+    const acknowledgement = await messages.next();
+    assert.deepEqual(acknowledgement.params.notifications.resourceSubscriptions, [uri]);
+    await api.notifyResourceUpdated(uri);
+    const update = await messages.next();
+    assert.equal(update.method, 'notifications/resources/updated');
+    assert.equal(update.params.uri, uri);
+    await messages.cancel();
+    abort.abort();
+  }
 });

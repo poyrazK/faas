@@ -97,16 +97,16 @@ func TestPostgresMajorUpgradeFailsForGood(t *testing.T) {
 	if _, err := store.ActiveResize(ctx, account, d.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("a failed upgrade is still active", err)
 	}
-	// The outcome is final, and only an upgrade can fail.
+	// The outcome is final, and every failed receipt needs a diagnostic.
 	if _, err := pool.Exec(ctx, "UPDATE managed_postgres_resizes SET state='succeeded',error_code=NULL WHERE id=$1", op.ID); err == nil {
 		t.Fatal("a failed upgrade was rewritten")
 	}
 	_, err = pool.Exec(ctx, `INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,
 		data_resource_id,source_spec,target_class,generation,state,error_code,created_at,completed_at)
 		SELECT $1,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,source_spec,'burstable',
-		generation+10,'failed','resize_refused',created_at,created_at FROM managed_postgres_resizes WHERE id=$2`, uuid.NewString(), op.ID)
+		generation+10,'failed',NULL,created_at,created_at FROM managed_postgres_resizes WHERE id=$2`, uuid.NewString(), op.ID)
 	if err == nil || !strings.Contains(err.Error(), "managed_postgres_resize_outcome_check") {
-		t.Fatal("a failed resize accepted", err)
+		t.Fatal("a failed resize without a diagnostic accepted", err)
 	}
 	// A new upgrade may follow.
 	next := postgresUpgradeIntent(back, back.Spec.PostgresMajor+1)

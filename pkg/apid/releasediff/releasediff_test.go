@@ -173,3 +173,60 @@ func TestParseSBOMAndPackageLimits(t *testing.T) {
 		t.Fatalf("added = %+v, truncated = %v", added, truncated)
 	}
 }
+
+// A failed build has no runtime base yet; the diff read "runtime_base: node24
+// → empty" and counted a runtime setting nobody changed (CLI journey
+// 2026-11-05, #6638). Missing build evidence is unknown, not a change.
+func TestCompareRuntimeBaseWithoutBuildEvidence(t *testing.T) {
+	built := func(id string, rev int, base string) state.Deployment {
+		return release(id, t0.Add(time.Duration(rev)*time.Hour), func(d *state.Deployment) {
+			d.Revision, d.RuntimeBase, d.RootfsPath = rev, base, "/var/lib/faas/layers/"+id+".ext4"
+		})
+	}
+	unbuilt := func(id string, rev int) state.Deployment {
+		return release(id, t0.Add(time.Duration(rev)*time.Hour), func(d *state.Deployment) {
+			d.Revision, d.RuntimeBase, d.RootfsPath, d.ImageDigest = rev, "", "", ""
+		})
+	}
+	image := release("img", t0.Add(5*time.Hour), func(d *state.Deployment) {
+		d.Revision, d.RuntimeBase, d.ImageDigest = 5, "", "sha256:abc"
+	})
+	for _, tc := range []struct {
+		name         string
+		from, to     state.Deployment
+		wantChange   bool
+		wantUnknown  string
+		wantNoChange bool
+	}{
+		{name: "successful to successful, same base", from: built("a", 1, "node24"), to: built("b", 2, "node24"), wantNoChange: true},
+		{name: "successful to failed", from: built("a", 1, "node24"), to: unbuilt("b", 2), wantUnknown: "runtime base unknown: v2 made no build artifact"},
+		{name: "successful to in progress", from: built("a", 1, "node24"), to: unbuilt("c", 3), wantUnknown: "v3 made no build artifact"},
+		{name: "failed to successful", from: unbuilt("b", 2), to: built("d", 4, "node24"), wantUnknown: "v2 made no build artifact"},
+		{name: "genuinely changed base", from: built("a", 1, "node22"), to: built("d", 4, "node24"), wantChange: true},
+		{name: "source build to image", from: built("a", 1, "node24"), to: image, wantChange: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			from := tc.from
+			d := Compare(Inputs{App: state.App{Slug: "shop"}, From: &from, To: tc.to})
+			changed := false
+			for _, f := range d.Runtime {
+				changed = changed || f.Field == "runtime_base"
+			}
+			if changed != tc.wantChange {
+				t.Fatalf("runtime_base in Runtime = %t, want %t: %+v", changed, tc.wantChange, d.Runtime)
+			}
+			if tc.wantUnknown != "" && !strings.Contains(d.Summary, tc.wantUnknown) {
+				t.Fatalf("summary = %q, want %q", d.Summary, tc.wantUnknown)
+			}
+			if tc.wantUnknown == "" && strings.Contains(d.Summary, "unknown") {
+				t.Fatalf("summary = %q reports unknown evidence", d.Summary)
+			}
+			if tc.wantUnknown != "" && strings.Contains(d.Summary, "runtime setting") {
+				t.Fatalf("summary counted unknown evidence as a change: %q", d.Summary)
+			}
+			if tc.wantNoChange && d.Summary != "no changes found" {
+				t.Fatalf("summary = %q", d.Summary)
+			}
+		})
+	}
+}

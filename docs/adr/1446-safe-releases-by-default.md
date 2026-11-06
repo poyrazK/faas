@@ -279,3 +279,22 @@ commit together only for that attempt. A failure arriving after timeout and a
 new preparation of the same deployment is discarded, leaving the replacement
 request and its receipt intact. Configuration changes during a failing probe
 also require new verification. Legacy failure callers keep their status checks.
+
+## Amendment 4 (2026-11-06): a stage nobody called advances at its boundary
+
+The bounded low-traffic hold assumed probes would cover a quiet release. They
+go through the public edge, so a `visibility: internal` service never gets
+probe evidence, and each stage of its rollout waited its dwell time plus the
+whole `CanaryLowTrafficMaxHold`. A four-stage rollout of an internal service
+took about 25 minutes and outlasted the CLI's 20-minute deploy wait although
+it finished cleanly (ChronoLake field report, rc.325).
+
+A stage in which neither the candidate nor its predecessor answered a single
+request, organic or probe (`canary.NoTrafficStage`), now takes the bounded
+advance at its boundary instead of after the bound. Every other condition of
+the bounded advance still applies (readable, clean OOM and liveness signals,
+zero candidate 5xx), and any request on either side keeps the bound. Holding
+such a stage longer produced no evidence and protected no request; the ADR-625
+first-wake window still covers the release when traffic arrives. The advance
+is still exported as `advance_low_traffic`, and meterd logs it with
+`no_traffic=true`.

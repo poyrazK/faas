@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -154,12 +155,47 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 		return Deployment{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// A retained acceptance remains a tombstone even if its environment was
+	// deleted or moved; scoped receipt reads may legitimately be unavailable.
+	if serviceAbortAttempt(ctx) != "" {
+		hash, err := serviceAbortHash(ctx, appID, id, predecessorID, reason)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		prior, err := readServiceAbortAcceptance(ctx, tx, appID, serviceAbortAttempt(ctx))
+		if err == nil {
+			return Deployment{}, 0, serviceAbortPrior(prior, hash)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Deployment{}, 0, err
+		}
+	}
 	if expected, ok := serviceRecoveryReview(ctx); ok && expected.EnvironmentID != "" {
 		params := sqlc.LockReviewedEnvironmentParams{AppID: mustPgUUID(appID), Scope: expected.Scope}
 		if _, err := sqlc.New().LockReviewedEnvironment(ctx, tx, params); err != nil {
 			return Deployment{}, 0, mapErr(err)
 		}
 		if err := sqlc.New().LockReviewedRoutePolicy(ctx, tx, sqlc.LockReviewedRoutePolicyParams(params)); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if serviceAbortAttempt(ctx) != "" {
+		hash, err := serviceAbortHash(ctx, appID, id, predecessorID, reason)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		// Preserve the ordinary route-snapshot/app/deployment lock order.
+		if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
+			return Deployment{}, 0, err
+		}
+		if _, err := sqlc.New().LockServiceAbortApp(ctx, tx, appID); err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+		prior, err := readServiceAbortAcceptance(ctx, tx, appID, serviceAbortAttempt(ctx))
+		if err == nil {
+			return Deployment{}, 0, serviceAbortPrior(prior, hash)
+		}
+		if !errors.Is(err, ErrNotFound) {
 			return Deployment{}, 0, err
 		}
 	}
@@ -187,7 +223,7 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 	if err := saveServiceHandoff(ctx, tx, target); err != nil {
 		return target, 0, err
 	}
-	auditID, err := sqlc.New().AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(id), AppID: mustPgUUID(appID), Kind: string(DeployRolledBack), Actor: "operator:cli:recover_rollout", Data: serviceBindingIntentAudit(target, reason)})
+	auditID, err := sqlc.New().AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(id), AppID: mustPgUUID(appID), Kind: string(DeployRolledBack), Actor: "operator:cli:recover_rollout", Data: serviceAbortReceiptData(ctx, target, reason)})
 	if err != nil {
 		return target, 0, err
 	}
