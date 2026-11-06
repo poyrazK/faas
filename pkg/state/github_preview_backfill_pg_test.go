@@ -33,7 +33,7 @@ func TestPgGitHubPreviewAccountBackfillCommitsBatches(t *testing.T) {
  update pr_preview_sets set account_id=null;`); err != nil {
 		t.Fatal(err)
 	}
-	source, err := migrations.FS.ReadFile("20261106170000001_github_preview_accounts_backfill.sql")
+	source, err := migrations.FS.ReadFile("20261106224732589_github_preview_accounts_backfill.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
