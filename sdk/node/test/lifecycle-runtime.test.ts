@@ -59,11 +59,32 @@ test('overlapping deliveries share one run', async () => {
   hooks.onAfterRestore(async () => { runs++; await gate; });
   const first = hooks.run('after_restore');
   const second = hooks.run('after_restore');
-  assert.equal(first, second);
   release();
   await Promise.all([first, second]);
   assert.equal(runs, 1);
   await hooks.run('after_restore');
+  assert.equal(runs, 2);
+});
+
+// Review finding 10: a timed-out delivery must not let a retry start the
+// callbacks again while the first run is still going.
+test('a retry after the budget waits for the still-running run', async () => {
+  const hooks = new LifecycleHooks({budgetMs: 20});
+  let runs = 0, running = 0, maxRunning = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  hooks.onAfterRestore(async () => {
+    runs++; running++; maxRunning = Math.max(maxRunning, running);
+    await gate; // ignores the abort signal, like a blocking reconnect
+    running--;
+  });
+  await assert.rejects(hooks.run('after_restore'), /budget/);
+  await assert.rejects(hooks.run('after_restore'), /budget/);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(runs, 1);
+  assert.equal(maxRunning, 1);
+  await hooks.run('after_restore').catch(() => {}); // a fresh run once the first settled
   assert.equal(runs, 2);
 });
 

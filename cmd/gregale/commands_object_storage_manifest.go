@@ -98,8 +98,10 @@ func createManifestBuckets(ctx context.Context, client manifestObjectStorageClie
 			continue
 		}
 		created[key] = true
-		bucketCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("manifest-bucket", slug, want.name, want.scope, want.region))
-		bucket, err := creator.CreateObjectBucket(bucketCtx, slug, api.CreateObjectBucketRequest{Name: want.name, Scope: want.scope, Region: want.region})
+		// No idempotency key: the API reserves by (app, scope, name), so a
+		// retry finds the bucket, and a fixed key could replay a create
+		// for a bucket deleted since.
+		bucket, err := creator.CreateObjectBucket(ctx, slug, api.CreateObjectBucketRequest{Name: want.name, Scope: want.scope, Region: want.region})
 		if err != nil {
 			return catalog, fmt.Errorf("create bucket %q: %w", want.name, err)
 		}

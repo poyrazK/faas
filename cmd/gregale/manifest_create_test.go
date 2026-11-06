@@ -119,6 +119,26 @@ func TestManifestDatabaseCreateAcceptsPendingBindingOfNewDatabase(t *testing.T) 
 	}
 }
 
+// Review finding 9: a database an earlier deploy created that is still
+// provisioning is waited for, not re-created with a spec computed now.
+func TestManifestDatabaseCreateWaitsForProvisioningInsteadOfRecreating(t *testing.T) {
+	quietManifestCreate(t)
+	dir := writeTestManifest(t, "databases:\n  - database: chronolake-db\n    create: true\n")
+	fake := &creatingPostgresClient{
+		databases: []api.ManagedPostgresDatabase{{ID: "old-db", Name: "chronolake-db", PostgresMajor: 16, State: "provisioning"}},
+		binding:   api.ManagedPostgresBinding{ID: "b", State: "ready", EnvironmentKey: "DATABASE_URL"},
+	}
+	if err := deployManifestPostgresBindings(context.Background(), fake, "gateway", dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.created) != 0 {
+		t.Fatalf("re-sent create %+v for a database that exists", fake.created)
+	}
+	if fake.gets == 0 || len(fake.boundIDs) != 1 || fake.boundIDs[0] != "old-db" {
+		t.Fatalf("gets %d, bound %v; want a wait and a binding on old-db", fake.gets, fake.boundIDs)
+	}
+}
+
 // creatingBucketClient adds bucket creation to the manifest bucket client.
 type creatingBucketClient struct {
 	buckets  []api.ObjectBucket

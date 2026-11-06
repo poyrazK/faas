@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -159,7 +160,15 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 		}
 		plans = append(plans, plan)
 	}
-	ready, err := ensureManifestDatabases(ctx, client, creates, plans, func(p bindingPlan) string { return p.create })
+	// Missing databases are created; one still provisioning (an earlier
+	// deploy's) is only waited for, never re-created with a spec computed now.
+	pending := map[string]api.ManagedPostgresDatabase{}
+	for _, plan := range plans {
+		if plan.create != "" {
+			pending[plan.create] = plan.database
+		}
+	}
+	ready, err := ensureManifestDatabases(ctx, client, creates, pending)
 	if err != nil {
 		return err
 	}
@@ -267,45 +276,33 @@ var (
 	manifestDatabasePoll      = 2 * time.Second
 )
 
-// ensureManifestDatabases creates each database the plans need (once per
-// name) and waits for it to become ready, so the deployment that follows
-// starts with its key. It returns the latest view of each.
-func ensureManifestDatabases[P any](ctx context.Context, client any, creates map[string]gregalemanifest.DatabaseCreate, plans []P, createName func(P) string) (map[string]api.ManagedPostgresDatabase, error) {
+// ensureManifestDatabases creates each pending database that does not exist
+// yet (zero ID) and waits for every pending one to become ready, so the
+// deployment that follows starts with its key. It returns the latest view of
+// each.
+func ensureManifestDatabases(ctx context.Context, client any, creates map[string]gregalemanifest.DatabaseCreate, pending map[string]api.ManagedPostgresDatabase) (map[string]api.ManagedPostgresDatabase, error) {
 	out := map[string]api.ManagedPostgresDatabase{}
-	for _, plan := range plans {
-		name := createName(plan)
-		if name == "" || out[name].ID != "" {
-			continue
-		}
+	names := make([]string, 0, len(pending))
+	for name := range pending {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		creator, ok := client.(manifestPostgresCreator)
 		if !ok {
 			return nil, fmt.Errorf("database %q: creating databases is unavailable", name)
 		}
-		request := creates[name].Request(name)
-		if request.Region == "" || request.PostgresMajor == 0 {
-			capabilities, err := creator.GetManagedPostgresCapabilities(ctx, request.Region)
+		database := pending[name]
+		if database.ID != "" {
+			if !jsonOutput {
+				PrintProgress(osStderr, "Waiting for database %s, still provisioning", database.Name)
+			}
+		} else {
+			created, err := createManifestDatabase(ctx, creator, name, creates[name])
 			if err != nil {
-				return nil, fmt.Errorf("database %q: read managed PostgreSQL capabilities: %w", name, err)
+				return nil, err
 			}
-			if request.Region == "" {
-				request.Region = capabilities.Region
-			}
-			if creates[name].PostgresMajor == 0 {
-				// The newest offered major, as a project deploy picks it.
-				for _, major := range capabilities.PostgresMajors {
-					request.PostgresMajor = max(request.PostgresMajor, major)
-				}
-			}
-		}
-		database, err := creator.CreateManagedPostgresDatabase(ctx, request)
-		if readRefused(err) {
-			return nil, fmt.Errorf("gregale.yaml creates database %q, which needs a credential with postgres:manage: %w", name, err)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("create database %q: %w", name, err)
-		}
-		if !jsonOutput {
-			PrintProgress(osStderr, "Creating database %s (PostgreSQL %d, %s)", database.Name, database.PostgresMajor, database.Region)
+			database = created
 		}
 		deadline := time.Now().Add(manifestDatabaseReadyWait)
 		for database.State == "provisioning" && time.Now().Before(deadline) {
@@ -319,9 +316,39 @@ func ensureManifestDatabases[P any](ctx context.Context, client any, creates map
 			}
 		}
 		if database.State != "ready" && database.State != "provisioning" {
-			return nil, fmt.Errorf("database %q is %s after creation", name, database.State)
+			return nil, fmt.Errorf("database %q is %s", name, database.State)
 		}
 		out[name] = database
 	}
 	return out, nil
+}
+
+func createManifestDatabase(ctx context.Context, creator manifestPostgresCreator, name string, create gregalemanifest.DatabaseCreate) (api.ManagedPostgresDatabase, error) {
+	request := create.Request(name)
+	if request.Region == "" || request.PostgresMajor == 0 {
+		capabilities, err := creator.GetManagedPostgresCapabilities(ctx, request.Region)
+		if err != nil {
+			return api.ManagedPostgresDatabase{}, fmt.Errorf("database %q: read managed PostgreSQL capabilities: %w", name, err)
+		}
+		if request.Region == "" {
+			request.Region = capabilities.Region
+		}
+		if create.PostgresMajor == 0 {
+			// The newest offered major, as a project deploy picks it.
+			for _, major := range capabilities.PostgresMajors {
+				request.PostgresMajor = max(request.PostgresMajor, major)
+			}
+		}
+	}
+	database, err := creator.CreateManagedPostgresDatabase(ctx, request)
+	if readRefused(err) {
+		return database, fmt.Errorf("gregale.yaml creates database %q, which needs a credential with postgres:manage: %w", name, err)
+	}
+	if err != nil {
+		return database, fmt.Errorf("create database %q: %w", name, err)
+	}
+	if !jsonOutput {
+		PrintProgress(osStderr, "Creating database %s (PostgreSQL %d, %s)", database.Name, database.PostgresMajor, database.Region)
+	}
+	return database, nil
 }

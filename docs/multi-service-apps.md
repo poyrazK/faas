@@ -566,7 +566,9 @@ Deploys never delete a database or bucket. See
 [managed PostgreSQL](postgres.md#connect-an-app) for the database fields;
 object-storage bindings inject the bucket's S3 settings under
 `GREGALE_S3_<BUCKET>_*` unless the entry sets `prefix`. Binding a bucket
-needs a credential with `storage:manage`.
+needs a credential with `storage:manage`, and creating a database needs
+`postgres:manage`. Organization projects attach buckets with
+`gregale add bucket` for now; a project deploy refuses `buckets:` there.
 
 ## Debugging a project
 

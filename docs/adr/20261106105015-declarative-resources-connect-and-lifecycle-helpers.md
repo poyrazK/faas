@@ -78,6 +78,34 @@ verification and SNI-routed providers keep working, and the password reaches
 `psql` only through `PGPASSWORD`. `--proxy` keeps the tunnel open for another
 client. It is part of the `app-tasks` capability.
 
+### Review fixes (same PR)
+
+- Creating a database from gregale.yaml needs `postgres:manage` (or a
+  session) on **every** account, not only organizations. A deploy token, a
+  `deploy:write` key or a push deploy without a principal can bind existing
+  databases but cannot create one.
+- Every binding's target app is checked before any database is created.
+- Bucket declarations are refused on organization projects and
+  organization-owned apps. Buckets are app-owned and billed to their owner,
+  and apply would otherwise reserve them under the deploying member.
+- Before any mutation, the plan runs the checks `gregale add bucket` runs:
+  object storage enabled and able to seal credentials, provider not refusing
+  credentials, fresh usage accounting, a known region, and room under the
+  per-app bucket limit. Apply repeats them.
+- A deleted bucket frees its name: `reserveBucket` no longer matches deleted
+  rows, matching `object_buckets_name_idx`. This also fixes
+  `gregale add bucket` for a reused name.
+- A binding deleted after a manifest created it keeps a revoked row under the
+  stable ID; re-binding takes a fresh ID.
+- The CLI waits for a database that is still provisioning from an earlier
+  deploy instead of re-sending create with a spec computed now.
+- `postgres connect` runs the tunnel on its own context. Stopping a
+  `signal.NotifyContext` cancels that context, which had closed the listener
+  before psql connected. `PGHOSTADDR` comes from the bound socket, so it is
+  always numeric.
+- SDK hooks keep a run registered until its callbacks return. A retried
+  delivery waits for the run already going instead of starting a second one.
+
 ## Consequences
 
 - A new multi-service project with databases and buckets deploys in one

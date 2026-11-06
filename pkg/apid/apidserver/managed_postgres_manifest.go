@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -272,9 +273,13 @@ func (s *server) manifestDatabaseCreateSpec(ctx context.Context, acct state.Acco
 	detail := func(format string, a ...any) string {
 		return fmt.Sprintf("database[%d]: create: ", index) + fmt.Sprintf(format, a...)
 	}
-	if sharedComposePostgres(ctx) && authorizeComposePostgres(ctx, nil) != nil {
+	// Creating a database is `gregale postgres create`: postgres:manage on
+	// every account, so a deploy token or deploy:write key (ADR-20261031162858
+	// amendment 1), or a push deploy without a principal, cannot buy one.
+	if sharedComposePostgres(ctx) && authorizeComposePostgres(ctx, nil) != nil ||
+		!authmw.HasScope((&http.Request{}).WithContext(ctx), api.ScopesManagedPostgresManageSurface...) {
 		return managedpostgres.Spec{}, api.NewProblem(http.StatusForbidden, "managed_postgres_forbidden",
-			"Cannot create managed PostgreSQL database", detail("your organization role or key cannot create databases (needs postgres:manage)"))
+			"Cannot create managed PostgreSQL database", detail("creating a database needs a credential with postgres:manage; deploy tokens and deploy:write keys can only bind existing databases"))
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
 	if !ok || limits.DatabasesMax == 0 || managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
@@ -369,6 +374,14 @@ func (s *server) bindResolvedManagedPostgresBindings(
 	appIDs := make(map[string]string, len(apps))
 	for _, app := range apps {
 		appIDs[strings.ToLower(app.Slug)] = app.ID
+	}
+	// Every target app must exist before a database is created for it, so a
+	// mistyped `app` cannot leave an unbound paid database behind.
+	for i, dependency := range bindings {
+		if appIDs[strings.ToLower(dependency.appSlug)] == "" {
+			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid manifest", fmt.Sprintf("database dependency %d targets workload %q, but no deployed app exists", i+1, dependency.appSlug))
+		}
 	}
 	// Databases the manifest creates, once each, before their bindings. A
 	// later failure leaves a created database in place: data is never

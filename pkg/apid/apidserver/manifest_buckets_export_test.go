@@ -17,3 +17,13 @@ func (s *server) ApplyProjectManifestBucketsForTest(ctx context.Context, acct st
 	}
 	return s.applyProjectManifestBuckets(ctx, acct, resolved, []state.App{app})
 }
+
+// CheckManifestBucketsForTest runs the plan-time bucket checks.
+func (s *server) CheckManifestBucketsForTest(ctx context.Context, acct state.Account, app *state.App, buckets []object.ManifestBucket) error {
+	return s.object.CheckManifestBuckets(ctx, acct, app, buckets)
+}
+
+// ObjectStorageMaxBucketsPerAppForTest is the registry's per-app bucket limit.
+func (s *server) ObjectStorageMaxBucketsPerAppForTest() int {
+	return s.object.Host.ObjectStorage().MaxBucketsPerApp
+}

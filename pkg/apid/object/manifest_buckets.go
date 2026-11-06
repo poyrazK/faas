@@ -50,6 +50,80 @@ func (s *Service) FindManifestBucket(ctx context.Context, acct state.Account, ap
 	return state.ObjectBucket{}, false, nil
 }
 
+// ErrManifestBucketsOrganization refuses gregale.yaml buckets on an app the
+// deploying account does not own: buckets are app-owned and billed to their
+// owner, and organization projects bind them explicitly for now.
+var ErrManifestBucketsOrganization = errors.New("gregale.yaml buckets are not supported for organization-owned apps yet; bind them with `gregale add bucket`")
+
+// CheckManifestBuckets runs, before any mutation, the checks `gregale add
+// bucket` runs for each bucket to create: object storage enabled and able to
+// seal credentials, the provider accepting the platform's credentials, fresh
+// usage accounting, a known region, and room under the per-app bucket limit.
+// app is nil for an app the deploy has not created yet.
+func (s *Service) CheckManifestBuckets(ctx context.Context, acct state.Account, app *state.App, buckets []ManifestBucket) error {
+	if len(buckets) == 0 {
+		return nil
+	}
+	if app != nil && app.AccountID != acct.ID {
+		return ErrManifestBucketsOrganization
+	}
+	if !s.ObjectStorageEnabled() {
+		return ErrObjectStorageDisabled
+	}
+	if !s.ObjectStorageSecretSealReady() {
+		return objectstorage.ErrUnavailable
+	}
+	creates := 0
+	for _, want := range buckets {
+		if want.Create {
+			creates++
+		}
+	}
+	if creates == 0 {
+		return nil
+	}
+	if s.providerRefusingCredentials() {
+		return ErrObjectStorageProviderRefused
+	}
+	registry := s.Host.ObjectStorage()
+	if !registry.CanProvisionAllRegions() {
+		return state.ErrObjectUsageStale
+	}
+	live := map[string]bool{}
+	if app != nil {
+		store, ok := s.Host.Store().(state.ObjectBucketStore)
+		if !ok {
+			return objectstorage.ErrUnavailable
+		}
+		items, err := store.ListObjectBuckets(ctx, acct.ID, app.ID)
+		if err != nil {
+			return err
+		}
+		for _, bucket := range items {
+			if bucket.State != "deleted" {
+				live[bucket.Name+"\x00"+bucket.Scope] = true
+			}
+		}
+	}
+	count := len(live)
+	for _, want := range buckets {
+		if !want.Create || live[want.Name+"\x00"+want.Scope] {
+			continue
+		}
+		if want.Region != "" {
+			if _, err := registry.Default(want.Region); err != nil {
+				return fmt.Errorf("%w: bucket %q: region %q is not offered", objectstorage.ErrInvalid, want.Name, want.Region)
+			}
+		}
+		live[want.Name+"\x00"+want.Scope] = true
+		count++
+	}
+	if limit := registry.MaxBucketsPerApp; count > limit {
+		return &state.ObjectStorageLimitError{Kind: "max_buckets_per_app", Limit: int64(limit), Observed: int64(count), Cause: state.ErrConflict}
+	}
+	return nil
+}
+
 // EnsureManifestBuckets creates the buckets a manifest declares with
 // `create` and binds every declared bucket to app, reusing an active binding
 // on the same (app, scope, prefix) as `gregale add bucket` made it. It runs
@@ -59,8 +133,9 @@ func (s *Service) EnsureManifestBuckets(ctx context.Context, acct state.Account,
 	if len(buckets) == 0 {
 		return nil, nil
 	}
-	if !s.ObjectStorageEnabled() || !s.ObjectStorageSecretSealReady() {
-		return nil, objectstorage.ErrUnavailable
+	// Repeat the plan's checks: the apply may run long after the plan.
+	if err := s.CheckManifestBuckets(ctx, acct, &app, buckets); err != nil {
+		return nil, err
 	}
 	store, ok := s.Host.Store().(state.ObjectBucketStore)
 	bindings, bindingOK := s.Host.Store().(state.ObjectS3CredentialBindingStore)
@@ -130,6 +205,12 @@ func (s *Service) ensureManifestBucketBinding(ctx context.Context, acct state.Ac
 		return nil, nil
 	}
 	id := ManifestBucketBindingID(bucket, app.ID, want.Prefix)
+	// A deleted binding keeps its row as revoked; its stable ID cannot be
+	// reused, so a re-bind after a delete takes a fresh one. The active scan
+	// above finds it on every later apply.
+	if existing, lookupErr := store.GetObjectS3Credential(ctx, acct.ID, bucket.ID, id); lookupErr == nil && existing.Status != state.ObjectS3CredentialStatusActive {
+		id = uuid.NewString()
+	}
 	credential, prob, err := s.newObjectStorageComputeBinding(ctx, acct, app, bucket, api.CreateObjectStorageComputeBindingRequest{
 		Label: want.Label, Prefix: want.Prefix, Permission: want.Permission,
 	}, id)

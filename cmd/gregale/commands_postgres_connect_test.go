@@ -1,9 +1,16 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net"
+	"os"
+	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -85,7 +92,92 @@ func TestSplitPassthroughArgs(t *testing.T) {
 	if !slices.Equal(own, []string{"orders", "--proxy"}) || !slices.Equal(rest, []string{"-c", "select 1"}) {
 		t.Fatalf("got %v %v", own, rest)
 	}
-	if got := tunnelHostAddr("0.0.0.0"); got != "127.0.0.1" {
-		t.Fatalf("tunnelHostAddr(0.0.0.0) = %s", got)
+}
+
+func TestTunnelEndpointIsNumeric(t *testing.T) {
+	for _, tc := range []struct {
+		addr *net.TCPAddr
+		want string
+	}{
+		{&net.TCPAddr{IP: net.IPv4zero, Port: 1}, "127.0.0.1"},
+		{&net.TCPAddr{IP: net.IPv6unspecified, Port: 1}, "::1"},
+		{&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1}, "127.0.0.1"},
+		{&net.TCPAddr{IP: net.ParseIP("::1"), Port: 1}, "::1"},
+	} {
+		if got, port := tunnelEndpoint(tc.addr); got != tc.want || port != 1 {
+			t.Errorf("tunnelEndpoint(%v) = %s:%d, want %s", tc.addr, got, port, tc.want)
+		}
+	}
+	// --address localhost: the listener's bound IP, never the hostname.
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if host, _ := tunnelEndpoint(ln.Addr()); net.ParseIP(host) == nil {
+		t.Fatalf("PGHOSTADDR %q is not an IP", host)
+	}
+}
+
+// Review finding 1: stopping the signal context cancelled the tunnel's
+// context, so the listener closed before psql dialed it.
+func TestRunOverTunnelKeepsTheTunnelUpAfterSignalStop(t *testing.T) {
+	database, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	go func() {
+		for {
+			conn, err := database.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
+		}
+	}()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	// A relay that stops serving when its context ends, like apptaskmux.Forward.
+	forward := func(ctx context.Context) error {
+		go func() { <-ctx.Done(); _ = ln.Close() }()
+		for {
+			client, err := ln.Accept()
+			if err != nil {
+				return err
+			}
+			upstream, err := net.Dial("tcp", database.Addr().String())
+			if err != nil {
+				return err
+			}
+			go func() { _, _ = io.Copy(upstream, client) }()
+			go func() { _, _ = io.Copy(client, upstream) }()
+		}
+	}
+	_, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	hostAddr, port := tunnelEndpoint(ln.Addr())
+	err = runOverTunnel(stop, forward, func() error {
+		time.Sleep(20 * time.Millisecond) // psql starts after the signal context stopped
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(hostAddr, strconv.Itoa(port)), time.Second)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if _, err := conn.Write([]byte("select 1")); err != nil {
+			return err
+		}
+		reply := make([]byte, 8)
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		_, err = io.ReadFull(conn, reply)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("psql could not use the tunnel: %v", err)
+	}
+	if _, err := net.DialTimeout("tcp", ln.Addr().String(), 200*time.Millisecond); err == nil {
+		t.Fatal("tunnel still listening after psql exited")
 	}
 }

@@ -23,9 +23,9 @@ const (
 // LifecycleHooks serves Gregale's before_checkpoint and after_restore
 // callbacks (ADR-20261106105015 §2). It answers only loopback POSTs that carry
 // the platform's marker header, runs the registered callbacks in order under
-// one deadline, and shares one run between concurrent deliveries, so the
-// callbacks need not be idempotent against overlap (they still run again on a
-// retried capture or a later restore).
+// one deadline, and never runs a kind's callbacks twice at once: a delivery
+// that arrives while a run is still going, even one whose delivery timed out,
+// waits for that run. Callbacks still run again on a later capture or restore.
 //
 // Mount it in front of the app's handler:
 //
@@ -148,66 +148,71 @@ func (h *LifecycleHooks) serve(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// run executes one kind's callbacks, sharing an in-flight run.
+// run waits for one kind's callbacks, at most one budget. A run stays
+// registered until its callbacks return, even after a delivery stops waiting
+// for it, so a retried delivery waits for that same run instead of starting
+// the callbacks again beside it.
 func (h *LifecycleHooks) run(ctx context.Context, kind string) error {
 	h.mu.Lock()
 	if h.inflight == nil {
 		h.inflight = map[string]*lifecycleRun{}
 	}
-	if current := h.inflight[kind]; current != nil {
-		h.mu.Unlock()
-		select {
-		case <-current.done:
-			return current.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	callbacks := h.after
-	if kind == "before_checkpoint" {
-		callbacks = h.before
-	}
-	callbacks = append([]func(context.Context) error(nil), callbacks...)
-	current := &lifecycleRun{done: make(chan struct{})}
-	h.inflight[kind] = current
 	budget := h.Budget
 	if budget <= 0 {
 		budget = DefaultLifecycleHookBudget
 	}
+	current := h.inflight[kind]
+	if current == nil {
+		callbacks := h.after
+		if kind == "before_checkpoint" {
+			callbacks = h.before
+		}
+		current = &lifecycleRun{done: make(chan struct{})}
+		h.inflight[kind] = current
+		go h.execute(kind, current, append([]func(context.Context) error(nil), callbacks...), budget)
+	}
 	h.mu.Unlock()
 
-	// The run outlives a cancelled delivery so a sharing retry gets its result.
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	select {
+	case <-current.done:
+		return current.err
+	case <-timer.C:
+		return errors.New("faas: lifecycle callbacks exceeded their budget")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// execute runs callbacks in order until one fails or the budget's context
+// ends; it returns only when the running callback returns.
+func (h *LifecycleHooks) execute(kind string, current *lifecycleRun, callbacks []func(context.Context) error, budget time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	current.err = runLifecycleCallbacks(runCtx, callbacks)
+	for _, callback := range callbacks {
+		if ctx.Err() != nil {
+			current.err = errors.New("faas: lifecycle callbacks exceeded their budget")
+			break
+		}
+		if err := callLifecycle(ctx, callback); err != nil {
+			current.err = err
+			break
+		}
+	}
 	h.mu.Lock()
 	delete(h.inflight, kind)
 	h.mu.Unlock()
 	close(current.done)
-	return current.err
 }
 
-func runLifecycleCallbacks(ctx context.Context, callbacks []func(context.Context) error) error {
-	for _, callback := range callbacks {
-		result := make(chan error, 1)
-		go func() {
-			defer func() {
-				if recover() != nil {
-					result <- errors.New("faas: lifecycle callback panicked")
-				}
-			}()
-			result <- callback(ctx)
-		}()
-		select {
-		case err := <-result:
-			if err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return errors.New("faas: lifecycle callbacks exceeded their budget")
+func callLifecycle(ctx context.Context, callback func(context.Context) error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("faas: lifecycle callback panicked")
 		}
-	}
-	return nil
+	}()
+	return callback(ctx)
 }
 
 func loopbackPeer(remoteAddr string) bool {

@@ -111,17 +111,16 @@ func cmdPostgresConnect(args []string) int {
 		return printErr("Could not start the tunnel", err)
 	}
 	defer closeSession()
-	forwardDone := make(chan error, 1)
-	forwardCtx, cancelForward := context.WithCancel(ctx)
-	defer cancelForward()
-	go func() { forwardDone <- apptaskmux.Forward(forwardCtx, ln, session, session.stdout) }()
-
-	localPort := ln.Addr().(*net.TCPAddr).Port
+	forward := func(forwardCtx context.Context) error {
+		return apptaskmux.Forward(forwardCtx, ln, session, session.stdout)
+	}
+	hostAddr, localPort := tunnelEndpoint(ln.Addr())
 	if *proxy {
 		PrintOK(osStderr, "Tunnel to %s open on %s (Ctrl-C to stop)", target.host, ln.Addr())
 		_, _ = fmt.Fprintf(osStderr, "Connect with host=%s hostaddr=%s port=%d dbname=%s user=%s sslmode=%s; the password is the one in %s on %s.\n",
-			target.host, tunnelHostAddr(*address), localPort, target.database, target.user, target.sslMode, key, slug)
-		err := <-forwardDone
+			target.host, hostAddr, localPort, target.database, target.user, target.sslMode, key, slug)
+		err := forward(ctx) // Ctrl-C cancels ctx and ends the tunnel
+		_ = session.CloseStdin()
 		if ctx.Err() == nil && err != nil {
 			return printErr("Tunnel ended unexpectedly", err)
 		}
@@ -130,16 +129,8 @@ func cmdPostgresConnect(args []string) int {
 
 	cmd := exec.CommandContext(context.Background(), psqlPath, psqlArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, osStdout, osStderr
-	cmd.Env = append(os.Environ(), target.libpqEnv(tunnelHostAddr(*address), localPort)...)
-	// psql owns Ctrl-C (it cancels the running query): stop cancelling ctx
-	// on it, and keep this process alive by catching it, so the tunnel
-	// stays up until psql exits.
-	stop()
-	interrupts := make(chan os.Signal, 1)
-	signal.Notify(interrupts, os.Interrupt)
-	defer signal.Stop(interrupts)
-	runErr := cmd.Run()
-	cancelForward()
+	cmd.Env = append(os.Environ(), target.libpqEnv(hostAddr, localPort)...)
+	runErr := runOverTunnel(stop, forward, cmd.Run)
 	_ = ln.Close()
 	_ = session.CloseStdin()
 	var exitErr *exec.ExitError
@@ -160,11 +151,40 @@ func splitPassthroughArgs(args []string) ([]string, []string) {
 	return args, nil
 }
 
-func tunnelHostAddr(address string) string {
-	if address == "" || address == "0.0.0.0" || address == "::" {
-		return "127.0.0.1"
+// runOverTunnel runs run while forward serves the tunnel. psql owns Ctrl-C
+// (it cancels the running query), so the signal context stops first. Stopping
+// a signal.NotifyContext also cancels its context, so the tunnel runs on its
+// own context, cancelled only after run returns. Interrupts are caught in the
+// meantime so this process outlives psql's Ctrl-C.
+func runOverTunnel(stopSignals func(), forward func(context.Context) error, run func() error) error {
+	stopSignals()
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	tunnelCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = forward(tunnelCtx) }()
+	err := run()
+	cancel()
+	<-done
+	return err
+}
+
+// tunnelEndpoint is the numeric address and port libpq dials. PGHOSTADDR must
+// be an IP, so it comes from the bound socket (`--address localhost` binds
+// 127.0.0.1); a wildcard bind dials loopback.
+func tunnelEndpoint(addr net.Addr) (string, int) {
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return "127.0.0.1", 0
 	}
-	return address
+	switch {
+	case tcp.IP == nil || tcp.IP.Equal(net.IPv4zero):
+		return "127.0.0.1", tcp.Port
+	case tcp.IP.IsUnspecified():
+		return "::1", tcp.Port
+	}
+	return tcp.IP.String(), tcp.Port
 }
 
 // choosePostgresConnectBinding picks one ready binding whose app the caller

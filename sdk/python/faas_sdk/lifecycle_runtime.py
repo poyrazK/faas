@@ -62,7 +62,7 @@ class LifecycleHooks:
         self.budget_seconds = float(budget_seconds)
         self._callbacks: dict[str, list[Callback]] = {"before_checkpoint": [], "after_restore": []}
         self._lock = threading.Lock()
-        self._async_runs: dict[str, asyncio.Future[None]] = {}
+        self._async_runs: dict[str, asyncio.Task[None]] = {}
         self._sync_runs: dict[str, tuple[threading.Event, list[BaseException]]] = {}
 
     # Registration -------------------------------------------------------
@@ -98,49 +98,63 @@ class LifecycleHooks:
     # Running ------------------------------------------------------------
 
     async def run_async(self, kind: str) -> None:
-        """Run one kind's callbacks on the event loop, sharing an in-flight run."""
-        loop = asyncio.get_running_loop()
-        current = self._async_runs.get(kind)
-        if current is not None and current.get_loop() is loop and not current.done():
-            return await asyncio.shield(current)
-        future: asyncio.Future[None] = loop.create_future()
-        self._async_runs[kind] = future
-        try:
-            await asyncio.wait_for(self._call_all_async(list(self._callbacks[kind])), self.budget_seconds)
-        except BaseException as error:  # noqa: BLE001 - reported to sharing callers
-            failure = error if not isinstance(error, asyncio.TimeoutError) else LifecycleHookError("lifecycle callbacks exceeded their budget")
-            future.set_exception(failure)
-            future.exception()  # mark retrieved for callers that never share
-            if self._async_runs.get(kind) is future:
-                del self._async_runs[kind]
-            raise failure from None
-        future.set_result(None)
-        if self._async_runs.get(kind) is future:
-            del self._async_runs[kind]
+        """Wait for one kind's callbacks on the event loop, at most one budget.
 
-    @staticmethod
-    async def _call_all_async(callbacks: list[Callback]) -> None:
+        A run stays registered until its callbacks finish, even after a
+        delivery stops waiting, so a retried delivery waits for that same run
+        instead of starting the callbacks again beside it. Coroutine callbacks
+        are cancelled at the budget; a synchronous one cannot be, and the run
+        lasts until its thread returns."""
+        loop = asyncio.get_running_loop()
+        task = self._async_runs.get(kind)
+        if task is None or task.get_loop() is not loop or task.done():
+            task = loop.create_task(self._execute_async(list(self._callbacks[kind])))
+            self._async_runs[kind] = task
+
+            def forget(finished: asyncio.Future[None], kind: str = kind) -> None:
+                if self._async_runs.get(kind) is finished:
+                    del self._async_runs[kind]
+                if not finished.cancelled():
+                    finished.exception()  # retrieved: callers may have stopped waiting
+
+            task.add_done_callback(forget)
+        try:
+            await asyncio.wait_for(asyncio.shield(task), self.budget_seconds)
+        except asyncio.TimeoutError:
+            raise LifecycleHookError("lifecycle callbacks exceeded their budget") from None
+
+    async def _execute_async(self, callbacks: list[Callback]) -> None:
+        deadline = asyncio.get_running_loop().time() + self.budget_seconds
         for callback in callbacks:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise LifecycleHookError("lifecycle callbacks exceeded their budget")
             if inspect.iscoroutinefunction(callback):
-                await callback()
+                try:
+                    await asyncio.wait_for(callback(), remaining)
+                except asyncio.TimeoutError:
+                    raise LifecycleHookError("lifecycle callbacks exceeded their budget") from None
                 continue
             result = await asyncio.to_thread(callback)
             if inspect.isawaitable(result):
                 await result
 
     def run_sync(self, kind: str) -> None:
-        """Run one kind's callbacks on a worker thread under the budget, sharing
-        an in-flight run. Coroutine callbacks are refused: use the ASGI wrapper."""
+        """Wait for one kind's callbacks on a worker thread, at most one budget.
+
+        A run stays registered until its thread finishes, so a retried delivery
+        waits for that same run instead of starting the callbacks again beside
+        it. Coroutine callbacks are refused: use the ASGI wrapper."""
         with self._lock:
             shared = self._sync_runs.get(kind)
             if shared is None:
                 shared = (threading.Event(), [])
                 self._sync_runs[kind] = shared
-                owner = True
+                start = True
             else:
-                owner = False
+                start = False
         done, errors = shared
-        if owner:
+        if start:
             callbacks = list(self._callbacks[kind])
 
             def work() -> None:
@@ -152,15 +166,13 @@ class LifecycleHooks:
                 except BaseException as error:  # noqa: BLE001 - reported to the caller
                     errors.append(error)
                 finally:
+                    with self._lock:
+                        if self._sync_runs.get(kind) is shared:
+                            del self._sync_runs[kind]
                     done.set()
 
             threading.Thread(target=work, name=f"gregale-{kind}", daemon=True).start()
-        finished = done.wait(self.budget_seconds)
-        if owner:
-            with self._lock:
-                if self._sync_runs.get(kind) is shared:
-                    del self._sync_runs[kind]
-        if not finished:
+        if not done.wait(self.budget_seconds):
             raise LifecycleHookError("lifecycle callbacks exceeded their budget")
         if errors:
             raise LifecycleHookError("lifecycle callback failed") from errors[0]

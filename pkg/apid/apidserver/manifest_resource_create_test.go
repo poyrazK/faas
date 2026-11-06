@@ -1,6 +1,8 @@
 package apidserver
 
 import (
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -37,6 +40,7 @@ func TestManifestDatabaseCreateIsPlannedCreatedAndBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx = withKeyScopes(ctx, acct, api.ScopeAdmin)
 	attachTestManagedPostgres(t, env.srv, 3)
 	app, err := env.store.AppBySlug(ctx, "gateway")
 	if err != nil {
@@ -90,6 +94,7 @@ func TestManifestDatabaseWithoutCreateNamesTheFix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx = withKeyScopes(ctx, acct, api.ScopeAdmin)
 	attachTestManagedPostgres(t, env.srv, 3)
 	manifest := loadTestManifest(t, "databases:\n  - database: missing-db\n")
 	_, problem := env.srv.resolveManifestPostgresBindings(ctx, acct, manifest, []string{"gateway"}, "")
@@ -105,6 +110,7 @@ func TestManifestDatabaseCreateRespectsPlanLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx = withKeyScopes(ctx, acct, api.ScopeAdmin)
 	attachTestManagedPostgres(t, env.srv, 1)
 	manifest := loadTestManifest(t, `databases:
   - database: first-db
@@ -138,4 +144,55 @@ func TestManifestBucketPlanShowsCreateAndBind(t *testing.T) {
 func objectManifestBucket(name string, create bool) object.ManifestBucket {
 	return object.ManifestBucket{Name: name, Scope: api.DefaultEnvScope, Prefix: api.DefaultObjectStorageBindingPrefix(name),
 		Permission: api.ObjectBucketPermissionReadWrite, Create: create}
+}
+
+// withKeyScopes authenticates ctx as an API key of acct with scopes.
+func withKeyScopes(ctx context.Context, acct state.Account, scopes ...string) context.Context {
+	return authmw.WithPrincipal(ctx, acct, &state.APIKey{AccountID: acct.ID, Scopes: scopes}, nil)
+}
+
+// Review finding 7: a missing target app is reported before any database
+// is created, so a mistyped `app` leaves nothing billable behind.
+func TestManifestDatabaseCreateChecksTargetsBeforeCreating(t *testing.T) {
+	env := newSourceRefTestServer(t, api.PlanPro, "gateway", 9110)
+	ctx := t.Context()
+	acct, err := env.store.AccountByID(ctx, env.acctID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = withKeyScopes(ctx, acct, api.ScopeAdmin)
+	attachTestManagedPostgres(t, env.srv, 3)
+	manifest := loadTestManifest(t, "databases:\n  - database: orders\n    app: worker\n    create: true\n")
+	resolved, problem := env.srv.resolveManifestPostgresBindings(ctx, acct, manifest, []string{"worker"}, "")
+	if problem != nil {
+		t.Fatalf("resolve: %+v", problem)
+	}
+	if _, problem := env.srv.bindResolvedManagedPostgresBindings(ctx, acct, resolved, nil); problem == nil || problem.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("problem %+v, want 422 for a workload with no app", problem)
+	}
+	if databases, _ := env.srv.managedPostgres.List(ctx, acct.ID); len(databases) != 0 {
+		t.Fatalf("created %d databases for a missing app", len(databases))
+	}
+}
+
+// Review finding 2: creating a database from gregale.yaml needs
+// postgres:manage on a personal account too; binding an existing one does not.
+func TestManifestDatabaseCreateNeedsPostgresManage(t *testing.T) {
+	env := newSourceRefTestServer(t, api.PlanPro, "gateway", 9109)
+	acct, err := env.store.AccountByID(t.Context(), env.acctID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachTestManagedPostgres(t, env.srv, 3)
+	manifest := loadTestManifest(t, "databases:\n  - database: paid-db\n    create: true\n")
+	for _, ctx := range []context.Context{t.Context(), withKeyScopes(t.Context(), acct, api.ScopeDeployWrite)} {
+		_, problem := env.srv.resolveManifestPostgresBindings(ctx, acct, manifest, []string{"gateway"}, "")
+		if problem == nil || problem.Status != http.StatusForbidden {
+			t.Fatalf("problem %+v, want 403 for a credential without postgres:manage", problem)
+		}
+	}
+	ctx := withKeyScopes(t.Context(), acct, api.ScopeManagedPostgresManage)
+	if _, problem := env.srv.resolveManifestPostgresBindings(ctx, acct, manifest, []string{"gateway"}, ""); problem != nil {
+		t.Fatalf("postgres:manage refused: %+v", problem)
+	}
 }

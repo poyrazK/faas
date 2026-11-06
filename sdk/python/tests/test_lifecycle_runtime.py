@@ -133,6 +133,55 @@ def test_wsgi_budget_and_coroutine_refusal():
         coroutine.run_sync("after_restore")
 
 
+def _overlap_counter(gate):
+    state = {"runs": 0, "running": 0, "max": 0}
+    lock = threading.Lock()
+
+    def slow():
+        with lock:
+            state["runs"] += 1
+            state["running"] += 1
+            state["max"] = max(state["max"], state["running"])
+        gate.wait(2)  # ignores the budget, like a blocking reconnect
+        with lock:
+            state["running"] -= 1
+
+    return state, slow
+
+
+def test_sync_retry_after_budget_does_not_overlap():
+    # Review finding 10.
+    hooks, gate = LifecycleHooks(budget_seconds=0.03), threading.Event()
+    state, slow = _overlap_counter(gate)
+    hooks.on_after_restore(slow)
+    for _ in range(2):
+        with pytest.raises(LifecycleHookError):
+            hooks.run_sync("after_restore")
+    gate.set()
+    time.sleep(0.05)
+    assert state["runs"] == 1 and state["max"] == 1
+    hooks.run_sync("after_restore")
+    assert state["runs"] == 2
+
+
+def test_async_retry_after_budget_does_not_overlap():
+    hooks, gate = LifecycleHooks(budget_seconds=0.03), threading.Event()
+    state, slow = _overlap_counter(gate)
+    hooks.on_after_restore(slow)  # a sync callback runs in a thread under ASGI
+
+    async def main():
+        for _ in range(2):
+            with pytest.raises(LifecycleHookError):
+                await hooks.run_async("after_restore")
+        gate.set()
+        await asyncio.sleep(0.05)
+        assert state["runs"] == 1 and state["max"] == 1
+        await hooks.run_async("after_restore")
+        assert state["runs"] == 2
+
+    asyncio.run(main())
+
+
 def test_recycle_helpers():
     class Engine:
         disposed = 0

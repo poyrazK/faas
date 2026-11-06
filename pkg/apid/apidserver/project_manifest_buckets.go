@@ -99,19 +99,43 @@ func (s *server) resolveProjectManifestBuckets(r *http.Request, acct state.Accou
 		return nil, api.NewProblem(http.StatusServiceUnavailable, "object_storage_unavailable", "Object storage unavailable",
 			"gregale.yaml declares buckets, but object storage is not enabled on this installation")
 	}
+	// Buckets are app-owned and billed to their owner; organization projects
+	// bind them explicitly for now, so refuse before anything is created
+	// under the deploying member's account.
+	if sharedComposePostgres(r.Context()) {
+		return nil, manifestBucketProblem("gregale.yaml", object.ErrManifestBucketsOrganization)
+	}
+	// Per app, the checks `gregale add bucket` runs, before any mutation.
+	byApp := map[string][]object.ManifestBucket{}
+	var order []string
+	for _, dependency := range out {
+		if _, seen := byApp[dependency.appSlug]; !seen {
+			order = append(order, dependency.appSlug)
+		}
+		byApp[dependency.appSlug] = append(byApp[dependency.appSlug], dependency.bucket)
+	}
+	apps := map[string]*state.App{}
+	for _, slug := range order {
+		app, err := s.store.AppBySlug(r.Context(), slug)
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			apps[slug] = nil // created by this deploy
+		case err != nil:
+			return nil, api.ErrCapacity("could not load bucket owners")
+		default:
+			apps[slug] = &app
+		}
+		if err := s.object.CheckManifestBuckets(r.Context(), acct, apps[slug], byApp[slug]); err != nil {
+			return nil, manifestBucketProblem(slug, err)
+		}
+	}
 	for i, dependency := range out {
 		if dependency.bucket.Create {
 			continue
 		}
-		app, err := s.store.AppBySlug(r.Context(), dependency.appSlug)
-		if errors.Is(err, state.ErrNotFound) {
+		app := apps[dependency.appSlug]
+		if app == nil {
 			return nil, invalid("bucket %q: %s does not exist yet, so the bucket cannot either; add `create: true` to create it on deploy", dependency.bucket.Name, dependency.appSlug)
-		}
-		if err != nil {
-			return nil, api.ErrCapacity("could not load bucket owners")
-		}
-		if app.AccountID != acct.ID {
-			continue // organization-owned: checked when apply binds it
 		}
 		bucket, exists, err := s.object.FindManifestBucket(r.Context(), acct, app.ID, dependency.bucket.Name, dependency.bucket.Scope)
 		if err != nil {
@@ -185,14 +209,31 @@ func (s *server) applyProjectManifestBuckets(ctx context.Context, acct state.Acc
 }
 
 func manifestBucketProblem(slug string, err error) *api.Problem {
+	var limit *state.ObjectStorageLimitError
 	switch {
+	case errors.Is(err, object.ErrManifestBucketsOrganization):
+		return api.NewProblem(http.StatusConflict, "object_storage_organization_manifest", "Bucket declarations unavailable", err.Error())
+	case errors.As(err, &limit):
+		problem := api.NewProblem(http.StatusConflict, "object_storage_conflict", "Bucket limit reached",
+			fmt.Sprintf("%s: gregale.yaml would give it %d buckets; the limit is %d (%s)", slug, limit.Observed, limit.Limit, limit.Kind))
+		problem.Limit, problem.Observed, problem.DocsURL = &limit.Limit, &limit.Observed, api.ObjectStorageLimitsDocsURL
+		return problem
+	case errors.Is(err, object.ErrObjectStorageDisabled):
+		return api.NewProblem(http.StatusServiceUnavailable, "object_storage_unavailable", "Object storage unavailable",
+			"gregale.yaml declares buckets, but object storage is not enabled on this installation")
+	case errors.Is(err, object.ErrObjectStorageProviderRefused):
+		return api.NewProblem(http.StatusServiceUnavailable, "object_storage_unavailable", "Object storage unavailable",
+			"the storage provider is refusing the platform's credentials; no bucket was created")
+	case errors.Is(err, state.ErrObjectUsageStale):
+		return api.NewProblem(http.StatusServiceUnavailable, "object_storage_usage_stale", "Object storage unavailable",
+			"storage accounting is stale, so new buckets are paused; retry later")
 	case errors.Is(err, state.ErrNotFound):
 		return api.NewProblem(http.StatusNotFound, "object_storage_not_found", "Bucket not found", fmt.Sprintf("%s: %v", slug, err))
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):
 		return api.NewProblem(http.StatusConflict, "object_storage_conflict", "Bucket conflict",
 			fmt.Sprintf("%s: %v", slug, err))
 	case errors.Is(err, objectstorage.ErrInvalid):
-		return api.NewProblem(http.StatusBadRequest, "object_storage_invalid", "Invalid bucket", fmt.Sprintf("%s: invalid bucket request", slug))
+		return api.NewProblem(http.StatusBadRequest, "object_storage_invalid", "Invalid bucket", fmt.Sprintf("%s: %v", slug, err))
 	}
 	return api.NewProblem(http.StatusServiceUnavailable, "object_storage_unavailable", "Object storage unavailable",
 		fmt.Sprintf("%s: buckets from gregale.yaml could not be created or bound; retry the deploy", slug))

@@ -107,35 +107,45 @@ export class LifecycleHooks {
     return true;
   }
 
-  /** Runs one kind's callbacks, sharing an in-flight run. Exposed for tests and custom servers. */
+  /**
+   * Waits for one kind's callbacks, at most one budget. A run stays registered
+   * until its callbacks settle, even after a delivery stops waiting, so a
+   * retried delivery waits for that same run instead of starting the callbacks
+   * again beside it. Exposed for tests and custom servers.
+   */
   run(kind: Kind): Promise<void> {
-    const current = this.#inflight[kind];
-    if (current) return current;
-    const callbacks = [...this.#callbacks[kind]];
-    const run = runCallbacks(callbacks, this.budgetMs).finally(() => { delete this.#inflight[kind]; });
-    this.#inflight[kind] = run;
-    return run;
+    let execution = this.#inflight[kind];
+    if (!execution) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.budgetMs);
+      timer.unref?.();
+      execution = executeCallbacks([...this.#callbacks[kind]], controller.signal).finally(() => {
+        clearTimeout(timer);
+        delete this.#inflight[kind];
+      });
+      execution.catch(() => {});
+      this.#inflight[kind] = execution;
+    }
+    return withinBudget(execution, this.budgetMs);
   }
 }
 
-async function runCallbacks(callbacks: LifecycleCallback[], budgetMs: number): Promise<void> {
-  const controller = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new LifecycleHookError('lifecycle callbacks exceeded their budget'));
-    }, budgetMs);
-    timer.unref?.();
-  });
-  expired.catch(() => {});
-  try {
-    for (const callback of callbacks) {
-      await Promise.race([Promise.resolve().then(() => callback(controller.signal)), expired]);
-    }
-  } finally {
-    clearTimeout(timer);
+async function executeCallbacks(callbacks: LifecycleCallback[], signal: AbortSignal): Promise<void> {
+  for (const callback of callbacks) {
+    if (signal.aborted) throw new LifecycleHookError('lifecycle callbacks exceeded their budget');
+    await callback(signal);
   }
+}
+
+function withinBudget(execution: Promise<void>, budgetMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new LifecycleHookError('lifecycle callbacks exceeded their budget')), budgetMs);
+    timer.unref?.();
+    execution.then(
+      () => { clearTimeout(timer); resolve(); },
+      error => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 function isLoopback(address: string | undefined): boolean {

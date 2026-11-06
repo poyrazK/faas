@@ -121,6 +121,48 @@ func TestLifecycleHooksShareConcurrentRun(t *testing.T) {
 	}
 }
 
+// Review finding 10: a delivery that timed out must not let a retry start the
+// callbacks again while the first run is still going.
+func TestLifecycleHooksNoOverlapAfterBudget(t *testing.T) {
+	hooks := NewLifecycleHooks()
+	hooks.Budget = 30 * time.Millisecond
+	release := make(chan struct{})
+	var running, maxRunning, runs atomic.Int32
+	hooks.OnAfterRestore(func(context.Context) error {
+		runs.Add(1)
+		now := running.Add(1)
+		if now > maxRunning.Load() {
+			maxRunning.Store(now)
+		}
+		<-release // ignores its context, like a blocking reconnect
+		running.Add(-1)
+		return nil
+	})
+	deliver := func() int {
+		recorder := httptest.NewRecorder()
+		hooks.ServeHTTP(recorder, hookRequest(DefaultAfterRestorePath, "X-Faas-After-Restore", "127.0.0.1:1"))
+		return recorder.Code
+	}
+	if code := deliver(); code != http.StatusInternalServerError {
+		t.Fatalf("first delivery %d, want 500 after the budget", code)
+	}
+	if code := deliver(); code != http.StatusInternalServerError {
+		t.Fatalf("retry %d, want 500 while the first run is still going", code)
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for running.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if runs.Load() != 1 || maxRunning.Load() != 1 {
+		t.Fatalf("runs %d, max concurrent %d; want one run, never overlapping", runs.Load(), maxRunning.Load())
+	}
+	time.Sleep(10 * time.Millisecond)
+	if code := deliver(); code != http.StatusNoContent || runs.Load() != 2 {
+		t.Fatalf("delivery after the run finished: %d, runs %d", code, runs.Load())
+	}
+}
+
 func TestRecycleIdleConnections(t *testing.T) {
 	hooks := NewLifecycleHooks()
 	pool := &idlePool{}
