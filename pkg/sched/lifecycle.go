@@ -1812,7 +1812,7 @@ func (e *Engine) drainIncompatibleServiceReplicas(ctx context.Context, instances
 		// ADR-732: a fork is not a replica of any mode; the fork
 		// coordinator owns its lifetime.
 		if normalizedInstanceMode(ins.Mode) == string(state.InstanceModeService) ||
-			ins.Mode == string(state.InstanceModeMirror) || state.IsFork(ins.Mode) {
+			ins.Mode == string(state.InstanceModeMirror) || state.NeverServes(ins.Mode) {
 			continue
 		}
 		fresh, err := e.store.InstanceByID(ctx, ins.ID)
