@@ -978,6 +978,7 @@ type warmEnsurer interface {
 type Handler struct {
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
+	publicRoutingFreezes  publicRoutingFreezes
 	publicRoutingRefusals publicRoutingRefusalLog
 	devBridgeAuthorize    func(*http.Request) *api.Problem
 	devBridgeForward      func(http.ResponseWriter, *http.Request, App) bool
