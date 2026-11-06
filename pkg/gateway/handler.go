@@ -8603,24 +8603,27 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// time so the slog latency_ms field is no longer effectively ~0. Doing
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
-	requestLog := h.log
+	// A warm 2xx is logged at Debug, which production does not write: build
+	// the line's attributes only when the handler will take it.
 	decision := trafficDecisionEvidence(r.Context(), status, false)
-	if decision.path != "" && requestLog != nil {
-		requestLog = requestLog.With(decision.logAttribute())
-	}
-	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
-		requestLog = requestLog.With("traffic_policy_revision", revision)
-	}
-	if fields, ok := wire.FromContext(r.Context()); ok {
-		requestLog = wire.WithCorrelationFields(requestLog, fields)
-	} else if target.InstanceID != "" || target.DeploymentID != "" {
-		identity := target.PlatformIdentity("", requestID)
-		if identity.AppID == "" {
-			identity.AppID = appID
+	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), requestLogLevel(code, cold)) {
+		if decision.path != "" {
+			requestLog = requestLog.With(decision.logAttribute())
 		}
-		requestLog = wire.WithPlatformIdentityLogger(requestLog, identity)
+		if revision := TrafficPolicyRevision(r.Context()); revision != "" {
+			requestLog = requestLog.With("traffic_policy_revision", revision)
+		}
+		if fields, ok := wire.FromContext(r.Context()); ok {
+			requestLog = wire.WithCorrelationFields(requestLog, fields)
+		} else if target.InstanceID != "" || target.DeploymentID != "" {
+			identity := target.PlatformIdentity("", requestID)
+			if identity.AppID == "" {
+				identity.AppID = appID
+			}
+			requestLog = wire.WithPlatformIdentityLogger(requestLog, identity)
+		}
+		(&requestLogger{log: requestLog}).Log(appID, code, elapsed, cold, requestID)
 	}
-	(&requestLogger{log: requestLog}).Log(appID, code, elapsed, cold, requestID)
 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
