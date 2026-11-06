@@ -653,6 +653,15 @@ hobby-route-audit: ## Tier A (ADR-093): Hobby-tier app audit. Read-only harness 
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.
 	$(GO) test -tags=load -race -count=1 -v -timeout=10m ./pkg/gateway/...
 
+.PHONY: test-outbound-resilience
+test-outbound-resilience: ## Deadline, pool saturation/recovery and retry regressions; optional DATABASE_URL for Postgres
+	$(GO_TEST) -race -p=1 -count=1 -timeout=10m -run 'Test(Arch_ApidWarmsPoolBeforeBgBefore|BoundedPool|PoolConfig|PoolCollector|DaemonMinConnections|ConnectionWarmup|CanceledAcquires|OutboundRedisPool|ClientDeadline|RemoteCompilerDeadline|AMQPCallInterruptsStalledBroker|Delay|Cancellation|AcquireDeadline|QueryDeadline)' ./pkg/db ./pkg/pgpoolbounds ./pkg/gateway ./pkg/outbound ./pkg/livequery ./pkg/retry ./pkg/sched
+
+.PHONY: test-outbound-resilience-load
+test-outbound-resilience-load: ## Explicit Postgres/Redis fixtures: concurrency, latency, pool recovery and retry accounting
+	@test -n "$$FAAS_RESILIENCE_DATABASE_URL" -a -n "$$FAAS_RESILIENCE_REDIS_URL" || (echo 'Set FAAS_RESILIENCE_DATABASE_URL and FAAS_RESILIENCE_REDIS_URL to isolated test services'; exit 1)
+	$(GO_TEST) -race -p=1 -tags=load -count=1 -timeout=3m -v ./tests/outboundresilience
+
 .PHONY: gateway-bench
 gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; emits ns/op + allocs/op
 	$(GO) test -race -bench=. -benchmem -run=^$ ./pkg/gateway/

@@ -161,7 +161,10 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/data-api/contract-tasks":     authz.OrgActionConfigureApp,
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}": authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/runtime":             authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/data-api/status":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/usage":               authz.OrgActionReadApp,
+	// Binding metadata contains no credentials or live database access.
+	"GET /v1/apps/{slug}/postgres-bindings": authz.OrgActionReadApp,
 	// data-repair
 	"GET /v1/apps/{slug}/data-repair/doctor":                            authz.OrgActionReadAppLogs,
 	"POST /v1/apps/{slug}/data-repair/operations":                       authz.OrgActionDeployApp,

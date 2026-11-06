@@ -8558,6 +8558,21 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// snapshot on its next park.
 	app, err := state.AppForInstance(ctx, e.store, ins)
 	if err != nil {
+		// A deleted environment tombstones its deployments before its VMs
+		// finish retiring. Such a VM must never publish into a recreated
+		// environment with the same slug. Only a confirmed tombstone permits
+		// this path; an unavailable policy still returns the original error.
+		if errors.Is(err, state.ErrConflict) {
+			deployment, readErr := e.store.DeploymentByID(ctx, ins.DeploymentID)
+			if readErr == nil && deployment.AppID == ins.AppID && deployment.DeletedAt != nil {
+				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); destroyErr != nil {
+					return fmt.Errorf("sched: park: destroy deleted-environment instance %s: %w", ins.ID, destroyErr)
+				}
+				e.ledger.Release(ins.ID)
+				e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_environment_deleted", "environment_deleted")
+				return nil
+			}
+		}
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
 	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")

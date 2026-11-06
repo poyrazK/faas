@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
 
+	"github.com/onebox-faas/faas/pkg/pgpoolbounds"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -287,6 +288,12 @@ func paceDials(cfg *pgxpool.Config) {
 const (
 	healthCheckPeriod = 30 * time.Second
 	pingTimeout       = 5 * time.Second
+	// Bound every new connection, including background replenishment after
+	// startup. A Ping deadline alone does not cover those later dials.
+	ConnectTimeout = pgpoolbounds.ConnectTimeout
+	// Pool contention must fail within a bounded interval even for background
+	// callers using a process-lifetime context. Request deadlines may be shorter.
+	AcquireTimeout = pgpoolbounds.AcquireTimeout
 )
 
 // OpenWithAppName is Open plus an application_name tag set on every
@@ -388,7 +395,7 @@ const (
 // either setting keeps its own value. LISTEN and session advisory locks are
 // idle outside a transaction, so neither bound touches them.
 const (
-	DaemonStatementTimeout                = 5 * time.Minute
+	DaemonStatementTimeout                = pgpoolbounds.StatementTimeout
 	DaemonIdleInTransactionSessionTimeout = 2 * time.Minute
 )
 
@@ -409,6 +416,7 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
 		return nil, err
 	}
+	ConfigureTimeouts(cfg)
 	// Direct pools have per-daemon budgets. Connections above the daemon's
 	// warm floor close after a quiet minute, so burst capacity never becomes
 	// permanent idle ClientRead sessions; LISTEN subscribers naturally retain
@@ -440,7 +448,6 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)
-	instrumentAcquires(cfg)
 	paceDials(cfg)
 	return cfg, nil
 }

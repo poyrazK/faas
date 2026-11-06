@@ -2,12 +2,6 @@ package main
 
 import "context"
 
-const mcpTaskWorkerRegistrySchema = `CREATE TABLE IF NOT EXISTS gregale_mcp_task_workers (
- namespace text NOT NULL,worker_id uuid NOT NULL,
- handlers jsonb NOT NULL CHECK(jsonb_typeof(handlers)='array'),draining boolean NOT NULL DEFAULT false,
- heartbeat_at timestamptz NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(namespace,worker_id));
- ALTER TABLE gregale_mcp_task_workers ADD COLUMN IF NOT EXISTS draining boolean NOT NULL DEFAULT false`
-
 func (runtime *mcpTaskRuntime) markWorkerDraining(ctx context.Context) error {
 	runtime.workerRegistryMu.Lock()
 	defer runtime.workerRegistryMu.Unlock()

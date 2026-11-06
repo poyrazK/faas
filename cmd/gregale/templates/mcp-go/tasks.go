@@ -360,7 +360,16 @@ func startMCPTaskRuntime(config mcpConfig, role string) (*mcpTaskRuntime, error)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, errors.New("could not initialize the PostgreSQL MCP task store")
+	}
+	poolWorkers := 0
+	if role == "combined" || role == "worker" {
+		poolWorkers = workerConcurrency
+	}
+	configureTaskDatabasePool(poolConfig, poolWorkers)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, errors.New("could not initialize the PostgreSQL MCP task store")
 	}
@@ -650,7 +659,11 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE gregale_mcp_task_worker_handlers ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx ON gregale_mcp_task_worker_handlers(namespace,tool_name,handler_version,heartbeat_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx ON gregale_mcp_task_worker_handlers(namespace,heartbeat_at)`,
-		mcpTaskWorkerRegistrySchema,
+		`CREATE TABLE IF NOT EXISTS gregale_mcp_task_workers (
+ namespace text NOT NULL,worker_id uuid NOT NULL,
+ handlers jsonb NOT NULL CHECK(jsonb_typeof(handlers)='array'),draining boolean NOT NULL DEFAULT false,
+ heartbeat_at timestamptz NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(namespace,worker_id));
+ ALTER TABLE gregale_mcp_task_workers ADD COLUMN IF NOT EXISTS draining boolean NOT NULL DEFAULT false`,
 		`CREATE OR REPLACE FUNCTION gregale_mcp_task_notify_change() RETURNS trigger
 			LANGUAGE plpgsql AS $$
 			BEGIN

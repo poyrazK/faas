@@ -13,7 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -26,6 +28,9 @@ func (s *PgStore) ApplyEnvBatch(ctx context.Context, in EnvBatchChange) (api.Env
 	// new transaction. PostgreSQL rolls that transaction back in full; retry
 	// with the same receipt identity and revision instead of weakening guards.
 	for attempt := 0; ; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return api.EnvBatchResponse{}, err
+		}
 		out, err := s.applyEnvBatchTx(ctx, in, hash)
 		var pgErr *pgconn.PgError
 		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40P01" && pgErr.Code != "40001" {

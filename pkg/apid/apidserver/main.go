@@ -1807,9 +1807,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: build capability gate: %w", err)
 	}
 	srv.WithCapabilityGate(capGate)
-	dashboard.SetCapabilityDecider(func(accountID, plan, capability string) bool {
+	restoreCapabilityDecider := dashboard.SetCapabilityDecider(func(accountID, plan, capability string) bool {
 		return capGate.Enabled(capability, platformflags.Subject{AccountID: accountID, Plan: plan})
 	})
+	defer restoreCapabilityDecider()
 	ops.Registry().MustRegister(capGate.Collectors()...)
 	log.Info("apid: capability gate enabled")
 	srv.WithOAuthConfig(oauthCfg)
