@@ -1451,10 +1451,24 @@ from .dispatch_invocation_batch_response_200_results_item_status import (
 from .dns_record_instruction import DNSRecordInstruction
 from .dns_record_instruction_purpose import DNSRecordInstructionPurpose
 from .dns_record_instruction_type import DNSRecordInstructionType
+from .domain_apply_request import DomainApplyRequest
+from .domain_apply_response import DomainApplyResponse
+from .domain_binding_change import DomainBindingChange
+from .domain_binding_change_action import DomainBindingChangeAction
+from .domain_binding_spec import DomainBindingSpec
+from .domain_binding_target import DomainBindingTarget
 from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
 from .domain_doctor_report import DomainDoctorReport
+from .domain_manifest import DomainManifest
+from .domain_manifest_version import DomainManifestVersion
+from .domain_plan import DomainPlan
+from .domain_plan_version import DomainPlanVersion
+from .domain_readiness import DomainReadiness
+from .domain_readiness_ownership import DomainReadinessOwnership
+from .domain_readiness_routing import DomainReadinessRouting
+from .domain_readiness_status import DomainReadinessStatus
 from .download_profile_capture_kind import DownloadProfileCaptureKind
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
@@ -7727,10 +7741,24 @@ __all__ = (
     "DNSRecordInstruction",
     "DNSRecordInstructionPurpose",
     "DNSRecordInstructionType",
+    "DomainApplyRequest",
+    "DomainApplyResponse",
+    "DomainBindingChange",
+    "DomainBindingChangeAction",
+    "DomainBindingSpec",
+    "DomainBindingTarget",
     "DomainDoctorCheck",
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",
     "DomainDoctorReport",
+    "DomainManifest",
+    "DomainManifestVersion",
+    "DomainPlan",
+    "DomainPlanVersion",
+    "DomainReadiness",
+    "DomainReadinessOwnership",
+    "DomainReadinessRouting",
+    "DomainReadinessStatus",
     "DownloadProfileCaptureKind",
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",

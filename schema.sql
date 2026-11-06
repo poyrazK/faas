@@ -34868,6 +34868,9 @@ CREATE TABLE public.custom_domains (
     verification_expires_at timestamp with time zone DEFAULT (now() + '7 days'::interval) NOT NULL,
     environment_id uuid,
     cert_retry_at timestamp with time zone,
+    verification_manual_check_at timestamp with time zone,
+    binding_version uuid DEFAULT gen_random_uuid(),
+    CONSTRAINT custom_domains_manual_check_at_check CHECK (((verification_manual_check_at IS NULL) OR isfinite(verification_manual_check_at))),
     CONSTRAINT custom_domains_cert_retry_at_check CHECK (((cert_retry_at IS NULL) OR isfinite(cert_retry_at))),
     CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text])))
 );
@@ -105025,6 +105028,18 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+CREATE FUNCTION public.custom_domain_binding_version() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (OLD.app_id, OLD.environment_id, OLD.challenge_token) IS DISTINCT FROM
+       (NEW.app_id, NEW.environment_id, NEW.challenge_token) THEN
+        NEW.binding_version := gen_random_uuid();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER custom_domain_binding_version BEFORE UPDATE OF app_id, environment_id, challenge_token
+ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.custom_domain_binding_version();
 
 
 --

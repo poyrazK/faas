@@ -58,6 +58,7 @@ func TestDNSPoller_CustomDomainDriftRevokesVerificationOnce(t *testing.T) {
 	log := slog.Default()
 	srv := &server{store: store, audit: newAuditor(store, log, nil), notif: noopNotifier{}}
 	srv.runDoctorForDomain(ctx, log, domain.Domain)
+	srv.runDoctorForDomain(ctx, log, domain.Domain)
 	got, err := store.DomainByName(ctx, domain.Domain)
 	if err != nil {
 		t.Fatal(err)

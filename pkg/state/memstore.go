@@ -13323,7 +13323,8 @@ func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token 
 	}
 	d := CustomDomain{
 		Domain: domain, AppID: appID, ChallengeToken: token,
-		CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now,
+		BindingVersion: uuid.NewString(),
+		CertStatus:     CustomDomainCertPending, VerificationNextCheckAt: now,
 		VerificationExpiresAt: now.Add(7 * 24 * time.Hour),
 	}
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
@@ -13571,6 +13572,9 @@ func (m *MemStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctor
 	defer m.mu.Unlock()
 	if !customDomainProbeMatches(ctx, m.domains[obs.Domain]) {
 		return ErrStaleCustomDomainProbe
+	}
+	if _, bound := CustomDomainProbe(ctx); bound && obs.ObservedAt.Before(m.domains[obs.Domain].DNSLastCheckedAt) {
+		return ErrStaleCustomDomainObservation
 	}
 	if existing, ok := m.doctorObs[obs.Domain]; ok {
 		if staleDoctorObservation(existing, obs) {

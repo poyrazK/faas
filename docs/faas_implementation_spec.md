@@ -909,7 +909,7 @@ The list below covers **all** customer-facing kinds as of PR #291. Prior kinds (
 | `app.rolled_back` | apid `handlers_ext.go::rollbackApp` | `{app_id, from: deployment_id, to: deployment_id}` |
 | `domain.added` | apid `handlers_ext.go::createDomain` | `{app_id, domain}` — `domain` is the canonical lowercased form stored on the row |
 | `domain.removed` | apid `handlers_ext.go::deleteDomain` | `{app_id, domain}` |
-| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once when a verified domain's CNAME leaves Gregale and verification is revoked |
+| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once after two consecutive conclusive routing failures revoke verification (ADR-20261106200000) |
 | `cron.created` | apid `handlers_ext.go::createCron` | `{cron_id, app_id, schedule, path, enabled}` — only emitted on the success path; the PR #340 plan-tier gate (402) suppresses this row for Free accounts |
 | `cron.updated` | apid `handlers_ext.go::updateCron` | `{cron_id, app_id, old, new}` |
 | `cron.deleted` | apid `handlers_ext.go::deleteCron` | `{cron_id, app_id}` |
@@ -1483,6 +1483,13 @@ maximum-age deadline. See [ADR-376](adr/376-platform-tenant-async-invocations.md
   IPv6 conflict) with per-check remediation lines; backed by the persisted
   `domain_doctor_observations` table the `dns_poller` writes every 30s. See
   [`docs/domains/doctor.md`](../domains/doctor.md).
+  **Binding changes (ADR-20261107010000):** explicit domain manifests support
+  read-only plan and atomic apply. Verified domains can move between serving
+  apps/environments within the same account namespace and organization without
+  deleting TXT proof, TLS state or wildcard issuance budgets. Reviewed digests
+  fence claim/release changes and intervening moves. Omitted bindings stay;
+  moved source defaults are cleared. Public smoke tests remain owned by guided
+  production cutover. See [`docs/domains.md`](domains.md).
 
 ---
 

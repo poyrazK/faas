@@ -3341,6 +3341,8 @@ const (
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
+	// BindingVersion fences reviewed plans across moves without changing DNS proof.
+	BindingVersion string
 	Domain string
 	AppID  string
 	// RedirectAppID mirrors the legacy redirect FK used by app purge.
@@ -3362,10 +3364,11 @@ type CustomDomain struct {
 	// CertFailureEmailAt is the in-memory mirror of the durable 24-hour
 	// notification cooldown. PgStore keeps this value in its column and does
 	// not need to expose it on customer-facing domain responses.
-	CertFailureEmailAt      time.Time
-	VerificationNextCheckAt time.Time
-	VerificationExpiresAt   time.Time
-	VerificationAttempts    int
+	CertFailureEmailAt        time.Time
+	VerificationNextCheckAt   time.Time
+	VerificationExpiresAt     time.Time
+	VerificationAttempts      int
+	VerificationManualCheckAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.

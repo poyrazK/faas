@@ -33885,6 +33885,75 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/domains/plan:
+    post:
+      tags: [domains]
+      operationId: planDomains
+      summary: Review a declarative set of domain bindings.
+      description: |
+        Reads one consistent snapshot without DNS probes or writes. Lists creates,
+        moves and unchanged bindings, serving destination deployments, and default
+        selections that a move clears. Omitted domains remain attached. All apps
+        must share an account namespace and organization and the caller needs
+        deployment-write access to every source and destination. A move requires
+        verified ownership and a serving destination; it does not smoke-test the
+        application. Traffic publication is validated again during atomic apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DomainManifest' }
+      responses:
+        '200':
+          description: Proposed binding changes and their private-identity-bound fingerprint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainPlan' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/domains/apply:
+    post:
+      tags: [domains]
+      operationId: applyDomains
+      summary: Atomically apply reviewed domain bindings.
+      description: |
+        Reauthorizes every binding, captures its current claim and serving
+        deployment set under routing and billing-subject locks, and requires the
+        exact reviewed fingerprint. A stale plan returns 409 without changes.
+        Moves retain TXT proof, verification, certificate state, wildcard host
+        allowlists and issuance budgets; source default-domain selections are
+        cleared. New claims follow normal DNS verification and pending quotas.
+        No provider DNS, deployment traffic, or application policy is changed.
+        Use the returned rollback manifest to review a move back. Rollback does
+        not detach new claims or restore default selections. Reuse the plan
+        fingerprint as Idempotency-Key for request-bound response replay.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DomainApplyRequest' }
+      responses:
+        '200':
+          description: Committed bindings, the reviewed plan and previous binding manifest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainApplyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/domains/{domain}:
     parameters:
       - name: domain
@@ -33962,15 +34031,19 @@ paths:
       operationId: verifyDomain
       summary: Re-verify a domain's DNS + cert.
       description: |
-        Re-runs the DNS verifier + cert dial; returns the canonical
-        CustomDomainResponse. Used by `gregale domains verify
-        <domain>`. Idempotent: POSTing twice does not change the
-        durable verification state.
+        Runs a bounded ownership TXT check and routing/TLS probes using the
+        background verifier's claim-bound logic. Concurrent checks for the same
+        claim are coalesced; a durable 15-second cooldown limits repeated probes
+        across API processes. Returns CustomDomainResponse with independent
+        readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+        is not ready is a successful check with a non-ready response, not a
+        transport failure. Expired claims require recreation. The same
+        Idempotency-Key replays its original response; use a new key to recheck.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: The row + cert details. `cert_not_after` / `cert_sans` populated when the cert dial succeeds.
+          description: Current ownership, routing and TLS readiness with fresh diagnostic checks. Retry-After indicates the minimum manual-check interval.
           content:
             application/json:
               schema:
@@ -33979,14 +34052,15 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422':
           description: |
-            code: domain_verification_failed | domain_cert_not_issued.
-            DNS walk found a missing/mismatched TXT record, or the
-            port-443 cert is a CDN cert whose SANs do not include
-            the customer's domain.
+            Older servers report domain_verification_failed or
+            domain_cert_not_issued for TLS probe failures. Current servers
+            return a non-ready CustomDomainResponse with HTTP 200 for DNS
+            and certificate configuration problems.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
 
   /v1/domains/{domain}/default:
     parameters:
@@ -105501,11 +105575,93 @@ components:
 
     # ─── Domains ──────────────────────────────────────────────────────────
 
+    DomainReadiness:
+      description: Independent ownership, DNS routing, and TLS activation state.
+      type: object
+      required: [status, ownership, routing, tls]
+      properties:
+        status: { type: string, enum: [awaiting_ownership, expired, checking_dns, fix_routing, preparing_https, ready, needs_attention] }
+        ownership: { type: string, enum: [pending, verified, expired] }
+        routing: { type: string, enum: [ok, fail, pending, na] }
+        tls: { type: string, description: "Certificate state, independently of ownership and routing." }
+
+    DomainManifest:
+      description: "Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20 bindings in a 128 KiB request. Use a separate file from the application deployment manifest."
+      type: object
+      additionalProperties: false
+      required: [version, domains]
+      properties:
+        version: { type: integer, enum: [1] }
+        domains: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/DomainBindingSpec' } }
+
+    DomainBindingSpec:
+      description: "A desired exact or wildcard hostname, app slug and optional project environment. An omitted environment selects ordinary default routing."
+      type: object
+      additionalProperties: false
+      required: [domain, app]
+      properties:
+        domain: { type: string, example: 'api.example.com' }
+        app: { type: string, example: 'my-api' }
+        environment: { type: string }
+
+    DomainBindingTarget:
+      description: "Resolved app and environment identity captured in a reviewed plan."
+      type: object
+      properties:
+        app: { type: string }
+        app_id: { type: string }
+        environment: { type: string }
+        environment_id: { type: string }
+
+    DomainBindingChange:
+      description: "A proposed create, move or noop. New claims need verification. A move retains proof and TLS state."
+      type: object
+      properties:
+        domain: { type: string }
+        action: { type: string, enum: [create, move, noop] }
+        before: { $ref: '#/components/schemas/DomainBindingTarget' }
+        after: { $ref: '#/components/schemas/DomainBindingTarget' }
+        verified: { type: boolean }
+        clears_default: { type: boolean, description: "The source app's default domain pointer will be cleared." }
+        deployment_ids: { type: array, items: { type: string }, description: "Serving destination deployments captured for review; this is not an HTTP smoke-test result." }
+
+    DomainPlan:
+      description: "Deterministic review artifact. The SHA-256 binds the diff to private claim identity, intervening moves, destination release and traffic allocations. It contains no ownership proof token."
+      type: object
+      properties:
+        version: { type: integer, enum: [1] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        manifest: { $ref: '#/components/schemas/DomainManifest' }
+        changes: { type: array, items: { $ref: '#/components/schemas/DomainBindingChange' } }
+
+    DomainApplyRequest:
+      description: "Apply exactly the reviewed bindings. Confirmation and the fingerprint from planDomains are required."
+      type: object
+      additionalProperties: false
+      required: [manifest, expected_plan_sha256, confirm]
+      properties:
+        manifest: { $ref: '#/components/schemas/DomainManifest' }
+        expected_plan_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        confirm: { type: boolean, const: true }
+
+    DomainApplyResponse:
+      description: "The committed snapshot and optional previous bindings for a separately reviewed rollback."
+      type: object
+      properties:
+        plan: { $ref: '#/components/schemas/DomainPlan' }
+        domains: { type: array, items: { $ref: '#/components/schemas/CustomDomainResponse' } }
+        rollback: { $ref: '#/components/schemas/DomainManifest' }
+
     CustomDomainResponse:
       description: "A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface."
       type: object
       required: [domain, app_id, verified]
       properties:
+        readiness: { $ref: '#/components/schemas/DomainReadiness' }
+        verification_next_check_at: { type: string, format: date-time, description: "Next scheduled automatic ownership check; omitted after verification." }
+        verification_attempts: { type: integer, minimum: 0 }
+        cert_retry_at: { type: string, format: date-time, description: "Next permitted legacy certificate attempt, when a durable cooldown is active. Caddy manages its own retry schedule." }
+        checks: { type: array, items: { $ref: '#/components/schemas/DomainDoctorCheck' }, description: "Fresh checks for this claim, including observed values and remediation. Stale observations are omitted." }
         domain: { type: string , example: "app.example.com"}
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         environment: { type: string, description: "Project environment that owns the route; omitted for legacy application-wide domains." }

@@ -266,6 +266,8 @@ var routeActions = map[string]authz.OrgAction{
 	// environment. Legacy /v1/triggers stay personal-only (QueuePattern;
 	// docs/organization-queues.md).
 	"POST /v1/domains":                         authz.OrgActionConfigureApp,
+	"POST /v1/domains/plan":                    authz.OrgActionConfigureApp,
+	"POST /v1/domains/apply":                   authz.OrgActionConfigureApp,
 	"GET /v1/domains/{domain}":                 authz.OrgActionReadApp,
 	"GET /v1/domains/{domain}/doctor":          authz.OrgActionReadApp,
 	"DELETE /v1/domains/{domain}":              authz.OrgActionConfigureApp,

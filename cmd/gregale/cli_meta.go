@@ -3145,6 +3145,22 @@ var cliCommands = []cliCommand{
 		DocSlug: "domains",
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
+			{Name: "plan", Short: "Review declared domain bindings without changing them", Flags: []cliFlag{
+				{Name: "file", Short: "domain manifest YAML or JSON", Value: "PATH", Req: true},
+				{Name: "out", Short: "save a new reviewed JSON plan", Value: "PATH"},
+			}},
+			{Name: "apply", Short: "Atomically apply a reviewed domain plan", Flags: []cliFlag{
+				{Name: "plan", Short: "reviewed plan JSON", Value: "PATH", Req: true},
+				{Name: "confirm", Short: "confirm every reviewed binding change"},
+				{Name: "rollback-out", Short: "save previous bindings as a new manifest", Value: "PATH"},
+			}},
+			{Name: "move", Short: "Move a verified domain to a serving app or environment", Positionals: []string{"<domain>"}, Notes: []string{"Keeps TXT proof, certificate state and wildcard issuance budgets. Use --dry-run to review or --confirm to commit."}, Flags: []cliFlag{
+				{Name: "app", Short: "destination app slug", Value: "SLUG", Req: true},
+				{Name: "environment", Short: "destination environment; omitted selects default routing", Value: "ENV"},
+				{Name: "dry-run", Short: "review without applying"},
+				{Name: "confirm", Short: "confirm the move"},
+				{Name: "rollback-out", Short: "save previous binding as a new manifest", Value: "PATH"},
+			}},
 			{Name: "setup", Short: "Guide DNS setup and wait for verification and TLS", Notes: []string{"Offers a default-domain change at the end."}, Positionals: []string{"<domain>"}, Examples: []string{"gregale domain setup api.example.com --app my-api"}, Flags: []cliFlag{
 				{Name: "app", Short: "app to attach to", Value: "SLUG", Req: true},
 				{Name: "environment", Short: "project environment to route to", Value: "SLUG"},
@@ -3159,7 +3175,11 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
-			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending."}, Positionals: []string{"<domain>"}},
+			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending.", "Checks ownership and routing immediately; --wait waits for HTTPS readiness."}, Positionals: []string{"<domain>"}, Flags: []cliFlag{
+				{Name: "wait", Short: "wait for verified ownership, correct routing, and HTTPS"},
+				{Name: "timeout", Short: "maximum wait (default 10m, maximum 1h)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "check interval (5s..1m, default 5s)", Value: "DURATION"},
+			}},
 			{Name: subDomainsShow, Short: "Show a domain's cert details", Positionals: []string{"<domain>"}},
 			{Name: subDomainsStatus, Short: "Show TLS status for all domains, or one domain's conditions", Notes: []string{"With a domain, prints its Ready, Verified and CertificateReady conditions (preview)."}, Positionals: []string{"[<domain>]"}, Examples: []string{"gregale domain status", "gregale domain status shop.example.com"}},
 			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<domain>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale domain wait shop.example.com"}, Flags: []cliFlag{
