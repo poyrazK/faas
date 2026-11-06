@@ -28,6 +28,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -673,18 +674,19 @@ func cmdInvitationsAccept(args []string) int {
 		return 1
 	}
 	token := fs.Arg(0)
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	m, err := client.AcceptInvitation(context.Background(), token)
-	if err != nil {
-		return printErr("Could not accept invitation", err)
-	}
+	target := dashboardBaseURL(apiBase()) + "/dashboard/invitations/" + url.PathEscape(token)
 	if jsonOutput {
-		return jsonOut(writeJSON(m))
+		return jsonOut(writeJSON(struct {
+			URL             string `json:"url"`
+			RequiresBrowser bool   `json:"requires_browser"`
+		}{target, true}))
 	}
-	PrintOK(osStdout, "Joined %s as %s", m.AccountID, m.Role)
+	PrintProgress(osStdout, "Review and accept this invitation in your signed-in browser: %s", target)
+	if !nonInteractive {
+		if err := openBrowser(target); err != nil {
+			PrintProgress(osStderr, "Open the URL above in your browser: %v", err)
+		}
+	}
 	return 0
 }
 
