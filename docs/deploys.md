@@ -1090,7 +1090,12 @@ replaced. The check runs every 15 seconds, and the release keeps serving until
 the previous one is ready again. While a rollout runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
-`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale release traffic rollback my-api` (the same as
+`gregale rollouts recover my-api --action abort`). For a split you set by
+hand with `release traffic set`, the same command gives the release with the
+largest share all traffic; `--to v6` names another, and a tie needs it. It
+acts on one environment (`--env`, or the only one the app is live in), and
+refuses if traffic changes while it runs. If a rollout wedges,
 `gregale rollouts recover my-api --action advance|promote|abort` is the manual
 escape hatch.
 

@@ -540,6 +540,9 @@ type Engine struct {
 	// (the window check is skipped; production cmd/schedd wires a
 	// real tracker via WithLivenessWindow).
 	livenessWindow *LivenessWindow
+	// oomBackoff bounds the OOM kill loop of a release that OOMs on every
+	// request (bug hunt H34).
+	oomBackoff oomBackoff
 
 	// jobLeaser (issue #1184 Workstream A / ADR-099) is the token-only
 	// lease primitive that WakeJob + HandleJobExit
@@ -3516,6 +3519,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	var snapshotReads wakeSnapshotReads
 	if !secretPolicyBlocksSnapshots {
 		snapshotReads = e.readWakeSnapshotInputs(ctx, dep.ID, string(acct.Plan), true)
+	}
+	// A release whose instances keep OOMing backs off its wakes instead of
+	// cold-booting into the same kill (bug hunt H34).
+	if retryAfter, active := e.oomBackoff.active(dep.ID, time.Now()); active && !bypassGates {
+		release()
+		return WakeResult{}, errWorkloadOOMBackoff(retryAfter)
 	}
 	var backoff state.Deployment
 	var backoffActive bool
@@ -10317,8 +10326,18 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// OOM'd at the plan cap may have a snap that encoded the
 	// same blast radius; the next cold boot is a fresh chance.
 	// Both warm + init tiers are flipped (mirrors the liveness
-	// path).
+	// path). Only the first kill in the OOM window does it, and
+	// repeated kills back off the deployment's wakes (bug hunt H34).
+	staleSnapshots, backingOff := e.oomBackoff.record(deploymentID, time.Now())
+	if backingOff {
+		e.log.Warn("workload_oom: repeated OOM kills; backing off wakes",
+			"instance", instanceID, "deployment_id", deploymentID,
+			"kills", api.WorkloadOOMBackoffKills, "window", api.WorkloadOOMBackoffWindow)
+	}
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if !staleSnapshots {
+			break
+		}
 		// Every CPU platform's row (ADR-20261024225612 amendment 1).
 		rows, terr := state.LiveSnapshotsForTier(ctx, e.store, deploymentID, tier)
 		if terr != nil {

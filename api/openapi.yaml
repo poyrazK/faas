@@ -85726,6 +85726,11 @@ components:
         label: { type: string, minLength: 1, maxLength: 64, default: compute }
         permission: { type: string, enum: [read, write, read_write] }
         prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', maxLength: 48 }
+        key_prefix:
+          type: string
+          minLength: 2
+          maxLength: 512
+          description: "Limit the binding's key to object keys under this literal prefix, such as segments/L0/. It must end in / and may not contain *, ? or [, empty segments, or . and .. segments. Requests outside it, unscoped listings and bucket-wide settings are denied. 403 object_storage_key_scopes_unavailable until key-scoped bindings are released to the account."
     ObjectStorageComputeBindingSecretKeys:
       description: Names of sealed app secrets written for a compute binding; values are never returned.
       type: object
@@ -85746,6 +85751,7 @@ components:
         bucket_id: { type: string, format: uuid }
         scope: { type: string }
         prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$' }
+        key_prefix: { type: string, description: Object keys this binding is limited to; absent for a whole-bucket binding. }
         credential: { $ref: '#/components/schemas/ObjectS3Credential' }
         secret_keys: { $ref: '#/components/schemas/ObjectStorageComputeBindingSecretKeys' }
         rotation_pending: { type: boolean, description: Previous key is still valid until the rolling refresh has drained old instances. }

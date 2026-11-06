@@ -59,6 +59,10 @@ type Loop struct {
 	// deployment, so the security lease waits for it once (amendment 14).
 	leaseRescanMu sync.Mutex
 	leaseRescans  map[string]time.Time
+	// sweepNode caches this imaged's compute node ID for the node-scoped
+	// security sweeps (bug hunt O32).
+	sweepNodeMu sync.Mutex
+	sweepNode   string
 	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
 	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
 	crashCaptureCryptoEvery time.Duration

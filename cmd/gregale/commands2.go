@@ -5332,7 +5332,7 @@ func explicitAppFlag(fs *flag.FlagSet) bool {
 // cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status|rollback> [args]", "traffic")
 		return 1
 	}
 	switch args[0] {
@@ -5342,8 +5342,10 @@ func cmdTraffic(args []string) int {
 		return cmdTrafficPromote(args[1:])
 	case "status":
 		return cmdTrafficStatus(args[1:])
+	case "rollback":
+		return cmdTrafficRollback(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status|rollback> [args]", "traffic")
 		return 1
 	}
 }

@@ -12922,6 +12922,7 @@
       "id",
       "issuer_access_revision",
       "issuer_account_id",
+      "key_prefix",
       "kid",
       "label",
       "last_used_at",

@@ -24,6 +24,9 @@ type ManifestBucket struct {
 	Label      string
 	Create     bool
 	Triggers   *[]api.ObjectStorageComputeTrigger
+	// KeyPrefix limits the binding to object keys under it
+	// (ADR-20261106114500); empty binds the whole bucket.
+	KeyPrefix string
 }
 
 // ManifestBucketBindingID is stable per bucket, app and prefix, so a retried
@@ -189,6 +192,13 @@ func (s *Service) EnsureManifestBuckets(ctx context.Context, acct state.Account,
 }
 
 func (s *Service) ensureManifestBucketBinding(ctx context.Context, acct state.Account, app state.App, bucket state.ObjectBucket, store state.ObjectS3CredentialBindingStore, want ManifestBucket) (*api.Problem, error) {
+	// The same validation and release gate as the binding API: a key prefix
+	// the gateway might not enforce must not quietly become a whole-bucket key.
+	if want.KeyPrefix != "" {
+		if problem := s.keyScopeProblem(acct, app, want.KeyPrefix); problem != nil {
+			return problem, nil
+		}
+	}
 	credentials, err := store.ListObjectS3Credentials(ctx, acct.ID, bucket.ID)
 	if err != nil {
 		return nil, err
@@ -202,6 +212,10 @@ func (s *Service) ensureManifestBucketBinding(ctx context.Context, acct state.Ac
 			return nil, fmt.Errorf("%w: bucket %q is already bound to %s as %s with permission %q, gregale.yaml asks for %q; delete the binding and redeploy",
 				state.ErrConflict, bucket.Name, app.Slug, want.Prefix, credential.Permission, want.Permission)
 		}
+		if credential.KeyPrefix != want.KeyPrefix {
+			return nil, fmt.Errorf("%w: bucket %q is already bound to %s as %s with key_prefix %q, gregale.yaml asks for %q; delete the binding and redeploy",
+				state.ErrConflict, bucket.Name, app.Slug, want.Prefix, credential.KeyPrefix, want.KeyPrefix)
+		}
 		return nil, nil
 	}
 	id := ManifestBucketBindingID(bucket, app.ID, want.Prefix)
@@ -212,12 +226,13 @@ func (s *Service) ensureManifestBucketBinding(ctx context.Context, acct state.Ac
 		id = uuid.NewString()
 	}
 	credential, prob, err := s.newObjectStorageComputeBinding(ctx, acct, app, bucket, api.CreateObjectStorageComputeBindingRequest{
-		Label: want.Label, Prefix: want.Prefix, Permission: want.Permission,
+		Label: want.Label, Prefix: want.Prefix, Permission: want.Permission, KeyPrefix: want.KeyPrefix,
 	}, id)
 	if errors.Is(err, state.ErrConflict) {
 		// A concurrent apply may have won the insert of the same identity.
 		if existing, lookupErr := store.GetObjectS3Credential(ctx, acct.ID, bucket.ID, id); lookupErr == nil &&
-			existing.Status == state.ObjectS3CredentialStatusActive && existing.ManagedAppID == app.ID && existing.Permission == want.Permission {
+			existing.Status == state.ObjectS3CredentialStatusActive && existing.ManagedAppID == app.ID && existing.Permission == want.Permission &&
+			existing.KeyPrefix == want.KeyPrefix {
 			return nil, nil
 		}
 	}
