@@ -1311,3 +1311,7 @@ func (k *keyedLocks) Size() int              { return k.size() }
 
 // DrainWithdrawsRoutes exposes drainWithdrawsRoutes to package sched_test.
 func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes(ins) }
+
+// XNewVMMClient wraps a generated vmmd client for tests of VMMClient's
+// mapping of vmmd answers (ADR-20261106214916).
+func XNewVMMClient(cli vmmdpb.VmmdClient) *VMMClient { return &VMMClient{cli: cli} }
