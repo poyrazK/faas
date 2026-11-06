@@ -217,6 +217,13 @@ the next push deploys them
   The migration's `user:` and `working_dir:` must match its owner's settings,
   including when one side inherits the image default. The plan rejects a mismatch
   because the release command runs in the owner's runtime.
+- A service can also declare its own release command in its own directory:
+  `release.command` in its `gregale.yaml`, or `release:` in a `Procfile` there
+  (`services/api/gregale.yaml`, `services/api/Procfile`). It runs before each
+  release of that service, as on a single-app deploy of the directory, and
+  wins over a Compose step. When another service builds from the same
+  directory the deploy fails with the reason, because the command would run
+  once per service; declare it as a Compose step instead.
 
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by

@@ -742,8 +742,21 @@ func (s *PgStore) ListAppTasks(ctx context.Context, accountID, appID string, lim
 }
 
 func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
+	return s.ClaimNextAppTaskForNode(ctx, owner, "", claimedAt, leaseDuration)
+}
+
+// ClaimNextAppTaskForNode is ClaimNextAppTask restricted to apps a schedd on
+// nodeID may place: apps it owns and unowned apps. An empty nodeID claims
+// any app.
+func (s *PgStore) ClaimNextAppTaskForNode(ctx context.Context, owner, nodeID string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
 	if owner == "" || leaseDuration <= 0 || claimedAt.IsZero() {
 		return AppTask{}, ErrAppTaskInvalid
+	}
+	var node pgtype.UUID
+	if nodeID != "" {
+		if err := node.Scan(nodeID); err != nil {
+			return AppTask{}, fmt.Errorf("%w: node id: %w", ErrAppTaskInvalid, err)
+		}
 	}
 	claimedAt = claimedAt.UTC()
 	expiresAt := claimedAt.Add(leaseDuration)
@@ -754,6 +767,7 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 	row, err := q.ClaimNextUnfencedAppTask(ctx, s.pool, sqlc.ClaimNextUnfencedAppTaskParams{
 		Owner: owner, ClaimedAt: pgtype.Timestamptz{Time: claimedAt, Valid: true},
 		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		NodeID:    node,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrNotFound

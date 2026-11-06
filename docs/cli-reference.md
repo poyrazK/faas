@@ -2865,6 +2865,22 @@ Clear the configured egress policy
 
 `gregale app egress-ports clear [<app>]`
 
+### app network
+
+Inspect networking or manage private-network attachments
+
+#### app network show
+
+Show network configuration and captured upstream telemetry
+
+`gregale app network show [<app>]`
+
+#### app network doctor
+
+Check observed network health without sending probe traffic
+
+`gregale app network doctor [<app>]`
+
 ### app traffic-status
 
 Show policy convergence and fresh gateway traffic wiring
@@ -6002,13 +6018,14 @@ Show app metrics, request breakdowns and the service map
 
 Break down past requests by route, country, referrer or status
 
-`gregale metric requests [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>] [<slug>]`
+`gregale metric requests [--since <WINDOW>] [--until <TIMESTAMP>] [--by <DIMENSION>] [--range <WINDOW>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--since <WINDOW>` | lookback window |  |
 | `--until <TIMESTAMP>` | exclusive RFC3339 end |  |
 | `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` · `consumer_id` |
+| `--range <WINDOW>` | lookback window; same as --since (gregale metric --range) |  |
 
 
 ## debug

@@ -67,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -2125,6 +2126,13 @@ func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account,
 // source deployment (ADR-20261102192943).
 func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
 	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, false)
+	return resolved.command, resolved.shell, problem
+}
+
+// ProjectWorkloadReleaseCommand exposes a project workload's release command
+// resolution (ADR-20261019120007 amendment 1).
+func ProjectWorkloadReleaseCommand(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, manifest)
 	return resolved.command, resolved.shell, problem
 }
 
