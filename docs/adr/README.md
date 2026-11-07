@@ -1297,7 +1297,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
-- [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
+- [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md) — amendment proposed 2026-11-07: journaled spares and claims under native recovery, closed-gate spares for strict egress
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
 - [ADR-425: retained cache materialization](425-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
 
