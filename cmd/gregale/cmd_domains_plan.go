@@ -217,7 +217,7 @@ func cmdDomainsMove(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || (!*confirm && !*dry) || (*confirm && *dry) {
-		return printErr("Invalid domain move", errors.New("usage: gregale domain move <domain> --app SLUG [--environment ENV] --dry-run | --confirm [--rollback-out PATH]"))
+		return printErr("Invalid domain move", errors.New("usage: gregale domain move <domain> --app SLUG [--env ENV] --dry-run | --confirm [--rollback-out PATH]"))
 	}
 	m, err := domainplan.Normalize(api.DomainManifest{Version: 1, Domains: []api.DomainBindingSpec{{Domain: fs.Arg(0), App: *app, Environment: *environment}}})
 	if err != nil {

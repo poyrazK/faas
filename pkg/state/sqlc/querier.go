@@ -346,7 +346,6 @@ type Querier interface {
 	CheckedRollbackCurrentMatches(ctx context.Context, db DBTX, arg CheckedRollbackCurrentMatchesParams) (pgtype.Bool, error)
 	CheckedRollbackForTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) ([]byte, error)
 	CheckedRollbackReuseLive(ctx context.Context, db DBTX, targetID pgtype.UUID) (pgtype.Bool, error)
-	CheckedRollbackServiceModeMatches(ctx context.Context, db DBTX, arg CheckedRollbackServiceModeMatchesParams) (bool, error)
 	CheckedRollbackSourceForShare(ctx context.Context, db DBTX, arg CheckedRollbackSourceForShareParams) ([]byte, error)
 	CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error)
 	CheckedRollbackWorkerInstances(ctx context.Context, db DBTX, arg CheckedRollbackWorkerInstancesParams) ([]CheckedRollbackWorkerInstancesRow, error)

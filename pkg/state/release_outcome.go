@@ -153,6 +153,10 @@ func (m *MemStore) releaseOutcomeUncertainLocked(prior AppTask) bool {
 	if _, checked := m.releaseOutcomeChecks[prior.ID]; checked {
 		return false
 	}
+	// A promotion migration recovery that resolved the task is its check.
+	if m.promotionMigrationTaskResolvedLocked(prior.ID) {
+		return false
+	}
 	scope := normalizedDeploymentScope(prior.DeploymentScope)
 	for _, later := range m.appTasks {
 		if later.AccountID == prior.AccountID && later.AppID == prior.AppID && later.Kind == AppTaskKindRelease &&

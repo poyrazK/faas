@@ -18,7 +18,10 @@ import (
 
 func TestEnvironmentPromotionReceiptPopulatedHistoryAndReplay(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.OpenMigrated(t)
+	// The migration-history shards run without the template database, where
+	// OpenMigrated hands back an empty one (nightly 11-07).
+	pool := pgtest.Open(t)
+	migrateUpOnce(ctx, t, pool)
 	store := state.NewPgStore(pool)
 	acct, err := store.CreateAccount(ctx, uuid.NewString()+"@receipt-migration.test", api.PlanPro)
 	if err != nil {

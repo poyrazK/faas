@@ -14697,6 +14697,7 @@ WITH candidate AS (
   AND coalesce(nullif(prior.deployment_scope,''),'default')=coalesce(nullif(task.deployment_scope,''),'default')
   AND prior.started_at IS NOT NULL AND prior.exit_code IS NULL AND prior.status IN ('failed','timed_out','cancelled')
   AND NOT EXISTS(SELECT 1 FROM release_outcome_checks c WHERE c.task_id=prior.id)
+  AND NOT EXISTS(SELECT 1 FROM project_promotion_migration_resolved_tasks resolved WHERE resolved.task_id=prior.id)
   AND NOT EXISTS(SELECT 1 FROM app_tasks later WHERE later.account_id=prior.account_id AND later.app_id=prior.app_id
    AND later.kind='release' AND later.status='succeeded' AND later.started_at>prior.started_at
    AND coalesce(nullif(later.deployment_scope,''),'default')=coalesce(nullif(prior.deployment_scope,''),'default'))))
@@ -20733,10 +20734,6 @@ SELECT EXISTS(SELECT 1 FROM apps a JOIN project_release_sets r
  WHERE a.id=sqlc.arg(app_id)::uuid AND a.preview_of_slug IS NULL AND NOT EXISTS(SELECT 1 FROM project_release_members m
  WHERE m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=sqlc.arg(target_id)::uuid));
 
--- name: CheckedRollbackServiceModeMatches :one
-SELECT EXISTS(SELECT 1 FROM apps WHERE id=sqlc.arg(app_id)::uuid
-AND (coalesce(manifest->>'execution_mode','request')='service')=sqlc.arg(service)::boolean);
-
 -- name: FailCheckedRollbackTarget :exec
 UPDATE deployments d SET status=CASE WHEN d.status='live' AND (
  EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp())
@@ -22619,6 +22616,7 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'request_analytics_minutes.deployment_id', (SELECT count(*) FROM request_analytics_minutes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'release_outcome_checks.deployment_id', (SELECT count(*) FROM release_outcome_checks WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=sqlc.arg(deployment_id)::uuid::text),
@@ -27763,6 +27761,7 @@ WHERE prior.account_id=sqlc.arg(account_id)::text::uuid AND prior.app_id=sqlc.ar
  AND coalesce(nullif(prior.deployment_scope,''),'default')=sqlc.arg(scope)::text
  AND prior.started_at IS NOT NULL AND prior.exit_code IS NULL AND prior.status IN ('failed','timed_out','cancelled')
  AND NOT EXISTS(SELECT 1 FROM release_outcome_checks c WHERE c.task_id=prior.id)
+ AND NOT EXISTS(SELECT 1 FROM project_promotion_migration_resolved_tasks resolved WHERE resolved.task_id=prior.id)
  AND NOT EXISTS(SELECT 1 FROM app_tasks later WHERE later.account_id=prior.account_id AND later.app_id=prior.app_id
   AND later.kind='release' AND later.status='succeeded' AND later.started_at>prior.started_at
   AND coalesce(nullif(later.deployment_scope,''),'default')=coalesce(nullif(prior.deployment_scope,''),'default'))

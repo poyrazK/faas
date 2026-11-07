@@ -3899,6 +3899,7 @@
       "docs_url": "/docs/orgs",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
+        "/dashboard/invitations/{}",
         "/dashboard/orgs",
         "/v1/invitations",
         "=/v1/orgs",
@@ -4753,6 +4754,9 @@
       ],
       "docs_url": "/docs/deploys",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
+      "routes": [
+        "/v1/deployments/{}/release-outcome"
+      ],
       "settings": [
         "manifest.release"
       ]
