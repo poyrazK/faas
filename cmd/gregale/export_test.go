@@ -850,6 +850,7 @@ var DataAPIHooksDelivery = dataAPIHooksDelivery
 var ApplyDataAPIDrainSchedule = applyDataAPIDrainSchedule
 
 type DataAPIHooksReceipt = dataAPIHooksReceipt
+
 var DataAPIDrainSchedule = dataAPIDrainSchedule
 var DataAPIDrainEvery = dataAPIDrainEvery
 var CheckDataAPIReportSettings = checkDataAPIReportSettings
