@@ -858,13 +858,18 @@ jobs:
         # dropping back to the runner uid for the test process.
         run: |
           BOOT_CONTRACT_PATH="$PATH"
-          sudo -E setpriv \
+          # The runner's sudo (sudo-rs) ignores -E, so name the environment
+          # the test needs: HOME and the Go paths keep the build cache under
+          # the runner user instead of /root.
+          sudo setpriv \
             --bounding-set=-sys_admin \
             --reuid "$(id -u)" \
             --regid "$(id -g)" \
             --init-groups \
             --no-new-privs \
-            -- env "PATH=$BOOT_CONTRACT_PATH" \
+            -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
+              "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" "GOPATH=$(go env GOPATH)" \
+              "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
             go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
