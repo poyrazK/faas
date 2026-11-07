@@ -48,23 +48,44 @@ cannot consume it. Confirming switches the address, marks it verified and
 signs out every session (the link may be opened on any device). API keys are
 kept. The old address receives an informational notice
 without a revert link. A new address that already has an account is answered
-like any other request and nothing is mailed.
+like any other request and nothing is mailed; the lookup, token and mail run
+in the background so the response time is the same either way. Confirming
+also spends every outstanding password-reset link and legacy MFA-disable
+request, which are bound to the account rather than the address they were
+mailed to. Wrong current passwords count against the dashboard's per-IP
+sign-in failure bucket, as on set-password.
 
 **Resend verification.** `POST /v1/auth/verify-email/resend` and an account
 page form, bounded by the per-account security-mail throttle.
 
 **Verification grace.** Past 30 days unverified, an account is restricted, not
 deleted: password sign-in is refused (a new link is mailed), and existing
-sessions and keys reach only the account read, deletion, logout and resend.
-Every channel that proves the address lifts the restriction.
+sessions and keys reach only the account read, deletion, logout, resend and
+email change (the only way out for an address with a typo). Every channel
+that proves the address lifts the restriction. Accounts created before
+enforcement shipped get their 30 days from `api.EmailVerificationEnforcedFrom`
+(2026-11-16), so long-standing unverified accounts and their CI keys are not
+cut off on deploy day. In the last 7 days, an account still in use is mailed a
+fresh verification link at most once a day per apid.
 
 **Recovery codes.** `POST /v1/account/mfa/recovery-codes` replaces the codes
-after a step-up and mails a notice.
+after a step-up and mails a notice. It takes a browser session only (strict
+step-up): recovery codes stand in for the authenticator, so a leaked API key
+must not be able to mint them.
 
 **Sign-in methods.** `GET /v1/account/sign-in-methods` lists password, MFA and
 linked providers; `DELETE /v1/account/sign-in-methods/{provider}` unlinks one
-after a step-up unless it is the last way to sign in. Linking a provider to an
-existing account mails a notice.
+(browser sessions need a step-up; API keys may unlink) unless it is the last
+way to sign in. Linking a provider to an existing account mails a notice.
+Unlinking is recorded in `account_oauth_unlinks`: the OAuth email-match path
+otherwise re-links any identity with the account's email on the next "Continue
+with Google", which would make removal meaningless. A removed provider is
+refused there until the owner links it again from a browser already signed in
+to the account (the account page's **Link** button); that clears the record.
+
+**Notices.** Security notices (new sign-in, provider linked, recovery codes,
+email changed) are mailed off the request path, so a slow mail server does not
+delay sign-in.
 
 **New sign-in alert.** A browser session whose user agent and network (/24,
 /48) match no session of the last 90 days mails a notice, except on the

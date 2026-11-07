@@ -149,7 +149,12 @@ func TestUnverifiedAccountRestrictedAfterGrace(t *testing.T) {
 	if code := flowBearer(h, http.MethodGet, "/v1/apps", key, "").Code; code != http.StatusOK {
 		t.Fatalf("inside grace /v1/apps = %d, want 200", code)
 	}
-	srv.SetVerificationClock(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
+	late, err := store.AccountByEmail(t.Context(), "late@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := apidserver.VerificationDeadline(late)
+	srv.SetVerificationClock(func() time.Time { return deadline.Add(time.Hour) })
 
 	if rec := flowBearer(h, http.MethodGet, "/v1/apps", key, ""); rec.Code != http.StatusForbidden ||
 		!strings.Contains(rec.Body.String(), api.CodeEmailVerificationRequired) {
@@ -161,6 +166,13 @@ func TestUnverifiedAccountRestrictedAfterGrace(t *testing.T) {
 	if code := flowBearer(h, http.MethodPost, "/v1/auth/verify-email/resend", key, "").Code; code != http.StatusAccepted {
 		t.Errorf("overdue resend = %d, want 202", code)
 	}
+	// An address with a typo can only be fixed by moving to another one.
+	mgr := *srv.Sessions()
+	if rec := flowSessionJSON(t, h, mgr, flowSession(t, store, mgr, late.ID), late.ID, http.MethodPost, "/v1/account/email",
+		"account_email_change", map[string]any{"email": "late-fixed@example.com", "current_password": "late-password-123!"}); rec.Code != http.StatusAccepted {
+		t.Errorf("overdue email change = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	srv.WaitPasswordResetMail()
 	rec := apidserver.V1AuthJSONRequest(t, h, "/v1/auth/login", `{"email":"late@example.com","password":"late-password-123!"}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("overdue password login = %d %s, want 403", rec.Code, rec.Body.String())
@@ -249,6 +261,7 @@ func TestEmailChangeConfirmsNewAddress(t *testing.T) {
 	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change", map[string]any{"email": "taken@example.com"}); rec.Code != http.StatusAccepted {
 		t.Fatalf("change to taken address = %d %s, want 202", rec.Code, rec.Body.String())
 	}
+	srv.WaitPasswordResetMail()
 	if got := flowMailsTo(mailer, "taken@example.com"); len(got) != 0 {
 		t.Fatalf("taken address was mailed: %q", got)
 	}
@@ -256,6 +269,7 @@ func TestEmailChangeConfirmsNewAddress(t *testing.T) {
 	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change", map[string]any{"email": "After@Example.com"}); rec.Code != http.StatusAccepted {
 		t.Fatalf("change = %d %s, want 202", rec.Code, rec.Body.String())
 	}
+	srv.WaitPasswordResetMail()
 	token := flowLastToken(t, mailer, regexp.MustCompile(`/auth/email-change\?token=([A-Za-z0-9_-]+)`))
 	if got := flowMailsTo(mailer, "after@example.com"); len(got) != 1 {
 		t.Fatalf("confirmation mails to the new address = %d, want 1", len(got))
@@ -272,6 +286,7 @@ func TestEmailChangeConfirmsNewAddress(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "email_changed=1") {
 		t.Fatalf("confirm = %d %s", rec.Code, rec.Body.String())
 	}
+	srv.WaitPasswordResetMail()
 	moved, err := store.AccountByEmail(t.Context(), "after@example.com")
 	if err != nil || moved.ID != acct.ID || !moved.EmailVerified() {
 		t.Fatalf("account after change: %+v err=%v", moved, err)
@@ -331,6 +346,123 @@ func TestSignInMethodsListAndUnlink(t *testing.T) {
 	}
 	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodDelete, "/v1/account/sign-in-methods/google", "sign_in_method_unlink", nil); rec.Code != http.StatusConflict {
 		t.Fatalf("unlink last method = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	// An API key unlinks too (the CLI and SDK have no CSRF cookie).
+	if err := store.UpsertOAuthLink(t.Context(), acct.ID, "github", "github-sub", "linked@example.com", true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := flowBearer(h, http.MethodDelete, "/v1/account/sign-in-methods/github", key, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("unlink with an API key = %d %s, want 204", rec.Code, rec.Body.String())
+	}
+}
+
+// A removed provider is not linked again by signing in with the same email;
+// only a browser already signed in to the account links it again.
+func TestUnlinkedProviderStaysUnlinked(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	mgr := *srv.Sessions()
+	acct, key := flowAccountKey(t, store, "removed@example.com", true)
+	for _, p := range []string{"google", "github"} {
+		if err := store.UpsertOAuthLink(t.Context(), acct.ID, p, p+"-sub", acct.Email, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec := flowBearer(h, http.MethodDelete, "/v1/account/sign-in-methods/google", key, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("unlink google = %d %s", rec.Code, rec.Body.String())
+	}
+	anonymous := httptest.NewRequest(http.MethodGet, "/v1/auth/google/callback", nil)
+	if refused, err := srv.LinkOAuthByEmail(anonymous, acct, "google", "google-sub-2"); err != nil || !refused {
+		t.Fatalf("sign-in with a removed provider: refused=%v err=%v, want refused", refused, err)
+	}
+	if _, err := store.OAuthLinkByProviderSubject(t.Context(), "google", "google-sub-2"); err == nil {
+		t.Fatal("refused sign-in still linked the provider")
+	}
+	signedIn := httptest.NewRequest(http.MethodGet, "/v1/auth/google/callback", nil)
+	signedIn.AddCookie(flowSession(t, store, mgr, acct.ID))
+	if refused, err := srv.LinkOAuthByEmail(signedIn, acct, "google", "google-sub-2"); err != nil || refused {
+		t.Fatalf("link from a signed-in browser: refused=%v err=%v", refused, err)
+	}
+	if _, err := store.OAuthLinkByProviderSubject(t.Context(), "google", "google-sub-2"); err != nil {
+		t.Fatalf("provider not linked again: %v", err)
+	}
+	if refused, err := srv.LinkOAuthByEmail(anonymous, acct, "github", "github-sub-2"); err != nil || refused {
+		t.Fatalf("a provider never removed: refused=%v err=%v", refused, err)
+	}
+}
+
+// Recovery codes stand in for the authenticator, so an API key cannot
+// create them.
+func TestRecoveryCodesRefuseAPIKeys(t *testing.T) {
+	e := apidserver.SetupWithMFA(t, api.PlanPro, false, false)
+	e.GenerateEnrolledAccount(t)
+	plain, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), e.Acct().ID, hash, "codes", api.ScopesAdminOnly); err != nil {
+		t.Fatal(err)
+	}
+	if rec := flowBearer(*e.H(), http.MethodPost, "/v1/account/mfa/recovery-codes", plain, "{}"); rec.Code != http.StatusForbidden {
+		t.Fatalf("recovery codes with an API key = %d %s, want 403", rec.Code, rec.Body.String())
+	}
+}
+
+// Wrong current passwords on the email-change route count against the
+// per-IP sign-in failure budget, so a stolen session cannot guess freely.
+func TestEmailChangePasswordGuessesLimited(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	mgr := *srv.Sessions()
+	flowSignup(t, h, "guess@example.com", "guess-password-123!")
+	acct, err := store.AccountByEmail(t.Context(), "guess@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := flowSession(t, store, mgr, acct.ID)
+	for i := range 30 {
+		rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change",
+			map[string]any{"email": "guess2@example.com", "current_password": "wrong-password-123!"})
+		if rec.Code == http.StatusTooManyRequests {
+			return
+		}
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("guess %d = %d %s, want 401 then 429", i, rec.Code, rec.Body.String())
+		}
+	}
+	t.Fatal("30 wrong passwords were never rate limited")
+}
+
+// Accounts get 30 days from the later of signup and the start of
+// enforcement, and an unverified account still active in its last week is
+// reminded once a day.
+func TestVerificationDeadlineAndReminder(t *testing.T) {
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	acct, key := flowAccountKey(t, store, "remind@example.com", false)
+	deadline := apidserver.VerificationDeadline(acct)
+	if min := api.EmailVerificationEnforcedFrom.Add(30 * 24 * time.Hour); deadline.Before(min) {
+		t.Fatalf("deadline %s is before enforcement start + 30 days %s", deadline, min)
+	}
+	if min := acct.CreatedAt.Add(30 * 24 * time.Hour); deadline.Before(min) {
+		t.Fatalf("deadline %s is before signup + 30 days %s", deadline, min)
+	}
+	srv.SetVerificationClock(func() time.Time { return deadline.Add(-10 * 24 * time.Hour) })
+	flowBearer(h, http.MethodGet, "/v1/apps", key, "")
+	srv.WaitPasswordResetMail()
+	if got := flowMailsTo(mailer, acct.Email); len(got) != 0 {
+		t.Fatalf("reminded 10 days early: %d mails", len(got))
+	}
+	srv.SetVerificationClock(func() time.Time { return deadline.Add(-2 * 24 * time.Hour) })
+	for range 3 {
+		if code := flowBearer(h, http.MethodGet, "/v1/apps", key, "").Code; code != http.StatusOK {
+			t.Fatalf("/v1/apps before the deadline = %d", code)
+		}
+	}
+	srv.WaitPasswordResetMail()
+	got := flowMailsTo(mailer, acct.Email)
+	if len(got) != 1 || !strings.Contains(got[0], "/v1/auth/verify-email?token=") {
+		t.Fatalf("reminders in the last week = %d, want 1 verification link", len(got))
 	}
 }
 

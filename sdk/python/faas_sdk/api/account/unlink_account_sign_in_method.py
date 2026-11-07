@@ -77,7 +77,10 @@ def sync_detailed(
      Browser sessions need a recent authenticator verification when
     two-factor authentication is on. Refused with 409 when it is the
     last way to sign in; set a password or link another provider first.
-    CSRF: action `sign_in_method_unlink`.
+    The provider stays removed: signing in with it no longer links it by
+    matching email, until it is linked again from a browser signed in to
+    the account. CSRF: action `sign_in_method_unlink` (browser sessions
+    only; API keys need no token).
 
     Args:
         provider (UnlinkAccountSignInMethodProvider):
@@ -111,7 +114,10 @@ def sync(
      Browser sessions need a recent authenticator verification when
     two-factor authentication is on. Refused with 409 when it is the
     last way to sign in; set a password or link another provider first.
-    CSRF: action `sign_in_method_unlink`.
+    The provider stays removed: signing in with it no longer links it by
+    matching email, until it is linked again from a browser signed in to
+    the account. CSRF: action `sign_in_method_unlink` (browser sessions
+    only; API keys need no token).
 
     Args:
         provider (UnlinkAccountSignInMethodProvider):
@@ -140,7 +146,10 @@ async def asyncio_detailed(
      Browser sessions need a recent authenticator verification when
     two-factor authentication is on. Refused with 409 when it is the
     last way to sign in; set a password or link another provider first.
-    CSRF: action `sign_in_method_unlink`.
+    The provider stays removed: signing in with it no longer links it by
+    matching email, until it is linked again from a browser signed in to
+    the account. CSRF: action `sign_in_method_unlink` (browser sessions
+    only; API keys need no token).
 
     Args:
         provider (UnlinkAccountSignInMethodProvider):
@@ -172,7 +181,10 @@ async def asyncio(
      Browser sessions need a recent authenticator verification when
     two-factor authentication is on. Refused with 409 when it is the
     last way to sign in; set a password or link another provider first.
-    CSRF: action `sign_in_method_unlink`.
+    The provider stays removed: signing in with it no longer links it by
+    matching email, until it is linked again from a browser signed in to
+    the account. CSRF: action `sign_in_method_unlink` (browser sessions
+    only; API keys need no token).
 
     Args:
         provider (UnlinkAccountSignInMethodProvider):

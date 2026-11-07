@@ -1383,6 +1383,12 @@ func (s *server) sendMagicLinkEmailAt(ctx context.Context, base string, acct sta
 // token. Delivery errors remain server-side because signup has already
 // committed; a same-credential signup retry mints and sends a fresh link.
 func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acct state.Account) {
+	s.sendEmailVerificationAt(ctx, s.passwordResetLinkBase(r), acct)
+}
+
+// sendEmailVerificationAt is sendEmailVerification with the link base
+// already resolved, for work that runs after the request has returned.
+func (s *server) sendEmailVerificationAt(ctx context.Context, base string, acct state.Account) {
 	if !s.allowSecurityMail(ctx, acct, "email_verification") {
 		return
 	}
@@ -1400,7 +1406,7 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 		s.log.Error("email_verification.issue_token", "err", err, "account_id", acct.ID)
 		return
 	}
-	link := fmt.Sprintf("%s%s?token=%s", s.passwordResetLinkBase(r), emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.EmailVerificationBody(acct.Email, link, expiresAt)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{acct.Email},

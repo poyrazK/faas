@@ -150,7 +150,7 @@ export class MfaService {
       errors: {
         400: `CSRF token missing or wrong for a browser session.`,
         401: `code: unauthorized`,
-        403: `A recent authenticator verification is required (\`step_up_required\`).`,
+        403: `An API key was used, or a recent authenticator verification is required (\`step_up_required\`).`,
         409: `Two-factor authentication is not set up.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

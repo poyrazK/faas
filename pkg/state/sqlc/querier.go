@@ -42,6 +42,7 @@ type Querier interface {
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
 	AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error)
 	AccountDisplayName(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
+	AccountDisplayNames(ctx context.Context, db DBTX, ids []pgtype.UUID) ([]AccountDisplayNamesRow, error)
 	// An installation ID is globally unique (github_installations_installation_id_uidx).
 	AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error)
 	// First-use GitHub Actions bootstrap through an OAuth-verified install
@@ -49,6 +50,7 @@ type Querier interface {
 	// as the current repository name; a zero ID preserves legacy name-only
 	// subject behavior.
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
+	AccountOAuthProviderUnlinked(ctx context.Context, db DBTX, arg AccountOAuthProviderUnlinkedParams) (bool, error)
 	AccountPendingDeletionEmail(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
 	AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentGitOpsEffectParams) (int64, error)
@@ -510,6 +512,7 @@ type Querier interface {
 	// Claims always allow an event to inspect demand and drain surplus workers.
 	// The returned failure deadline gates new admission inside the reconciler.
 	ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWorkerRecoveryParams) (WorkerRecovery, error)
+	ClearAccountOAuthUnlink(ctx context.Context, db DBTX, arg ClearAccountOAuthUnlinkParams) error
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
@@ -668,7 +671,10 @@ type Querier interface {
 	// Lock the account before the change row, like verification and reset. The
 	// change applies only while the account still has the address it was
 	// requested from. A unique violation on accounts.email rolls the whole
-	// statement back and leaves the link usable.
+	// statement back and leaves the link usable. Password-reset links and legacy
+	// MFA-disable requests are bound to the account, not the address they were
+	// mailed to, so the change spends every outstanding one: the old mailbox
+	// must not be able to take the account back.
 	ConsumeAccountEmailChange(ctx context.Context, db DBTX, tokenHash []byte) (ConsumeAccountEmailChangeRow, error)
 	// Uses one approved, unexpired request with the same binding, in the same
 	// statement that finds it, so one approval allows exactly one request.
@@ -991,6 +997,8 @@ type Querier interface {
 	// dismissed scopes. list_secrets-shaped variant of DeleteAPIKey.
 	DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg DeleteAPIKeyReturningParams) (DeleteAPIKeyReturningRow, error)
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	// Removing a provider also records it, so signing in with it does not
+	// re-link it by matching email (ADR 20261107103000).
 	DeleteAccountOAuthLink(ctx context.Context, db DBTX, arg DeleteAccountOAuthLinkParams) (int64, error)
 	DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error)

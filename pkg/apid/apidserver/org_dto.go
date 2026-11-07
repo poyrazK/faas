@@ -51,20 +51,39 @@ func orgToRow(o state.Org) api.OrgRow {
 // place-holder email is what the customer sees until PR 8's GDPR
 // purge runs).
 func (s *server) memberToRow(ctx context.Context, mem state.OrgMembership) api.OrgMemberRow {
-	email, name := "", ""
+	email := ""
 	if acct, err := s.store.AccountByID(ctx, mem.AccountID); err == nil {
 		email = acct.Email
 	}
-	if flow, ok := s.store.(state.AccountFlowStore); ok {
-		name, _ = flow.AccountDisplayName(ctx, mem.AccountID)
-	}
 	return api.OrgMemberRow{
-		AccountID:   mem.AccountID,
-		Email:       email,
-		DisplayName: name,
-		Role:        string(mem.Role),
-		JoinedAt:    mem.JoinedAt,
+		AccountID: mem.AccountID,
+		Email:     email,
+		Role:      string(mem.Role),
+		JoinedAt:  mem.JoinedAt,
 	}
+}
+
+// memberRowWithName is memberToRow plus the member's display name, for
+// the routes that answer with one member.
+func (s *server) memberRowWithName(ctx context.Context, mem state.OrgMembership) api.OrgMemberRow {
+	row := s.memberToRow(ctx, mem)
+	row.DisplayName = s.displayNames(ctx, []string{mem.AccountID})[mem.AccountID]
+	return row
+}
+
+// displayNames reads the display names of accountIDs in one query. Names
+// are decoration: a failed read logs and returns none.
+func (s *server) displayNames(ctx context.Context, accountIDs []string) map[string]string {
+	flow, ok := s.store.(state.AccountFlowStore)
+	if !ok || len(accountIDs) == 0 {
+		return nil
+	}
+	names, err := flow.AccountDisplayNames(ctx, accountIDs)
+	if err != nil {
+		s.log.Warn("org_members.display_names", "err", err)
+		return nil
+	}
+	return names
 }
 
 // invitationToRow maps a state.OrgInvitation + the joined org row

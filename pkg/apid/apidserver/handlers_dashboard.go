@@ -2111,7 +2111,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		Plan:                       string(acct.Plan),
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
-		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
+		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
 	}
 }
 

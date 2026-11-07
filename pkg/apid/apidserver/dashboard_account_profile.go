@@ -67,8 +67,24 @@ func (s *server) fillAccountProfileForms(w http.ResponseWriter, r *http.Request,
 	}
 	if methods, err := s.signInMethods(r.Context(), acct); err == nil {
 		data.HasPassword = methods.Password
+		linked := map[string]bool{}
 		for _, p := range methods.Providers {
+			linked[p.Provider] = true
 			data.Providers = append(data.Providers, dashboard.AccountProviderRow{Provider: p.Provider, Email: p.Email, LinkedAt: p.LinkedAt})
+		}
+		for _, opt := range []struct {
+			provider, path string
+			enabled        bool
+		}{
+			{"google", "/v1/auth/google", s.oauthConfig.Google.Enabled()},
+			{"github", "/v1/auth/github", s.oauthConfig.GitHub.Enabled()},
+		} {
+			if opt.enabled && !linked[opt.provider] {
+				data.LinkProviders = append(data.LinkProviders, dashboard.AccountLinkOption{
+					Name: providerDisplayName(opt.provider),
+					URL:  opt.path + "?next=" + url.QueryEscape(accountPagePath),
+				})
+			}
 		}
 	}
 	data.MFAEnabled = acct.MFAEnrolled()

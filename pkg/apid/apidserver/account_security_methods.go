@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,7 +29,9 @@ const (
 )
 
 // mfaRegenerateRecoveryCodes is POST /v1/account/mfa/recovery-codes. A
-// browser session with a fresh step-up replaces every recovery code.
+// browser session with a fresh step-up replaces every recovery code. The
+// route uses the strict step-up, so an API key is refused: a leaked key
+// must not be able to mint codes that stand in for the authenticator.
 func (s *server) mfaRegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionMFARecoveryCodes, acct.ID); err != nil {
 		api.WriteProblem(w, csrfMismatchProblem)
@@ -92,7 +97,7 @@ func (s *server) signInMethods(ctx context.Context, acct state.Account) (api.Sig
 // unlinkSignInMethod is DELETE /v1/account/sign-in-methods/{provider}. It
 // refuses to remove the last way to sign in besides email links.
 func (s *server) unlinkSignInMethod(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionSignInUnlink, acct.ID); err != nil {
+	if err := s.verifySessionCSRF(r, csrfActionSignInUnlink, acct.ID); err != nil {
 		api.WriteProblem(w, csrfMismatchProblem)
 		return
 	}
@@ -130,6 +135,76 @@ func (s *server) unlinkProvider(ctx context.Context, acct state.Account, provide
 	}
 	s.audit.Emit(ctx, "account.sign_in_method_unlinked", &acct.ID, map[string]any{"provider": provider})
 	return nil
+}
+
+// errOAuthProviderUnlinked refuses an OAuth sign-in whose provider the
+// account removed; only a browser signed in to the account can link it again.
+var errOAuthProviderUnlinked = errors.New("oauth provider was unlinked from this account")
+
+// linkOAuthByEmail binds a provider identity to the existing account with
+// the same email. A provider the owner removed stays removed: signing in
+// with it is refused unless this browser is already signed in to the
+// account (the account page's "Link" button), which links it again.
+func (s *server) linkOAuthByEmail(r *http.Request, acct state.Account, provider, sub, email string, verified bool) error {
+	ctx := r.Context()
+	flow, ok := s.store.(state.AccountFlowStore)
+	if ok {
+		unlinked, err := flow.OAuthProviderUnlinked(ctx, acct.ID, provider)
+		if err != nil {
+			return fmt.Errorf("check unlinked %s: %w", provider, err)
+		}
+		if unlinked {
+			if !s.signedInBrowserAs(r, acct) {
+				s.audit.Emit(ctx, "auth.oauth_unlinked_refused", &acct.ID, map[string]any{"provider": provider})
+				return errOAuthProviderUnlinked
+			}
+			if err := flow.ClearOAuthUnlink(ctx, acct.ID, provider); err != nil {
+				return fmt.Errorf("clear unlinked %s: %w", provider, err)
+			}
+		}
+	}
+	if err := s.store.UpsertOAuthLink(ctx, acct.ID, provider, sub, email, verified); err != nil {
+		s.log.Error("oauth.upsert_link", "provider", provider, "err", err)
+		return nil
+	}
+	s.alertSignInMethodLinked(ctx, acct, provider)
+	return nil
+}
+
+// signedInBrowserAs reports whether r carries a live, fully signed-in
+// dashboard session for acct.
+func (s *server) signedInBrowserAs(r *http.Request, acct state.Account) bool {
+	c, err := sessioncookie.Get(r)
+	if err != nil || c.Value == "" {
+		return false
+	}
+	env, err := s.sessions.Verify(c.Value)
+	if err != nil || env.AccountID != acct.ID {
+		return false
+	}
+	if session.IsMFAPending(env) && s.sessionMFAPending(acct) {
+		return false
+	}
+	_, ok := s.dashboardSessionRow(&headerCaptureWriter{header: http.Header{}}, r, env)
+	return ok
+}
+
+// writeOAuthProviderUnlinked answers a sign-in refused by linkOAuthByEmail.
+func writeOAuthProviderUnlinked(w http.ResponseWriter, r *http.Request, provider string) {
+	name := providerDisplayName(provider)
+	api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+		name+" sign-in was removed",
+		"This account no longer signs in with "+name+". Sign in with your password or an email link, then link "+name+" again from your account page."))
+}
+
+func providerDisplayName(provider string) string {
+	switch provider {
+	case "google":
+		return "Google"
+	case "github":
+		return "GitHub"
+	}
+	return provider
 }
 
 // alertSignInMethodLinked mails the account when an OAuth provider is newly
@@ -178,8 +253,21 @@ func (s *server) sendSecurityNotice(ctx context.Context, acct state.Account, kin
 	if !s.allowSecurityMail(ctx, acct, kind) {
 		return
 	}
-	if err := s.mailer.Send(context.WithoutCancel(ctx), Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
-		s.log.Error("security_notice.mailer", "kind", kind, "err", err, "account_id", acct.ID)
+	s.sendNoticeInBackground(ctx, kind, acct.ID, Message{To: []string{acct.Email}, Subject: subject, TextBody: body})
+}
+
+// sendNoticeInBackground mails msg off the request path, so a slow mail
+// server never delays sign-in or the change that caused the notice.
+func (s *server) sendNoticeInBackground(ctx context.Context, kind, accountID string, msg Message) {
+	ctx = context.WithoutCancel(ctx)
+	if !s.resetMail.try(func() {
+		ctx, cancel := context.WithTimeout(ctx, api.PasswordResetMailTimeout)
+		defer cancel()
+		if err := s.mailer.Send(ctx, msg); err != nil {
+			s.log.Error("security_notice.mailer", "kind", kind, "err", err, "account_id", accountID)
+		}
+	}) {
+		s.log.Warn("security_notice.busy", "kind", kind, "account_id", accountID)
 	}
 }
 

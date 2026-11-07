@@ -29531,6 +29531,19 @@ CREATE TABLE public.account_email_changes (
 
 
 --
+-- Name: account_oauth_unlinks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_oauth_unlinks (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    unlinked_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT account_oauth_unlinks_provider_check CHECK ((provider = ANY (ARRAY['google'::text, 'github'::text]))),
+    CONSTRAINT account_oauth_unlinks_unlinked_at_check CHECK (isfinite(unlinked_at))
+);
+
+
+--
 -- Name: account_passwords; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58769,6 +58782,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_email_changes
     ADD CONSTRAINT account_email_changes_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: account_oauth_unlinks account_oauth_unlinks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_oauth_unlinks
+    ADD CONSTRAINT account_oauth_unlinks_pkey PRIMARY KEY (account_id, provider);
 
 
 --
@@ -89687,6 +89708,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_email_changes
     ADD CONSTRAINT account_email_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_oauth_unlinks account_oauth_unlinks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_oauth_unlinks
+    ADD CONSTRAINT account_oauth_unlinks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

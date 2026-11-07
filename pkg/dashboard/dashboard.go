@@ -3605,6 +3605,10 @@ type AccountData struct {
 	HasPassword                bool
 	MFAEnabled                 bool
 	ProviderUnlinkConfirmToken string
+	// LinkProviders are the enabled providers not yet linked. Linking
+	// signs in with the provider from this signed-in browser, which is
+	// the only way to link one the owner removed.
+	LinkProviders []AccountLinkOption
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -3645,6 +3649,12 @@ type AccountSessionRow struct {
 }
 
 // AccountProviderRow is one linked Google or GitHub sign-in.
+// AccountLinkOption is one "Link" button on the account page.
+type AccountLinkOption struct {
+	Name string // "Google"
+	URL  string // OAuth start path with next back to the account page
+}
+
 type AccountProviderRow struct {
 	Provider string
 	Email    string

@@ -22,6 +22,66 @@ func (q *Queries) AccountDisplayName(ctx context.Context, db DBTX, id pgtype.UUI
 	return display_name, err
 }
 
+const accountDisplayNames = `-- name: AccountDisplayNames :many
+SELECT id, display_name FROM accounts
+WHERE id = ANY($1::uuid[]) AND display_name <> ''
+`
+
+type AccountDisplayNamesRow struct {
+	ID          pgtype.UUID
+	DisplayName string
+}
+
+func (q *Queries) AccountDisplayNames(ctx context.Context, db DBTX, ids []pgtype.UUID) ([]AccountDisplayNamesRow, error) {
+	rows, err := db.Query(ctx, accountDisplayNames, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AccountDisplayNamesRow{}
+	for rows.Next() {
+		var i AccountDisplayNamesRow
+		if err := rows.Scan(&i.ID, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const accountOAuthProviderUnlinked = `-- name: AccountOAuthProviderUnlinked :one
+SELECT EXISTS(SELECT 1 FROM account_oauth_unlinks WHERE account_id=$1 AND provider=$2)::boolean AS unlinked
+`
+
+type AccountOAuthProviderUnlinkedParams struct {
+	AccountID pgtype.UUID
+	Provider  string
+}
+
+func (q *Queries) AccountOAuthProviderUnlinked(ctx context.Context, db DBTX, arg AccountOAuthProviderUnlinkedParams) (bool, error) {
+	row := db.QueryRow(ctx, accountOAuthProviderUnlinked, arg.AccountID, arg.Provider)
+	var unlinked bool
+	err := row.Scan(&unlinked)
+	return unlinked, err
+}
+
+const clearAccountOAuthUnlink = `-- name: ClearAccountOAuthUnlink :exec
+DELETE FROM account_oauth_unlinks WHERE account_id=$1 AND provider=$2
+`
+
+type ClearAccountOAuthUnlinkParams struct {
+	AccountID pgtype.UUID
+	Provider  string
+}
+
+func (q *Queries) ClearAccountOAuthUnlink(ctx context.Context, db DBTX, arg ClearAccountOAuthUnlinkParams) error {
+	_, err := db.Exec(ctx, clearAccountOAuthUnlink, arg.AccountID, arg.Provider)
+	return err
+}
+
 const clearPendingAccountEmailChanges = `-- name: ClearPendingAccountEmailChanges :exec
 
 DELETE FROM account_email_changes WHERE account_id=$1 AND consumed_at IS NULL
@@ -43,6 +103,14 @@ WITH candidate AS MATERIALIZED (
     UPDATE account_email_changes c SET consumed_at=clock_timestamp()
     FROM candidate x WHERE c.token_hash=$1 AND c.account_id=x.id AND c.consumed_at IS NULL
     RETURNING c.account_id, c.old_email, c.new_email
+), spent_resets AS (
+    UPDATE login_tokens t SET consumed_at=clock_timestamp()
+    FROM consumed c WHERE t.account_id=c.account_id AND t.consumed_at IS NULL
+    RETURNING t.account_id
+), spent_mfa_disables AS (
+    UPDATE mfa_disable_requests m SET consumed_at=clock_timestamp()
+    FROM consumed c WHERE m.account_id=c.account_id AND m.consumed_at IS NULL
+    RETURNING m.account_id
 )
 UPDATE accounts a SET email=c.new_email, email_verified_at=clock_timestamp()
 FROM consumed c WHERE a.id=c.account_id
@@ -58,7 +126,10 @@ type ConsumeAccountEmailChangeRow struct {
 // Lock the account before the change row, like verification and reset. The
 // change applies only while the account still has the address it was
 // requested from. A unique violation on accounts.email rolls the whole
-// statement back and leaves the link usable.
+// statement back and leaves the link usable. Password-reset links and legacy
+// MFA-disable requests are bound to the account, not the address they were
+// mailed to, so the change spends every outstanding one: the old mailbox
+// must not be able to take the account back.
 func (q *Queries) ConsumeAccountEmailChange(ctx context.Context, db DBTX, tokenHash []byte) (ConsumeAccountEmailChangeRow, error) {
 	row := db.QueryRow(ctx, consumeAccountEmailChange, tokenHash)
 	var i ConsumeAccountEmailChangeRow
@@ -66,8 +137,17 @@ func (q *Queries) ConsumeAccountEmailChange(ctx context.Context, db DBTX, tokenH
 	return i, err
 }
 
-const deleteAccountOAuthLink = `-- name: DeleteAccountOAuthLink :execrows
-DELETE FROM oauth_links WHERE account_id=$1 AND provider=$2
+const deleteAccountOAuthLink = `-- name: DeleteAccountOAuthLink :one
+WITH removed AS (
+    DELETE FROM oauth_links l WHERE l.account_id=$1 AND l.provider=$2
+    RETURNING l.account_id AS removed_account, l.provider AS removed_provider
+), marked AS (
+    INSERT INTO account_oauth_unlinks AS u (account_id, provider)
+    SELECT DISTINCT r.removed_account, r.removed_provider FROM removed r
+    ON CONFLICT (account_id, provider) DO UPDATE SET unlinked_at=clock_timestamp()
+    RETURNING u.account_id
+)
+SELECT count(*)::bigint AS removed FROM removed
 `
 
 type DeleteAccountOAuthLinkParams struct {
@@ -75,12 +155,13 @@ type DeleteAccountOAuthLinkParams struct {
 	Provider  string
 }
 
+// Removing a provider also records it, so signing in with it does not
+// re-link it by matching email (ADR 20261107103000).
 func (q *Queries) DeleteAccountOAuthLink(ctx context.Context, db DBTX, arg DeleteAccountOAuthLinkParams) (int64, error) {
-	result, err := db.Exec(ctx, deleteAccountOAuthLink, arg.AccountID, arg.Provider)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	row := db.QueryRow(ctx, deleteAccountOAuthLink, arg.AccountID, arg.Provider)
+	var removed int64
+	err := row.Scan(&removed)
+	return removed, err
 }
 
 const insertAccountEmailChange = `-- name: InsertAccountEmailChange :execrows
@@ -149,7 +230,7 @@ func (q *Queries) ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID 
 }
 
 const recentAccountSessions = `-- name: RecentAccountSessions :many
-SELECT host(issued_ip)::text AS issued_ip, coalesce(issued_ua,'')::text AS issued_ua, issued_at
+SELECT coalesce(host(issued_ip),'')::text AS issued_ip, coalesce(issued_ua,'')::text AS issued_ua, issued_at
 FROM sessions WHERE account_id=$1 AND issued_at>=$2
 ORDER BY issued_at DESC LIMIT 200
 `

@@ -1552,7 +1552,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		},
 	}
 	if !acct.EmailVerified() {
-		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		graceEnds := verificationDeadline(acct)
 		resp.EmailVerificationGraceEndsAt = &graceEnds
 	}
 	if flow, ok := s.store.(state.AccountFlowStore); ok {

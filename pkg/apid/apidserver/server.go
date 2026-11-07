@@ -491,6 +491,8 @@ type server struct {
 	// verificationClock is the clock the email-verification grace reads;
 	// nil means time.Now (test seam).
 	verificationClock func() time.Time
+	// verificationReminders throttles the deadline reminder mail per account.
+	verificationReminders verificationReminders
 	// resetMail runs forgot-password lookups and mail off the request path
 	// (background_mail.go, H86).
 	resetMail *backgroundWork
@@ -2214,7 +2216,11 @@ func (s *server) handler() http.Handler {
 	// wildcard DELETE /v1/auth/sessions/{id} is matched by the
 	// prefix-check seam in isMFAAllowlisted.
 	mux.HandleFunc("PATCH /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAccountProfile))))
-	mux.HandleFunc("POST /v1/account/email", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postAccountEmailChange))))
+	// Email change checks the current password: failures count against
+	// the dashboard's per-IP bucket, like set-password.
+	mux.Handle("POST /v1/account/email", s.dashboardCredentialLimit(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusUnauthorized},
+	}, s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postAccountEmailChange)))))
 	mux.HandleFunc("POST /v1/auth/verify-email/resend", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.resendEmailVerification))))
 	mux.HandleFunc("POST /v1/auth/logout", s.auth(s.requireMFA(s.logout)))
 	// The session inventory carries the owner's sign-in IPs and user
@@ -4956,7 +4962,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/mfa/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaConfirm))))
 	mux.HandleFunc("POST /v1/account/mfa/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaVerify))))
 	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaRecover))))
-	mux.HandleFunc("POST /v1/account/mfa/recovery-codes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.mfaRegenerateRecoveryCodes)))))
+	mux.HandleFunc("POST /v1/account/mfa/recovery-codes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUpStrict(5*time.Minute)(s.mfaRegenerateRecoveryCodes)))))
 	mux.HandleFunc("GET /v1/account/sign-in-methods", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSignInMethods))))
 	mux.HandleFunc("DELETE /v1/account/sign-in-methods/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.unlinkSignInMethod)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisable))))
@@ -5320,7 +5326,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/account/sessions/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRevokeSession))))
 	mux.Handle("POST /dashboard/account/providers/{provider}/unlink", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUnlinkProvider))))
 	mux.Handle("POST /dashboard/account/display-name", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetDisplayName))))
-	mux.Handle("POST /dashboard/account/email", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRequestEmailChange))))
+	// The form turns a wrong password into a redirect, so every attempt
+	// counts against the per-IP bucket shared with /login.
+	mux.Handle("POST /dashboard/account/email", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.sessionAuth(http.HandlerFunc(s.dashboardRequestEmailChange))))
 	mux.Handle("POST /dashboard/account/verify-email/resend", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardResendVerification))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
 	// TOTP challenge for mfa_pending sessions (sessionAuth confines them
@@ -5962,12 +5972,18 @@ func (s *server) dashboardChain(h http.Handler) http.Handler {
 // the handler so it can 429 without ever invoking the inner logic.
 // Spec §11: "rate limit auth failures (10/min/IP)".
 func (s *server) dashboardAuthChain(cfg middleware.AuthLimitConfig, h http.Handler) http.Handler {
-	h = s.dashboardChain(h)
+	return s.dashboardCredentialLimit(cfg, s.dashboardChain(h))
+}
+
+// dashboardCredentialLimit charges a route to the dashboard's per-IP
+// failure bucket (shared with /login). Routes that check a password behind
+// an existing session use it so a stolen session is not a free oracle for
+// guessing the password (§11).
+func (s *server) dashboardCredentialLimit(cfg middleware.AuthLimitConfig, h http.Handler) http.Handler {
 	if s.dashboardAuthLimiter == nil {
 		s.dashboardAuthLimiter = middleware.NewLimiter(cfg)
 	}
-	h = middleware.AuthLimitWithLimiter(cfg, s.dashboardAuthLimiter)(h)
-	return h
+	return middleware.AuthLimitWithLimiter(cfg, s.dashboardAuthLimiter)(h)
 }
 
 // cliAuthChain wraps the anonymous /v1/cli-auth/* endpoints in the

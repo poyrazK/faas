@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
@@ -2190,6 +2191,19 @@ func (r *server) ResetSecurityMailLimiter() { r.securityMail = newSecurityMailLi
 
 // SetVerificationClock moves the clock the email-verification grace reads.
 func (r *server) SetVerificationClock(now func() time.Time) { r.verificationClock = now }
+
+// VerificationDeadline is when an unverified account becomes restricted.
+func VerificationDeadline(acct state.Account) time.Time { return verificationDeadline(acct) }
+
+// LinkOAuthByEmail runs the OAuth email-match link step; the bool reports
+// a refusal because the owner removed the provider.
+func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provider, sub string) (refused bool, err error) {
+	err = r.linkOAuthByEmail(req, acct, provider, sub, acct.Email, true)
+	if errors.Is(err, errOAuthProviderUnlinked) {
+		return true, nil
+	}
+	return false, err
+}
 
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }

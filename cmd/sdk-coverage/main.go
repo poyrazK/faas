@@ -433,6 +433,7 @@ var routeExclude = map[string]bool{
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
 	"POST /v1/account/email":                                     true, // email change; session-cookie + named CSRF-only (ADR-20261107103000)
+	"POST /v1/account/mfa/recovery-codes":                        true, // recovery codes; browser session + strict step-up only (ADR-20261107103000)
 	"POST /v1/install/repos/list":                                true, // bind picker hydrates from this; browser-only
 	"GET /v1/install/connections":                                true, // account connection manager; session-cookie-only
 	"DELETE /v1/install/connections/{installationID}":            true, // account disconnect; session-cookie + named CSRF-only
@@ -1449,7 +1450,6 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/account":                              "SetDisplayName",
 	"GET /v1/account/sign-in-methods":                "SignInMethods",
 	"DELETE /v1/account/sign-in-methods/{provider}":  "UnlinkSignInMethod",
-	"POST /v1/account/mfa/recovery-codes":            "RegenerateRecoveryCodes",
 	"POST /v1/auth/verify-email/resend":              "ResendEmailVerification",
 	"POST /v1/orgs/{slug}/leave":                     "LeaveOrg",
 	"GET /v1/apps/{slug}/forks":                      "ListAppForks",

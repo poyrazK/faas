@@ -72,6 +72,13 @@ func (s *server) listOrgMembers(w http.ResponseWriter, r *http.Request, _ state.
 		return
 	}
 	out := api.ListMembersResponse{Members: make([]api.OrgMemberResponse, 0, len(rows))}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.RemovedAt == nil {
+			ids = append(ids, row.AccountID)
+		}
+	}
+	names := s.displayNames(r.Context(), ids)
 	for _, row := range rows {
 		if row.RemovedAt != nil {
 			continue // Filter at the API boundary; removed rows stay in DB for audit.
@@ -82,7 +89,9 @@ func (s *server) listOrgMembers(w http.ResponseWriter, r *http.Request, _ state.
 		// that JOINs org_memberships.account_id = accounts.id in
 		// a single query. Acceptable for PR 5 (small orgs); flag
 		// here so PR 6 picks it up alongside the api_keys cut-over.
-		out.Members = append(out.Members, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), row)))
+		member := s.memberToRow(r.Context(), row)
+		member.DisplayName = names[row.AccountID]
+		out.Members = append(out.Members, api.OrgMemberResponseFromRow(member))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -269,7 +278,7 @@ func (s *server) changeOrgMemberRole(w http.ResponseWriter, r *http.Request, acc
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), updated)))
+	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberRowWithName(r.Context(), updated)))
 }
 
 // removeOrgMember stamps removed_at on the membership row. The

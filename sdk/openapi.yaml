@@ -1299,7 +1299,10 @@ paths:
         Browser sessions need a recent authenticator verification when
         two-factor authentication is on. Refused with 409 when it is the
         last way to sign in; set a password or link another provider first.
-        CSRF: action `sign_in_method_unlink`.
+        The provider stays removed: signing in with it no longer links it by
+        matching email, until it is linked again from a browser signed in to
+        the account. CSRF: action `sign_in_method_unlink` (browser sessions
+        only; API keys need no token).
       responses:
         '204': {description: Sign-in method unlinked.}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -1623,7 +1626,7 @@ paths:
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403':
-          description: 'A recent authenticator verification is required (`step_up_required`).'
+          description: 'An API key was used, or a recent authenticator verification is required (`step_up_required`).'
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '409':
           description: Two-factor authentication is not set up.

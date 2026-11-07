@@ -94,38 +94,48 @@ func (s *server) requestEmailChange(w http.ResponseWriter, r *http.Request, acct
 		return false
 	}
 	s.audit.Emit(r.Context(), "account.email_change_requested", &acct.ID, nil)
-	// A taken address gets the same answer and no mail, so the form does
-	// not tell which addresses have accounts.
-	if _, err := s.store.AccountByEmail(r.Context(), newEmail); err == nil {
-		return true
-	}
-	if !s.allowSecurityMail(r.Context(), acct, "email_change") {
-		return true
-	}
-	if err := s.sendEmailChangeConfirmation(r, flow, acct, newEmail); err != nil {
-		s.log.Error("email_change.issue", "err", err, "account_id", acct.ID)
-		api.WriteProblem(w, api.ErrCapacity("could not start the email change; try again"))
-		return false
+	// The taken-address check, the token and the mail run in the
+	// background, so neither the answer nor its timing tells which
+	// addresses have accounts (as forgot-password, H86). A taken address
+	// gets no mail.
+	base := s.passwordResetLinkBase(r)
+	//nolint:contextcheck // The work outlives the request; it keeps the request values and has its own timeout.
+	ctx := context.WithoutCancel(r.Context())
+	if !s.resetMail.try(func() {
+		ctx, cancel := context.WithTimeout(ctx, api.PasswordResetMailTimeout)
+		defer cancel()
+		s.startEmailChange(ctx, flow, base, acct, newEmail)
+	}) {
+		s.log.Warn("email_change.busy", "account_id", acct.ID)
 	}
 	return true
 }
 
-func (s *server) sendEmailChangeConfirmation(r *http.Request, flow state.AccountFlowStore, acct state.Account, newEmail string) error {
+// startEmailChange issues the change and mails the new address unless it
+// already belongs to an account. Failures stay server-side.
+func (s *server) startEmailChange(ctx context.Context, flow state.AccountFlowStore, base string, acct state.Account, newEmail string) {
+	if _, err := s.store.AccountByEmail(ctx, newEmail); err == nil {
+		return
+	}
+	if !s.allowSecurityMail(ctx, acct, "email_change") {
+		return
+	}
 	raw := make([]byte, emailChangeTokenBytes)
 	defer clear(raw)
 	if _, err := rand.Read(raw); err != nil {
-		return fmt.Errorf("email change token: %w", err)
+		s.log.Error("email_change.token", "err", err, "account_id", acct.ID)
+		return
 	}
 	expiresAt := time.Now().Add(emailChangeTTL)
-	if err := flow.IssueEmailChange(r.Context(), api.HashToken(raw), acct.ID, newEmail, expiresAt); err != nil {
-		return fmt.Errorf("issue email change: %w", err)
+	if err := flow.IssueEmailChange(ctx, api.HashToken(raw), acct.ID, newEmail, expiresAt); err != nil {
+		s.log.Error("email_change.issue", "err", err, "account_id", acct.ID)
+		return
 	}
-	link := fmt.Sprintf("%s%s?token=%s", s.passwordResetLinkBase(r), emailChangeConfirmPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, emailChangeConfirmPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.EmailChangeConfirmBody(newEmail, link, expiresAt)
-	if err := s.mailer.Send(r.Context(), Message{To: []string{newEmail}, Subject: subject, TextBody: body}); err != nil {
+	if err := s.mailer.Send(ctx, Message{To: []string{newEmail}, Subject: subject, TextBody: body}); err != nil {
 		s.log.Error("email_change.mailer", "err", err, "account_id", acct.ID)
 	}
-	return nil
 }
 
 var emailChangeConfirmPage = template.Must(template.New("email-change-confirm").Parse(`<!doctype html>
@@ -190,8 +200,6 @@ func (s *server) finishEmailChange(r *http.Request, change state.EmailChange) {
 	s.revokeSessionsAfterPasswordChange(r.Context(), change.AccountID, "")
 	s.audit.Emit(r.Context(), "account.email_changed", &change.AccountID, nil)
 	subject, body := mailpkg.EmailChangedNoticeBody(change.OldEmail, change.NewEmail, time.Now())
-	ctx := context.WithoutCancel(r.Context())
-	if err := s.mailer.Send(ctx, Message{To: []string{change.OldEmail}, Subject: subject, TextBody: body}); err != nil {
-		s.log.Error("email_change.notice_mailer", "err", err, "account_id", change.AccountID)
-	}
+	s.sendNoticeInBackground(r.Context(), "email_changed", change.AccountID,
+		Message{To: []string{change.OldEmail}, Subject: subject, TextBody: body})
 }

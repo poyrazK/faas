@@ -85,7 +85,13 @@
           </tbody>
         </table>
       {{else}}
-        <p class="muted">No Google or GitHub sign-in is linked. Use "Continue with Google" or "Continue with GitHub" on the sign-in page with this email to link one.</p>
+        <p class="muted">No Google or GitHub sign-in is linked.</p>
+      {{end}}
+      {{if $d.LinkProviders}}
+        <p>
+          {{range $d.LinkProviders}}<a class="button" href="{{.URL}}">Link {{.Name}}</a> {{end}}
+        </p>
+        <p class="muted">Sign in to the provider with the account that uses this email. A provider you removed can only be linked again from here.</p>
       {{end}}
 
       <h2>Sessions</h2>

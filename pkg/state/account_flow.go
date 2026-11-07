@@ -49,9 +49,19 @@ type AccountFlowStore interface {
 	// hashes. ErrNotFound when the account has no enrolled factor.
 	ReplaceRecoveryCodes(ctx context.Context, accountID string, hashes [][]byte) error
 	ListOAuthLinks(ctx context.Context, accountID string) ([]OAuthLink, error)
-	// DeleteOAuthLink removes the account's links for provider.
+	// DeleteOAuthLink removes the account's links for provider and records
+	// the provider as unlinked.
 	DeleteOAuthLink(ctx context.Context, accountID, provider string) (bool, error)
+	// OAuthProviderUnlinked reports whether the account removed provider;
+	// signing in with it must not re-link it by matching email.
+	OAuthProviderUnlinked(ctx context.Context, accountID, provider string) (bool, error)
+	// ClearOAuthUnlink forgets the removal once the signed-in owner links
+	// the provider again.
+	ClearOAuthUnlink(ctx context.Context, accountID, provider string) error
 	AccountDisplayName(ctx context.Context, accountID string) (string, error)
+	// AccountDisplayNames returns the set display names of accountIDs in
+	// one read; accounts without a name are absent from the map.
+	AccountDisplayNames(ctx context.Context, accountIDs []string) (map[string]string, error)
 	SetAccountDisplayName(ctx context.Context, accountID, name string) error
 	// RecentSignIns lists browser sessions (revoked included) since.
 	RecentSignIns(ctx context.Context, accountID string, since time.Time) ([]SignInRecord, error)
@@ -73,6 +83,7 @@ type memEmailChange struct {
 type memAccountFlow struct {
 	emailChanges map[string]memEmailChange // stored token hash → change
 	displayNames map[string]string
+	unlinked     map[string]bool // account ID + "\x00" + provider
 }
 
 func (m *MemStore) IssueEmailChange(_ context.Context, tokenHash []byte, accountID, newEmail string, expiresAt time.Time) error {
@@ -118,6 +129,19 @@ func (m *MemStore) ConsumeEmailChange(_ context.Context, tokenHash []byte) (Emai
 		m.storeRouteCheckAccountLocked(a.ID, a)
 		c.consumed = true
 		m.accountFlow.emailChanges[string(stored)] = c
+		// Spend account-bound links mailed to the old address.
+		for k, t := range m.loginTokens {
+			if t.AccountID == a.ID && t.ConsumedAt == nil {
+				t.ConsumedAt = &now
+				m.loginTokens[k] = t
+			}
+		}
+		for k, req := range m.mfaDisableRequests {
+			if req.AccountID == a.ID && req.ConsumedAt == nil {
+				req.ConsumedAt = &now
+				m.mfaDisableRequests[k] = req
+			}
+		}
 		return EmailChange{AccountID: a.ID, OldEmail: c.oldEmail, NewEmail: c.newEmail}, nil
 	}
 	return EmailChange{}, ErrNotFound
@@ -166,7 +190,26 @@ func (m *MemStore) DeleteOAuthLink(_ context.Context, accountID, provider string
 			removed = true
 		}
 	}
+	if removed {
+		if m.accountFlow.unlinked == nil {
+			m.accountFlow.unlinked = map[string]bool{}
+		}
+		m.accountFlow.unlinked[accountID+"\x00"+provider] = true
+	}
 	return removed, nil
+}
+
+func (m *MemStore) OAuthProviderUnlinked(_ context.Context, accountID, provider string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.accountFlow.unlinked[accountID+"\x00"+provider], nil
+}
+
+func (m *MemStore) ClearOAuthUnlink(_ context.Context, accountID, provider string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.accountFlow.unlinked, accountID+"\x00"+provider)
+	return nil
 }
 
 func (m *MemStore) AccountDisplayName(_ context.Context, accountID string) (string, error) {
@@ -176,6 +219,18 @@ func (m *MemStore) AccountDisplayName(_ context.Context, accountID string) (stri
 		return "", ErrNotFound
 	}
 	return m.accountFlow.displayNames[accountID], nil
+}
+
+func (m *MemStore) AccountDisplayNames(_ context.Context, accountIDs []string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]string, len(accountIDs))
+	for _, id := range accountIDs {
+		if name := m.accountFlow.displayNames[id]; name != "" {
+			out[id] = name
+		}
+	}
+	return out, nil
 }
 
 func (m *MemStore) SetAccountDisplayName(_ context.Context, accountID, name string) error {
@@ -289,6 +344,23 @@ func (s *PgStore) DeleteOAuthLink(ctx context.Context, accountID, provider strin
 	return n > 0, nil
 }
 
+func (s *PgStore) OAuthProviderUnlinked(ctx context.Context, accountID, provider string) (bool, error) {
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return false, err
+	}
+	unlinked, err := sqlc.New().AccountOAuthProviderUnlinked(ctx, s.pool, sqlc.AccountOAuthProviderUnlinkedParams{AccountID: account, Provider: provider})
+	return unlinked, mapErr(err)
+}
+
+func (s *PgStore) ClearOAuthUnlink(ctx context.Context, accountID, provider string) error {
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	return mapErr(sqlc.New().ClearAccountOAuthUnlink(ctx, s.pool, sqlc.ClearAccountOAuthUnlinkParams{AccountID: account, Provider: provider}))
+}
+
 func (s *PgStore) AccountDisplayName(ctx context.Context, accountID string) (string, error) {
 	account, err := parsePgUUID(accountID)
 	if err != nil {
@@ -299,6 +371,29 @@ func (s *PgStore) AccountDisplayName(ctx context.Context, accountID string) (str
 		return "", ErrNotFound
 	}
 	return name, mapErr(err)
+}
+
+func (s *PgStore) AccountDisplayNames(ctx context.Context, accountIDs []string) (map[string]string, error) {
+	ids := make([]pgtype.UUID, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		u, err := parsePgUUID(id)
+		if err != nil {
+			continue // not an account id; it has no name
+		}
+		ids = append(ids, u)
+	}
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := sqlc.New().AccountDisplayNames(ctx, s.pool, ids)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	for _, row := range rows {
+		out[operationUUIDString(row.ID)] = row.DisplayName
+	}
+	return out, nil
 }
 
 func (s *PgStore) SetAccountDisplayName(ctx context.Context, accountID, name string) error {

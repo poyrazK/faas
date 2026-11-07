@@ -415,6 +415,15 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_oauth_unlinks",
+    "columns": [
+      "account_id",
+      "provider",
+      "unlinked_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "accounts",
     "columns": [
       "abuse_hold_at",

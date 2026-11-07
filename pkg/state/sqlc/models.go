@@ -146,6 +146,12 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountOauthUnlink struct {
+	AccountID  pgtype.UUID
+	Provider   string
+	UnlinkedAt pgtype.Timestamptz
+}
+
 type AccountPassword struct {
 	AccountID pgtype.UUID
 	Hash      string
