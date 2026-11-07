@@ -1361,6 +1361,8 @@ type Manager struct {
 	// never held while m.mu is taken.
 	idleActivity QuietActivity
 	idleLadderOn bool
+	idleCPU      IdleLadderCPU
+	idleNet      IdleLadderNet
 	idleMetrics  *IdleLadderMetrics
 	idleTick     time.Duration
 	idleMu       sync.Mutex
