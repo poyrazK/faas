@@ -44,8 +44,8 @@ Columns:
 
 | Tier | Rows | Meaning |
 |---|---|---|
-| `GA` | 47 | Ships in v1.0, billed, held to the "ready to charge" bar. |
-| `beta` | 32 | On for every account, labelled beta, may change, no service credits. |
+| `GA` | 48 | Ships in v1.0, billed, held to the "ready to charge" bar. |
+| `beta` | 31 | On for every account, labelled beta, may change, no service credits. |
 | `preview` | 46 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
 
@@ -286,7 +286,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 149 | API consumers: end-customer keys (ADR-120) | `consumers` | **MISSING** | — | internal |
 | 150 | API monetization: rate cards, consumer plans, billing, signup | `consumer-*`, `rate-cards` | `api-monetization` internal | `pf: api_monetization` | internal |
 | 151 | Plans, usage, invoices, overage cap, cost breakdown and forecast, FOCUS 1.4 invoice export | `billing`, `invoices`, `usage`, `gregale billing costs/forecast` | **MISSING** | `faas_billing_mode: disabled` | GA |
-| 152 | Budgets: policies, projections, alerts and channels, automatic stops (strict budgets) | `gregale billing budgets`, `financial_budget_*` tables | **MISSING** | `pf: strict_budgets` | beta |
+| 152 | Budgets: policies, projections, alerts and channels, preview stops (GA, ADR-20261107160000); strict budgets that stop workloads stay beta | `gregale billing budgets`, `financial_budget_*` tables | `budgets` ga, `strict-budgets` beta | `pf: strict_budgets` (strict budgets only) | GA |
 | 153 | GDPR export, account deletion and restore during grace, DPA | `/v1/account/export`, `DELETE /v1/account`, `gregale account restore` | **MISSING** | — | GA |
 | 154 | Customer feature flags | | `feature-flags` internal | `pf: customer_flags` | internal |
 | 155 | Product control | `product-control` | `product-control` internal | env flag | internal |

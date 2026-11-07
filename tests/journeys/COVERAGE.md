@@ -48,6 +48,7 @@ covered. Update this table when a journey or a GA row changes.
 | 143 | Customer notification emails | — | all (no test inbox) |
 | 144 | API keys with scopes | `TestAccountAndKeys` | — |
 | 151 | Plans, usage, invoices, overage cap, costs, forecast | `TestBillingAndUsage` (read-only views) | changing plan or overage cap (would bill the account), FOCUS export |
+| 152 | Budgets (monitored; strict budgets stay beta) | `TestBudgets`: `preview`, `create` (monitored notify, active, not enforcing), `list`, `get`, `update` (revision 2), `history`, `channels` (read, clear), `delete` | threshold and projected-overrun alerts (thresholds set above the account's spend: no test inbox), channel delivery, preview stops, organization budgets, strict budgets (beta) |
 | 153 | GDPR export, account deletion and restore, DPA | `TestAccountExportAndDPA` (export, status, DPA) | deletion and restore (no disposable accounts) |
 | 156 | `gregale` CLI | every journey, `TestCLITools` (version, context, doctor, completion, man, help) | interactive `start` and `menu` |
 | 157 | Web dashboard | — | all (dashboard journeys not enabled) |
