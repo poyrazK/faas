@@ -153,11 +153,6 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
 	}
-	if clone.branch != nil {
-		if err := checkProjectEnvironmentBranchPrivateNetworks(ctx, tx, clone.AccountID, clone.ProjectID); err != nil {
-			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
-		}
-	}
 	if !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		if clone.branch != nil {
 			// A branch copies managed PostgreSQL and object storage after it

@@ -43,28 +43,39 @@ func (c *environmentBranchContainment) allows(name string, port uint16) bool {
 	return c.databases[strings.ToLower(strings.TrimSuffix(name, "."))][port]
 }
 
-// environmentBranchPolicyCache remembers uncontained deployments. A
-// deployment's scope and its branch's egress never change, so a deployment
-// once read as outside any contained branch stays so; contained and deleted
+// environmentBranchPolicyCache remembers uncontained deployments and whether
+// they join their app's private networks. A deployment's scope and its
+// branch's egress and private network mode never change, so a deployment once
+// read as outside any contained branch stays so; contained and deleted
 // branches are read again on every wake.
 type environmentBranchPolicyCache struct {
 	mu          sync.Mutex
-	uncontained map[string]bool
+	uncontained map[string]bool // deployment -> joins its app's private networks
 }
 
-func (c *environmentBranchPolicyCache) known(deploymentID string) bool {
+func (c *environmentBranchPolicyCache) known(deploymentID string) (joinsPrivateNetworks, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.uncontained[deploymentID]
+	joinsPrivateNetworks, ok = c.uncontained[deploymentID]
+	return joinsPrivateNetworks, ok
 }
 
-func (c *environmentBranchPolicyCache) remember(deploymentID string) {
+func (c *environmentBranchPolicyCache) remember(deploymentID string, joinsPrivateNetworks bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.uncontained == nil || len(c.uncontained) >= environmentBranchPolicyCacheMax {
 		c.uncontained = make(map[string]bool)
 	}
-	c.uncontained[deploymentID] = true
+	c.uncontained[deploymentID] = joinsPrivateNetworks
+}
+
+// excludeFromPrivateNetworks keeps a branch instance off its app's private
+// networks (ADR-20261031193635 section 6): the wake carries the app's
+// attachment, and vmmd drops it before the network is prepared.
+func (req *WakeRequest) excludeFromPrivateNetworks() {
+	req.privateNetworkExcluded = true
+	req.PrivateNetworkCIDRs, req.PrivateNetworkAllowedCIDRs, req.PrivateNetworkFirewallRules = nil, nil, nil
+	req.PrivateNetworkID, req.PrivateNetworkAddress = "", ""
 }
 
 // WithEnvironmentBranchEgress is daemon wiring, installed before any
@@ -84,7 +95,7 @@ func (m *Manager) atomicFirewall() bool {
 
 // applyEnvironmentBranchEgress resolves the wake's branch containment.
 func (m *Manager) applyEnvironmentBranchEgress(ctx context.Context, req *WakeRequest) error {
-	req.environmentBranch = nil
+	req.environmentBranch, req.privateNetworkExcluded = nil, false
 	if m.environmentBranchEgress == nil {
 		if req.EnvironmentBranchContained {
 			return errors.New("environment branch containment authority is unavailable on this node")
@@ -97,7 +108,10 @@ func (m *Manager) applyEnvironmentBranchEgress(ctx context.Context, req *WakeReq
 		}
 		return nil
 	}
-	if !req.EnvironmentBranchContained && m.environmentBranchPolicies.known(req.DeploymentID) {
+	if joins, ok := m.environmentBranchPolicies.known(req.DeploymentID); ok && !req.EnvironmentBranchContained {
+		if !joins {
+			req.excludeFromPrivateNetworks()
+		}
 		return nil
 	}
 	policy, err := m.environmentBranchEgress.EnvironmentBranchEgress(ctx, req.DeploymentID)
@@ -109,11 +123,14 @@ func (m *Manager) applyEnvironmentBranchEgress(ctx context.Context, req *WakeReq
 	case err != nil:
 		return fmt.Errorf("read environment branch egress: %w", err)
 	}
+	if !policy.JoinsPrivateNetworks() {
+		req.excludeFromPrivateNetworks()
+	}
 	if !policy.Contained() {
 		if req.EnvironmentBranchContained {
 			return errors.New("environment branch egress differs from the requested containment")
 		}
-		m.environmentBranchPolicies.remember(req.DeploymentID)
+		m.environmentBranchPolicies.remember(req.DeploymentID, policy.JoinsPrivateNetworks())
 		return nil
 	}
 	switch {

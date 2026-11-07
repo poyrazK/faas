@@ -42,6 +42,13 @@ const (
 	// rehearsal twins whose side effects are simulated and recorded
 	// (ADR-20261031193635 slice 6b).
 	EnvironmentBranchEgressSimulated = "simulated"
+	// EnvironmentBranchPrivateNetworksOff keeps a branch's instances off the
+	// private networks their workloads are attached to (the default);
+	// EnvironmentBranchPrivateNetworksJoin attaches them with addresses of
+	// their own, never a workload's service address (ADR-20261031193635
+	// section 6).
+	EnvironmentBranchPrivateNetworksOff  = "off"
+	EnvironmentBranchPrivateNetworksJoin = "join"
 	// EnvironmentBranchContainmentEnv is apid's operator gate for contained
 	// branches: set it to 1 only once every serving vmmd, schedd and
 	// gatewayd-internal enforces the contained profile.
@@ -68,9 +75,6 @@ const (
 	CodeEnvironmentBranchManagedData = "environment_branch_managed_data_unsupported"
 	// CodeEnvironmentBranchDepth: a branch of a branch went too deep.
 	CodeEnvironmentBranchDepth = "environment_branch_depth_exceeded"
-	// CodeEnvironmentBranchPrivateNetwork: a project cannot have both
-	// environment branches and a workload on a private network yet.
-	CodeEnvironmentBranchPrivateNetwork = "environment_branch_private_network_unsupported"
 	// CodeEnvironmentBranchContainedObjects: a contained branch cannot use
 	// object storage while the bridge object relay is switched off
 	// (EnvironmentBranchContainedObjectsEnv); its overlay buckets are then
@@ -92,6 +96,10 @@ type CreateProjectEnvironmentBranchRequest struct {
 	TTL string `json:"ttl,omitempty"`
 	// Egress is "live" (the default), "contained" or "simulated".
 	Egress string `json:"egress,omitempty"`
+	// PrivateNetworks is "off" (the default) or "join": whether the
+	// branch's instances join the private networks their workloads are
+	// attached to. Only a live branch may join.
+	PrivateNetworks string `json:"private_networks,omitempty"`
 }
 
 // SeedDevSessionFromEnvironmentBranchRequest is POST
@@ -121,7 +129,9 @@ type ProjectEnvironmentBranchResponse struct {
 	BranchPoint string `json:"branch_point"`
 	ExpiresAt   string `json:"expires_at"`
 	Egress      string `json:"egress"`
-	Depth       int    `json:"depth"`
+	// PrivateNetworks is off or join.
+	PrivateNetworks string `json:"private_networks"`
+	Depth           int    `json:"depth"`
 	// Data is ready, pending or failed. A branch whose parent binds managed
 	// PostgreSQL copies each database as of the branch point; its workloads
 	// start only once the copies exist.
@@ -151,10 +161,12 @@ type ProjectEnvironmentBranchSummary struct {
 	BranchPoint string `json:"branch_point"`
 	ExpiresAt   string `json:"expires_at"`
 	Egress      string `json:"egress"`
-	Depth       int    `json:"depth"`
-	Data        string `json:"data"`
-	DataError   string `json:"data_error,omitempty"`
-	CreatedAt   string `json:"created_at"`
+	// PrivateNetworks is off or join.
+	PrivateNetworks string `json:"private_networks"`
+	Depth           int    `json:"depth"`
+	Data            string `json:"data"`
+	DataError       string `json:"data_error,omitempty"`
+	CreatedAt       string `json:"created_at"`
 }
 
 // ParseEnvironmentBranchTTL returns the requested TTL, or the default when

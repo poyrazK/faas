@@ -559,6 +559,10 @@ type Instance struct {
 	// the dispatch path is tolerant of "" and skips the flip.
 	DeploymentID         string
 	StaticEgressExcluded bool // non-production deployments never use the app pin
+	// PrivateNetworkExcluded keeps an environment branch instance off its
+	// app's private networks: replays of the app's attachment skip it
+	// (ADR-20261031193635 section 6).
+	PrivateNetworkExcluded bool
 
 	// LivenessProbe preserves the per-deployment probe override across a
 	// migration pause/resume cycle. It is copied from WakeRequest so ResumeVM
@@ -3760,7 +3764,10 @@ type WakeRequest struct {
 	// environmentBranch is set by applyEnvironmentBranchEgress for a
 	// contained branch wake.
 	environmentBranch *environmentBranchContainment
-	Instance          string
+	// privateNetworkExcluded is set by applyEnvironmentBranchEgress for a
+	// branch that stays off its app's private networks.
+	privateNetworkExcluded bool
+	Instance               string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -5404,9 +5411,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
-		environmentBranch:    req.environmentBranch,
-		StaticEgressExcluded: req.StaticEgressExcluded,
-		WakeID:               wakeID, NodeID: fields.NodeID,
+		environmentBranch:      req.environmentBranch,
+		StaticEgressExcluded:   req.StaticEgressExcluded,
+		PrivateNetworkExcluded: req.privateNetworkExcluded,
+		WakeID:                 wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
@@ -7565,7 +7573,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID || inst.QualificationOnly {
+		if inst.AppID != appID || inst.QualificationOnly || inst.PrivateNetworkExcluded {
 			continue
 		}
 		if originalTargets != nil && originalTargets[id] != inst {
@@ -7858,7 +7866,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID == appID && !inst.QualificationOnly {
+		if inst.AppID == appID && !inst.QualificationOnly && !inst.PrivateNetworkExcluded {
 			targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
 		}
 	}

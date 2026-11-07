@@ -62,7 +62,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	if egress == "" {
 		egress = api.EnvironmentBranchEgressLive
 	}
-	if problem := s.environmentBranchEgressProblem(egress); problem != nil {
+	if problem := s.environmentBranchEgressProblem(egress, req.PrivateNetworks); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -70,7 +70,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 	env, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
 		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: parent, Slug: req.Slug,
-		ExpiresAt: time.Now().UTC().Add(ttl), EgressMode: egress,
+		ExpiresAt: time.Now().UTC().Add(ttl), EgressMode: egress, PrivateNetworks: req.PrivateNetworks,
 		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
 		ContainedObjects: s.environmentBranchContainedObjectsEnabled,
 	}, limits)
@@ -132,40 +132,10 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 	return workloads, nil
 }
 
-// environmentBranchPrivateNetworkProblem answers both sides of the rule
-// that branches and private networks do not share a project yet
-// (ADR-20261031193635 section 6): a private-network attachment is per app,
-// and every instance of the app would join the network, a branch's too.
-func environmentBranchPrivateNetworkProblem() *api.Problem {
-	return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchPrivateNetwork,
-		"Environment branches cannot use private networks yet",
-		"a project cannot have environment branches while one of its workloads is attached to a private network: detach the workload, or delete the project's branches first")
-}
-
-// environmentBranchesBlockPrivateNetwork refuses attaching a project
-// workload while the project has environment branches. The store refuses the
-// same race-free; this answers before a network address is reserved.
-func (s *server) environmentBranchesBlockPrivateNetwork(ctx context.Context, acct state.Account, app state.App) *api.Problem {
-	store, ok := s.store.(state.ProjectEnvironmentBranchStore)
-	if !ok || app.ProjectID == "" {
-		return nil
-	}
-	branches, err := store.ListProjectEnvironmentBranches(ctx, acct.ID, app.ProjectID)
-	if err != nil {
-		return api.ErrCapacity("could not check the project's environment branches")
-	}
-	if len(branches) > 0 {
-		return environmentBranchPrivateNetworkProblem()
-	}
-	return nil
-}
-
 func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.Account, project state.Project, parent, slug string, limits api.Limits, err error) *api.Problem {
 	var managed *state.ProjectEnvironmentCloneManagedBindingsError
 	var quota *state.ProjectEnvironmentCloneQuotaError
 	switch {
-	case errors.Is(err, state.ErrProjectEnvironmentBranchPrivateNetwork):
-		return environmentBranchPrivateNetworkProblem()
 	case errors.Is(err, state.ErrProjectEnvironmentBranchContainedObjects):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchContainedObjects,
 			"Contained environment branch cannot use object storage",
@@ -242,7 +212,7 @@ func (s *server) listProjectEnvironmentBranches(w http.ResponseWriter, r *http.R
 		}
 		out.Branches = append(out.Branches, api.ProjectEnvironmentBranchSummary{
 			Slug: b.Slug, Parent: b.ParentSlug, BranchPoint: b.BranchPoint.Format(time.RFC3339Nano),
-			ExpiresAt: b.ExpiresAt.Format(time.RFC3339Nano), Egress: b.EgressMode, Depth: b.Depth,
+			ExpiresAt: b.ExpiresAt.Format(time.RFC3339Nano), Egress: b.EgressMode, PrivateNetworks: b.PrivateNetworks, Depth: b.Depth,
 			Data: b.DataState, DataError: b.DataError, CreatedAt: b.CreatedAt.Format(time.RFC3339Nano),
 		})
 	}
@@ -252,7 +222,7 @@ func (s *server) listProjectEnvironmentBranches(w http.ResponseWriter, r *http.R
 func environmentBranchResponse(b state.ProjectEnvironmentBranch) *api.ProjectEnvironmentBranchResponse {
 	return &api.ProjectEnvironmentBranchResponse{
 		Parent: b.ParentSlug, BranchPoint: b.BranchPoint.Format(time.RFC3339Nano),
-		ExpiresAt: b.ExpiresAt.Format(time.RFC3339Nano), Egress: b.EgressMode, Depth: b.Depth,
+		ExpiresAt: b.ExpiresAt.Format(time.RFC3339Nano), Egress: b.EgressMode, PrivateNetworks: b.PrivateNetworks, Depth: b.Depth,
 		Data: b.DataState, DataError: b.DataError,
 	}
 }
@@ -308,8 +278,14 @@ func environmentHasBranchesProblem(slug string) *api.Problem {
 // the operator gate is on (slice 6a), and simulated egress once rehearsal
 // containment and simulation are on too (slice 6b): its twins rehearse
 // through them.
-func (s *server) environmentBranchEgressProblem(egress string) *api.Problem {
+func (s *server) environmentBranchEgressProblem(egress, privateNetworks string) *api.Problem {
 	switch {
+	case privateNetworks != "" && privateNetworks != api.EnvironmentBranchPrivateNetworksOff && privateNetworks != api.EnvironmentBranchPrivateNetworksJoin:
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid environment branch private networks",
+			"private_networks must be off or join")
+	case privateNetworks == api.EnvironmentBranchPrivateNetworksJoin && egress != api.EnvironmentBranchEgressLive:
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid environment branch private networks",
+			"only a live branch can join private networks; a "+egress+" branch reaches only its own branch's services")
 	case egress == api.EnvironmentBranchEgressLive:
 		return nil
 	case egress != api.EnvironmentBranchEgressContained && egress != api.EnvironmentBranchEgressSimulated:

@@ -144,10 +144,6 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrPrivateNetworkInvalid("allowed_cidrs", strings.Join(req.AllowedCIDRs, ","), err.Error()))
 		return
 	}
-	if problem := s.environmentBranchesBlockPrivateNetwork(r.Context(), acct, app); problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
 	var previous state.AppPrivateNetworkAttachment
 	if fabric != nil {
 		previous, _ = store.GetAppPrivateNetworkAttachment(r.Context(), acct.ID, app.ID)
@@ -176,10 +172,6 @@ func (s *server) setAppPrivateNetworkAttachment(w http.ResponseWriter, r *http.R
 	if err != nil {
 		if fabric != nil {
 			_ = fabric.ReleasePrivateNetworkAddress(r.Context(), acct.ID, req.NetworkID, "app", app.ID)
-		}
-		if errors.Is(err, state.ErrProjectEnvironmentBranchPrivateNetwork) {
-			api.WriteProblem(w, environmentBranchPrivateNetworkProblem())
-			return
 		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.ErrPrivateNetworkInvalid("network_id", req.NetworkID, "the attachment conflicts with another account binding"))

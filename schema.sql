@@ -51338,12 +51338,14 @@ CREATE TABLE public.project_environment_branches (
     data_lease_token uuid,
     data_lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    private_networks text DEFAULT 'off'::text NOT NULL,
     CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
     CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
     CONSTRAINT project_environment_branches_egress_mode CHECK ((egress_mode = ANY (ARRAY['live'::text, 'contained'::text, 'simulated'::text]))),
     CONSTRAINT project_environment_branches_expiry CHECK ((expires_at > created_at)),
-    CONSTRAINT project_environment_branches_not_self CHECK ((parent_environment_id <> environment_id))
+    CONSTRAINT project_environment_branches_not_self CHECK ((parent_environment_id <> environment_id)),
+    CONSTRAINT project_environment_branches_private_networks_chk CHECK (((private_networks = ANY (ARRAY['off'::text, 'join'::text])) AND ((private_networks = 'off'::text) OR (egress_mode = 'live'::text))))
 );
 
 

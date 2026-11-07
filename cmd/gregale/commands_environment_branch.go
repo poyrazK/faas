@@ -11,7 +11,7 @@ import (
 
 // adr: 20261031193635 — environment branches.
 
-const environmentBranchUsage = "usage: gregale environment branch <project-slug> <environment-slug> [--from <environment>] [--ttl <duration>] [--egress live|contained|simulated]\n" +
+const environmentBranchUsage = "usage: gregale environment branch <project-slug> <environment-slug> [--from <environment>] [--ttl <duration>] [--egress live|contained|simulated] [--private-networks off|join]\n" +
 	"       gregale environment branch <project-slug> --list [--from <environment>]"
 
 // gregale environment branch <project> <name> --from production. The branch
@@ -25,6 +25,7 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 	ttl := fs.String("ttl", "", "time to live, such as 24h (default 168h, 1h to 720h)")
 	list := fs.Bool("list", false, "list the parent's branches instead of creating one")
 	egress := fs.String("egress", "", "outbound traffic: live (default), contained (only the branch's own services) or simulated (contained, and it can seed rehearsals)")
+	privateNetworks := fs.String("private-networks", "", "off (default): the branch's workloads stay off their private networks; join: they join them with addresses of their own (live egress only)")
 	if err := fs.Parse(flags); err != nil || len(positional) < 1 || len(positional) > 2 || *list == (len(positional) == 2) {
 		PrintUsage(os.Stderr, environmentBranchUsage, "projects environments")
 		return 1
@@ -49,16 +50,36 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 	if _, err := api.ParseEnvironmentBranchTTL(*ttl); err != nil {
 		return printErr("Invalid --ttl", err)
 	}
-	if *egress != "" && *egress != api.EnvironmentBranchEgressLive && *egress != api.EnvironmentBranchEgressContained && *egress != api.EnvironmentBranchEgressSimulated {
-		return printErr("Invalid --egress", fmt.Errorf("--egress must be live, contained or simulated"))
+	if flagName, err := validateEnvironmentBranchModes(*egress, *privateNetworks); err != nil {
+		return printErr("Invalid "+flagName, err)
 	}
 	environment, err := client.CreateProjectEnvironmentBranch(context.Background(), positional[0], *from, api.CreateProjectEnvironmentBranchRequest{
-		Slug: positional[1], TTL: *ttl, Egress: *egress,
+		Slug: positional[1], TTL: *ttl, Egress: *egress, PrivateNetworks: *privateNetworks,
 	})
 	if err != nil {
 		return printErr("Could not branch environment", err)
 	}
 	return renderProjectEnvironmentBranch(environment)
+}
+
+// validateEnvironmentBranchModes checks --egress and --private-networks and
+// names the flag at fault.
+func validateEnvironmentBranchModes(egress, privateNetworks string) (string, error) {
+	switch egress {
+	case "", api.EnvironmentBranchEgressLive, api.EnvironmentBranchEgressContained, api.EnvironmentBranchEgressSimulated:
+	default:
+		return "--egress", fmt.Errorf("--egress must be live, contained or simulated")
+	}
+	switch privateNetworks {
+	case "", api.EnvironmentBranchPrivateNetworksOff:
+	case api.EnvironmentBranchPrivateNetworksJoin:
+		if egress != "" && egress != api.EnvironmentBranchEgressLive {
+			return "--private-networks", fmt.Errorf("only a live branch can join private networks; a %s branch reaches only its own branch's services", egress)
+		}
+	default:
+		return "--private-networks", fmt.Errorf("--private-networks must be off or join")
+	}
+	return "", nil
 }
 
 func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) int {
@@ -68,6 +89,9 @@ func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) 
 	_, _ = fmt.Fprintf(osStdout, "%s\n", environment.Slug)
 	if b := environment.Branch; b != nil {
 		_, _ = fmt.Fprintf(osStdout, "  branched from: %s at %s\n  expires: %s\n  egress: %s\n", b.Parent, b.BranchPoint, b.ExpiresAt, b.Egress)
+		if b.PrivateNetworks != "" {
+			_, _ = fmt.Fprintf(osStdout, "  private networks: %s\n", b.PrivateNetworks)
+		}
 		_, _ = fmt.Fprintf(osStdout, "  data: %s\n", environmentBranchDataLine(b.Data, b.DataError))
 		if len(b.Workloads) == 0 {
 			_, _ = fmt.Fprintln(osStdout, "  workloads: none live in the parent")

@@ -16,6 +16,13 @@ import (
 // deployment that reuses the parent's built artifact and activates without a
 // boot, so its first request cold boots.
 
+// A branch's instances stay off their apps' private networks unless the
+// branch joins them (ADR-20261031193635 section 6). vmmd enforces it.
+const (
+	EnvironmentBranchPrivateNetworksOff  = "off"
+	EnvironmentBranchPrivateNetworksJoin = "join"
+)
+
 const (
 	EnvironmentBranchEgressLive      = "live"
 	EnvironmentBranchEgressContained = "contained"
@@ -41,11 +48,6 @@ var (
 	ErrProjectEnvironmentBranchLimit    = fmt.Errorf("%w: environment branch limit reached", ErrConflict)
 	ErrProjectEnvironmentBranchChildren = fmt.Errorf("%w: environment has branches", ErrConflict)
 	ErrProjectEnvironmentNotBranch      = fmt.Errorf("%w: environment is not a branch", ErrNotFound)
-	// ErrProjectEnvironmentBranchPrivateNetwork keeps branches and private
-	// networks out of the same project (ADR-20261031193635 section 6). An
-	// attachment is per app and vmmd applies it to every instance of the app,
-	// so a branch instance would join the parent's network.
-	ErrProjectEnvironmentBranchPrivateNetwork = fmt.Errorf("%w: environment branches and private networks cannot share a project yet", ErrConflict)
 	// ErrProjectEnvironmentBranchContainedObjects refuses a contained or
 	// simulated branch of an environment with object storage unless the
 	// request admits the bridge object relay (ADR-20261031193635 slices 6a
@@ -72,8 +74,11 @@ type ProjectEnvironmentBranch struct {
 	BranchPoint         time.Time
 	ExpiresAt           time.Time
 	EgressMode          string
-	Depth               int
-	CreatedAt           time.Time
+	// PrivateNetworks is off or join (section 6): whether the branch's
+	// instances join the private networks their apps are attached to.
+	PrivateNetworks string
+	Depth           int
+	CreatedAt       time.Time
 	// DataState is ready, pending or failed. DataError explains a failure or
 	// the last retryable error; DataLeaseToken is set on a claimed branch.
 	DataState      string
@@ -142,6 +147,9 @@ type ProjectEnvironmentBranchCreate struct {
 	BranchPoint time.Time
 	ExpiresAt   time.Time
 	EgressMode  string
+	// PrivateNetworks is off (the default when empty) or join; join needs
+	// live egress.
+	PrivateNetworks string
 	// MaxDepth caps how deep a branch of a branch may go (>= 1). MaxBranches
 	// caps the account's live branches; zero means no cap.
 	MaxDepth    int
@@ -167,7 +175,25 @@ func (r ProjectEnvironmentBranchCreate) validate() error {
 	default:
 		return ErrInvalidArgument
 	}
+	switch r.PrivateNetworks {
+	case "", EnvironmentBranchPrivateNetworksOff:
+	case EnvironmentBranchPrivateNetworksJoin:
+		// A contained branch reaches only its own branch's services.
+		if r.EgressMode != EnvironmentBranchEgressLive {
+			return ErrInvalidArgument
+		}
+	default:
+		return ErrInvalidArgument
+	}
 	return nil
+}
+
+// environmentBranchPrivateNetworks is the stored mode of a create request.
+func environmentBranchPrivateNetworks(mode string) string {
+	if mode == "" {
+		return EnvironmentBranchPrivateNetworksOff
+	}
+	return mode
 }
 
 // ProjectEnvironmentBranchWorkload is one parent workload a branch serves:
@@ -290,7 +316,8 @@ func (m *MemStore) prepareProjectEnvironmentBranchLocked(req ProjectEnvironmentB
 	// PostgreSQL keeps microseconds; restore identity checks compare points.
 	return ProjectEnvironmentBranch{AccountID: req.AccountID, ProjectID: req.ProjectID,
 		ParentEnvironmentID: parent.ID, ParentSlug: parent.Slug, BranchPoint: point.UTC().Truncate(time.Microsecond),
-		ExpiresAt: req.ExpiresAt.UTC(), EgressMode: req.EgressMode, Depth: depth, CreatedAt: now,
+		ExpiresAt: req.ExpiresAt.UTC(), EgressMode: req.EgressMode, PrivateNetworks: environmentBranchPrivateNetworks(req.PrivateNetworks),
+		Depth: depth, CreatedAt: now,
 		DataState: dataState, dataNextAttemptAt: now}, nil
 }
 

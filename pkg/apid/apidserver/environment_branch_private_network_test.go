@@ -11,10 +11,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Slice 4: a private-network attachment reaches every instance of its app,
-// a branch's too, so a project has either environment branches or attached
-// workloads. Each side refuses the other with the same problem.
-func TestEnvironmentBranchesAndPrivateNetworksDoNotShareAProject(t *testing.T) {
+// Section 6: branches and attached workloads share a project. A branch stays
+// off its workloads' networks unless it joins them, and only a live branch
+// may join; vmmd keeps the branch's instances off (or on) at every wake.
+func TestEnvironmentBranchesAndPrivateNetworksShareAProject(t *testing.T) {
 	withPrivateNetworkEnabled(t, true)
 	e := apidserver.Setup(t, api.PlanScale)
 	srv, store, acct := *e.S(), *e.Store(), *e.Acct()
@@ -43,36 +43,45 @@ func TestEnvironmentBranchesAndPrivateNetworksDoNotShareAProject(t *testing.T) {
 	attach := func() int {
 		return e.Do(t, http.MethodPut, "/v1/apps/shop-web/network/private", privateNetworkRequest("prod-vpc", "fra1", []string{"10.20.0.0/16"}), nil).Code
 	}
-	branch := func(slug string) (int, api.Problem) {
-		req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/branches", "shop", []byte(`{"slug":"`+slug+`","ttl":"2h"}`))
+	branch := func(body string) (int, []byte) {
+		req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/branches", "shop", []byte(body))
 		req.SetPathValue("environment", "production")
 		srv.CreateProjectEnvironmentBranch(rec, req, acct)
-		var problem api.Problem
-		_ = json.Unmarshal(rec.Body.Bytes(), &problem)
-		return rec.Code, problem
+		return rec.Code, rec.Body.Bytes()
 	}
+	*srv.EnvironmentBranchContainmentEnabled() = true
 
 	if code := attach(); code != http.StatusAccepted {
 		t.Fatalf("attach = %d", code)
 	}
-	if code, problem := branch("pr-1"); code != http.StatusConflict || problem.Code != api.CodeEnvironmentBranchPrivateNetwork {
-		t.Fatalf("branch of an attached project = %d %+v", code, problem)
+	code, body := branch(`{"slug":"pr-1","ttl":"2h"}`)
+	var created api.ProjectEnvironmentResponse
+	if code != http.StatusCreated || json.Unmarshal(body, &created) != nil || created.Branch == nil || created.Branch.PrivateNetworks != api.EnvironmentBranchPrivateNetworksOff {
+		t.Fatalf("branch of an attached project = %d %s", code, body)
 	}
-	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-1"); err == nil {
+	code, body = branch(`{"slug":"pr-2","ttl":"2h","private_networks":"join"}`)
+	if code != http.StatusCreated || json.Unmarshal(body, &created) != nil || created.Branch.PrivateNetworks != api.EnvironmentBranchPrivateNetworksJoin {
+		t.Fatalf("join branch = %d %s", code, body)
+	}
+	for name, request := range map[string]string{
+		"contained join": `{"slug":"pr-3","ttl":"2h","egress":"contained","private_networks":"join"}`,
+		"unknown mode":   `{"slug":"pr-4","ttl":"2h","private_networks":"bridge"}`,
+	} {
+		var problem api.Problem
+		if code, body := branch(request); code != http.StatusBadRequest || json.Unmarshal(body, &problem) != nil || problem.Code != api.CodeValidation {
+			t.Errorf("%s = %d %s", name, code, body)
+		}
+	}
+	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-3"); err == nil {
 		t.Fatal("the refused branch left an environment")
 	}
 	if rec := e.Do(t, http.MethodDelete, "/v1/apps/shop-web/network/private", nil, nil); rec.Code >= 300 {
 		t.Fatalf("detach = %d %s", rec.Code, rec.Body.String())
 	}
-	if code, problem := branch("pr-2"); code != http.StatusCreated {
-		t.Fatalf("branch after detaching = %d %+v", code, problem)
+	if code := attach(); code != http.StatusAccepted {
+		t.Fatalf("attach in a branched project = %d", code)
 	}
-	rec := e.Do(t, http.MethodPut, "/v1/apps/shop-web/network/private", privateNetworkRequest("prod-vpc", "fra1", []string{"10.20.0.0/16"}), nil)
-	var problem api.Problem
-	if rec.Code != http.StatusConflict || json.Unmarshal(rec.Body.Bytes(), &problem) != nil || problem.Code != api.CodeEnvironmentBranchPrivateNetwork {
-		t.Fatalf("attach in a branched project = %d %s", rec.Code, rec.Body.String())
-	}
-	if _, err := store.GetAppPrivateNetworkAttachment(ctx, acct.ID, app.ID); err == nil {
-		t.Fatal("the refused attachment was saved")
+	if _, err := store.GetAppPrivateNetworkAttachment(ctx, acct.ID, app.ID); err != nil {
+		t.Fatalf("attachment in a branched project: %v", err)
 	}
 }

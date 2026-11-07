@@ -413,6 +413,7 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,
 		PrivateNetworkHandleV6: a.Network.PrivateNetworkHandleV6,
 		StaticEgressExcluded:   a.Network.StaticEgressExcluded,
+		PrivateNetworkExcluded: a.Network.PrivateNetworkExcluded,
 		adoptionVCPUs:          a.Firecracker.VCPUs,
 		adoptionMemSizeMiB:     a.Firecracker.MemoryMiB,
 		devPatched:             in.DevPatched,

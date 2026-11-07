@@ -208,7 +208,10 @@ type resourceAdoptionNetwork struct {
 	EgressAllowlist      []string `json:"egress_allowlist,omitempty"`
 	StaticEgressIP       string   `json:"static_egress_ip,omitempty"`
 	StaticEgressExcluded bool     `json:"static_egress_excluded,omitempty"`
-	StaticEgressBlocked  bool     `json:"static_egress_blocked,omitempty"`
+	// PrivateNetworkExcluded keeps an adopted branch instance off its app's
+	// private networks (ADR-20261031193635 section 6).
+	PrivateNetworkExcluded bool `json:"private_network_excluded,omitempty"`
+	StaticEgressBlocked    bool `json:"static_egress_blocked,omitempty"`
 	// RehearsalRunID is the run whose outbound containment the guest's
 	// network carries (ADR-20261017201005). Adoption refuses such a guest:
 	// the containment and the run's recorder are not rebuilt.
@@ -525,6 +528,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			PrivateNetworkHandleV6:     inst.PrivateNetworkHandleV6,
 			Private:                    adoptionPrivateNetworkFor(inst.Net),
 			StaticEgressExcluded:       inst.StaticEgressExcluded,
+			PrivateNetworkExcluded:     inst.PrivateNetworkExcluded,
 			RehearsalRunID:             inst.Net.RehearsalRunID,
 			EnvironmentBranchContained: inst.Net.EnvironmentBranchContained,
 			EgressCircuits:             inst.Net.EgressCircuitEnabled,

@@ -121,13 +121,6 @@ func (m *MemStore) upsertAppPrivateNetworkAttachment(ctx context.Context, attach
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if app, ok := m.apps[attachment.AppID]; ok && app.ProjectID != "" {
-		for _, branch := range m.projectEnvironmentBranches {
-			if branch.AccountID == attachment.AccountID && branch.ProjectID == app.ProjectID {
-				return AppPrivateNetworkAttachment{}, ErrProjectEnvironmentBranchPrivateNetwork
-			}
-		}
-	}
 	if m.privateNetworkAttachments == nil {
 		m.privateNetworkAttachments = make(map[string]AppPrivateNetworkAttachment)
 	}
@@ -274,16 +267,6 @@ func (s *PgStore) upsertAppPrivateNetworkAttachment(ctx context.Context, attachm
 	}
 	if err != nil {
 		return AppPrivateNetworkAttachment{}, mapErr(err)
-	}
-	if projectID != "" {
-		var branched bool
-		if err := tx.QueryRow(ctx, `select exists (select 1 from project_environment_branches where account_id = $1 and project_id = $2)`,
-			attachment.AccountID, projectID).Scan(&branched); err != nil {
-			return AppPrivateNetworkAttachment{}, mapErr(err)
-		}
-		if branched {
-			return AppPrivateNetworkAttachment{}, ErrProjectEnvironmentBranchPrivateNetwork
-		}
 	}
 	row := tx.QueryRow(ctx, `
 		insert into app_private_network_attachments

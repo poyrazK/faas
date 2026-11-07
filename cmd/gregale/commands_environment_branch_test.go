@@ -95,4 +95,25 @@ func TestEnvironmentBranchCLICreatesAndLists(t *testing.T) {
 	if code := main.CmdProjectsEnvironments([]string{"branch", "shop", "pr-2", "--ttl", "5m"}); code == 0 {
 		t.Fatal("a TTL under an hour was accepted")
 	}
+
+	// Section 6: a live branch may join its workloads' private networks.
+	out.Reset()
+	if code := main.CmdProjectsEnvironments([]string{"branch", "shop", "pr-3", "--from", "staging", "--private-networks", "join"}); code != 0 {
+		t.Fatalf("join branch exit = %d", code)
+	}
+	if created.PrivateNetworks != api.EnvironmentBranchPrivateNetworksJoin {
+		t.Fatalf("join request = %+v", created)
+	}
+	requests := len(paths)
+	for name, args := range map[string][]string{
+		"contained join": {"branch", "shop", "pr-4", "--egress", "contained", "--private-networks", "join"},
+		"unknown mode":   {"branch", "shop", "pr-5", "--private-networks", "bridge"},
+	} {
+		if code := main.CmdProjectsEnvironments(args); code == 0 {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if len(paths) != requests {
+		t.Fatalf("a refused flag still sent a request: %v", paths[requests:])
+	}
 }

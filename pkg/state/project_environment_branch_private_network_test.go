@@ -11,9 +11,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-20261031193635 slice 4: a private-network attachment reaches every
-// instance of its app, so environment branches and attached workloads do not
-// share a project. Each side refuses the other.
+// ADR-20261031193635 section 6: branches and private networks share a
+// project. A branch stays off its apps' networks unless it joins them, which
+// only a live branch may; vmmd reads the mode from the deployment's policy.
 func TestMemProjectEnvironmentBranchPrivateNetworks(t *testing.T) {
 	projectEnvironmentBranchPrivateNetworks(t, state.NewMemStore())
 }
@@ -21,54 +21,60 @@ func TestMemProjectEnvironmentBranchPrivateNetworks(t *testing.T) {
 func projectEnvironmentBranchPrivateNetworks(t *testing.T, s contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
-	acct, project, _, deployment := seedProjectEnvironmentBranch(t, s, "branch-network@example.com")
-	attach := func(appID string) error {
-		_, err := s.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
-			AccountID: acct.ID, AppID: appID, NetworkID: "net-1", Region: "eu-1",
-			CIDRs: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")},
-		})
-		return err
+	acct, project, off, offDeployment := seedProjectEnvironmentBranch(t, s, "branch-network@example.com")
+	if _, err := s.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
+		AccountID: acct.ID, AppID: offDeployment.AppID, NetworkID: "net-1", Region: "eu-1",
+		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")},
+	}); err != nil {
+		t.Fatalf("attach a workload of a branched project: %v", err)
 	}
-	if err := attach(deployment.AppID); !errors.Is(err, state.ErrProjectEnvironmentBranchPrivateNetwork) {
-		t.Fatalf("attached a workload of a branched project: %v", err)
+	if off.PrivateNetworks != state.EnvironmentBranchPrivateNetworksOff {
+		t.Fatalf("default private networks = %q, want off", off.PrivateNetworks)
 	}
-	if _, err := s.GetAppPrivateNetworkAttachment(ctx, acct.ID, deployment.AppID); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("refused attachment was saved: %v", err)
-	}
-	other, err := s.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "other"})
+	parentID, err := s.EnvironmentBranchLineageParent(ctx, offDeployment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherApp, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: other.ID, Slug: "worker", WorkloadName: "worker", Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
-	if err != nil {
-		t.Fatal(err)
+	if got, err := s.EnvironmentBranchEgress(ctx, parentID); err != nil || !got.JoinsPrivateNetworks() {
+		t.Fatalf("production joins its networks: %+v, %v", got, err)
 	}
-	if err := attach(otherApp.ID); err != nil {
-		t.Fatalf("another project's workload: %v", err)
+	if got, err := s.EnvironmentBranchEgress(ctx, offDeployment.ID); err != nil || got.JoinsPrivateNetworks() || got.PrivateNetworks != state.EnvironmentBranchPrivateNetworksOff {
+		t.Fatalf("a branch stays off its networks by default: %+v, %v", got, err)
 	}
 
-	if err := s.DeleteProjectEnvironmentBranch(ctx, acct.ID, project.ID, "pr-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := attach(deployment.AppID); err != nil {
-		t.Fatalf("attach after the branch is gone: %v", err)
-	}
 	limits := api.MustLimitsFor(acct.Plan)
-	branch := state.ProjectEnvironmentBranchCreate{
-		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: "production", Slug: "pr-2",
-		ExpiresAt: time.Now().Add(time.Hour), EgressMode: state.EnvironmentBranchEgressLive,
-		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+	create := func(slug, egress, networks string) (state.ProjectEnvironmentBranch, error) {
+		_, branch, _, err := s.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
+			AccountID: acct.ID, ProjectID: project.ID, ParentSlug: "production", Slug: slug,
+			ExpiresAt: time.Now().Add(time.Hour), EgressMode: egress, PrivateNetworks: networks,
+			MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+		}, limits)
+		return branch, err
 	}
-	if _, _, _, err := s.CreateProjectEnvironmentBranch(ctx, branch, limits); !errors.Is(err, state.ErrProjectEnvironmentBranchPrivateNetwork) {
-		t.Fatalf("branched a project with an attached workload: %v", err)
+	joined, err := create("pr-2", state.EnvironmentBranchEgressLive, state.EnvironmentBranchPrivateNetworksJoin)
+	if err != nil || joined.PrivateNetworks != state.EnvironmentBranchPrivateNetworksJoin {
+		t.Fatalf("branch an attached project with join = %+v, %v", joined, err)
 	}
-	if _, err := s.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-2"); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("refused branch left an environment: %v", err)
+	if stored, err := s.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-2"); err != nil || stored.PrivateNetworks != state.EnvironmentBranchPrivateNetworksJoin {
+		t.Fatalf("stored join branch = %+v, %v", stored, err)
 	}
-	if err := s.DeleteAppPrivateNetworkAttachment(ctx, acct.ID, deployment.AppID); err != nil {
+	joinedDeployment, err := s.CreateDeploymentForEnvironmentBranch(ctx, acct.ID, project.ID, "pr-2", offDeployment.AppID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.CreateProjectEnvironmentBranch(ctx, branch, limits); err != nil {
-		t.Fatalf("branch after the workload left the network: %v", err)
+	if got, err := s.EnvironmentBranchEgress(ctx, joinedDeployment.ID); err != nil || !got.JoinsPrivateNetworks() {
+		t.Fatalf("a join branch joins its networks: %+v, %v", got, err)
+	}
+	for name, tc := range map[string]struct{ egress, networks string }{
+		"contained join": {state.EnvironmentBranchEgressContained, state.EnvironmentBranchPrivateNetworksJoin},
+		"simulated join": {state.EnvironmentBranchEgressSimulated, state.EnvironmentBranchPrivateNetworksJoin},
+		"unknown mode":   {state.EnvironmentBranchEgressLive, "bridge"},
+	} {
+		if _, err := create("pr-x", tc.egress, tc.networks); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Errorf("%s: %v, want invalid argument", name, err)
+		}
+	}
+	if _, err := create("pr-3", state.EnvironmentBranchEgressContained, state.EnvironmentBranchPrivateNetworksOff); err != nil {
+		t.Fatalf("contained branch of an attached project: %v", err)
 	}
 }

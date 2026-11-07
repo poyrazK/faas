@@ -173,6 +173,7 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
 	"StaticEgressExcluded":            "rebuilt",
+	"PrivateNetworkExcluded":          "rebuilt",
 	"networkPolicyMu":                 "reset",
 	"resolvedEgress":                  "reset",   // cache; the nft entries keep their own timeouts
 	"databaseEgress":                  "reset",   // same for egress_db pairs (ADR-20261026150000)

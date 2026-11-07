@@ -26,6 +26,16 @@ type EnvironmentBranchEgressPolicy struct {
 	Mode          string
 	EnvironmentID string
 	Scope         string
+	// PrivateNetworks is the branch's private network mode; empty outside a
+	// branch.
+	PrivateNetworks string
+}
+
+// JoinsPrivateNetworks reports whether the deployment's instances join the
+// private networks their app is attached to: always outside a branch, and in
+// a branch only when it joins them (ADR-20261031193635 section 6).
+func (p EnvironmentBranchEgressPolicy) JoinsPrivateNetworks() bool {
+	return p.Mode == "" || p.PrivateNetworks == EnvironmentBranchPrivateNetworksJoin
 }
 
 // Contained reports whether the branch's instances get the contained network
@@ -82,7 +92,7 @@ func (m *MemStore) EnvironmentBranchEgress(_ context.Context, deploymentID strin
 		if !ok {
 			return EnvironmentBranchEgressPolicy{Scope: scope}, nil
 		}
-		return EnvironmentBranchEgressPolicy{Mode: branch.EgressMode, EnvironmentID: env.ID, Scope: scope}, nil
+		return EnvironmentBranchEgressPolicy{Mode: branch.EgressMode, EnvironmentID: env.ID, Scope: scope, PrivateNetworks: branch.PrivateNetworks}, nil
 	}
 	return EnvironmentBranchEgressPolicy{}, ErrEnvironmentBranchGone
 }
@@ -99,16 +109,16 @@ func (s *PgStore) EnvironmentBranchEgress(ctx context.Context, deploymentID stri
 	if _, err := uuid.Parse(deploymentID); err != nil {
 		return EnvironmentBranchEgressPolicy{}, ErrNotFound
 	}
-	var scope, projectID, environmentID, mode string
+	var scope, projectID, environmentID, mode, privateNetworks string
 	err := s.pool.QueryRow(ctx, `
-		select d.scope, coalesce(a.project_id::text, ''), coalesce(e.id::text, ''), coalesce(b.egress_mode, '')
+		select d.scope, coalesce(a.project_id::text, ''), coalesce(e.id::text, ''), coalesce(b.egress_mode, ''), coalesce(b.private_networks, '')
 		  from deployments d
 		  join apps a on a.id = d.app_id
 		  left join project_environments e
 		         on e.account_id = a.account_id and e.project_id = a.project_id and e.slug = d.scope
 		  left join project_environment_branches b on b.environment_id = e.id
 		 where d.id = $1
-	`, deploymentID).Scan(&scope, &projectID, &environmentID, &mode)
+	`, deploymentID).Scan(&scope, &projectID, &environmentID, &mode, &privateNetworks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnvironmentBranchEgressPolicy{}, ErrNotFound
 	}
@@ -124,7 +134,7 @@ func (s *PgStore) EnvironmentBranchEgress(ctx context.Context, deploymentID stri
 	if mode == "" {
 		return EnvironmentBranchEgressPolicy{Scope: scope}, nil
 	}
-	return EnvironmentBranchEgressPolicy{Mode: mode, EnvironmentID: environmentID, Scope: scope}, nil
+	return EnvironmentBranchEgressPolicy{Mode: mode, EnvironmentID: environmentID, Scope: scope, PrivateNetworks: privateNetworks}, nil
 }
 
 func (s *PgStore) EnvironmentBranchDatabaseEndpoints(ctx context.Context, deploymentID string) ([]EnvironmentBranchDatabaseEndpoint, error) {
