@@ -77,6 +77,7 @@ func (l *Loop) tendCrashCaptures(ctx context.Context, now time.Time) {
 		return
 	}
 	l.expireCrashCaptures(ctx, be, now)
+	l.collectEnvironmentBranchCaptureObjects(ctx, be, now)
 	identities := l.handler.secretboxIdentities
 	l.encryptCrashCaptures(ctx, be, identities, now)
 	l.purgeCrashPlaintext(ctx, be, now)

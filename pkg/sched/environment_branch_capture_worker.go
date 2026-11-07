@@ -128,6 +128,13 @@ func (e *Engine) CaptureEnvironmentBranch(ctx context.Context, capture state.Env
 		return zero, fmt.Errorf("sched: credential-free capture: cold boot response names another instance: %w", state.ErrConflict)
 	}
 	memKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierWarm, uuid.NewString())
+	// imaged deletes the attempt's objects unless it publishes, so the key
+	// is recorded before anything is written under it.
+	if objects, ok := e.store.(state.EnvironmentBranchCaptureObjectStore); ok {
+		if err := objects.RecordEnvironmentBranchCaptureObject(ctx, capture.ID, capture.LeaseToken, memKey); err != nil {
+			return zero, fmt.Errorf("sched: credential-free capture: record objects: %w", err)
+		}
+	}
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: memKey})
 	captureCtx, cancel := context.WithTimeout(ctx, SnapshotBudgetFor(app.RAMMB))
 	bytes, err := e.vmm.WarmSnapshot(captureCtx, placement.NodeID, ins.ID, memKey, vmstateKey)

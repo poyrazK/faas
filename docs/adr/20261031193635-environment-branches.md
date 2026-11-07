@@ -197,9 +197,19 @@ booting. Rules:
     orphan sweep keeps the directory of every deployment with a requested or ready
     capture; an imaged older than this keeps only deployments with snapshot rows, so
     5b must treat a missing capture object as a restore failure and cold-boot.
-    Follow-ups: removing a capture's objects on a remote storage backend when its row
-    goes, and objects left by failed attempts (the local sweep removes them only with
-    the deployment).
+    **Capture objects** (built 2026-11-07). Before taking the snapshot, schedd records
+    the attempt's memory key in `environment_branch_capture_objects`, which has no
+    foreign key, so the row outlives its capture and its deployment. imaged's
+    crash-capture pass (every 5 s) lists the keys no ready capture references, that
+    were recorded over an hour ago (well past the capture lease), and whose deployment
+    has no live leased attempt. These are failed and retried attempts, retired
+    captures, and captures of deleted parents. imaged deletes the memory, vmstate,
+    private drive and backing objects through its storage backend, treating a missing
+    object as deleted, and forgets the key only when every delete succeeded. Captures
+    that were already ready are backfilled by the migration. An older schedd records
+    nothing, and its attempts leave objects behind as before. A copy of a failed
+    attempt that is only on another node's local disk goes with the deployment
+    directory (the local orphan sweep).
   - **How the identity is reloaded (5b).** schedd marks the restore with
     `AppSpec.identity_reload`. vmmd attaches a one-shot expectation to the restore and
     sends `identityReload` in the resume hook. guest-init then asks vmmd's

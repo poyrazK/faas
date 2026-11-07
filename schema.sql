@@ -37304,6 +37304,25 @@ CREATE TABLE public.environment_binding_release_receipts (
 
 
 --
+-- Name: environment_branch_capture_objects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_branch_capture_objects (
+    storage_key text NOT NULL,
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_branch_capture_objects_key CHECK (((octet_length(storage_key) <= 512) AND (storage_key ~~ 'snap/%/v2/mem'::text)))
+);
+
+
+--
+-- Name: TABLE environment_branch_capture_objects; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.environment_branch_capture_objects IS 'ADR-20261031193635 objects written by credential-free capture attempts; imaged deletes those no ready capture references.';
+
+
+--
 -- Name: environment_branch_captures; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61891,6 +61910,14 @@ ALTER TABLE ONLY public.environment_binding_retirement_receipts
 
 
 --
+-- Name: environment_branch_capture_objects environment_branch_capture_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_capture_objects
+    ADD CONSTRAINT environment_branch_capture_objects_pkey PRIMARY KEY (storage_key);
+
+
+--
 -- Name: environment_branch_captures environment_branch_captures_one_per_deployment; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74289,6 +74316,13 @@ CREATE INDEX egress_flow_log_remote_ip_idx ON public.egress_flow_log USING gist 
 --
 
 CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: environment_branch_capture_objects_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_branch_capture_objects_created_idx ON public.environment_branch_capture_objects USING btree (created_at);
 
 
 --

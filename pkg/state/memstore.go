@@ -1457,6 +1457,7 @@ type MemStore struct {
 	projectEnvironmentBranchDatabases         map[string]ProjectEnvironmentBranchDatabase   // copy row ID
 	projectEnvironmentBranchBuckets           map[string]ProjectEnvironmentBranchBucket     // copy row ID
 	environmentBranchCaptures                 map[string]EnvironmentBranchCapture           // parent deployment ID
+	environmentBranchCaptureObjects           map[string]EnvironmentBranchCaptureObject     // storage key
 	objectBucketOverlays                      map[string]ObjectBucketOverlay                // bucket ID
 	objectBucketOverlayTombstones             map[string]map[string]bool                    // bucket ID -> key
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion

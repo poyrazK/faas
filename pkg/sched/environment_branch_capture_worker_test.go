@@ -78,6 +78,18 @@ func TestEnvironmentBranchCaptureWorkerPublishesQuarantinedCapture(t *testing.T)
 	if ins := instances[0]; !state.IsFork(ins.Mode) || ins.State != string(state.StateStopped) || ins.ID != capture.InstanceID {
 		t.Fatalf("capture instance = %+v; want a stopped fork-mode row", ins)
 	}
+	// The attempt recorded its key, so imaged collects it once the capture
+	// stops being ready, and not before.
+	later := time.Now().Add(time.Hour)
+	if garbage, err := store.EnvironmentBranchCaptureGarbage(ctx, later, 10); err != nil || len(garbage) != 0 {
+		t.Fatalf("garbage while ready = %+v, %v", garbage, err)
+	}
+	if err := store.RetireEnvironmentBranchCapture(ctx, capture.ID, "restore fell back"); err != nil {
+		t.Fatal(err)
+	}
+	if garbage, err := store.EnvironmentBranchCaptureGarbage(ctx, later, 10); err != nil || len(garbage) != 1 || garbage[0].StorageKey != capture.StorageKey {
+		t.Fatalf("garbage after retiring = %+v, %v; want the capture's key", garbage, err)
+	}
 }
 
 // A failed attempt is retried on a later tick; after the attempt cap the
