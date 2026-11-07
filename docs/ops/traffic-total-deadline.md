@@ -85,11 +85,14 @@ function handle(request: Request) {
 For ASGI Python, `GregaleReleaseMiddleware` captures both release and deadline
 context. Use `AsyncGregaleReleaseTransport` with HTTPX inside the handler. A
 synchronous handler can use `with_gregale_request_context(dict(request.headers))`
-with `GregaleReleaseTransport`. Both SDKs support `.svc.gregale` and declared
-`.internal` aliases, isolate concurrent context and remove deadline carriers
-from external calls. The current request's deadline wins over an explicit
-downstream override. Node returns redirects from signed calls for the app to
-follow through the helper; HTTPX reapplies its transport guard at each redirect.
+with `GregaleReleaseTransport`. For Go, wrap the handler in
+`faas.GregaleReleaseMiddleware` and make calls with the request's context
+through an `http.Client` using `faas.NewGregaleReleaseTransport`. All three
+SDKs support `.svc.gregale` and declared `.internal` aliases, isolate
+concurrent context and remove deadline carriers from external calls. The
+current request's deadline wins over an explicit downstream override. Node
+returns redirects from signed calls for the app to follow through the helper;
+HTTPX and Go's `http.Client` reapply the transport guard at each redirect.
 
 Participating gateways require the same 32-byte gateway fleet key
 (`FAAS_GATEWAY_FLEET_KEY_FILE`, ADR-20261102191500); a purpose-derived MAC key

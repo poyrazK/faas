@@ -38,7 +38,7 @@
 //   - missing code or state query param   → 400 problem
 //   - missing or mismatched CSRF cookie   → 403 csrf_rejected + audit
 //   - missing GitHub App installation      → redirect to GitHub install flow
-//   - installation belongs to another account → 409 github_account_conflict
+//   - independently authorized accounts may share deployment installations
 //   - several connectable installations   → installation chooser page
 //   - installation the GitHub user may not connect → 403 with the reason
 //     (owner, organization admin, pending permission, not accessible)
@@ -65,6 +65,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/githubconnect"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
@@ -239,13 +240,13 @@ func (s *server) redirectToGitHubAuthorization(w http.ResponseWriter, r *http.Re
 	clientID := os.Getenv("FAAS_GITHUB_APP_CLIENT_ID")
 	if clientID == "" {
 		s.log.Error("GitHub App connection is unavailable", "reason", "client ID is not configured")
-		api.WriteProblem(w, githubAppUnavailableProblem())
+		writeGitHubConnectProblem(w, r, githubAppUnavailableProblem())
 		return false
 	}
 	stateToken, err := s.issueOAuthCodeStateForInstallation(w, r, installationID)
 	if err != nil {
 		s.log.Error("issue OAuth state for GitHub App authorization", "err", err)
-		api.WriteProblem(w, api.ErrInternal("Gregale could not start the GitHub connection flow.").WithHint("Retry in a moment; if it continues, contact support."))
+		writeGitHubConnectProblem(w, r, api.ErrInternal("Gregale could not start the GitHub connection flow.").WithHint("Retry in a moment; if it continues, contact support."))
 		return false
 	}
 	redirectURI := os.Getenv("FAAS_GITHUB_APP_REDIRECT_URI")
@@ -282,7 +283,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		// sessionAuth would have redirected before this; defend
 		// against a future refactor that drops the middleware.
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "sign in to connect GitHub"))
 		return
 	}
@@ -293,12 +294,12 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 	queryState := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
 	if queryState == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Missing state", "/oauth/code-callback requires a state query parameter"))
 		return
 	}
-	if code == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+	if code == "" && r.URL.Query().Get("error") == "" {
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Missing code", "/oauth/code-callback requires a code query parameter"))
 		return
 	}
@@ -312,7 +313,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 		s.audit.Emit(r.Context(), "auth.install.csrf_rejected", &acctID, map[string]any{
 			"reason": "missing_state_cookie",
 		})
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "csrf_missing",
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusForbidden, "csrf_missing",
 			"Missing CSRF state", "the Connect GitHub flow requires a recent 'Connect GitHub' click — restart the flow"))
 		return
 	}
@@ -334,7 +335,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 		s.audit.Emit(r.Context(), "auth.install.csrf_rejected", &acctID, map[string]any{
 			"reason": "state_mismatch",
 		})
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "csrf_mismatch",
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusForbidden, "csrf_mismatch",
 			"CSRF mismatch", "the OAuth state token does not match the cookie — restart the Connect GitHub flow"))
 		return
 	}
@@ -356,6 +357,17 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 		MaxAge:   -1,
 	})
 
+	if providerError := r.URL.Query().Get("error"); providerError != "" {
+		code := "github_authorization_failed"
+		if providerError == "access_denied" {
+			code = "github_access_denied"
+		}
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusBadRequest, code,
+			"GitHub authorization did not complete", "GitHub did not approve the deployment connection.").
+			WithHint("Start Connect GitHub again and approve access to continue.").WithDocs(api.GitHubConnectDocsURL))
+		return
+	}
+
 	// Hand the code to githubd. githubd mints the install token,
 	// seals under the host age key, persists to github_installations,
 	// and emits auth.install.token_sealed via its audit callback. The
@@ -370,7 +382,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 			s.audit.Emit(r.Context(), "auth.install.account_conflict", &acctID, map[string]any{
 				"reason": api.CodeGitHubAccountConflict,
 			})
-			api.WriteProblemForRequest(w, r, api.ErrGitHubAccountConflict())
+			writeGitHubConnectProblem(w, r, api.ErrGitHubAccountConflict())
 			return
 		}
 		if choice, ok := githubdgrpc.AsInstallationChoice(err); ok {
@@ -383,7 +395,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 			s.audit.Emit(r.Context(), "auth.install.connect_refused", &acctID, map[string]any{
 				"reason": p.Code,
 			})
-			api.WriteProblemForRequest(w, r, p)
+			writeGitHubConnectProblem(w, r, p)
 			return
 		}
 		if isGithubAppNotInstalled(err) {
@@ -405,7 +417,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 		s.audit.Emit(r.Context(), "auth.install.token_exchange_failed", &acctID, map[string]any{
 			"githubd_err": stripLogCRLF(err.Error()),
 		})
-		api.WriteProblem(w, githubUnreachableProblem("Retry the connect flow in a minute."))
+		writeGitHubConnectProblem(w, r, githubUnreachableProblem("Retry the connect flow in a minute."))
 		return
 	}
 
@@ -434,13 +446,13 @@ func (s *server) redirectToGitHubAppInstall(w http.ResponseWriter, r *http.Reque
 	stateToken, err := s.issueOAuthCodeState(w, r)
 	if err != nil {
 		s.log.Error("issue oauth code state for GitHub App installation", "err", err)
-		api.WriteProblem(w, api.ErrInternal("Gregale could not start the GitHub connection flow.").WithHint("Retry in a moment; if it continues, contact support."))
+		writeGitHubConnectProblem(w, r, api.ErrInternal("Gregale could not start the GitHub connection flow.").WithHint("Retry in a moment; if it continues, contact support."))
 		return false
 	}
 	installURL, err := githubAppInstallURL(stateToken)
 	if err != nil {
 		s.log.Error("build GitHub App installation URL", "err", err)
-		api.WriteProblem(w, githubAppUnavailableProblem())
+		writeGitHubConnectProblem(w, r, githubAppUnavailableProblem())
 		return false
 	}
 	http.Redirect(w, r, installURL, http.StatusFound)
@@ -471,12 +483,12 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "sign in to connect GitHub"))
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, githubConnectAction, acct.ID, githubConnectCSRFCookie); err != nil {
-		http.Redirect(w, r, "/dashboard/account?github=connect-forbidden", http.StatusSeeOther)
+		http.Redirect(w, r, "/dashboard/settings?section=integrations&github=connect-forbidden", http.StatusSeeOther)
 		return
 	}
 	setGitHubConnectReturn(w, r, r.FormValue("return_to"))
@@ -484,7 +496,7 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 	clientID := os.Getenv("FAAS_GITHUB_APP_CLIENT_ID")
 	if clientID == "" {
 		log.Error("FAAS_GITHUB_APP_CLIENT_ID not configured")
-		api.WriteProblem(w, githubAppUnavailableProblem())
+		writeGitHubConnectProblem(w, r, githubAppUnavailableProblem())
 		return
 	}
 
@@ -495,7 +507,7 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(r.FormValue("installation_id")); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || parsed <= 0 {
-			http.Redirect(w, r, "/dashboard/account?github=connect-forbidden", http.StatusSeeOther)
+			http.Redirect(w, r, "/dashboard/settings?section=integrations&github=connect-forbidden", http.StatusSeeOther)
 			return
 		}
 		installationID = parsed
@@ -538,7 +550,13 @@ func (s *server) renderGitHubInstallationChoice(w http.ResponseWriter, r *http.R
 // connect and bind flows.
 func githubUnreachableProblem(detail string) *api.Problem {
 	return api.NewProblem(http.StatusBadGateway, "github_unreachable", "Could not reach GitHub", detail).
+		WithHint("Gregale could not complete the GitHub connection. Try again in a minute; if it continues, contact support.").
 		WithDocs(api.GitHubConnectDocsURL)
+}
+
+func writeGitHubConnectProblem(w http.ResponseWriter, r *http.Request, p *api.Problem) {
+	clearGitHubConnectReturn(w, r)
+	githubconnect.WriteProblem(w, r, p)
 }
 
 // stripLogCRLF / stripLogInt64 are defined in handlers_install_github.go

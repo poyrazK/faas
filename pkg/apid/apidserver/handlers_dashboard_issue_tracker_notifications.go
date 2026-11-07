@@ -6,11 +6,26 @@ import (
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// A company app's creator is not necessarily allowed to manage its security,
+// and an organization owner or admin need not be its creator.
+func (s *server) dashboardCanManageTrackerNotifications(r *http.Request, acct state.Account, app state.App) bool {
+	actor := actorAccount(r, acct)
+	if grant, ok := appaccess.FromContext(r.Context()); ok && grant.App.ID == app.ID && grant.Actor.ID == actor.ID {
+		// The nested session middleware may replace the principal's membership.
+		// Recheck the role against the same revision as the app access grant.
+		snapshot, err := s.store.OrgAccessSnapshot(r.Context(), app.OrgID, actor.ID)
+		return err == nil && snapshot.Revision == grant.Fence.Revision && authz.Can(snapshot.Role, authz.OrgActionManageAppSecurity)
+	}
+	return app.ID != "" && app.AccountID == actor.ID
+}
 
 func (s *server) dashboardTrackerNotificationsAccess(w http.ResponseWriter, r *http.Request, acct state.Account) (state.IssueTrackerNotificationStore, state.App, bool) {
 
@@ -24,22 +39,21 @@ func (s *server) dashboardTrackerNotificationsAccess(w http.ResponseWriter, r *h
 		api.WriteProblem(w, api.ErrCapacity("tracker notifications unavailable"))
 		return nil, app, false
 	}
-	allowed, err := st.CanReadIssueTrackerNotifications(r.Context(), app.ID, app.AccountID, acct.ID, r.PathValue("link_id"))
-	if err != nil {
-		writeIssueError(w, err)
-		return nil, app, false
-	}
-	if !allowed {
-		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "no such app"))
-		return nil, app, false
-	}
-	owner := acct
-	if acct.ID != app.AccountID {
-		owner, err = s.store.AccountByID(r.Context(), app.AccountID)
+	if !s.dashboardCanManageTrackerNotifications(r, acct, app) {
+		allowed, err := st.CanReadIssueTrackerNotifications(r.Context(), app.ID, app.AccountID, acct.ID, r.PathValue("link_id"))
 		if err != nil {
 			writeIssueError(w, err)
 			return nil, app, false
 		}
+		if !allowed {
+			api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "no such app"))
+			return nil, app, false
+		}
+	}
+	owner, err := state.AppResourceAccount(r.Context(), s.store, app)
+	if err != nil {
+		writeIssueError(w, err)
+		return nil, app, false
 	}
 	if _, ok = s.issueStore(w, owner); !ok {
 		return nil, app, false
@@ -70,7 +84,7 @@ func (s *server) dashboardTrackerNotificationsHandler(w http.ResponseWriter, r *
 	}
 	policy := state.IssueTrackerNotificationPolicy{}
 	reminderPolicy := state.IssueTrackerReminderPolicy{}
-	if acct.ID == app.AccountID {
+	if s.dashboardCanManageTrackerNotifications(r, acct, app) {
 		policy, err = st.GetIssueTrackerNotificationPolicy(r.Context(), app.ID, app.AccountID)
 		if err != nil {
 			writeIssueError(w, err)
@@ -94,7 +108,7 @@ func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *h
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	escalation := state.IssueTrackerEscalationPolicy{}
 	teams := api.ListIssueTeamsResponse{}
-	if acct.ID == app.AccountID {
+	if s.dashboardCanManageTrackerNotifications(r, acct, app) {
 		st := s.store.(state.IssueTrackerNotificationStore)
 		escalation, err = st.GetIssueTrackerEscalationPolicy(r.Context(), app.ID, app.AccountID)
 		if err != nil {
@@ -109,7 +123,7 @@ func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *h
 			}
 		}
 	}
-	view := dashboard.IssueTrackerNotificationsView{EscalationPolicy: escalation, Teams: teams.Items, EscalationDelayMin: api.IssueTrackerEscalationDelayMinMinutes, EscalationDelayMax: api.IssueTrackerEscalationDelayMaxMinutes, EscalationSaved: r.URL.Query().Get("saved") == "escalation", AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, ReminderPolicy: reminderPolicy, ReminderIntervalMin: api.IssueTrackerReminderIntervalMinMinutes, ReminderIntervalMax: api.IssueTrackerReminderIntervalMaxMinutes, RemindersMax: api.IssueTrackerRemindersMax, ReminderSaved: r.URL.Query().Get("saved") == "reminders", Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
+	view := dashboard.IssueTrackerNotificationsView{EscalationPolicy: escalation, Teams: teams.Items, EscalationDelayMin: api.IssueTrackerEscalationDelayMinMinutes, EscalationDelayMax: api.IssueTrackerEscalationDelayMaxMinutes, EscalationSaved: r.URL.Query().Get("saved") == "escalation", AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: s.dashboardCanManageTrackerNotifications(r, acct, app), Policy: policy, ReminderPolicy: reminderPolicy, ReminderIntervalMin: api.IssueTrackerReminderIntervalMinMinutes, ReminderIntervalMax: api.IssueTrackerReminderIntervalMaxMinutes, RemindersMax: api.IssueTrackerRemindersMax, ReminderSaved: r.URL.Query().Get("saved") == "reminders", Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
 	if !s.dashboardIssueSlackView(w, r, app, &view) {
 		return
 	}
@@ -137,6 +151,19 @@ func (s *server) dashboardTrackerNotificationPolicyHandler(w http.ResponseWriter
 	s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboardTrackerNotificationPolicyForAccount)))(w, r)
 }
 func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	actor := actorAccount(r, acct)
+	if grant, ok := appaccess.FromContext(r.Context()); ok && grant.Actor.ID == actor.ID {
+		// Keep the membership revision that authorized the dashboard request
+		// through the settings transaction, including the nested session auth.
+		appaccess.ServeFenced(s.store, func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+			s.dashboardTrackerNotificationPolicyFenced(w, r, actor)
+		}, w, r, grant.Owner, grant.Fence)
+		return
+	}
+	s.dashboardTrackerNotificationPolicyFenced(w, r, actor)
+}
+
+func (s *server) dashboardTrackerNotificationPolicyFenced(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	st, app, ok := s.dashboardTrackerNotificationsAccess(w, r, acct)
 	if !ok {
 		return

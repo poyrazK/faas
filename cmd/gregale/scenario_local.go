@@ -37,11 +37,8 @@ func validateLocalTestURL(raw string) (string, error) {
 }
 
 func validateLocalTestScenario(scenario testScenario) error {
-	if err := validateTestCommandExecution(scenario, "local", "local"); err != nil {
+	if err := validateTestScenarioExecution(scenario, "local"); err != nil {
 		return err
-	}
-	if scenario.Actions != nil {
-		return errors.New("webhook action capture requires the real-vm engine")
 	}
 	if scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0 {
 		return errors.New("--engine local cannot evaluate platform wait_for conditions; use real-vm for those checks")
@@ -142,7 +139,7 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	if caseValues == nil {
 		caseValues = map[string]any{}
 	}
-	dataJSON, err := json.Marshal(caseValues)
+	dataJSON, err := encodeTestDataCase(caseValues)
 	if err != nil {
 		receipt.Error = fmt.Sprintf("encode case data: %v", err)
 		return
@@ -184,6 +181,14 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	if scenario.Local != nil {
 		env = localAppCommandEnv(env, host, port)
 	}
+	loadEvidencePath := ""
+	defer func() {
+		if loadEvidencePath != "" {
+			if err := os.Remove(loadEvidencePath); err != nil && !os.IsNotExist(err) {
+				receipt.addCleanupError("remove private load evidence file")
+			}
+		}
+	}()
 	var app *managedLocalApp
 	defer func() {
 		behavior.finish(&receipt)
@@ -242,8 +247,9 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 		phases.advance("load", "passed")
 		steps := append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...)
 		receipt.Load, err = runTestLoad(ctx, baseURL, receipt.RunID, consumerEnv, steps, data.Values, load)
-		loadJSON, _ := json.Marshal(receipt.Load)
-		env = append(env, "GREGALE_TEST_LOAD_JSON="+string(loadJSON))
+		var evidenceErr error
+		env, loadEvidencePath, evidenceErr = testLoadEvidenceCommandEnv(env, receipt.Load)
+		err = errors.Join(err, evidenceErr)
 		if err != nil {
 			receipt.Error = err.Error()
 			return
@@ -273,4 +279,28 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	}
 	receipt.Status = "passed"
 	return
+}
+
+// Keep complete evidence available during assertions and cleanup without
+// exceeding the OS environment-string bound. Small reports retain the original
+// inline variable for existing commands; the file works for reports of any size.
+func testLoadEvidenceCommandEnv(env []string, evidence *testLoadEvidence) ([]string, string, error) {
+	body, err := json.Marshal(evidence)
+	if err != nil {
+		return env, "", fmt.Errorf("encode load evidence: %w", err)
+	}
+	file, err := os.CreateTemp("", "gregale-load-evidence-*.json")
+	if err != nil {
+		return env, "", fmt.Errorf("create private load evidence: %w", err)
+	}
+	_, writeErr := file.Write(body)
+	err = errors.Join(writeErr, file.Close())
+	if err != nil {
+		return env, file.Name(), fmt.Errorf("write private load evidence: %w", err)
+	}
+	env = append(env, "GREGALE_TEST_LOAD_FILE="+file.Name())
+	if len(body) <= testDataCaseJSONLimit {
+		env = append(env, "GREGALE_TEST_LOAD_JSON="+string(body))
+	}
+	return env, file.Name(), nil
 }

@@ -9,8 +9,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,21 +34,24 @@ type doctorFunction struct {
 // The last CREATE OR REPLACE wins, as it does in Schema().
 // This is immutable installation wiring. Each caller gets its own copy because
 // writer probes filter the list and adjust their runtime privilege profile.
-var installedDoctorFunctions, installedDoctorFingerprint = buildDoctorFunctions()
+// It is built on first use: parsing the installation SQL took about 200 ms
+// and 2 MB at init in every process that imports this package, which is
+// every daemon through pkg/state and pkg/fcvm.
+var installedDoctorFunctions = sync.OnceValues(buildDoctorFunctions)
 
 func doctorFunctions() ([]doctorFunction, string) {
-	functions := slices.Clone(installedDoctorFunctions)
+	installed, fingerprint := installedDoctorFunctions()
+	functions := slices.Clone(installed)
 	for i := range functions {
 		functions[i].Config = slices.Clone(functions[i].Config)
 	}
-	return functions, installedDoctorFingerprint
+	return functions, fingerprint
 }
 
 func buildDoctorFunctions() ([]doctorFunction, string) {
-	pattern := regexp.MustCompile(`(?s)CREATE(?: OR REPLACE)? FUNCTION gregale_repair\.([a-z_]+)\((.*?)\) RETURNS ([^\n]+)\nLANGUAGE (.*?) AS \$\$(.*?)\$\$;`)
 	byName := map[string]doctorFunction{}
 	fingerprint := ""
-	for _, m := range pattern.FindAllStringSubmatch(Schema(), -1) {
+	for _, m := range functionDefinition.FindAllStringSubmatch(Schema(), -1) {
 		// The optional repairable-transaction API qualifies its own contract;
 		// legacy capture and executor readiness do not require these privileges.
 		if m[1] == "capture_transaction" || m[1] == "protect_capture_receipt" {
@@ -143,7 +148,7 @@ type doctorColumn struct {
 
 func doctorColumns() []doctorColumn {
 	tables := map[string]string{
-		"enrollments":    "relation:regclass qualified_name:text enrollment_id:uuid fields:text[] keys:text[] fingerprint:text fingerprint_timezone:text fingerprint_datestyle:text fingerprint_intervalstyle:text type_fingerprint:text",
+		"enrollments":    "relation:regclass qualified_name:text enrollment_id:uuid fields:text[] keys:text[] fingerprint:text fingerprint_timezone:text fingerprint_datestyle:text fingerprint_intervalstyle:text fingerprint_monetary:text type_fingerprint:text",
 		"operations":     "id:uuid scope:jsonb release:text enrollment_id:uuid schema_fingerprint:text transaction_id:text finalized:boolean repair_of:uuid created_at:timestamptz payload_purged_at:timestamptz capture_relation_filenode:oid capture_contract_version:integer type_fingerprint:text capture_type_state:text",
 		"changes":        "operation_id:uuid row_identity:uuid key:jsonb before_values:jsonb after_values:jsonb before_version:bigint after_version:bigint",
 		"plans":          "id:uuid source_operation_id:uuid scope:jsonb document:jsonb digest:text created_at:timestamptz expires_at:timestamptz rehearsed_at:timestamptz rehearsal:jsonb approved_at:timestamptz approved_by:text applied_at:timestamptz repair_operation_id:uuid payload_purged_at:timestamptz retained_digest:text check_failure:jsonb apply_checks:jsonb apply_resolution:jsonb replacement_plan_id:uuid",
@@ -295,7 +300,8 @@ const doctorPermissionsSQL = `WITH required(name,privilege) AS (VALUES
  ('changes','SELECT'),('changes','INSERT'),('changes','UPDATE'),('plans','SELECT'),('plans','INSERT'),('plans','UPDATE'))
 SELECT 'gregale_repair: USAGE',has_schema_privilege(n.oid,'USAGE') FROM pg_namespace n WHERE n.nspname='gregale_repair'
 UNION ALL SELECT 'gregale_repair.'||r.name||': '||r.privilege,has_table_privilege(c.oid,r.privilege)
-FROM required r JOIN pg_namespace n ON n.nspname='gregale_repair' JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.name`
+FROM required r JOIN pg_namespace n ON n.nspname='gregale_repair' JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.name
+UNION ALL SELECT 'pg_catalog.pg_locks: SELECT',has_table_privilege('pg_catalog.pg_locks','SELECT')`
 
 func doctorPrivileges(ctx context.Context, tx pgx.Tx, r *DoctorReport, missing []string) (bool, error) {
 	rows, err := tx.Query(ctx, doctorPermissionsSQL)
@@ -329,11 +335,12 @@ func doctorPrivileges(ctx context.Context, tx pgx.Tx, r *DoctorReport, missing [
 	return registry, nil
 }
 
-var doctorEnrollmentSQL = strings.NewReplacer("__CASCADING_FIELDS__", cascadingFieldsSQL("c.oid", "e.fields"), "__TYPE_CONTRACT_CHANGED__", typeContractMismatchSQL("e.relation", "e.type_fingerprint"), "__UNSUPPORTED_EXPRESSIONS__", unsupportedExpressionsSQL("c.oid"), "__LOSSY_TYPES__", lossyValueTypesSQL("c.oid", "e.fields||e.keys")).Replace(`SELECT e.relation::oid,e.enrollment_id::text,
+var doctorEnrollmentSQL = sync.OnceValue(func() string {
+	return strings.NewReplacer("__CASCADING_FIELDS__", cascadingFieldsSQL("c.oid", "e.fields"), "__TYPE_CONTRACT_CHANGED__", typeContractMismatchSQL("e.relation", "e.type_fingerprint"), "__UNSUPPORTED_EXPRESSIONS__", unsupportedExpressionsSQL("c.oid"), "__LOSSY_TYPES__", lossyValueTypesSQL("c.oid", "e.fields||e.keys")).Replace(`SELECT e.relation::oid,e.enrollment_id::text,
  (SELECT array_agg(left(f,current_setting('max_identifier_length')::int)) FROM unnest(e.fields[1:$2]) f),
  (SELECT array_agg(left(f,current_setting('max_identifier_length')::int)) FROM unnest(e.keys[1:$2]) f),
  CASE WHEN octet_length(e.fingerprint)=64 THEN e.fingerprint ELSE '' END,
- coalesce(e.fingerprint_datestyle IS NOT NULL AND e.fingerprint_intervalstyle IS NOT NULL AND e.fingerprint_timezone IS NOT NULL AND c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
+ coalesce(e.fingerprint_datestyle IS NOT NULL AND e.fingerprint_intervalstyle IS NOT NULL AND e.fingerprint_monetary IS NOT NULL AND e.fingerprint_timezone IS NOT NULL AND c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
  format('%I.%I',n.nspname,c.relname)=e.qualified_name AND
  NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid) AND
  NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attnum>0 AND NOT attisdropped AND attgenerated<>'') AND
@@ -345,6 +352,7 @@ var doctorEnrollmentSQL = strings.NewReplacer("__CASCADING_FIELDS__", cascadingF
  EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attname='gregale_row_identity' AND atttypid='uuid'::regtype AND attnotnull AND NOT attisdropped) AND
  EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attname='gregale_row_version' AND atttypid='int8'::regtype AND attnotnull AND NOT attisdropped),false)
 FROM gregale_repair.enrollments e LEFT JOIN pg_class c ON c.oid=e.relation LEFT JOIN pg_namespace n ON n.oid=c.relnamespace WHERE e.qualified_name=$1`)
+})
 
 func doctorEnrollment(ctx context.Context, tx pgx.Tx, r *DoctorReport, fingerprint string, missing []string) error {
 	registry, err := doctorPrivileges(ctx, tx, r, missing)
@@ -355,7 +363,7 @@ func doctorEnrollment(ctx context.Context, tx pgx.Tx, r *DoctorReport, fingerpri
 	var id, saved string
 	var fields, keys []string
 	var valid bool
-	err = tx.QueryRow(ctx, doctorEnrollmentSQL, r.Table, api.DataRepairDoctorMaxObjects).Scan(&oid, &id, &fields, &keys, &saved, &valid)
+	err = tx.QueryRow(ctx, doctorEnrollmentSQL(), r.Table, api.DataRepairDoctorMaxObjects).Scan(&oid, &id, &fields, &keys, &saved, &valid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		r.finding("enrollment", "not_enrolled")
 		return nil

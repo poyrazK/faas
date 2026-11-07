@@ -948,13 +948,16 @@ func (r hostRuntime) waitReady(ctx context.Context, service string) error {
 }
 
 func (r hostRuntime) waitHTTP(ctx context.Context, address string) error {
+	ctx, cancel := context.WithTimeout(ctx, r.readyTimeout)
+	defer cancel()
+	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(r.readyTimeout)
 	lastStatus := 0
 	lastBody := ""
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 		if err == nil {
-			response, err := http.DefaultClient.Do(req)
+			response, err := client.Do(req)
 			if err == nil {
 				body, readErr := io.ReadAll(io.LimitReader(response.Body, 512))
 				_ = response.Body.Close()
@@ -962,12 +965,15 @@ func (r hostRuntime) waitHTTP(ctx context.Context, address string) error {
 				if readErr == nil {
 					lastBody = strings.TrimSpace(string(body))
 				}
-				if response.StatusCode == http.StatusOK {
+				if response.StatusCode == http.StatusOK && readErr == nil && ctx.Err() == nil {
 					return nil
 				}
 			}
 		}
 		if err := sleepReady(ctx); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
 			return err
 		}
 	}

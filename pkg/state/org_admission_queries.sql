@@ -22,3 +22,7 @@ SELECT plan,status,deleted_pending,abuse_hold_at FROM orgs WHERE id=$1 FOR NO KE
 
 -- name: CountActiveOrgMembers :one
 SELECT count(*) FROM org_memberships WHERE org_id=$1 AND removed_at IS NULL;
+
+-- Pin the incoming plan while deciding whether a transfer consumes a Free slot.
+-- name: LockOrgOwnershipTransferTarget :one
+SELECT plan,personal_org,deleted_pending FROM orgs WHERE id=$1 FOR NO KEY UPDATE;

@@ -112,7 +112,7 @@ func TestRepairNestedIntervalsAcrossStyles(t *testing.T) {
 func installV2RenderingContract(t *testing.T, e *Engine) {
 	t.Helper()
 	contract := strings.ReplaceAll(captureContract, "__CURRENT_ROW_CONTRACT__", "true")
-	begin := strings.Replace(embeddedFunction(retentionContract, "begin_operation")[0], ",true),3);", ",true),2);", 1)
+	begin := strings.Replace(embeddedFunction(retentionContract, "begin_operation")[0], ",true),4);", ",true),2);", 1)
 	parts := []string{previousV2RowContractSchema(), contract, begin, strings.ReplaceAll(valueComparisonSchema, " SET IntervalStyle = 'postgres'", "")}
 	for _, name := range []string{"create_plan", "apply_plan"} {
 		part := strings.ReplaceAll(embeddedFunction(retentionContract, name)[0], " SET IntervalStyle = 'postgres'", "")

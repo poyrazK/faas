@@ -535,11 +535,15 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 			record := rolloutDecisionRecord(row, api.RolloutRuleAdvanceProbeEvidence, decision.Reason, &observation, since, now)
 			return true, &record
 		}
-		if held >= api.CanaryLowTrafficMaxHold && LowTrafficAdvanceAllowed(decision, observation) {
+		// A stage nobody called advances at its boundary: holding it longer
+		// cannot produce evidence (ADR-1446 amendment 3).
+		noTraffic := held >= 0 && NoTrafficStage(observation)
+		if (held >= api.CanaryLowTrafficMaxHold || noTraffic) && LowTrafficAdvanceAllowed(decision, observation) {
 			p.Log.Info("canary: advancing low-traffic stage on clean evidence",
 				"deployment_id", row.ID,
 				"stable_deployment_id", observation.StableDeploymentID,
 				"reason", decision.Reason,
+				"no_traffic", noTraffic,
 				"held", held.Round(time.Second).String())
 			stats.LowTrafficAdvanced++
 			p.recordCircuitBreakerEvent("advance_low_traffic")

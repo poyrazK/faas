@@ -10,6 +10,10 @@ export type EnvBatchResponse = {
   request_id: string;
   app_id: string;
   scope: string;
+  /**
+   * Immutable environment identity when the original named batch was pinned.
+   */
+  environment_id?: string;
   updated_keys: Array<string>;
   deleted_keys: Array<string>;
   config_change: ConfigChangeReceipt;

@@ -33,6 +33,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
    AND d.rollout_state = 'complete'
    AND d.rollout_completed_at IS NOT NULL
    AND d.rollout_completed_at > now() - make_interval(secs => $1::int)
+   AND ($2::timestamptz IS NULL OR
+        (d.rollout_completed_at, d.id) > ($2::timestamptz, $3::uuid))
    AND NOT EXISTS (
         SELECT 1 FROM deployments AS n
          WHERE n.app_id = d.app_id
@@ -41,12 +43,14 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
            AND n.status NOT IN ('failed', 'cancelled')
            AND (n.serving_ended_at IS NOT NULL OR (n.status = 'live' AND n.traffic_percent > 0)))
  ORDER BY d.rollout_completed_at, d.id
- LIMIT $2::int
+ LIMIT $4::int
 `
 
 type ListPostReleaseWatchCandidatesParams struct {
-	WindowSeconds int32
-	RowLimit      int32
+	WindowSeconds    int32
+	AfterCompletedAt pgtype.Timestamptz
+	AfterID          pgtype.UUID
+	RowLimit         int32
 }
 
 type ListPostReleaseWatchCandidatesRow struct {
@@ -77,7 +81,12 @@ type ListPostReleaseWatchCandidatesRow struct {
 // v3 with a release that never served and rolled back to it (release review
 // 2026-10-28).
 func (q *Queries) ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error) {
-	rows, err := db.Query(ctx, listPostReleaseWatchCandidates, arg.WindowSeconds, arg.RowLimit)
+	rows, err := db.Query(ctx, listPostReleaseWatchCandidates,
+		arg.WindowSeconds,
+		arg.AfterCompletedAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -84,13 +84,13 @@ func (s *server) runIssueTrackerAutoSync(ctx context.Context, st state.IssueTrac
 		row.Policy.Reason = "app_unavailable"
 		return row
 	}
-	account, err := s.store.AccountByID(ctx, row.AccountID)
+	account, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		row.Policy.Outcome = "error"
 		row.Policy.Reason = "account_unavailable"
 		return row
 	}
-	if app.AccountID != account.ID || !account.Plan.IssueLimits().Enabled || !account.MayDeploy() || app.DeletedAt != nil || app.Status == state.AppDeleted {
+	if app.AccountID != row.AccountID || app.AccountID != account.ID || !account.Plan.IssueLimits().Enabled || !account.MayDeploy() || app.DeletedAt != nil || app.Status == state.AppDeleted {
 		row.Policy.Outcome = "blocked"
 		row.Policy.Reason = "owner_or_entitlement_unavailable"
 		return row
@@ -114,11 +114,11 @@ func (h nativeAutoSyncHost) Prepare(ctx context.Context) (issuetrackers.Prepared
 	if err != nil {
 		return issuetrackers.Prepared{}, err
 	}
-	account, err := h.server.store.AccountByID(ctx, h.account.ID)
+	account, err := state.AppResourceAccount(ctx, h.server.store, app)
 	if err != nil {
 		return issuetrackers.Prepared{}, err
 	}
-	if app.AccountID != account.ID || app.DeletedAt != nil || app.Status == state.AppDeleted || !account.MayDeploy() || !account.Plan.IssueLimits().Enabled {
+	if app.AccountID != h.account.ID || app.AccountID != account.ID || app.DeletedAt != nil || app.Status == state.AppDeleted || !account.MayDeploy() || !account.Plan.IssueLimits().Enabled {
 		return issuetrackers.Prepared{}, api.NewProblem(409, "issue_tracker_auto_sync_ineligible", "Automatic sync paused", "owner or Issues entitlement is unavailable")
 	}
 	h.app = app

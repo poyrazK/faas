@@ -297,7 +297,9 @@ func TestResumeBufferedFrameRequiresFreshIdentity(t *testing.T) {
 	authorizer.err = errors.New("JWKS unavailable")
 	authorizer.mu.Unlock()
 	expireConnectionIdentity(c.identity)
-	if err := m.queueResume(t.Context(), c, resumeServerFrame{Type: "message", Channel: "updates", DataBase64: "cHJpdmF0ZQ=="}); err != nil {
+	// The identity check may close the expired connection before the frame
+	// is queued; either way the buffered frame must not reach the client.
+	if err := m.queueResume(t.Context(), c, resumeServerFrame{Type: "message", Channel: "updates", DataBase64: "cHJpdmF0ZQ=="}); err != nil && !errors.Is(err, ErrConnectionClosed) {
 		t.Fatal(err)
 	}
 	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))

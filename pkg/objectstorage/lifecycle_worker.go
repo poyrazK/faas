@@ -157,7 +157,7 @@ func (s LifecycleExpirationService) expireKey(ctx context.Context, deletion Dele
 	}
 	actions := 0
 	for _, target := range versions {
-		o, err := lifecycleHistoryObject(versions, target.ProviderVersionID, target.LastModified, time.Now().UTC())
+		o, err := deletion.lifecycleObject(ctx, b, versions, target.ProviderVersionID, target.LastModified, time.Now().UTC(), rules)
 		if err != nil {
 			return err
 		}

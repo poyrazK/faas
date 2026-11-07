@@ -156,6 +156,12 @@ func (s *DataAPISetup) ownedApp(ctx context.Context, job datapipeline.Setup) (st
 
 func (s *DataAPISetup) Prepare(ctx context.Context, job datapipeline.Setup) (string, bool, error) {
 	a, app, err := s.ownedApp(ctx, job)
+	if err != nil && (a.ID == "" || !errors.Is(err, datapipeline.ErrNotFound)) {
+		return "", false, err
+	}
+	if s.DataAPIReleased != nil && !s.DataAPIReleased(a) {
+		return "", false, datapipeline.ErrUnavailable
+	}
 	if errors.Is(err, datapipeline.ErrNotFound) {
 		// Only create after verifying Auth independently; an absent/foreign Auth
 		// app must never cause a new customer resource to be reserved.
@@ -216,6 +222,11 @@ func (s *DataAPISetup) Deploy(ctx context.Context, job datapipeline.Setup) (stri
 	} else if !errors.Is(readErr, state.ErrNotFound) {
 		return "", "", dataAPIError(readErr)
 	}
+	// Accepted deployments remain recoverable, but a saved plan cannot
+	// authorize a new build after its capability has been withdrawn.
+	if !accepted && s.DataAPIReleased != nil && !s.DataAPIReleased(a) {
+		return "", "", datapipeline.ErrUnavailable
+	}
 	latest, latestErr := s.Store.LatestDeployment(ctx, app.ID)
 	if latestErr == nil && latest.ID != deployment && latest.ID != job.DataAPIPlan.PreviousDeploymentID {
 		return "", "", datapipeline.ErrConflict
@@ -237,6 +248,9 @@ func (s *DataAPISetup) Deploy(ctx context.Context, job datapipeline.Setup) (stri
 	}
 	source, size, err := s.source(job)
 	if err != nil {
+		if !accepted && errors.Is(err, datapipeline.ErrConflict) {
+			return "", "", datapipeline.ErrDataAPISourceChanged
+		}
 		return "", "", dataAPIError(err)
 	}
 	if expectedSource != "" {

@@ -25,12 +25,15 @@ import (
 // AlertWorker never connects to a source or mirror. It runs separately from
 // Worker, and monitoring continues even while HTTP delivery or keys fail.
 type AlertWorker struct {
-	Store      *PostgresStore
-	Accounts   []string
-	Identities func() ([]*age.X25519Identity, error)
-	Sender     func(context.Context, alertwire.Attempt) alertwire.Result
-	Now        func() time.Time
-	Log        *slog.Logger
+	Store    *PostgresStore
+	Accounts []string
+	// AccountsSource refreshes the operator's pilot scope during a long-lived
+	// process. When set, a failed refresh suspends monitoring and delivery.
+	AccountsSource func() ([]string, error)
+	Identities     func() ([]*age.X25519Identity, error)
+	Sender         func(context.Context, alertwire.Attempt) alertwire.Result
+	Now            func() time.Time
+	Log            *slog.Logger
 }
 
 func alertTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t.UTC(), Valid: true} }
@@ -41,11 +44,19 @@ func (w *AlertWorker) now() time.Time {
 	return time.Now().UTC()
 }
 func (w *AlertWorker) accounts() ([]pgtype.UUID, error) {
-	if w.Store == nil || len(w.Accounts) == 0 || len(w.Accounts) > api.DataPipelinePilotAccountsMax {
+	accounts := w.Accounts
+	if w.AccountsSource != nil {
+		var err error
+		accounts, err = w.AccountsSource()
+		if err != nil {
+			return nil, ErrUnavailable
+		}
+	}
+	if w.Store == nil || len(accounts) == 0 || len(accounts) > api.DataPipelinePilotAccountsMax {
 		return nil, ErrUnavailable
 	}
-	result := make([]pgtype.UUID, 0, len(w.Accounts))
-	for _, account := range w.Accounts {
+	result := make([]pgtype.UUID, 0, len(accounts))
+	for _, account := range accounts {
 		id, err := uuid.Parse(account)
 		if err != nil {
 			return nil, ErrInvalid
@@ -241,7 +252,9 @@ func (w *AlertWorker) Run(ctx context.Context) error {
 	}
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error { return w.loop(ctx, log, true) })
-	group.Go(func() error { return w.loop(ctx, log, false) })
+	for range api.DataPipelineAlertDeliveryConcurrency {
+		group.Go(func() error { return w.loop(ctx, log, false) })
+	}
 	return group.Wait()
 }
 

@@ -34,12 +34,20 @@ func (l *Loop) runPrimeRecovery(ctx context.Context) {
 			CreatedBefore: cutoff,
 			OldestFirst:   true,
 			Limit:         primeRecoveryPageSize,
-			Offset:        page * primeRecoveryPageSize,
+			Offset:        l.primeRecoveryOffset,
 		})
 		l.primeMetrics.observeQuery(ctx, err)
 		if err != nil {
 			l.log.Warn("sched: list snapshot prime recovery candidates", "err", err)
 			return
+		}
+		// Keep progress across ticks even when every candidate is held or
+		// belongs to another node. Wrap at the end to revisit older rows whose
+		// eligibility changed, including rows shifted by concurrent removals.
+		if len(deps) < primeRecoveryPageSize {
+			l.primeRecoveryOffset = 0
+		} else {
+			l.primeRecoveryOffset += len(deps)
 		}
 		for _, dep := range deps {
 			if ctx.Err() != nil {
@@ -121,6 +129,16 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		changedAt = time.Unix(0, 0).UTC()
 	}
 	for _, ins := range instances {
+		if ins.DeploymentID == dep.ID && ins.StartedAt.After(*stage.CurrentStartedAt) &&
+			ins.Mode == string(state.InstanceModeWorker) && (ins.State == string(state.StateRunning) || ins.State == string(state.StateDraining)) {
+			retired, retireErr := l.engine.retireStalePrimeWorker(ctx, app, dep, ins)
+			if retireErr != nil {
+				return retireErr
+			}
+			if retired {
+				continue
+			}
+		}
 		// A PARKED instance means capture finished and imaged may still be
 		// handling snapshot_written. A guest older than the config stamp
 		// cannot publish, so it must not suppress recovery indefinitely.
@@ -132,6 +150,11 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 			outcome = "active"
 			if state.State(ins.State) == state.StateParked {
 				outcome = "publication_pending"
+			}
+			if ins.State == string(state.StateParked) || ins.State == string(state.StateRunning) {
+				// Prime resumes capture, a retained activation message, or worker
+				// readiness under its allocation lock without starting another VM.
+				l.dispatchPrime(ctx, app.ID, dep.ID)
 			}
 			return nil
 		}

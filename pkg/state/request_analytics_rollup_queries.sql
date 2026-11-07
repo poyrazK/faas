@@ -95,3 +95,37 @@ FROM filtered AS f
 LEFT JOIN top_groups AS t ON t.dimension = f.dimension AND t.method = f.method
 GROUP BY f.bucket, t.dimension, t.method
 ORDER BY 1 ASC, 4 DESC, 2 ASC, 3 ASC;
+
+-- name: RecordRequestAnalyticsRollupGaps :exec
+-- ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
+INSERT INTO request_analytics_rollup_gaps (app_id, bucket_start)
+SELECT g.app_id, g.bucket_start
+FROM (
+    SELECT unnest(sqlc.arg(app_ids)::uuid[]) AS app_id,
+           unnest(sqlc.arg(bucket_starts)::timestamptz[]) AS bucket_start
+) AS g
+ON CONFLICT (app_id, bucket_start) DO NOTHING;
+
+-- name: RequestAnalyticsRollupHasGap :one
+-- Whether any minute starting inside the window lost rollups.
+SELECT EXISTS (
+    SELECT 1 FROM request_analytics_rollup_gaps
+    WHERE app_id = sqlc.arg(app_id)
+      AND bucket_start >= sqlc.arg(window_from)::timestamptz
+      AND bucket_start <  sqlc.arg(window_until)::timestamptz
+)::bool AS has_gap;
+
+-- name: RequestAnalyticsRollupRouteDeployments :many
+-- Requests per route, method and deployment from the rollups, for the
+-- analytics route and deployment cost splits.
+SELECT dimension::text AS route,
+       method::text AS method,
+       deployment_id::uuid AS deployment_id,
+       SUM(requests)::bigint AS requests
+FROM request_analytics_minutes
+WHERE app_id = sqlc.arg(app_id)
+  AND account_id = sqlc.arg(account_id)
+  AND dimension_kind = 'route'
+  AND bucket_start >= sqlc.arg(window_from)::timestamptz
+  AND bucket_start <  sqlc.arg(window_until)::timestamptz
+GROUP BY dimension, method, deployment_id;

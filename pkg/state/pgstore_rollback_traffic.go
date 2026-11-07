@@ -34,6 +34,9 @@ func rollbackTrafficTargetTx(ctx context.Context, tx pgx.Tx, d Deployment) (Depl
 	if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
 		return d, err
 	}
+	if err := preserveRollbackSuccessTx(ctx, tx, d); err != nil {
+		return d, err
+	}
 	if err := q.ResetSynchronousRollbackTarget(ctx, tx, mustPgUUID(d.ID)); err != nil {
 		return d, err
 	}

@@ -137,6 +137,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	var req api.CreateOrgAPIKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	scopes, err := api.NormalizeCreateKeyScopes(req.Scopes)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -360,6 +364,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	var req api.RotateOrgAPIKeyRequest
 	_ = decodeJSON(r, &req)
+	if problem := reservedKeyLabelProblem(req.Label); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if p := authz.AuthorizeOrgAction(r.Context(), authz.OrgActionCreateApiKey, s.authzAuditForCurrentRequest()); p != nil {
 		api.WriteProblem(w, p)
 		return

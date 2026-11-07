@@ -70,6 +70,9 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		if existing.EnvironmentCloneOperationID != "" {
 			return Database{}, false, ErrConflict
 		}
+		if !restoreSlotAllowed(ctx) && !existing.RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
@@ -171,7 +174,8 @@ func (s *PostgresStore) Due(ctx context.Context, includeProvisioning bool, limit
 		return nil, ErrInvalid
 	}
 	rows, err := new(sqlc.Queries).DueManagedPostgresLifecycleDatabases(ctx, s.catalog, sqlc.DueManagedPostgresLifecycleDatabasesParams{
-		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit)})
+		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit),
+		HoldRetryBefore: databaseNullableTime(now.Add(-defaultPollInterval))})
 	return databasesFromSQL(rows), mapPostgresError(err)
 }
 

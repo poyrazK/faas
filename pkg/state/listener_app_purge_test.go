@@ -11,6 +11,7 @@ import (
 )
 
 type listenerRetirementStore interface {
+	UpdateApp(context.Context, string, state.UpdateAppParams) (state.App, error)
 	state.UDPListenerStore
 	ListEnabledTCPListeners(context.Context) ([]state.TCPListener, error)
 	ListEnabledUDPListeners(context.Context) ([]state.UDPListener, error)
@@ -40,6 +41,10 @@ func TestMemStoreListenerAppRetirement(t *testing.T) {
 
 func checkListenerRetirement(t *testing.T, store listenerRetirementStore, ctx context.Context, accountID, appID string) {
 	t.Helper()
+	manifest := state.AppManifest{Ports: []api.WorkloadPort{{Name: "enabled", Port: 5353}, {Name: "disabled", Port: 5354}, {Name: "enabled-udp", Port: 5353, Protocol: api.WorkloadPortUDP}, {Name: "disabled-udp", Port: 5354, Protocol: api.WorkloadPortUDP}}}
+	if _, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
 	var tcpIDs, udpIDs []string
 	for i := 0; i < 2; i++ {
 		tcp, err := store.CreateTCPListener(ctx, state.TCPListener{AccountID: accountID, AppID: appID, ListenerName: []string{"enabled", "disabled"}[i], GuestPort: 5353 + i, PublicPort: 40190 + i, Enabled: i == 0, TLSMode: api.TCPListenerTLSTerminate, TLSHostname: "retirement.example"})
@@ -47,13 +52,13 @@ func checkListenerRetirement(t *testing.T, store listenerRetirementStore, ctx co
 			t.Fatal(err)
 		}
 		tcpIDs = append(tcpIDs, tcp.ID)
-		udp, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: []string{"enabled", "disabled"}[i], GuestPort: 5353 + i, PublicPort: 40190 + i, Enabled: i == 0})
+		udp, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: []string{"enabled-udp", "disabled-udp"}[i], GuestPort: 5353 + i, PublicPort: 40190 + i, Enabled: i == 0})
 		if err != nil {
 			t.Fatal(err)
 		}
 		udpIDs = append(udpIDs, udp.ID)
 	}
-	other, err := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: "listener-retirement-other", Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1})
+	other, err := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: "listener-retirement-other", Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "other", Port: 5353}, {Name: "other-udp", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +66,7 @@ func checkListenerRetirement(t *testing.T, store listenerRetirementStore, ctx co
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherUDP, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: other.ID, ListenerName: "other", GuestPort: 5353, PublicPort: 40192, Enabled: true})
+	otherUDP, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: other.ID, ListenerName: "other-udp", GuestPort: 5353, PublicPort: 40192, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

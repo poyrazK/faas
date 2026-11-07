@@ -189,7 +189,7 @@ func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destina
 	if err != nil {
 		return CopyObjectResult{}, err
 	}
-	out, err := p.client.CopyObject(ctx, in)
+	out, err := p.client.CopyObject(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return CopyObjectResult{}, normalize(err)
 	}

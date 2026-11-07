@@ -146,6 +146,8 @@ from .app_operation_preview_authorization import AppOperationPreviewAuthorizatio
 from .app_operation_preview_checks import AppOperationPreviewChecks
 from .app_operation_preview_operation import AppOperationPreviewOperation
 from .app_operation_preview_schema_version import AppOperationPreviewSchemaVersion
+from .app_postgres_binding import AppPostgresBinding
+from .app_postgres_binding_list import AppPostgresBindingList
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_release_review import AppReleaseReview
@@ -168,6 +170,9 @@ from .app_response_type import AppResponseType
 from .app_response_visibility import AppResponseVisibility
 from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
+from .app_scaling_receipt import AppScalingReceipt
+from .app_scaling_settings import AppScalingSettings
+from .app_scaling_snapshot import AppScalingSnapshot
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
@@ -219,6 +224,7 @@ from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
+from .apply_app_scaling_request import ApplyAppScalingRequest
 from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
@@ -357,6 +363,7 @@ from .config_revision_detail import ConfigRevisionDetail
 from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
 from .config_revision_detail_variables import ConfigRevisionDetailVariables
 from .config_revision_source import ConfigRevisionSource
+from .config_rollback_receipt import ConfigRollbackReceipt
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
@@ -566,6 +573,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -585,6 +593,8 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_tag import DeploymentResponseTag
+from .deployment_retry_intent import DeploymentRetryIntent
+from .deployment_retry_intent_version import DeploymentRetryIntentVersion
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
 from .deployment_stage_history_entry import DeploymentStageHistoryEntry
@@ -619,6 +629,23 @@ from .diff_response_plan import DiffResponsePlan
 from .dns_record_instruction import DNSRecordInstruction
 from .dns_record_instruction_purpose import DNSRecordInstructionPurpose
 from .dns_record_instruction_type import DNSRecordInstructionType
+from .domain_apply_request import DomainApplyRequest
+from .domain_apply_response import DomainApplyResponse
+from .domain_binding_change import DomainBindingChange
+from .domain_binding_change_action import DomainBindingChangeAction
+from .domain_binding_spec import DomainBindingSpec
+from .domain_binding_target import DomainBindingTarget
+from .domain_doctor_check import DomainDoctorCheck
+from .domain_doctor_check_name import DomainDoctorCheckName
+from .domain_doctor_check_status import DomainDoctorCheckStatus
+from .domain_manifest import DomainManifest
+from .domain_manifest_version import DomainManifestVersion
+from .domain_plan import DomainPlan
+from .domain_plan_version import DomainPlanVersion
+from .domain_readiness import DomainReadiness
+from .domain_readiness_ownership import DomainReadinessOwnership
+from .domain_readiness_routing import DomainReadinessRouting
+from .domain_readiness_status import DomainReadinessStatus
 from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
@@ -866,9 +893,15 @@ from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
 from .get_worker_rollout_observation_scope import GetWorkerRolloutObservationScope
+from .git_hub_account_connection import GitHubAccountConnection
+from .git_hub_account_connection_health import GitHubAccountConnectionHealth
+from .git_hub_account_connections import GitHubAccountConnections
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
+from .git_hub_connection_manage_request import GitHubConnectionManageRequest
+from .git_hub_connection_verification import GitHubConnectionVerification
+from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
@@ -1870,6 +1903,14 @@ from .project_deployment_check_workload import ProjectDeploymentCheckWorkload
 from .project_deployment_readiness import ProjectDeploymentReadiness
 from .project_deployment_readiness_schema_version import ProjectDeploymentReadinessSchemaVersion
 from .project_deployment_readiness_status import ProjectDeploymentReadinessStatus
+from .project_environment_config_change import ProjectEnvironmentConfigChange
+from .project_environment_config_change_kind import ProjectEnvironmentConfigChangeKind
+from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
+from .project_environment_config_response import ProjectEnvironmentConfigResponse
+from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
+from .project_environment_shared_secret import ProjectEnvironmentSharedSecret
+from .project_environment_shared_secret_response import ProjectEnvironmentSharedSecretResponse
+from .project_environment_shared_secrets_response import ProjectEnvironmentSharedSecretsResponse
 from .project_initial_secrets import ProjectInitialSecrets
 from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
 from .project_migration_baseline_verification import ProjectMigrationBaselineVerification
@@ -1960,6 +2001,7 @@ from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
 from .realtime_trigger_config import RealtimeTriggerConfig
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
 from .release_approval_decision import ReleaseApprovalDecision
@@ -1986,6 +2028,8 @@ from .release_freeze_weekly import ReleaseFreezeWeekly
 from .release_freeze_weekly_days_item import ReleaseFreezeWeeklyDaysItem
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
+from .release_outcome_check import ReleaseOutcomeCheck
+from .release_outcome_check_task_status import ReleaseOutcomeCheckTaskStatus
 from .release_restore_point import ReleaseRestorePoint
 from .release_timeline import ReleaseTimeline
 from .release_timeline_event import ReleaseTimelineEvent
@@ -2169,6 +2213,7 @@ from .secret_runtime_reload_observation_reload_support import SecretRuntimeReloa
 from .secret_runtime_reload_observation_runtime_state import SecretRuntimeReloadObservationRuntimeState
 from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
 from .secret_scan_result import SecretScanResult
+from .service_abort_receipt import ServiceAbortReceipt
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -2213,6 +2258,7 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_password_request import SetPasswordRequest
+from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
 from .set_workflow_recovery_policy_request import SetWorkflowRecoveryPolicyRequest
 from .severity_counts import SeverityCounts
@@ -2339,6 +2385,8 @@ from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpoin
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
+from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_request import UpdateProjectRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
@@ -2718,6 +2766,7 @@ __all__ = (
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyAppScalingRequest",
     "ApplyCachedProjectPlanRequest",
     "ApplyResponse",
     "ApplyResponseAppsItem",
@@ -2747,6 +2796,8 @@ __all__ = (
     "AppOperationPreviewChecks",
     "AppOperationPreviewOperation",
     "AppOperationPreviewSchemaVersion",
+    "AppPostgresBinding",
+    "AppPostgresBindingList",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppReleaseReview",
@@ -2769,6 +2820,9 @@ __all__ = (
     "AppResponseVisibility",
     "AppResponseWorkloadClass",
     "AppRestartResponse",
+    "AppScalingReceipt",
+    "AppScalingSettings",
+    "AppScalingSnapshot",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
@@ -2952,6 +3006,7 @@ __all__ = (
     "ConfigRevisionDetailSecretVersions",
     "ConfigRevisionDetailVariables",
     "ConfigRevisionSource",
+    "ConfigRollbackReceipt",
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
@@ -3156,6 +3211,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",
@@ -3175,6 +3231,8 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
     "DeploymentResponseTag",
+    "DeploymentRetryIntent",
+    "DeploymentRetryIntentVersion",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
     "DeploymentStageHistoryEntry",
@@ -3212,6 +3270,23 @@ __all__ = (
     "DNSRecordInstruction",
     "DNSRecordInstructionPurpose",
     "DNSRecordInstructionType",
+    "DomainApplyRequest",
+    "DomainApplyResponse",
+    "DomainBindingChange",
+    "DomainBindingChangeAction",
+    "DomainBindingSpec",
+    "DomainBindingTarget",
+    "DomainDoctorCheck",
+    "DomainDoctorCheckName",
+    "DomainDoctorCheckStatus",
+    "DomainManifest",
+    "DomainManifestVersion",
+    "DomainPlan",
+    "DomainPlanVersion",
+    "DomainReadiness",
+    "DomainReadinessOwnership",
+    "DomainReadinessRouting",
+    "DomainReadinessStatus",
     "DurableEntityValidatorDeploymentInfo",
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
@@ -3447,9 +3522,15 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GetRuntimePolicyStatusEdgeRulesScope",
     "GetWorkerRolloutObservationScope",
+    "GitHubAccountConnection",
+    "GitHubAccountConnectionHealth",
+    "GitHubAccountConnections",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
+    "GitHubConnectionManageRequest",
+    "GitHubConnectionVerification",
+    "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
@@ -4321,6 +4402,14 @@ __all__ = (
     "ProjectDeploymentReadiness",
     "ProjectDeploymentReadinessSchemaVersion",
     "ProjectDeploymentReadinessStatus",
+    "ProjectEnvironmentConfigChange",
+    "ProjectEnvironmentConfigChangeKind",
+    "ProjectEnvironmentConfigDiffResponse",
+    "ProjectEnvironmentConfigResponse",
+    "ProjectEnvironmentConfigResponseValues",
+    "ProjectEnvironmentSharedSecret",
+    "ProjectEnvironmentSharedSecretResponse",
+    "ProjectEnvironmentSharedSecretsResponse",
     "ProjectInitialSecrets",
     "ProjectInitialSecretsAdditionalProperty",
     "ProjectMigrationBaselineVerification",
@@ -4409,6 +4498,7 @@ __all__ = (
     "RaiseOverageCapRequest",
     "RealtimeTriggerConfig",
     "ReceiveInboundWebhookBody",
+    "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
     "ReleaseApprovalDecision",
@@ -4435,6 +4525,8 @@ __all__ = (
     "ReleaseFreezeWeeklyDaysItem",
     "ReleaseGateResult",
     "ReleaseGateResultKind",
+    "ReleaseOutcomeCheck",
+    "ReleaseOutcomeCheckTaskStatus",
     "ReleaseRestorePoint",
     "ReleaseTimeline",
     "ReleaseTimelineEvent",
@@ -4612,6 +4704,7 @@ __all__ = (
     "SecretRuntimeReloadObservationRuntimeState",
     "SecretRuntimeReloadObservationSignal",
     "SecretScanResult",
+    "ServiceAbortReceipt",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",
@@ -4656,6 +4749,7 @@ __all__ = (
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetPasswordRequest",
+    "SetProjectEnvironmentSharedSecretRequest",
     "SetServiceWakeAheadRequest",
     "SetWorkflowRecoveryPolicyRequest",
     "SeverityCounts",
@@ -4776,6 +4870,8 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateProjectEnvironmentConfigRequest",
+    "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",

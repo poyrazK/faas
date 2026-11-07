@@ -692,6 +692,8 @@ export class KeysService {
    * the next rotation observes the new value. `days=0` is atomic
    * rotation (no grace); `days=null` (or omission) clears the
    * override and falls back to the plan default.
+   * A failed save returns retryable 503 without invalidating the cache
+   * or emitting a successful change audit event.
    *
    * @returns GraceWindowResponse Override applied.
    * @throws ApiError
@@ -713,6 +715,10 @@ export class KeysService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

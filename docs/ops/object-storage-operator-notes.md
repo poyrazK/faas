@@ -553,7 +553,10 @@ concurrent writes to the same part return 409. Different parts remain concurrent
 Successful verified transfers settle their token. Failed or uncertain transfers
 block finalization for a conservative 36-minute window (30-minute transfer
 context, 60-second internal URL, five-minute grace). Expiry alone releases no
-capacity. Completion checks the part revision and absence of in-flight writes,
+capacity. An abort settles an uncertain attempt once its window has ended and
+the native abort is verified (no parts or `NoSuchUpload`), so an upload a
+client abandoned mid-part finishes aborting instead of retrying forever
+(ADR-20261104151650); completion still waits for proof. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
 Conditional completion also persists its immutable condition in a distinct
@@ -1093,7 +1096,9 @@ each backend's optional `usage_reports_path` to an **absolute, operator-owned
 regular JSON file**, readable by apid but not writable by customer workloads.
 A provider-specific exporter must atomically replace this file with an array
 of `ObjectStorageUsageReport` records from actual provider data. Apid imports
-it each accounting sweep. Files are capped at 4 MiB / 10,000 reports. Keep
+it each accounting sweep. Files are capped at 4 MiB / 10,000 reports, including
+the serialized JSON and trailing newline. The publisher checks both limits
+before replacing the previous file, using the same bounds as the importer. Keep
 exports limited to the latest cumulative report per account/month/backend.
 Publish the same feed to all API replicas, or configure a designated importer.
 
@@ -1108,16 +1113,24 @@ as zero. Neither Gregale's compute MB-seconds nor inventory samples substitute
 for these billing quantities.
 
 The repository includes an OVH Public Cloud adapter in
-`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed usage-history
-API and normalizes bucket storage byte-hours, outgoing bandwidth, and provider
-costs when the provider response is denominated in EUR. A non-EUR project is
+`pkg/objectstorage/ovh_usage.go`. It reads the provider's signed `/usage/current`
+API for the current UTC month and `/usage/history` for closed periods. Historical
+exports require one matching, finalized complete UTC-month document; missing,
+partial or ambiguous periods remain unavailable. The adapter normalizes bucket
+storage byte-hours, outgoing bandwidth, and provider costs. Native per-storage
+`totalPrice` values are decimal numbers; the enclosing document supplies the
+currency. EUR prices are converted with exact decimal arithmetic, rounding a
+positive fractional millicent up. A non-EUR project is
 rejected until an explicit operator FX/conversion policy exists. OVH's public
 usage response does not currently include a request count, so the branded
 gateway records every outbound provider request attempt in the durable
 `object_storage_request_metrics` ledger. For GA, the OVH runner reads OVH
 Server Access Logging from the configured operator bucket per physical bucket
-and month, which also covers direct provider URLs; it fails closed when a log
-object is missing, malformed, partial, or unknown. It never substitutes
+and month, including direct provider URLs. Publication requires independent
+coverage evidence from a qualified collector; best-effort delivery and a
+nonempty log bucket cannot establish completeness. It fails closed when
+coverage or a selected log object is missing, malformed, partial, or unknown.
+It never substitutes
 signed-URL issuance counts or an explicit zero for unavailable data. The
 catalog and request source are injected through narrow interfaces so a
 qualified R2, AWS, GCS, or storage-node adapter can replace OVH without
@@ -1136,7 +1149,9 @@ For an OVH backend, set `usage.driver` to `ovh`, provide the three OVH API
 credential environment-variable names, and configure `request_log_bucket` (and
 optionally `request_log_prefix`) for a dedicated same-region bucket receiving
 [OVH Server Access Logging](https://docs.ovhcloud.com/en/guides/storage-and-backup/object-storage/s3-server-access-logging)
-from every managed physical bucket. Keep
+from every managed physical bucket. Set `request_log_coverage_path` to an
+absolute path containing the qualified collector's coverage manifest described
+below. Without that configuration the OVH export job is not started. Keep
 `usage_reports_path` in the operator-owned registry, in a directory `apid` owns
 (for example `/var/spool/faas/object-storage-usage/<backend>.json`; apid
 creates the directory). `apid` runs the exporter immediately and every five
@@ -1145,14 +1160,74 @@ provider environment, atomically replaces that file, imports it each accounting
 sweep, and exposes `faas_object_storage_usage_exports_total` plus
 `faas_object_storage_usage_export_last_success_timestamp_seconds` (0 until the
 first success) on its metrics endpoint. No S3 gateway runs the export
-(ADR-20261031122757). OVH access logs are delivered asynchronously
-(normally about one hour later), so the report's `observed_at` is intentionally
-one hour behind the wall clock. Missing credentials, an unreadable/malformed
-log object, or a failed export does not publish a partial report; `apid`
+(ADR-20261031122757). Current reports retain the financial source's native
+`lastUpdate` as `observed_at`; closed reports use the last microsecond of the
+proven complete month. The exporter never substitutes wall-clock freshness or
+backdates newer cumulative data by an arbitrary lag. Request-log coverage must
+independently reach the financial observation, and request counts are filtered
+to that same instant. Asynchronous access-log delivery (normally about one
+hour later) alone cannot establish this coverage. A missing physical bucket in
+the financial source is unavailable, even when its request count is measured
+zero; a quiet bucket needs an explicit financial row too.
+Missing credentials or coverage, an unreadable/malformed log object, or a failed
+export does not publish a partial report; `apid`
 therefore continues to enforce the configured freshness window and fails closed
 when the previous report ages out. The durable request ledger remains useful
-for gateway diagnostics, but access logs are authoritative because API-issued
-direct S3 URLs bypass the gateway.
+for gateway diagnostics. Complete provider evidence must also cover API-issued
+direct S3 URLs, which bypass the gateway.
+
+The coverage file is a JSON array with one entry per UTC month. Each entry
+asserts complete request coverage from `period_start` through `covered_through`
+for the exact backend placement and catalogued physical bucket set. It lists
+every log object needed for that interval and the lowercase SHA-256 of its
+exact bytes. For example (replace the sample identities and digests):
+
+```json
+[
+  {
+    "version": 1,
+    "backend_id": "managed-virginia-v1",
+    "backend_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "log_bucket": "dedicated-ovh-access-log-bucket",
+    "log_prefix": "gregale/",
+    "period_start": "2026-11-01T00:00:00Z",
+    "covered_through": "2026-11-05T12:00:00Z",
+    "buckets": ["physical-managed-bucket"],
+    "objects": [
+      {
+        "key": "gregale/qualified-log-object",
+        "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+      }
+    ]
+  }
+]
+```
+
+`covered_through` must reach the export's requested observation time and cannot
+be in the future. Records after that observation time are excluded. Retain
+prior-month entries while month close still needs them. Bucket coverage is
+explicit even for quiet buckets; `objects: []` is valid only when the collector
+can independently attest zero requests for the complete covered interval.
+The exporter never creates this proof from log timestamps or file presence.
+This repository does not supply a qualified coverage producer: until one is
+available, OVH request exports remain unavailable. A collector must establish
+completeness independently before asserting it here; writing a manifest alone
+does not qualify a best-effort source for billing.
+
+Publish the manifest atomically in an operator-owned directory. It must be a
+regular file, not a symlink, and must not be group/world writable (use `0600`).
+The parser rejects unknown fields, duplicate months and trailing JSON. Reads
+are bounded to 8 MiB, 10,000 log objects, 64 MiB per object, 1 MiB per line and
+one million unique tracked requests per export. Selected objects are verified
+against their digests before any report is published. Repeated delivery of an
+identical bucket/request-ID record counts once across all selected objects;
+conflicting records with that identity reject the export. Missing IDs also
+reject it. Normal monotonic import checks still apply to any lower corrected
+total; this change does not rewrite previously imported usage.
+
+Deploy the updated binary before adding `request_log_coverage_path` to existing
+registries. The path does not change backend placement fingerprints. No usage
+report schema or database migration is needed.
 
 All fields are required, including explicit zero measurements. Reports must
 match catalogued backend placement. Identical repeats are harmless;

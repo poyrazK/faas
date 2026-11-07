@@ -72,6 +72,19 @@ to tools or docs helped.
 - The harness costs real money per run: a trivial Claude session costs about
   $0.06 on Sonnet. Budgets are per task.
 
+### Default catalog recovery amendment
+
+The default is now `core`. Its saved-plan resources and prompts can point to
+review and recovery tools, so core also includes the read-only saved-plan
+review and check tools and retained action list, detail and outcome tools.
+This lets an agent recover an ambiguous action after its plan expires without
+switching catalogs. These tools retain existing connection, app and environment
+authorization, bounded retention and native completion semantics; listing them
+does not grant write authority or extend plan validity. The catalog size test
+continues to bound the context cost. With these five tools and their structured
+output schemas, the fully consented hosted catalog measures about 65 KB versus
+about 221 KB for all tools; the bound is 65 KiB.
+
 ## Rejected alternatives
 
 - **Changing the default to `core`:** it would silently remove tools from
