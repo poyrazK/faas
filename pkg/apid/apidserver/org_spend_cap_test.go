@@ -3,6 +3,7 @@ package apidserver_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -55,8 +56,12 @@ func TestOrgSpendCapRoutes(t *testing.T) {
 		t.Fatalf("viewer cleared the organization cap: %d %s", rec.Code, rec.Body)
 	}
 
+	// ADR-20261105120000: a paid organization keeps a cap.
 	rec = e.Do(t, "POST", "/v1/orgs/"+org.Slug+"/overage-cap", map[string]any{"overage_cap_cents": nil}, nil)
-	if rec.Code != 200 || read(nil).OverageCapCents != nil {
-		t.Fatalf("clear organization cap: %d %s", rec.Code, rec.Body)
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), api.CodeOverageCapRequired) {
+		t.Fatalf("clear paid organization cap: %d %s, want 422 %s", rec.Code, rec.Body, api.CodeOverageCapRequired)
+	}
+	if got := read(nil); got.OverageCapCents == nil || *got.OverageCapCents != 2500 {
+		t.Fatalf("organization cap after refused clear = %+v, want 2500", got)
 	}
 }

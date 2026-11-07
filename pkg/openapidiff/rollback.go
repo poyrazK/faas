@@ -9,6 +9,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ErrRollbackTargetUndeclared means the rollback or traffic target was captured
+// before the app declared any API contract: its snapshot has no paths. Such a
+// target never promised the routes it lacks, so comparing it with today's
+// contract would report every route as removed and block incident recovery to
+// any pre-adoption revision (ChronoLake finding 24). It wraps
+// ErrSnapshotBaselineMissing, which every caller already treats as "nothing to
+// compare, allowed".
+var ErrRollbackTargetUndeclared = fmt.Errorf("%w: rollback target declared no API contract", ErrSnapshotBaselineMissing)
+
+// undeclaredContract reports whether a stored snapshot declares no paths. An
+// unreadable snapshot is not undeclared: CompareSnapshots reports it.
+func undeclaredContract(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	spec, err := UnmarshalSnapshot(raw)
+	return err == nil && len(spec.Paths) == 0
+}
+
 // CheckDeploymentRollback pins the baseline to the selected serving deployment.
 // A dark candidate or another production lane cannot replace that baseline.
 // Pre-capture targets retain the existing projection fallback.
@@ -30,6 +49,9 @@ func CheckDeploymentRollback(ctx context.Context, store state.Store, appID, targ
 		return PromotionCheck{}, fmt.Errorf("read rollback contract: %w", err)
 	}
 	check := PromotionCheck{Proposed: proposed, ProposedSource: source, Diff: SnapshotDiff{ProposedSHA256: proposed.SHA256}}
+	if undeclaredContract(proposed.Snapshot) {
+		return check, ErrRollbackTargetUndeclared
+	}
 	if currentID == "" {
 		return check, ErrSnapshotBaselineMissing
 	}

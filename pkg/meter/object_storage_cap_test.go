@@ -69,6 +69,7 @@ func TestEgressPushReservesLiveObjectStorageAgainstCap(t *testing.T) {
 	}
 	saveObjectStorageCharge(t, store, acct.ID, state.ObjectStorageDeliveryLive, state.ObjectStoragePeriod(start), 500, 0)
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
 	completeUsageThrough(t, ctx, store, start.Add(time.Hour))
 	if _, err := pusher.PushPending(ctx, 24*time.Hour); err != nil {
