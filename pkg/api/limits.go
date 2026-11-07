@@ -184,6 +184,16 @@ const (
 // shorter than other non-admin keys' because agents run unattended.
 const AgentKeyLifetime = 90 * 24 * time.Hour
 
+// Agent approvals (ADR-20261104140058): a request waits this long for a
+// person and its approval stays usable until then; one key holds at most
+// MaxPendingAgentApprovals undecided requests; a body up to
+// AgentApprovalBodyBindBytes is bound by its hash, a larger one is not.
+const (
+	AgentApprovalTTL           = 30 * time.Minute
+	MaxPendingAgentApprovals   = 20
+	AgentApprovalBodyBindBytes = 1 << 20
+)
+
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.

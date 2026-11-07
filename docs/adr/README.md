@@ -40,6 +40,8 @@
 
 - [ADR-20261104104521: Recoverable app scaling](20261104104521-recoverable-app-scaling.md) — accepted; native app/environment identity and revision guards, atomic scaling receipts, safe MCP retries, and configuration verification.
 
+- [ADR-20261104140058: Human approval for risky agent actions](20261104140058-human-approval-for-risky-agent-actions.md) — accepted; apid answers an agent key's deletes, production deploys, credential and billing changes with 428 approval_required and a review link; a signed-in member who connected the agent, or an org owner/admin, approves; the identical retry consumes the approval once
+- [ADR-20261104085712: Agent connections can be limited to projects](20261104085712-agent-connections-limited-to-projects.md) — accepted; agent and hosted MCP keys may carry a set of projects; apid refuses everything outside it
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
 - [ADR-20261104002000: Serialize rollback recovery](20261104002000-rollback-recovery-serialization.md) — accepted; automatic rollback checks the observed serving release, configuration restoration commits atomically, guards paginate, edge reads hold its mutation lock, database compensation reconciles actual traffic, project rollback conditionally restores all traffic, checked rollback rechecks release controls, and monitor intent commits with its incident link.
 

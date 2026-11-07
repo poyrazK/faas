@@ -61,6 +61,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -616,6 +617,12 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Incomplete upload",
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
+		return
+	}
+	// ADR-20261104140058: an agent deploying a production app needs a
+	// person's approval; the commit names its app only in the session, so
+	// the gate runs here rather than in the authentication middleware.
+	if actor, key, _, ok := authmw.PrincipalFrom(r); ok && s.authMw.RequireAgentApprovalForApp(w, r, actor, key, app) {
 		return
 	}
 	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {

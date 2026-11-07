@@ -5064,6 +5064,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	var k state.APIKey
 	switch {
 	case perr == nil:
@@ -5090,6 +5095,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -5143,6 +5152,9 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }

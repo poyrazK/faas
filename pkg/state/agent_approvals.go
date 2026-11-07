@@ -1,0 +1,400 @@
+package state
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"slices"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+// ErrTooManyAgentApprovals refuses a new approval request from a key that
+// already has api.MaxPendingAgentApprovals undecided ones.
+var ErrTooManyAgentApprovals = errors.New("too many pending agent approvals")
+
+// AgentApproval is a request of an agent key that waits for, or holds, a
+// person's decision (ADR-20261104140058).
+type AgentApproval struct {
+	ID        string
+	KeyID     string
+	AccountID string // the member who connected the agent
+	OrgID     string // the organization the key acts in
+	Category  string
+	Method    string
+	Path      string
+	// BodySHA256 binds the request body; nil when the body is not bound.
+	BodySHA256 []byte
+	Status     string
+	DecidedBy  string
+	CreatedAt  time.Time
+	DecidedAt  time.Time
+	ConsumedAt time.Time
+	ExpiresAt  time.Time
+}
+
+// AgentApprovalBinding is what an approval allows: one request of the key
+// with this method, path and body.
+type AgentApprovalBinding struct {
+	KeyID      string
+	Method     string
+	Path       string
+	BodySHA256 []byte
+}
+
+// EffectiveStatus is the request's status, with an undecided or unused
+// approval past its expiry reported as expired.
+func (a AgentApproval) EffectiveStatus(now time.Time) string {
+	if (a.Status == api.AgentApprovalPending || a.Status == api.AgentApprovalApproved) && !now.Before(a.ExpiresAt) {
+		return api.AgentApprovalExpired
+	}
+	return a.Status
+}
+
+// AgentApprovalStore keeps agent keys' approval categories and their
+// approval requests. apid is the only writer.
+type AgentApprovalStore interface {
+	// SetAPIKeyApprovalCategories records the categories a key must have
+	// approved; set once, when the key is minted. ErrConflict when already
+	// set or a category is unknown.
+	SetAPIKeyApprovalCategories(ctx context.Context, keyID string, categories []string) error
+	// APIKeyApprovalCategories returns the key's categories and whether it
+	// chose any (false: every category applies).
+	APIKeyApprovalCategories(ctx context.Context, keyID string) ([]string, bool, error)
+	// ConsumeAgentApproval uses one approved, unexpired request with the
+	// binding. It reports false when there is none.
+	ConsumeAgentApproval(ctx context.Context, binding AgentApprovalBinding) (string, bool, error)
+	// RequestAgentApproval returns the key's pending request with the same
+	// binding, or records a new one. ErrTooManyAgentApprovals when the key
+	// has too many undecided requests.
+	RequestAgentApproval(ctx context.Context, request AgentApproval) (AgentApproval, error)
+	// AgentApproval returns one request.
+	AgentApproval(ctx context.Context, id string) (AgentApproval, error)
+	// DecideAgentApproval approves or denies a pending, unexpired request.
+	// ErrNotFound when there is no such request.
+	DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID string) error
+	// ListAgentApprovalsForKey returns the key's requests, newest first.
+	ListAgentApprovalsForKey(ctx context.Context, keyID string, limit int) ([]AgentApproval, error)
+	// ListPendingAgentApprovals returns the pending requests of agents the
+	// account connected or that act in one of the organizations.
+	ListPendingAgentApprovals(ctx context.Context, accountID string, orgIDs []string, limit int) ([]AgentApproval, error)
+}
+
+func validApprovalCategories(categories []string) bool {
+	for _, category := range categories {
+		if !slices.Contains(api.AgentApprovalCategories, category) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *PgStore) SetAPIKeyApprovalCategories(ctx context.Context, keyID string, categories []string) error {
+	if !validApprovalCategories(categories) {
+		return ErrConflict
+	}
+	return mapErr(sqlc.New().InsertAPIKeyApprovalCategories(ctx, s.pool, sqlc.InsertAPIKeyApprovalCategoriesParams{
+		KeyID: mustPgUUID(keyID), Categories: nonNilStrings(categories),
+	}))
+}
+
+func (s *PgStore) APIKeyApprovalCategories(ctx context.Context, keyID string) ([]string, bool, error) {
+	categories, err := sqlc.New().GetAPIKeyApprovalCategories(ctx, s.pool, mustPgUUID(keyID))
+	if err != nil {
+		if err = mapErr(err); errors.Is(err, ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return nonNilStrings(categories), true, nil
+}
+
+func (s *PgStore) ConsumeAgentApproval(ctx context.Context, binding AgentApprovalBinding) (string, bool, error) {
+	id, err := sqlc.New().ConsumeAgentApproval(ctx, s.pool, sqlc.ConsumeAgentApprovalParams{
+		KeyID: mustPgUUID(binding.KeyID), Method: binding.Method, Path: binding.Path, BodySha256: binding.BodySHA256,
+	})
+	if err != nil {
+		if err = mapErr(err); errors.Is(err, ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return pgUUIDString(id), true, nil
+}
+
+func (s *PgStore) RequestAgentApproval(ctx context.Context, request AgentApproval) (AgentApproval, error) {
+	q := sqlc.New()
+	key := mustPgUUID(request.KeyID)
+	if err := q.PruneAgentApprovals(ctx, s.pool, key); err != nil {
+		return AgentApproval{}, mapErr(err)
+	}
+	existing, err := q.FindPendingAgentApproval(ctx, s.pool, sqlc.FindPendingAgentApprovalParams{
+		KeyID: key, Method: request.Method, Path: request.Path, BodySha256: request.BodySHA256,
+	})
+	if err == nil {
+		return s.AgentApproval(ctx, pgUUIDString(existing.ID))
+	}
+	if err = mapErr(err); !errors.Is(err, ErrNotFound) {
+		return AgentApproval{}, err
+	}
+	pending, err := q.CountPendingAgentApprovals(ctx, s.pool, key)
+	if err != nil {
+		return AgentApproval{}, mapErr(err)
+	}
+	if int(pending) >= api.MaxPendingAgentApprovals {
+		return AgentApproval{}, ErrTooManyAgentApprovals
+	}
+	request.ID = uuid.NewString()
+	if err := q.InsertAgentApproval(ctx, s.pool, sqlc.InsertAgentApprovalParams{
+		ID: mustPgUUID(request.ID), KeyID: key, AccountID: mustPgUUID(request.AccountID), OrgID: mustPgUUID(request.OrgID),
+		Category: request.Category, Method: request.Method, Path: request.Path, BodySha256: request.BodySHA256,
+		ExpiresAt: pgTime(request.ExpiresAt),
+	}); err != nil {
+		return AgentApproval{}, mapErr(err)
+	}
+	return s.AgentApproval(ctx, request.ID)
+}
+
+func (s *PgStore) AgentApproval(ctx context.Context, id string) (AgentApproval, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return AgentApproval{}, ErrNotFound
+	}
+	row, err := sqlc.New().GetAgentApproval(ctx, s.pool, mustPgUUID(id))
+	if err != nil {
+		return AgentApproval{}, mapErr(err)
+	}
+	return agentApprovalFromRow(row), nil
+}
+
+func (s *PgStore) DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return ErrNotFound
+	}
+	status := api.AgentApprovalDenied
+	if approve {
+		status = api.AgentApprovalApproved
+	}
+	n, err := sqlc.New().DecideAgentApproval(ctx, s.pool, sqlc.DecideAgentApprovalParams{Status: status, DecidedBy: mustPgUUID(deciderID), ID: mustPgUUID(id)})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) ListAgentApprovalsForKey(ctx context.Context, keyID string, limit int) ([]AgentApproval, error) {
+	rows, err := sqlc.New().ListAgentApprovalsForKey(ctx, s.pool, sqlc.ListAgentApprovalsForKeyParams{KeyID: mustPgUUID(keyID), MaxRows: int32(limit)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return agentApprovalsFromRows(rows), nil
+}
+
+func (s *PgStore) ListPendingAgentApprovals(ctx context.Context, accountID string, orgIDs []string, limit int) ([]AgentApproval, error) {
+	rows, err := sqlc.New().ListPendingAgentApprovals(ctx, s.pool, sqlc.ListPendingAgentApprovalsParams{
+		AccountID: mustPgUUID(accountID), OrgIds: pgUUIDList(orgIDs), MaxRows: int32(limit),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return agentApprovalsFromRows(rows), nil
+}
+
+func agentApprovalsFromRows(rows []sqlc.AgentApprovalRequest) []AgentApproval {
+	out := make([]AgentApproval, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, agentApprovalFromRow(row))
+	}
+	return out
+}
+
+func agentApprovalFromRow(row sqlc.AgentApprovalRequest) AgentApproval {
+	return AgentApproval{
+		ID: pgUUIDString(row.ID), KeyID: pgUUIDString(row.KeyID), AccountID: pgUUIDString(row.AccountID), OrgID: pgUUIDString(row.OrgID),
+		Category: row.Category, Method: row.Method, Path: row.Path, BodySHA256: row.BodySha256, Status: row.Status,
+		DecidedBy: pgUUIDString(row.DecidedBy), CreatedAt: row.CreatedAt.Time, DecidedAt: row.DecidedAt.Time,
+		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time,
+	}
+}
+
+// --- MemStore ---------------------------------------------------------------
+
+func (m *MemStore) SetAPIKeyApprovalCategories(_ context.Context, keyID string, categories []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !validApprovalCategories(categories) {
+		return ErrConflict
+	}
+	if _, ok := m.keyApprovalCategories[keyID]; ok {
+		return ErrConflict
+	}
+	if !m.hasKeyLocked(keyID) {
+		return ErrNotFound
+	}
+	if m.keyApprovalCategories == nil {
+		m.keyApprovalCategories = map[string][]string{}
+	}
+	m.keyApprovalCategories[keyID] = nonNilStrings(slices.Clone(categories))
+	return nil
+}
+
+func (m *MemStore) APIKeyApprovalCategories(_ context.Context, keyID string) ([]string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	categories, ok := m.keyApprovalCategories[keyID]
+	if !ok || !m.hasKeyLocked(keyID) {
+		return nil, false, nil
+	}
+	return slices.Clone(categories), true, nil
+}
+
+// hasKeyLocked reports whether the API key exists; its approval rows go with
+// it, as ON DELETE CASCADE removes them in Postgres.
+func (m *MemStore) hasKeyLocked(keyID string) bool {
+	for _, key := range m.keys {
+		if key.ID == keyID {
+			return true
+		}
+	}
+	return false
+}
+
+func sameApprovalBinding(a AgentApproval, b AgentApprovalBinding) bool {
+	return a.KeyID == b.KeyID && a.Method == b.Method && a.Path == b.Path && bytes.Equal(a.BodySHA256, b.BodySHA256) &&
+		(a.BodySHA256 == nil) == (b.BodySHA256 == nil)
+}
+
+func (m *MemStore) ConsumeAgentApproval(_ context.Context, binding AgentApprovalBinding) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	var found *AgentApproval
+	for id, approval := range m.agentApprovals {
+		if approval.Status != api.AgentApprovalApproved || !now.Before(approval.ExpiresAt) || !sameApprovalBinding(approval, binding) || !m.hasKeyLocked(approval.KeyID) {
+			continue
+		}
+		if found == nil || approval.DecidedAt.Before(found.DecidedAt) {
+			candidate := m.agentApprovals[id]
+			found = &candidate
+		}
+	}
+	if found == nil {
+		return "", false, nil
+	}
+	found.Status, found.ConsumedAt = api.AgentApprovalConsumed, now
+	m.agentApprovals[found.ID] = *found
+	return found.ID, true, nil
+}
+
+func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval) (AgentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasKeyLocked(request.KeyID) {
+		return AgentApproval{}, ErrNotFound
+	}
+	if !slices.Contains(api.AgentApprovalCategories, request.Category) {
+		return AgentApproval{}, ErrConflict
+	}
+	now := time.Now()
+	binding := AgentApprovalBinding{KeyID: request.KeyID, Method: request.Method, Path: request.Path, BodySHA256: request.BodySHA256}
+	pending := 0
+	var reuse *AgentApproval
+	for id, approval := range m.agentApprovals {
+		if approval.KeyID != request.KeyID {
+			continue
+		}
+		if approval.ExpiresAt.Before(now.Add(-7 * 24 * time.Hour)) {
+			delete(m.agentApprovals, id)
+			continue
+		}
+		if approval.Status != api.AgentApprovalPending || !now.Before(approval.ExpiresAt) {
+			continue
+		}
+		pending++
+		if sameApprovalBinding(approval, binding) && (reuse == nil || approval.CreatedAt.After(reuse.CreatedAt)) {
+			candidate := approval
+			reuse = &candidate
+		}
+	}
+	if reuse != nil {
+		return cloneAgentApproval(*reuse), nil
+	}
+	if pending >= api.MaxPendingAgentApprovals {
+		return AgentApproval{}, ErrTooManyAgentApprovals
+	}
+	request.ID, request.Status, request.CreatedAt = uuid.NewString(), api.AgentApprovalPending, now
+	request.DecidedBy, request.DecidedAt, request.ConsumedAt = "", time.Time{}, time.Time{}
+	request.BodySHA256 = bytes.Clone(request.BodySHA256)
+	if m.agentApprovals == nil {
+		m.agentApprovals = map[string]AgentApproval{}
+	}
+	m.agentApprovals[request.ID] = request
+	return cloneAgentApproval(request), nil
+}
+
+func cloneAgentApproval(a AgentApproval) AgentApproval {
+	a.BodySHA256 = bytes.Clone(a.BodySHA256)
+	return a
+}
+
+func (m *MemStore) AgentApproval(_ context.Context, id string) (AgentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	approval, ok := m.agentApprovals[id]
+	if !ok || !m.hasKeyLocked(approval.KeyID) {
+		return AgentApproval{}, ErrNotFound
+	}
+	return cloneAgentApproval(approval), nil
+}
+
+func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve bool, deciderID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	approval, ok := m.agentApprovals[id]
+	now := time.Now()
+	if !ok || approval.Status != api.AgentApprovalPending || !now.Before(approval.ExpiresAt) || !m.hasKeyLocked(approval.KeyID) {
+		return ErrNotFound
+	}
+	approval.Status = api.AgentApprovalDenied
+	if approve {
+		approval.Status = api.AgentApprovalApproved
+	}
+	approval.DecidedBy, approval.DecidedAt = deciderID, now
+	m.agentApprovals[id] = approval
+	return nil
+}
+
+func (m *MemStore) ListAgentApprovalsForKey(_ context.Context, keyID string, limit int) ([]AgentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.listAgentApprovalsLocked(limit, func(a AgentApproval) bool { return a.KeyID == keyID }), nil
+}
+
+func (m *MemStore) ListPendingAgentApprovals(_ context.Context, accountID string, orgIDs []string, limit int) ([]AgentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	return m.listAgentApprovalsLocked(limit, func(a AgentApproval) bool {
+		return a.Status == api.AgentApprovalPending && now.Before(a.ExpiresAt) && (a.AccountID == accountID || slices.Contains(orgIDs, a.OrgID))
+	}), nil
+}
+
+func (m *MemStore) listAgentApprovalsLocked(limit int, keep func(AgentApproval) bool) []AgentApproval {
+	out := []AgentApproval{}
+	for _, approval := range m.agentApprovals {
+		if keep(approval) && m.hasKeyLocked(approval.KeyID) {
+			out = append(out, cloneAgentApproval(approval))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}

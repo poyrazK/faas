@@ -1397,9 +1397,12 @@ type MemStore struct {
 	orgs             map[string]Org
 	orgAgentPolicies map[string]OrgAgentPolicy // ADR-20261101225122
 	keyProjectLimits map[string][]string       // ADR-20261104085712
-	orgsBySlug       map[string]string         // lower(slug) -> id
-	memberships      map[orgAccountKey]OrgMembership
-	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	// ADR-20261104140058: agent keys' approval categories and requests.
+	keyApprovalCategories map[string][]string
+	agentApprovals        map[string]AgentApproval
+	orgsBySlug            map[string]string // lower(slug) -> id
+	memberships           map[orgAccountKey]OrgMembership
+	invitations           map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call
