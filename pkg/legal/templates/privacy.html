@@ -1,5 +1,5 @@
 {{define "privacy"}}
-<p>This policy explains what personal data {{.C.OperatorName}} ("Gregale", "we", "us") collects when you use the Gregale website, dashboard, API, command-line tool and SDKs (the "Service"), why, and what rights you have. We are the controller of the data described here.</p>
+<p>This policy explains what personal data {{if .C.OperatorName}}{{.C.OperatorName}} ("Gregale", "we", "us"){{else}}Gregale ("we", "us"){{end}} collects when you use the Gregale website, dashboard, API, command-line tool and SDKs (the "Service"), why, and what rights you have. We are the controller of the data described here.</p>
 <p>It does not cover data that you, as our customer, process in your own apps on Gregale. For that data you are the controller and we are your processor under our <a href="https://gregale.dev/docs/dpa">Data Processing Agreement</a>.</p>
 
 <h2>1. What we collect</h2>
@@ -57,5 +57,5 @@
 <p>We will post changes here and update the effective date. For material changes we email account owners before they take effect.</p>
 
 <h2>11. Contact</h2>
-<p>{{.C.OperatorName}}, {{.C.OperatorAddress}}, {{.C.OperatorCountry}}. Email: <a href="mailto:{{.C.PrivacyEmail}}">{{.C.PrivacyEmail}}</a>.</p>
+<p>{{template "operator-line" .}}Email: <a href="mailto:{{.C.PrivacyEmail}}">{{.C.PrivacyEmail}}</a>.</p>
 {{end}}

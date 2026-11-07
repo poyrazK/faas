@@ -33,9 +33,9 @@ footer { color: var(--muted); font-size: .9rem; border-top: 1px solid var(--rule
 {{if eq .Doc "terms"}}{{template "terms" .}}{{else if eq .Doc "privacy"}}{{template "privacy" .}}{{else}}{{template "acceptable-use" .}}{{end}}
 </main>
 <footer>
-Gregale is operated by {{.C.OperatorName}}, {{.C.OperatorAddress}}, {{.C.OperatorCountry}}.
-Questions about these documents: <a href="mailto:{{.C.ContactEmail}}">{{.C.ContactEmail}}</a>.
+{{if .C.OperatorName}}Gregale is operated by {{template "operator-line" .}}{{end}}Questions about these documents: <a href="mailto:{{.C.ContactEmail}}">{{.C.ContactEmail}}</a>.
 </footer>
 </div>
 </body>
 </html>
+{{define "operator-line"}}{{if .C.OperatorName}}{{.C.OperatorName}}{{with .C.OperatorAddress}}, {{.}}{{end}}{{with .C.OperatorCountry}}, {{.}}{{end}}. {{end}}{{end}}

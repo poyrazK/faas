@@ -104,6 +104,37 @@ func TestIndividualOperatorWording(t *testing.T) {
 	}
 }
 
+// An individual operator may publish under the Gregale name alone; a
+// company operator must be named with its address.
+func TestBrandOnlyIndividualOperator(t *testing.T) {
+	c := fullConfig(t)
+	c.IndividualOperator = true
+	c.OperatorName, c.OperatorAddress, c.OperatorCountry = "", "", ""
+	if m := c.Missing(); len(m) > 0 {
+		t.Fatalf("brand-only individual operator should publish, missing %v", m)
+	}
+	for _, doc := range Documents {
+		body, err := Render(c, doc, "")
+		if err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		s := string(body)
+		for _, bad := range []string{"operated by", ", ,", " , ", "()", "an individual"} {
+			if strings.Contains(s, bad) {
+				t.Errorf("%s: brand-only text contains %q", doc, bad)
+			}
+		}
+	}
+	terms, _ := Render(c, Terms, "")
+	if !strings.Contains(string(terms), `agreement between you and Gregale ("we", "us"), the operator of the Gregale platform`) {
+		t.Error("terms: brand-only party wording missing")
+	}
+	c.IndividualOperator = false
+	if c.Published() {
+		t.Fatal("a company operator without name and address must stay unpublished")
+	}
+}
+
 func TestUnknownDocument(t *testing.T) {
 	if _, err := Render(fullConfig(t), "cookies", ""); err == nil {
 		t.Fatal("unknown document must error")

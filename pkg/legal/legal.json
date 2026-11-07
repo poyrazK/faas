@@ -2,14 +2,14 @@
   "individual_operator": true,
   "operator_name": "",
   "operator_address": "",
-  "operator_country": "Türkiye",
+  "operator_country": "",
   "governing_law": "the State of Delaware, United States",
   "courts": "the State of Delaware",
   "effective_date": "",
   "minimum_age": 16,
-  "contact_email": "legal@gregale.dev",
-  "privacy_email": "privacy@gregale.dev",
-  "abuse_email": "abuse@gregale.dev",
-  "security_email": "security@gregale.dev",
-  "support_email": "support@gregale.dev"
+  "contact_email": "gregale@gregale.dev",
+  "privacy_email": "gregale@gregale.dev",
+  "abuse_email": "gregale@gregale.dev",
+  "security_email": "gregale@gregale.dev",
+  "support_email": "gregale@gregale.dev"
 }

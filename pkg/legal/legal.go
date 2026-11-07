@@ -44,6 +44,8 @@ type Config struct {
 	// IndividualOperator is true while a person, not a company, runs the
 	// Service. The documents then say so and announce the move to the
 	// company being formed. operator_address may be just the city.
+	// While it is true the operator name, address and country are optional;
+	// without a name the documents speak as "Gregale" with the contact email.
 	IndividualOperator bool   `json:"individual_operator"`
 	OperatorName       string `json:"operator_name"`
 	OperatorAddress    string `json:"operator_address"`
@@ -62,10 +64,7 @@ type Config struct {
 // Missing names every required field that is still empty or invalid.
 func (c Config) Missing() []string {
 	var out []string
-	for _, f := range []struct{ name, value string }{
-		{"operator_name", c.OperatorName},
-		{"operator_address", c.OperatorAddress},
-		{"operator_country", c.OperatorCountry},
+	required := []struct{ name, value string }{
 		{"governing_law", c.GoverningLaw},
 		{"courts", c.Courts},
 		{"effective_date", c.EffectiveDate},
@@ -74,7 +73,16 @@ func (c Config) Missing() []string {
 		{"abuse_email", c.AbuseEmail},
 		{"security_email", c.SecurityEmail},
 		{"support_email", c.SupportEmail},
-	} {
+	}
+	// A company operator must be named with its registered address. An
+	// individual operator may publish under the Gregale name alone.
+	if !c.IndividualOperator {
+		required = append(required,
+			struct{ name, value string }{"operator_name", c.OperatorName},
+			struct{ name, value string }{"operator_address", c.OperatorAddress},
+			struct{ name, value string }{"operator_country", c.OperatorCountry})
+	}
+	for _, f := range required {
 		if strings.TrimSpace(f.value) == "" {
 			out = append(out, f.name)
 		}
