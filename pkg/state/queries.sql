@@ -16837,7 +16837,7 @@ SELECT pg_advisory_xact_lock(sqlc.arg(lock_class)::integer,hashtext(sqlc.arg(nod
 
 -- name: EnvironmentQualificationNodeUsedMB :one
 SELECT coalesce(sum(ram_mb+sqlc.arg(overhead_mb)::integer),0)::bigint FROM instances
-WHERE node_id=sqlc.arg(node_id)::uuid AND state IN ('waking','cold_booting','running','draining','warm');
+WHERE node_id=sqlc.arg(node_id)::uuid AND state IN ('waking','cold_booting','running','draining','warm','snapshotting');
 
 -- name: CreateEnvironmentQualificationInstance :one
 INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
