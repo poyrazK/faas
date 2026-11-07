@@ -52,7 +52,10 @@ func validDataAPIAllowlist(value string, pattern *regexp.Regexp, limit int) bool
 func unsetDataAPISetting(ctx context.Context, client *api.Client, app, key, scope string) error {
 	err := client.UnsetSecretWithScope(ctx, app, key, scope)
 	var ae *APIError
-	if err != nil && errors.As(err, &ae) && ae.Problem.Status == http.StatusNotFound {
+	// A missing secret answers 400 secret_not_found, not 404: turning usage
+	// reporting off when caps were never set failed on it (ChronoLake
+	// finding 21).
+	if err != nil && errors.As(err, &ae) && (ae.Problem.Status == http.StatusNotFound || ae.Problem.Code == api.CodeSecretNotFound) {
 		return nil
 	}
 	return err

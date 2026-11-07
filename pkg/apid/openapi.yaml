@@ -21912,7 +21912,7 @@ paths:
       summary: Read an app's change timeline.
       description: |
         Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-        otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+        otherwise 403 `change_timeline_unavailable`. Requires apps:read or
         admin; no MFA required.
 
         Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -21952,7 +21952,7 @@ paths:
       summary: Search an app's log events.
       description: |
         Internal preview, enabled by
-        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
         Requires apps:read or admin.
 
         Returns one newest-first page of the app's log ledger. Filters
@@ -53417,7 +53417,7 @@ paths:
       summary: Account service map of caller → target app edges.
       description: |
         Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-        otherwise 503 `service_map_unavailable`.
+        otherwise 403 `service_map_unavailable`.
 
         Built from the unsampled service-proxy edge series. Both the
         caller and the target are constrained to the account's apps.
