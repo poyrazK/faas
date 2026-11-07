@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -78,5 +79,14 @@ func TestPauseTierWorkloadExcludesNonServingInstances(t *testing.T) {
 				t.Fatalf("pauseTierWorkload = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// adr: 20261107122928 — a fleet poll of vmmd's Stats carries the idle ladder
+// level of each instance.
+func TestVMInstanceStatFromProtoCarriesIdleLadderLevel(t *testing.T) {
+	row := sched.VMInstanceStatFromProto(&vmmdpb.InstanceStats{Instance: "vm-a", QuietPaused: true, IdleLadderLevel: 2})
+	if row.InstanceID != "vm-a" || !row.QuietPaused || row.IdleLadderLevel != 2 {
+		t.Fatalf("row = %+v, want vm-a quiet-paused at level 2", row)
 	}
 }

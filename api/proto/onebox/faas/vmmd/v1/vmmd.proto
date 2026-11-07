@@ -1876,6 +1876,13 @@ message InstanceStats {
   // ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
   // the node does not report this guarantee; the plan cap is for this VM.
   HTTPAdmissionEnforcement http_admission_enforcement = 29;
+  // ADR-20261107122928: the idle ladder level vmmd holds the instance at
+  // while its idle_ladder is on: 1 quiet-paused, 2 quiet-paused and quiet for
+  // at least the ladder's freeze delay (10 s). Measured admission charges a
+  // level-2 instance's memory with the frozen floor (FrozenChargeFloorMB).
+  // 0 when the ladder is off, the instance is running, or it is not on the
+  // ladder.
+  int32 idle_ladder_level = 30;
 }
 
 message HTTPAdmissionEnforcement {

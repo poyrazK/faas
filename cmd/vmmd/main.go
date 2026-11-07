@@ -1410,15 +1410,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.QuietPause || cfg.QuietPauseObserve || cfg.AgentWaitPause {
 		go mgr.RunQuietPause(ctx)
 	}
-	// ADR-20261107122928 idle ladder, observe mode only: measure the level
-	// each request-serving instance's idle time reaches. Nothing is paused.
-	if cfg.IdleLadder == idleLadderObserve {
-		mgr.WithIdleLadderObserve(fcvm.IdleLadderConfig{
+	// ADR-20261107122928 idle ladder. Observe measures the level each
+	// request-serving instance's idle time reaches and pauses nothing; on
+	// also quiet-pauses at the ladder's 1 s and reports instances quiet for
+	// 10 s at L2, whose memory measured admission charges with the frozen
+	// floor. LoadConfig
+	// refuses on without quiet pause.
+	if cfg.IdleLadder != idleLadderOff {
+		on := cfg.IdleLadder == idleLadderOn
+		mgr.WithIdleLadder(fcvm.IdleLadderConfig{
 			Activity: activityTracker,
 			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
+			On:       on,
 		})
 		go mgr.RunIdleLadderObserve(ctx)
-		log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
+		if on {
+			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet")
+		} else {
+			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
+		}
 	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance

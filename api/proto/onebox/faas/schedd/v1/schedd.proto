@@ -1145,6 +1145,11 @@ message InstanceTelemetry {
   google.protobuf.Timestamp quiet_last_pause_started_at = 22;
   google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
   google.protobuf.Int64Value quiet_paused_ns_total = 24;
+  // ADR-20261107122928: vmmd's InstanceStats.idle_ladder_level, the idle
+  // ladder level vmmd holds the instance at (1 quiet-paused, 2 quiet-paused
+  // and quiet for the ladder's freeze delay). 0 when off, running or not on
+  // the ladder.
+  int32 idle_ladder_level = 25;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

@@ -1,13 +1,23 @@
 package fcvm
 
-// Idle ladder observe mode (ADR-20261107122928, proposed). The ladder moves
-// an idle request-serving instance down levels by how long it has had nothing
-// in flight: L1 quiet pause, L2 a vmmd-local freeze, L3 and L4 compress the
-// pages it left untouched, L5 snapshots it. Observe mode only measures: it
-// tracks every eligible instance's idle time, whatever its declared pause,
-// and records the level each would reach, the RAM held at each level, the
-// level each request wakes from and the billed MB-seconds the unbilled levels
-// would not bill. Nothing is paused, compressed or written anywhere.
+// The idle ladder (ADR-20261107122928, proposed). The ladder moves an idle
+// request-serving instance down levels by how long it has had nothing in
+// flight: L1 quiet pause, L2 a vmmd-local freeze, L3 and L4 compress the pages
+// it left untouched, L5 snapshots it.
+//
+// Observe mode only measures: it tracks every eligible instance's idle time,
+// whatever its declared pause, and records the level each would reach, the
+// RAM held at each level, the level each request wakes from and the billed
+// MB-seconds the unbilled levels would not bill.
+//
+// On adds the first two levels to the measurement, for the instances quiet
+// pause already pauses (functions and between_requests apps): quiet pause
+// waits IdleLadderQuietPauseAfterMillis (L1), and an instance quiet-paused
+// and quiet for IdleLadderFreezeAfterSeconds is reported at L2 in
+// InstanceStats, where measured admission charges its memory with the frozen
+// floor. The guest stays
+// quiet-paused and resumes on the next request as before; L2 changes only
+// how admission counts it. The deeper levels are not built yet.
 //
 // Lock order: m.mu is released before idleMu is taken; idleMu is a leaf.
 
@@ -82,19 +92,24 @@ func idleLadderEligibleFor(req WakeRequest, qualificationOnly bool) bool {
 		!req.KeepPaused && req.ExportDir == "" && req.PrivateNetworkID == ""
 }
 
-// IdleLadderConfig turns on the idle ladder's observe mode.
+// IdleLadderConfig turns on the idle ladder.
 type IdleLadderConfig struct {
 	Activity QuietActivity
 	Metrics  *IdleLadderMetrics
 	// Tick is the observe pass period; zero means DefaultIdleLadderTick.
 	Tick time.Duration
+	// On applies levels L1 and L2 to quiet-paused instances; without it the
+	// ladder only observes. On needs quiet pause (WithQuietPause, not in
+	// observe mode).
+	On bool
 }
 
-// WithIdleLadderObserve enables the idle ladder's observe mode. Without it
-// RunIdleLadderObserve returns at once.
-func (m *Manager) WithIdleLadderObserve(cfg IdleLadderConfig) *Manager {
+// WithIdleLadder enables the idle ladder. Without it RunIdleLadderObserve
+// returns at once and IdleLadderLevel reports IdleRunning.
+func (m *Manager) WithIdleLadder(cfg IdleLadderConfig) *Manager {
 	m.idleActivity = cfg.Activity
 	m.idleMetrics = cfg.Metrics
+	m.idleLadderOn = cfg.On
 	m.idleTick = cfg.Tick
 	if m.idleTick <= 0 {
 		m.idleTick = DefaultIdleLadderTick
@@ -229,6 +244,46 @@ func (m *Manager) idleLadderSample(st *idleLadderState, c idleLadderCandidate, n
 	m.idleMetrics.observeUnbilled(c.lease, min(step, max(past, 0)))
 }
 
+// quietPauseAfter is how long quiet pause waits before pausing inst: its own
+// delay, or the ladder's L1 delay when idle_ladder is on and that is shorter.
+func (m *Manager) quietPauseAfter(inst *Instance) time.Duration {
+	after := inst.QuietPauseAfter
+	if m.idleLadderOn && after > 0 {
+		after = min(after, api.IdleLadderQuietPauseAfterMillis*time.Millisecond)
+	}
+	return after
+}
+
+// IdleLadderLevel is the level vmmd holds an instance at while idle_ladder is
+// on: IdleQuietPause while quiet pause holds it paused, IdleFreeze once it
+// has also had nothing in flight for IdleLadderFreezeAfterSeconds. The deeper
+// levels are not built, so IdleFreeze is the most it reports. It is
+// IdleRunning when the ladder is off and for an instance that is running, is
+// an agent run, or whose last pause failed (its state is unknown).
+func (m *Manager) IdleLadderLevel(instance string, now time.Time) IdleLevel {
+	if !m.idleLadderOn || m.quietActivity == nil {
+		return IdleRunning
+	}
+	st := m.quietStateIfAny(instance)
+	if st == nil || st.inst.AgentRunOnly {
+		return IdleRunning
+	}
+	st.mu.Lock()
+	paused, since := st.paused.Load(), st.since
+	st.mu.Unlock()
+	if !paused || since.IsZero() {
+		return IdleRunning
+	}
+	from := st.seenAt
+	if _, last, ok := m.quietActivity.Quiet(instance); ok && last.After(from) {
+		from = last
+	}
+	if now.Sub(from) >= api.IdleLadderFreezeAfterSeconds*time.Second {
+		return IdleFreeze
+	}
+	return IdleQuietPause
+}
+
 // idleLadderSnapshot is one measured instance at scrape time.
 type idleLadderSnapshot struct {
 	lease Lease
@@ -278,7 +333,7 @@ type IdleLadderMetrics struct {
 // vmmd_idle_ladder_observed_wakes_total,
 // vmmd_idle_ladder_observed_gap_seconds and
 // vmmd_idle_ladder_observed_unbilled_mb_seconds_total on reg. The level
-// gauges read the Manager passed to WithIdleLadderObserve.
+// gauges read the Manager passed to WithIdleLadder.
 func NewIdleLadderMetrics(reg prometheus.Registerer) *IdleLadderMetrics {
 	m := &IdleLadderMetrics{
 		instances: prometheus.NewDesc("vmmd_idle_ladder_observed_instances",

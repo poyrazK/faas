@@ -142,7 +142,12 @@
 # cold compression at 1 and 3 min, snapshot at 10 min), the VM memory held at
 # each level, the level each request wakes from and the billed MB-seconds the
 # unbilled levels would not bill (vmmd_idle_ladder_observed_*). It pauses
-# nothing and runs beside quiet_pause. FAAS_IDLE_LADDER overrides.
+# nothing and runs beside quiet_pause. "on" measures the same and also
+# applies the first two levels to the instances quiet_pause pauses: it pauses
+# them after 1 s instead of 2 s, and reports those quiet for 10 s at level 2
+# (InstanceStats.idle_ladder_level), whose memory schedd's measured admission
+# charges with the frozen floor (8 MB, not 64). "on" needs quiet_pause on.
+# FAAS_IDLE_LADDER overrides.
 # Default: "off"
 # idle_ladder = "observe"
 
