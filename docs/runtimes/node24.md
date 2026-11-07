@@ -17,6 +17,9 @@ default for new function apps. A future PR may flip once fleet-wide
 
 ## Function contract
 
+The [handler API](../handler-api.md) lists everything a handler receives
+and can return.
+
 The customer's source is a Node module exporting either `default async
 function handler(event, ctx)` or a Fetch API object (`export default {
 fetch(request, env, ctx) { ... } }`), served at `/app/node24.js`.

@@ -16,6 +16,9 @@ identically.
 
 ## Function contract
 
+The [handler API](../handler-api.md) lists everything a handler receives
+and can return.
+
 The customer's source is a `handler.py` exporting a callable. Generated
 adapters are prewarmed during runner startup and process newline-framed §4.9
 envelopes in one long-lived subprocess; legacy protocol handlers retain one

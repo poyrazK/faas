@@ -1,5 +1,9 @@
 # Functions and runtimes
 
+Everything a handler receives and can use (request, `ctx`, responses,
+platform headers, limits, secrets, databases) is on one page:
+[handler API](handler-api.md).
+
 Functions are request handlers packaged with a supported runtime. Explicit
 runtime and handler flags make the contract unambiguous:
 
