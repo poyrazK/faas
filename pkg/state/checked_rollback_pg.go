@@ -290,13 +290,6 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if d.Status != DeployLive || d.TrafficPercent != 0 {
 		return r, ErrCheckedRollbackChanged
 	}
-	modeMatches, err := q.CheckedRollbackServiceModeMatches(ctx, tx, sqlc.CheckedRollbackServiceModeMatchesParams{AppID: mustPgUUID(r.AppID), Service: r.Service})
-	if err != nil {
-		return r, err
-	}
-	if !modeMatches {
-		return r, ErrCheckedRollbackChanged
-	}
 	if err = checkAppRollbackGraphTx(ctx, tx, r.AppID, r.Scope, d.ID); err != nil {
 		return r, err
 	}

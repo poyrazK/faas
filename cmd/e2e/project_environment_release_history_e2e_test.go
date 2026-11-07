@@ -74,7 +74,7 @@ func performReleaseHistoryPromotion(t *testing.T, f *projectEnvironmentPromotion
 	}
 
 	approvalPath := "/v1/projects/" + f.project.Slug + "/environments/production/approvals"
-	raw, status = doReq(t, f.h, f.key, http.MethodPost, approvalPath,
+	raw, status = doReq(t, f.h, f.approverKey, http.MethodPost, approvalPath,
 		api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken},
 		map[string]string{"Idempotency-Key": "release-history-approval"})
 	if status != http.StatusCreated {
