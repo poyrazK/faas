@@ -111,7 +111,8 @@ type Querier interface {
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
 	// New config: requests from the minute of the latest change on, served by an
-	// instance started after it or failing before any instance served them.
+	// instance started after it or failing before any instance served them
+	// (those carry no deployment; see the WHERE clause).
 	// Old config: requests in the baseline window before the guard opened.
 	// Telemetry is minute-bucketed, so instance start time attributes the change
 	// minute. Only deployments that existed when the guard opened count: a
