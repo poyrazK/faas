@@ -7844,7 +7844,7 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	OverageMillicentsPerGBHour = 5_000 // $0.05 per GB-RAM-hour (ADR-20261107192333, amends ADR-1430)
 	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
 	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's

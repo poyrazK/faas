@@ -118,7 +118,7 @@ func TestObjectStorageCeilingFollowsThePlanGrantAndSpendCap(t *testing.T) {
 		{"a zero cap stops at the included storage", PlanPro, nil, bytesOf(0), 50 * gib},
 		{"a low cap binds below the plan's ceiling", PlanHobby, nil, bytesOf(15), 15 * gib},
 		{"a support grant replaces the plan's ceiling", PlanPro, bytesOf(2_000 * gib), nil, 2_000 * gib},
-		{"the cap still tightens a grant", PlanPro, bytesOf(2_000 * gib), defaultCap(PlanPro), 383 * gib},
+		{"the cap still tightens a grant", PlanPro, bytesOf(2_000 * gib), defaultCap(PlanPro), 1_716 * gib},
 		{"free keeps its own ceiling", PlanFree, nil, nil, gib},
 		{"free ignores a grant", PlanFree, bytesOf(100 * gib), nil, gib},
 		{"free's ceiling is tighter than any cap", PlanFree, nil, bytesOf(1_000_000), gib},
