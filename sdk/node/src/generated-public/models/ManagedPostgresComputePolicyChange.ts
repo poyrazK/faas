@@ -11,10 +11,10 @@ export type ManagedPostgresComputePolicyChange = {
   from_scale_to_zero: boolean;
   target_scale_to_zero: boolean;
   generation: number;
-  state: 'pending' | 'succeeded';
+  state: 'pending' | 'succeeded' | 'failed';
   connection_interruption_expected: boolean;
   /**
-   * Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery.
+   * Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending.
    */
   last_error_code?: string;
   created_at: string;

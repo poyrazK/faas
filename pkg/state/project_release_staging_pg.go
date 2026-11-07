@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"slices"
 	"time"
 )
 
@@ -28,6 +29,11 @@ func releaseStageSnapshotPG(ctx context.Context, db sqlc.DBTX, account, project,
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
+	members, err := projectEnvironmentAppIDsDB(ctx, db, account, project, scope)
+	if err != nil {
+		return out, err
+	}
+	out.Apps = slices.DeleteFunc(out.Apps, func(app App) bool { return !slices.Contains(members, app.ID) })
 	if source != "" {
 		raw, err := sqlc.New().CheckedRollbackSourceForShare(ctx, db, sqlc.CheckedRollbackSourceForShareParams{ID: mustPgUUID(source), AccountID: mustPgUUID(account), ProjectID: mustPgUUID(project), Environment: scope})
 		if errors.Is(err, pgx.ErrNoRows) {

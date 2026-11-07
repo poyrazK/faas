@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // This private transport primitive consumes prepared stage queues. Public
@@ -125,7 +127,8 @@ func validateEnvironmentQueueReceipt(receipt environmentQueueReceipt, owner Invo
 }
 
 // The producer freezes the retry policy; a later account downgrade still
-// clamps its attempt budget. Zero policy requests an immediate, finite retry.
+// clamps its attempt budget. An unset policy uses the platform's capped
+// delivery backoff instead of immediately redelivering a failed message.
 func environmentQueueRetry(inv Invocation, plan api.Plan, now time.Time, lastError string) (Invocation, error) {
 	limits, ok := api.LimitsFor(plan)
 	if !ok {
@@ -140,7 +143,11 @@ func environmentQueueRetry(inv Invocation, plan api.Plan, now time.Time, lastErr
 		inv.Outcome = &outcome
 	} else {
 		inv.State, inv.Outcome, inv.CompletedAt = InvocationPending, nil, nil
-		inv.DueAt = now.Add(policy.Backoff(inv.Attempts))
+		delay := policy.Backoff(inv.Attempts)
+		if delay <= 0 {
+			delay = retry.Delay(api.EventDeliveryRetryBaseSeconds*time.Second, api.EventDeliveryRetryMaxSeconds*time.Second, max(1, inv.Attempts))
+		}
+		inv.DueAt = now.Add(delay)
 	}
 	return inv, nil
 }

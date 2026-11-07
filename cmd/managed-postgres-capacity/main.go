@@ -16,7 +16,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 )
@@ -74,6 +76,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, output,
 	config.MaxConns = api.DataAPIConnectionCapacityControlPool
 	config.MinConns = 0
 	config.ConnConfig.RuntimeParams["application_name"] = "gregale-capacity-observer"
+	dbbounds.ConfigureTimeouts(config)
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return errors.New("capacity catalog connection unavailable")

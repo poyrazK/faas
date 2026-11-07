@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -25,6 +26,13 @@ type dataAPIHooksReceipt struct {
 	Source    string   `json:"source"`
 	Changed   []string `json:"changed"`
 	Restarted bool     `json:"restarted,omitempty"`
+	// DrainEvery is the drain schedule that wakes a parked API, if any.
+	DrainEvery string `json:"drain_every,omitempty"`
+	// RuntimeReports is "unavailable" when the installation accepts no
+	// runtime reports: changes then wait in gregale_change_events.
+	RuntimeReports string `json:"runtime_reports,omitempty"`
+	// Delivery is what the runtime last reported, when it reported.
+	Delivery *api.DataAPIChangeHookStatus `json:"delivery,omitempty"`
 }
 
 func cmdDataAPIHooks(args []string) int {
@@ -74,13 +82,28 @@ func cmdDataAPIHooksSetting(verb string, args []string) int {
 	fs := newFlagSet("data-api hooks "+verb, flag.ContinueOnError)
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
+	drainEvery := fs.String("drain-every", "", "wake a parked API this often to publish changes other writers recorded (e.g. 5m), or off")
 	usage := fmt.Sprintf("usage: gregale data-api hooks %s NAME [--scope SCOPE] [--no-restart]", verb)
-	if verb == "status" {
+	switch verb {
+	case "status":
 		usage = "usage: gregale data-api hooks status NAME [--env SCOPE]"
+	case "enable":
+		usage = "usage: gregale data-api hooks enable NAME [--drain-every DURATION|off] [--scope SCOPE] [--no-restart]"
 	}
-	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (verb == "status" && *noRestart) {
+	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil ||
+		(verb == "status" && *noRestart) || (verb != "enable" && *drainEvery != "") {
 		PrintUsage(os.Stderr, usage, "data-api")
 		return 1
+	}
+	schedule := ""
+	if *drainEvery != "" && *drainEvery != "off" {
+		var err error
+		if schedule, err = dataAPIDrainSchedule(*drainEvery); err != nil {
+			return printErr("Invalid --drain-every", err)
+		}
+		if *scope != api.DefaultEnvScope {
+			return printErr("Invalid --drain-every", errors.New("a drain schedule wakes the production deployment; set it on the default scope"))
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -91,6 +114,9 @@ func cmdDataAPIHooksSetting(verb string, args []string) int {
 	switch verb {
 	case "enable":
 		receipt, err = enableDataAPIHooks(ctx, client, fs.Arg(0), *scope, !*noRestart)
+		if err == nil && *drainEvery != "" {
+			err = applyDataAPIDrainSchedule(ctx, client, &receipt, schedule, *drainEvery)
+		}
 	case "disable":
 		receipt, err = disableDataAPIHooks(ctx, client, fs.Arg(0), *scope, !*noRestart)
 	default:
@@ -123,6 +149,27 @@ func enableDataAPIHooks(ctx context.Context, client *api.Client, slug, scope str
 	return receipt, restartDataAPIHooks(ctx, client, &receipt, restart)
 }
 
+// applyDataAPIDrainSchedule sets or (with "off") removes the drain cron after
+// hooks are on.
+func applyDataAPIDrainSchedule(ctx context.Context, client *api.Client, receipt *dataAPIHooksReceipt, schedule, every string) error {
+	app, err := client.GetApp(ctx, receipt.App)
+	if err != nil {
+		return err
+	}
+	if err := setDataAPIDrainSchedule(ctx, client, receipt.App, app.ID, schedule); err != nil {
+		return fmt.Errorf("change hooks are on; the drain schedule was not stored: %w", err)
+	}
+	receipt.Changed = append(receipt.Changed, "drain_schedule")
+	if schedule != "" {
+		receipt.DrainEvery = every
+	} else {
+		receipt.DrainEvery = ""
+	}
+	return nil
+}
+
+// disableDataAPIHooks turns publishing off and removes the drain schedule,
+// whose runs would otherwise fail against a runtime without hooks.
 func disableDataAPIHooks(ctx context.Context, client *api.Client, slug, scope string, restart bool) (dataAPIHooksReceipt, error) {
 	receipt, err := dataAPIHooksStatus(ctx, client, slug, scope)
 	if err != nil {
@@ -132,6 +179,16 @@ func disableDataAPIHooks(ctx context.Context, client *api.Client, slug, scope st
 		return receipt, err
 	}
 	receipt.Enabled, receipt.Changed = false, []string{"change_hooks"}
+	if receipt.DrainEvery != "" && scope == api.DefaultEnvScope {
+		app, err := client.GetApp(ctx, slug)
+		if err == nil {
+			err = setDataAPIDrainSchedule(ctx, client, slug, app.ID, "")
+		}
+		if err != nil {
+			return receipt, fmt.Errorf("change hooks are off; the drain schedule was not removed: %w", err)
+		}
+		receipt.DrainEvery, receipt.Changed = "", append(receipt.Changed, "drain_schedule")
+	}
 	return receipt, restartDataAPIHooks(ctx, client, &receipt, restart)
 }
 
@@ -162,6 +219,14 @@ func dataAPIHooksStatus(ctx context.Context, client *api.Client, slug, scope str
 			receipt.Enabled = true
 		}
 	}
+	// Delivery and the drain schedule are reported when the control plane
+	// offers them; an older release leaves them out.
+	if status, ok := dataAPIPlatformStatus(ctx, client, slug); ok {
+		receipt.RuntimeReports, receipt.Delivery = status.RuntimeReports, status.ChangeHooks
+	}
+	if drain, err := dataAPIDrainCron(ctx, client, slug); err == nil && drain != nil && drain.Enabled {
+		receipt.DrainEvery = dataAPIDrainEvery(drain.Schedule)
+	}
 	return receipt, nil
 }
 
@@ -171,6 +236,13 @@ func printDataAPIHooks(verb string, receipt dataAPIHooksReceipt) {
 		PrintOK(osStdout, "Change hooks off for %s; recorded changes stay in gregale_change_events until hooks are on again", receipt.App)
 	case "status":
 		_, _ = fmt.Fprintf(osStdout, "change hooks  %s\nsource        %s\n", onOff(receipt.Enabled), receipt.Source)
+		if receipt.Enabled {
+			drain := "off (changes other writers record wait until a request wakes the API)"
+			if receipt.DrainEvery != "" {
+				drain = "every " + receipt.DrainEvery
+			}
+			_, _ = fmt.Fprintf(osStdout, "drain         %s\ndelivery      %s\n", drain, dataAPIHooksDelivery(receipt))
+		}
 	default:
 		PrintOK(osStdout, "Change hooks on for %s: recorded changes publish as events from %s", receipt.App, receipt.Source)
 		_, _ = fmt.Fprintf(osStdout, `Record changes with a migration: add the table (gregale data-api hooks export), then hook tables:
@@ -188,7 +260,42 @@ Subscribe from any app's gregale.yaml, in commit order per row:
       ordered: true
 `, receipt.Source)
 	}
+	if verb == "enable" {
+		if receipt.DrainEvery != "" {
+			_, _ = fmt.Fprintf(osStdout, "A platform cron wakes the API every %s to publish changes other writers recorded while it was parked; each run counts as app time.\n", receipt.DrainEvery)
+		}
+		if receipt.RuntimeReports == api.DataAPIRuntimeReportsUnavailable {
+			PrintWarn(os.Stderr, "%v: recorded changes wait in gregale_change_events until it does", errDataAPIRuntimeReportsUnavailable("Publishing change events"))
+		}
+	}
 	if verb != "status" && !receipt.Restarted {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", receipt.App)
 	}
+}
+
+// dataAPIHooksDelivery summarizes what the runtime last reported.
+func dataAPIHooksDelivery(receipt dataAPIHooksReceipt) string {
+	if receipt.RuntimeReports == api.DataAPIRuntimeReportsUnavailable {
+		return "not published: this installation does not accept runtime reports yet (workload identity is not configured); changes wait in gregale_change_events"
+	}
+	d := receipt.Delivery
+	if d == nil {
+		return "not reported yet (the runtime reports while the API is awake)"
+	}
+	parts := []string{fmt.Sprintf("%d waiting", d.Pending)}
+	if d.OldestPendingAt != nil {
+		parts[0] += " (oldest recorded " + d.OldestPendingAt.UTC().Format(time.RFC3339) + ")"
+	}
+	failed := fmt.Sprintf("%d rejected", d.Failed)
+	if d.Failed > 0 && d.LastFailureCode != "" {
+		failed += " (" + d.LastFailureCode + "; retry with SELECT gregale_hooks.retry_failed())"
+	}
+	parts = append(parts, failed)
+	if d.Publishing == api.DataAPIChangeHooksPublishingRetrying {
+		parts = append(parts, "publications are failing and retrying")
+	}
+	if d.LastPublishedAt != nil {
+		parts = append(parts, "last published "+d.LastPublishedAt.UTC().Format(time.RFC3339))
+	}
+	return strings.Join(parts, ", ") + "; reported " + d.ReportedAt.UTC().Format(time.RFC3339)
 }

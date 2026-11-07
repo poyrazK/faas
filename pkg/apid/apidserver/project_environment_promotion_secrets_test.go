@@ -39,7 +39,7 @@ func TestPromotionSecretsAPI(t *testing.T) {
 			if scenario == "read_scope" {
 				scopes = []string{api.ScopeProjectEnvironmentRead}
 			}
-			_, err = store.CreateAPIKey(ctx, acct.ID, hash, "promotion", scopes)
+			_, err = store.CreateAPIKey(ctx, acct.ID, hash, cliLoginKeyLabel, scopes) // a person approves (H70)
 			mustSnapshotPromotionAPI(t, err)
 			_, err = store.UpdateProjectEnvironmentProtection(ctx, acct.ID, project.ID, "production", true)
 			mustSnapshotPromotionAPI(t, err)

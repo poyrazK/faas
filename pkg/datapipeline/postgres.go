@@ -296,7 +296,7 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 		arg.DesiredState = "running"
 		arg.State = "validating"
 	case "verify":
-		if p.State != "live" || p.VerifyRequested || tableWorkflow(p) || activeTableCancellation(p) {
+		if p.DesiredState != "running" || (p.State != "live" && !canRetrySourceStorage(p)) || p.VerifyRequested || tableWorkflow(p) || activeTableCancellation(p) {
 			return Pipeline{}, ErrConflict
 		}
 		arg.VerifyRequested = true

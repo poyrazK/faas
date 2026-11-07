@@ -231,9 +231,11 @@ func LiveStates() []string { return append([]string(nil), liveStates...) }
 //
 // The mirror-mode skip is preserved verbatim (ADR-125). The new
 // M-2 modes (worker, service, job) are NOT skipped — they bill at
-// the standard mb_seconds rate (spec §4.7 formula unchanged).
+// the standard mb_seconds rate (spec §4.7 formula unchanged). A platform
+// snapshot refresh is skipped like a mirror: the release, not the
+// customer, caused it (ADR-20261106214916).
 func IsMeteredSkippableMode(mode string) bool {
-	return mode == string(InstanceModeMirror)
+	return mode == string(InstanceModeMirror) || mode == string(InstanceModeRefresh)
 }
 
 // CountsForRAMByMode reports whether an instance in `mode` counts

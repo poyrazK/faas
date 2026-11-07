@@ -112,7 +112,7 @@ def sync_detailed(
         environment (str):
         body (CreateProjectEnvironmentQualificationRequest): Closed-schema health and smoke probe
             results for one exact active source release set, non-secret source configuration version,
-            and per-workload secret revision fingerprints.
+            and workload and shared-secret revision fingerprints observed before probes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,7 +155,7 @@ def sync(
         environment (str):
         body (CreateProjectEnvironmentQualificationRequest): Closed-schema health and smoke probe
             results for one exact active source release set, non-secret source configuration version,
-            and per-workload secret revision fingerprints.
+            and workload and shared-secret revision fingerprints observed before probes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,7 +193,7 @@ async def asyncio_detailed(
         environment (str):
         body (CreateProjectEnvironmentQualificationRequest): Closed-schema health and smoke probe
             results for one exact active source release set, non-secret source configuration version,
-            and per-workload secret revision fingerprints.
+            and workload and shared-secret revision fingerprints observed before probes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -234,7 +234,7 @@ async def asyncio(
         environment (str):
         body (CreateProjectEnvironmentQualificationRequest): Closed-schema health and smoke probe
             results for one exact active source release set, non-secret source configuration version,
-            and per-workload secret revision fingerprints.
+            and workload and shared-secret revision fingerprints observed before probes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

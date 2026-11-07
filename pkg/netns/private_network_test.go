@@ -37,7 +37,7 @@ func TestNftCommandsPrivateNetworkAcceptPrecedesDeny(t *testing.T) {
 	deny := -1
 	for i, cmd := range cmds {
 		line := strings.Join(cmd, " ")
-		if strings.Contains(line, "ip daddr { 10.42.0.0/16 }") {
+		if strings.Contains(line, "ip faas forward") && strings.Contains(line, "ip daddr { 10.42.0.0/16 }") {
 			private = i
 		}
 		if strings.Contains(line, "ip daddr 10.0.0.0/8") && strings.HasSuffix(line, "drop") {

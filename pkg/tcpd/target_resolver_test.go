@@ -9,19 +9,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// activeAccountReader answers the raw ingress safety check's account reads
-// with an active, unheld account (ADR-20261104221012).
-type activeAccountReader struct{}
-
-func (activeAccountReader) AccountByID(_ context.Context, id string) (state.Account, error) {
-	return state.Account{ID: id, Status: state.AccountActive}, nil
-}
-func (activeAccountReader) OrgByID(context.Context, string) (state.Org, error) {
-	return state.Org{}, state.ErrNotFound
-}
-
 type targetSourceFixture struct {
-	activeAccountReader
+	activeOwnerFixture
 	app         state.App
 	instances   []state.Instance
 	deployments []state.Deployment
@@ -38,7 +27,7 @@ func (s *targetSourceFixture) TCPListenerByAppAndName(context.Context, string, s
 }
 
 func TestTCPResolverTLSRequiresCurrentDomainOwnership(t *testing.T) {
-	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true, TLSMode: api.TCPListenerTLSTerminate, TLSHostname: "echo.example"}}
+	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true, TLSMode: api.TCPListenerTLSTerminate, TLSHostname: "echo.example"}}
 	admit := &targetAdmitterFixture{}
 	resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
 	route := Route{ListenerID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp", TLSHostname: "echo.example"}
@@ -65,11 +54,15 @@ func (s *targetSourceFixture) ListInstancesForApp(context.Context, string) ([]st
 
 type targetAdmitterFixture struct {
 	calls              int
+	onAdmit            func()
 	returnedDeployment string
 }
 
 func (a *targetAdmitterFixture) AdmitInstance(_ context.Context, _, deployment, _, _ string) (string, string, string, string, int32, bool, int, error) {
 	a.calls++
+	if a.onAdmit != nil {
+		a.onAdmit()
+	}
 	if a.returnedDeployment != "" {
 		deployment = a.returnedDeployment
 	}
@@ -78,7 +71,7 @@ func (a *targetAdmitterFixture) AdmitInstance(_ context.Context, _, deployment, 
 
 func TestTCPResolverMaintenanceAndOwnership(t *testing.T) {
 	ctx := context.Background()
-	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}}
+	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}}
 	admit := &targetAdmitterFixture{}
 	resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
 	route := Route{ListenerID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
@@ -129,7 +122,7 @@ func TestTCPResolverRejectsStaleListenerBeforeWake(t *testing.T) {
 		{"tls-mode", func(l *state.TCPListener) { l.TLSMode = api.TCPListenerTLSTerminate; l.TLSHostname = "echo.example" }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
-			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}}
+			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}}
 			change.mutate(&source.intent)
 			admit := &targetAdmitterFixture{}
 			resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
@@ -144,7 +137,7 @@ func TestTCPResolverRejectsStaleListenerBeforeWake(t *testing.T) {
 func TestTCPResolverNeverSelectsMirrorInstances(t *testing.T) {
 	for _, mode := range []string{"", string(state.InstanceModeNormal), string(state.InstanceModeService), string(state.InstanceModeWorker)} {
 		t.Run("customer-mode-"+mode, func(t *testing.T) {
-			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, instances: []state.Instance{
+			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, instances: []state.Instance{
 				{ID: "mirror", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: string(state.InstanceModeMirror)},
 				{ID: "customer", DeploymentID: "deployment", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: mode},
 			}}
@@ -174,7 +167,7 @@ func (s *targetSourceFixture) LiveDeployments(context.Context, string) ([]state.
 }
 
 func TestTCPResolverPinsServingDeploymentOnWarmAndColdPaths(t *testing.T) {
-	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, deployments: []state.Deployment{{ID: "old", AppID: "app", Status: state.DeployLive}, {ID: "current", AppID: "app", Status: state.DeployLive, TrafficPercent: 100}}, instances: []state.Instance{{ID: "old-instance", AppID: "app", DeploymentID: "old", NodeID: "node", State: string(state.StateRunning)}, {ID: "current-instance", AppID: "app", DeploymentID: "current", NodeID: "node", State: string(state.StateRunning)}}}
+	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, deployments: []state.Deployment{{ID: "old", AppID: "app", Status: state.DeployLive}, {ID: "current", AppID: "app", Status: state.DeployLive, TrafficPercent: 100}}, instances: []state.Instance{{ID: "old-instance", AppID: "app", DeploymentID: "old", NodeID: "node", State: string(state.StateRunning)}, {ID: "current-instance", AppID: "app", DeploymentID: "current", NodeID: "node", State: string(state.StateRunning)}}}
 	admit := &targetAdmitterFixture{}
 	resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
 	route := Route{ListenerID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
@@ -196,5 +189,28 @@ func TestTCPResolverPinsServingDeploymentOnWarmAndColdPaths(t *testing.T) {
 	source.deployments = []state.Deployment{}
 	if _, err := resolver.ResolveTarget(context.Background(), route); err == nil || admit.calls != 2 {
 		t.Fatalf("empty serving set admitted: err=%v calls=%d", err, admit.calls)
+	}
+}
+
+func TestTCPResolverWithdrawnManifestDeclaration(t *testing.T) {
+	for _, ports := range [][]api.WorkloadPort{nil, {{Name: "renamed", Port: 9000}}, {{Name: "echo", Port: 9001}}, {{Name: "echo", Port: 9000, Protocol: api.WorkloadPortUDP}}, {{Name: "echo", Port: 9000, Internal: true}}} {
+		for _, warm := range []bool{true, false} {
+			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Manifest: state.AppManifest{Ports: ports}}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}}
+			if warm {
+				source.instances = []state.Instance{{ID: "live", AppID: "app", DeploymentID: "deployment", NodeID: "node", State: string(state.StateRunning)}}
+			}
+			admit := &targetAdmitterFixture{}
+			route := Route{ListenerID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
+			resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
+			if _, err := resolver.ResolveTarget(t.Context(), route); err == nil || admit.calls != 0 {
+				t.Fatalf("withdrawn declaration routed: ports=%v warm=%v calls=%d err=%v", ports, warm, admit.calls, err)
+			}
+		}
+	}
+	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}}
+	admit := &targetAdmitterFixture{onAdmit: func() { source.app.Manifest.Ports = nil }}
+	resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
+	if _, err := resolver.ResolveTarget(t.Context(), Route{ListenerID: "listener", AppID: "app", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}); err == nil || admit.calls != 1 {
+		t.Fatalf("declaration removed during wake was admitted: calls=%d err=%v", admit.calls, err)
 	}
 }

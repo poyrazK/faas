@@ -118,3 +118,10 @@ func (h objectHost) MFAIdentities() []*age.X25519Identity {
 	}
 	return idents
 }
+
+// CapabilityEnabledFor implements object.CapabilityHost: key-scoped bindings
+// are issued only where object-storage-key-scopes is released
+// (ADR-20261106114500).
+func (h objectHost) CapabilityEnabledFor(capability string, acct state.Account, app state.App) bool {
+	return h.s.capabilityEnabledFor(capability, acct, app)
+}

@@ -53,6 +53,7 @@ func relationHash(relations []relation) string {
 }
 
 func schemaPlan(p Pipeline, before, after []relation) SchemaChange {
+	after = recordedSourceMetadata(p, preserveMissingMetadata(after, before))
 	c := SchemaChange{State: "pending", Supported: true, Before: before, After: after, BeforeHash: relationHash(before), AfterHash: relationHash(after), Changes: []SchemaColumnChange{}}
 	add := func(table string, old, next *column, kind, reason string, safe bool) {
 		v := SchemaColumnChange{Table: table, Kind: kind, Reason: reason, Safe: safe}

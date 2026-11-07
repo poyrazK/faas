@@ -41,6 +41,10 @@ func (*fakeVmmdClient) ReconcilePrivateNetworkPeerings(context.Context, *vmmdpb.
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not reconcile private network peerings")
 }
 
+func (*fakeVmmdClient) RestrictPrivateNetworkPeerings(context.Context, *vmmdpb.ReconcilePrivateNetworkPeeringsRequest, ...grpc.CallOption) (*vmmdpb.ReconcilePrivateNetworkPeeringsAck, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not reconcile private network peerings")
+}
+
 func (*fakeVmmdClient) MaterializeVerifiedParentExt4(context.Context, *vmmdpb.MaterializeVerifiedParentExt4Request, ...grpc.CallOption) (*vmmdpb.MaterializeVerifiedParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not materialize verified parents")
 }

@@ -188,7 +188,10 @@ func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID
 	if err != nil {
 		return false, err
 	}
-	return domain.Verified() && domain.EnvironmentID == "" && domain.AppID == appID, nil
+	if !domain.Verified() || domain.EnvironmentID != "" || domain.AppID != appID {
+		return false, nil
+	}
+	return r.cachedCustomDomainPlanAllowed(ctx, domain)
 }
 
 func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
@@ -468,6 +471,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 		if err != nil || !found {
 			return app, found, err
 		}
+		if !customDomainPlanAllowed(dom, app.Plan) {
+			return gateway.App{}, false, nil
+		}
 		app.CustomDomainRoute = true
 		app.DynamicRoute = true
 		return app, true, nil
@@ -482,6 +488,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	resolved, found, err := r.toPublicApp(ctx, app)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	if !customDomainPlanAllowed(dom, resolved.Plan) {
+		return gateway.App{}, false, nil
 	}
 	resolved.CustomDomainRoute = true
 	return resolved, true, nil
@@ -857,28 +866,7 @@ type deploymentCompanionRoute struct {
 }
 
 func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
-	sources := make([]string, 0, 2)
-	if len(deployment.OverrideReadinessProbe) > 0 {
-		var probe api.DeploymentReadinessProbe
-		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
-			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
-		}
-		if probe.Path != "" || probe.GRPC != nil {
-			sources = append(sources, "primary_app")
-		}
-	}
-	var companions []deploymentCompanionRoute
-	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
-		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
-			return nil, fmt.Errorf("decode deployment companions: %w", err)
-		}
-	}
-	for _, companion := range companions {
-		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
-			sources = append(sources, "sidecar:"+companion.Name)
-		}
-	}
-	return sources, nil
+	return state.DeploymentReadinessSources(deployment)
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a

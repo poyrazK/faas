@@ -56,6 +56,10 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 	if problem != nil {
 		return api.ProjectEnvironmentStateResponse{}, problem
 	}
+	sharedHash, err := s.projectEnvironmentSharedSecretsRevision(ctx, acct.ID, project.ID, environment.Slug)
+	if err != nil {
+		return api.ProjectEnvironmentStateResponse{}, api.ErrCapacity("could not fingerprint shared secret revisions")
+	}
 	flagHash, err := s.projectEnvironmentFeatureFlagsQualificationHash(ctx, environment)
 	if err != nil {
 		return api.ProjectEnvironmentStateResponse{}, api.ErrCapacity("could not fingerprint environment feature flags")
@@ -82,13 +86,26 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 		status = "active"
 	}
 	return api.ProjectEnvironmentStateResponse{
-		FeatureFlagsHash: flagHash,
-		ActiveReleaseSet: release, ReleaseSetStatus: status,
+		ProjectSecretsRevisionHash: sharedHash,
+		FeatureFlagsHash:           flagHash,
+		ActiveReleaseSet:           release, ReleaseSetStatus: status,
 		ProjectSlug: project.Slug, Environment: environment.Slug, Protected: environment.Protected,
 		Configuration: projectEnvironmentConfigResponse(project.Slug, environment.Slug, config),
 		Workloads:     workloads, SharedResources: projectEnvironmentSharedResources(workloads),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func (s *server) projectEnvironmentSharedSecretsRevision(ctx context.Context, accountID, projectID, environment string) (string, error) {
+	reader, ok := s.store.(state.ProjectSharedSecretRevisionReader)
+	if !ok {
+		return "", nil
+	}
+	revision, err := reader.ProjectEnvironmentSharedSecretRevision(ctx, accountID, projectID, environment)
+	if err != nil {
+		return "", err
+	}
+	return revision.Hash, nil
 }
 
 func (s *server) projectEnvironmentFeatureFlagsQualificationHash(ctx context.Context, environment state.ProjectEnvironment) (string, error) {

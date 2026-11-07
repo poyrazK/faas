@@ -2161,6 +2161,16 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if held, err := h.holdReleaseCommandForApproval(ctx, app, dep); err != nil || held {
 			return err
 		}
+		// ADR-20261022140000 amendment 2: no release command starts during
+		// the break-glass pause, whenever its release was created.
+		if held, err := h.holdReleaseCommandForPause(ctx, dep); err != nil || held {
+			return err
+		}
+		// ADR-1448 amendment 1: no release command after one whose effect
+		// on the database is unknown, until a person checks it.
+		if closed, err := h.failAfterUncertainRelease(ctx, app, dep); err != nil || closed {
+			return err
+		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) {
 			return nil
@@ -2168,6 +2178,7 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if err != nil {
 			return err
 		}
+		h.retireOutpacedReleases(ctx, dep)
 		wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
 		if err != nil || wait {
 			return err
@@ -3470,9 +3481,17 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 // (buildLocalOCIAppLayer in local_oci.go) share the exact same
 // seeding rule — the F8 fixup consolidates what was duplicated.
 func applyContainerDefaults(m *api.AppManifest) {
+	applyContainerHealthDefault(m)
+	applyContainerEnvDefaults(m)
+}
+
+func applyContainerHealthDefault(m *api.AppManifest) {
 	if m.Healthz == "" {
 		m.Healthz = defaultHealthzPath
 	}
+}
+
+func applyContainerEnvDefaults(m *api.AppManifest) {
 	if m.Env == nil {
 		m.Env = make(map[string]string, 1)
 	}
@@ -3614,12 +3633,34 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
 		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
 	}
+	if ready == nil && dep.DeletedAt != nil {
+		// A deleted stage cannot resolve runtime policy from its replacement.
+		// Discard this unreferenced capture before attempting that lookup.
+		if err := h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier}); err != nil {
+			return err
+		}
+		return fmt.Errorf("imaged: snapshot deployment was deleted: %w", state.ErrNotFound)
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
 	}
 	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app for deployment activation: %w", err)
+	}
+	if dep.Status != state.DeployLive && !dep.Status.IsTerminal() {
+		valuesStore, ok := h.store.(state.RuntimeAppValuesStore)
+		if !ok {
+			return errors.New("imaged: deployment activation requires runtime configuration values")
+		}
+		values, err := valuesStore.RuntimeAppValuesForDeployment(ctx, app.AccountID, dep.AppID, dep.ID)
+		if err != nil {
+			return fmt.Errorf("imaged: load snapshot activation inputs: %w", err)
+		}
+		ctx, err = state.WithDeploymentActivationAttempt(ctx, dep, values)
+		if err != nil {
+			return fmt.Errorf("imaged: bind snapshot activation attempt: %w", err)
+		}
 	}
 
 	if ready != nil {
@@ -3657,6 +3698,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
 					return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
 				}
+				ctx, err = state.WithWorkerDeploymentActivation(ctx, dep, ins.ID)
+				if err != nil {
+					return err
+				}
 			case api.ExecutionModeJob:
 				if ready.NoSnapshotReason != "" {
 					return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
@@ -3688,6 +3733,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
 					ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
 					return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
+				}
+				ctx, err = state.WithEphemeralDeploymentActivation(ctx, dep, ins)
+				if err != nil {
+					return err
 				}
 			default:
 				return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
@@ -3754,7 +3803,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		stored, createErr := h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
 		created := createErr == nil
-		if errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+		if errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
 			h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
 			h.log.Info("imaged: discarded stale snapshot capture", "deployment", snapshot.DeploymentID,
 				"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
@@ -3793,7 +3842,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					"missing_drive", unrestorable, "retired_fc_version", stored.FCVersion,
 					"capture_fc_version", snap.FCVersion)
 				retired := stored.ID
-				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
 					h.log.Info("imaged: discarded stale snapshot capture after retirement", "deployment", snapshot.DeploymentID,
 						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
@@ -3923,6 +3972,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		detail := contractErr.Error()
 		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if errors.Is(markErr, state.ErrDeploymentActivationStale) {
+			return nil
+		}
 		if markErr != nil {
 			h.log.Warn("api contract gate: mark deployment failed", "deployment_id", dep.ID, "err", markErr)
 		}
@@ -4001,6 +4053,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				detail = "could not verify GitHub source branch before promotion: " + verifyErr.Error()
 			}
 			if _, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail); markErr != nil {
+				if errors.Is(markErr, state.ErrDeploymentActivationStale) {
+					return nil
+				}
 				return fmt.Errorf("imaged: mark unverified GitHub source ref failed: %w", markErr)
 			}
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
@@ -4025,6 +4080,22 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
+	}
+	if errors.Is(promoteErr, state.ErrDeploymentActivationStale) {
+		h.log.Info("imaged: activation verification belongs to an earlier attempt", "deployment_id", dep.ID)
+		return nil
+	}
+	if errors.Is(promoteErr, state.ErrRollbackCrossesRelease) || errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+		code, detail := api.CodeRollbackCrossesRelease, "Release commands started after this rollback was reviewed. Review migration history and submit a new rollback with acknowledgement."
+		if errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+			code, detail = api.CodeRollbackTargetDatabaseRestored, "This deployment's release command was undone by a database restore."
+		}
+		failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if err != nil {
+			return fmt.Errorf("imaged: record rollback release refusal: %w", err)
+		}
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, failed.Status)
+		return nil
 	}
 	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
@@ -4051,6 +4122,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		var routeRemovalBlocker *state.RouteRemovalBlockedError
 		if errors.As(promoteErr, &routeRemovalBlocker) {
 			_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeRouteRemovalRequired, routeRemovalBlocker.Error())
+			if errors.Is(markErr, state.ErrDeploymentActivationStale) {
+				return nil
+			}
 			if markErr != nil {
 				return fmt.Errorf("imaged: record route removal blocker: %w", markErr)
 			}

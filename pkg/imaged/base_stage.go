@@ -1222,6 +1222,11 @@ func (h *Handler) EnsureMinimalBase(ctx context.Context, arch string, envLookup 
 	if err := requireProductionBaseDigest("FAAS_DEPLOY_BASE_REF_MINIMAL", ref, envLookup); err != nil {
 		return BaseStageResult{}, err
 	}
+	// Serialized like runtime bases: two plain-image deployments arriving
+	// together each published a producer for the same key, and the first
+	// one's scan publication then failed as stale, failing its deploy.
+	h.runtimeBaseMu.Lock()
+	defer h.runtimeBaseMu.Unlock()
 	results, err := h.EnsureBases(ctx, arch, []RuntimeBaseRef{{Runtime: "", Ref: ref}}, envLookup)
 	if err != nil {
 		return BaseStageResult{}, err

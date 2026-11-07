@@ -53,15 +53,15 @@ A review of the public edge after round 6 (#6490) found:
    same-host requests pass. An app opts a partner origin in with a `cors`
    edge rule of its own account that lists the origin explicitly (not `*`) with
    `allow_credentials: true`.
-3. **Raw ingress meets the gateway's gates.** `pkg/ingressroute.CheckApp`
-   runs in both resolvers' intent validation and refuses an app whose account
-   is suspended or deletion-pending (org status included), abuse-held, whose
-   live deployment is security quarantined, whose public auth is
-   `internal_only`, or whose `ip_allowlist` does not contain the session's
-   peer address. A store without the needed reads fails closed. Basic and
-   bearer have no meaning on a raw socket and are not applied; an app needing
-   them on TCP must authenticate in its own protocol. The spend cap is already
-   enforced at schedd admission.
+3. **Raw ingress meets the gateway's access gates.** Main now refuses an
+   inactive account owner (`RequireActiveOwner`, #6644) and a quarantined
+   production deployment (`RequireDeployment`, ADR-20261105115100) on raw
+   ingress. `pkg/ingressroute.CheckApp` adds the app's public access setting
+   in both resolvers: it refuses an app whose public auth is `internal_only`,
+   or whose `ip_allowlist` does not contain the session's peer address (an
+   unknown peer is refused). Basic and bearer have no meaning on a raw socket
+   and are not applied; an app needing them on TCP must authenticate in its
+   own protocol. The spend cap is already enforced at schedd admission.
 4. **Active content is never served from a public mount.** An active type
    (HTML, XHTML, SVG, XML and `+xml`, XSL, JavaScript,
    `multipart/x-mixed-replace`) matches an upload route only when the route
