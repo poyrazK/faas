@@ -59,3 +59,13 @@ func StorageRoot(raw string) (string, error) {
 func EffectiveRoot(stored string) (string, error) {
 	return Normalize(stored)
 }
+
+// DeploymentRoot resolves an optional upload root against the app's configured
+// root and returns its storage representation. An explicit "." selects the
+// archive root; an omitted or blank root uses configured.
+func DeploymentRoot(requested, configured string) (string, error) {
+	if strings.TrimSpace(requested) == "" {
+		requested = configured
+	}
+	return StorageRoot(requested)
+}

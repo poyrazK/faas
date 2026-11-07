@@ -32,7 +32,7 @@ func (h *Handler) bucketVersioning(w http.ResponseWriter, r *http.Request, req r
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	svc := objectstorage.BucketVersioningService{Store: st, Provider: p, BeforeRequest: objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)}
+	svc := objectstorage.BucketVersioningService{Store: st, Provider: p, BeforeRequest: h.configurationRequestRecorder(req.bucket)}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodGet {
 		_, v, err := svc.Read(r.Context(), req.bucket)
@@ -57,6 +57,7 @@ func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	if j.State != "ready" {
+		svc.BeforeRequest = objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)
 		j, err = svc.Reconcile(r.Context(), req.bucket)
 		if errors.Is(err, state.ErrConflict) {
 			j, err = st.GetObjectBucketVersioning(r.Context(), req.bucket.AccountID, req.bucket.AppID, req.bucket.ID)
@@ -100,6 +101,9 @@ func decodeBucketVersioning(w http.ResponseWriter, r *http.Request, hash string)
 	return in.Statuses[0], nil
 }
 func (h *Handler) versioningError(w http.ResponseWriter, r *http.Request, req requestContext, err error) {
+	if h.configurationAdmissionError(w, r, req, err) {
+		return
+	}
 	status, code, message := 503, "ServiceUnavailable", "Versioning configuration is pending; retry or inspect its status in the control API."
 	switch {
 	case errors.Is(err, objectstorage.ErrUnsupported):

@@ -26,6 +26,18 @@ type HandshakeGate struct {
 	errs      chan error
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// settle, when set, decides a connection whose handshake completed:
+	// false resets it instead of serving it (WithSettle).
+	settle func(*tls.Conn) bool
+}
+
+// WithSettle makes the gate ask settle about each completed handshake before
+// serving the connection; a false answer resets it. Call before the first
+// Accept.
+func (g *HandshakeGate) WithSettle(settle func(*tls.Conn) bool) *HandshakeGate {
+	g.settle = settle
+	return g
 }
 
 // NewHandshakeGate serves inner, a TLS listener, through at most max
@@ -89,6 +101,10 @@ func (g *HandshakeGate) handshake(ctx context.Context, tc *tls.Conn) {
 		return
 	}
 	_ = tc.SetDeadline(time.Time{})
+	if g.settle != nil && !g.settle(tc) {
+		reset(tc)
+		return
+	}
 	g.deliver(tc)
 }
 

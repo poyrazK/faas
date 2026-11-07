@@ -422,7 +422,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {
+	if err := validateTestReportInputs([]string{*manifestPath, *dataPath, *baselinePath, *recoveryBaselinePath, *sweepBaselinePath}, *reportPath, *junitPath, *htmlPath); err != nil {
 		return printErr("Invalid test report paths", err)
 	}
 	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Rate: *rate, Duration: *duration, Pacing: *pacing}
@@ -536,14 +536,18 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		if *scenarioName != "" && name != *scenarioName {
 			continue
 		}
-		selected := profiles
-		if *engine != "real-vm" {
-			selected = []string{*engine}
+		if err := validateTestReportInputs(testScenarioInputPaths(scenario, sourceDir), *reportPath, *junitPath, *htmlPath); err != nil {
+			return printErr("Invalid test report paths", err)
 		}
-		for _, p := range selected {
-			if err := validateTestCommandExecution(scenario, *engine, p); err != nil {
-				return printErr("Invalid contained command recipe", err)
+		if !*load {
+			httpScenario := scenario
+			httpScenario.Load = nil
+			if err := validateTestHTTPRequestsWithData(httpScenario, dataFields); err != nil {
+				return printErr("Invalid scenario execution", fmt.Errorf("scenario %q: %w", name, err))
 			}
+		}
+		if err := validateTestScenarioExecution(scenario, *engine, profiles...); err != nil {
+			return printErr("Invalid scenario execution", err)
 		}
 		if scenario.CommandExecution != nil && *load {
 			return printErr("Invalid contained command recipe", errors.New("contained commands do not support load overrides"))
@@ -566,7 +570,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		}
 	}
 	if *validateOnly {
-		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine)
+		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine, profiles...)
 	}
 	if *preflightOnly {
 		if *engine != "real-vm" {
@@ -1094,12 +1098,8 @@ func runSimulatedTest(parent context.Context, name string, scenario testScenario
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
-	if err := validateTestCommandExecution(scenario, "simulated", "simulated"); err != nil {
+	if err := validateTestScenarioExecution(scenario, "simulated"); err != nil {
 		receipt.Error = err.Error()
-		return receipt
-	}
-	if scenario.Actions != nil {
-		receipt.Error = "webhook action capture requires the real-vm engine"
 		return receipt
 	}
 	if len(scenario.Simulation) == 0 || scenario.Simulation[0] == "" {
@@ -2314,7 +2314,7 @@ func prepareTestProfile(ctx context.Context, client *Client, slug, profile strin
 		if response.WakeID == "" {
 			return errors.New("wake response omitted wake_id")
 		}
-		_, err = waitForAppWake(ctx, client, slug, response.WakeID, 2*time.Minute, 250*time.Millisecond)
+		_, err = waitForAppWakeOrInstance(ctx, client, slug, response.WakeID, response.InstanceID, 2*time.Minute, 250*time.Millisecond)
 		return err
 	case "cold":
 		return client.ParkPreviewFresh(ctx, slug)

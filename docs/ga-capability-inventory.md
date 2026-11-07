@@ -128,7 +128,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | # | Capability | Where it lives | Catalog | Gate today | Tier |
 |---|---|---|---|---|---|
 | 24 | Rollback to a named revision | `rollback`, `gregale rollback` | `progressive-rollouts` beta | — | GA |
-| 25 | Progressive rollouts: canary ladder, traffic split, automatic rollback on 5xx | `rollouts`, `gregale canary` | `progressive-rollouts` beta | — | beta |
+| 25 | Progressive rollouts: canary ladder, traffic split, automatic rollback on 5xx | `rollouts`, `gregale canary`, service-abort acceptance receipts (`/v1/apps/{slug}/service-aborts/{attempt_id}`, Go SDK `service_abort_attempts`) | `progressive-rollouts` beta | — | beta |
 | 26 | Deployment aliases | `deployment-aliases`, `gregale alias` | **MISSING** | — | beta |
 | 27 | Pull-request previews | `previews` | `pr-previews` ga | — | GA |
 | 28 | Release gates on customer signals | `release-gates` | **MISSING** | — | preview |

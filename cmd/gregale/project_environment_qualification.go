@@ -168,6 +168,12 @@ func qualifyProjectEnvironmentWithProfileAndHTTPClient(ctx context.Context, clie
 	if err != nil {
 		return api.ProjectEnvironmentQualificationResponse{}, fmt.Errorf("fingerprint environment secret revisions: %w", err)
 	}
+	if snapshot.ProjectSecretsRevisionHash != "" {
+		if !api.ValidProjectEnvironmentConfigHash(snapshot.ProjectSecretsRevisionHash) {
+			return api.ProjectEnvironmentQualificationResponse{}, errors.New("environment state has an invalid shared-secret revision; retry qualification")
+		}
+		secretRevisionHashes[api.ProjectSecretsRevisionKey] = snapshot.ProjectSecretsRevisionHash
+	}
 	workloadConfigHashes := make(map[string]string, len(workloadBySlug))
 	for slug, workload := range workloadBySlug {
 		if workload.WorkloadConfigHash == "" && workload.Release.WorkloadConfigHash == "" {

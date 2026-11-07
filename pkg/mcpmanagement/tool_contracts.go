@@ -4,7 +4,32 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"sync"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// Schema wiring is process-wide; the set of tool names and input types is
+// fixed. Schemas contain no connection, consent or credential state.
+var managementSchemaCache = mcp.NewSchemaCache()
+var managementOutputSchemas sync.Map
+
+func registeredToolOutputSchema(name string) *jsonschema.Schema {
+	if saved, ok := managementOutputSchemas.Load(name); ok {
+		return saved.(*jsonschema.Schema)
+	}
+	raw, err := json.Marshal(toolOutputSchema(name))
+	if err != nil {
+		panic(err)
+	}
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		panic(err)
+	}
+	saved, _ := managementOutputSchemas.LoadOrStore(name, &schema)
+	return saved.(*jsonschema.Schema)
+}
 
 // Schemas describe stable envelope fields while allowing additive native
 // evidence. Nested diagnostic projections retain their existing versioned

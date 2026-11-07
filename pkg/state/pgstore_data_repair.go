@@ -54,29 +54,36 @@ func (s *PgStore) CreateDataRepairOperation(ctx context.Context, in DataRepairAd
 	var parent Operation
 	var parentEvent api.OperationEvent
 	parentPending := false
+	now := time.Now().UTC()
 	if in.Plan.ReplacesPlanID != "" {
 		parent = cloneOperation(source)
-		parentPending = !parent.State.Terminal()
-		parentEvent, err = finishDataRepairReplacement(&parent, in, time.Now().UTC())
+		parentPending = operationCountsPending(parent, now)
+		parentEvent, err = finishDataRepairReplacement(&parent, in, now)
 		if err != nil {
 			return Operation{}, false, err
 		}
 	}
 	limits := api.MustLimitsFor(api.Plan(plan)).Operations
-	if !limits.Allowed {
+	recovery := expiredReplacementRecovery(in, now)
+	if recovery {
+		limits, err = replacementRecoveryLimits(source)
+		if err != nil {
+			return Operation{}, false, err
+		}
+	} else if !limits.Allowed {
 		return Operation{}, false, NewOperationLimitError("plan_admission", 0, 1)
 	}
-	pending, err := q.CountPendingCustomerOperations(ctx, tx, mustPgUUID(in.AccountID))
+	pending, err := q.CountPendingCustomerOperations(ctx, tx, sqlc.CountPendingCustomerOperationsParams{AccountID: mustPgUUID(in.AccountID), ObservedAt: operationPGTime(&now)})
 	if err != nil {
 		return Operation{}, false, err
 	}
 	if parentPending {
 		pending-- // Child admission replaces its reserved nonterminal parent.
 	}
-	if pending >= int64(limits.PendingPerAccount) {
+	if !recovery && pending >= int64(limits.PendingPerAccount) {
 		return Operation{}, false, NewOperationLimitError("pending_per_account", int64(limits.PendingPerAccount), pending+1)
 	}
-	op, err := newDataRepairOperation(source, in, limits, time.Now().UTC())
+	op, err := newDataRepairOperation(source, in, limits, now)
 	if err != nil {
 		return Operation{}, false, err
 	}

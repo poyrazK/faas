@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 )
 
 // testHostLookupBudget allows burst new-host reads and refills none.
@@ -18,6 +20,77 @@ func testHostLookupBudget(burst int) *HostLookupBudget {
 	b := NewHostLookupBudget("test_public_object")
 	b.budget = rate.NewLimiter(0, burst)
 	return b
+}
+
+type recentBudgetSource struct{}
+
+func (recentBudgetSource) KnownRouteHosts(context.Context, int) ([]string, []string, error) {
+	return nil, nil, nil
+}
+func (recentBudgetSource) ListRecentCustomDomainTLSHosts(context.Context, int) ([]string, error) {
+	return []string{"admitted.wild.example.com"}, nil
+}
+
+func TestHostLookupBudgetRecoversConcreteHostAfterFlood(t *testing.T) {
+	known := knownhosts.New("gregale.dev")
+	if err := known.Refresh(t.Context(), recentBudgetSource{}); err != nil {
+		t.Fatal(err)
+	}
+	budget := testHostLookupBudget(0)
+	budget.Preload(known)
+	if !budget.admit(t.Context(), "admitted.wild.example.com") {
+		t.Fatal("admitted wildcard host was shed")
+	}
+	if budget.admit(t.Context(), "random.wild.example.com") {
+		t.Fatal("unadmitted wildcard host bypassed the budget")
+	}
+}
+
+func TestHostLookupBudgetBoundsLegacyWildcardRecovery(t *testing.T) {
+	known := knownhosts.New("gregale.dev")
+	known.Replace(nil, []string{"*.wild.example.com"})
+	budget := testHostLookupBudget(0)
+	budget.wildcardBudget = rate.NewLimiter(0, 1)
+	budget.Preload(known)
+	if !budget.admit(t.Context(), "legacy.wild.example.com") {
+		t.Fatal("legacy wildcard was shed after unrelated host flood")
+	}
+	if budget.admit(t.Context(), "another.wild.example.com") || budget.admit(t.Context(), "unrelated.example.com") {
+		t.Fatal("wildcard recovery budget was bypassed")
+	}
+}
+
+// After a restart the edge had seen no host name an app, so random names
+// that spent the budget shed a real app's first public read. A preloaded app
+// host skips the spent budget; random names are still shed.
+func TestPublicReadPreloadedHostsSkipASpentBudget(t *testing.T) {
+	store := &countingPublicReadStore{Store: seedForwardBucket(t)}
+	budget := testHostLookupBudget(3)
+	known := knownhosts.New("gregale.dev")
+	known.Replace([]string{"assets-app"}, nil)
+	budget.Preload(known)
+	h, err := NewPublicReadForwarder(PublicReadForwardConfig{
+		Store: store, HostLookups: budget, AppsDomain: "gregale.dev", Forward: http.NotFoundHandler(), Next: http.NotFoundHandler(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shed := 0
+	for i := range 10 {
+		req := httptest.NewRequest(http.MethodGet, "http://x/assets/logo.png", nil)
+		req.Host = fmt.Sprintf("random-%d.gregale.dev", i)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusServiceUnavailable {
+			shed++
+		}
+	}
+	if shed != 7 {
+		t.Fatalf("shed %d of 10 random names, want 7 (budget 3)", shed)
+	}
+	if got := publicReadRoute(t, h, "assets-app.gregale.dev", "/assets/logo.png"); got != "forward" {
+		t.Fatalf("preloaded app's first public read after the flood went to %q, want forward", got)
+	}
 }
 
 // A flood of random names under the apps wildcard must spend the edge's
@@ -109,7 +182,7 @@ func TestHostLookupBudgetKnownSetIsBounded(t *testing.T) {
 	if len(b.known) != 1 {
 		t.Fatalf("known set holds %d hosts, want 1 after the drop", len(b.known))
 	}
-	if !b.admit("c.gregale.dev") || b.admit("a.gregale.dev") {
+	if !b.admit(context.Background(), "c.gregale.dev") || b.admit(context.Background(), "a.gregale.dev") {
 		t.Fatal("after the drop only the newest host should skip an empty budget")
 	}
 }
@@ -118,7 +191,7 @@ func TestHostLookupBudgetKnownSetIsBounded(t *testing.T) {
 func TestHostLookupBudgetNilAdmits(t *testing.T) {
 	var b *HostLookupBudget
 	b.found("a.gregale.dev")
-	if !b.admit("a.gregale.dev") {
+	if !b.admit(context.Background(), "a.gregale.dev") {
 		t.Fatal("nil budget refused a lookup")
 	}
 }

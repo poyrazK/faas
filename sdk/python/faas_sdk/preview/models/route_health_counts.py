@@ -22,8 +22,9 @@ class RouteHealthCounts:
     """Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not
     selected or evidence is unavailable; zero is a valid observation."""
     latency_requests: int | Unset = UNSET
-    """Requests the p95 ranked. The canary guard ranks only requests that did not cold boot, and the latency
-    minimum applies to this count. Omitted when every request was ranked."""
+    """Requests the p95 ranked, to which the latency minimum applies. The canary guard ranks only requests that did
+    not cold boot, and no reader ranks a long-lived response such as a WebSocket or an event stream. Omitted when
+    every request was ranked."""
     unauthenticated: int | Unset = UNSET
     """Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a
     window where at least half of either side was rejected is unknown (probe_unauthenticated)."""

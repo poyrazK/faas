@@ -113,6 +113,7 @@ service Githubd {
   // install-belongs-to-the-app half; the install-belongs-to-the-user
   // half lands here).
   rpc VerifyInstallation(VerifyInstallationRequest) returns (VerifyInstallationResponse);
+  rpc GetInstallationAccess(GetInstallationAccessRequest) returns (GetInstallationAccessResponse);
 
   // MintInstallationToken returns a fresh installation token for
   // the given (account, installation_id). The token is the canonical
@@ -531,6 +532,12 @@ message EnqueueBuildRequest {
   // github_installation_id identifies the installation used to validate
   // github_source_ref. Zero means no mutable branch provenance was supplied.
   int64 github_installation_id = 18;
+  // compose_service_addresses are this service's Compose environment values
+  // that call a sibling project service, already rewritten to that service's
+  // Gregale address (ADR-20261105104500). apid sets each key the app has no
+  // value for in deployment_scope before the build, as a reviewed project
+  // deploy does; a value already set is kept. Push events only.
+  map<string, string> compose_service_addresses = 19;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for
@@ -761,4 +768,12 @@ message GetProtectedBranchEvidenceResponse {
 message GetReviewedMergeEvidenceResponse {
   // Credential-free gitapproval.MergeEvidence. Bounded and validated at both ends.
   bytes evidence_json = 1;
+}
+
+// Account authorization is checked before provider metadata is read.
+message GetInstallationAccessRequest { string account_id = 1; int64 installation_id = 2; }
+message GetInstallationAccessResponse {
+ string account_type = 1;
+ string repository_selection = 2;
+ map<string,string> permissions = 3;
 }

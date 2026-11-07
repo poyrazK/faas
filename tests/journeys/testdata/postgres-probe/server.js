@@ -9,6 +9,10 @@
 // KEY names the environment variable holding the URL (DATABASE_URL by
 // default). TEXT is [a-z0-9-]{1,40}, so it can be quoted safely; writing the
 // same TEXT again returns the existing row.
+//
+// /notes runs no DDL: a read_write or read_only login cannot change the
+// schema. The release command `migrate create` makes the table through the
+// migration binding first.
 
 import crypto from "node:crypto";
 import http from "node:http";
@@ -204,10 +208,10 @@ async function notes(req, url) {
     if (!/^[a-z0-9-]{1,40}$/.test(body)) return [400, { error: "body must match [a-z0-9-]{1,40}" }];
     // A retried write returns the first attempt's row, so a lost response
     // never adds a second one.
-    const rows = await query(database, `${schema} INSERT INTO journey_notes (body) VALUES ('${body}') ON CONFLICT (body) DO UPDATE SET body = EXCLUDED.body RETURNING body, ${utc("at")};`);
+    const rows = await query(database, `INSERT INTO journey_notes (body) VALUES ('${body}') ON CONFLICT (body) DO UPDATE SET body = EXCLUDED.body RETURNING body, ${utc("at")};`);
     return [200, { body: rows[0][0], at: rows[0][1] }];
   }
-  const rows = await query(database, `${schema} SELECT body, ${utc("clock_timestamp()")} FROM journey_notes ORDER BY id;`);
+  const rows = await query(database, `SELECT body, ${utc("clock_timestamp()")} FROM journey_notes ORDER BY id;`);
   const now = await query(database, `SELECT ${utc("clock_timestamp()")};`);
   return [200, { bodies: rows.map((row) => row[0]), now: now[0][0] }];
 }

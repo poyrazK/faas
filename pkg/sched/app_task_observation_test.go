@@ -73,7 +73,9 @@ func TestAppTaskObservationLifecycleContract(t *testing.T) {
 		for k, kind := range []state.AppTaskKind{state.AppTaskKindRelease, state.AppTaskKindManual} {
 			t.Run(backend+"/"+string(kind), func(t *testing.T) {
 				s := taskObservationStore(t, backend)
-				base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+				// Release admission uses the store's real clock. Keep the
+				// simulated lease and start times ahead of that clock.
+				base := time.Now().UTC().Truncate(time.Microsecond)
 				if got := observeTasks(t, s, base); got != (state.AppTaskObservationSnapshot{}) {
 					t.Fatal(got)
 				}
@@ -123,7 +125,8 @@ func TestAppTaskObservationRecoveryAndDeadlines(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			s := taskObservationStore(t, backend)
-			base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+			// Exercise recovery with a valid lease at actual admission.
+			base := time.Now().UTC().Truncate(time.Microsecond)
 			task := observationTask(t, s, "task-recovery", state.AppTaskKindRelease, base, nil)
 			claimed, err := s.ClaimNextAppTask(t.Context(), "runner", base.Add(time.Minute), 30*time.Second)
 			if err != nil {

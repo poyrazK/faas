@@ -103,6 +103,9 @@ func (s *server) databaseSwitchPromoteRelease(ctx context.Context, sw state.Data
 		return fmt.Errorf("database rollback binding check: %s", problem.Code)
 	}
 	problem, err = s.withBindingReleaseObservations(r, account, app, observations, func(writeCtx context.Context) error {
+		if sw.LeaseToken != "" {
+			writeCtx = state.WithDatabaseSwitchLease(writeCtx, sw)
+		}
 		return s.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(writeCtx), id)
 	})
 	if problem != nil {

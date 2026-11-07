@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,15 +16,16 @@ import (
 // renewals must remain allowed; only a new hostname consumes durable budget.
 func TestOnDemandTLSPolicyRepeatedLoadsRemainAllowed(t *testing.T) {
 	_, p, _ := onDemandTLSFixture(t)
-	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	p.SetNow(func() time.Time { return now })
+	var now atomic.Int64
+	now.Store(time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC).UnixNano())
+	p.SetNow(func() time.Time { return time.Unix(0, now.Load()).UTC() })
 	for i := range 12 {
 		for _, host := range []string{"shop.example.com", "a.tenants.example.net"} {
 			if ok, decision := p.Decide(t.Context(), host); !ok {
 				t.Fatalf("load %d for %s refused: %s", i, host, decision)
 			}
 		}
-		now = now.Add(time.Minute)
+		now.Add(int64(time.Minute))
 	}
 }
 

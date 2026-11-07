@@ -188,7 +188,10 @@ func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID
 	if err != nil {
 		return false, err
 	}
-	return domain.Verified() && domain.EnvironmentID == "" && domain.AppID == appID, nil
+	if !domain.Verified() || domain.EnvironmentID != "" || domain.AppID != appID {
+		return false, nil
+	}
+	return r.cachedCustomDomainPlanAllowed(ctx, domain)
 }
 
 func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
@@ -468,6 +471,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 		if err != nil || !found {
 			return app, found, err
 		}
+		if !customDomainPlanAllowed(dom, app.Plan) {
+			return gateway.App{}, false, nil
+		}
 		app.CustomDomainRoute = true
 		app.DynamicRoute = true
 		return app, true, nil
@@ -482,6 +488,9 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	resolved, found, err := r.toPublicApp(ctx, app)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	if !customDomainPlanAllowed(dom, resolved.Plan) {
+		return gateway.App{}, false, nil
 	}
 	resolved.CustomDomainRoute = true
 	return resolved, true, nil
@@ -788,6 +797,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// column DEFAULT (migration 00212).
 		RouteMetricsEnabled:     app.RouteMetricsEnabled,
 		OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+		TracingEnabled:          app.Manifest.Tracing != nil && app.Manifest.Tracing.Enabled,
 		DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
 		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag. Plumbed from apps.maintenance_mode so
@@ -856,28 +866,7 @@ type deploymentCompanionRoute struct {
 }
 
 func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
-	sources := make([]string, 0, 2)
-	if len(deployment.OverrideReadinessProbe) > 0 {
-		var probe api.DeploymentReadinessProbe
-		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
-			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
-		}
-		if probe.Path != "" || probe.GRPC != nil {
-			sources = append(sources, "primary_app")
-		}
-	}
-	var companions []deploymentCompanionRoute
-	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
-		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
-			return nil, fmt.Errorf("decode deployment companions: %w", err)
-		}
-	}
-	for _, companion := range companions {
-		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
-			sources = append(sources, "sidecar:"+companion.Name)
-		}
-	}
-	return sources, nil
+	return state.DeploymentReadinessSources(deployment)
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a
@@ -1483,6 +1472,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.ResetApp(p.AppID)
 			inv.InvalidateRoutesForApp(p.AppID)
 			inv.InvalidateResponseCacheByApp(p.AppID)
+			if counts, ok := inv.(interface{ ForgetDeletedAppRequestCounts(string) }); ok {
+				counts.ForgetDeletedAppRequestCounts(p.AppID)
+			}
 		} else {
 			inv.FlushRoutes()
 			inv.InvalidateResponseCacheAll()

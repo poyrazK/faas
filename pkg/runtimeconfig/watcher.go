@@ -44,6 +44,24 @@ const (
 	// coordinator. Daemons start with it on and apply the durable value at
 	// their first reconcile; turn it on fleet-wide before admitting clones.
 	KeyFullEnvironmentClones = "full_environment_clones_enabled"
+
+	// The values that shape the CPU of an app on the
+	// KeyGuestVCPUFromCPUApps list (ADR-20261101215228), read by schedd.
+	// Each default is the compiled value; bounds are in pkg/api/limits.go.
+	KeyAppCPUBaselineMillicoresPerGB = "app_cpu_baseline_millicores_per_gb"
+	KeyAppCPUCeilingFloorMillicores  = "app_cpu_ceiling_floor_millicores"
+	KeyGuestVCPUMillicores           = "guest_vcpu_millicores"
+	// KeyGuestVCPUFromCPUApps lists the apps, comma-separated IDs or "*",
+	// whose vCPUs follow their CPU ceiling and that book their plan's
+	// baseline (ADR-20261101160231). Empty keeps every app on its plan.
+	KeyGuestVCPUFromCPUApps = "guest_vcpu_from_cpu_apps"
+
+	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
+	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
+	// is how recently an app must have parked on a node to be refreshed
+	// there. Defaults and bounds are in pkg/api/limits.go.
+	KeySnapshotRefresh            = "snapshot_refresh"
+	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.
@@ -286,6 +304,24 @@ func Bool(value json.RawMessage) (bool, error) {
 		return false, err
 	}
 	return enabled, nil
+}
+
+// Int decodes the JSON integer shape of an integer setting.
+func Int(value json.RawMessage) (int, error) {
+	var v int
+	if err := json.Unmarshal(value, &v); err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// String decodes the JSON string shape of a string setting.
+func String(value json.RawMessage) (string, error) {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return "", err
+	}
+	return v, nil
 }
 
 // IsContextDone identifies normal shutdown so callers can avoid logging a

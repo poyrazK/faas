@@ -902,6 +902,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
 		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
 		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+		if s.releasePhaseOff && len(dep.ReleaseCommand) > 0 {
+			api.WriteProblem(w, releasePhaseOffProblem())
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return
@@ -1039,7 +1043,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 // defaultCustomDomain is the app's usable default custom domain, or "".
 func (s *server) defaultCustomDomain(ctx context.Context, appID string) string {
 	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
-		if domain, err := resolver.DefaultCustomDomain(ctx, appID); err == nil {
+		if domain, err := resolver.DefaultCustomDomain(s.defaultDomainContext(ctx), appID); err == nil {
 			return domain
 		}
 	}
@@ -1058,7 +1062,7 @@ func (s *server) defaultCustomDomains(ctx context.Context, apps []state.App) (ma
 	for _, a := range apps {
 		ids = append(ids, a.ID)
 	}
-	domains, err := reader.DefaultCustomDomains(ctx, ids)
+	domains, err := reader.DefaultCustomDomains(s.defaultDomainContext(ctx), ids)
 	if err != nil {
 		s.log.Warn("apid: default custom domains lookup", "apps", len(ids), "err", err)
 		return nil, false
@@ -1116,8 +1120,9 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
 		// through the accessor to 0 — same fail-closed contract
-		// as MaxMinInstances.
-		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
+		// as MaxMinInstances. app_request_concurrency_max replaces it
+		// once runtime config sets it (ADR-20261101215228).
+		ConcurrencyPerVMBound: plan.RequestConcurrencyBound(),
 		EffectiveLimits:       appEffectiveLimits(a, plan),
 		ConfiguredResources: api.AppConfiguredResources{
 			MemoryMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),

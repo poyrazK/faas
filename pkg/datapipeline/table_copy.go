@@ -166,6 +166,9 @@ func observeTableCopies(ctx context.Context, p Pipeline, target *pgx.Conn, curre
 		if stage == "copying" || stage == "refreshing" {
 			next.Phase = "missing"
 		}
+		if r := p.SchemaChange.Recovery; r != nil && r.Table == name && r.Stage == "copying" {
+			next.Phase = "missing"
+		}
 		if r := p.SchemaChange.Recovery; r != nil && r.Table == name && r.State == "approved" && slices.Contains([]string{"retiring", "detached", "cleared", "published"}, r.Stage) {
 			next.Phase = "recovering"
 		}

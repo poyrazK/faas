@@ -10,7 +10,7 @@ INSERT INTO issue_application_triage(issue_id,revision,reminder_started_at)
 SELECT sqlc.arg(issue_id),1,clock_timestamp() FROM issue_application_reminder_policies p WHERE p.app_id=sqlc.arg(app_id) AND p.enabled
 ON CONFLICT(issue_id) DO UPDATE SET reminder_started_at=COALESCE(issue_application_triage.reminder_started_at,excluded.reminder_started_at);
 -- name: IssueApplicationReminderApp :one
-SELECT a.id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+SELECT a.id FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN issue_application_reminder_policies p ON p.app_id=a.id AND p.enabled
 JOIN issue_application_slack_policies ap ON ap.app_id=a.id AND ap.enabled
 JOIN LATERAL(SELECT GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snoozed_until,p.updated_at)+p.interval_minutes*interval '1 minute' AS due_at
@@ -19,15 +19,15 @@ JOIN LATERAL(SELECT GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snooz
  AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
  AND GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snoozed_until,p.updated_at)+p.interval_minutes*interval '1 minute'<=statement_timestamp()
  ORDER BY due_at,i.id LIMIT 1) due ON true
-WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[])
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[])
 ORDER BY due.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED;
 -- name: IssueApplicationReminderDue :one
 SELECT i.*,tr.incident_id AS response_id,tr.reminder_count,p.revision AS reminder_policy_revision,tr.escalation_team_id AS responsibility_team_id,CASE WHEN tr.escalated_at IS NOT NULL THEN tr.escalation_team_id ELSE i.assignee_team_id END::uuid AS preferred_team_id
-FROM apps a JOIN accounts owner ON owner.id=a.account_id
+FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
 JOIN issue_application_reminder_policies p ON p.app_id=a.id AND p.enabled
 JOIN issue_application_slack_policies ap ON ap.app_id=a.id AND ap.enabled
 JOIN app_issues i ON i.app_id=a.id AND i.account_id=a.account_id JOIN issue_application_triage tr ON tr.issue_id=i.id
-WHERE a.id=sqlc.arg(app_id) AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[])
+WHERE a.id=sqlc.arg(app_id) AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[])
 AND i.state='open' AND tr.reminder_started_at IS NOT NULL AND tr.acknowledged_at IS NULL AND tr.reminder_count<p.repeat_limit
 AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
 AND GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snoozed_until,p.updated_at)+p.interval_minutes*interval '1 minute'<=statement_timestamp()

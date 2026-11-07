@@ -62,6 +62,7 @@ type composeCandidate struct {
 	ServiceBindingTransport   string                                  `yaml:"x-gregale-service-transport"`
 	ServiceReliability        map[string]api.ServiceReliabilityPolicy `yaml:"x-gregale-service-reliability"`
 	PreviewServiceCallsPolicy string                                  `yaml:"x-gregale-preview-calls"`
+	AppProtocol               string                                  `yaml:"x-gregale-app-protocol"`
 	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
 	AllowedServiceCallScopes  *api.ServiceCallerScopes                `yaml:"x-gregale-allow-call-scopes"`
 	PlatformTenantRequired    *bool                                   `yaml:"x-gregale-platform-tenant-required"`
@@ -289,6 +290,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasWorkload && previewServiceCallsPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a deployable workload", src, name)
 		}
+		appProtocol, appProtocolErr := normalizeComposeAppProtocol(s.AppProtocol)
+		if appProtocolErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, appProtocolErr)
+		}
+		if !hasWorkload && appProtocol != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-app-protocol requires a deployable workload", src, name)
+		}
 		allowedCallers, callersErr := normalizeAllowedServiceCallers(s.AllowedServiceCallers)
 		if callersErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, callersErr)
@@ -436,6 +444,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			serviceBindingTransport:   serviceBindingTransport,
 			serviceReliability:        reliability,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
+			appProtocol:               appProtocol,
 			allowedServiceCallers:     allowedCallers,
 			allowedServiceCallScopes:  allowedCallScopes,
 			platformTenantRequired:    s.PlatformTenantRequired,
@@ -548,6 +557,19 @@ func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {
 		return ServiceBindingPolicyProject, nil
 	default:
 		return "", fmt.Errorf("x-gregale-service-policy must be project, declared or account")
+	}
+}
+
+// normalizeComposeAppProtocol validates x-gregale-app-protocol, the wire
+// protocol a service serves (ADR-20261105095300): http1, http2 or grpc. A
+// gRPC service needs grpc so the platform reaches it over HTTP/2, publicly
+// and from its siblings; empty keeps the app's protocol.
+func normalizeComposeAppProtocol(value string) (string, error) {
+	switch protocol := strings.ToLower(strings.TrimSpace(value)); protocol {
+	case "", "http1", "http2", "grpc":
+		return protocol, nil
+	default:
+		return "", fmt.Errorf("x-gregale-app-protocol %q must be http1, http2 or grpc", value)
 	}
 }
 

@@ -79,8 +79,9 @@ func TestGeneratedFlagDefaultsFollowTier(t *testing.T) {
 // ungatedGeneratedFlags are capabilities whose generated flag gates nothing
 // by design, with the reason (ADR-20261023115741).
 var ungatedGeneratedFlags = map[string]string{
-	"framework-profiles": "detection runs inside the CLI's deploy and init flows; there is no request or daemon decision to gate",
-	"frozen-tier":        "operator performance switch (FAAS_FROZEN_TIER) with no customer-visible behaviour to release",
+	"framework-profiles":        "detection runs inside the CLI's deploy and init flows; there is no request or daemon decision to gate",
+	"frozen-tier":               "operator performance switch (FAAS_FROZEN_TIER) with no customer-visible behaviour to release",
+	"object-storage-key-scopes": "key_prefix is one field on the shared bucket binding routes; pkg/apid/object keyScopeProblem checks the capability itself",
 }
 
 // TestEveryGeneratedFlagGatesSomething fails when a capability's generated

@@ -113,8 +113,17 @@ func TestSnapshotPrimeObservationStoreContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			// More than recovery's four pages: observation must cover all durable rows.
+			// Spread the fleet cohort across accounts to keep each setup write
+			// within its per-account traffic-policy analysis budget.
+			var cohort state.Account
 			for i := range 257 {
-				primeObservationCandidate(t, store, account.ID, fmt.Sprintf("wait-%d", i), nil)
+				if i%64 == 0 {
+					cohort, err = store.CreateAccount(ctx, fmt.Sprintf("prime-observation-page-%d@example.com", i/64), api.PlanScale)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				primeObservationCandidate(t, store, cohort.ID, fmt.Sprintf("wait-%d", i), nil)
 			}
 			activeApp, activeDep := primeObservationCandidate(t, store, account.ID, "active", nil)
 			primeObservationInstance(t, store, activeApp, activeDep, state.StateColdBooting)

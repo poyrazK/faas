@@ -234,6 +234,30 @@ func (q *Queries) ReadEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readEnvironmentBudgetReceiptForApp = `-- name: ReadEnvironmentBudgetReceiptForApp :one
+SELECT request_hash,response FROM environment_route_budget_receipts
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND request_id=$3::uuid
+`
+
+type ReadEnvironmentBudgetReceiptForAppParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+type ReadEnvironmentBudgetReceiptForAppRow struct {
+	RequestHash string
+	Response    []byte
+}
+
+func (q *Queries) ReadEnvironmentBudgetReceiptForApp(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptForAppParams) (ReadEnvironmentBudgetReceiptForAppRow, error) {
+	row := db.QueryRow(ctx, readEnvironmentBudgetReceiptForApp, arg.AccountID, arg.AppID, arg.RequestID)
+	var i ReadEnvironmentBudgetReceiptForAppRow
+	err := row.Scan(&i.RequestHash, &i.Response)
+	return i, err
+}
+
 const readEnvironmentRouteBudgets = `-- name: ReadEnvironmentRouteBudgets :one
 SELECT to_jsonb(b) FROM app_environment_route_budgets b
 WHERE b.app_id=$1::uuid AND b.account_id=$2::uuid AND b.scope=$3::text

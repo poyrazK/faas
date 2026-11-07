@@ -67,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -284,6 +285,7 @@ var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
+var ErrCDNCert = &errCDNCert
 var ErrCertFailure = &errCertFailure
 var ErrClassifierHostHashFailed = &errClassifierHostHashFailed
 var ErrClassifierInsert = &errClassifierInsert
@@ -474,6 +476,8 @@ var DebugRegressionObservationToItem = debugRegressionObservationToItem
 var DebugRegressionParams = debugRegressionParams
 var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
+var DebugRouteMatches = debugRouteMatches
+var RegressionAppsAfter = regressionAppsAfter
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename
 var DecodeBindingInventory = decodeBindingInventory
@@ -665,6 +669,14 @@ func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
 }, appID string, from, until, asOf time.Time) (*bool, []string) {
 	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
 }
+
+// RequestAnalyticsSampledRead runs read as the analytics handler runs a
+// sampled-detail read; bounded is whether the rollups answer the window.
+func RequestAnalyticsSampledRead(ctx context.Context, bounded bool, read func(context.Context) (int, error)) (int, bool, error) {
+	return requestAnalyticsSampledRead(ctx, &server{}, bounded, "test", read)
+}
+
+var RequestAnalyticsSampledMeasuresState = requestAnalyticsSampledMeasuresState
 
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
@@ -2121,9 +2133,34 @@ func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account,
 // ResolveSourceReleaseCommand exposes the release command precedence of a
 // source deployment (ADR-20261102192943).
 func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
-	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, false)
 	return resolved.command, resolved.shell, problem
 }
+
+// ProjectWorkloadReleaseCommand exposes a project workload's release command
+// resolution (ADR-20261019120007 amendment 1).
+func ProjectWorkloadReleaseCommand(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, manifest)
+	return resolved.command, resolved.shell, problem
+}
+
+// ResolveSourceReleaseCommandWithPhase resolves a source deployment's release
+// command with the release phase on or off (FAAS_RELEASE_PHASE_ENABLED).
+func ResolveSourceReleaseCommandWithPhase(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, enabled bool) ([]string, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest, !enabled)
+	return resolved.command, problem
+}
+
+// CapabilitiesWithReleasePhase answers GET /v1/capabilities for a Pro
+// account with the release phase on or off.
+func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithReleasePhaseEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
+// ReleasePhaseEnabledFromEnv exposes how apid reads FAAS_RELEASE_PHASE_ENABLED.
+var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
@@ -2152,3 +2189,15 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
+// enforcement.
+var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
+
+func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentRollbackReceipt(w, r, acct)
+}
+
+func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.getEnvironmentPromotionReceipt(w, r, acct)
+}

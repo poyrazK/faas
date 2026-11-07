@@ -42,6 +42,7 @@ func (s *server) collectAppHealth(w http.ResponseWriter, r *http.Request, acct s
 		MetricsAllowed: acct.Plan.PerAppMetricsAllowed(),
 		AssessWorkers:  s.platformFlagEnabled(platformflags.AppHealthWorkers, acct),
 		AssessMemory:   s.platformFlagEnabled(platformflags.AppHealthMemory, acct),
+		Plan:           acct.Plan,
 	})
 	if environment.ID != "" {
 		current, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, scope)

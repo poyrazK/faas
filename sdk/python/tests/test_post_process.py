@@ -133,6 +133,7 @@ def test_regen_is_deterministic(_regen_skip_reason: None, tmp_path: Path) -> Non
         for name in (
             "preview/object_storage_runtime.py",
             "secret_reload_runtime.py",
+            "lifecycle_runtime.py",
             "_binding_client_runtime.py",
             "preview/postgres_pool_runtime.py",
             "preview/async_postgres_pool_runtime.py",
@@ -167,6 +168,7 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/_binding_qualification.py": b"# uncommitted qualification waiting\n",
         "faas_sdk/preview/operations_runtime.py": b"# uncommitted runtime authority\n",
         "faas_sdk/secret_reload_runtime.py": b"# uncommitted secret reload authority\n",
+        "faas_sdk/lifecycle_runtime.py": b"# uncommitted lifecycle hooks\n",
         "faas_sdk/_binding_client_runtime.py": b"# shared owned-resource lifecycle\n",
         "faas_sdk/preview/postgres_pool_runtime.py": b"# PostgreSQL pool adoption\n",
         "faas_sdk/preview/async_postgres_pool_runtime.py": b"# async PostgreSQL pool adoption\n",
