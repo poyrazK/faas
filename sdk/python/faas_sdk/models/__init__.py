@@ -34,6 +34,7 @@ from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .agent_approval_pending_info import AgentApprovalPendingInfo
 from .agent_approval_pending_info_category import AgentApprovalPendingInfoCategory
+from .agent_approval_pending_info_status import AgentApprovalPendingInfoStatus
 from .agent_approval_response import AgentApprovalResponse
 from .agent_approval_response_category import AgentApprovalResponseCategory
 from .agent_approval_response_status import AgentApprovalResponseStatus
@@ -2680,6 +2681,7 @@ __all__ = (
     "AfterRestoreHook",
     "AgentApprovalPendingInfo",
     "AgentApprovalPendingInfoCategory",
+    "AgentApprovalPendingInfoStatus",
     "AgentApprovalResponse",
     "AgentApprovalResponseCategory",
     "AgentApprovalResponseStatus",

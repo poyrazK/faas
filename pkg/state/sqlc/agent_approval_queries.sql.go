@@ -64,19 +64,27 @@ func (q *Queries) CountPendingAgentApprovals(ctx context.Context, db DBTX, keyID
 
 const decideAgentApproval = `-- name: DecideAgentApproval :execrows
 UPDATE agent_approval_requests
-SET status = $1, decided_by = $2::uuid, decided_at = now()
-WHERE id = $3::uuid AND status = 'pending' AND expires_at > now()
+SET status = $1, decided_by = $2::uuid, decided_at = now(),
+    decision_note = $3
+WHERE id = $4::uuid AND status = 'pending' AND expires_at > now()
 `
 
 type DecideAgentApprovalParams struct {
-	Status    string
-	DecidedBy pgtype.UUID
-	ID        pgtype.UUID
+	Status       string
+	DecidedBy    pgtype.UUID
+	DecisionNote pgtype.Text
+	ID           pgtype.UUID
 }
 
-// A person approves or denies a request that is still pending and unexpired.
+// A person approves or denies a request that is still pending and unexpired;
+// a denial may carry a note for the agent (ADR-20261107140000 §6).
 func (q *Queries) DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (int64, error) {
-	result, err := db.Exec(ctx, decideAgentApproval, arg.Status, arg.DecidedBy, arg.ID)
+	result, err := db.Exec(ctx, decideAgentApproval,
+		arg.Status,
+		arg.DecidedBy,
+		arg.DecisionNote,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -134,7 +142,7 @@ func (q *Queries) GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyI
 
 const getAgentApproval = `-- name: GetAgentApproval :one
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at
+       created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests WHERE id = $1::uuid
 `
 
@@ -156,6 +164,7 @@ func (q *Queries) GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID)
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.ExpiresAt,
+		&i.DecisionNote,
 	)
 	return i, err
 }
@@ -211,7 +220,7 @@ func (q *Queries) InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAg
 
 const listAgentApprovalsForKey = `-- name: ListAgentApprovalsForKey :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at
+       created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests
 WHERE key_id = $1::uuid
 ORDER BY created_at DESC
@@ -247,6 +256,7 @@ func (q *Queries) ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg Lis
 			&i.DecidedAt,
 			&i.ConsumedAt,
 			&i.ExpiresAt,
+			&i.DecisionNote,
 		); err != nil {
 			return nil, err
 		}
@@ -260,7 +270,7 @@ func (q *Queries) ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg Lis
 
 const listPendingAgentApprovals = `-- name: ListPendingAgentApprovals :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at
+       created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests
 WHERE status = 'pending' AND expires_at > now()
   AND (account_id = $1::uuid OR org_id = ANY($2::uuid[]))
@@ -300,6 +310,7 @@ func (q *Queries) ListPendingAgentApprovals(ctx context.Context, db DBTX, arg Li
 			&i.DecidedAt,
 			&i.ConsumedAt,
 			&i.ExpiresAt,
+			&i.DecisionNote,
 		); err != nil {
 			return nil, err
 		}
@@ -320,4 +331,61 @@ WHERE key_id = $1::uuid AND expires_at < now() - interval '7 days'
 func (q *Queries) PruneAgentApprovals(ctx context.Context, db DBTX, keyID pgtype.UUID) error {
 	_, err := db.Exec(ctx, pruneAgentApprovals, keyID)
 	return err
+}
+
+const recentAgentApprovalOutcome = `-- name: RecentAgentApprovalOutcome :one
+SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
+       created_at, decided_at, consumed_at, expires_at, decision_note
+FROM (
+    SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by, created_at, decided_at, consumed_at, expires_at, decision_note FROM agent_approval_requests
+    WHERE key_id = $1::uuid
+      AND method = $2
+      AND path = $3
+      AND body_sha256 IS NOT DISTINCT FROM $4::bytea
+    ORDER BY created_at DESC
+    LIMIT 1
+) latest
+WHERE (status = 'denied' AND decided_at > now() - $5::int * interval '1 second')
+   OR (status IN ('pending', 'approved') AND expires_at <= now()
+       AND expires_at > now() - $5::int * interval '1 second')
+`
+
+type RecentAgentApprovalOutcomeParams struct {
+	KeyID         pgtype.UUID
+	Method        string
+	Path          string
+	BodySha256    []byte
+	WindowSeconds int32
+}
+
+// ADR-20261107140000 §6: the key's most recent request with the same binding,
+// when it was denied, or expired undecided or unused, within the window. A
+// newer request of any other status (pending, approved, consumed) hides it.
+func (q *Queries) RecentAgentApprovalOutcome(ctx context.Context, db DBTX, arg RecentAgentApprovalOutcomeParams) (AgentApprovalRequest, error) {
+	row := db.QueryRow(ctx, recentAgentApprovalOutcome,
+		arg.KeyID,
+		arg.Method,
+		arg.Path,
+		arg.BodySha256,
+		arg.WindowSeconds,
+	)
+	var i AgentApprovalRequest
+	err := row.Scan(
+		&i.ID,
+		&i.KeyID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.Category,
+		&i.Method,
+		&i.Path,
+		&i.BodySha256,
+		&i.Status,
+		&i.DecidedBy,
+		&i.CreatedAt,
+		&i.DecidedAt,
+		&i.ConsumedAt,
+		&i.ExpiresAt,
+		&i.DecisionNote,
+	)
+	return i, err
 }

@@ -54,18 +54,20 @@ RETURNING id;
 
 -- name: GetAgentApproval :one
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at
+       created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests WHERE id = sqlc.arg(id)::uuid;
 
 -- name: DecideAgentApproval :execrows
--- A person approves or denies a request that is still pending and unexpired.
+-- A person approves or denies a request that is still pending and unexpired;
+-- a denial may carry a note for the agent (ADR-20261107140000 §6).
 UPDATE agent_approval_requests
-SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by)::uuid, decided_at = now()
+SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by)::uuid, decided_at = now(),
+    decision_note = sqlc.narg(decision_note)
 WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND expires_at > now();
 
 -- name: ListAgentApprovalsForKey :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at
+       created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests
 WHERE key_id = sqlc.arg(key_id)::uuid
 ORDER BY created_at DESC
@@ -75,9 +77,28 @@ LIMIT sqlc.arg(max_rows)::int;
 -- Undecided requests of agents the account connected, or of agents acting in
 -- the organizations given (those the account owns or administers).
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at
+       created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests
 WHERE status = 'pending' AND expires_at > now()
   AND (account_id = sqlc.arg(account_id)::uuid OR org_id = ANY(sqlc.arg(org_ids)::uuid[]))
 ORDER BY created_at DESC
 LIMIT sqlc.arg(max_rows)::int;
+
+-- name: RecentAgentApprovalOutcome :one
+-- ADR-20261107140000 §6: the key's most recent request with the same binding,
+-- when it was denied, or expired undecided or unused, within the window. A
+-- newer request of any other status (pending, approved, consumed) hides it.
+SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
+       created_at, decided_at, consumed_at, expires_at, decision_note
+FROM (
+    SELECT * FROM agent_approval_requests
+    WHERE key_id = sqlc.arg(key_id)::uuid
+      AND method = sqlc.arg(method)
+      AND path = sqlc.arg(path)
+      AND body_sha256 IS NOT DISTINCT FROM sqlc.narg(body_sha256)::bytea
+    ORDER BY created_at DESC
+    LIMIT 1
+) latest
+WHERE (status = 'denied' AND decided_at > now() - sqlc.arg(window_seconds)::int * interval '1 second')
+   OR (status IN ('pending', 'approved') AND expires_at <= now()
+       AND expires_at > now() - sqlc.arg(window_seconds)::int * interval '1 second');

@@ -22,6 +22,7 @@ import (
 type AgentApprovalGate interface {
 	APIKeyApprovalCategories(ctx context.Context, keyID string) ([]string, bool, error)
 	ConsumeAgentApproval(ctx context.Context, binding state.AgentApprovalBinding) (string, bool, error)
+	RecentAgentApprovalOutcome(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (state.AgentApproval, bool, error)
 	RequestAgentApproval(ctx context.Context, request state.AgentApproval) (state.AgentApproval, error)
 }
 
@@ -121,6 +122,15 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 	} else if used {
 		return false
 	}
+	outcome, decided, err := gate.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)
+	if err != nil {
+		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
+		return true
+	}
+	if decided {
+		m.writeApprovalOutcome(w, acct, key, outcome)
+		return true
+	}
 	request, err := gate.RequestAgentApproval(ctx, state.AgentApproval{
 		KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
@@ -149,6 +159,42 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 	}
 	api.WriteProblem(w, problem)
 	return true
+}
+
+// writeApprovalOutcome tells an agent that repeats a denied or expired
+// request what happened, so it stops asking (ADR-20261107140000 §6).
+func (m *Middleware) writeApprovalOutcome(w http.ResponseWriter, acct state.Account, key state.APIKey, outcome state.AgentApproval) {
+	reviewURL := ""
+	if m.ApprovalReviewURL != nil {
+		reviewURL = m.ApprovalReviewURL(outcome.ID)
+	}
+	retryAt := outcome.DecidedAt
+	status := api.AgentApprovalDenied
+	if outcome.Status != api.AgentApprovalDenied {
+		retryAt, status = outcome.ExpiresAt, api.AgentApprovalExpired
+	}
+	retryAt = retryAt.Add(api.AgentApprovalOutcomeWindow).UTC()
+	var problem *api.Problem
+	if status == api.AgentApprovalDenied {
+		detail := "a person denied this " + outcome.Category + " request"
+		if outcome.Note != "" {
+			detail += ": " + outcome.Note
+		}
+		problem = api.NewProblem(http.StatusForbidden, api.CodeApprovalDenied, "Approval denied", detail).
+			WithHint("Do not repeat this request. Tell the person, and change what you are doing; repeating it after " + retryAt.Format(time.RFC3339) + " asks again.")
+	} else {
+		problem = api.NewProblem(http.StatusGone, api.CodeApprovalExpired, "Approval expired",
+			"nobody approved this "+outcome.Category+" request in time, or its approval went unused").
+			WithHint("Ask the person whether to go ahead; repeating it after " + retryAt.Format(time.RFC3339) + " asks again.")
+	}
+	problem.AgentApproval = &api.AgentApprovalPendingInfo{
+		ID: outcome.ID, Category: outcome.Category, ReviewURL: reviewURL,
+		ExpiresAt: outcome.ExpiresAt.UTC().Format(time.RFC3339), Status: status, Note: outcome.Note,
+	}
+	if m.Log != nil {
+		m.Log.Info("agent_approval.outcome", "key_id", key.ID, "account_id", acct.ID, "category", outcome.Category, "approval_id", outcome.ID, "status", status)
+	}
+	api.WriteProblem(w, problem)
 }
 
 // productionTarget reports whether the request's app is a production app. It

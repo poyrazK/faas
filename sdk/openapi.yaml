@@ -37662,14 +37662,16 @@ components:
         updated_at: {type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one.}
         revoked: {type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them.}
     AgentApprovalPendingInfo:
-      description: "The approval request behind an approval_required problem: a person opens review_url to decide, then the agent repeats the same request once."
+      description: "The approval request behind an approval_required, approval_denied or approval_expired problem. On approval_required a person opens review_url to decide, then the agent repeats the same request once; on the other two the agent should stop repeating it."
       type: object
       required: [id, category, review_url, expires_at]
       properties:
-        id: {type: string, format: uuid, description: The id of the pending approval request.}
+        id: {type: string, format: uuid, description: The id of the approval request.}
         category: {type: string, enum: [delete, production, credentials, billing], description: The kind of action that needs approval.}
         review_url: {type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request."}
         expires_at: {type: string, format: date-time, description: When the request and any approval of it expire.}
+        status: {type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request."}
+        note: {type: string, maxLength: 280, description: "The person's reason for denying the request, when they gave one."}
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
       type: object
@@ -37686,6 +37688,7 @@ components:
         created_at: {type: string, format: date-time, description: When the agent first made the request.}
         expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
         decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
+        note: {type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise."}
     AgentApprovalsResponse:
       description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
       type: object

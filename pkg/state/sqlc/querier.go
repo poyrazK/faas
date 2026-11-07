@@ -954,7 +954,8 @@ type Querier interface {
 	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
 	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
-	// A person approves or denies a request that is still pending and unexpired.
+	// A person approves or denies a request that is still pending and unexpired;
+	// a denial may carry a note for the agent (ADR-20261107140000 §6).
 	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (int64, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
@@ -6423,6 +6424,10 @@ type Querier interface {
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantAutomationSchedules(ctx context.Context, db DBTX, arg RearmTenantAutomationSchedulesParams) error
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
+	// ADR-20261107140000 §6: the key's most recent request with the same binding,
+	// when it was denied, or expired undecided or unused, within the window. A
+	// newer request of any other status (pending, approved, consumed) hides it.
+	RecentAgentApprovalOutcome(ctx context.Context, db DBTX, arg RecentAgentApprovalOutcomeParams) (AgentApprovalRequest, error)
 	ReclaimOperatorIntentAttempts(ctx context.Context, db DBTX, threshold pgtype.Timestamptz) (int64, error)
 	RecomputeCustomerOperationJobRun(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)

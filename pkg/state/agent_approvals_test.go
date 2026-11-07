@@ -79,10 +79,10 @@ func exerciseAgentApprovals(t *testing.T, store contractTestStore) {
 		t.Fatalf("pending for an org admin = %v, %v; want the request", others, err)
 	}
 
-	if err := store.DecideAgentApproval(ctx, first.ID, true, acct.ID); err != nil {
+	if err := store.DecideAgentApproval(ctx, first.ID, true, acct.ID, ""); err != nil {
 		t.Fatalf("DecideAgentApproval: %v", err)
 	}
-	if err := store.DecideAgentApproval(ctx, first.ID, false, acct.ID); !errors.Is(err, state.ErrNotFound) {
+	if err := store.DecideAgentApproval(ctx, first.ID, false, acct.ID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deciding twice = %v, want ErrNotFound", err)
 	}
 	other := binding
@@ -110,11 +110,31 @@ func exerciseAgentApprovals(t *testing.T, store contractTestStore) {
 	if err != nil || denied.ID == first.ID {
 		t.Fatalf("a request after the approval was used = %v, %v; want a new one", denied.ID, err)
 	}
-	if err := store.DecideAgentApproval(ctx, denied.ID, false, acct.ID); err != nil {
+	if outcome, ok, err := store.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow); err != nil || ok {
+		t.Fatalf("outcome while the latest request is pending = %+v, %v, %v; want none", outcome, ok, err)
+	}
+	if err := store.DecideAgentApproval(ctx, denied.ID, false, acct.ID, "  not on a Friday  "); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
 	if _, ok, err := store.ConsumeAgentApproval(ctx, binding); err != nil || ok {
 		t.Fatalf("consuming a denied request = %v, %v; want nothing", ok, err)
+	}
+	// adr: 20261107140000 — the agent repeating a denied request learns the
+	// outcome and the person's note, within the window only.
+	outcome, ok, err := store.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)
+	if err != nil || !ok || outcome.ID != denied.ID || outcome.Status != api.AgentApprovalDenied || outcome.Note != "not on a Friday" {
+		t.Fatalf("outcome of a denied request = %+v, %v, %v; want it denied with its trimmed note", outcome, ok, err)
+	}
+	if got, err := store.AgentApproval(ctx, denied.ID); err != nil || got.Note != "not on a Friday" {
+		t.Fatalf("denied request = %+v, %v; want its note", got, err)
+	}
+	if _, ok, err := store.RecentAgentApprovalOutcome(ctx, binding, time.Nanosecond); err != nil || ok {
+		t.Fatalf("outcome outside the window = %v, %v; want none", ok, err)
+	}
+	neverAsked := binding
+	neverAsked.Path = "/v1/apps/never-asked"
+	if _, ok, err := store.RecentAgentApprovalOutcome(ctx, neverAsked, api.AgentApprovalOutcomeWindow); err != nil || ok {
+		t.Fatalf("outcome of a request never made = %v, %v; want none", ok, err)
 	}
 
 	expired := request
@@ -127,7 +147,11 @@ func exerciseAgentApprovals(t *testing.T, store contractTestStore) {
 	if got := stale.EffectiveStatus(time.Now()); got != api.AgentApprovalExpired {
 		t.Fatalf("status of an expired request = %q", got)
 	}
-	if err := store.DecideAgentApproval(ctx, stale.ID, true, acct.ID); !errors.Is(err, state.ErrNotFound) {
+	staleBinding := state.AgentApprovalBinding{KeyID: key.ID, Method: expired.Method, Path: expired.Path}
+	if outcome, ok, err := store.RecentAgentApprovalOutcome(ctx, staleBinding, api.AgentApprovalOutcomeWindow); err != nil || !ok || outcome.ID != stale.ID || outcome.Note != "" {
+		t.Fatalf("outcome of an expired request = %+v, %v, %v; want it", outcome, ok, err)
+	}
+	if err := store.DecideAgentApproval(ctx, stale.ID, true, acct.ID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("approving an expired request = %v, want ErrNotFound", err)
 	}
 

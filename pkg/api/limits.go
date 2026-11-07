@@ -194,6 +194,15 @@ const (
 	AgentApprovalBodyBindBytes = 1 << 20
 )
 
+// Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
+// request denied, or expired, within AgentApprovalOutcomeWindow is told so
+// instead of asking again; a denial note holds at most
+// MaxAgentApprovalNoteChars characters.
+const (
+	AgentApprovalOutcomeWindow = 30 * time.Minute
+	MaxAgentApprovalNoteChars  = 280
+)
+
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.

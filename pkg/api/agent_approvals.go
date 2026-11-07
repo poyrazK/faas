@@ -34,6 +34,14 @@ const (
 // person approves it.
 const CodeApprovalRequired = "approval_required"
 
+// CodeApprovalDenied and CodeApprovalExpired answer an agent that repeats a
+// request a person denied, or that expired undecided or unused, within
+// AgentApprovalOutcomeWindow (ADR-20261107140000 §6).
+const (
+	CodeApprovalDenied  = "approval_denied"
+	CodeApprovalExpired = "approval_expired"
+)
+
 // NormalizeAgentApprovalCategories validates a requested set: "none" alone
 // means no category, "all" every one. It returns them deduplicated in
 // display order.
@@ -68,6 +76,11 @@ type AgentApprovalPendingInfo struct {
 	Category  string `json:"category"`
 	ReviewURL string `json:"review_url"`
 	ExpiresAt string `json:"expires_at"`
+	// Status is set on approval_denied and approval_expired: denied or
+	// expired.
+	Status string `json:"status,omitempty"`
+	// Note is the person's reason for a denial, when they gave one.
+	Note string `json:"note,omitempty"`
 }
 
 // AgentApprovalResponse is one approval request of an agent connection.
@@ -86,6 +99,8 @@ type AgentApprovalResponse struct {
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
 	DecidedAt string `json:"decided_at,omitempty"`
+	// Note is the person's reason for a denial, when they gave one.
+	Note string `json:"note,omitempty"`
 }
 
 // AgentApprovalsResponse lists approval requests, newest first.

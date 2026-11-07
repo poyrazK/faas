@@ -204,20 +204,21 @@ type Agent struct {
 
 // ADR-20261104140058 agent requests awaiting or holding a person's approval; apid is the only writer.
 type AgentApprovalRequest struct {
-	ID         pgtype.UUID
-	KeyID      pgtype.UUID
-	AccountID  pgtype.UUID
-	OrgID      pgtype.UUID
-	Category   string
-	Method     string
-	Path       string
-	BodySha256 []byte
-	Status     string
-	DecidedBy  pgtype.UUID
-	CreatedAt  pgtype.Timestamptz
-	DecidedAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	ExpiresAt  pgtype.Timestamptz
+	ID           pgtype.UUID
+	KeyID        pgtype.UUID
+	AccountID    pgtype.UUID
+	OrgID        pgtype.UUID
+	Category     string
+	Method       string
+	Path         string
+	BodySha256   []byte
+	Status       string
+	DecidedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	DecidedAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+	DecisionNote pgtype.Text
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.

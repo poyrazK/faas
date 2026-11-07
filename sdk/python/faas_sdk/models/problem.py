@@ -58,8 +58,9 @@ class Problem:
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
     agent_approval: AgentApprovalPendingInfo | Unset = UNSET
-    """The approval request behind an approval_required problem: a person opens review_url to decide, then the
-    agent repeats the same request once."""
+    """The approval request behind an approval_required, approval_denied or approval_expired problem. On
+    approval_required a person opens review_url to decide, then the agent repeats the same request once; on the
+    other two the agent should stop repeating it."""
     condition_field: str | Unset = UNSET
     condition_index: int | Unset = UNSET
     field_exists: bool | Unset = UNSET

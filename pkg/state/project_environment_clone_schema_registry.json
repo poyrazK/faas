@@ -47,6 +47,7 @@
       "created_at",
       "decided_at",
       "decided_by",
+      "decision_note",
       "expires_at",
       "id",
       "key_id",

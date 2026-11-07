@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,8 @@ type AgentApproval struct {
 	DecidedAt  time.Time
 	ConsumedAt time.Time
 	ExpiresAt  time.Time
+	// Note is the person's reason for a denial; empty otherwise.
+	Note string
 }
 
 // AgentApprovalBinding is what an approval allows: one request of the key
@@ -74,9 +77,13 @@ type AgentApprovalStore interface {
 	RequestAgentApproval(ctx context.Context, request AgentApproval) (AgentApproval, error)
 	// AgentApproval returns one request.
 	AgentApproval(ctx context.Context, id string) (AgentApproval, error)
-	// DecideAgentApproval approves or denies a pending, unexpired request.
-	// ErrNotFound when there is no such request.
-	DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID string) error
+	// DecideAgentApproval approves or denies a pending, unexpired request; a
+	// denial may carry a note. ErrNotFound when there is no such request.
+	DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID, note string) error
+	// RecentAgentApprovalOutcome returns the key's most recent request with
+	// the binding when it was denied, or expired undecided or unused, within
+	// window (ADR-20261107140000 §6). It reports false otherwise.
+	RecentAgentApprovalOutcome(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error)
 	// ListAgentApprovalsForKey returns the key's requests, newest first.
 	ListAgentApprovalsForKey(ctx context.Context, keyID string, limit int) ([]AgentApproval, error)
 	// ListPendingAgentApprovals returns the pending requests of agents the
@@ -170,15 +177,14 @@ func (s *PgStore) AgentApproval(ctx context.Context, id string) (AgentApproval, 
 	return agentApprovalFromRow(row), nil
 }
 
-func (s *PgStore) DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID string) error {
+func (s *PgStore) DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID, note string) error {
 	if _, err := uuid.Parse(id); err != nil {
 		return ErrNotFound
 	}
-	status := api.AgentApprovalDenied
-	if approve {
-		status = api.AgentApprovalApproved
-	}
-	n, err := sqlc.New().DecideAgentApproval(ctx, s.pool, sqlc.DecideAgentApprovalParams{Status: status, DecidedBy: mustPgUUID(deciderID), ID: mustPgUUID(id)})
+	status, decisionNote := decisionStatusNote(approve, note)
+	n, err := sqlc.New().DecideAgentApproval(ctx, s.pool, sqlc.DecideAgentApprovalParams{
+		Status: status, DecidedBy: mustPgUUID(deciderID), DecisionNote: pgText(decisionNote), ID: mustPgUUID(id),
+	})
 	if err != nil {
 		return mapErr(err)
 	}
@@ -186,6 +192,33 @@ func (s *PgStore) DecideAgentApproval(ctx context.Context, id string, approve bo
 		return ErrNotFound
 	}
 	return nil
+}
+
+// decisionStatusNote is the status a decision writes and the note it keeps:
+// only a denial keeps one, trimmed and cut to api.MaxAgentApprovalNoteChars.
+func decisionStatusNote(approve bool, note string) (string, string) {
+	if approve {
+		return api.AgentApprovalApproved, ""
+	}
+	note = strings.TrimSpace(note)
+	if runes := []rune(note); len(runes) > api.MaxAgentApprovalNoteChars {
+		note = strings.TrimSpace(string(runes[:api.MaxAgentApprovalNoteChars]))
+	}
+	return api.AgentApprovalDenied, note
+}
+
+func (s *PgStore) RecentAgentApprovalOutcome(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error) {
+	row, err := sqlc.New().RecentAgentApprovalOutcome(ctx, s.pool, sqlc.RecentAgentApprovalOutcomeParams{
+		KeyID: mustPgUUID(binding.KeyID), Method: binding.Method, Path: binding.Path, BodySha256: binding.BodySHA256,
+		WindowSeconds: int32(window / time.Second),
+	})
+	if err != nil {
+		if err = mapErr(err); errors.Is(err, ErrNotFound) {
+			return AgentApproval{}, false, nil
+		}
+		return AgentApproval{}, false, err
+	}
+	return agentApprovalFromRow(row), true, nil
 }
 
 func (s *PgStore) ListAgentApprovalsForKey(ctx context.Context, keyID string, limit int) ([]AgentApproval, error) {
@@ -219,7 +252,7 @@ func agentApprovalFromRow(row sqlc.AgentApprovalRequest) AgentApproval {
 		ID: pgUUIDString(row.ID), KeyID: pgUUIDString(row.KeyID), AccountID: pgUUIDString(row.AccountID), OrgID: pgUUIDString(row.OrgID),
 		Category: row.Category, Method: row.Method, Path: row.Path, BodySHA256: row.BodySha256, Status: row.Status,
 		DecidedBy: pgUUIDString(row.DecidedBy), CreatedAt: row.CreatedAt.Time, DecidedAt: row.DecidedAt.Time,
-		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time,
+		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time, Note: row.DecisionNote.String,
 	}
 }
 
@@ -353,7 +386,7 @@ func (m *MemStore) AgentApproval(_ context.Context, id string) (AgentApproval, e
 	return cloneAgentApproval(approval), nil
 }
 
-func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve bool, deciderID string) error {
+func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve bool, deciderID, note string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	approval, ok := m.agentApprovals[id]
@@ -361,13 +394,38 @@ func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve boo
 	if !ok || approval.Status != api.AgentApprovalPending || !now.Before(approval.ExpiresAt) || !m.hasKeyLocked(approval.KeyID) {
 		return ErrNotFound
 	}
-	approval.Status = api.AgentApprovalDenied
-	if approve {
-		approval.Status = api.AgentApprovalApproved
-	}
+	approval.Status, approval.Note = decisionStatusNote(approve, note)
 	approval.DecidedBy, approval.DecidedAt = deciderID, now
 	m.agentApprovals[id] = approval
 	return nil
+}
+
+func (m *MemStore) RecentAgentApprovalOutcome(_ context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest *AgentApproval
+	for _, approval := range m.agentApprovals {
+		if !sameApprovalBinding(approval, binding) || !m.hasKeyLocked(approval.KeyID) {
+			continue
+		}
+		if latest == nil || approval.CreatedAt.After(latest.CreatedAt) {
+			candidate := approval
+			latest = &candidate
+		}
+	}
+	if latest == nil {
+		return AgentApproval{}, false, nil
+	}
+	now := time.Now()
+	since := now.Add(-window)
+	switch {
+	case latest.Status == api.AgentApprovalDenied && latest.DecidedAt.After(since):
+	case (latest.Status == api.AgentApprovalPending || latest.Status == api.AgentApprovalApproved) &&
+		!now.Before(latest.ExpiresAt) && latest.ExpiresAt.After(since):
+	default:
+		return AgentApproval{}, false, nil
+	}
+	return cloneAgentApproval(*latest), true, nil
 }
 
 func (m *MemStore) ListAgentApprovalsForKey(_ context.Context, keyID string, limit int) ([]AgentApproval, error) {

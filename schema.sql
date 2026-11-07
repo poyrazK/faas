@@ -29667,6 +29667,7 @@ CREATE TABLE public.agent_approval_requests (
     decided_at timestamp with time zone,
     consumed_at timestamp with time zone,
     expires_at timestamp with time zone NOT NULL,
+    decision_note text,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
     CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
@@ -58795,6 +58796,14 @@ ALTER TABLE ONLY public.accounts
 
 ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_stripe_customer_id_key UNIQUE (provider_customer_id);
+
+
+--
+-- Name: agent_approval_requests agent_approval_requests_decision_note_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_decision_note_check CHECK (((decision_note IS NULL) OR ((status = 'denied'::text) AND ((char_length(decision_note) >= 1) AND (char_length(decision_note) <= 280))))) NOT VALID;
 
 
 --
