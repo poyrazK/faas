@@ -12,6 +12,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -183,6 +184,8 @@ func (r *SnapshotRefresher) bootRefresh(ctx context.Context, ins state.Instance,
 	}
 	bootCtx, cancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer cancel()
+	startedAt := time.Now().UTC()
+	r.emitRefreshBootStarted(bootCtx, ins, placement.NodeID, startedAt)
 	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
 	if err != nil {
 		e.ledger.Release(ins.ID)
@@ -216,11 +219,37 @@ func (r *SnapshotRefresher) bootRefresh(ctx context.Context, ins state.Instance,
 		return fmt.Errorf("sched: snapshot refresh: record runtime: %w", applicationStandardRuntimeProblem(err))
 	}
 	e.recordCommittedInstanceTransition(ctx, published, state.StateColdBooting, state.StateRunning, appID, "state_transition", "")
+	r.emitRefreshBootCompleted(ctx, published, placement.NodeID, startedAt)
 	e.recordAppSecretDelivery(ctx, delivery, state.SecretDeliveryDelivered, "")
 	delivered = true
 	// A fresh capture from this boot: the stale row was retired, so no
 	// usable row may be reused in its place.
 	return e.snapshotAndParkPrime(ctx, published)
+}
+
+// emitRefreshBootStarted and emitRefreshBootCompleted put the refresh boot
+// on the app's wake timeline with trigger platform.snapshot_refresh, so a
+// boot the customer did not cause is labelled as the platform's.
+func (r *SnapshotRefresher) emitRefreshBootStarted(ctx context.Context, ins state.Instance, nodeID string, at time.Time) {
+	if r.e.events == nil {
+		return
+	}
+	r.e.events.EmitAsync(ctx, events.BootStarted{
+		EmitAt: at, WakeID: ins.WakeID, AppID: ins.AppID, InstanceID: ins.ID, NodeID: nodeID,
+		Method: "cold_boot", Tier: wakeTierColdBootFallback, ColdReason: ColdReasonStale,
+		RequestedAt: at, Trigger: TriggerSnapshotRefresh,
+	})
+}
+
+func (r *SnapshotRefresher) emitRefreshBootCompleted(ctx context.Context, ins state.Instance, nodeID string, startedAt time.Time) {
+	if r.e.events == nil {
+		return
+	}
+	r.e.events.EmitAsync(ctx, events.BootCompleted{
+		EmitAt: time.Now().UTC(), WakeID: ins.WakeID, AppID: ins.AppID, InstanceID: ins.ID, NodeID: nodeID,
+		Method: "cold_boot", Tier: wakeTierColdBootFallback, StartedAt: startedAt, CompletedAt: time.Now().UTC(),
+		Trigger: TriggerSnapshotRefresh,
+	})
 }
 
 // reapOrphanedRefreshes retires refresh instances on nodeID that outlived

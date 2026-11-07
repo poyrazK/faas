@@ -4,6 +4,7 @@ package sched_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -411,5 +412,48 @@ func TestSnapshotRefreshRetiresOrphanedRefreshes(t *testing.T) {
 	}
 	if _, _, destroys := f.boots.XBootCounts(); destroys != 1 {
 		t.Fatalf("destroys = %d, want 1", destroys)
+	}
+}
+
+// A refresh boot is on the app's wake timeline, labelled as the platform's.
+func TestSnapshotRefreshBootIsOnTheTimelineAsThePlatforms(t *testing.T) {
+	f := newRefreshFixture(t)
+	e := sched.WakeEngineWithEvents(t, f.store, f.vmm, &sched.FakeNotifier{})
+	f.refresher = sched.NewSnapshotRefresher(e, nil, nil)
+	if err := f.refresher.SetMode(api.SnapshotRefreshOn); err != nil {
+		t.Fatal(err)
+	}
+	app, stale := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+	f.vmm.verdicts[stale] = sched.SnapshotBackingStale
+	if pass, err := f.refresher.Pass(f.ctx, f.nodeA.ID, "r1"); err != nil || pass.Outcomes[sched.SnapshotRefreshRefreshed] != 1 {
+		t.Fatalf("pass = %+v (err %v), want one refreshed", pass, err)
+	}
+	instances, err := f.store.ListInstancesForApp(f.ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wakeID := ""
+	for _, ins := range instances {
+		if state.IsRefresh(ins.Mode) {
+			wakeID = ins.WakeID
+		}
+	}
+	rows := sched.EventuallyEventsForInstance(t, f.store, wakeID, 2)
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if row.Kind != "wake.boot_started" && row.Kind != "wake.boot_completed" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		if data["trigger"] != sched.TriggerSnapshotRefresh {
+			t.Fatalf("%s trigger = %v, want %s", row.Kind, data["trigger"], sched.TriggerSnapshotRefresh)
+		}
+		seen[row.Kind] = true
+	}
+	if !seen["wake.boot_started"] || !seen["wake.boot_completed"] {
+		t.Fatalf("timeline rows %v, want boot started and completed", sched.KindsOf(rows))
 	}
 }
