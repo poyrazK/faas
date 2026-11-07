@@ -230,3 +230,43 @@ A review of long windows found three more problems.
    on raw-row windows they run unbounded. A failure leaves out
    `deployment_costs` or the route deployment splits, logs a warning, and
    sets `sampled_measures` to `omitted`. A cancelled request still fails.
+
+## Amendment 3 (2026-11-07): smaller rollups
+
+A size review found the minute tier holding about 2.8 GB a day for one app
+at 100 requests/s (689 bytes per row on Postgres 16, 2,840 rows a minute),
+so about 20 GB at Pro's 7-day retention and 39 GB at Scale's 14 days: about
+half the raw telemetry it was meant to replace. Two causes, both fixed:
+
+1. **Dimension rows were split by status and deployment.** Every
+   `country`, `referrer_host`, `ua_family` and `consumer_id` row carried the
+   request's HTTP status and deployment in its key, as route rows do. No
+   reader uses either for those kinds: `group_by=status` and the deployment
+   splits read route rows only, and error counts are a column. apid now
+   writes those rows with status `0` and the nil deployment, so a value is
+   one row per minute. Route rows keep their method, status and deployment.
+   Migration `20261107164340118` lets the status CHECK of both tiers accept
+   `0` on non-route rows (added `NOT VALID`, validated, then the old CHECK
+   dropped); the previous release writes rows it accepts and reads status on
+   route rows only. Rows written before the upgrade age out with retention;
+   readers merge old and new rows of a value as they already merge groups.
+2. **The top-N fold was per flush, not per minute.** Each 10-second flush
+   kept its own busiest `RequestAnalyticsRollupDimensionsMax` values, so a
+   minute stored up to six different sets (about 180 consumers instead of
+   50), and each minute row was upserted about six times. apid now writes a
+   minute once, at the first flush after it closed
+   `RequestAnalyticsRollupMinuteGrace` (30 s) ago, with one fold over the
+   whole minute; rows of a minute that arrive later are added by the next
+   flush. The grace covers gateways holding a minute until it closes, and
+   the minute is still inside `RequestAnalyticsSettleLag`, which readers
+   already report as arriving. A clean shutdown writes the open minutes too.
+   An apid crash now loses up to about 100 s of rollups instead of 10 s;
+   the debugger's raw rows are unaffected. The per-minute value buffer is
+   `RequestAnalyticsRollupDimensionsBufferMax` (now 500), as a value costs
+   one buffered row.
+
+With the same traffic mix, a minute is now 358 rows written once (538 with a
+canary's second deployment), against 2,840 rows from 6,952 upserts: about
+8x less storage and 19x fewer row writes, in both tiers. The hourly tier is
+derived from the same rows, so each hour row is now updated once a minute
+instead of every flush.
