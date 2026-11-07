@@ -35,8 +35,8 @@ func environmentBranchObjectRelay(t *testing.T, s contractTestStore) {
 		}
 		return c
 	}
-	branchKey := credential(copyBucket, "GRGBRANCHRELAYKEY0001")
-	credential(source, "GRGPARENTRELAYKEY0001")
+	branchKey := credential(copyBucket, "GRGABRANCHRELAYKEYAA")
+	credential(source, "GRGAPARENTRELAYKEYAA")
 	allowed := func(environmentID, key string) bool {
 		t.Helper()
 		ok, err := s.EnvironmentBranchObjectCredentialAllowed(ctx, environmentID, key)
@@ -55,8 +55,8 @@ func environmentBranchObjectRelay(t *testing.T, s contractTestStore) {
 		t.Fatal("the branch's own bucket key must be allowed")
 	}
 	for name, tc := range map[string]struct{ environment, key string }{
-		"parent bucket key": {branch.EnvironmentID, "GRGPARENTRELAYKEY0001"},
-		"unknown key":       {branch.EnvironmentID, "GRGUNKNOWNRELAYKEY001"},
+		"parent bucket key": {branch.EnvironmentID, "GRGAPARENTRELAYKEYAA"},
+		"unknown key":       {branch.EnvironmentID, "GRGAUNKNOWNRELAYKEYA"},
 		"other environment": {uuid.NewString(), branchKey.AccessKeyID},
 		"malformed env":     {"not-a-uuid", branchKey.AccessKeyID},
 		"empty key":         {branch.EnvironmentID, " "},

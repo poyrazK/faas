@@ -72,7 +72,11 @@ func environmentBranchEgress(t *testing.T, s contractTestStore) {
 // bridge object relay (slice 6c); without it the overlay buckets are served
 // only by the public S3 gateway, which the contained profile does not reach.
 func TestMemContainedEnvironmentBranchRefusesObjectStorage(t *testing.T) {
-	s := state.NewMemStore()
+	containedEnvironmentBranchRefusesObjectStorage(t, state.NewMemStore())
+}
+
+func containedEnvironmentBranchRefusesObjectStorage(t *testing.T, s contractTestStore) {
+	t.Helper()
 	ctx := context.Background()
 	acct, project, _, live := seedProjectEnvironmentBranch(t, s, "branch-objects@example.com")
 	if err := s.PutManagedObjectStorageSecret(ctx, state.AppSecret{AccountID: acct.ID, AppID: live.AppID, Scope: "production",
