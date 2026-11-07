@@ -25999,10 +25999,7 @@ BEGIN
  IF NOT FOUND THEN blockers:=blockers||jsonb_build_array('fresh_authenticated_approval_required');
  ELSE
  blockers:=blockers||route_removal_coverage_blockers(p.app_id,approval.observation_from,date_trunc('minute',stamp-interval '2 minutes'));
- IF EXISTS (SELECT 1 FROM request_telemetry rt JOIN deployments td ON td.id=rt.deployment_id
- JOIN jsonb_array_elements(removed) r ON rt.method=r->>'method' AND rt.route IN (r->>'path',(r->>'method')||' '||(r->>'path'))
- WHERE rt.app_id=p.app_id AND rt.account_id=p.account_id AND coalesce(nullif(td.scope,''),'default') IN ('default','prod','production')
- AND rt.received_at>=approval.observation_from AND rt.count>0) THEN
+ IF route_removal_route_observed(p.app_id,p.account_id,removed,c.doc,approval.observation_from) THEN
  blockers:=blockers||jsonb_build_array('old_route_observed'); END IF;
  END IF;
  END IF;
@@ -26069,6 +26066,48 @@ CREATE FUNCTION public.route_removal_operations(document jsonb) RETURNS TABLE(me
  CROSS JOIN LATERAL jsonb_each(p.value) o
  WHERE lower(o.key) IN ('get','put','post','delete','options','head','patch','trace')
 $$;
+
+
+--
+-- Name: route_removal_route_observed(uuid, uuid, jsonb, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_route_observed(target_app uuid, target_account uuid, removed jsonb, retained jsonb, since timestamp with time zone) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ WITH r AS (
+  SELECT upper(x->>'method') AS method, route_removal_route_pattern(x->>'method', x->>'path') AS pattern
+  FROM jsonb_array_elements(coalesce(removed,'[]'::jsonb)) x
+  WHERE coalesce(x->>'method','')<>'' AND coalesce(x->>'path','') LIKE '/%'
+ ), k AS (
+  SELECT o.method, CASE WHEN o.path='/' THEN '/' ELSE rtrim(o.path,'/') END AS path
+  FROM route_removal_operations(coalesce(retained,'{}'::jsonb)) o
+ )
+ SELECT EXISTS (
+  SELECT 1 FROM request_telemetry rt JOIN deployments td ON td.id=rt.deployment_id
+  JOIN r ON (rt.method=r.method OR (r.method='GET' AND rt.method='HEAD')) AND rt.route ~ r.pattern
+  WHERE rt.app_id=target_app AND rt.account_id=target_account
+   AND coalesce(nullif(td.scope,''),'default') IN ('default','prod','production')
+   AND rt.received_at>=since AND rt.count>0
+   AND NOT EXISTS (SELECT 1 FROM k WHERE (k.method=rt.method OR (k.method='GET' AND rt.method='HEAD'))
+    AND rt.route IN (k.path, rt.method||' '||k.path))
+ )
+$$;
+
+
+--
+-- Name: route_removal_route_pattern(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_removal_route_pattern(method text, path text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+ SELECT '^((' || CASE WHEN upper(method)='GET' THEN 'GET|HEAD' ELSE upper(method) END || ') )?'
+  || regexp_replace(
+       regexp_replace(CASE WHEN path='/' THEN '/' ELSE rtrim(path,'/') END, '([][.^$*+?(){}|\\])', '\\\1', 'g'),
+       '\\\{[^/}]*\\\}', '[^/]+', 'g')
+  || CASE WHEN path='/' THEN '' ELSE '/?' END || '$'
+$_$;
 
 
 --

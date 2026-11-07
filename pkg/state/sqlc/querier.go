@@ -6897,6 +6897,11 @@ type Querier interface {
 	// ADR-1446: probe totals per deployment over a canary stage, for meterd's
 	// circuit breaker.
 	RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg RouteProbeTotalsByDeploymentParams) ([]RouteProbeTotalsByDeploymentRow, error)
+	// ADR-20261028110044 amendment 6: the captured contract of the deployment an
+	// app's route removal policy holds as its baseline. The gateway labels
+	// requests with its templates when the app's current document no longer
+	// declares them, so a removed route's traffic keeps its own label.
+	RouteRemovalBaselineDoc(ctx context.Context, db DBTX, arg RouteRemovalBaselineDocParams) ([]byte, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
 	// ADR-20261028110044 amendments 1 and 2: whether a gateway may have lost
 	// request telemetry that route evidence over [window_from, window_until)
