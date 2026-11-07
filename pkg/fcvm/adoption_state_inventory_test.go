@@ -199,6 +199,10 @@ var adoptionInstanceInventory = map[string]string{
 	"functionMigration":               "bootonly",
 	"publicForwardTarget":             "bootonly", // captured only under native process recovery
 	"wakeID":                          "bootonly", // function VM migration authority
+	// ADR-20261107160000: an adopted guest's later resumes send no identity and
+	// its file keeps the last one published, the same instance. A warm spare
+	// promoted after a vmmd restart keeps the capture's identity in the file.
+	"resumeIdentity": "reset",
 }
 
 func TestAdoptionStateInventoryClassifiesEveryInstanceField(t *testing.T) {

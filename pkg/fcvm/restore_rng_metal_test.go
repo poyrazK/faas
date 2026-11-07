@@ -223,7 +223,8 @@ func buildRuntimeBaseExt4(dst, repoRoot, tarball, file, script string, entrypoin
 			return fmt.Errorf("build guest-init: %w: %s", err, out)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(work, file), []byte(script), 0o644); err != nil {
+	// Executable so a compiled probe (ADR-20261107160000) can be the entrypoint.
+	if err := os.WriteFile(filepath.Join(work, file), []byte(script), 0o755); err != nil {
 		return err
 	}
 	manifest, err := json.Marshal(map[string]any{"entrypoint": rootfsEntrypoint(work, entrypoint), "port": 8080, "env": env})

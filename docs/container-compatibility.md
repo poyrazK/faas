@@ -141,7 +141,9 @@ Reseed these yourself, or avoid keeping them across a snapshot:
 - values your code generated before the snapshot, such as a secret, nonce or
   instance ID drawn once at startup: every instance restored from that snapshot
   holds the same value. Draw them per request or per use, and take the serving
-  instance from the `X-Faas-Instance-Id` request header;
+  instance from the `X-Faas-Instance-Id` request header or, outside a request,
+  from the file named by `FAAS_INSTANCE_IDENTITY_FILE`, which Gregale rewrites
+  on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
 - sidecars that run from their own root filesystem.
 
