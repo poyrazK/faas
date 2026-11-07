@@ -229,6 +229,8 @@ var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
 
 var PauseTierWorkload = pauseTierWorkload
+
+var VMInstanceStatFromProto = vmInstanceStatFromProto
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary

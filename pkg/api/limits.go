@@ -7630,6 +7630,10 @@ const (
 	IdleLadderColdAge1Seconds       = 60
 	IdleLadderColdAge2Seconds       = 180
 	IdleLadderSnapshotAfterSeconds  = 600
+	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
+	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
+	// measured admission books like a frozen instance.
+	IdleLadderFreezeLevel = 2
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds

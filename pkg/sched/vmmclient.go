@@ -402,6 +402,9 @@ type VMInstanceStat struct {
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928): the idle ladder level vmmd holds
+	// a quiet-paused instance at (1 quiet pause, 2 freeze); 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
 	// QuietPause is the quiet pause record for the pause ledger
@@ -1825,6 +1828,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
+		IdleLadderLevel:  in.GetIdleLadderLevel(),
 		Frozen:           in.GetFrozen(),
 		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
 			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
