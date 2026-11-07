@@ -136,6 +136,16 @@
 # Default: false
 # quiet_pause_observe = false
 
+# idle_ladder: the idle ladder (ADR-20261107122928, proposed). "observe"
+# measures, for every request-serving instance whatever its declared pause,
+# the ladder level its idle time reaches (quiet pause at 1 s, freeze at 10 s,
+# cold compression at 1 and 3 min, snapshot at 10 min), the VM memory held at
+# each level, the level each request wakes from and the billed MB-seconds the
+# unbilled levels would not bill (vmmd_idle_ladder_observed_*). It pauses
+# nothing and runs beside quiet_pause. FAAS_IDLE_LADDER overrides.
+# Default: "off"
+# idle_ladder = "observe"
+
 # agent_wait_pause: pause an agent run VM while its harness waits on a model
 # call through the outbound relay and does nothing else, and resume it when
 # the relay's next bytes arrive (ADR-20261027090012). It needs an open relay

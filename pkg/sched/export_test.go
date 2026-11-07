@@ -227,6 +227,8 @@ var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
+
+var PauseTierWorkload = pauseTierWorkload
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary

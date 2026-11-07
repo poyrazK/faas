@@ -469,6 +469,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HOST_KEY_PATH` | gatewayd-internal, gatewayd-public, vmmd | `default` |  |  | `` |  |
 | `FAAS_HSTS_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_HTTP_ADMISSION` | vmmd | `default` |  |  | `` | ADR-570 kill switch; empty or on enforces the per-VM HTTP admission cap, off lifts it on that node (permits stay tracked); vmmd restart applies |
+| `FAAS_IDLE_LADDER` | vmmd | `default` |  |  | `` | optional off or observe (ADR-20261107122928): observe measures the idle ladder level each request-serving instance reaches, the memory held per level and the billed MB-seconds the unbilled levels would not bill (vmmd_idle_ladder_observed_*), pausing nothing; overrides idle_ladder in vmmd.toml; production default is off |
 | `FAAS_IMAGED_BASE_PROVENANCE` | imaged, shared | `dropin` |  | observe | `` | off, observe or enforce: what imaged does with a platform base whose SLSA provenance does not verify (ADR-20261029155852); 99-faas-base-provenance.conf drop-in from compute_only_service (faas_imaged_base_provenance_mode, empty = observe); enforce refuses the base; any other value stops imaged |
 | `FAAS_IMAGED_METRICS_ADDR` | imaged | `default` |  |  | `` |  |
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
