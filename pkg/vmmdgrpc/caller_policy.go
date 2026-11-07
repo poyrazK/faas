@@ -137,6 +137,7 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_RunDataRepairRehearsal_FullMethodName:                  callerSchedd,
 	vmmdpb.Vmmd_RuntimeAdmissionIdentity_FullMethodName:                callerSchedd,
 	vmmdpb.Vmmd_SeccompStatus_FullMethodName:                           callerSchedd,
+	vmmdpb.Vmmd_SnapshotBackingCurrent_FullMethodName:                  callerSchedd,
 	vmmdpb.Vmmd_StartDatabase_FullMethodName:                           callerSchedd,
 	vmmdpb.Vmmd_Stats_FullMethodName:                                   callerSchedd | callerGateway,
 	vmmdpb.Vmmd_StopDatabase_FullMethodName:                            callerSchedd,

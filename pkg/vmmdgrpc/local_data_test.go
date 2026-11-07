@@ -68,6 +68,7 @@ func TestLocalDataServesOnlyTheGatewayRPCs(t *testing.T) {
 		{vmmdpb.Vmmd_CreateAdmittedRuntime_FullMethodName, codes.PermissionDenied},
 		{vmmdpb.Vmmd_CreateFromSnapshot_FullMethodName, codes.PermissionDenied},
 		{vmmdpb.Vmmd_PauseAndSnapshot_FullMethodName, codes.PermissionDenied},
+		{vmmdpb.Vmmd_SnapshotBackingCurrent_FullMethodName, codes.PermissionDenied},
 	} {
 		if got := status.Code(authorizeLocalData(tc.method)); got != tc.want {
 			t.Errorf("%s: code %v, want %v", tc.method, got, tc.want)
