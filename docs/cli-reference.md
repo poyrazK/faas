@@ -7063,7 +7063,7 @@ Set or clear a spending cap for usage beyond your plan
 
 Show or set billing for egress above the monthly allowance
 
-`gregale billing egress-overage <get|set> [--org <SLUG>] [on|off]`
+`gregale billing egress-overage [get|set] [--org <SLUG>] [on|off]`
 
 | Flag | Meaning | |
 |---|---|---|
