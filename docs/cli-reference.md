@@ -19273,6 +19273,25 @@ Set or clear a spending cap for usage beyond your plan
 |---|---|---|
 | `--clear` | remove the overage cap |  |
 
+### billing egress-overage
+
+Keep apps serving past the plan&#39;s monthly egress, billed per GiB
+
+`gregale billing egress-overage [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage
+gregale billing egress-overage on
+```
+
+Off by default: apps stop at the plan&#39;s monthly egress until the month ends. On a paid plan, turn it on to keep serving at $0.03 per GiB, up to your spend cap.
+
 ### billing payment-method
 
 Show the card on file

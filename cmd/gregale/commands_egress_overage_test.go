@@ -58,4 +58,30 @@ func TestCmdEgressOverage(t *testing.T) {
 	if code := main.CmdEgressOverage([]string{"maybe"}); code == 0 {
 		t.Fatal("an unknown argument was accepted")
 	}
+	if code := main.CmdEgressOverage([]string{"on", "unexpected"}); code == 0 {
+		t.Fatal("a trailing argument was accepted")
+	}
+}
+
+func TestCmdEgressOverageJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "billed": true, "included_gib": 500, "millicents_per_gib": 3000})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	defer func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON }()
+	if code := main.CmdEgressOverage(nil); code != 0 {
+		t.Fatalf("egress-overage --json = %d:\n%s", code, out.String())
+	}
+	var got struct {
+		Enabled     bool `json:"enabled"`
+		IncludedGiB int  `json:"included_gib"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || !got.Enabled || got.IncludedGiB != 500 {
+		t.Fatalf("egress-overage --json = %+v, %v:\n%s", got, err, out.String())
+	}
 }
