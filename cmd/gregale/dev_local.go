@@ -130,7 +130,7 @@ func cmdDevLocal(args []string) int {
 	httpSrv := &http.Server{Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
@@ -435,7 +435,9 @@ func treeSignature(root, cacheDir string) string {
 	count := 0
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			// A file removed mid-scan, or an unreadable directory, is
+			// skipped; the next scan sees the settled tree.
+			return skipUnreadable(d)
 		}
 		name := d.Name()
 		if d.IsDir() {
@@ -448,14 +450,20 @@ func treeSignature(root, cacheDir string) string {
 		if count > devLocalMaxScanFiles {
 			return filepath.SkipAll
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
+		if info, infoErr := d.Info(); infoErr == nil {
+			fmt.Fprintf(&b, "%s:%d:%d;", path, info.Size(), info.ModTime().UnixNano())
 		}
-		fmt.Fprintf(&b, "%s:%d:%d;", path, info.Size(), info.ModTime().UnixNano())
 		return nil
 	})
 	return b.String()
+}
+
+// skipUnreadable keeps a scan going past an entry it cannot read.
+func skipUnreadable(d os.DirEntry) error {
+	if d != nil && d.IsDir() {
+		return filepath.SkipDir
+	}
+	return nil
 }
 
 // statusRecorder notes the status while passing writes and flushes through,

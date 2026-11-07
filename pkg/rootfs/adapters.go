@@ -14,7 +14,5 @@ const (
 	pythonAdapterHandlerImport = fnadapter.PythonHandlerImport
 )
 
-var nodeFunctionResources = fnadapter.NodeResources
-
 func nodeFunctionAdapterFor(handlerRel string) string   { return fnadapter.NodeFor(handlerRel) }
 func pythonFunctionAdapterFor(handlerRel string) string { return fnadapter.PythonFor(handlerRel) }

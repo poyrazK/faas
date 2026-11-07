@@ -44,6 +44,48 @@ start the developer loop after authentication; it cannot be combined with
 values and destination. TOML manifests require an explicit migration before
 using this YAML writer.
 
+## Run functions on this machine
+
+`gregale dev --local` runs the project's Node, Python and Go functions on
+your computer, with the same adapters and runner code a deployed function
+uses, and reloads a function within a second of saving its files. Nothing is
+uploaded and no login is needed:
+
+```sh
+gregale dev --local
+```
+
+```
+Serving 3 function(s) on this machine (ctrl-c to stop):
+  web       http://web.localhost:8787     node   functions/web
+  users     http://users.localhost:8787   python functions/users
+  digest    http://digest.localhost:8787  node   functions/digest  cron 0 8 * * *
+  http://localhost:8787 routes like the entry address (entry: web)
+```
+
+- Each function has its own address, `http://<name>.localhost:8787`, as it
+  has its own host on Gregale. With an `entry: true` function,
+  `http://localhost:8787` routes by the functions' `routes:`, and a project
+  with one function is also served there. `--port` picks another port.
+- Requests carry the platform's `x-faas-invocation-id` and
+  `x-faas-deadline-ms` headers, and client-sent `x-faas-*` headers are
+  dropped, as on Gregale.
+- `env:` from `gregale.yaml` and your shell's environment reach every
+  function; `--env-file .env` adds a file's entries.
+- Run a cron or an async call as Gregale would, with
+  `x-faas-invocation-source` set:
+
+  ```sh
+  gregale dev trigger --local cron digest
+  gregale dev trigger --local invoke users /users/7 --data '{"id":7}'
+  ```
+
+- `node`, `python3` and `go` must be installed for their functions. Go
+  functions are rebuilt on save.
+
+A local run has no memory cap, no pause between requests and no snapshot.
+Use `gregale dev` without `--local` to check those on real infrastructure.
+
 ## The development loop
 
 The CLI detects the application shape, uploads the current working tree
