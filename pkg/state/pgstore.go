@@ -6199,6 +6199,23 @@ func (s *PgStore) ApplyProjectReconcile(
 	scanSource ProjectScanSource,
 	limits api.Limits,
 ) (ProjectReconcileResult, error) {
+	var result ProjectReconcileResult
+	err := s.retryAfterDetachingCronHistory(ctx, func() error {
+		var err error
+		result, err = s.applyProjectReconcileOnce(ctx, project, mutations, desiredCrons, scanSource, limits)
+		return err
+	})
+	return result, err
+}
+
+func (s *PgStore) applyProjectReconcileOnce(
+	ctx context.Context,
+	project Project,
+	mutations []ProjectReconcileMutation,
+	desiredCrons []ProjectReconcileCron,
+	scanSource ProjectScanSource,
+	limits api.Limits,
+) (ProjectReconcileResult, error) {
 	tx, err := s.beginAccountAppTrafficMutation(ctx, project.AccountID, "")
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: begin project reconcile: %w", err)
@@ -6452,6 +6469,9 @@ func (s *PgStore) ApplyProjectReconcile(
 				key := cron.Schedule + "\x00" + cron.Path
 				desired, wanted := desiredByApp[appID][key]
 				if !wanted || kept[key] {
+					if err := prepareCronRemovalTx(ctx, tx, []string{cron.ID}); err != nil {
+						return ProjectReconcileResult{}, err
+					}
 					if _, err := tx.Exec(ctx, `delete from crons where id = $1`, cron.ID); err != nil {
 						return ProjectReconcileResult{}, err
 					}
@@ -6474,6 +6494,13 @@ func (s *PgStore) ApplyProjectReconcile(
 		}
 		// Remove crons attached to apps deleted by this reconcile.
 		for _, removed := range out.Removed {
+			ids, err := appCronIDsTx(ctx, tx, removed.ID)
+			if err != nil {
+				return ProjectReconcileResult{}, err
+			}
+			if err := prepareCronRemovalTx(ctx, tx, ids); err != nil {
+				return ProjectReconcileResult{}, err
+			}
 			if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, removed.ID); err != nil {
 				return ProjectReconcileResult{}, err
 			}

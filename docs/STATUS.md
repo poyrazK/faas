@@ -533,6 +533,16 @@ ADR-20261026201726 amendment 2026-11-03 (2)):
 - A disabled cron's manual run is refused (`409`); the scheduler no longer
   lists disabled crons from PostgreSQL.
 
+Audit round 7, 2026-11-05 (branch `fix/crons-audit-round7`, no PR yet,
+ADR-20261026201726 amendment 2026-11-05 (2)):
+
+- A disabled or suspended cron's queued runs (spend-cap or budget deferrals,
+  retries, queued manual runs) are cancelled instead of delivered; queued
+  runs go to the cron's current path.
+- Removing a long-lived cron through `gregale.yaml`, deploy activation or a
+  project apply detaches its run history in batches before the removal
+  transaction, instead of timing out under the account's quota lock.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
