@@ -382,7 +382,7 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, false
 	}
 	bookkeeping := e.publicationBookkeeping(plan.frozen.ID, plan.app.ID, plan.frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
-	publishCtx := e.thawAdmissionContext(ctx, plan.frozen.NodeID, plan.limits.VCPU, effectiveAppCPUMillicores(plan.app))
+	publishCtx := e.thawAdmissionContext(ctx, plan.frozen.NodeID, plan.limits.VCPU, e.appCPUBookingMillicores(plan.app, plan.limits))
 	fresh, err := guards.ThawFrozenInstance(publishCtx, state.FrozenThaw{
 		AccountID: plan.acct.ID, AppID: plan.app.ID, InstanceID: plan.frozen.ID, NodeID: plan.frozen.NodeID, WakeID: plan.frozen.WakeID,
 		Fence: ticket.fence, Generation: ticket.generation, Bookkeeping: bookkeeping,

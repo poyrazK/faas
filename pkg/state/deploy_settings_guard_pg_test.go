@@ -99,3 +99,8 @@ func TestDeploySettingsGuardPGBlocksNewDeploymentUntilCommit(t *testing.T) {
 		t.Fatalf("deployments=%d err=%v", len(deployments), err)
 	}
 }
+
+func TestSourceDeploySettingsGuardPG(t *testing.T) {
+	store, _ := pgStore(t)
+	testSourceDeploySettingsGuard(t, store)
+}

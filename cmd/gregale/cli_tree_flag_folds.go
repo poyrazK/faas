@@ -131,6 +131,32 @@ func rewriteFlagFold(args []string) ([]string, bool) {
 	return nil, false
 }
 
+// onlyFoldPath reports args that start with a path existing only through
+// its folds (`edge cache set`) but set none of their flags, with the flag
+// spellings that would run it.
+func onlyFoldPath(args []string) (string, []string, bool) {
+	words := leadingTreeWords(args)
+	var path string
+	var flags []string
+	for _, fold := range cliTreeFlagFolds {
+		fields := strings.Fields(fold.New)
+		if !fold.Only || len(fields) > len(words) || !slices.Equal(fields, words[:len(fields)]) {
+			continue
+		}
+		path = fold.New
+		flag := strings.TrimPrefix(fold.spelling(), fold.New+" ")
+		if !slices.Contains(flags, flag) {
+			flags = append(flags, flag)
+		}
+	}
+	return path, flags, path != ""
+}
+
+// errFoldFlagRequired is a fold-only path run without the flag it needs.
+type errFoldFlagRequired struct{ error }
+
+func (e errFoldFlagRequired) Unwrap() error { return e.error }
+
 type foldFlagSpan struct{ start, end int }
 
 // findFoldFlag finds --name, --name=value or --name value in args before
@@ -217,7 +243,9 @@ func (d cliTreeDiscovery) foldFlags(path string, own []cliFlag) []cliFlag {
 			}
 			continue
 		}
-		flag := cliFlag{Name: name, Short: short}
+		// A path that exists only through its folds runs nothing without
+		// the flag, so the flag is required there.
+		flag := cliFlag{Name: name, Short: short, Req: fold.Only, Bool: !valued && cliTreeFoldBoolean[name]}
 		switch {
 		case valued:
 			flag.Value, flag.Short = value, value+": "+short

@@ -2,6 +2,32 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 
 const KEY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+// Legacy envelopes do not identify their key. Multiple retained native keys can
+// share that format, so authenticating one sample cannot prove queue readability.
+export async function authenticateRetainedMcpTaskPayloads(client, namespace, cipher) {
+  // All callers already hold a transaction. A cursor bounds memory even when
+  // terminal Tasks retain large results for the full TTL.
+  await client.query(`DECLARE gregale_mcp_payload_preflight NO SCROLL CURSOR FOR
+    SELECT task_id::text, encrypted.field, encrypted.payload
+      FROM gregale_mcp_tasks
+      CROSS JOIN LATERAL (VALUES ('arguments', arguments_encrypted), ('result', result_encrypted),
+        ('error', error_encrypted), ('input-state', input_state_encrypted)) AS encrypted(field, payload)
+     WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
+     ORDER BY task_id, encrypted.field
+  `, [namespace]);
+  try {
+    for (;;) {
+      const batch = await client.query('FETCH FORWARD 32 FROM gregale_mcp_payload_preflight');
+      for (const row of batch.rows) {
+        cipher.decrypt(row.payload, `gregale-mcp-task:v1:${namespace}:${row.task_id}:${row.field}`);
+      }
+      if (batch.rows.length < 32) break;
+    }
+  } finally {
+    await client.query('CLOSE gregale_mcp_payload_preflight');
+  }
+}
+
 export function parseMcpTaskEncryptionKeys(value) {
   let config;
   try { config = typeof value === 'string' ? JSON.parse(value) : value; }

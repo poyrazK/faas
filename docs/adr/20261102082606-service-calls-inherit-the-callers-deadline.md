@@ -99,7 +99,68 @@ call latency is negligible. No CP Postgres call is added to the request path.
 2. Measure added service call latency on production with the switch on one
    node; then default it on.
 3. SDK and runner helpers that forward `X-Faas-Deadline-Ms` on service calls,
-   which extends the bound to concurrent instances.
+   which extends the bound to concurrent instances (amendment 1: the SDKs;
+   amendment 2: the Node and Python function adapters).
+
+## Amendment 1 (2026-11-04): step 3 in the SDKs
+
+- The SDKs' existing request-context helpers carry it, so apps already
+  forwarding the release get it without new wiring: Go
+  `GregaleReleaseMiddleware` + `NewGregaleReleaseTransport`, Node
+  `withGregaleRequestContext` + `createGregaleFetch`, Python
+  `GregaleReleaseMiddleware` / `with_gregale_request_context` + the HTTPX
+  transports.
+- Inbound, the helper reads one valid `X-Faas-Deadline-Ms` (a positive whole
+  number up to a day; otherwise nothing) and keeps the absolute time it runs
+  out. It never cancels the handler's own context.
+- Outbound, only on the managed service hosts each SDK already forwards the
+  release to (`*.svc.gregale` and declared `*.internal` aliases; Go added
+  `*.internal` on 2026-11-05 with the signed-carrier parity fix), it sets the header to the time left, keeping a smaller valid value the
+  caller set itself. With no time left it sends 1 ms, so the proxy answers 504
+  `request_budget_exceeded` without waking the target, as it would for an
+  inferred deadline. External hosts get nothing added.
+- Handlers can read the time left: Go `GregaleDeadlineFromContext`, Node
+  `gregaleRequestTimeRemainingMs()`, Python
+  `gregale_request_time_remaining_ms()`.
+- The function runners are unchanged: they do not run handlers inside the
+  SDK's request context. A function that calls services wraps its handler in
+  the helper as an app does. (Superseded for Node and Python functions by
+  amendment 2.)
+- Nothing changes until `FAAS_SERVICE_CALL_DEADLINES` is on: with it off the
+  proxy ignores the header and its forwarder drops customer `x-faas-*`
+  headers.
+
+## Amendment 2 (2026-11-05): function adapters enter the SDK's context
+
+A function's handler is called by the adapter Gregale writes into its image
+(`pkg/rootfs`), not by customer code that could wrap it, so step 3 reached
+functions only when the customer wrapped the handler by hand. The adapters
+now do it:
+
+- The Node SDK registers `withGregaleRequestContext` under
+  `Symbol.for("gregale.sdk.requestContext.v1")` on `globalThis` when it
+  loads; the first SDK copy in a process registers, a second one does not
+  replace it. The Node adapter looks the symbol up on each call and, when it
+  is a function, runs the handler and the response it returns, streamed
+  bodies included, inside it.
+- The Python adapter looks up `faas_sdk.release_context` in `sys.modules` on
+  each call and, when it is loaded, enters `with_gregale_request_context`
+  with the request's headers around the handler and its body: on the
+  sequential worker, on an async worker's task, and on a sync handler's
+  thread. Coroutines that a handler thread hands to the event loop re-enter
+  the context in the loop, since `run_coroutine_threadsafe` does not carry it.
+- The adapters never import the SDK. A function that does not load it runs
+  exactly as before and pays nothing. The context carries the release, the
+  signed chain deadline (ADR-570) and the time left, so all three follow a
+  function's service calls.
+- Go functions are unchanged: `function.Serve` hands the handler an
+  `*http.Request` with the request headers, so wrapping it in
+  `faas.GregaleReleaseMiddleware` already works. The `function` package stays
+  free of the full SDK so function binaries stay small.
+- Release compatibility: the adapter is written into the image at build time,
+  so a function picks this up on its next build. An older SDK does not
+  register the symbol and the adapter falls back to calling the handler
+  directly.
 
 ## Alternatives considered
 

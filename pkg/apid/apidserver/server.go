@@ -35,6 +35,7 @@ import (
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/docsassets"
+	"github.com/onebox-faas/faas/pkg/apid/domainverify"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	hostingapi "github.com/onebox-faas/faas/pkg/apid/hosting"
@@ -121,6 +122,7 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
 	// (ADR-20261101085552); nil in tests that do not wire it.
 	requestIDLookups                       *receivers.RequestIDLookupHub
@@ -183,9 +185,13 @@ type server struct {
 	configGuardCursor    state.ConfigGuardCursor
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
-	postReleaseTelemetry rollbackOn5xxTelemetry
-	outboundAI           outboundai.Service     // ADR-977; Host wired in newServer
-	profileCaptures      profilecapture.Service // ADR-1155; Host wired in newServer
+	postReleaseTelemetry   rollbackOn5xxTelemetry
+	postReleaseScanMu      sync.Mutex
+	postReleaseCursor      state.ReleaseScanCursor
+	scheduledReleaseMu     sync.Mutex
+	scheduledReleaseCursor state.ReleaseScanCursor
+	outboundAI             outboundai.Service     // ADR-977; Host wired in newServer
+	profileCaptures        profilecapture.Service // ADR-1155; Host wired in newServer
 	// releaseGateEvidence overrides the store's release gate evidence
 	// reader for the post-release watch (ADR-20261019071734; tests).
 	releaseGateEvidence   state.ReleaseGateEvidenceStore
@@ -659,6 +665,12 @@ type server struct {
 	projectReleaseSecretsEnabled     bool
 	atomicServiceAdditionsEnabled    bool
 	appTaskAPIEnabled                bool
+	// releasePhaseOff refuses deployments that declare a release command and
+	// hides the release-commands capability while the release phase is off
+	// (FAAS_RELEASE_PHASE_ENABLED on apid, imaged and, with
+	// FAAS_APP_TASK_DISPATCH, schedd). The zero value keeps it on for tests;
+	// production wiring decides it from the environment.
+	releasePhaseOff bool
 	// ADR-435: keep standards intent/exception mutations disabled until
 	// consumer convergence, rollout recovery and native acceptance pass.
 	applicationStandardMutationsEnabled bool
@@ -1148,6 +1160,11 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	return s
 }
 
+func (s *server) WithReleasePhaseEnabled(enabled bool) *server {
+	s.releasePhaseOff = !enabled
+	return s
+}
+
 func (s *server) WithRealtimeAccessPreviewEnabled(enabled bool) *server {
 	s.realtime.AccessPreviewEnabled = enabled
 	return s
@@ -1634,6 +1651,7 @@ func newServerWithDeps(
 		// handler falls back to the store directly.
 		graceWindowCache: newGraceWindowCache(),
 	}
+	s.authMw.MandatoryMFA = s.isOperator
 	// Issue #270 / ADR-101 / PR-A: build the OIDC exchange
 	// handler after the struct is wired so the handler can read
 	// the apiAuthLimiter / audit / store / log / sessions
@@ -1643,6 +1661,9 @@ func newServerWithDeps(
 	s.oidcHandler = s.buildOIDCHandler()
 	s.durable.Host = durableHost{s}
 	s.object.Host = objectHost{s}
+	// ADR-20261104140058: a person decides an agent's approval request on the
+	// session-authenticated /cli-auth surface.
+	s.authMw.ApprovalReviewURL = s.agentApprovalReviewURL
 	s.authMw.HostingAutomationEnabled = func() bool { return (hostingHost{s}).HostingEnabled() && (hostingHost{s}).HostingAutomationEnabled() }
 	s.hosting.Host = hostingHost{s}
 	s.hosting.OIDCVerifier = oidc.NewVerifier(s.log)
@@ -1779,6 +1800,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/postgres-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listAppPostgresBindings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings/services/{service}/explanation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.explainAppServiceBinding))))
 
 	// Internal static hosting remains default-off and operator-only. The
@@ -1910,7 +1932,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("GET /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresOverage))))
-	mux.HandleFunc("PUT /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.putManagedPostgresOverage))))
+	mux.HandleFunc("PUT /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireStepUp(5*time.Minute)(s.putManagedPostgresOverage)))))
 	mux.HandleFunc("POST /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresDatabase))))))
 	// Resize UUIDs are persisted by the lifecycle store; progress must not be
 	// frozen by the generic HTTP idempotency response cache.
@@ -1934,6 +1956,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/runtime/data-api/connection-observations", s.reportDataAPIRuntimeConnections)
 	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
 	mux.HandleFunc("POST /v1/runtime/data-api/events", s.reportDataAPIChangeEvents)
+	mux.HandleFunc("POST /v1/runtime/data-api/change-status", s.reportDataAPIChangeStatus)
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api/status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIStatus)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))
 	// ADR-20261031095954: the CLI deploys the runtime apid serves.
@@ -2094,19 +2118,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.removeOrgMember)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
 	mux.HandleFunc("GET /v1/invitations/{token}", s.authLimited(s.peekInvitation))
-	// PR-8 + PR-9 §4: accept-invitation sits behind requireStepUpStrict
-	// (5m). PR-9 flips the bearer-key branch from "bypass" to
-	// "reject" — a leaked invitation token alone is sufficient to
-	// grant org membership, so the bearer path is no longer
-	// step-up-equivalent. The cookie path keeps its original
-	// reject-on-missing-stamp behavior. The other 8 requireStepUp
-	// mounts (server.go:655, 671, 700, 892, ...) keep the v1
-	// bypass until each route's threat model is re-audited.
-	// Compose order mirrors POST /v1/orgs/{slug}/transfer_ownership
-	// (server.go:655): authLimited → requireMFA → requireStepUpStrict.
-	// requireVerifiedEmail makes the invitation's email match a binding:
-	// an unverified account could otherwise claim the invitee's address.
-	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireStepUpStrict(5*time.Minute)(s.requireVerifiedEmail(s.acceptInvitation)))))
+	// Invitation acceptance requires the invitee's verified browser session.
+	// Bearer keys remain refused; recent MFA follows the invitee's policy.
+	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireInvitationSession(5*time.Minute)(s.requireVerifiedEmail(s.acceptInvitation)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{invitation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.revokeInvitation)))))
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
@@ -2690,6 +2704,9 @@ func (s *server) handler() http.Handler {
 	// on apps.account_id = $1 in the pgstore helper.
 	mux.HandleFunc("GET /v1/account/slo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getAccountSLO))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateApp))))
+	mux.HandleFunc("GET /v1/apps/{slug}/scaling", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appScalingHandler())))
+	mux.HandleFunc("GET /v1/apps/{slug}/scaling/requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appScalingHandler())))
+	mux.HandleFunc("POST /v1/apps/{slug}/scaling", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appScalingHandler()))))
 	mux.HandleFunc("GET /v1/apps/{slug}/resource-inventory", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentinspect.Inventory(s.agentInspection()))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operation-preview", s.authLimited(s.requireScope(api.ScopesDeployTargetReadSurface...)(agentinspect.Preview(s.agentInspection()))))
 	mux.HandleFunc("GET /v1/apps/{slug}/costs", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(agentinspect.Costs(s.agentInspection()))))
@@ -2796,7 +2813,9 @@ func (s *server) handler() http.Handler {
 	// loadApp so cross-account probes collapse to the same 404 surface as
 	// the latest-deployment endpoint; pagination stays on the app's index.
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployment-promotions/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeploymentPromotionReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployment-submissions/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeploymentSubmission))))
+	mux.HandleFunc("GET /v1/apps/{slug}/service-aborts/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getServiceAbortReceipt))))
 	// Stable customer-managed names for immutable deployment rows. These
 	// control-plane operations do not change production traffic; the gateway
 	// hostname integration is a follow-up stack PR.
@@ -2913,6 +2932,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePriorities))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putRoutePriorities))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteRoutePriorities))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-budgets/receipts/{request_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentRouteBudgetReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-budgets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentRouteBudgets))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-budgets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putEnvironmentRouteBudgets))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteMonitor))))
@@ -3203,6 +3223,8 @@ func (s *server) handler() http.Handler {
 
 	// Custom domains.
 	mux.HandleFunc("GET /v1/domains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDomains))))
+	mux.HandleFunc("POST /v1/domains/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.planDomains))))
+	mux.Handle("POST /v1/domains/apply", s.domainCreateLimited(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyDomains)))))
 	mux.Handle("POST /v1/domains", s.domainCreateLimited(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDomain))))))
 	mux.HandleFunc("DELETE /v1/domains/{domain}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteDomain))))
 	// Issue #961 / Mega-A PR-3: per-domain verify + show surfaces for
@@ -3697,6 +3719,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.exchangeBrowserPromotionApproval))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/approvals/{approval}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentApprovalStatus))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promote", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.promoteProjectEnvironment))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentRollbackReceipt))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentPromotionReceipt))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentPromotionStatus))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironmentPromotions))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverProjectPromotionMigration)))))
@@ -4326,6 +4350,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/agent-connections/self", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.Disconnect(agentConnections))))
 	mux.HandleFunc("DELETE /v1/agent-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.Revoke(agentConnections)))))
 	mux.HandleFunc("POST /v1/agent-connections/revoke_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.RevokeAll(agentConnections)))))
+	// ADR-20261104140058: an agent polls its approval requests; a person lists
+	// the ones they may decide. Deciding happens only on the review page.
+	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))
+	mux.HandleFunc("GET /v1/agent-approvals/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.GetApproval(agentConnections))))
 
 	// Per-app deploy tokens. These credentials are minted by an
 	// administrator, carry only deploy:write, and are accepted by
@@ -4741,6 +4769,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/env", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listEnv)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.setEnv)))
 	mux.HandleFunc("POST /v1/apps/{slug}/env/batch", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.envBatchHandler())))
+	mux.HandleFunc("GET /v1/apps/{slug}/env/batch/requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.envBatchReceiptHandler())))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.deleteEnv)))
 
 	// ADR-117 PR-C: env-diff matrix endpoint. Read-only; not
@@ -4756,6 +4785,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions/{revision}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigRevision)))
 	mux.HandleFunc("GET /v1/apps/{slug}/config/guard", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigGuard)))
 	mux.HandleFunc("POST /v1/apps/{slug}/config/rollback", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.rollbackConfig)))
+	mux.HandleFunc("GET /v1/apps/{slug}/config/rollback/requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.configRollbackReceiptHandler())))
 	// ADR-20261019071733: deploy freezes and release windows. Lifting a
 	// freeze, deleting a release gate and changing or removing the approval
 	// policy need the admin scope (a person's session or CLI login): a
@@ -4783,6 +4813,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/release-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseApprovals)))
 	mux.HandleFunc("GET /v1/deployments/{id}/approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseApproval)))
 	mux.HandleFunc("POST /v1/deployments/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.decideReleaseApproval)))))
+	// ADR-1448 amendment 1: record a check after a release command whose outcome is unknown.
+	mux.HandleFunc("POST /v1/deployments/{id}/release-outcome", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordReleaseOutcomeCheck)))))
 	// Release diff (ADR-20261021101117).
 	mux.HandleFunc("GET /v1/deployments/{id}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseDiff)))
 	// ADR-20261022120744: one release's phase and history.
@@ -5089,7 +5121,7 @@ func (s *server) handler() http.Handler {
 	// OAuth-only customers and the change-password path for everyone
 	// else. Behind sessionAuth so the call is anchored to a known
 	// account. NOT behind requireStepUpHandler (ADR-140): the only
-	// writer of a step-up stamp is TOTP verify, so a blanket gate
+	// proof may be a password or recent MFA, so a blanket gate
 	// locked out the OAuth-only, no-MFA customers the route exists
 	// for. The handler picks the proof itself — fresh step-up,
 	// current_password, or a 403 when an explicit MFA policy is
@@ -5200,6 +5232,9 @@ func (s *server) handler() http.Handler {
 	// under /v1/* so cmd/gatewayd-internal/proxy.go:isApidPath already
 	// forwards them; the §11 anti-takeover proof (session.github_login
 	// == install.account.login) is enforced in the handlers.
+	mux.Handle("GET /v1/install/connections", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
+	mux.Handle("DELETE /v1/install/connections/{installationID}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
+	mux.Handle("POST /v1/install/connections/{installationID}/verify", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.manageGitHubAccountConnections))))
 	mux.Handle("POST /v1/install/repos/list", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.listInstallableRepos))))
 	mux.Handle("POST /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.bindAppToRepo))))
 	// Customer-facing connection management. GET returns the current
@@ -5270,6 +5305,7 @@ func (s *server) handler() http.Handler {
 	// 10/min/IP budget like /login does.
 	mux.Handle("GET /dashboard/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFA))))
 	mux.Handle("GET /dashboard/account/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFASettings))))
+	mux.Handle("GET /dashboard/invitations/{token}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardInvitation))))
 	mux.Handle("POST /dashboard/mfa", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{http.StatusUnauthorized},
 	}, s.sessionAuth(http.HandlerFunc(s.dashboardMFAVerify))))
@@ -5281,7 +5317,7 @@ func (s *server) handler() http.Handler {
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
 	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
-	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardAccountPlan))))))
+	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardAccountPlan)))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
 	// Step-up gate matches dashboardDelete: a hostile actor with a
@@ -5569,14 +5605,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
 	// ADR-1506: an app's customer reads its own billing with its consumer
 	// key; no account credential is involved.
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}", s.consumerBilling.Summary)
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}/usage", s.consumerBilling.Usage)
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}/statements", s.consumerBilling.Statements)
+	mux.Handle("GET /v1/consumer-billing/{slug}", selfVerified(s.consumerBilling.Summary))
+	mux.Handle("GET /v1/consumer-billing/{slug}/usage", selfVerified(s.consumerBilling.Usage))
+	mux.Handle("GET /v1/consumer-billing/{slug}/statements", selfVerified(s.consumerBilling.Statements))
 	// Customer self-service with a billing-scope key (ADR-20261021183000).
-	mux.HandleFunc("GET /v1/consumer-billing/{slug}/plans", s.consumerBilling.Plans)
-	mux.HandleFunc("PUT /v1/consumer-billing/{slug}/plan", s.consumerBilling.ChangePlan)
-	mux.HandleFunc("POST /v1/consumer-billing/{slug}/portal", s.consumerBilling.Portal)
-	mux.HandleFunc("POST /v1/consumer-billing/{slug}/close", s.consumerBilling.Close)
+	mux.Handle("GET /v1/consumer-billing/{slug}/plans", selfVerified(s.consumerBilling.Plans))
+	mux.Handle("PUT /v1/consumer-billing/{slug}/plan", selfVerified(s.consumerBilling.ChangePlan))
+	mux.Handle("POST /v1/consumer-billing/{slug}/portal", selfVerified(s.consumerBilling.Portal))
+	mux.Handle("POST /v1/consumer-billing/{slug}/close", selfVerified(s.consumerBilling.Close))
 	// Consumer self-service sign-up (ADR-20261021143000): no credential; the
 	// service limits each client address and answers like an unregistered
 	// route unless the app's owner has API monetization.
@@ -6210,7 +6246,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 	if !idempotencyReplayable(status) {
 		return false
 	}
-	if status != http.StatusConflict {
+	if status != http.StatusConflict && status != http.StatusUnprocessableEntity {
 		return true
 	}
 	var problem struct {
@@ -6218,6 +6254,13 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 	}
 	if json.Unmarshal(body, &problem) != nil {
 		return true
+	}
+	if status == http.StatusUnprocessableEntity {
+		// Release commands being off is an operator gate, like a 501: it
+		// clears when the operator enables them. The CLI derives deploy keys
+		// from the source, so a cached refusal kept answering the same deploy
+		// for 24 h after release commands were turned on.
+		return problem.Code != api.CodeReleasePhaseUnavailable
 	}
 	switch problem.Code {
 	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,

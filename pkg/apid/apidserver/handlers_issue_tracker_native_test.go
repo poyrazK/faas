@@ -2199,6 +2199,14 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	admin, err := full.CreateAccount(t.Context(), "notify-admin-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := full.CreateAccount(t.Context(), "notify-viewer-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{app.AccountID, member.ID, outsider.ID} {
 		role := state.OrgRoleDeveloper
 		if id == app.AccountID {
@@ -2208,10 +2216,16 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 			t.Fatal(err)
 		}
 	}
+	if err = full.AddOrgMember(t.Context(), org.ID, admin.ID, state.OrgRoleAdmin, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, viewer.ID, state.OrgRoleViewer, nil); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE apps SET org_id=$2 WHERE id=$1", app.ID, org.ID); err != nil {
 		t.Fatal(err)
 	}
-	team, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "payments", api.PutIssueTeamRequest{Name: "Payments", MemberAccountIDs: []string{app.AccountID, member.ID}}, time.Now())
+	team, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "payments", api.PutIssueTeamRequest{Name: "Payments", MemberAccountIDs: []string{app.AccountID, member.ID, viewer.ID}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2311,8 +2325,18 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if out := getAs(outsider, pageURL); out.Code != 404 {
 		t.Fatal("unrelated member opened inbox", out.Code)
 	}
+	if out := getAs(viewer, pageURL); out.Code != 200 {
+		t.Fatal("viewer recipient cannot read inbox", out.Code, out.Body.String())
+	}
+	if out := getAs(viewer, "/dashboard/apps/"+app.Slug+"/issues/slack-routing"); out.Code != http.StatusForbidden {
+		t.Fatal("viewer recipient read Slack channel settings", out.Code, out.Body.String())
+	}
 	// Triage is shared by incident, with revision checks and no lifecycle effects.
 	notice := inbox(member.ID, team.ID).Items[0].ID
+	triageURL := pageURL + "/triage/" + notice
+	if out := getAs(admin, triageURL); out.Code != http.StatusOK {
+		t.Fatal("admin cannot open a non-recipient incident", out.Code, out.Body.String())
+	}
 	triageGet := func(actor string) state.IssueTrackerTriage {
 		t.Helper()
 		v, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, actor, notice)
@@ -2371,10 +2395,48 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if v.ClaimedBy == app.AccountID && triageAct(member.ID, 2, "release") == nil {
 		t.Fatal("member released another account's claim")
 	}
-	if err := triageAct(app.AccountID, 2, "release"); err != nil {
-		t.Fatal(err)
+	adminPage := getAs(admin, triageURL)
+	var adminCSRF *http.Cookie
+	for _, cookie := range adminPage.Result().Cookies() {
+		if cookie.Name == apidserver.DashboardIssueCookie {
+			adminCSRF = cookie
+		}
+	}
+	if adminPage.Code != http.StatusOK || adminCSRF == nil || !strings.Contains(adminPage.Body.String(), `value="release"`) {
+		t.Fatal("admin triage page", adminPage.Code, adminPage.Body.String())
+	}
+	adminForm := url.Values{"action": {"release"}, "expected_revision": {"2"}, "csrf_token": {adminCSRF.Value}}
+	adminRequest := httptest.NewRequest(http.MethodPost, triageURL, strings.NewReader(adminForm.Encode()))
+	adminRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	adminRequest.AddCookie(adminCSRF)
+	saved := *e.Acct()
+	*e.Acct() = admin
+	e.AddAdminSession(t, adminRequest)
+	*e.Acct() = saved
+	adminResult := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(adminResult, adminRequest)
+	if adminResult.Code != http.StatusSeeOther {
+		t.Fatal("admin triage release", adminResult.Code, adminResult.Body.String())
+	}
+	if v := triageGet(admin.ID); len(v.History) == 0 || v.History[0].ActorID != admin.ID {
+		t.Fatal("admin release lost the real audit actor", v)
 	}
 	if err := triageAct(member.ID, 3, "claim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := full.TransferOrgOwnership(t.Context(), org.ID, app.AccountID, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := full.UpdateOrgMemberRole(t.Context(), org.ID, app.AccountID, state.OrgRoleDeveloper); err != nil {
+		t.Fatal(err)
+	}
+	if out := getAs(*e.Acct(), triageURL); out.Code != http.StatusOK || strings.Contains(out.Body.String(), `value="release"`) {
+		t.Fatal("demoted app creator retained release control", out.Code, out.Body.String())
+	}
+	if triageAct(app.AccountID, 4, "release") == nil {
+		t.Fatal("demoted app creator released another account's claim")
+	}
+	if err := full.TransferOrgOwnership(t.Context(), org.ID, admin.ID, app.AccountID); err != nil {
 		t.Fatal(err)
 	}
 	// A history write failure must not leave a partially changed claim.
@@ -2400,7 +2462,6 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if v := triageGet(app.AccountID); v.Revision != 5 || v.AcknowledgedBy != member.ID {
 		t.Fatal(v)
 	}
-	triageURL := pageURL + "/triage/" + notice
 	triagePage := getAs(member, triageURL)
 	if triagePage.Code != 200 || !strings.Contains(triagePage.Body.String(), "Claim for me") || !strings.Contains(triagePage.Body.String(), member.Email) {
 		t.Fatal("member triage page", triagePage.Code, triagePage.Body.String())
@@ -3865,7 +3926,10 @@ func TestNativeIssueSlackDestinationsThreadRetryAndFenceDeliveries(t *testing.T)
 	if wins != 1 || first.Attempt != 1 || first.ThreadTS != "" {
 		t.Fatal("concurrent Slack claim", wins, first.Status)
 	}
-	if err = st.FinishIssueSlackDelivery(t.Context(), first, state.IssueSlackResult{Status: "failed", Error: "transport_error", RetryAt: time.Now().Add(time.Minute)}); err != nil {
+	if err = st.BeginIssueSlackAttempt(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.FinishIssueSlackDelivery(t.Context(), first, state.IssueSlackResult{Status: "failed", Error: "transport_error", RetryAt: time.Now().Add(time.Minute), Attempted: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err = st.RetryIssueSlackDelivery(t.Context(), app.ID, member.ID, first.ID); !errors.Is(err, state.ErrNotFound) {

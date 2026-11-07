@@ -66,7 +66,7 @@ test('change hooks record committed changes and only the relay reads them', { sk
   ]) await su.query(statement)
 
   // The owner's migration: the printed SQL, then a hooked table.
-  const sql = (await readFile(new URL('../change-hooks.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api')
+  const sql = (await readFile(new URL('../change-hooks.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api').replaceAll('{{backlog_max}}', '100000')
   await su.query(`SET ROLE ${owner}`)
   await su.query(sql)
   await su.query(`CREATE TABLE api.orders (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, status text NOT NULL, secret text, note text);
@@ -221,4 +221,37 @@ test('change hooks record committed changes and only the relay reads them', { sk
       await assert.rejects(as(serving, relayClaims, () => serving.query(statement)), error => error.code === '22023', statement)
     }
   })
+})
+
+// Amendment 2: while the bound's worth of changes waits, capture records no
+// more, so a backlog the platform never takes cannot fill the database.
+test('capture stops recording at the backlog bound and resumes as changes publish', { skip: !admin && 'set DATA_API_CHANGE_HOOKS_PG_URL' }, async t => {
+  const bounded = `${db}_bound`
+  const root = await connect(admin, 'postgres')
+  await root.query(`CREATE DATABASE ${bounded}`)
+  const su = await connect(admin, bounded)
+  t.after(async () => {
+    await su.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${bounded} WITH (FORCE)`)
+    await root.end()
+  })
+  const sql = (await readFile(new URL('../change-hooks.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api').replaceAll('{{backlog_max}}', '3')
+  await su.query('CREATE SCHEMA api')
+  await su.query(sql)
+  await su.query('CREATE TABLE api.orders (id int PRIMARY KEY, status text NOT NULL)')
+  await su.query("SELECT gregale_hooks.enable('api.orders')")
+  const recorded = async () => (await su.query('SELECT relation_name, row_key FROM api.gregale_change_events ORDER BY id')).rows.map(r => r.row_key.id)
+  for (let id = 1; id <= 5; id++) await su.query('INSERT INTO api.orders VALUES ($1, $2)', [id, 'new'])
+  assert.deepEqual(await recorded(), [1, 2, 3], 'changes past the bound are not recorded')
+  const { rows: [check] } = await su.query(`SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'gregale_hooks' AND p.proname = 'capture' AND p.prosrc LIKE '%gregale:backlog-bound%') AS bounded`)
+  assert.equal(check.bounded, true, 'the runtime can see the bound is installed')
+  // The relay published the oldest change; recording resumes.
+  await su.query('DELETE FROM api.gregale_change_events WHERE id = (SELECT min(id) FROM api.gregale_change_events)')
+  await su.query('INSERT INTO api.orders VALUES (6, $1)', ['new'])
+  assert.deepEqual(await recorded(), [2, 3, 6])
+  // Rejected changes do not hold the bound: only waiting ones count.
+  await su.query('UPDATE api.gregale_change_events SET failed_at = now(), failure_code = $1', ['rejected'])
+  await su.query('INSERT INTO api.orders VALUES (7, $1)', ['new'])
+  assert.deepEqual(await recorded(), [2, 3, 6, 7])
 })

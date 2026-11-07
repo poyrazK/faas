@@ -303,7 +303,7 @@ services:
 A reviewed project apply (`gregale deploy`, the dashboard, or
 `gregale deploy --repo … --project`) writes each imported value into the
 service's app, in the deploy's environment, before any build starts; a GitHub
-push deploy imports nothing. Values are written only where the key is still unset: a
+push imports only the addresses of sibling services. Values are written only where the key is still unset: a
 value configured on the app, as a variable or a secret, is never replaced. The
 plan lists imported names under **Imported from Compose** and gives the reason
 for each value it skips: a secret-looking key or value, an address of another

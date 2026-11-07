@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -79,6 +81,9 @@ type runtimeConfigDefinition struct {
 	ControllerEnabled bool
 	Mutable           bool
 	Sensitive         bool
+	// Validate, when set, checks the value after its kind's check: the
+	// key's own bounds (ADR-20261101215228).
+	Validate func(json.RawMessage) error
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
@@ -102,6 +107,14 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigProductControlSignup, Label: "Product Control self-serve signup", Description: "Let visitors sign up and create their own workspace in Product Control products whose catalog offers signup, and keep a card on file through the product's Stripe (ADR-20261022100735). Disabling hides every signup offer and refuses new signups; existing workspaces keep working.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFullEnvironmentClones, Label: "Full environment clone machinery", Description: "Run what only full environment clones use (ADR-590): schedd's wake and migration ownership recorders, gateway clone readiness reads for stage URLs, and apid's clone coordinator. Full clones are not admitted yet. Turn this on and wait for every daemon's apply receipt before admitting them; it cannot be turned off while admission is open or a clone is unfinished. Partial environment clones never need it.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFullEnvironmentCloneAdmission, Label: "Full environment clone admission", Description: "Admit env create --full for sources without managed data (ADR-20261024123122). Turn on only after full_environment_clones_enabled has an apply receipt from every daemon; admission also needs that switch on.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeconfig.KeyGuestVCPUFromCPUApps, Label: "Apps whose CPU follows plan RAM", Description: "Comma-separated app IDs, or * for every app, that book their plan's CPU baseline and boot one guest vCPU per guest_vcpu_millicores of CPU ceiling (ADR-20261101160231). Empty keeps every app on its plan. A listed app cold-boots once: its snapshots were taken at the other vCPU count. List Scale apps only once every node runs a release that accepts a two-core ceiling.", Category: "Plan CPU", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateGuestVCPUApps},
+	{Key: runtimeconfig.KeyAppCPUBaselineMillicoresPerGB, Label: "CPU baseline per GB of plan RAM", Description: "Millicores a listed app's instance books per GB of plan RAM, and its share on a busy node (ADR-20261101215228). 1000 gives 250 m Free, 500 m Hobby, 1,000 m Pro, 2,000 m Scale.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.AppCPUBaselineMillicoresPerGBMin, api.AppCPUBaselineMillicoresPerGBMax, api.ValidAppCPUBaselineMillicoresPerGB)},
+	{Key: runtimeconfig.KeyAppCPUCeilingFloorMillicores, Label: "Lowest CPU ceiling", Description: "The lowest burst ceiling (cpu.max) a listed app's plan gets: 250, 500, or whole cores up to 2000 (ADR-20261101215228). A ceiling is never above what this release's vmmd accepts for the plan.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.AppCPUCeilingFloorMillicoresMin, api.AppCPUCeilingFloorMillicoresMax, api.ValidAppCPUCeilingFloorMillicores)},
+	{Key: runtimeconfig.KeyGuestVCPUMillicores, Label: "Millicores per guest vCPU", Description: "A listed app boots one guest vCPU per this many millicores of CPU ceiling, never more than its plan's count (ADR-20261101215228). Changing it makes listed apps cold-boot once.", Category: "Plan CPU", Kind: "integer", Default: json.RawMessage("1000"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.GuestVCPUMillicoresMin, api.GuestVCPUMillicoresMax, api.ValidGuestVCPUMillicores)},
+	{Key: runtimeconfig.KeyAppRequestConcurrencyDefault, Label: "Requests per instance (default)", Description: "Requests one instance of an app that declares no per_instance_concurrency takes at once, on every plan (ADR-20261101215228). 0 keeps each plan's concurrency_per_vm (Free 4, Hobby 5, Pro 25, Scale 80). Gateways, schedd and apid apply it; it is capped at app_request_concurrency_max when that is set, else at the plan's bound.", Category: "Plan requests", Kind: "integer", Default: json.RawMessage("0"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateRequestConcurrencySetting},
+	{Key: runtimeconfig.KeyAppRequestConcurrencyMax, Label: "Requests per instance (maximum)", Description: "The largest per_instance_concurrency an app may declare, on every plan, and what vmmd admits to an instance of an app without one (ADR-20261101215228). 0 keeps each plan's concurrency_per_vm. Set it only once every vmmd runs a release that takes the limit from the wake; an older vmmd keeps the plan bound and answers App busy above it.", Category: "Plan requests", Kind: "integer", Default: json.RawMessage("0"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateRequestConcurrencySetting},
+	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
+	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -137,6 +150,8 @@ type runtimeConfigManager struct {
 	receiptDaemon   string
 	receiptInstance string
 	failedReceipts  map[string]int64
+	// requestConcurrency applies the request keys (ADR-20261101215228).
+	requestConcurrency runtimeconfig.RequestConcurrency
 }
 
 // enableReceipts makes the manager report what it applies, as daemon on
@@ -432,6 +447,12 @@ func (m *runtimeConfigManager) applyVersion(key string, value json.RawMessage, v
 			httpsec.SetHSTSEnabled(enabled)
 		}
 	}
+	// ADR-20261101215228: apid resolves per-instance request limits for
+	// validation and effective_limits through the process-wide value.
+	if _, err := m.requestConcurrency.Apply(key, value); err != nil {
+		m.mu.Unlock()
+		return false, err
+	}
 	m.mu.Unlock()
 	return true, nil
 }
@@ -496,7 +517,11 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		}
 	case "integer":
 		var v int
-		if err := json.Unmarshal(value, &v); err != nil || v < 1 || v > 86400 {
+		if err := json.Unmarshal(value, &v); err != nil {
+			return fmt.Errorf("%s must be an integer", def.Key)
+		}
+		// A key with its own bounds checks them in Validate below.
+		if def.Validate == nil && (v < 1 || v > 86400) {
 			return fmt.Errorf("%s must be an integer between 1 and 86400", def.Key)
 		}
 	case "duration":
@@ -530,6 +555,62 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		}
 	default:
 		return fmt.Errorf("%s has unsupported kind %q", def.Key, def.Kind)
+	}
+	if def.Validate != nil {
+		if err := def.Validate(value); err != nil {
+			return fmt.Errorf("%s: %w", def.Key, err)
+		}
+	}
+	return nil
+}
+
+// validateIntSetting checks an integer setting against its bounds and shape.
+func validateIntSetting(lo, hi int, valid func(int) bool) func(json.RawMessage) error {
+	return func(value json.RawMessage) error {
+		v, err := runtimeconfig.Int(value)
+		if err != nil || !valid(v) {
+			return fmt.Errorf("must be between %d and %d (see pkg/api/limits.go)", lo, hi)
+		}
+		return nil
+	}
+}
+
+// validateRequestConcurrencySetting checks a request key: 0 (unset) or 1 to
+// api.AppRequestConcurrencyBound.
+func validateRequestConcurrencySetting(value json.RawMessage) error {
+	v, err := runtimeconfig.Int(value)
+	if err != nil || !runtimeconfig.ValidRequestConcurrency(v) {
+		return fmt.Errorf("must be 0 (unset) or between 1 and %d", api.AppRequestConcurrencyBound)
+	}
+	return nil
+}
+
+// validateSnapshotRefresh checks a `snapshot_refresh` mode (ADR-20261106214916).
+func validateSnapshotRefresh(value json.RawMessage) error {
+	mode, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	if !api.ValidSnapshotRefresh(mode) {
+		return fmt.Errorf("%q is not off, shadow or on", mode)
+	}
+	return nil
+}
+
+// validateGuestVCPUApps checks a comma-separated list of app IDs or "*".
+func validateGuestVCPUApps(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(list, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || entry == "*" {
+			continue
+		}
+		if _, err := uuid.Parse(entry); err != nil {
+			return fmt.Errorf("%q is not an app ID or *", entry)
+		}
 	}
 	return nil
 }

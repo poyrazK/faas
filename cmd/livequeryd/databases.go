@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
 	"github.com/onebox-faas/faas/pkg/livequery/schemalog"
@@ -197,7 +198,7 @@ func supervise(ctx context.Context, db database, deps hubDeps, metrics *liveserv
 	failures := 0
 	for {
 		started := time.Now()
-		pool, err := pgxpool.New(ctx, db.DSN)
+		pool, err := dbbounds.NewBoundedPool(ctx, db.DSN, 4)
 		if err == nil {
 			err = runDatabase(ctx, db, pool, deps, metrics, func(h *liveserver.Hub) { routes.set(db.ID, h) })
 			pool.Close()

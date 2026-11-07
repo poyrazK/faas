@@ -172,3 +172,13 @@ caller could not see, can leave unreferenced bytes in the bucket; they are
 unreachable through the Data API and visible to the owner. Existing storage
 tables need the upgrade migration before a runtime with this amendment serves
 files.
+
+## Amendment 2 (2026-11-05): an upload rereads what it replaces before committing
+
+An upload read the version it replaces before streaming its bytes and deleted
+those bytes after committing. When another upload of the same name committed
+while the bytes streamed, the version actually replaced was that one, and its
+bytes stayed in the bucket with nothing pointing to them. The upload now reads
+the row again just before its commit and deletes the bytes of both versions it
+read, never its own. Only the moment between that read and the commit remains
+a race, instead of the whole transfer; deletion stays best effort.

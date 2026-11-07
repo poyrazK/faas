@@ -675,12 +675,29 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printManagedServices(w io.Writer, managed []api.PlanManaged) {
-	var provided, listed []api.PlanManaged
+	var provided, buckets, listed []api.PlanManaged
 	for _, m := range managed {
-		if m.Provision != nil {
+		switch {
+		case m.Provision != nil && m.Kind == "bucket":
+			buckets = append(buckets, m)
+		case m.Provision != nil:
 			provided = append(provided, m)
-		} else {
+		default:
 			listed = append(listed, m)
+		}
+	}
+	if len(buckets) > 0 {
+		// gregale.yaml buckets (ADR-20261106105015 §1): Database is the
+		// bucket and each binding's EnvKey the S3 settings prefix.
+		fmt.Fprintln(w, "\nObject storage (from gregale.yaml):")
+		for _, m := range buckets {
+			verb := "creates"
+			if m.Provision.Existing {
+				verb = "binds"
+			}
+			for _, b := range m.Provision.Bindings {
+				fmt.Fprintf(w, "  - %-20s %s bucket for %s as %s_*\n", m.Name, verb, b.Workload, b.EnvKey)
+			}
 		}
 	}
 	if len(provided) > 0 {
@@ -709,6 +726,13 @@ func printManagedServices(w io.Writer, managed []api.PlanManaged) {
 				reason = "   (" + text + ")"
 			}
 			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s%s\n", m.Name, m.Kind, m.EnvHint, m.Image, reason)
+			if len(m.Unbound) > 0 {
+				if m.Kind != "postgres" {
+					fmt.Fprintf(w, "      not run on Gregale and no managed equivalent; set to an external %s: %s\n", m.Kind, strings.Join(m.Unbound, ", "))
+				} else {
+					fmt.Fprintf(w, "      no value for: %s\n", strings.Join(m.Unbound, ", "))
+				}
+			}
 		}
 	}
 }

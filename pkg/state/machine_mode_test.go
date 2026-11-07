@@ -12,6 +12,33 @@ import (
 	"testing"
 )
 
+// TestIsMeteredSkippableMode pins the meter-skip predicate: only a
+// platform snapshot refresh is skipped (ADR-20261106214916). Mirror VMs
+// bill (ADR-20261104145353), and so do worker / service / job (spec §4.7).
+func TestIsMeteredSkippableMode(t *testing.T) {
+	tests := []struct {
+		mode string
+		want bool
+	}{
+		{"normal", false},
+		{"mirror", false}, // ADR-20261104145353: mirrors bill
+		{"worker", false},
+		{"service", false},
+		{"job", false},
+		{"fork", false},   // ADR-732: a fork bills like a live instance
+		{"refresh", true}, // ADR-20261106214916: the release caused it
+		{"", false},       // empty defaults to non-skip
+		{"bogus", false},  // unknown mode is not skipped (fail-open at the meter layer; CHECK is the load-bearing defence)
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			if got := state.IsMeteredSkippableMode(tt.mode); got != tt.want {
+				t.Errorf("IsMeteredSkippableMode(%q)=%v, want %v", tt.mode, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCountsForRAMByMode pins the RAM-admission predicate.
 // Every mode (including mirror) counts against the tenant budget
 // while RUNNING; the meter sampler is a separate layer that skips
@@ -64,5 +91,22 @@ func TestInstanceModeConstants(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("InstanceMode %q: string value %q, want %q", k, got[k], v)
 		}
+	}
+}
+
+// TestNeverServes pins which modes every target loader, wake reuse and
+// replica count skips: a fork (ADR-732) and a platform snapshot refresh
+// (ADR-20261106214916).
+func TestNeverServes(t *testing.T) {
+	for mode, want := range map[string]bool{
+		"normal": false, "mirror": false, "worker": false, "service": false, "job": false, "": false,
+		"fork": true, "refresh": true,
+	} {
+		if got := state.NeverServes(mode); got != want {
+			t.Errorf("NeverServes(%q) = %v, want %v", mode, got, want)
+		}
+	}
+	if !state.IsRefresh(string(state.InstanceModeRefresh)) || state.IsRefresh(string(state.InstanceModeFork)) {
+		t.Error("IsRefresh must match exactly the refresh mode")
 	}
 }

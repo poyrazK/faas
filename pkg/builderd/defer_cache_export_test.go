@@ -16,8 +16,10 @@ func TestParseDeferCacheExport(t *testing.T) {
 	}{
 		{raw: "", want: false},
 		{raw: "false", want: false},
-		{raw: "true", want: true},
-		{raw: " 1 ", want: true},
+		// Refused until the cache export stops editing the drive on the
+		// host (bug hunt H104).
+		{raw: "true", wantErr: true},
+		{raw: " 1 ", wantErr: true},
 		{raw: "later", wantErr: true},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {

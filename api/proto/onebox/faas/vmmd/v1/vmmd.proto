@@ -214,6 +214,13 @@ service Vmmd {
   // warm capture. Missing objects are treated as an idempotent success.
   rpc DeleteWarmSnapshot(DeleteWarmSnapshotRequest) returns (DeleteWarmSnapshotResponse);
 
+  // SnapshotBackingCurrent answers, without starting a VM, whether a parked
+  // capture would restore on this node: the Firecracker version pin and the
+  // ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+  // after a release to find captures the release made stale and refresh them
+  // before a customer request wakes the app (ADR-20261106214916).
+  rpc SnapshotBackingCurrent(SnapshotBackingCurrentRequest) returns (SnapshotBackingCurrentResponse);
+
   // RetireNativeRuntimeSnapshotObject removes one object of a native runtime
   // capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
   // imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -425,6 +432,7 @@ service Vmmd {
   // Atomically replaces the complete account/region L3 peering policy.
   // Callers must prepare every listed fabric before publishing app routes.
   rpc ReconcilePrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
+  rpc RestrictPrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
 
   // RemovePrivateNetworkFabric tears down the node-local bridge and optional
   // regional VXLAN link for a deleted Gregale-owned network. The operation is
@@ -934,6 +942,19 @@ message AppSpec {
   // Non-production deployments keep shared egress even when their app has a pin.
   // False preserves production eligibility for older callers.
   bool static_egress_excluded = 36;
+  // ADR-20261101215228: requests vmmd's HTTP admission lets through to this
+  // instance at once. schedd sends it once runtime config sets the request
+  // limits: the app's declared per_instance_concurrency, or else
+  // app_request_concurrency_max. 0 (an older schedd, or nothing set) keeps the
+  // plan's concurrency_per_vm. vmmd clamps it to api.AppRequestConcurrencyBound.
+  int32 request_concurrency = 37;
+  // ADR-20261107122928 (idle ladder, proposed): the instance is a
+  // request-serving workload the pause tiers may pause, whatever its declared
+  // pause (schedd's pauseTierWorkload). vmmd's idle_ladder observe mode
+  // measures how long such instances sit idle and which ladder level each
+  // would reach; nothing is paused because of it. False (an older schedd)
+  // leaves the instance out unless quiet_pause_after_ms is set.
+  bool idle_ladder_eligible = 38;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1855,6 +1876,13 @@ message InstanceStats {
   // ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
   // the node does not report this guarantee; the plan cap is for this VM.
   HTTPAdmissionEnforcement http_admission_enforcement = 29;
+  // ADR-20261107122928: the idle ladder level vmmd holds the instance at
+  // while its idle_ladder is on: 1 quiet-paused, 2 quiet-paused and quiet for
+  // at least the ladder's freeze delay (10 s). Measured admission charges a
+  // level-2 instance's memory with the frozen floor (FrozenChargeFloorMB).
+  // 0 when the ladder is off, the instance is running, or it is not on the
+  // ladder.
+  int32 idle_ladder_level = 30;
 }
 
 message HTTPAdmissionEnforcement {
@@ -2711,6 +2739,31 @@ message DeleteWarmSnapshotResponse {
   bool deleted = 1;
 }
 
+message SnapshotBackingCurrentRequest {
+  // The capture to check. storage_key is required; fc_version, when set, is
+  // compared with the Firecracker version this node runs.
+  SnapshotRef snapshot = 1;
+  // The drive0 base a wake of this app would attach, as in BootRequest.
+  string base_key = 2;
+}
+
+enum SnapshotBackingVerdict {
+  SNAPSHOT_BACKING_VERDICT_UNSPECIFIED = 0;
+  // A wake on this node would restore the capture.
+  SNAPSHOT_BACKING_CURRENT = 1;
+  // A wake on this node would refuse the capture and cold-boot.
+  SNAPSHOT_BACKING_STALE = 2;
+  // This node could not tell (its images or the capture's identity could not
+  // be read). Callers leave the capture alone; a wake decides.
+  SNAPSHOT_BACKING_UNKNOWN = 3;
+}
+
+message SnapshotBackingCurrentResponse {
+  SnapshotBackingVerdict verdict = 1;
+  // Why the capture is stale or unknown, for logs. Empty when current.
+  string detail = 2;
+}
+
 message RetireNativeRuntimeSnapshotObjectRequest {
   // One of a v2 capture's memory, device state, drive or backing keys.
   string storage_key = 1;
@@ -3270,6 +3323,10 @@ message AllowResolvedEgressRequest {
   // app's bound managed databases (ADR 20261026150000): vmmd also opens that
   // TCP port to the addresses. An older resolver leaves it zero.
   uint32 database_port = 4;
+  // Captured from ResolveServiceCaller before starting the DNS lookup.
+  // Both fields fence a grant against slot reuse and daemon/VM replacement.
+  string instance_id = 5;
+  string network_generation = 6;
 }
 
 message AllowResolvedEgressAck {
@@ -3857,6 +3914,9 @@ message ResolveServiceCallerResponse {
   string deployment_id = 5;
   bool app_task = 6;
   bool job_task = 7;
+  // Opaque lifetime of this manager's current network owner, including
+  // occupied builder/job slots that have no service-caller app identity.
+  string network_generation = 8;
 }
 
 message DataRepairRehearsalIdentityRequest {}

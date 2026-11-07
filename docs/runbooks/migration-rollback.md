@@ -25,6 +25,19 @@ down step. A bad migration is recovered by either:
   - A migration that genuinely needs longer, such as a large backfill, raises
     its own bound for its transaction with `SET LOCAL statement_timeout = '…'`.
     It says why in a comment.
+  - A `-- +goose NO TRANSACTION` migration (every `CREATE INDEX CONCURRENTLY`)
+    runs each statement as its own transaction, so `SET LOCAL` there changes
+    nothing. It sets a session-level `SET statement_timeout = 0;` (or a
+    measured bound) before a concurrent build on an existing table, and drops
+    an invalid leftover of the index before `CREATE INDEX CONCURRENTLY IF NOT
+    EXISTS` (the `indisvalid` DO block in
+    `migrations/20261027225845842_events_at_brin_idx.sql`). `make
+    migration-lint` enforces both.
+  - A concurrent build cancelled part way leaves an INVALID index. `db.MigrateUp`
+    fails after goose when any index is invalid, naming each one:
+    `db: invalid indexes after migrate: public.<index>`. Rebuild it with
+    `REINDEX INDEX CONCURRENTLY <index>`, or drop it and rerun the deploy when
+    its migration is still pending.
 - **Serialization.** `db.MigrateUp` holds a Postgres advisory lock, so two
   migrators never interleave.
 - **Expand/contract.** New migrations are expand/contract

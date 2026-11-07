@@ -26,6 +26,12 @@ const (
 	Build    Domain = "build"
 	Source   Domain = "source"
 	Edge     Domain = "edge"
+	// EdgeTLS holds the key of the apps domains' publicly trusted
+	// certificate (ADR-20261103163954 §3). edgednsd seals it on the control
+	// plane and only the compute edges' gatewayd-public open it, so neither
+	// the daemon that talks to guests nor the one that reads customer
+	// credentials holds it.
+	EdgeTLS  Domain = "edge-tls"
 	Alerting Domain = "alerting"
 	Storage  Domain = "storage"
 	Delivery Domain = "delivery"
@@ -141,6 +147,13 @@ var registry = []Spec{
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
+	)},
+	// The apps domains' certificate key (ADR-20261103163954 §3). edgednsd
+	// seals it to this domain alone, never the fleet identity: the table is
+	// new, so no reader needs a fleet copy, and a fleet holder must not get a
+	// publicly trusted key for every app host.
+	{Domain: EdgeTLS, Readers: []string{"gatewayd-public"}, Roles: computeOnly, Wired: true, Columns: join(
+		cols("edge_tls_certificates", "key_sealed"),
 	)},
 	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),

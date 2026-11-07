@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -71,6 +72,18 @@ const MaxKeysPerJWKSURL = 1024
 // still be very large even when the key-count limit is respected.
 const MaxResponseBytes = 2 << 20
 
+// MaxCachedJWKSURLs and MaxCachedJWKSBytes bound one gateway's cache across
+// every tenant (ADR-091 amendment 2026-11-04, round 12). A URL was
+// registered on the first token checked against it and never dropped, so
+// a rule whose jwks_url kept changing (a new query string is enough) left
+// up to MaxResponseBytes resident per edit on a daemon every tenant shares.
+// Past either bound the least recently used URL goes; a later token for it
+// registers and fetches it again.
+const (
+	MaxCachedJWKSURLs  = 512
+	MaxCachedJWKSBytes = 64 << 20
+)
+
 // DefaultMinRefreshInterval is the window for demand-driven refreshes per
 // URL. A Get after this window refreshes known and unknown key IDs alike;
 // unknown IDs cannot trigger unbounded fetches inside the window.
@@ -115,6 +128,8 @@ type Options struct {
 type jwksCache struct {
 	mu         sync.Mutex
 	byURL      map[string]*urlEntry
+	totalBytes int64 // fetched document bytes of every entry, under mu
+	now        func() time.Time
 	httpClient *http.Client
 	refresh    time.Duration
 	fetchTO    time.Duration
@@ -122,6 +137,11 @@ type jwksCache struct {
 }
 
 type urlEntry struct {
+	// lastUse and bytes order and size the entry for eviction; under
+	// jwksCache.mu.
+	lastUse time.Time
+	bytes   int64
+
 	gate        chan struct{}
 	set         *jose.JSONWebKeySet
 	lastFetch   time.Time
@@ -142,6 +162,7 @@ func NewCache(opts Options) Cache {
 		opts.FetchTimeout = DefaultFetchTimeout
 	}
 	return &jwksCache{
+		now:        time.Now,
 		byURL:      make(map[string]*urlEntry),
 		httpClient: opts.HTTPClient,
 		refresh:    opts.MinRefreshInterval,
@@ -160,11 +181,52 @@ func (c *jwksCache) Register(rawURL string) error {
 		return fmt.Errorf("edgejwks: invalid jwks_url %q: %w", rawURL, err)
 	}
 	c.mu.Lock()
-	if _, ok := c.byURL[rawURL]; !ok {
-		c.byURL[rawURL] = &urlEntry{gate: make(chan struct{}, 1)}
+	if entry, ok := c.byURL[rawURL]; ok {
+		entry.lastUse = c.now()
+	} else {
+		for len(c.byURL) >= MaxCachedJWKSURLs {
+			if !c.evictLocked(nil) {
+				break
+			}
+		}
+		c.byURL[rawURL] = &urlEntry{gate: make(chan struct{}, 1), lastUse: c.now()}
 	}
 	c.mu.Unlock()
 	return nil
+}
+
+// evictLocked drops the least recently used entry other than keep, and
+// reports whether one went. A request holding the dropped entry finishes
+// with it; the next one registers the URL again.
+func (c *jwksCache) evictLocked(keep *urlEntry) bool {
+	var oldestURL string
+	var oldest *urlEntry
+	for u, e := range c.byURL {
+		if e != keep && (oldest == nil || e.lastUse.Before(oldest.lastUse)) {
+			oldestURL, oldest = u, e
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	delete(c.byURL, oldestURL)
+	c.totalBytes -= oldest.bytes
+	return true
+}
+
+// accountLocked records entry's fetched size and evicts other entries
+// until the cache fits MaxCachedJWKSBytes.
+func (c *jwksCache) accountLocked(entry *urlEntry, n int64) {
+	if c.byURL == nil {
+		return
+	}
+	c.totalBytes += n - entry.bytes
+	entry.bytes = n
+	for c.totalBytes > MaxCachedJWKSBytes {
+		if !c.evictLocked(entry) {
+			break
+		}
+	}
 }
 
 // Get returns the cached keyset for url, fetching on the first call after
@@ -174,6 +236,9 @@ func (c *jwksCache) Register(rawURL string) error {
 func (c *jwksCache) Get(ctx context.Context, rawURL string, kid string) (*jose.JSONWebKeySet, bool, error) {
 	c.mu.Lock()
 	entry, ok := c.byURL[rawURL]
+	if ok {
+		entry.lastUse = c.now()
+	}
 	c.mu.Unlock()
 	if !ok {
 		return nil, false, nil
@@ -197,7 +262,15 @@ func (c *jwksCache) Get(ctx context.Context, rawURL string, kid string) (*jose.J
 		return c.graceSet(entry, now, errors.New("fetch backing off after a recent failure"))
 	}
 	entry.lastAttempt = now
-	if err := entry.fetch(ctx, c.httpClient, c.fetchTO, rawURL); err != nil {
+	n, err := entry.fetch(ctx, c.httpClient, c.fetchTO, rawURL)
+	if err == nil {
+		c.mu.Lock()
+		if c.byURL[rawURL] == entry {
+			c.accountLocked(entry, n)
+		}
+		c.mu.Unlock()
+	}
+	if err != nil {
 		if ctx.Err() == nil {
 			entry.lastFailure = now
 		}
@@ -238,32 +311,46 @@ func (c *jwksCache) graceSet(entry *urlEntry, now time.Time, cause error) (*jose
 // entry. Singleflight: only one fetch per URL at a time; concurrent
 // callers wait via entry.gate (already held by the caller), or cancel their
 // own wait without interrupting the in-flight request.
-func (e *urlEntry) fetch(ctx context.Context, hc *http.Client, timeout time.Duration, rawURL string) error {
+// fetch replaces e's keyset and returns the document's size in bytes.
+func (e *urlEntry) fetch(ctx context.Context, hc *http.Client, timeout time.Duration, rawURL string) (int64, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return fmt.Errorf("edgejwks: build request: %w", err)
+		return 0, fmt.Errorf("edgejwks: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("edgejwks: fetch %s: %w", rawURL, err)
+		return 0, fmt.Errorf("edgejwks: fetch %s: %w", rawURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("edgejwks: fetch %s: status %d", rawURL, resp.StatusCode)
+		return 0, fmt.Errorf("edgejwks: fetch %s: status %d", rawURL, resp.StatusCode)
 	}
+	body := &countingReader{r: resp.Body}
 	var set jose.JSONWebKeySet
-	if err := httpjson.Decode(resp.Body, MaxResponseBytes, &set); err != nil {
-		return fmt.Errorf("edgejwks: decode jwks from %s: %w", rawURL, err)
+	if err := httpjson.Decode(body, MaxResponseBytes, &set); err != nil {
+		return 0, fmt.Errorf("edgejwks: decode jwks from %s: %w", rawURL, err)
 	}
 	if len(set.Keys) > MaxKeysPerJWKSURL {
-		return fmt.Errorf("edgejwks: jwks from %s has %d keys (> max %d)", rawURL, len(set.Keys), MaxKeysPerJWKSURL)
+		return 0, fmt.Errorf("edgejwks: jwks from %s has %d keys (> max %d)", rawURL, len(set.Keys), MaxKeysPerJWKSURL)
 	}
 	e.set = &set
 	e.lastFetch = time.Now()
-	return nil
+	return body.n, nil
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // Reset drops every registration. Mirrors pkg/gateway/EdgeRuleCache.Reset()
@@ -272,5 +359,6 @@ func (e *urlEntry) fetch(ctx context.Context, hc *http.Client, timeout time.Dura
 func (c *jwksCache) Reset() {
 	c.mu.Lock()
 	c.byURL = make(map[string]*urlEntry)
+	c.totalBytes = 0
 	c.mu.Unlock()
 }

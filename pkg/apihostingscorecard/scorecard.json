@@ -559,6 +559,22 @@
       ]
     },
     {
+      "id": "object-storage-key-scopes",
+      "name": "Scoped bucket credential enforcement",
+      "category": "security",
+      "description": "Key-scoped bindings are issued only after the capability is released to the account. Their credentials refuse requests, copy sources and bulk deletes outside the literal key prefix, and cannot change bucket-wide settings (ADR-20261106114500).",
+      "capabilities": ["object-storage-key-scopes"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/object/key_scope_test.go::TestKeyScopedBindingsNeedTheCapability"},
+        {"kind": "test", "locator": "pkg/apid/object/key_scope_test.go::TestManifestBucketBindingHonorsKeyPrefix"},
+        {"kind": "test", "locator": "pkg/s3gateway/key_scope_test.go::TestKeyScopeAllowsOnlyRequestsInsideThePrefix"},
+        {"kind": "test", "locator": "pkg/s3gateway/key_scope_test.go::TestKeyScopedBulkDeleteRefusesAnyKeyOutside"},
+        {"kind": "test", "locator": "pkg/s3gateway/key_scope_test.go::TestBucketSettingsExcludeRotationStagesAndScopedKeys"},
+        {"kind": "runbook", "locator": "docs/adr/20261106114500-key-scoped-bucket-bindings.md"}
+      ]
+    },
+    {
       "id": "preview-readiness",
       "name": "Pull-request preview readiness",
       "category": "delivery",

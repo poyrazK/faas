@@ -173,6 +173,7 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 				snapshot.ReadyDatabases++
 			}
 			progress := s.accountingCoverageLocked(database).Progress
+			progress.DatabaseID = database.ID
 			snapshot.Databases = append(snapshot.Databases, progress)
 		}
 	}

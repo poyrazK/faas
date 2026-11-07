@@ -221,6 +221,15 @@ var liveStates = []string{
 // LiveStates returns the states IsLive accepts.
 func LiveStates() []string { return append([]string(nil), liveStates...) }
 
+// IsMeteredSkippableMode reports whether an instance in `mode` is skipped
+// by the meter sampler. Only a platform snapshot refresh is: the release,
+// not the customer, caused it (ADR-20261106214916). Mirror VMs bill like
+// every other instance (ADR-20261104145353), and so do the M-2 modes
+// (worker, service, job) at the standard mb_seconds rate (spec §4.7).
+func IsMeteredSkippableMode(mode string) bool {
+	return mode == string(InstanceModeRefresh)
+}
+
 // CountsForRAMByMode reports whether an instance in `mode` counts
 // against the platform's RAM admission ceiling when the state
 // predicate alone would have said "yes" (CountsForRAM). Today every

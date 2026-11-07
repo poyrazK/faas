@@ -685,6 +685,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// ADR-20261104145353: a mirror VM bills plan RAM + 8 MB per
 			// running second like every other instance, as ADR-124 told
 			// customers. It is real capacity the customer chose to run.
+			// A platform snapshot refresh does not (ADR-20261106214916).
+			if state.IsMeteredSkippableMode(ins.Mode) {
+				continue
+			}
 			var usage UsageDeltas
 			var usageOK bool
 			if !catchUp {
@@ -902,7 +906,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			// floor enrichment either. Skipping them keeps the floor
 			// math symmetric — a customer with a mirror rule sees
 			// their floor counted from production instances only.
-			if ins.Mode == string(state.InstanceModeMirror) {
+			if ins.Mode == string(state.InstanceModeMirror) || state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
 			if ins.DeploymentID == "" {
