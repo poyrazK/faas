@@ -8259,6 +8259,9 @@ type CreateAccountWithPersonalOrgParams struct {
 	// commits it with the account, personal organization and owner membership.
 	// The credential is never included when creation parameters are serialized.
 	InitialPasswordHash string `json:"-"`
+	// TermsAcceptance, when set, records the Terms of Service version the
+	// account accepted at sign-up in the same transaction (legal_acceptances).
+	TermsAcceptance *TermsAcceptance
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

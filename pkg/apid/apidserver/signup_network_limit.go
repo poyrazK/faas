@@ -82,6 +82,11 @@ func (s *server) createSignupAccount(r *http.Request, method, source string, par
 		s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
 		return state.CreateAccountWithPersonalOrgResult{}, errSignupNetworkCap
 	}
+	// Sign-up accepts the published Terms of Service; the version is stored
+	// with the account in one transaction (legal_acceptances).
+	if params.TermsAcceptance == nil {
+		params.TermsAcceptance = signupTermsAcceptance(method)
+	}
 	res, err := s.store.CreateAccountWithPersonalOrg(r.Context(), params)
 	if err == nil {
 		s.signups.record(ip)
