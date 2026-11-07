@@ -22,6 +22,7 @@ export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
 export type { AgentApprovalPendingInfo } from './models/AgentApprovalPendingInfo.js';
 export type { AgentApprovalResponse } from './models/AgentApprovalResponse.js';
 export type { AgentApprovalsResponse } from './models/AgentApprovalsResponse.js';
+export type { AgentApprovalWebhookPayload } from './models/AgentApprovalWebhookPayload.js';
 export type { AgentClientRequest } from './models/AgentClientRequest.js';
 export type { AgentConnectionResponse } from './models/AgentConnectionResponse.js';
 export type { AgentConnectionsResponse } from './models/AgentConnectionsResponse.js';

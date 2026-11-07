@@ -41985,6 +41985,23 @@ components:
         error_fix: {type: string}
         relevant_logs: {type: array, items: {type: string}}
       additionalProperties: true
+    AgentApprovalWebhookPayload:
+      type: object
+      description: "Delivered with agent.approval.requested, agent.approval.approved and agent.approval.denied: an agent key's request waits for a person, or a person decided it. It never carries the request body."
+      required: [approval_id, key_id, category, method, path, status, expires_at]
+      properties:
+        approval_id: {type: string, format: uuid, description: The approval request this event is about.}
+        key_id: {type: string, format: uuid, description: The agent key that made the request.}
+        org_id: {type: string, format: uuid, description: The organization the key acts in, when it acts in one.: null}
+        category: {type: string, enum: [delete, production, credentials, billing], description: Which kind of risky action the agent asked to take.}
+        method: {type: string, description: HTTP method of the agent's request.}
+        path: {type: string, description: Path and query of the agent's request.}
+        status: {type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded.}
+        expires_at: {type: string, format: date-time, description: When the request stops being approvable or usable.}
+        review_url: {type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it."}
+        decided_at: {type: string, format: date-time, description: When the person approved or denied the request.}
+        note: {type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any."}
+      additionalProperties: true
     RolloutCompletedWebhookPayload:
       type: object
       description: The configured rollout completed. Explicit traffic splits may complete below 100%; inspect traffic_percent.
