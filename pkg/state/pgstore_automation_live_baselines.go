@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func baselineFromSQL(row sqlc.WorkflowAutomationLiveBaselinePromotion) (api.AutomationLiveBaseline, error) {
+func baselineFromSQL(row sqlc.StoredWorkflowLiveBaselinePromotion) (api.AutomationLiveBaseline, error) {
 	var receipt api.AutomationLiveBaseline
 	err := json.Unmarshal(row.Receipt, &receipt)
 	return receipt, err

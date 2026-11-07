@@ -2688,7 +2688,7 @@ func (q *Queries) AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg Au
 }
 
 const automationFailurePaused = `-- name: AutomationFailurePaused :one
-SELECT EXISTS(SELECT 1 FROM workflow_automation_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean
+SELECT EXISTS(SELECT 1 FROM stored_workflow_failure_guards WHERE app_id=$1 AND name=$2 AND paused_at IS NOT NULL)::boolean
 `
 
 type AutomationFailurePausedParams struct {
@@ -11784,7 +11784,7 @@ func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx
 }
 
 const countWorkflowAutomationRevisions = `-- name: CountWorkflowAutomationRevisions :one
-SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2
+SELECT count(*) FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2
 `
 
 type CountWorkflowAutomationRevisionsParams struct {
@@ -14862,7 +14862,7 @@ func (q *Queries) DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOPar
 }
 
 const deleteAutomation = `-- name: DeleteAutomation :exec
-DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
+DELETE FROM stored_workflows WHERE app_id=$1 AND name=$2
 `
 
 type DeleteAutomationParams struct {
@@ -17011,7 +17011,7 @@ func (q *Queries) EnsureAppSecretRuntimeProcess(ctx context.Context, db DBTX, ar
 }
 
 const ensureAutomationFailureGuard = `-- name: EnsureAutomationFailureGuard :exec
-INSERT INTO workflow_automation_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING
+INSERT INTO stored_workflow_failure_guards(app_id,name) VALUES($1,$2) ON CONFLICT(app_id,name) DO NOTHING
 `
 
 type EnsureAutomationFailureGuardParams struct {
@@ -25725,9 +25725,9 @@ SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.versi
  'paused',g.paused_at IS NOT NULL,'generation',coalesce(g.generation,0),'monitoring_since',g.monitoring_since,'paused_at',g.paused_at,
  'history',coalesce((SELECT jsonb_agg(jsonb_build_object('generation',h.generation,'state',h.state,'reason',h.reason,'recorded_at',h.recorded_at,
  'failures',h.failures,'completed_runs',h.completed_runs,'policy_version',h.policy_version,'actor_account_id',coalesce(h.actor_account_id::text,'')) ORDER BY h.generation DESC)
- FROM (SELECT id, app_id, name, generation, state, reason, recorded_at, failures, completed_runs, policy_version, actor_account_id FROM workflow_automation_failure_history WHERE app_id=a.id AND name=$1::text ORDER BY generation DESC LIMIT $2::int) h),'[]'::jsonb))::jsonb
-FROM apps a LEFT JOIN workflow_automation_failure_policies p ON p.app_id=a.id AND p.name=$1::text
-LEFT JOIN workflow_automation_failure_guards g ON g.app_id=a.id AND g.name=$1::text WHERE a.id=$3::uuid AND a.status<>'deleted'
+ FROM (SELECT id, app_id, name, generation, state, reason, recorded_at, failures, completed_runs, policy_version, actor_account_id FROM stored_workflow_failure_history WHERE app_id=a.id AND name=$1::text ORDER BY generation DESC LIMIT $2::int) h),'[]'::jsonb))::jsonb
+FROM apps a LEFT JOIN stored_workflow_failure_policies p ON p.app_id=a.id AND p.name=$1::text
+LEFT JOIN stored_workflow_failure_guards g ON g.app_id=a.id AND g.name=$1::text WHERE a.id=$3::uuid AND a.status<>'deleted'
 `
 
 type GetAutomationFailurePolicyParams struct {
@@ -25744,7 +25744,7 @@ func (q *Queries) GetAutomationFailurePolicy(ctx context.Context, db DBTX, arg G
 }
 
 const getAutomationPublishDraftVersion = `-- name: GetAutomationPublishDraftVersion :one
-SELECT version FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
+SELECT version FROM stored_workflows WHERE app_id=$1 AND name=$2
 `
 
 type GetAutomationPublishDraftVersionParams struct {
@@ -25761,7 +25761,7 @@ func (q *Queries) GetAutomationPublishDraftVersion(ctx context.Context, db DBTX,
 
 const getAutomationPublishPolicy = `-- name: GetAutomationPublishPolicy :one
 SELECT COALESCE(p.mode,'optional')::text AS mode, COALESCE(p.version,0)::bigint AS version
-FROM apps a LEFT JOIN workflow_automation_publish_policies p ON p.app_id=a.id
+FROM apps a LEFT JOIN stored_workflow_publish_policies p ON p.app_id=a.id
 WHERE a.id=$1 AND a.status <> 'deleted'
 `
 
@@ -25778,7 +25778,7 @@ func (q *Queries) GetAutomationPublishPolicy(ctx context.Context, db DBTX, id pg
 }
 
 const getAutomationPublishReceipt = `-- name: GetAutomationPublishReceipt :one
-SELECT app_id, name, account_id, api_key_id, token_hash, policy_version, expires_at, evidence FROM workflow_automation_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4
+SELECT app_id, name, account_id, api_key_id, token_hash, policy_version, expires_at, evidence FROM stored_workflow_publish_receipts WHERE app_id=$1 AND name=$2 AND account_id=$3 AND api_key_id=$4
 `
 
 type GetAutomationPublishReceiptParams struct {
@@ -25788,14 +25788,14 @@ type GetAutomationPublishReceiptParams struct {
 	ApiKeyID  string
 }
 
-func (q *Queries) GetAutomationPublishReceipt(ctx context.Context, db DBTX, arg GetAutomationPublishReceiptParams) (WorkflowAutomationPublishReceipt, error) {
+func (q *Queries) GetAutomationPublishReceipt(ctx context.Context, db DBTX, arg GetAutomationPublishReceiptParams) (StoredWorkflowPublishReceipt, error) {
 	row := db.QueryRow(ctx, getAutomationPublishReceipt,
 		arg.AppID,
 		arg.Name,
 		arg.AccountID,
 		arg.ApiKeyID,
 	)
-	var i WorkflowAutomationPublishReceipt
+	var i StoredWorkflowPublishReceipt
 	err := row.Scan(
 		&i.AppID,
 		&i.Name,
@@ -29925,7 +29925,7 @@ func (q *Queries) GetWorkflowAutomationQueueHealth(ctx context.Context, db DBTX,
 }
 
 const getWorkflowAutomationRevision = `-- name: GetWorkflowAutomationRevision :one
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2 AND version=$3
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3
 `
 
 type GetWorkflowAutomationRevisionParams struct {
@@ -29934,9 +29934,9 @@ type GetWorkflowAutomationRevisionParams struct {
 	Version int64
 }
 
-func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, arg GetWorkflowAutomationRevisionParams) (WorkflowAutomationRevision, error) {
+func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, arg GetWorkflowAutomationRevisionParams) (StoredWorkflowRevision, error) {
 	row := db.QueryRow(ctx, getWorkflowAutomationRevision, arg.AppID, arg.Name, arg.Version)
-	var i WorkflowAutomationRevision
+	var i StoredWorkflowRevision
 	err := row.Scan(
 		&i.AppID,
 		&i.Name,
@@ -38719,7 +38719,7 @@ func (q *Queries) InsertWebhookAutomationReceipt(ctx context.Context, db DBTX, a
 }
 
 const insertWorkflowAutomationRevision = `-- name: InsertWorkflowAutomationRevision :exec
-INSERT INTO workflow_automation_revisions(
+INSERT INTO stored_workflow_revisions(
  app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence
 ) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8)
 `
@@ -42382,10 +42382,10 @@ func (q *Queries) LastGraphMemberServingEnd(ctx context.Context, db DBTX, arg La
 
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
- UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
+ UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
  WHERE app_id=$2::uuid AND name=$3::text AND paused_at IS NULL RETURNING app_id, name, generation, monitoring_since, paused_at
 ), history AS (
- INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
+ INSERT INTO stored_workflow_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version)
  SELECT app_id,name,generation,'paused','failure_threshold',paused_at,$4::bigint,$5::bigint,$6::bigint FROM changed RETURNING id, app_id, name, generation, state, reason, recorded_at, failures, completed_runs, policy_version, actor_account_id
 ), recipients AS (
  SELECT h.id,h.app_id,a.account_id,h.name,h.generation,h.failures,h.completed_runs,h.policy_version,h.recorded_at,array_agg(w.id ORDER BY w.id) AS ids
@@ -46045,7 +46045,7 @@ func (q *Queries) ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, doll
 }
 
 const listAutomationFailurePauses = `-- name: ListAutomationFailurePauses :many
-SELECT name FROM workflow_automation_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
+SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
 `
 
 func (q *Queries) ListAutomationFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error) {
@@ -46069,7 +46069,7 @@ func (q *Queries) ListAutomationFailurePauses(ctx context.Context, db DBTX, appI
 }
 
 const listAutomationFailurePolicyCandidates = `-- name: ListAutomationFailurePolicyCandidates :many
-SELECT p.app_id::text AS app_id,p.name FROM workflow_automation_failure_policies p JOIN apps a ON a.id=p.app_id
+SELECT p.app_id::text AS app_id,p.name FROM stored_workflow_failure_policies p JOIN apps a ON a.id=p.app_id
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE p.enabled AND a.status<>'deleted' AND ($1::uuid IS NULL OR a.node_id=$1::uuid)
 AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
@@ -46109,18 +46109,18 @@ func (q *Queries) ListAutomationFailurePolicyCandidates(ctx context.Context, db 
 }
 
 const listAutomations = `-- name: ListAutomations :many
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 ORDER BY name
 `
 
-func (q *Queries) ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowAutomationDefinition, error) {
+func (q *Queries) ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]StoredWorkflow, error) {
 	rows, err := db.Query(ctx, listAutomations, appID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkflowAutomationDefinition{}
+	items := []StoredWorkflow{}
 	for rows.Next() {
-		var i WorkflowAutomationDefinition
+		var i StoredWorkflow
 		if err := rows.Scan(
 			&i.AppID,
 			&i.Name,
@@ -56663,7 +56663,7 @@ func (q *Queries) ListWorkflowAutomationHealthRecentRuns(ctx context.Context, db
 }
 
 const listWorkflowAutomationRevisions = `-- name: ListWorkflowAutomationRevisions :many
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM workflow_automation_revisions
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions
 WHERE app_id=$1 AND name=$2
 ORDER BY version DESC
 LIMIT $3 OFFSET $4
@@ -56676,7 +56676,7 @@ type ListWorkflowAutomationRevisionsParams struct {
 	Offset int32
 }
 
-func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg ListWorkflowAutomationRevisionsParams) ([]WorkflowAutomationRevision, error) {
+func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg ListWorkflowAutomationRevisionsParams) ([]StoredWorkflowRevision, error) {
 	rows, err := db.Query(ctx, listWorkflowAutomationRevisions,
 		arg.AppID,
 		arg.Name,
@@ -56687,9 +56687,9 @@ func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkflowAutomationRevision{}
+	items := []StoredWorkflowRevision{}
 	for rows.Next() {
-		var i WorkflowAutomationRevision
+		var i StoredWorkflowRevision
 		if err := rows.Scan(
 			&i.AppID,
 			&i.Name,
@@ -65271,7 +65271,7 @@ func (q *Queries) MigrationTaskIsContract(ctx context.Context, db DBTX, arg Migr
 }
 
 const nextAutomationVersion = `-- name: NextAutomationVersion :one
-SELECT nextval('automation_definition_versions')::bigint
+SELECT nextval('stored_workflow_versions')::bigint
 `
 
 func (q *Queries) NextAutomationVersion(ctx context.Context, db DBTX) (int64, error) {
@@ -82196,8 +82196,8 @@ SELECT jsonb_build_object(
  'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
  'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
  'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
- 'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
- 'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
+ 'stored_workflow_live_suites.deployment_id', (SELECT count(*) FROM stored_workflow_live_suites WHERE deployment_id=$1::uuid),
+ 'stored_workflow_live_verifications.deployment_id', (SELECT count(*) FROM stored_workflow_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
  'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=$1::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
@@ -100471,10 +100471,10 @@ func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context,
 
 const resumeAutomationFailurePause = `-- name: ResumeAutomationFailurePause :exec
 WITH changed AS (
- UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
+ UPDATE stored_workflow_failure_guards SET generation=generation+1,paused_at=NULL,monitoring_since=clock_timestamp()
  WHERE app_id=$5::uuid AND name=$6::text AND paused_at IS NOT NULL RETURNING app_id, name, generation, monitoring_since, paused_at
 )
-INSERT INTO workflow_automation_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
+INSERT INTO stored_workflow_failure_history(app_id,name,generation,state,reason,recorded_at,failures,completed_runs,policy_version,actor_account_id)
 SELECT app_id,name,generation,'resumed','operator_resume',monitoring_since,$1::bigint,$2::bigint,
  $3::bigint,$4::uuid FROM changed
 `
@@ -103497,7 +103497,7 @@ func (q *Queries) SaveApplicationStandardLocalIntent(ctx context.Context, db DBT
 }
 
 const saveAutomation = `-- name: SaveAutomation :exec
-INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
+INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
  published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
@@ -103534,7 +103534,7 @@ func (q *Queries) SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomatio
 }
 
 const saveAutomationTestReport = `-- name: SaveAutomationTestReport :execrows
-UPDATE workflow_automation_definitions SET test_report=$4
+UPDATE stored_workflows SET test_report=$4
 WHERE app_id=$1 AND name=$2 AND version=$3
 `
 
@@ -109585,7 +109585,7 @@ func (q *Queries) UpdateWorkflowScheduleLastAdmittedAt(ctx context.Context, db D
 }
 
 const upsertAutomationFailurePolicy = `-- name: UpsertAutomationFailurePolicy :exec
-INSERT INTO workflow_automation_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
+INSERT INTO stored_workflow_failure_policies(app_id,name,version,enabled,failure_threshold,min_completed_runs,window_seconds)
 VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,
  failure_threshold=excluded.failure_threshold,min_completed_runs=excluded.min_completed_runs,window_seconds=excluded.window_seconds
 `
@@ -109614,7 +109614,7 @@ func (q *Queries) UpsertAutomationFailurePolicy(ctx context.Context, db DBTX, ar
 }
 
 const upsertAutomationPublishPolicy = `-- name: UpsertAutomationPublishPolicy :exec
-INSERT INTO workflow_automation_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
+INSERT INTO stored_workflow_publish_policies(app_id,mode,version) VALUES($1,$2,$3)
 ON CONFLICT(app_id) DO UPDATE SET mode=EXCLUDED.mode,version=EXCLUDED.version
 `
 
@@ -109630,7 +109630,7 @@ func (q *Queries) UpsertAutomationPublishPolicy(ctx context.Context, db DBTX, ar
 }
 
 const upsertAutomationPublishReceipt = `-- name: UpsertAutomationPublishReceipt :exec
-INSERT INTO workflow_automation_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
+INSERT INTO stored_workflow_publish_receipts(app_id,name,account_id,api_key_id,token_hash,policy_version,expires_at,evidence)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT(app_id,name,account_id,api_key_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,policy_version=EXCLUDED.policy_version,expires_at=EXCLUDED.expires_at,evidence=EXCLUDED.evidence
 `

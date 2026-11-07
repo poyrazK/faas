@@ -14,10 +14,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func liveRecordFromSQL(row sqlc.WorkflowAutomationLiveVerification) (automationLiveRecord, error) {
+func liveRecordFromSQL(row sqlc.StoredWorkflowLiveVerification) (automationLiveRecord, error) {
 	r := automationLiveRecord{AppID: pgUUIDString(row.AppID), Name: row.Name, Key: row.IdempotencyKey, Fingerprint: row.RequestFingerprint, Test: row.LiveTest,
 		View: api.AutomationLiveVerification{RunID: pgUUIDString(row.RunID), CaseName: row.CaseName, DeploymentID: pgUUIDString(row.DeploymentID),
-			Version: row.AutomationVersion, PublishedVersion: row.PublishedVersion, InputsHash: row.InputsHash, CreatedAt: timeFromPgtype(row.CreatedAt)}}
+			Version: row.WorkflowVersion, PublishedVersion: row.PublishedVersion, InputsHash: row.InputsHash, CreatedAt: timeFromPgtype(row.CreatedAt)}}
 	if len(row.Report) > 0 {
 		r.View.Report = new(api.AutomationLiveReport)
 		if err := json.Unmarshal(row.Report, r.View.Report); err != nil {
@@ -43,7 +43,7 @@ func liveCurrentSQL(ctx context.Context, db sqlc.DBTX, appID, name string) (Auto
 	return automationFromSQL(row), pgUUIDString(dep), err
 }
 
-func liveViewSQL(ctx context.Context, db sqlc.DBTX, row sqlc.WorkflowAutomationLiveVerification, current Automation, deploymentID string) (api.AutomationLiveVerification, error) {
+func liveViewSQL(ctx context.Context, db sqlc.DBTX, row sqlc.StoredWorkflowLiveVerification, current Automation, deploymentID string) (api.AutomationLiveVerification, error) {
 	live, err := liveRecordFromSQL(row)
 	if err != nil {
 		return api.AutomationLiveVerification{}, err
@@ -102,62 +102,62 @@ func (s *PgStore) StartAutomationLiveVerification(ctx context.Context, appID, na
 	return view, false, nil
 }
 
-func startLiveVerificationTx(ctx context.Context, tx pgx.Tx, appID, name, key string, req api.StartAutomationLiveVerificationRequest, fingerprint []byte, runtimeEnabled bool) (sqlc.WorkflowAutomationLiveVerification, error) {
+func startLiveVerificationTx(ctx context.Context, tx pgx.Tx, appID, name, key string, req api.StartAutomationLiveVerificationRequest, fingerprint []byte, runtimeEnabled bool) (sqlc.StoredWorkflowLiveVerification, error) {
 	q := sqlc.New()
 	target, err := q.LockEventWorkflowTarget(ctx, tx, mustPgUUID(appID))
 	if errors.Is(err, pgx.ErrNoRows) || target.AppStatus == string(AppDeleted) {
-		return sqlc.WorkflowAutomationLiveVerification{}, ErrNotFound
+		return sqlc.StoredWorkflowLiveVerification{}, ErrNotFound
 	}
 	if err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	plan := api.Plan(target.Plan)
 	if err := automationAccountGate(plan, (target.AccountStatus == "active" || target.AccountStatus == "past_due") && !target.AbuseHoldAt.Valid, "tests"); err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	if target.PlatformTenantRequired {
-		return sqlc.WorkflowAutomationLiveVerification{}, api.ErrWorkflowTenantIdentityUnavailable()
+		return sqlc.StoredWorkflowLiveVerification{}, api.ErrWorkflowTenantIdentityUnavailable()
 	}
 	if !runtimeEnabled || target.MaintenanceMode {
-		return sqlc.WorkflowAutomationLiveVerification{}, ErrWorkflowEventTargetUnavailable
+		return sqlc.StoredWorkflowLiveVerification{}, ErrWorkflowEventTargetUnavailable
 	}
 	code, err := q.LockWorkflowScheduleTarget(ctx, tx, mustPgUUID(appID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return sqlc.WorkflowAutomationLiveVerification{}, ErrWorkflowEventTargetUnavailable
+		return sqlc.StoredWorkflowLiveVerification{}, ErrWorkflowEventTargetUnavailable
 	}
 	if err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	automation, err := q.GetAutomationForLiveVerification(ctx, tx, sqlc.GetAutomationForLiveVerificationParams{AppID: mustPgUUID(appID), Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return sqlc.WorkflowAutomationLiveVerification{}, ErrNotFound
+		return sqlc.StoredWorkflowLiveVerification{}, ErrNotFound
 	}
 	if err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	run, live, err := prepareLiveVerification(appID, name, key, pgUUIDString(code.DeploymentID), automationFromSQL(automation), req, fingerprint)
 	if err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	var def api.WorkflowSpec
 	if err := json.Unmarshal(run.DefinitionSnapshot, &def); err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	if err := validateWorkflowOutboundTx(ctx, tx, appID, pgUUIDString(target.AccountID), def); err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), WorkflowName: "", ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	if active >= int64(plan.WorkflowMaxConcurrentRuns()) {
-		return sqlc.WorkflowAutomationLiveVerification{}, api.ErrPlanWorkflowsQuota(plan, plan.WorkflowMaxConcurrentRuns(), int(active))
+		return sqlc.StoredWorkflowLiveVerification{}, api.ErrPlanWorkflowsQuota(plan, plan.WorkflowMaxConcurrentRuns(), int(active))
 	}
 	if err := insertWorkflowRun(ctx, tx, run); err != nil {
-		return sqlc.WorkflowAutomationLiveVerification{}, err
+		return sqlc.StoredWorkflowLiveVerification{}, err
 	}
 	return q.InsertAutomationLiveVerification(ctx, tx, sqlc.InsertAutomationLiveVerificationParams{RunID: mustPgUUID(run.ID), AppID: mustPgUUID(appID), Name: name,
-		CaseName: req.CaseName, AutomationVersion: live.View.Version, PublishedVersion: live.View.PublishedVersion, DeploymentID: code.DeploymentID,
+		CaseName: req.CaseName, WorkflowVersion: live.View.Version, PublishedVersion: live.View.PublishedVersion, DeploymentID: code.DeploymentID,
 		InputsHash: live.View.InputsHash, LiveTest: live.Test, IdempotencyKey: key, RequestFingerprint: fingerprint})
 }
 

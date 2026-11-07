@@ -28559,7 +28559,7 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		// automation failure history names it as the actor. An override goes
 		// with its author; the history keeps the event without the person.
 		{"deployment_mcp_readiness_overrides", `delete from deployment_mcp_readiness_overrides where created_by = $1`},
-		{"workflow_automation_failure_history", `update workflow_automation_failure_history set actor_account_id = null where actor_account_id = $1`},
+		{"stored_workflow_failure_history", `update stored_workflow_failure_history set actor_account_id = null where actor_account_id = $1`},
 		// Release stages and additions of the account's projects reference
 		// the account, and stages the project, without a cascade.
 		{"project_release_additions", `delete from project_release_additions where account_id = $1`},

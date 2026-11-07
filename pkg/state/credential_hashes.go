@@ -34,7 +34,7 @@ const (
 	credTagRealtimeTicket               credhash.Tag = "managed_realtime_subscription_tickets.token_hash"
 	credTagQueueLeaseReceipt            credhash.Tag = "invocation_queue_lease_receipts.token_hash"
 	credTagEnvironmentQueueReceipt      credhash.Tag = "invocation_environment_queue_receipts.token_hash"
-	credTagPublishReceipt               credhash.Tag = "workflow_automation_publish_receipts.token_hash"
+	credTagPublishReceipt               credhash.Tag = "stored_workflow_publish_receipts.token_hash"
 	CredentialColumnConsumerSignupClaim credhash.Tag = "api_consumer_signups.claim_hash"
 
 	// Account-family columns outside pkg/state, keyed by their packages

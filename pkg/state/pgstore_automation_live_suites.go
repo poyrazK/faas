@@ -12,9 +12,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func liveSuiteRecordFromSQL(row sqlc.WorkflowAutomationLiveSuite) (automationLiveSuiteRecord, error) {
+func liveSuiteRecordFromSQL(row sqlc.StoredWorkflowLiveSuite) (automationLiveSuiteRecord, error) {
 	record := automationLiveSuiteRecord{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), Name: row.Name, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), Managed: row.Managed,
-		Plan: api.SaveAutomationLiveSuiteRequest{ExpectedVersion: row.AutomationVersion, ExpectedPublishedVersion: row.PublishedVersion, ExpectedDeploymentID: pgUUIDString(row.DeploymentID)}}
+		Plan: api.SaveAutomationLiveSuiteRequest{ExpectedVersion: row.WorkflowVersion, ExpectedPublishedVersion: row.PublishedVersion, ExpectedDeploymentID: pgUUIDString(row.DeploymentID)}}
 	err := json.Unmarshal(row.Cases, &record.Plan.Cases)
 	return record, err
 }
@@ -140,11 +140,11 @@ func persistLiveSuiteSQL(ctx context.Context, db sqlc.DBTX, appID, name, id stri
 		return prior, err
 	}
 	q := sqlc.New()
-	var row sqlc.WorkflowAutomationLiveSuite
+	var row sqlc.StoredWorkflowLiveSuite
 	if exists {
 		row, err = q.UpdateAutomationLiveSuite(ctx, db, sqlc.UpdateAutomationLiveSuiteParams{AppID: mustPgUUID(appID), Name: name, ID: mustPgUUID(id), Cases: raw})
 	} else {
-		row, err = q.InsertAutomationLiveSuite(ctx, db, sqlc.InsertAutomationLiveSuiteParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID), Name: name, AutomationVersion: request.ExpectedVersion, PublishedVersion: request.ExpectedPublishedVersion, DeploymentID: mustPgUUID(request.ExpectedDeploymentID), Cases: raw, Managed: managed})
+		row, err = q.InsertAutomationLiveSuite(ctx, db, sqlc.InsertAutomationLiveSuiteParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID), Name: name, WorkflowVersion: request.ExpectedVersion, PublishedVersion: request.ExpectedPublishedVersion, DeploymentID: mustPgUUID(request.ExpectedDeploymentID), Cases: raw, Managed: managed})
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return prior, ErrNotFound

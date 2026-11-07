@@ -178,10 +178,10 @@ func automationAccountGate(plan api.Plan, active bool, action string) error {
 	}
 	return nil
 }
-func automationFromSQL(row sqlc.WorkflowAutomationDefinition) Automation {
+func automationFromSQL(row sqlc.StoredWorkflow) Automation {
 	return Automation{TestSuite: row.TestSuite, TestReport: row.TestReport, AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version, Draft: row.Draft, Published: row.Published, PublishedVersion: row.PublishedVersion, Enabled: row.Enabled, UpdatedAt: row.UpdatedAt.Time}
 }
-func automationRevisionFromSQL(row sqlc.WorkflowAutomationRevision) AutomationRevision {
+func automationRevisionFromSQL(row sqlc.StoredWorkflowRevision) AutomationRevision {
 	revision := AutomationRevision{
 		AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version,
 		CheckEvidence: cloneWorkflowJSON(row.CheckEvidence),

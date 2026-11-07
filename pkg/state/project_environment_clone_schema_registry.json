@@ -19237,7 +19237,7 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_definitions",
+    "table": "stored_workflows",
     "columns": [
       "app_id",
       "draft",
@@ -19257,7 +19257,7 @@
     }
   },
   {
-    "table": "workflow_automation_failure_guards",
+    "table": "stored_workflow_failure_guards",
     "columns": [
       "app_id",
       "generation",
@@ -19268,7 +19268,7 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_failure_history",
+    "table": "stored_workflow_failure_history",
     "columns": [
       "actor_account_id",
       "app_id",
@@ -19285,7 +19285,7 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_failure_policies",
+    "table": "stored_workflow_failure_policies",
     "columns": [
       "app_id",
       "enabled",
@@ -19302,7 +19302,7 @@
     }
   },
   {
-    "table": "workflow_automation_live_baseline_promotions",
+    "table": "stored_workflow_live_baseline_promotions",
     "columns": [
       "app_id",
       "baseline_name",
@@ -19316,7 +19316,7 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_live_baseline_retirements",
+    "table": "stored_workflow_live_baseline_retirements",
     "columns": [
       "app_id",
       "baseline_name",
@@ -19327,10 +19327,10 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_live_suites",
+    "table": "stored_workflow_live_suites",
     "columns": [
       "app_id",
-      "automation_version",
+      "workflow_version",
       "cases",
       "created_at",
       "deployment_id",
@@ -19343,10 +19343,10 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_live_verifications",
+    "table": "stored_workflow_live_verifications",
     "columns": [
       "app_id",
-      "automation_version",
+      "workflow_version",
       "case_name",
       "created_at",
       "deployment_id",
@@ -19362,7 +19362,7 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_publish_policies",
+    "table": "stored_workflow_publish_policies",
     "columns": [
       "app_id",
       "mode",
@@ -19375,7 +19375,7 @@
     }
   },
   {
-    "table": "workflow_automation_publish_receipts",
+    "table": "stored_workflow_publish_receipts",
     "columns": [
       "account_id",
       "api_key_id",
@@ -19389,7 +19389,7 @@
     "kind": "operational"
   },
   {
-    "table": "workflow_automation_revisions",
+    "table": "stored_workflow_revisions",
     "columns": [
       "app_id",
       "check_evidence",

@@ -93,7 +93,7 @@ func (q *Queries) AutomationLiveStep(ctx context.Context, db DBTX, arg Automatio
 }
 
 const countAutomationLiveBaselineNames = `-- name: CountAutomationLiveBaselineNames :one
-SELECT count(DISTINCT baseline_name) FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2
+SELECT count(DISTINCT baseline_name) FROM stored_workflow_live_baseline_promotions WHERE app_id=$1 AND name=$2
 `
 
 type CountAutomationLiveBaselineNamesParams struct {
@@ -109,7 +109,7 @@ func (q *Queries) CountAutomationLiveBaselineNames(ctx context.Context, db DBTX,
 }
 
 const countAutomationLiveBaselines = `-- name: CountAutomationLiveBaselines :one
-SELECT count(DISTINCT head.baseline_name) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=$1 AND head.name=$2 AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=head.app_id AND retired.name=head.name AND retired.baseline_name=head.baseline_name)
+SELECT count(DISTINCT head.baseline_name) FROM stored_workflow_live_baseline_promotions AS head WHERE head.app_id=$1 AND head.name=$2 AND NOT EXISTS (SELECT 1 FROM stored_workflow_live_baseline_retirements AS retired WHERE retired.app_id=head.app_id AND retired.name=head.name AND retired.baseline_name=head.baseline_name)
 `
 
 type CountAutomationLiveBaselinesParams struct {
@@ -125,7 +125,7 @@ func (q *Queries) CountAutomationLiveBaselines(ctx context.Context, db DBTX, arg
 }
 
 const countProtectedAutomationLiveSuites = `-- name: CountProtectedAutomationLiveSuites :one
-SELECT count(*) FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text AND (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=pin.app_id AND retired.name=pin.name AND retired.baseline_name=pin.baseline_name) AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz))
+SELECT count(*) FROM stored_workflow_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text AND (EXISTS (SELECT 1 FROM stored_workflow_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND NOT EXISTS (SELECT 1 FROM stored_workflow_live_baseline_retirements AS retired WHERE retired.app_id=pin.app_id AND retired.name=pin.name AND retired.baseline_name=pin.baseline_name) AND pin.revision=(SELECT max(head.revision) FROM stored_workflow_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz))
 `
 
 type CountProtectedAutomationLiveSuitesParams struct {
@@ -142,7 +142,7 @@ func (q *Queries) CountProtectedAutomationLiveSuites(ctx context.Context, db DBT
 }
 
 const deleteAutomationLiveSuites = `-- name: DeleteAutomationLiveSuites :exec
-DELETE FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2
+DELETE FROM stored_workflow_live_suites WHERE app_id=$1 AND name=$2
 `
 
 type DeleteAutomationLiveSuitesParams struct {
@@ -156,7 +156,7 @@ func (q *Queries) DeleteAutomationLiveSuites(ctx context.Context, db DBTX, arg D
 }
 
 const deleteAutomationLiveVerifications = `-- name: DeleteAutomationLiveVerifications :exec
-DELETE FROM workflow_automation_live_verifications WHERE app_id=$1 AND name=$2
+DELETE FROM stored_workflow_live_verifications WHERE app_id=$1 AND name=$2
 `
 
 type DeleteAutomationLiveVerificationsParams struct {
@@ -170,7 +170,7 @@ func (q *Queries) DeleteAutomationLiveVerifications(ctx context.Context, db DBTX
 }
 
 const fenceAutomationLiveBaselineMutation = `-- name: FenceAutomationLiveBaselineMutation :exec
-UPDATE workflow_automation_definitions SET updated_at=updated_at WHERE app_id=$1 AND name=$2
+UPDATE stored_workflows SET updated_at=updated_at WHERE app_id=$1 AND name=$2
 `
 
 type FenceAutomationLiveBaselineMutationParams struct {
@@ -186,7 +186,7 @@ func (q *Queries) FenceAutomationLiveBaselineMutation(ctx context.Context, db DB
 }
 
 const getAutomationForLiveVerification = `-- name: GetAutomationForLiveVerification :one
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 AND name=$2
 `
 
 type GetAutomationForLiveVerificationParams struct {
@@ -194,9 +194,9 @@ type GetAutomationForLiveVerificationParams struct {
 	Name  string
 }
 
-func (q *Queries) GetAutomationForLiveVerification(ctx context.Context, db DBTX, arg GetAutomationForLiveVerificationParams) (WorkflowAutomationDefinition, error) {
+func (q *Queries) GetAutomationForLiveVerification(ctx context.Context, db DBTX, arg GetAutomationForLiveVerificationParams) (StoredWorkflow, error) {
 	row := db.QueryRow(ctx, getAutomationForLiveVerification, arg.AppID, arg.Name)
-	var i WorkflowAutomationDefinition
+	var i StoredWorkflow
 	err := row.Scan(
 		&i.AppID,
 		&i.Name,
@@ -213,7 +213,7 @@ func (q *Queries) GetAutomationForLiveVerification(ctx context.Context, db DBTX,
 }
 
 const getAutomationLiveBaselineHead = `-- name: GetAutomationLiveBaselineHead :one
-SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT 1
+SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM stored_workflow_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT 1
 `
 
 type GetAutomationLiveBaselineHeadParams struct {
@@ -222,9 +222,9 @@ type GetAutomationLiveBaselineHeadParams struct {
 	BaselineName string
 }
 
-func (q *Queries) GetAutomationLiveBaselineHead(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHeadParams) (WorkflowAutomationLiveBaselinePromotion, error) {
+func (q *Queries) GetAutomationLiveBaselineHead(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHeadParams) (StoredWorkflowLiveBaselinePromotion, error) {
 	row := db.QueryRow(ctx, getAutomationLiveBaselineHead, arg.AppID, arg.Name, arg.BaselineName)
-	var i WorkflowAutomationLiveBaselinePromotion
+	var i StoredWorkflowLiveBaselinePromotion
 	err := row.Scan(
 		&i.PromotionID,
 		&i.AppID,
@@ -239,7 +239,7 @@ func (q *Queries) GetAutomationLiveBaselineHead(ctx context.Context, db DBTX, ar
 }
 
 const getAutomationLiveBaselineHistory = `-- name: GetAutomationLiveBaselineHistory :many
-SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT $4
+SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM stored_workflow_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT $4
 `
 
 type GetAutomationLiveBaselineHistoryParams struct {
@@ -249,7 +249,7 @@ type GetAutomationLiveBaselineHistoryParams struct {
 	Limit        int32
 }
 
-func (q *Queries) GetAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHistoryParams) ([]WorkflowAutomationLiveBaselinePromotion, error) {
+func (q *Queries) GetAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHistoryParams) ([]StoredWorkflowLiveBaselinePromotion, error) {
 	rows, err := db.Query(ctx, getAutomationLiveBaselineHistory,
 		arg.AppID,
 		arg.Name,
@@ -260,9 +260,9 @@ func (q *Queries) GetAutomationLiveBaselineHistory(ctx context.Context, db DBTX,
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkflowAutomationLiveBaselinePromotion{}
+	items := []StoredWorkflowLiveBaselinePromotion{}
 	for rows.Next() {
-		var i WorkflowAutomationLiveBaselinePromotion
+		var i StoredWorkflowLiveBaselinePromotion
 		if err := rows.Scan(
 			&i.PromotionID,
 			&i.AppID,
@@ -284,12 +284,12 @@ func (q *Queries) GetAutomationLiveBaselineHistory(ctx context.Context, db DBTX,
 }
 
 const getAutomationLiveBaselinePromotion = `-- name: GetAutomationLiveBaselinePromotion :one
-SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions WHERE promotion_id=$1
+SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM stored_workflow_live_baseline_promotions WHERE promotion_id=$1
 `
 
-func (q *Queries) GetAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, promotionID pgtype.UUID) (WorkflowAutomationLiveBaselinePromotion, error) {
+func (q *Queries) GetAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, promotionID pgtype.UUID) (StoredWorkflowLiveBaselinePromotion, error) {
 	row := db.QueryRow(ctx, getAutomationLiveBaselinePromotion, promotionID)
-	var i WorkflowAutomationLiveBaselinePromotion
+	var i StoredWorkflowLiveBaselinePromotion
 	err := row.Scan(
 		&i.PromotionID,
 		&i.AppID,
@@ -304,7 +304,7 @@ func (q *Queries) GetAutomationLiveBaselinePromotion(ctx context.Context, db DBT
 }
 
 const getAutomationLiveBaselineRetirement = `-- name: GetAutomationLiveBaselineRetirement :one
-SELECT retirement_id, app_id, name, baseline_name, receipt FROM workflow_automation_live_baseline_retirements WHERE app_id=$1 AND name=$2 AND baseline_name=$3
+SELECT retirement_id, app_id, name, baseline_name, receipt FROM stored_workflow_live_baseline_retirements WHERE app_id=$1 AND name=$2 AND baseline_name=$3
 `
 
 type GetAutomationLiveBaselineRetirementParams struct {
@@ -313,9 +313,9 @@ type GetAutomationLiveBaselineRetirementParams struct {
 	BaselineName string
 }
 
-func (q *Queries) GetAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineRetirementParams) (WorkflowAutomationLiveBaselineRetirement, error) {
+func (q *Queries) GetAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineRetirementParams) (StoredWorkflowLiveBaselineRetirement, error) {
 	row := db.QueryRow(ctx, getAutomationLiveBaselineRetirement, arg.AppID, arg.Name, arg.BaselineName)
-	var i WorkflowAutomationLiveBaselineRetirement
+	var i StoredWorkflowLiveBaselineRetirement
 	err := row.Scan(
 		&i.RetirementID,
 		&i.AppID,
@@ -327,12 +327,12 @@ func (q *Queries) GetAutomationLiveBaselineRetirement(ctx context.Context, db DB
 }
 
 const getAutomationLiveBaselineRetirementByID = `-- name: GetAutomationLiveBaselineRetirementByID :one
-SELECT retirement_id, app_id, name, baseline_name, receipt FROM workflow_automation_live_baseline_retirements WHERE retirement_id=$1
+SELECT retirement_id, app_id, name, baseline_name, receipt FROM stored_workflow_live_baseline_retirements WHERE retirement_id=$1
 `
 
-func (q *Queries) GetAutomationLiveBaselineRetirementByID(ctx context.Context, db DBTX, retirementID pgtype.UUID) (WorkflowAutomationLiveBaselineRetirement, error) {
+func (q *Queries) GetAutomationLiveBaselineRetirementByID(ctx context.Context, db DBTX, retirementID pgtype.UUID) (StoredWorkflowLiveBaselineRetirement, error) {
 	row := db.QueryRow(ctx, getAutomationLiveBaselineRetirementByID, retirementID)
-	var i WorkflowAutomationLiveBaselineRetirement
+	var i StoredWorkflowLiveBaselineRetirement
 	err := row.Scan(
 		&i.RetirementID,
 		&i.AppID,
@@ -344,7 +344,7 @@ func (q *Queries) GetAutomationLiveBaselineRetirementByID(ctx context.Context, d
 }
 
 const getAutomationLiveSuite = `-- name: GetAutomationLiveSuite :one
-SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 AND id=$3
+SELECT id, app_id, name, workflow_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM stored_workflow_live_suites WHERE app_id=$1 AND name=$2 AND id=$3
 `
 
 type GetAutomationLiveSuiteParams struct {
@@ -353,14 +353,14 @@ type GetAutomationLiveSuiteParams struct {
 	ID    pgtype.UUID
 }
 
-func (q *Queries) GetAutomationLiveSuite(ctx context.Context, db DBTX, arg GetAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
+func (q *Queries) GetAutomationLiveSuite(ctx context.Context, db DBTX, arg GetAutomationLiveSuiteParams) (StoredWorkflowLiveSuite, error) {
 	row := db.QueryRow(ctx, getAutomationLiveSuite, arg.AppID, arg.Name, arg.ID)
-	var i WorkflowAutomationLiveSuite
+	var i StoredWorkflowLiveSuite
 	err := row.Scan(
 		&i.ID,
 		&i.AppID,
 		&i.Name,
-		&i.AutomationVersion,
+		&i.WorkflowVersion,
 		&i.PublishedVersion,
 		&i.DeploymentID,
 		&i.Cases,
@@ -372,7 +372,7 @@ func (q *Queries) GetAutomationLiveSuite(ctx context.Context, db DBTX, arg GetAu
 }
 
 const getAutomationLiveVerification = `-- name: GetAutomationLiveVerification :one
-SELECT run_id, app_id, name, case_name, automation_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at FROM workflow_automation_live_verifications WHERE app_id=$1 AND name=$2 AND run_id=$3
+SELECT run_id, app_id, name, case_name, workflow_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at FROM stored_workflow_live_verifications WHERE app_id=$1 AND name=$2 AND run_id=$3
 `
 
 type GetAutomationLiveVerificationParams struct {
@@ -381,15 +381,15 @@ type GetAutomationLiveVerificationParams struct {
 	RunID pgtype.UUID
 }
 
-func (q *Queries) GetAutomationLiveVerification(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationParams) (WorkflowAutomationLiveVerification, error) {
+func (q *Queries) GetAutomationLiveVerification(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationParams) (StoredWorkflowLiveVerification, error) {
 	row := db.QueryRow(ctx, getAutomationLiveVerification, arg.AppID, arg.Name, arg.RunID)
-	var i WorkflowAutomationLiveVerification
+	var i StoredWorkflowLiveVerification
 	err := row.Scan(
 		&i.RunID,
 		&i.AppID,
 		&i.Name,
 		&i.CaseName,
-		&i.AutomationVersion,
+		&i.WorkflowVersion,
 		&i.PublishedVersion,
 		&i.DeploymentID,
 		&i.InputsHash,
@@ -403,7 +403,7 @@ func (q *Queries) GetAutomationLiveVerification(ctx context.Context, db DBTX, ar
 }
 
 const getAutomationLiveVerificationByKey = `-- name: GetAutomationLiveVerificationByKey :one
-SELECT run_id, app_id, name, case_name, automation_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at FROM workflow_automation_live_verifications WHERE app_id=$1 AND name=$2 AND idempotency_key=$3
+SELECT run_id, app_id, name, case_name, workflow_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at FROM stored_workflow_live_verifications WHERE app_id=$1 AND name=$2 AND idempotency_key=$3
 `
 
 type GetAutomationLiveVerificationByKeyParams struct {
@@ -412,15 +412,15 @@ type GetAutomationLiveVerificationByKeyParams struct {
 	IdempotencyKey string
 }
 
-func (q *Queries) GetAutomationLiveVerificationByKey(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationByKeyParams) (WorkflowAutomationLiveVerification, error) {
+func (q *Queries) GetAutomationLiveVerificationByKey(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationByKeyParams) (StoredWorkflowLiveVerification, error) {
 	row := db.QueryRow(ctx, getAutomationLiveVerificationByKey, arg.AppID, arg.Name, arg.IdempotencyKey)
-	var i WorkflowAutomationLiveVerification
+	var i StoredWorkflowLiveVerification
 	err := row.Scan(
 		&i.RunID,
 		&i.AppID,
 		&i.Name,
 		&i.CaseName,
-		&i.AutomationVersion,
+		&i.WorkflowVersion,
 		&i.PublishedVersion,
 		&i.DeploymentID,
 		&i.InputsHash,
@@ -434,7 +434,7 @@ func (q *Queries) GetAutomationLiveVerificationByKey(ctx context.Context, db DBT
 }
 
 const insertAutomationLiveBaselinePromotion = `-- name: InsertAutomationLiveBaselinePromotion :exec
-INSERT INTO workflow_automation_live_baseline_promotions(promotion_id,app_id,name,baseline_name,revision,suite_id,receipt,promoted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO stored_workflow_live_baseline_promotions(promotion_id,app_id,name,baseline_name,revision,suite_id,receipt,promoted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 `
 
 type InsertAutomationLiveBaselinePromotionParams struct {
@@ -463,7 +463,7 @@ func (q *Queries) InsertAutomationLiveBaselinePromotion(ctx context.Context, db 
 }
 
 const insertAutomationLiveBaselineRetirement = `-- name: InsertAutomationLiveBaselineRetirement :exec
-INSERT INTO workflow_automation_live_baseline_retirements(retirement_id,app_id,name,baseline_name,receipt) VALUES($1,$2,$3,$4,$5)
+INSERT INTO stored_workflow_live_baseline_retirements(retirement_id,app_id,name,baseline_name,receipt) VALUES($1,$2,$3,$4,$5)
 `
 
 type InsertAutomationLiveBaselineRetirementParams struct {
@@ -486,38 +486,38 @@ func (q *Queries) InsertAutomationLiveBaselineRetirement(ctx context.Context, db
 }
 
 const insertAutomationLiveSuite = `-- name: InsertAutomationLiveSuite :one
-INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases,managed)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed
+INSERT INTO stored_workflow_live_suites(id,app_id,name,workflow_version,published_version,deployment_id,cases,managed)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING RETURNING id, app_id, name, workflow_version, published_version, deployment_id, cases, created_at, updated_at, managed
 `
 
 type InsertAutomationLiveSuiteParams struct {
-	ID                pgtype.UUID
-	AppID             pgtype.UUID
-	Name              string
-	AutomationVersion int64
-	PublishedVersion  int64
-	DeploymentID      pgtype.UUID
-	Cases             []byte
-	Managed           bool
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	Name             string
+	WorkflowVersion  int64
+	PublishedVersion int64
+	DeploymentID     pgtype.UUID
+	Cases            []byte
+	Managed          bool
 }
 
-func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
+func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (StoredWorkflowLiveSuite, error) {
 	row := db.QueryRow(ctx, insertAutomationLiveSuite,
 		arg.ID,
 		arg.AppID,
 		arg.Name,
-		arg.AutomationVersion,
+		arg.WorkflowVersion,
 		arg.PublishedVersion,
 		arg.DeploymentID,
 		arg.Cases,
 		arg.Managed,
 	)
-	var i WorkflowAutomationLiveSuite
+	var i StoredWorkflowLiveSuite
 	err := row.Scan(
 		&i.ID,
 		&i.AppID,
 		&i.Name,
-		&i.AutomationVersion,
+		&i.WorkflowVersion,
 		&i.PublishedVersion,
 		&i.DeploymentID,
 		&i.Cases,
@@ -529,9 +529,9 @@ func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg In
 }
 
 const insertAutomationLiveVerification = `-- name: InsertAutomationLiveVerification :one
-INSERT INTO workflow_automation_live_verifications
-(run_id,app_id,name,case_name,automation_version,published_version,deployment_id,inputs_hash,live_test,idempotency_key,request_fingerprint)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING run_id, app_id, name, case_name, automation_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at
+INSERT INTO stored_workflow_live_verifications
+(run_id,app_id,name,case_name,workflow_version,published_version,deployment_id,inputs_hash,live_test,idempotency_key,request_fingerprint)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING run_id, app_id, name, case_name, workflow_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at
 `
 
 type InsertAutomationLiveVerificationParams struct {
@@ -539,7 +539,7 @@ type InsertAutomationLiveVerificationParams struct {
 	AppID              pgtype.UUID
 	Name               string
 	CaseName           string
-	AutomationVersion  int64
+	WorkflowVersion    int64
 	PublishedVersion   int64
 	DeploymentID       pgtype.UUID
 	InputsHash         string
@@ -548,13 +548,13 @@ type InsertAutomationLiveVerificationParams struct {
 	RequestFingerprint []byte
 }
 
-func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX, arg InsertAutomationLiveVerificationParams) (WorkflowAutomationLiveVerification, error) {
+func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX, arg InsertAutomationLiveVerificationParams) (StoredWorkflowLiveVerification, error) {
 	row := db.QueryRow(ctx, insertAutomationLiveVerification,
 		arg.RunID,
 		arg.AppID,
 		arg.Name,
 		arg.CaseName,
-		arg.AutomationVersion,
+		arg.WorkflowVersion,
 		arg.PublishedVersion,
 		arg.DeploymentID,
 		arg.InputsHash,
@@ -562,13 +562,13 @@ func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX,
 		arg.IdempotencyKey,
 		arg.RequestFingerprint,
 	)
-	var i WorkflowAutomationLiveVerification
+	var i StoredWorkflowLiveVerification
 	err := row.Scan(
 		&i.RunID,
 		&i.AppID,
 		&i.Name,
 		&i.CaseName,
-		&i.AutomationVersion,
+		&i.WorkflowVersion,
 		&i.PublishedVersion,
 		&i.DeploymentID,
 		&i.InputsHash,
@@ -582,8 +582,8 @@ func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX,
 }
 
 const listAutomationLiveBaselineHeads = `-- name: ListAutomationLiveBaselineHeads :many
-SELECT DISTINCT ON (head.baseline_name) head.promotion_id, head.app_id, head.name, head.baseline_name, head.revision, head.suite_id, head.receipt, head.promoted_at FROM workflow_automation_live_baseline_promotions AS head
-WHERE head.app_id=$1 AND head.name=$2 AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=head.app_id AND retired.name=head.name AND retired.baseline_name=head.baseline_name) ORDER BY head.baseline_name,head.revision DESC LIMIT $3
+SELECT DISTINCT ON (head.baseline_name) head.promotion_id, head.app_id, head.name, head.baseline_name, head.revision, head.suite_id, head.receipt, head.promoted_at FROM stored_workflow_live_baseline_promotions AS head
+WHERE head.app_id=$1 AND head.name=$2 AND NOT EXISTS (SELECT 1 FROM stored_workflow_live_baseline_retirements AS retired WHERE retired.app_id=head.app_id AND retired.name=head.name AND retired.baseline_name=head.baseline_name) ORDER BY head.baseline_name,head.revision DESC LIMIT $3
 `
 
 type ListAutomationLiveBaselineHeadsParams struct {
@@ -592,15 +592,15 @@ type ListAutomationLiveBaselineHeadsParams struct {
 	Limit int32
 }
 
-func (q *Queries) ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, arg ListAutomationLiveBaselineHeadsParams) ([]WorkflowAutomationLiveBaselinePromotion, error) {
+func (q *Queries) ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, arg ListAutomationLiveBaselineHeadsParams) ([]StoredWorkflowLiveBaselinePromotion, error) {
 	rows, err := db.Query(ctx, listAutomationLiveBaselineHeads, arg.AppID, arg.Name, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkflowAutomationLiveBaselinePromotion{}
+	items := []StoredWorkflowLiveBaselinePromotion{}
 	for rows.Next() {
-		var i WorkflowAutomationLiveBaselinePromotion
+		var i StoredWorkflowLiveBaselinePromotion
 		if err := rows.Scan(
 			&i.PromotionID,
 			&i.AppID,
@@ -622,7 +622,7 @@ func (q *Queries) ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, 
 }
 
 const listAutomationLiveSuites = `-- name: ListAutomationLiveSuites :many
-SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER BY created_at DESC,id DESC LIMIT $3
+SELECT id, app_id, name, workflow_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM stored_workflow_live_suites WHERE app_id=$1 AND name=$2 ORDER BY created_at DESC,id DESC LIMIT $3
 `
 
 type ListAutomationLiveSuitesParams struct {
@@ -631,20 +631,20 @@ type ListAutomationLiveSuitesParams struct {
 	Limit int32
 }
 
-func (q *Queries) ListAutomationLiveSuites(ctx context.Context, db DBTX, arg ListAutomationLiveSuitesParams) ([]WorkflowAutomationLiveSuite, error) {
+func (q *Queries) ListAutomationLiveSuites(ctx context.Context, db DBTX, arg ListAutomationLiveSuitesParams) ([]StoredWorkflowLiveSuite, error) {
 	rows, err := db.Query(ctx, listAutomationLiveSuites, arg.AppID, arg.Name, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkflowAutomationLiveSuite{}
+	items := []StoredWorkflowLiveSuite{}
 	for rows.Next() {
-		var i WorkflowAutomationLiveSuite
+		var i StoredWorkflowLiveSuite
 		if err := rows.Scan(
 			&i.ID,
 			&i.AppID,
 			&i.Name,
-			&i.AutomationVersion,
+			&i.WorkflowVersion,
 			&i.PublishedVersion,
 			&i.DeploymentID,
 			&i.Cases,
@@ -663,7 +663,7 @@ func (q *Queries) ListAutomationLiveSuites(ctx context.Context, db DBTX, arg Lis
 }
 
 const listAutomationLiveVerifications = `-- name: ListAutomationLiveVerifications :many
-SELECT run_id, app_id, name, case_name, automation_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at FROM workflow_automation_live_verifications WHERE app_id=$1 AND name=$2
+SELECT run_id, app_id, name, case_name, workflow_version, published_version, deployment_id, inputs_hash, live_test, idempotency_key, request_fingerprint, report, created_at FROM stored_workflow_live_verifications WHERE app_id=$1 AND name=$2
 ORDER BY created_at DESC,run_id DESC LIMIT $3
 `
 
@@ -673,21 +673,21 @@ type ListAutomationLiveVerificationsParams struct {
 	Limit int32
 }
 
-func (q *Queries) ListAutomationLiveVerifications(ctx context.Context, db DBTX, arg ListAutomationLiveVerificationsParams) ([]WorkflowAutomationLiveVerification, error) {
+func (q *Queries) ListAutomationLiveVerifications(ctx context.Context, db DBTX, arg ListAutomationLiveVerificationsParams) ([]StoredWorkflowLiveVerification, error) {
 	rows, err := db.Query(ctx, listAutomationLiveVerifications, arg.AppID, arg.Name, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkflowAutomationLiveVerification{}
+	items := []StoredWorkflowLiveVerification{}
 	for rows.Next() {
-		var i WorkflowAutomationLiveVerification
+		var i StoredWorkflowLiveVerification
 		if err := rows.Scan(
 			&i.RunID,
 			&i.AppID,
 			&i.Name,
 			&i.CaseName,
-			&i.AutomationVersion,
+			&i.WorkflowVersion,
 			&i.PublishedVersion,
 			&i.DeploymentID,
 			&i.InputsHash,
@@ -708,7 +708,7 @@ func (q *Queries) ListAutomationLiveVerifications(ctx context.Context, db DBTX, 
 }
 
 const lockAutomationForLiveSuite = `-- name: LockAutomationForLiveSuite :one
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2 FOR SHARE
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 AND name=$2 FOR SHARE
 `
 
 type LockAutomationForLiveSuiteParams struct {
@@ -716,9 +716,9 @@ type LockAutomationForLiveSuiteParams struct {
 	Name  string
 }
 
-func (q *Queries) LockAutomationForLiveSuite(ctx context.Context, db DBTX, arg LockAutomationForLiveSuiteParams) (WorkflowAutomationDefinition, error) {
+func (q *Queries) LockAutomationForLiveSuite(ctx context.Context, db DBTX, arg LockAutomationForLiveSuiteParams) (StoredWorkflow, error) {
 	row := db.QueryRow(ctx, lockAutomationForLiveSuite, arg.AppID, arg.Name)
-	var i WorkflowAutomationDefinition
+	var i StoredWorkflow
 	err := row.Scan(
 		&i.AppID,
 		&i.Name,
@@ -758,7 +758,7 @@ func (q *Queries) LockAutomationLiveRunState(ctx context.Context, db DBTX, id pg
 }
 
 const pruneAutomationLiveBaselineHistory = `-- name: PruneAutomationLiveBaselineHistory :exec
-DELETE FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 AND revision <= $4
+DELETE FROM stored_workflow_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 AND revision <= $4
 `
 
 type PruneAutomationLiveBaselineHistoryParams struct {
@@ -779,9 +779,9 @@ func (q *Queries) PruneAutomationLiveBaselineHistory(ctx context.Context, db DBT
 }
 
 const pruneAutomationLiveSuites = `-- name: PruneAutomationLiveSuites :exec
-DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=$1::uuid AND suite.name=$2::text AND suite.id IN (
- SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text
- ORDER BY (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=pin.app_id AND retired.name=pin.name AND retired.baseline_name=pin.baseline_name) AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz)) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
+DELETE FROM stored_workflow_live_suites AS suite WHERE suite.app_id=$1::uuid AND suite.name=$2::text AND suite.id IN (
+ SELECT history.id FROM stored_workflow_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text
+ ORDER BY (EXISTS (SELECT 1 FROM stored_workflow_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND NOT EXISTS (SELECT 1 FROM stored_workflow_live_baseline_retirements AS retired WHERE retired.app_id=pin.app_id AND retired.name=pin.name AND retired.baseline_name=pin.baseline_name) AND pin.revision=(SELECT max(head.revision) FROM stored_workflow_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz)) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
 )
 `
 
@@ -803,7 +803,7 @@ func (q *Queries) PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg Pr
 }
 
 const saveAutomationLiveReport = `-- name: SaveAutomationLiveReport :execrows
-UPDATE workflow_automation_live_verifications SET report=$4
+UPDATE stored_workflow_live_verifications SET report=$4
 WHERE app_id=$1 AND name=$2 AND run_id=$3
 `
 
@@ -828,7 +828,7 @@ func (q *Queries) SaveAutomationLiveReport(ctx context.Context, db DBTX, arg Sav
 }
 
 const updateAutomationLiveSuite = `-- name: UpdateAutomationLiveSuite :one
-UPDATE workflow_automation_live_suites SET cases=$4,updated_at=now() WHERE app_id=$1 AND name=$2 AND id=$3 RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed
+UPDATE stored_workflow_live_suites SET cases=$4,updated_at=now() WHERE app_id=$1 AND name=$2 AND id=$3 RETURNING id, app_id, name, workflow_version, published_version, deployment_id, cases, created_at, updated_at, managed
 `
 
 type UpdateAutomationLiveSuiteParams struct {
@@ -838,19 +838,19 @@ type UpdateAutomationLiveSuiteParams struct {
 	Cases []byte
 }
 
-func (q *Queries) UpdateAutomationLiveSuite(ctx context.Context, db DBTX, arg UpdateAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
+func (q *Queries) UpdateAutomationLiveSuite(ctx context.Context, db DBTX, arg UpdateAutomationLiveSuiteParams) (StoredWorkflowLiveSuite, error) {
 	row := db.QueryRow(ctx, updateAutomationLiveSuite,
 		arg.AppID,
 		arg.Name,
 		arg.ID,
 		arg.Cases,
 	)
-	var i WorkflowAutomationLiveSuite
+	var i StoredWorkflowLiveSuite
 	err := row.Scan(
 		&i.ID,
 		&i.AppID,
 		&i.Name,
-		&i.AutomationVersion,
+		&i.WorkflowVersion,
 		&i.PublishedVersion,
 		&i.DeploymentID,
 		&i.Cases,
