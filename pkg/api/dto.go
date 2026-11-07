@@ -11773,16 +11773,6 @@ type DebugTelemetryExportOptions struct {
 	MinLatencyMS int
 }
 
-// DebugTelemetryExport is a downloaded export with what the server applied:
-// the effective window, whether plan retention clamped it, and whether the
-// row limit cut it short.
-type DebugTelemetryExport struct {
-	Data             []byte
-	Window           string
-	RetentionClamped bool
-	Truncated        bool
-}
-
 // DebugTelemetryListResponse is the wire envelope for the debug
 // requests list endpoint. `Since` echoes the effective window
 // applied (after the plan's DebugTelemetryRetentionDays clamp) so

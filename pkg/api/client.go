@@ -7571,6 +7571,17 @@ func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts D
 	return export.Data, err
 }
 
+// DebugTelemetryExport is a downloaded export with what the server applied:
+// the effective window, whether plan retention clamped it, and whether the
+// row limit cut it short. It is assembled from the response headers, not a
+// wire schema.
+type DebugTelemetryExport struct {
+	Data             []byte
+	Window           string
+	RetentionClamped bool
+	Truncated        bool
+}
+
 // ExportAppDebugRequestsWithInfo is ExportAppDebugRequests with the window
 // the server applied and whether the row limit cut the export short.
 func (c *Client) ExportAppDebugRequestsWithInfo(ctx context.Context, slug string, opts DebugTelemetryExportOptions) (DebugTelemetryExport, error) {

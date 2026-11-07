@@ -24799,27 +24799,27 @@ paths:
           in: query
           required: false
           schema: { type: [string, 'null'], format: uuid }
-          description: "Exact deployment UUID filter."
+          description: "Export only rows served by this deployment UUID."
         - name: status
           in: query
           required: false
           schema: { type: [integer, 'null'], minimum: 100, maximum: 599 }
-          description: "Exact HTTP status filter."
+          description: "Export only rows with this HTTP status."
         - name: cold_boot
           in: query
           required: false
           schema: { type: [boolean, 'null'] }
-          description: "Filter cold-start requests when true, or warm requests when false."
+          description: "Export only cold-start rows when true, or only warm rows when false."
         - name: consumer_id
           in: query
           required: false
           schema: { type: [string, 'null'], maxLength: 64 }
-          description: "Consumer UUID, or __anonymous__ for requests without a stable consumer identity."
+          description: "Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity."
         - name: min_latency_ms
           in: query
           required: false
           schema: { type: [integer, 'null'], minimum: 0, maximum: 86400000 }
-          description: "Minimum inclusive latency bucket bound in milliseconds."
+          description: "Export only rows whose latency bucket bound is at least this many milliseconds."
       responses:
         '200':
           description: Metadata-only request telemetry export.
