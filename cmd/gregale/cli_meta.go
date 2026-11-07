@@ -3504,6 +3504,7 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-regression", Short: "exit 1 when confirmed customer migration regressions are found"},
 			}}}}}},
 			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
+				{Name: "commit", Short: "wait until the preview serves this commit (a full or abbreviated SHA), such as the pull request's head", Value: "SHA"},
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},

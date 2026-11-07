@@ -289,10 +289,11 @@ func TestPreviewWaitRequiresWholeEnvironment(t *testing.T) {
 	var reads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/apps/pr-42-web":
-			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active", URL: "https://pr-42-web.gregale.dev"})
-		case "/v1/apps/pr-42-web/deployments/latest":
-			writeJSONTest(w, api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive})
+		case "/v1/preview/pr-42-web":
+			writeJSONTest(w, api.PreviewResourceResponse{
+				App:              api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active", URL: "https://pr-42-web.gregale.dev"},
+				LatestDeployment: &api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive},
+			})
 		case "/v1/preview/pr-42-web/environment":
 			if reads.Add(1) == 1 {
 				oldHead := previewEnvironmentFixture("building", false, "building")
@@ -332,15 +333,82 @@ func TestPreviewWaitRequiresWholeEnvironment(t *testing.T) {
 	}
 }
 
+// A push's CI must not pass on the previous head: until the environment
+// records the asked-for commit, even a failed or live phase is the old one's
+// (ADR-20261105090226). The wait reads only /v1/preview routes, which the
+// credentials a pull request's CI holds can call.
+func TestPreviewWaitCommitWaitsForThatHead(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	oldInterval := previewWaitPollInterval
+	previewWaitPollInterval = time.Millisecond
+	t.Cleanup(func() { previewWaitPollInterval = oldInterval })
+	var reads atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/preview/pr-42-web":
+			writeJSONTest(w, api.PreviewResourceResponse{
+				App:              api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"},
+				LatestDeployment: &api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: "failed"},
+			})
+		case "/v1/preview/pr-42-web/environment":
+			if reads.Add(1) <= 2 {
+				oldHead := previewEnvironmentFixture("failed", false, "failed")
+				oldHead.CommitSHA = "0ld0000000000000000000000000000000000000"
+				oldHead.Members[0].DeploymentID = "old-root"
+				writeJSONTest(w, oldHead)
+				return
+			}
+			head := previewEnvironmentFixture("live", true, statusLive)
+			head.CommitSHA = "abcdef1234567890abcdef1234567890abcdef12"
+			writeJSONTest(w, head)
+		case "/v1/deployments/current-root":
+			writeJSONTest(w, api.DeploymentResponse{ID: "current-root", AppID: "preview-web", Status: statusLive})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	jsonOutput = true
+
+	if code := cmdPreviewWait([]string{"pr-42-web", "--commit", "ABCDEF1", "--timeout", "1"}); code != 0 {
+		t.Fatalf("exit = %d, want 0 once the asked-for head is live", code)
+	}
+	var got previewWaitReceipt
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if reads.Load() < 3 || !got.Ready || got.Environment == nil || got.Environment.CommitSHA != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("receipt = %+v, environment reads = %d", got, reads.Load())
+	}
+}
+
+func TestPreviewWaitRejectsMalformedCommit(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	for _, commit := range []string{"abc", "not-a-sha", strings.Repeat("a", 41)} {
+		if code := cmdPreviewWait([]string{"pr-42-web", "--commit", commit}); code != 1 {
+			t.Errorf("--commit %q exit = %d, want usage error 1", commit, code)
+		}
+	}
+}
+
 func TestPreviewWaitFailsForSiblingDeployment(t *testing.T) {
 	resetJSONOut(t)
 	setPreviewTestAuth(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/apps/pr-42-web":
-			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"})
-		case "/v1/apps/pr-42-web/deployments/latest":
-			writeJSONTest(w, api.DeploymentResponse{ID: "current-root", AppID: "preview-web", Status: statusLive})
+		case "/v1/preview/pr-42-web":
+			writeJSONTest(w, api.PreviewResourceResponse{
+				App:              api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"},
+				LatestDeployment: &api.DeploymentResponse{ID: "current-root", AppID: "preview-web", Status: statusLive},
+			})
 		case "/v1/preview/pr-42-web/environment":
 			writeJSONTest(w, previewEnvironmentFixture("failed", false, "failed"))
 		case "/v1/deployments/current-root":

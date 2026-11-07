@@ -453,6 +453,10 @@ project's organization, and the visibility production would give it, so a
 service without ports stays internal. It takes no declared-route contract: the
 bound app's routes are another service's. Preview apps cannot have custom
 domains; attach the domain to the production app.
+Under consumer auth, a preview accepts the production app's consumer keys, so
+clients call it with the keys they already hold. The preview app never sees
+those keys, nor a password or API key a gate verified: the gateway removes
+`Authorization` before the request reaches it.
 When a dependency preview is absent, the gateway considers the **production**
 service and its side effects are real if policy permits it.
 
@@ -480,9 +484,12 @@ A pull request's CI can read its preview without a stored key
 ([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
 With `permissions: id-token: write`, exchange the job's GitHub OIDC token for a
 preview-read bearer of the production app, then poll the environment until it
-is live:
+is live at the pull request's head. Compare `commit_sha` with that head: a
+push starts CI before the preview records the new commit, and until then the
+phase is the previous head's.
 
 ```bash
+HEAD_SHA=${{ github.event.pull_request.head.sha }}
 BEARER=$(curl -sf -X POST https://api.gregale.dev/v1/auth/oidc/exchange \
   -H 'Content-Type: application/json' \
   -d "{\"provider\":\"github\",\"token\":\"$OIDC_TOKEN\",\"aud\":\"gregale\",\"app\":\"shop-api\",\"capability\":\"preview-read\"}" \
@@ -490,17 +497,26 @@ BEARER=$(curl -sf -X POST https://api.gregale.dev/v1/auth/oidc/exchange \
 for _ in $(seq 90); do
   status=$(curl -sf -H "Authorization: Bearer $BEARER" \
     "https://api.gregale.dev/v1/preview/pr-$PR_NUMBER-shop-api/environment")
-  case "$(jq -r .phase <<<"$status")" in
-    live) exit 0 ;;
-    failed | closed) echo "$status"; exit 1 ;;
-  esac
+  [ "$(jq -r .phase <<<"$status")" = closed ] && { echo "$status"; exit 1; }
+  if [ "$(jq -r .commit_sha <<<"$status")" = "$HEAD_SHA" ]; then
+    case "$(jq -r .phase <<<"$status")" in
+      live) exit 0 ;;
+      failed) echo "$status"; exit 1 ;;
+    esac
+  fi
   sleep 10
 done
 exit 1
 ```
 
-`gregale preview wait` reads the preview app as well, so it needs an
-account-wide credential.
+`gregale preview wait` reads the same routes, so the bearer (as `FAAS_TOKEN`) or
+an app-bound deploy token is enough. Pass `--commit "$HEAD_SHA"` so it waits for
+that head rather than returning the previous one's result
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)):
+
+```bash
+FAAS_TOKEN=$BEARER gregale preview wait "pr-$PR_NUMBER-shop-api" --commit "$HEAD_SHA" --timeout 15m
+```
 
 The bearer reads only the status of that app's previews, from any branch or
 pull request run. A per-app deploy token can read its app's previews too, but

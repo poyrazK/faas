@@ -2615,10 +2615,11 @@ gregale preview customers migration diff --before migration-last-week.json --aft
 
 Wait for a preview deployment to become ready
 
-`gregale preview wait [--progress] [--open] [--timeout <SECONDS|DURATION>] <preview-slug>`
+`gregale preview wait [--commit <SHA>] [--progress] [--open] [--timeout <SECONDS|DURATION>] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--commit <SHA>` | wait until the preview serves this commit (a full or abbreviated SHA), such as the pull request&#39;s head |  |
 | `--progress` | print deployment transitions while waiting |  |
 | `--open` | open the preview URL after it becomes ready |  |
 | `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
