@@ -1,7 +1,8 @@
 {
+  "individual_operator": true,
   "operator_name": "",
   "operator_address": "",
-  "operator_country": "",
+  "operator_country": "Türkiye",
   "governing_law": "the State of Delaware, United States",
   "courts": "the State of Delaware",
   "effective_date": "",

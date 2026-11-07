@@ -1,5 +1,5 @@
 {{define "terms"}}
-<p>These Terms of Service ("Terms") are an agreement between you and {{.C.OperatorName}} ("Gregale", "we", "us"), which operates the Gregale platform, its dashboard, API, command-line tool, SDKs and documentation (together, the "Service"). By creating an account or using the Service you accept these Terms. If you accept them for a company or other organization, you confirm that you may bind it, and "you" means that organization.</p>
+<p>These Terms of Service ("Terms") are an agreement between you and {{.C.OperatorName}}{{if .C.IndividualOperator}}, an individual,{{end}} ("Gregale", "we", "us"), {{if .C.IndividualOperator}}who{{else}}which{{end}} operates the Gregale platform, its dashboard, API, command-line tool, SDKs and documentation (together, the "Service"). By creating an account or using the Service you accept these Terms. If you accept them for a company or other organization, you confirm that you may bind it, and "you" means that organization.</p>
 
 <h2>1. Who may use the Service</h2>
 <ul>
@@ -78,6 +78,7 @@
 <li>These Terms, together with the documents they refer to, are the whole agreement about the Service and replace earlier agreements on the same subject.</li>
 <li>If a provision is found unenforceable, the rest stays in force. Not enforcing a provision is not a waiver of it.</li>
 <li>You may not transfer these Terms without our consent. We may transfer them to an affiliate, or to a successor in a merger, acquisition or sale of the Service, with notice to you.</li>
+{{if .C.IndividualOperator}}<li><strong>Company formation.</strong> We are forming a company to operate the Service. When it is formed, these Terms, your account and your content will transfer to it, and it will take our place under these Terms. We will email you at least 30 days before the transfer; if you object, you may close your account before it takes effect.</li>{{end}}
 <li>Neither party is liable for delays caused by events outside its reasonable control.</li>
 <li>Notices to us go to <a href="mailto:{{.C.ContactEmail}}">{{.C.ContactEmail}}</a>. Notices to you go to your account email.</li>
 </ul>

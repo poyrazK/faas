@@ -41,18 +41,22 @@ var titles = map[string]string{
 
 // Config holds the operator facts the documents quote.
 type Config struct {
-	OperatorName    string `json:"operator_name"`
-	OperatorAddress string `json:"operator_address"`
-	OperatorCountry string `json:"operator_country"`
-	GoverningLaw    string `json:"governing_law"`
-	Courts          string `json:"courts"`
-	EffectiveDate   string `json:"effective_date"`
-	MinimumAge      int    `json:"minimum_age"`
-	ContactEmail    string `json:"contact_email"`
-	PrivacyEmail    string `json:"privacy_email"`
-	AbuseEmail      string `json:"abuse_email"`
-	SecurityEmail   string `json:"security_email"`
-	SupportEmail    string `json:"support_email"`
+	// IndividualOperator is true while a person, not a company, runs the
+	// Service. The documents then say so and announce the move to the
+	// company being formed. operator_address may be just the city.
+	IndividualOperator bool   `json:"individual_operator"`
+	OperatorName       string `json:"operator_name"`
+	OperatorAddress    string `json:"operator_address"`
+	OperatorCountry    string `json:"operator_country"`
+	GoverningLaw       string `json:"governing_law"`
+	Courts             string `json:"courts"`
+	EffectiveDate      string `json:"effective_date"`
+	MinimumAge         int    `json:"minimum_age"`
+	ContactEmail       string `json:"contact_email"`
+	PrivacyEmail       string `json:"privacy_email"`
+	AbuseEmail         string `json:"abuse_email"`
+	SecurityEmail      string `json:"security_email"`
+	SupportEmail       string `json:"support_email"`
 }
 
 // Missing names every required field that is still empty or invalid.

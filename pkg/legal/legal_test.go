@@ -78,6 +78,32 @@ func TestUnpublishedConfigRefusesToRender(t *testing.T) {
 	}
 }
 
+// While a person runs the Service the documents say so and announce the
+// move to the company; a company operator gets neither sentence.
+func TestIndividualOperatorWording(t *testing.T) {
+	for _, individual := range []bool{true, false} {
+		c := fullConfig(t)
+		c.IndividualOperator = individual
+		terms, err := Render(c, Terms, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		privacy, err := Render(c, Privacy, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, got := range map[string]bool{
+			"terms names an individual":    strings.Contains(string(terms), "Test Operator, an individual"),
+			"terms announces the company":  strings.Contains(string(terms), "Company formation"),
+			"privacy announces controller": strings.Contains(string(privacy), "will become the controller"),
+		} {
+			if got != individual {
+				t.Errorf("individual_operator=%v: %s = %v", individual, name, got)
+			}
+		}
+	}
+}
+
 func TestUnknownDocument(t *testing.T) {
 	if _, err := Render(fullConfig(t), "cookies", ""); err == nil {
 		t.Fatal("unknown document must error")
