@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--port N] [--env-file PATH] [--no-reload]"
+	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--port N] [--env-file PATH] [--no-remote] [--no-reload]"
 	devLocalDefaultPort  = 8787
 	devLocalTokenHeader  = "X-Gregale-Local-Token"
 	devLocalTriggerPath  = "/__gregale/trigger"
@@ -82,11 +82,12 @@ func cmdDevLocal(args []string) int {
 	port := fs.Int("port", devLocalDefaultPort, "local port")
 	envFile := fs.String("env-file", "", "KEY=VALUE file whose entries every function gets")
 	noReload := fs.Bool("no-reload", false, "do not reload functions when their source changes")
+	noRemote := fs.Bool("no-remote", false, "do not connect to the developer session's database and buckets")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
 		PrintUsage(osStderr, devLocalUsage, "dev")
 		return 1
 	}
-	projectDir, baseEnv, err := devLocalInputs(*sourcePath, *envFile)
+	projectDir, fileEnv, err := devLocalInputs(*sourcePath, *envFile)
 	if err != nil {
 		return printErr("Could not start local functions", err)
 	}
@@ -100,6 +101,12 @@ func cmdDevLocal(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	remote := &devLocalRemote{Env: map[string]string{}}
+	if !*noRemote {
+		remote = attachDevLocalRemote(ctx, *sourcePath, osStderr)
+	}
+	defer remote.close()
+	baseEnv := devLocalEnv(os.Environ(), remote.Env, fileEnv)
 	for _, fn := range fns {
 		if err := fn.prepare(ctx, cacheDir, baseEnv); err != nil {
 			return printErr("Could not start function "+fn.Name, err)
@@ -121,6 +128,7 @@ func cmdDevLocal(args []string) int {
 	}
 	defer func() { _ = os.Remove(statePath) }()
 	srv.printBanner(osStdout)
+	printDevLocalRemote(osStdout, remote, baseEnv, fns)
 	for _, fn := range fns {
 		srv.prewarm(ctx, fn)
 	}
@@ -144,8 +152,8 @@ func cmdDevLocal(args []string) int {
 	return 0
 }
 
-// devLocalInputs resolves the project directory and the base environment:
-// this shell's environment plus the --env-file entries.
+// devLocalInputs resolves the project directory and reads the --env-file
+// entries as KEY=VALUE strings.
 func devLocalInputs(sourcePath, envFile string) (string, []string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -161,7 +169,7 @@ func devLocalInputs(sourcePath, envFile string) (string, []string, error) {
 	if projectDir, err = filepath.Abs(projectDir); err != nil {
 		return "", nil, err
 	}
-	env := os.Environ()
+	var env []string
 	if envFile != "" {
 		path, err := resolveDevEnvFilePath(cwd, envFile)
 		if err != nil {
@@ -176,6 +184,48 @@ func devLocalInputs(sourcePath, envFile string) (string, []string, error) {
 		}
 	}
 	return projectDir, env, nil
+}
+
+// devLocalEnv layers the base environment: the shell, then the developer
+// session's resources, then the --env-file. A function's env: in
+// gregale.yaml is applied on top when it starts. Later entries win.
+func devLocalEnv(shell []string, remote map[string]string, file []string) []string {
+	env := append([]string(nil), shell...)
+	keys := make([]string, 0, len(remote))
+	for k := range remote {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		env = append(env, k+"="+remote[k])
+	}
+	return append(env, file...)
+}
+
+// printDevLocalRemote reports what came from the developer session and
+// which of its secret names nothing local supplies.
+func printDevLocalRemote(w io.Writer, remote *devLocalRemote, baseEnv []string, fns []*localFunction) {
+	for _, n := range remote.notes {
+		_, _ = fmt.Fprintln(w, n)
+	}
+	have := map[string]bool{}
+	for _, kv := range baseEnv {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			have[k] = true
+		}
+	}
+	for _, fn := range fns {
+		for k := range fn.Env {
+			have[k] = true
+		}
+	}
+	if missing := remote.missingSecrets(func(k string) bool { return have[k] }); len(missing) > 0 {
+		_, _ = fmt.Fprintf(w, "Secrets stay on Gregale. %s has these keys that nothing here sets: %s. Add them to an --env-file.\n",
+			remote.App, strings.Join(missing, ", "))
+	}
+	if len(remote.notes) > 0 {
+		_, _ = fmt.Fprintln(w)
+	}
 }
 
 func writeDevLocalState(path string, st devLocalState) error {

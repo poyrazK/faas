@@ -3220,6 +3220,7 @@ var cliCommands = []cliCommand{
 			{Name: "local", Short: "run the project's functions on this machine instead of a remote developer environment"},
 			{Name: "port", Short: "local port for --local (default 8787)", Value: "N"},
 			{Name: "no-reload", Short: "with --local, do not reload functions when their files change"},
+			{Name: "no-remote", Short: "with --local, do not connect to the developer session's database and buckets"},
 			{Name: "all", Short: "run one developer loop per deployable workspace app"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets (with --local: give them to every function)", Value: "PATH"},

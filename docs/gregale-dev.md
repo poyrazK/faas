@@ -70,8 +70,22 @@ Serving 3 function(s) on this machine (ctrl-c to stop):
 - Requests carry the platform's `x-faas-invocation-id` and
   `x-faas-deadline-ms` headers, and client-sent `x-faas-*` headers are
   dropped, as on Gregale.
-- `env:` from `gregale.yaml` and your shell's environment reach every
-  function; `--env-file .env` adds a file's entries.
+- If this directory has a developer environment (`gregale dev` created
+  one), local functions use its resources:
+  - **Postgres**: the binding's variable (usually `DATABASE_URL`) points at a
+    local tunnel to the session's database. The CLI makes the TLS connection
+    to the database itself and verifies it as the binding asks, so every
+    driver works with the plain local URL. The tunnel starts a task VM, so it
+    needs app tasks on your plan.
+  - **Buckets**: each bucket's `GREGALE_S3_*` settings use a credential made
+    for this local session and revoked when you stop.
+  - **Secrets** never leave Gregale. The CLI lists the session's secret
+    names that nothing local sets; put their values in an `--env-file`.
+
+  `--no-remote` skips all of this. Without a login or a developer
+  environment, functions run with local settings only.
+- Settings layer in this order, later winning: your shell, the session's
+  resources, `--env-file`, then each function's `env:` in `gregale.yaml`.
 - Run a cron or an async call as Gregale would, with
   `x-faas-invocation-source` set:
 
