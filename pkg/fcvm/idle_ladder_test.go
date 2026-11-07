@@ -85,7 +85,7 @@ func newLadderManager(t *testing.T, act QuietActivity) (*Manager, *IdleLadderMet
 	reg := prometheus.NewRegistry()
 	metrics := NewIdleLadderMetrics(reg)
 	v := &residentVMM{fakeVMM: &fakeVMM{}, bytes: 100 << 20}
-	m := newTestManager(&fakeRunner{}, v).WithIdleLadderObserve(IdleLadderConfig{Activity: act, Metrics: metrics})
+	m := newTestManager(&fakeRunner{}, v).WithIdleLadder(IdleLadderConfig{Activity: act, Metrics: metrics})
 	req := admissionWake("w")
 	req.IdleLadderEligible = true
 	if _, err := m.Wake(t.Context(), req); err != nil {
@@ -227,5 +227,90 @@ func TestIdleLadderObserveTracksOnlyLiveEligibleInstances(t *testing.T) {
 	m.idleLadderPass(t0.Add(21 * time.Second))
 	if counts, _ := m.IdleLadderLevels(); counts != ([idleLevelCount]int{}) {
 		t.Fatalf("levels = %v after destroy, want none", counts)
+	}
+}
+
+// newLadderOnManager wakes instance "q" with quiet pause and the idle ladder
+// on, as if the pause pass first saw it an hour ago.
+func newLadderOnManager(t *testing.T, v *pausingVMM, act QuietActivity) *Manager {
+	t.Helper()
+	m := newTestManager(&fakeRunner{}, v).
+		WithQuietPause(QuietPauseConfig{Activity: act}).
+		WithIdleLadder(IdleLadderConfig{Activity: act, On: true})
+	if _, err := m.Wake(t.Context(), quietWake("q")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(t.Context(), "q") })
+	seenQuiet(m, "q", time.Now().Add(-time.Hour))
+	return m
+}
+
+// adr: 20261107122928 — with the ladder on, quiet pause waits the ladder's
+// 1 s instead of schedd's 2 s; it never pauses an instance schedd did not ask
+// it to.
+func TestQuietPauseAfterUsesTheLadderDelayWhenOn(t *testing.T) {
+	inst := &Instance{QuietPauseAfter: 2 * time.Second}
+	off := newTestManager(&fakeRunner{}, &fakeVMM{})
+	if got := off.quietPauseAfter(inst); got != 2*time.Second {
+		t.Fatalf("ladder off: delay = %v, want schedd's 2s", got)
+	}
+	on := newTestManager(&fakeRunner{}, &fakeVMM{}).WithIdleLadder(IdleLadderConfig{Activity: newFakeQuietActivity(), On: true})
+	if got := on.quietPauseAfter(inst); got != time.Second {
+		t.Fatalf("ladder on: delay = %v, want 1s", got)
+	}
+	if got := on.quietPauseAfter(&Instance{QuietPauseAfter: 500 * time.Millisecond}); got != 500*time.Millisecond {
+		t.Fatalf("ladder on: a shorter delay = %v, want kept", got)
+	}
+	if got := on.quietPauseAfter(&Instance{}); got != 0 {
+		t.Fatalf("ladder on: an instance schedd did not mark = %v, want never paused", got)
+	}
+
+	act := newFakeQuietActivity()
+	v := &pausingVMM{fakeVMM: &fakeVMM{}}
+	m := newLadderOnManager(t, v, act)
+	act.set("q", 0, time.Now().Add(-1500*time.Millisecond))
+	m.quietPausePass(t.Context(), time.Now())
+	if v.pauses() != 1 {
+		t.Fatalf("pauses = %d after 1.5 s quiet, want 1 with the ladder's 1 s delay", v.pauses())
+	}
+}
+
+// adr: 20261107122928 — vmmd reports a quiet-paused instance at L1, and at L2
+// once it has been quiet for the ladder's freeze delay; a running instance,
+// or any instance with the ladder off, reports no level.
+func TestIdleLadderLevelFollowsQuietPause(t *testing.T) {
+	act := newFakeQuietActivity()
+	v := &pausingVMM{fakeVMM: &fakeVMM{}}
+	m := newLadderOnManager(t, v, act)
+	now := time.Now()
+	act.set("q", 1, now)
+	if got := m.IdleLadderLevel("q", now); got != IdleRunning {
+		t.Fatalf("level while running = %v, want running", got)
+	}
+	act.set("q", 0, now.Add(-3*time.Second))
+	m.quietPausePass(t.Context(), now)
+	if v.pauses() != 1 {
+		t.Fatalf("pauses = %d, want 1", v.pauses())
+	}
+	if got := m.IdleLadderLevel("q", now); got != IdleQuietPause {
+		t.Fatalf("level 3 s quiet = %v, want quiet_pause", got)
+	}
+	if got := m.IdleLadderLevel("q", now.Add(7*time.Second)); got != IdleFreeze {
+		t.Fatalf("level 10 s quiet = %v, want freeze", got)
+	}
+	if got := m.IdleLadderLevel("q", now.Add(time.Hour)); got != IdleFreeze {
+		t.Fatalf("level 1 h quiet = %v, want freeze: deeper levels are not built", got)
+	}
+	if err := m.QuietResume(t.Context(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.IdleLadderLevel("q", now.Add(time.Hour)); got != IdleRunning {
+		t.Fatalf("level after resume = %v, want running", got)
+	}
+
+	off := newQuietManager(t, &pausingVMM{fakeVMM: &fakeVMM{}}, act)
+	off.quietPausePass(t.Context(), now)
+	if got := off.IdleLadderLevel("q", now.Add(time.Hour)); got != IdleRunning {
+		t.Fatalf("ladder off: level = %v, want running", got)
 	}
 }

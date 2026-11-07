@@ -96,6 +96,7 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 				QuietLastPauseStartedAt: timestamppb.New(time.Unix(150, 0)),
 				QuietLastPauseEndedAt:   timestamppb.New(time.Unix(160, 0)),
 				QuietPausedNsTotal:      wrapperspb.Int64(int64(10 * time.Second)),
+				IdleLadderLevel:         2,
 			}},
 		}, nil
 	})
@@ -123,6 +124,9 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 		t.Fatalf("quiet pause record = paused %v since %v last [%v, %v] total %v",
 			row.GetQuietPaused(), row.GetQuietPausedSince(), row.GetQuietLastPauseStartedAt(),
 			row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal())
+	}
+	if row.GetIdleLadderLevel() != 2 {
+		t.Fatalf("idle_ladder_level = %d, want 2 carried to schedd (ADR-20261107122928)", row.GetIdleLadderLevel())
 	}
 }
 

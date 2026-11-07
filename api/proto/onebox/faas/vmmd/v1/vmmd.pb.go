@@ -5398,8 +5398,15 @@ type InstanceStats struct {
 	// ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
 	// the node does not report this guarantee; the plan cap is for this VM.
 	HttpAdmissionEnforcement *HTTPAdmissionEnforcement `protobuf:"bytes,29,opt,name=http_admission_enforcement,json=httpAdmissionEnforcement,proto3" json:"http_admission_enforcement,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// ADR-20261107122928: the idle ladder level vmmd holds the instance at
+	// while its idle_ladder is on: 1 quiet-paused, 2 quiet-paused and quiet for
+	// at least the ladder's freeze delay (10 s). Measured admission charges a
+	// level-2 instance's memory with the frozen floor (FrozenChargeFloorMB).
+	// 0 when the ladder is off, the instance is running, or it is not on the
+	// ladder.
+	IdleLadderLevel int32 `protobuf:"varint,30,opt,name=idle_ladder_level,json=idleLadderLevel,proto3" json:"idle_ladder_level,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *InstanceStats) Reset() {
@@ -5633,6 +5640,13 @@ func (x *InstanceStats) GetHttpAdmissionEnforcement() *HTTPAdmissionEnforcement 
 		return x.HttpAdmissionEnforcement
 	}
 	return nil
+}
+
+func (x *InstanceStats) GetIdleLadderLevel() int32 {
+	if x != nil {
+		return x.IdleLadderLevel
+	}
+	return 0
 }
 
 type HTTPAdmissionEnforcement struct {
@@ -20320,7 +20334,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tinstances\x18\x04 \x03(\v2\".onebox.faas.vmmd.v1.InstanceStatsR\tinstances\x12`\n" +
 	"\x1einstance_bridge_resident_bytes\x18\x05 \x01(\v2\x1b.google.protobuf.Int64ValueR\x1binstanceBridgeResidentBytes\x12`\n" +
 	"\x1etenant_cpu_pressure_some_avg10\x18\x06 \x01(\v2\x1c.google.protobuf.DoubleValueR\x1atenantCpuPressureSomeAvg10\x12O\n" +
-	"\x15host_cpu_busy_percent\x18\a \x01(\v2\x1c.google.protobuf.DoubleValueR\x12hostCpuBusyPercent\"\x95\x0f\n" +
+	"\x15host_cpu_busy_percent\x18\a \x01(\v2\x1c.google.protobuf.DoubleValueR\x12hostCpuBusyPercent\"\xc1\x0f\n" +
 	"\rInstanceStats\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -20355,7 +20369,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x19quiet_last_pause_ended_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x15quietLastPauseEndedAt\x12N\n" +
 	"\x15quiet_paused_ns_total\x18\x1b \x01(\v2\x1b.google.protobuf.Int64ValueR\x12quietPausedNsTotal\x12k\n" +
 	"\x1aegress_circuit_enforcement\x18\x1c \x01(\v2-.onebox.faas.vmmd.v1.EgressCircuitEnforcementR\x18egressCircuitEnforcement\x12k\n" +
-	"\x1ahttp_admission_enforcement\x18\x1d \x01(\v2-.onebox.faas.vmmd.v1.HTTPAdmissionEnforcementR\x18httpAdmissionEnforcement\"\xb6\x01\n" +
+	"\x1ahttp_admission_enforcement\x18\x1d \x01(\v2-.onebox.faas.vmmd.v1.HTTPAdmissionEnforcementR\x18httpAdmissionEnforcement\x12*\n" +
+	"\x11idle_ladder_level\x18\x1e \x01(\x05R\x0fidleLadderLevel\"\xb6\x01\n" +
 	"\x18HTTPAdmissionEnforcement\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x03R\x05limit\x12\x1a\n" +

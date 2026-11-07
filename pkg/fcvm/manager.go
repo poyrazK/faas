@@ -1355,11 +1355,12 @@ type Manager struct {
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
 
-	// Idle ladder observe mode (ADR-20261107122928; idle_ladder.go).
-	// idleActivity is nil unless vmmd.toml sets idle_ladder = "observe".
-	// idleMu guards idleStates and idleLast and is a leaf lock: it is never
-	// held while m.mu is taken.
+	// Idle ladder (ADR-20261107122928; idle_ladder.go). idleActivity is nil
+	// unless vmmd.toml sets idle_ladder; idleLadderOn applies levels L1 and
+	// L2. idleMu guards idleStates and idleLast and is a leaf lock: it is
+	// never held while m.mu is taken.
 	idleActivity QuietActivity
+	idleLadderOn bool
 	idleMetrics  *IdleLadderMetrics
 	idleTick     time.Duration
 	idleMu       sync.Mutex
