@@ -34,12 +34,18 @@ BEGIN
 			EXECUTE format('GRANT faas_runtime TO %I', r);
 		END IF;
 	END LOOP;
-	IF to_regrole('faas_compute') IS NOT NULL THEN
-		ALTER ROLE faas_compute LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-		IF NOT pg_has_role('faas_compute', 'faas_runtime', 'MEMBER') THEN
-			GRANT faas_runtime TO faas_compute;
+	-- Password-authenticated compute roles: faas_compute, and the per-daemon
+	-- compute roles of step 3 (scripts/ci/compute_db_roles.py UNIT_ROLES),
+	-- each present only once Ansible has created it from its secret.
+	FOREACH r IN ARRAY ARRAY['faas_compute', 'faas_vmmd', 'faas_node_schedd', 'faas_imaged',
+		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge'] LOOP
+		IF to_regrole(r) IS NOT NULL THEN
+			EXECUTE format('ALTER ROLE %I LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', r);
+			IF NOT pg_has_role(r, 'faas_runtime', 'MEMBER') THEN
+				EXECUTE format('GRANT faas_runtime TO %I', r);
+			END IF;
 		END IF;
-	END IF;
+	END LOOP;
 END
 $$;
 
