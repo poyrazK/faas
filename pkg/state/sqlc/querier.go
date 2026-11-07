@@ -78,6 +78,9 @@ type Querier interface {
 	ActiveServiceProjectReleaseTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
 	AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error
+	// ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
+	// the same shape as AddRequestAnalyticsMinutes.
+	AddRequestAnalyticsHours(ctx context.Context, db DBTX, arg AddRequestAnalyticsHoursParams) error
 	// ADR-20261103113952: add one apid flush of per-minute rollups. Row i of
 	// the parallel arrays takes latency_hist from latency_hists[i*45+1 : i*45+45];
 	// the CHECK on latency_hist rejects a flattened array of another width. The
@@ -2282,7 +2285,7 @@ type Querier interface {
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
 	GetReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg GetReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	GetReleaseDatabaseSwitchForApp(ctx context.Context, db DBTX, arg GetReleaseDatabaseSwitchForAppParams) (ReleaseDatabaseSwitch, error)
-	GetRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
+	GetRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, appID pgtype.UUID) (GetRequestAnalyticsRollupCoverageRow, error)
 	// Exact app/account-scoped lookup, latest first when callers reuse an ID.
 	// expires_at is checked as well as received_at so plan downgrades do not
 	// extend the original request-time retention window.
@@ -6553,9 +6556,10 @@ type Querier interface {
 	RecordQuietPauses(ctx context.Context, db DBTX, arg RecordQuietPausesParams) error
 	// Adds one round's probe counts for a gate and revision.
 	RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error
-	// The first flush that holds an app's rows records its minute. A later,
-	// earlier minute (a replica's late flush) moves it back; an app that is
-	// gone is skipped.
+	// The first flush that holds an app's rows records its minute, for both
+	// tiers. A later, earlier minute (a replica's late flush) moves either back;
+	// an app whose coverage predates the hourly tier gets hours_covered_since
+	// from its first flush after it. An app that is gone is skipped.
 	RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error
 	// ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
 	RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error
@@ -6713,19 +6717,24 @@ type Querier interface {
 	// Lock the node before its epoch, matching registration and FK deletion order.
 	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
-	// ADR-20261103113952: analytics totals from the rollups. Groups are
-	// (dimension, method) over the window, top sqlc.arg(group_limit) by
-	// requests, the rest folded into one __other__ group; with hourly they are
-	// also split by UTC hour (callers zero-fill). group_by 'status' groups the
-	// route rows by HTTP status. The route/method filter applies to route
-	// rows only, so callers pass group_by 'route' or 'status' with it. A
-	// minute counts when it starts inside the window. latency_hist is the
-	// groups' merged histogram; callers turn it into percentiles.
+	// ADR-20261103113952: analytics totals from the rollups. Whole hours in
+	// [hours_from, hours_until) come from the hourly tier and the minutes on
+	// either side from the minute tier (amendment 2); callers pass an empty
+	// hour range to read minutes only. Groups are (dimension, method) over the
+	// window, top sqlc.arg(group_limit) by requests, the rest folded into one
+	// __other__ group; with hourly they are also split by UTC hour (callers
+	// zero-fill). group_by 'status' groups the route rows by HTTP status. The
+	// route/method filter applies to route rows only, so callers pass group_by
+	// 'route' or 'status' with it. A bucket counts when it starts inside the
+	// window. latency_hist is the groups' merged histogram, summed bucket by
+	// bucket; callers turn it into percentiles. filtered is not materialized:
+	// the top-group pass reads no histograms.
 	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
 	// Whether any minute starting inside the window lost rollups.
 	RequestAnalyticsRollupHasGap(ctx context.Context, db DBTX, arg RequestAnalyticsRollupHasGapParams) (bool, error)
 	// Requests per route, method and deployment from the rollups, for the
-	// analytics route and deployment cost splits.
+	// analytics route and deployment cost splits; tiers split as in
+	// RequestAnalyticsRollupGroups.
 	RequestAnalyticsRollupRouteDeployments(ctx context.Context, db DBTX, arg RequestAnalyticsRollupRouteDeploymentsParams) ([]RequestAnalyticsRollupRouteDeploymentsRow, error)
 	RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error
 	RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error

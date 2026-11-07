@@ -25,6 +25,14 @@ Secrets (SMTP password, Pushover token and user key, chat webhooks, heartbeat
 URL) are files under `/etc/alertmanager/secrets/`. They are never in the
 rendered config.
 
+**Production today (checked 2026-11-07 on the control plane).** Only the
+Slack webhook and the heartbeat URL are provisioned. No Pushover or SMTP
+secrets exist, so every page and warn goes to Slack only. Alertmanager has
+never sent a Pushover or email notification there. A page wakes someone only
+if that Slack channel pushes to a phone with sound. The heartbeat is live and
+delivering with no failures. Provisioning Pushover (or a Pushover delivery
+group) is the open action that turns a page into a phone alarm.
+
 What this means during an incident:
 
 - **There is one Pushover target.** Alertmanager has no secondary rotation.
