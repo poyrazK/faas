@@ -1287,6 +1287,11 @@ const (
 	// actionable retry guidance ("raise your plan or lower
 	// --min-instances").
 	CodeMaxMinInstancesExceeded = "max_min_instances_exceeded"
+	// CodeOverageCapRequired and CodeOverageCapAboveMax (ADR-20261105120000):
+	// a paid subject keeps a spend cap, at most its plan's self-service
+	// ceiling.
+	CodeOverageCapRequired = "overage_cap_required"
+	CodeOverageCapAboveMax = "overage_cap_above_max"
 
 	// CodePlanTrafficSplitNotAllowed (issue #556 / traffic
 	// splitting across deployments) is a 403 for plan-tier
@@ -5965,6 +5970,36 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 // can render actionable retry guidance ("raise your plan or lower
 // --min-instances"). Distinct from ErrInvalidMinInstances which
 // rejects negative values or values above MaxConcurrency.
+// OverageCapProblem validates a spend cap a subject on plan asks for
+// (ADR-20261105120000). nil clears the cap: allowed on Free, which stops at
+// its allowance, and refused on a paid plan. A paid cap may not exceed the
+// plan's self-service ceiling.
+func OverageCapProblem(plan Plan, cents *int64) *Problem {
+	if cents != nil && *cents < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"overage_cap_cents must be >= 0 or null", "negative values are rejected")
+	}
+	ceiling, paid := plan.MaxSelfServiceOverageCapCents()
+	if !paid {
+		return nil
+	}
+	if cents == nil {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapRequired,
+			"Spend cap required",
+			fmt.Sprintf("a paid plan keeps a spend cap; set overage_cap_cents to at most %d. Contact support for a higher cap.", ceiling)).
+			WithLimit(ceiling, 0).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	if *cents > ceiling {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapAboveMax,
+			"Spend cap above plan maximum",
+			fmt.Sprintf("overage_cap_cents must be at most %d on this plan; got %d. Contact support for a higher cap.", ceiling, *cents)).
+			WithLimit(ceiling, *cents).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	return nil
+}
+
 func ErrMaxMinInstancesExceeded(got, planMax int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMaxMinInstancesExceeded,
 		"min_instances exceeds plan cap",

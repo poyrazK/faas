@@ -27,6 +27,10 @@ func TestPlanChangeOverageCap(t *testing.T) {
 		{"pause switch kept", api.PlanHobby, api.PlanPro, cents(0), cents(0)},
 		{"cleared cap kept on a paid change", api.PlanHobby, api.PlanScale, nil, nil},
 		{"free stays uncapped", api.PlanFree, api.PlanFree, nil, nil},
+		// ADR-20261105120000: a cap above the target's self-service ceiling
+		// comes down to it.
+		{"scale cap capped on a downgrade", api.PlanScale, api.PlanHobby, cents(300_000), cents(20_000)},
+		{"free cap capped on an upgrade", api.PlanFree, api.PlanHobby, cents(1_000_000), cents(20_000)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := planChangeOverageCap(tc.from, tc.to, tc.current)

@@ -741,6 +741,12 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			l.log.Warn("imaged: per-app gc", "err", err)
 		}
 	}
+	// Step A2: Free-tier disk reaper (spec §4.3, ADR-20261105120000).
+	if n, err := l.evictDormantFreeSnapshots(ctx, rows, stale, now); err != nil {
+		l.log.Warn("imaged: free dormant gc", "err", err)
+	} else if n > 0 {
+		l.log.Info("imaged: gc evicted dormant free snapshots", "evicted", n)
+	}
 	l.removeLocalSnapshotOrphans(ctx, now)
 	if !pressure {
 		return
@@ -767,6 +773,55 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			return
 		}
 	}
+}
+
+// evictDormantFreeSnapshots is the Free-tier disk reaper (spec §4.3,
+// ADR-20261105120000): every snapshot of a Free app with no request, start,
+// park or deployment for FreeTierColdEvictDays is deleted, at most
+// FreeTierColdEvictAppsPerTick apps per tick. Snapshots are cache (ADR-005):
+// the live deployment's app layer stays, so the app cold-boots on its next
+// request. An audit event per app records the eviction.
+func (l *Loop) evictDormantFreeSnapshots(ctx context.Context, rows []state.SnapshotForGC, already []deleteTarget, now time.Time) (int, error) {
+	lister, ok := l.store.(state.DormantFreeAppLister)
+	if !ok {
+		return 0, nil
+	}
+	cutoff := now.Add(-time.Duration(api.FreeTierColdEvictDays) * 24 * time.Hour)
+	ids, err := lister.ListDormantFreeSnapshotApps(ctx, cutoff, api.FreeTierColdEvictAppsPerTick)
+	if err != nil || len(ids) == 0 {
+		return 0, err
+	}
+	dormant := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		dormant[id] = true
+	}
+	targets := dormantFreeTargets(rows, dormant, already)
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	if err := l.deleteSnapshotsAndFiles(ctx, targets); err != nil {
+		return 0, err
+	}
+	perApp := map[string][]deleteTarget{}
+	for _, t := range targets {
+		perApp[t.AppID] = append(perApp[t.AppID], t)
+	}
+	for appID, ts := range perApp {
+		payload, err := json.Marshal(map[string]any{
+			"app_id": appID, "snapshots": len(ts), "idle_days": api.FreeTierColdEvictDays,
+		})
+		if err != nil {
+			continue
+		}
+		var accountID *string
+		if ts[0].AccountID != "" {
+			accountID = &ts[0].AccountID
+		}
+		if err := l.store.AppendEvent(ctx, "imaged", "snapshot.free_dormant_evicted", accountID, payload); err != nil {
+			l.log.Warn("imaged: audit free dormant eviction", "app", appID, "err", err)
+		}
+	}
+	return len(targets), nil
 }
 
 func (l *Loop) retryRemoteDeleteBacklog(ctx context.Context, now time.Time) {

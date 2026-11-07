@@ -5616,7 +5616,9 @@ func TestRaiseOverageCap_Raise(t *testing.T) {
 // the audit row's new_cents surfaces as the literal string "null"
 // so the audit reader can distinguish a clear from a 0-set.
 func TestRaiseOverageCap_Clear(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	// Free may clear its cap; a paid plan keeps one (ADR-20261105120000,
+	// TestRaiseOverageCap_PaidPlanCeiling).
+	e := setup(t, api.PlanFree)
 	// Pre-set a cap to make the clear visible.
 	if err := e.store.UpdateAccountOverageCapCents(context.Background(), e.acct.ID, ptrInt64(7500)); err != nil {
 		t.Fatalf("seed cap: %v", err)

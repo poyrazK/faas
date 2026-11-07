@@ -3603,6 +3603,14 @@ type Querier interface {
 	ListDoctorDomains(ctx context.Context, db DBTX) ([]string, error)
 	ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error)
 	ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error)
+	// ListDormantFreeSnapshotApps (Free-tier disk reaper, spec §4.3,
+	// ADR-20261105120000) returns apps whose every possible billing
+	// subject is on Free (the creator's account, and its shared organization when
+	// it has one), with a snapshot, no live instance, and neither a request, a
+	// start, a park nor a deployment since the cutoff. Instance rows are retained
+	// 30 days, longer than the 14-day window, so a request inside the window is
+	// always seen.
+	ListDormantFreeSnapshotApps(ctx context.Context, db DBTX, arg ListDormantFreeSnapshotAppsParams) ([]pgtype.UUID, error)
 	ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DBTX, maxRows int32) ([]ReleaseDatabaseSwitch, error)
 	// ADR-1196: HTTP executions carry the deadline themselves; workflow runs
 	// have none, so the sweeper stops them.
