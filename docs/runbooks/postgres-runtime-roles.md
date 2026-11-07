@@ -100,6 +100,40 @@ A converge that refuses lists what to move; it changes nothing. Because the
 check runs at converge time, an operator `psql` session as `faas` left open
 also blocks it; close it and converge again.
 
+## Give each compute daemon its own login (step 3)
+
+Compute daemons share `faas_compute` until this is on. To split them:
+
+1. Add the environment **secret** `POSTGRES_COMPUTE_ROLE_KEY` (a random
+   string of 32+ characters, for example `openssl rand -hex 32`). It never
+   leaves CD: both workflows derive each role's password from it.
+2. Set the environment **variable** `POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED=true`.
+   This step requires the compute nodes to be on `faas_compute`
+   (`COMPUTE_DATABASE_URL` names it); the script refuses an owner DSN.
+3. Run the control-plane converge (`cd-controlplane`) first. It creates
+   `faas_vmmd`, `faas_node_schedd`, `faas_imaged`, `faas_builderd`,
+   `faas_gatewayd_internal` and `faas_gatewayd_edge` from SCRAM verifiers and
+   adds them to `faas_runtime`.
+4. Then roll the compute nodes (`cd-compute`, or the next `cd-platform`
+   release). On each node the join play proves every new login against the
+   node's own row, all or none, before installing
+   `/etc/faas/secrets/db/<unit>.env` and the `zz-faas-db-role.conf`
+   drop-ins. The daemons pick them up at the rollout's restart.
+
+Check on the control plane that each daemon now has its own role:
+
+```sh
+sudo -u postgres psql -Atc "SELECT usename, application_name, host(client_addr), count(*)
+  FROM pg_stat_activity WHERE datname = 'faas' AND client_addr IS NOT NULL GROUP BY 1, 2, 3 ORDER BY 3, 1"
+```
+
+To roll back, set the variable to `false` and roll the compute nodes. The
+join play removes the drop-ins and the daemons return to `faas_compute`; the
+roles stay, unused. To rotate the key, change the secret and run both
+converges in the same order; until the compute rollout, the daemons'
+existing sessions keep working and new ones on a not-yet-rolled node fail.
+So roll every node right after the control plane.
+
 ## Roll back
 
 Undo the contract first: set `faas_postgres_owner_contracted: false` (or the
