@@ -73,6 +73,12 @@ path, status, expiry and review URL, never the body. Expiry is not an event:
 a request's expiry is computed when it is read, not written, and the
 listing shows it.
 
+Like `agent_run.finished`, these deliveries are inserted directly and do not
+pass the account's webhook outbox admission caps (ADR-20261101093517). Their
+volume is bounded instead: a key holds at most 20 pending requests, each
+request yields one `requested` and at most one decision event, and a
+repeated denied or expired request opens no new one for 30 minutes (§6).
+
 ### 5. Where delivery runs
 
 Notification channel targets are sealed to the Alerting domain, which only

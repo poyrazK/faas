@@ -42618,7 +42618,7 @@ components:
         enabled: true
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe to account release outcomes and environment GitOps status transitions.
+      description: "Subscribe to account release outcomes, environment GitOps status transitions, and agent approval requests and decisions."
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
@@ -42626,9 +42626,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none], default: default}
         delivery_format: {type: string, enum: [json, cloudevents], default: json}
         enabled: {type: boolean, default: true}
@@ -42744,9 +42744,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 5
+          maxItems: 8
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
         retry_policy: {type: string, enum: [default, aggressive, none]}
         delivery_format: {type: string, enum: [json, cloudevents]}
         enabled: {type: boolean}
