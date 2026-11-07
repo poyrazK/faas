@@ -68,8 +68,9 @@ func environmentBranchEgress(t *testing.T, s contractTestStore) {
 	}
 }
 
-// A contained branch cannot use object storage yet: overlay buckets are served
-// by the public S3 gateway, which the contained profile does not reach.
+// A contained branch uses object storage only when the request admits the
+// bridge object relay (slice 6c); without it the overlay buckets are served
+// only by the public S3 gateway, which the contained profile does not reach.
 func TestMemContainedEnvironmentBranchRefusesObjectStorage(t *testing.T) {
 	s := state.NewMemStore()
 	ctx := context.Background()
@@ -79,18 +80,22 @@ func TestMemContainedEnvironmentBranchRefusesObjectStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	create := func(slug, mode string) error {
+	create := func(slug, mode string, relay bool) error {
 		_, _, _, err := s.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
 			AccountID: acct.ID, ProjectID: project.ID, ParentSlug: "production", Slug: slug,
 			ExpiresAt: time.Now().Add(time.Hour), EgressMode: mode,
 			MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+			ContainedObjects: relay,
 		}, limits)
 		return err
 	}
-	if err := create("pr-2", state.EnvironmentBranchEgressContained); !errors.Is(err, state.ErrProjectEnvironmentBranchContainedObjects) {
+	if err := create("pr-2", state.EnvironmentBranchEgressContained, false); !errors.Is(err, state.ErrProjectEnvironmentBranchContainedObjects) {
 		t.Fatalf("contained branch with object storage: %v", err)
 	}
-	if err := create("pr-3", state.EnvironmentBranchEgressLive); err != nil {
+	if err := create("pr-3", state.EnvironmentBranchEgressLive, false); err != nil {
 		t.Fatalf("live branch with object storage: %v", err)
+	}
+	if err := create("pr-4", state.EnvironmentBranchEgressContained, true); err != nil {
+		t.Fatalf("contained branch through the object relay: %v", err)
 	}
 }

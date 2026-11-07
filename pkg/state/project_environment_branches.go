@@ -47,9 +47,10 @@ var (
 	// so a branch instance would join the parent's network.
 	ErrProjectEnvironmentBranchPrivateNetwork = fmt.Errorf("%w: environment branches and private networks cannot share a project yet", ErrConflict)
 	// ErrProjectEnvironmentBranchContainedObjects refuses a contained or
-	// simulated branch of an environment with object storage
-	// (ADR-20261031193635 slice 6a): overlay buckets are served by the
-	// shared public S3 gateway, which the contained profile does not reach.
+	// simulated branch of an environment with object storage unless the
+	// request admits the bridge object relay (ADR-20261031193635 slices 6a
+	// and 6c): without it, overlay buckets are served only by the shared
+	// public S3 gateway, which the contained profile does not reach.
 	ErrProjectEnvironmentBranchContainedObjects = fmt.Errorf("%w: contained environment branches cannot use object storage yet", ErrConflict)
 )
 
@@ -145,6 +146,11 @@ type ProjectEnvironmentBranchCreate struct {
 	// caps the account's live branches; zero means no cap.
 	MaxDepth    int
 	MaxBranches int
+	// ContainedObjects admits a contained branch whose parent binds object
+	// storage: its guests reach their overlay buckets through the bridge
+	// object relay (ADR-20261031193635 slice 6c). apid sets it only behind
+	// api.EnvironmentBranchContainedObjectsEnv.
+	ContainedObjects bool
 }
 
 func (r ProjectEnvironmentBranchCreate) validate() error {

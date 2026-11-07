@@ -46,6 +46,19 @@ const (
 	// branches: set it to 1 only once every serving vmmd, schedd and
 	// gatewayd-internal enforces the contained profile.
 	EnvironmentBranchContainmentEnv = "FAAS_ENVIRONMENT_BRANCH_CONTAINMENT"
+	// EnvironmentBranchContainedObjectsEnv is apid's operator gate for
+	// contained branches of environments with object storage: set it to 1
+	// only once every serving gatewayd-internal runs the bridge object relay,
+	// every vmmd admits its port and every s3-gatewayd accepts its host
+	// (ADR-20261031193635 slice 6c).
+	EnvironmentBranchContainedObjectsEnv = "FAAS_ENVIRONMENT_BRANCH_CONTAINED_OBJECTS"
+	// EnvironmentBranchObjectRelayHost is the name a contained branch guest
+	// dials for object storage. The guest resolver answers it with the
+	// node's tenant bridge address, so it follows the guest to any node; it
+	// is outside svc.gregale, so no workload name can take it.
+	EnvironmentBranchObjectRelayHost = "objects.gregale"
+	// EnvironmentBranchObjectRelayPort is the relay's bridge port.
+	EnvironmentBranchObjectRelayPort = 10085
 
 	// CodeEnvironmentBranchUnavailable: branches are switched off.
 	CodeEnvironmentBranchUnavailable = "environment_branch_unavailable"
@@ -59,8 +72,9 @@ const (
 	// environment branches and a workload on a private network yet.
 	CodeEnvironmentBranchPrivateNetwork = "environment_branch_private_network_unsupported"
 	// CodeEnvironmentBranchContainedObjects: a contained branch cannot use
-	// object storage yet; its overlay buckets are served by the public S3
-	// gateway, which contained guests do not reach.
+	// object storage while the bridge object relay is switched off
+	// (EnvironmentBranchContainedObjectsEnv); its overlay buckets are then
+	// served only by the public S3 gateway, which contained guests do not reach.
 	CodeEnvironmentBranchContainedObjects = "environment_branch_contained_objects_unsupported"
 	// CodeEnvironmentBranchNotSimulated: only a simulated branch seeds a
 	// rehearsal twin.
@@ -157,4 +171,10 @@ func ParseEnvironmentBranchTTL(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("ttl must be between %s and %s", EnvironmentBranchMinTTL, EnvironmentBranchMaxTTL)
 	}
 	return ttl, nil
+}
+
+// EnvironmentBranchObjectRelayEndpoint is the S3 endpoint a contained
+// branch's object storage binding names (ADR-20261031193635 slice 6c).
+func EnvironmentBranchObjectRelayEndpoint() string {
+	return fmt.Sprintf("http://%s:%d", EnvironmentBranchObjectRelayHost, EnvironmentBranchObjectRelayPort)
 }

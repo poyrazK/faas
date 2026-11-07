@@ -242,7 +242,7 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 	}
 	if clone.branch != nil && managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		postgres, objects := m.projectCloneManagedSecretKindsLocked(apps, valueScopes)
-		if objects > 0 && environmentBranchEgressContained(clone.branch.EgressMode) {
+		if objects > 0 && environmentBranchEgressContained(clone.branch.EgressMode) && !clone.branch.ContainedObjects {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrProjectEnvironmentBranchContainedObjects
 		}
 		clone.branchManagedPostgres, managed = postgres+objects, 0

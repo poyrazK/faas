@@ -141,6 +141,7 @@ type contractTestStore interface {
 	state.EnvironmentBranchDeploymentReader
 	state.EnvironmentBranchCaptureStore
 	state.EnvironmentBranchEgressStore
+	state.EnvironmentBranchObjectRelayStore
 	state.EnvironmentBranchSeedStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
