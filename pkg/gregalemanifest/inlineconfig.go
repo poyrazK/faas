@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"unicode"
 
 	"gopkg.in/yaml.v3"
@@ -73,7 +74,13 @@ func ReadInlineConfig(projectDir, rel string) (InlineConfig, bool, error) {
 	}
 	abs := filepath.Join(projectDir, filepath.FromSlash(rel))
 	info, err := os.Stat(abs)
-	if err != nil || info.IsDir() {
+	if errors.Is(err, os.ErrNotExist) {
+		return InlineConfig{}, false, nil
+	}
+	if err != nil {
+		return InlineConfig{}, false, fmt.Errorf("%s: %w", rel, err)
+	}
+	if info.IsDir() {
 		return InlineConfig{}, false, nil
 	}
 	if info.Size() > InlineConfigMaxFileBytes {
@@ -83,6 +90,28 @@ func ReadInlineConfig(projectDir, rel string) (InlineConfig, bool, error) {
 	if err != nil {
 		return InlineConfig{}, false, fmt.Errorf("%s: %w", rel, err)
 	}
+	return parseInlineConfig(rel, src, lang)
+}
+
+// ParseInlineConfig reads the config declared in a handler file's contents;
+// rel names the file and selects the language by extension.
+func ParseInlineConfig(rel string, src []byte) (InlineConfig, bool, error) {
+	lang, ok := inlineLang(rel)
+	if !ok {
+		return InlineConfig{}, false, nil
+	}
+	return parseInlineConfig(rel, src, lang)
+}
+
+// ValidFunctionName reports whether name is a valid function name.
+func ValidFunctionName(name string) bool { return functionNameRE.MatchString(name) }
+
+// CronTriggers returns the kind=cron triggers the `cron` shorthand makes.
+func CronTriggers(function string, schedules []string) []Trigger {
+	return cronTriggers(function, schedules)
+}
+
+func parseInlineConfig(rel string, src []byte, lang literalLang) (InlineConfig, bool, error) {
 	raw, found, err := extractInlineConfig(string(src), lang)
 	if err != nil {
 		return InlineConfig{}, false, fmt.Errorf("%s: %w", rel, err)
@@ -161,17 +190,14 @@ func extractPythonConfig(src string) (map[string]any, bool, error) {
 	}
 	for _, loc := range pyDecoratorRE.FindAllStringIndex(src, -1) {
 		p := &literalParser{src: src, pos: loc[1], lang: langPython}
-		m, err := p.kwargs()
-		if err != nil {
-			// Another library's @x.function decorator (Modal's
-			// @app.function, say) is not ours unless it decorates handler.
-			if decoratesHandler(src, loc[1]) {
-				return nil, false, err
-			}
+		// Another library's @x.function decorator (Modal's @app.function,
+		// say) is not ours unless it decorates handler.
+		if !decoratesHandler(src, loc[1]) {
 			continue
 		}
-		if !pyDecoratesRE.MatchString(src[p.pos:]) {
-			continue
+		m, err := p.kwargs()
+		if err != nil {
+			return nil, false, err
 		}
 		found = append(found, m)
 	}
@@ -360,7 +386,7 @@ func ApplyInlineConfig(m *Manifest, projectDir string) (*Manifest, []InlineConfi
 		sources, err := m.mergeListedInlineConfig(projectDir)
 		return m, sources, err
 	}
-	if m != nil && (m.Functions != nil || m.rejectSectionsBesideFunctions() != nil) {
+	if !AllowsFunctionDiscovery(m) {
 		return m, nil, nil
 	}
 	discovered, sources, err := discoverInlineFunctions(projectDir)
@@ -376,6 +402,13 @@ func ApplyInlineConfig(m *Manifest, projectDir string) (*Manifest, []InlineConfi
 		m.Triggers = append(m.Triggers, cronTriggers(d.Spec.Name, d.Crons)...)
 	}
 	return m, sources, nil
+}
+
+// AllowsFunctionDiscovery reports whether deploy discovers functions/<name>/
+// directories for this manifest: there is none, or it has no functions: key
+// and no single-app sections.
+func AllowsFunctionDiscovery(m *Manifest) bool {
+	return m == nil || (m.Functions == nil && m.rejectSectionsBesideFunctions() == nil)
 }
 
 func (m *Manifest) mergeListedInlineConfig(projectDir string) ([]InlineConfigSource, error) {
@@ -461,8 +494,11 @@ func fillUnset(dst *FunctionSpec, src FunctionSpec) []string {
 // conventional handler declares a config, in name order.
 func discoverInlineFunctions(projectDir string) ([]InlineConfig, []InlineConfigSource, error) {
 	entries, err := os.ReadDir(filepath.Join(projectDir, FunctionsDiscoveryDir))
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	var out []InlineConfig
 	var sources []InlineConfigSource

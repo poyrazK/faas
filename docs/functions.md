@@ -131,6 +131,17 @@ def handler(event, ctx):
     return {"status": 200, "body": {"ok": True}}
 ```
 
+`gregale add function NAME --trigger http|cron|queue|bucket|webhook`
+writes such a directory for you, with a handler, a test beside it and, for
+Node, a `package.json`; `--lang python` picks Python. Nothing is created
+remotely until you deploy:
+
+```bash
+gregale add function digest --trigger cron --schedule "0 8 * * *"
+node --test functions/digest/handler.test.js
+gregale deploy
+```
+
 With the SDK installed you can use the typed helpers instead:
 `export const config = defineConfig({...})` from `@gregale/sdk-node`, or
 `@function(cron="0 8 * * *")` from `faas_sdk` on `handler`.

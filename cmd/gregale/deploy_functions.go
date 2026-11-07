@@ -329,7 +329,11 @@ func (d functionSetDeploy) printConfigFromCode() {
 		if src.Discovered {
 			note = " (discovered; not in gregale.yaml)"
 		}
-		_, _ = fmt.Fprintf(d.out, "  %-20s %s: %s%s\n", src.Function, src.File, strings.Join(src.Keys, ", "), note)
+		keys := strings.Join(src.Keys, ", ")
+		if keys == "" {
+			keys = "no settings"
+		}
+		_, _ = fmt.Fprintf(d.out, "  %-20s %s: %s%s\n", src.Function, src.File, keys, note)
 	}
 }
 
