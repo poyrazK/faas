@@ -411,6 +411,8 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		LivenessProbe:          append([]byte(nil), in.LivenessProbe...),
 		ReadinessProbe:         append([]byte(nil), in.ReadinessProbe...),
 		QuietPauseAfter:        durationMillis(in.QuietPauseAfterMs),
+		IdleLadderEligible:     in.IdleLadderEligible,
+		IdleLadderGuardedPause: in.IdleLadderGuarded,
 		AllowlistHandleV4:      a.Network.AllowlistHandleV4,
 		AllowlistHandleV6:      a.Network.AllowlistHandleV6,
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,

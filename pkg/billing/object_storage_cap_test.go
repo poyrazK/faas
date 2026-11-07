@@ -53,12 +53,16 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 		capCents int64
 		usage    []state.Usage
 		egress   MeterUsagePolicy
-		want     int64
+		// unelected leaves the subject without an egress overage
+		// election, so its egress is never billed (ADR-20261104204500).
+		unelected bool
+		want      int64
 	}{
 		{name: "uncapped bills in full", usage: []state.Usage{computeOver(40)}, want: 9000},
 		{name: "cap above every meter bills in full", capped: true, capCents: 100, usage: []state.Usage{computeOver(4)}, want: 9000},
 		{name: "billable compute keeps its place", capped: true, capCents: 10, usage: []state.Usage{computeOver(4)}, want: 6000},
 		{name: "live egress keeps its place", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: liveEgress, want: 4000},
+		{name: "unelected live egress reserves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: liveEgress, unelected: true, want: 6000},
 		{name: "shadow egress reserves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: shadowEgress, want: 6000},
 		{name: "egress before its activation reserves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: lateEgress, want: 6000},
 		{name: "compute over the cap leaves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(20)}, want: 0},
@@ -74,6 +78,9 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 			}
 			if tc.capped {
 				store.caps = map[string]int64{"acct": tc.capCents}
+			}
+			if !tc.unelected {
+				store.elections = map[string]state.EgressOverageElection{"acct": {EnabledAt: &period}}
 			}
 			recorder := &objectStorageLineItemRecorder{}
 			accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "acct", Plan: api.PlanHobby}}}

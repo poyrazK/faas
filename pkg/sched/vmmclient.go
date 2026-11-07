@@ -402,6 +402,9 @@ type VMInstanceStat struct {
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928): the idle ladder level vmmd holds
+	// a quiet-paused instance at (1 quiet pause, 2 freeze); 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
 	// QuietPause is the quiet pause record for the pause ledger
@@ -549,6 +552,14 @@ type AppSpec struct {
 	// QuietPauseAfterMS asks vmmd to pause the instance's vCPUs between
 	// requests (ADR-1151); 0 keeps it running. See quietPauseAfterMS.
 	QuietPauseAfterMS int64
+	// IdleLadderEligible marks a request-serving workload the pause tiers
+	// may pause, whatever its declared pause (pauseTierWorkload). vmmd's
+	// idle_ladder observe mode measures it (ADR-20261107122928).
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause lets vmmd quiet-pause a request-serving app that
+	// declared no pause behind the idle ladder's activity guard
+	// (idleLadderGuardedPause, ADR-20261107122928 §6).
+	IdleLadderGuardedPause bool
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -1825,6 +1836,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
+		IdleLadderLevel:  in.GetIdleLadderLevel(),
 		Frozen:           in.GetFrozen(),
 		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
 			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
@@ -1996,6 +2008,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,
 		QuietPauseAfterMs:        a.QuietPauseAfterMS,
+		IdleLadderEligible:       a.IdleLadderEligible,
+		IdleLadderGuardedPause:   a.IdleLadderGuardedPause,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

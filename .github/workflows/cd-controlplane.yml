@@ -1060,7 +1060,16 @@ jobs:
           trap - EXIT
 
           ident_file="$(sudo -u postgres psql -X -A -t -c 'show ident_file')"
-          if ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+          # ADR-20261023104734 step 2: once the postgres role has contracted
+          # the owner (its marker beside pg_ident.conf), only root may map to
+          # `faas`; outboundd logs in as faas_outboundd. Drop the legacy line
+          # instead of adding it back.
+          if [[ -e "$(dirname "$ident_file")/faas-owner-contracted" ]]; then
+            if grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+              sed -i -E '/^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$/d' "$ident_file"
+              systemctl reload postgresql@16-main.service
+            fi
+          elif ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
             printf 'faas_map  faas-outboundd  faas\n' >> "$ident_file"
             systemctl reload postgresql@16-main.service
           fi

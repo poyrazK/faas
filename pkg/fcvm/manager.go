@@ -481,6 +481,12 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// IdleLadderEligible marks a request-serving instance the idle ladder's
+	// observe mode measures (ADR-20261107122928; idle_ladder.go).
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause marks an app the idle ladder may quiet-pause
+	// behind its activity guard (idle_ladder_apps.go).
+	IdleLadderGuardedPause bool
 	// AgentWaitPauseAfter is an agent run's model-wait pause delay
 	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
 	// running while it waits on the model.
@@ -1351,6 +1357,21 @@ type Manager struct {
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
+
+	// Idle ladder (ADR-20261107122928; idle_ladder.go). idleActivity is nil
+	// unless vmmd.toml sets idle_ladder; idleLadderOn applies levels L1 and
+	// L2. idleMu guards idleStates and idleLast and is a leaf lock: it is
+	// never held while m.mu is taken.
+	idleActivity QuietActivity
+	idleLadderOn bool
+	idleAppsOn   bool
+	idleCPU      IdleLadderCPU
+	idleNet      IdleLadderNet
+	idleMetrics  *IdleLadderMetrics
+	idleTick     time.Duration
+	idleMu       sync.Mutex
+	idleStates   map[string]*idleLadderState
+	idleLast     time.Time
 
 	// Model-wait pause of agent runs (ADR-20261027090012;
 	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
@@ -3811,6 +3832,15 @@ type WakeRequest struct {
 	// Manager ignores it for instances that cannot be paused safely; see
 	// quietPauseAfterFor.
 	QuietPauseAfter time.Duration
+	// IdleLadderEligible (ADR-20261107122928) marks a request-serving
+	// workload the pause tiers may pause, whatever its declared pause.
+	// vmmd's idle_ladder observe mode measures it; see idleLadderEligibleFor.
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause (ADR-20261107122928 §6) lets vmmd quiet-pause a
+	// request-serving app that declared no pause, behind the idle ladder's
+	// activity guard, when idle_ladder_apps is on; see
+	// idleLadderGuardedPauseFor.
+	IdleLadderGuardedPause bool
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -5423,10 +5453,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
-		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
-		ExecutionMode:       req.ExecutionMode,
-		Characterization:    report, Runtime: req.Runtime,
+		QuietPauseAfter:        quietPauseAfterFor(req, qualificationOnly),
+		IdleLadderEligible:     idleLadderEligibleFor(req, qualificationOnly),
+		IdleLadderGuardedPause: idleLadderGuardedPauseFor(req, qualificationOnly),
+		AgentWaitPauseAfter:    agentWaitPauseAfterFor(req),
+		ExecutionMode:          req.ExecutionMode,
+		Characterization:       report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}

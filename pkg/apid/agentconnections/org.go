@@ -169,7 +169,7 @@ func (d OrgDeps) revokeWhere(r *http.Request, acct state.Account, orgID, reason 
 
 // GetPolicy handles GET /v1/orgs/{slug}/agent-policy.
 func GetPolicy(d OrgDeps) httpkit.AccountHandler {
-	return func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		orgID, ok := d.activeOrg(w, r, authz.OrgActionView)
 		if !ok {
 			return
@@ -184,7 +184,12 @@ func GetPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("could not read the agent policy"))
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, 0))
+		channels, err := boundChannelNames(r.Context(), d.Store, acct.ID, orgID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read the approval channels"))
+			return
+		}
+		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, 0, channels))
 	}
 }
 
@@ -207,6 +212,10 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			return
 		}
 		approvals, prob := d.policyApprovals(r.Context(), store, orgID, req.ApprovalCategories)
+		if prob == nil && req.ApprovalChannels != nil {
+			// The caller's own channels get the organization's requests (ADR-20261107140000 §3).
+			prob = setApprovalChannels(r.Context(), d.Store, acct.ID, orgID, *req.ApprovalChannels)
+		}
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -222,12 +231,14 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("the policy is saved, but some agent connections it no longer allows could not be revoked; retry"))
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, revoked))
+		channels, _ := boundChannelNames(r.Context(), d.Store, acct.ID, orgID)
+		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, revoked, channels))
 	}
 }
 
-func policyResponse(policy state.OrgAgentPolicy, revoked int) api.OrgAgentPolicyResponse {
+func policyResponse(policy state.OrgAgentPolicy, revoked int, channels []string) api.OrgAgentPolicyResponse {
 	out := api.OrgAgentPolicyResponse{AgentsAllowed: policy.AgentsAllowed, AllowedScopes: slices.Clone(policy.AllowedScopes), Revoked: revoked}
+	out.ApprovalChannels = append([]string{}, channels...)
 	if out.AllowedScopes == nil {
 		out.AllowedScopes = []string{}
 	}

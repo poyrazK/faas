@@ -418,6 +418,7 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		return windows[i].AccountID < windows[j].AccountID
 	})
 	cursors := make(map[string]overageCursor)
+	elections := make(map[string]state.EgressOverageElection)
 	held := newHeldUsage(start)
 	defer p.publishHeld(meter, held)
 	pushed := 0
@@ -479,6 +480,25 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			}
 			p.log.Warn("meter: calculate meter overage", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "hour", window.Hour, "quantity", window.Quantity, "err", err)
 			continue
+		}
+		if meter == state.BillingMeterEgress && billable > 0 {
+			// Egress above the allowance is billed only in hours the
+			// subject's egress overage election covers; any other hour
+			// settles at zero, like a Free hour (ADR-20261104204500).
+			covered, err := p.egressHourElected(ctx, elections, acct.ID, window.Hour)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				p.log.Warn("meter: load egress overage election", "account", acct.ID, "hour", window.Hour, "err", err)
+				continue
+			}
+			if !covered {
+				if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
 		}
 		if err := p.checkFundedEgressDelivery(ctx, acct, window, policy, totalBillable); err != nil {
 			if firstErr == nil {
@@ -617,6 +637,21 @@ func (p *Pusher) billablePendingMeterUsage(ctx context.Context, acct state.Accou
 	after := max(current-policy.IncludedQuantity, 0)
 	cursors[key] = cursor
 	return after - before, after, nil
+}
+
+// egressHourElected reports whether the subject's egress overage election
+// covers the egress hour, reading each subject's election once per pass.
+func (p *Pusher) egressHourElected(ctx context.Context, elections map[string]state.EgressOverageElection, subjectID string, hour time.Time) (bool, error) {
+	election, ok := elections[subjectID]
+	if !ok {
+		var err error
+		election, err = billing.EgressOverageElectionFor(ctx, p.store, subjectID)
+		if err != nil {
+			return false, err
+		}
+		elections[subjectID] = election
+	}
+	return election.Covers(hour), nil
 }
 
 func saturatedAdd(left, right int64) int64 {

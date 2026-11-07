@@ -141,6 +141,33 @@ var AllowedAppWebhookEvents = []string{
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
 	"environment.gitops.changed",
+	AgentApprovalRequestedWebhookEvent, AgentApprovalApprovedWebhookEvent, AgentApprovalDeniedWebhookEvent,
+}
+
+// Agent approval events (ADR-20261107140000 §4): an agent key's request waits
+// for a person, and a person approved or denied it. Expiry is not an event.
+const (
+	AgentApprovalRequestedWebhookEvent = "agent.approval.requested"
+	AgentApprovalApprovedWebhookEvent  = "agent.approval.approved"
+	AgentApprovalDeniedWebhookEvent    = "agent.approval.denied"
+)
+
+// AgentApprovalWebhookPayload is the payload of an agent.approval.* delivery.
+// It never carries the request body.
+type AgentApprovalWebhookPayload struct {
+	ApprovalID string `json:"approval_id"`
+	KeyID      string `json:"key_id"`
+	OrgID      string `json:"org_id,omitempty"`
+	Category   string `json:"category"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	ExpiresAt  string `json:"expires_at"`
+	// ReviewURL is set on agent.approval.requested.
+	ReviewURL string `json:"review_url,omitempty"`
+	DecidedAt string `json:"decided_at,omitempty"`
+	// Note is the person's reason on agent.approval.denied, when given.
+	Note string `json:"note,omitempty"`
 }
 
 // AgentRunFinishedWebhookEvent reaches account receivers when an agent run
