@@ -137,6 +137,8 @@ func TestEnvironmentBranchContainedObjectsMetal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The gateway admits writes only once the bucket's usage is accounted.
+	seedObjectStorageAccounting(t, objectStorageE2EEnv{pool: pool, backend: objects.backend}, account.ID, appID, copyBucket.ID)
 
 	secret := func(scope, name string) string {
 		t.Helper()
@@ -221,6 +223,7 @@ type branchObjectGateway struct {
 	identity *age.X25519Identity
 	stub     *objectStorageS3Stub
 	relayed  *relayedKeys
+	backend  objectstorage.Backend
 }
 
 // startBranchObjectGateway runs s3-gatewayd's handler on the public TLS
@@ -277,6 +280,10 @@ func startBranchObjectGateway(t *testing.T, store *state.PgStore) branchObjectGa
 	if err != nil {
 		t.Fatalf("object storage registry: %v", err)
 	}
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatalf("object storage backend: %v", err)
+	}
 	relayHost := api.EnvironmentBranchObjectRelayHost
 	handler, err := s3gateway.New(s3gateway.Config{Registry: registry, Store: store, RequestMetrics: store, SpoolDir: t.TempDir(),
 		RelayHosts: []string{relayHost, net.JoinHostPort(relayHost, strconv.Itoa(api.EnvironmentBranchObjectRelayPort))},
@@ -299,7 +306,7 @@ func startBranchObjectGateway(t *testing.T, store *state.PgStore) branchObjectGa
 	if err := os.WriteFile(configPath, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return branchObjectGateway{identity: identity, stub: stub, relayed: relayed, env: []string{
+	return branchObjectGateway{identity: identity, stub: stub, relayed: relayed, backend: backend, env: []string{
 		"FAAS_OBJECT_STORAGE_CONFIG=" + configPath,
 		"FAAS_E2E_S3_ACCESS_KEY=e2e-access", "FAAS_E2E_S3_SECRET_KEY=e2e-secret",
 		"FAAS_HOST_KEY_PATH=" + filepath.Join(keysDir, "host.age"),
