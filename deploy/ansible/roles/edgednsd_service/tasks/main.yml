@@ -10,12 +10,14 @@
       - (faas_edgednsd_cf_token | length > 0) or (faas_edgednsd_cf_token_src | length > 0)
       - faas_edgednsd_names | length > 0
       - faas_edgednsd_node_addresses | length > 0
+      - faas_edgednsd_node_private_addresses | length > 0
       - faas_edgednsd_metrics_listen is match('^(127\.0\.0\.1|\[::1\]):[0-9]+$')
     fail_msg: >-
       edgednsd runs on a control-plane (or single-box) host and needs the
       zone's DNS: Edit token (faas_edgednsd_cf_token, which CD stages from
       the EDGEDNSD_CF_TOKEN secret, or faas_edgednsd_cf_token_src), at least
-      one managed name and node address, and a loopback metrics listener.
+      one managed name, node address and node private address (ADR-20261107180000),
+      and a loopback metrics listener.
       See roles/edgednsd_service/README.md.
   when: faas_edgednsd_enabled | bool
 
