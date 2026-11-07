@@ -165,9 +165,17 @@ const (
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
+//
+// SignupAccountsPerDay caps the self-service accounts the whole platform
+// creates in any 24 hours (ADR-20261104145353). Each account carries a full
+// Free allowance, and the per-address and per-network caps reset with every
+// new address, so this bounds the Free compute, egress and storage a signup
+// farm can claim in a day. It counts every account created, so an operator-
+// or support-created account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+	SignupAccountsPerDay           = 2_000
 )
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
@@ -193,6 +201,24 @@ const (
 	MaxPendingAgentApprovals   = 20
 	AgentApprovalBodyBindBytes = 1 << 20
 )
+
+// Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
+// request denied, or expired, within AgentApprovalOutcomeWindow is told so
+// instead of asking again; a denial note holds at most
+// MaxAgentApprovalNoteChars characters.
+const (
+	AgentApprovalOutcomeWindow = 30 * time.Minute
+	MaxAgentApprovalNoteChars  = 280
+)
+
+// AgentApprovalEmailInterval is the least time between two emails to one
+// person about one agent key's approval requests (ADR-20261107140000 §2).
+const AgentApprovalEmailInterval = 10 * time.Minute
+
+// MaxAgentApprovalChannels is how many notification channels one scope (an
+// account's agents, or an organization's for one admin) may route agent
+// approval requests to (ADR-20261107140000 §3).
+const MaxAgentApprovalChannels = 5
 
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
@@ -3964,7 +3990,12 @@ type ObjectStoragePlanLimits struct {
 	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
 	// grant a paid account another (ObjectStorageLimitsFor), and the account's
 	// spend cap tightens it (WithSpendCap).
-	MaxAccountBytes       int64
+	MaxAccountBytes int64
+	// MaxMonthlyRequests is the requests the account may make each month
+	// (ADR-20261104145353): Free 50,000, Hobby 500,000, Pro 2,500,000, Scale
+	// 10,000,000. Requests are not billed, so this bounds the provider's
+	// per-request charge: even all writes stay below the plan's price. The
+	// operator policy still applies when it is tighter.
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
 	// IncludedBytes is average stored bytes over a billing month of
@@ -4381,12 +4412,18 @@ type Limits struct {
 	EgressMbit int // per-instance egress bandwidth cap via tc
 	// MonthlyEgressGiB is the application egress a month includes: the
 	// host-interface bytes the subject's instances send (state.Usage
-	// NetTxBytes, the egress meter's source). While egress is not billed for
-	// the plan, meterd stops the subject's apps at it until the month ends or
-	// the plan grows; once the egress meter bills live it is the included
-	// allowance and usage above it is overage under the spend cap
-	// (ADR-20261103131742). It matches the plan's object storage egress.
+	// NetTxBytes, the egress meter's source). meterd stops the subject's apps
+	// at it until the month ends or the plan grows, on every plan and even
+	// once the egress meter bills live: usage above it is overage only for a
+	// subject that opted into egress overage, which none can yet
+	// (ADR-20261103131742, ADR-20261104090000). It matches the plan's object
+	// storage egress.
 	MonthlyEgressGiB int64
+	// EgressOverageElectable is whether the plan's billing subject may elect
+	// to pay for egress above MonthlyEgressGiB instead of stopping at it
+	// (PUT /v1/account/egress-overage, ADR-20261104204500). The election takes
+	// effect only while the egress meter bills live; Free never can.
+	EgressOverageElectable bool
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -5879,7 +5916,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       20,
 		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
 		// ten times that (ADR-20261031122757).
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -6296,7 +6333,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6305,6 +6342,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 100,
 		EgressMbit:                     25,
 		MonthlyEgressGiB:               100,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -6743,7 +6781,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6754,6 +6792,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 500,
 		EgressMbit:                     100,
 		MonthlyEgressGiB:               500,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -7155,7 +7194,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -7168,6 +7207,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 2000,
 		EgressMbit:                     250,
 		MonthlyEgressGiB:               2000,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
@@ -9889,8 +9929,14 @@ const (
 	// unbounded body exhausted schedd's memory (bug hunt 2026-10-28 H56).
 	TriggerBrokerStatsMaxBytes int64 = 4 << 10
 
-	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
+	// Free-tier disk reaper (spec §4.3, ADR-20261105120000): a Free app with
+	// no request, start, park or deployment this long loses its snapshots;
+	// its live app layer stays and the next request cold-boots.
 	FreeTierColdEvictDays = 14
+	// FreeTierColdEvictAppsPerTick bounds the apps one imaged GC tick evicts
+	// (ADR-20261105120000), so a first sweep over a large backlog is spread
+	// over several ticks.
+	FreeTierColdEvictAppsPerTick = 50
 
 	// Instance retention (spec §17 follow-up, PR #74; issue #2415):
 	// STOPPED/FAILED rows are deleted from their terminal_at anchor and
@@ -10765,6 +10811,31 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 		return 0, false
 	}
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
+// Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
+// owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
+// cap is an operator change.
+const (
+	HobbyMaxSelfServiceOverageCapCents int64 = 7_500
+	ProMaxSelfServiceOverageCapCents   int64 = 20_000
+	ScaleMaxSelfServiceOverageCapCents int64 = 100_000
+)
+
+// MaxSelfServiceOverageCapCents is the largest spend cap a paid subject may
+// set through the API or dashboard, and the cap a paid subject without one
+// (NULL, saved before ADR-20261105120000) is held to. Free has none: Free
+// stops at its allowance whatever its cap.
+func (p Plan) MaxSelfServiceOverageCapCents() (int64, bool) {
+	switch p {
+	case PlanHobby:
+		return HobbyMaxSelfServiceOverageCapCents, true
+	case PlanPro:
+		return ProMaxSelfServiceOverageCapCents, true
+	case PlanScale:
+		return ScaleMaxSelfServiceOverageCapCents, true
+	}
+	return 0, false
 }
 
 // Valid reports whether p is a known plan.
@@ -17982,6 +18053,18 @@ const (
 	EdgeHostTrackedMax              = 100_000
 	EdgeTLSHandshakesInFlightPerCPU = 128
 	EdgeTLSHandshakeTimeout         = 10 * time.Second
+	// ADR-20261107180000: one client address (an IPv4 address or an IPv6
+	// /64) holds at most EdgeTLSHandshakesInFlightPerAddrMax of those
+	// handshakes at once, an address in Cloudflare's ranges
+	// EdgeTLSHandshakesInFlightPerProxyAddrMax (it carries many clients when
+	// a host is back behind Cloudflare, and the listener does not count it
+	// until its handshake settles), so one address cannot hold every slot
+	// with connections that never finish. A connection must send its
+	// ClientHello within EdgeTLSClientHelloTimeout; the rest of the
+	// handshake keeps EdgeTLSHandshakeTimeout.
+	EdgeTLSHandshakesInFlightPerAddrMax      = 32
+	EdgeTLSHandshakesInFlightPerProxyAddrMax = 64
+	EdgeTLSClientHelloTimeout                = 3 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17993,6 +18076,10 @@ const (
 	// (uploads, public reads, OTLP), so direct clients cannot push more at
 	// the control plane than Cloudflare let through.
 	EdgeControlPlaneForwardsInFlightMax = 256
+	// One client address holds at most
+	// EdgeControlPlaneForwardsInFlightPerAddrMax of them, so slow uploads
+	// from one client cannot hold every slot (ADR-20261107180000).
+	EdgeControlPlaneForwardsInFlightPerAddrMax = 16
 )
 
 // The host firewall's backstop for a compute edge's public entry address
@@ -18050,6 +18137,11 @@ const (
 	// EdgeCertificateListenRetry.
 	EdgeCertificateReloadInterval = 10 * time.Minute
 	EdgeCertificateListenRetry    = 5 * time.Second
+	// A reload reads at most EdgeCertificateLiveMax live certificates,
+	// newest first: every one is opened, so an unopenable newest row never
+	// hides an older good one (ADR-20261107180000). A cell holds one or two
+	// live certificates per set of names.
+	EdgeCertificateLiveMax = 32
 	// edgednsd's Certificate Transparency watch reads the apps domain's
 	// unexpired issuances from Cert Spotter every
 	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter

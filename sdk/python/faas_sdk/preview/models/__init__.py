@@ -73,11 +73,17 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_approval_channels_request import AgentApprovalChannelsRequest
+from .agent_approval_channels_response import AgentApprovalChannelsResponse
 from .agent_approval_pending_info import AgentApprovalPendingInfo
 from .agent_approval_pending_info_category import AgentApprovalPendingInfoCategory
+from .agent_approval_pending_info_status import AgentApprovalPendingInfoStatus
 from .agent_approval_response import AgentApprovalResponse
 from .agent_approval_response_category import AgentApprovalResponseCategory
 from .agent_approval_response_status import AgentApprovalResponseStatus
+from .agent_approval_webhook_payload import AgentApprovalWebhookPayload
+from .agent_approval_webhook_payload_category import AgentApprovalWebhookPayloadCategory
+from .agent_approval_webhook_payload_status import AgentApprovalWebhookPayloadStatus
 from .agent_approvals_response import AgentApprovalsResponse
 from .agent_client_request import AgentClientRequest
 from .agent_connection_response import AgentConnectionResponse
@@ -1600,6 +1606,9 @@ from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
 from .egress_flow_log_response import EgressFlowLogResponse
+from .egress_overage_request import EgressOverageRequest
+from .egress_overage_response import EgressOverageResponse
+from .egress_overage_response_billing import EgressOverageResponseBilling
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
@@ -6417,12 +6426,18 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentApprovalChannelsRequest",
+    "AgentApprovalChannelsResponse",
     "AgentApprovalPendingInfo",
     "AgentApprovalPendingInfoCategory",
+    "AgentApprovalPendingInfoStatus",
     "AgentApprovalResponse",
     "AgentApprovalResponseCategory",
     "AgentApprovalResponseStatus",
     "AgentApprovalsResponse",
+    "AgentApprovalWebhookPayload",
+    "AgentApprovalWebhookPayloadCategory",
+    "AgentApprovalWebhookPayloadStatus",
     "AgentClientRequest",
     "AgentConnectionResponse",
     "AgentConnectionResponseApprovalsItem",
@@ -7908,6 +7923,9 @@ __all__ = (
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
     "EgressFlowLogResponse",
+    "EgressOverageRequest",
+    "EgressOverageResponse",
+    "EgressOverageResponseBilling",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableDurableEntityRegistryBody",

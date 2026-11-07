@@ -552,6 +552,10 @@ type AppSpec struct {
 	// may pause, whatever its declared pause (pauseTierWorkload). vmmd's
 	// idle_ladder observe mode measures it (ADR-20261107122928).
 	IdleLadderEligible bool
+	// IdleLadderGuardedPause lets vmmd quiet-pause a request-serving app that
+	// declared no pause behind the idle ladder's activity guard
+	// (idleLadderGuardedPause, ADR-20261107122928 §6).
+	IdleLadderGuardedPause bool
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -2000,6 +2004,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		LivenessProbeJson:        a.LivenessProbeJSON,
 		QuietPauseAfterMs:        a.QuietPauseAfterMS,
 		IdleLadderEligible:       a.IdleLadderEligible,
+		IdleLadderGuardedPause:   a.IdleLadderGuardedPause,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

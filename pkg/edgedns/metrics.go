@@ -14,6 +14,7 @@ type Metrics struct {
 	probeFailures *prometheus.CounterVec
 	nodeIn        *prometheus.GaugeVec
 	errors        *prometheus.CounterVec
+	drainRefused  *prometheus.GaugeVec
 }
 
 // NewMetrics registers the series with reg.
@@ -40,10 +41,17 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Cloudflare DNS calls edgednsd could not complete, by op (read, create, mode, delete); while they fail the records stay as they are (ADR-20261102081618).",
 		}, []string{"op"}),
 	}
+	m.drainRefused = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "edge_dns_drain_refused_nodes",
+		Help: "Drained compute nodes whose edges still pass their probes and that edgednsd keeps in the records, by mode (proxied, dns-only), because withdrawing them would leave fewer than half of the healthy nodes: the registry is writable by every compute node, so a mass drain alone does not move DNS (ADR-20261107180000).",
+	}, []string{"mode"})
 	for _, op := range []string{"read", "create", "mode", "delete"} {
 		m.errors.WithLabelValues(op)
 	}
-	reg.MustRegister(m.records, m.changes, m.probeFailures, m.nodeIn, m.errors)
+	for _, mode := range []string{"proxied", "dns-only"} {
+		m.drainRefused.WithLabelValues(mode)
+	}
+	reg.MustRegister(m.records, m.changes, m.probeFailures, m.nodeIn, m.errors, m.drainRefused)
 	return m
 }
 
@@ -62,6 +70,12 @@ func (m *Metrics) changed(name, action string, dryRun bool) {
 func (m *Metrics) errored(op string) {
 	if m != nil {
 		m.errors.WithLabelValues(op).Inc()
+	}
+}
+
+func (m *Metrics) setDrainRefused(mode string, n int) {
+	if m != nil {
+		m.drainRefused.WithLabelValues(mode).Set(float64(n))
 	}
 }
 
