@@ -48,6 +48,11 @@ func TestEdgeTLSListenerServesTheStoredCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The chain must verify (ADR-20261107180000); the test's public CA
+	// stands in for the system roots.
+	roots := x509.NewCertPool()
+	roots.AddCert(publicCA.cert)
+	served.WithRoots(roots)
 	clientCAFile := filepath.Join(dir, "client-ca.pem")
 	if err := os.WriteFile(clientCAFile, zoneCA.pem(), 0o600); err != nil {
 		t.Fatal(err)
@@ -74,8 +79,6 @@ func TestEdgeTLSListenerServesTheStoredCertificate(t *testing.T) {
 			go func() { _ = conn.(*tls.Conn).Handshake(); _ = conn.Close() }()
 		}
 	}()
-	roots := x509.NewCertPool()
-	roots.AddCert(publicCA.cert)
 	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: roots, ServerName: "app.gregale.dev"})
 	if err != nil {
 		t.Fatalf("handshake for an app host: %v", err)

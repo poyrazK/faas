@@ -308,6 +308,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EDGEDNS_METRICS_ADDR` | edgednsd | `dropin` |  | 127.0.0.1:9113 | `` | ADR-20261102081618: edgednsd's only listener, for Prometheus |
 | `FAAS_EDGEDNS_NAMES` | edgednsd | `dropin` |  |  | `` | ADR-20261102081618: the managed names, <zone id>:<host>[:proxied\|:dns-only],... (proxied by default; dns-only per ADR-20261103163954 §1); rendered from the manifest's public_edge.dns |
 | `FAAS_EDGEDNS_NODE_ADDRESSES` | edgednsd | `dropin` |  |  | `` | ADR-20261102081618: each compute node's public address under its registry name, <node>=<address>,...; rendered from the hosts' public_ipv4 |
+| `FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES` | edgednsd | `dropin` |  |  | `` | ADR-20261107180000: each compute node's private address or host name, <node>=<host>,..., where edgednsd probes its edge's /readyz; rendered from the hosts' address, never the registry's target_url |
 | `FAAS_EDGEDNS_ROLE` | edgednsd | `default` |  |  | `` | box role edgednsd checks it runs on (control-plane or single-box); unset is single-box |
 | `FAAS_EDGE_CHALLENGE_KEY_FILE` | gatewayd-internal | `dropin` |  |  | `path-exists` | deprecated name of FAAS_GATEWAY_FLEET_KEY_FILE (ADR-20261102191500), read when that is unset; the role sets both for one release |
 | `FAAS_EDGE_CLIENT_LIMITS` | gatewayd-public | `dropin` |  | 0 | `` | ADR-20261103163954 §4: 1 turns on a compute edge's per-client-address limits (values in pkg/api/limits.go): the request rate on any front, keyed on the trusted client address; open connections, new connections a second and TLS handshakes in progress only on a listener with FAAS_EDGE_PUBLIC_FRONT=none |
@@ -843,6 +844,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REQUEST_TELEMETRY_ENABLED` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE` | gatewayd-internal | `default` |  | 0 | `` | `1` holds each minute's request telemetry buckets open and ships them once the minute closes, instead of once per drained batch (ADR-20261101085552); default off pending a production row-rate check |
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
+| `FAAS_RESERVED_APP_SLUGS` | apid | `dropin` |  |  | `` | ADR-20261107180000: the labels of the host names edgednsd manages under the apps domain, <slug>,...; apid refuses them as new apps' names; rendered from public_edge.dns |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RESTORE_CONCURRENCY` | vmmd, shared | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RESTORE_PREFETCH` | vmmd, shared | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; "shared" covers pkg/e2etest forwarding it |

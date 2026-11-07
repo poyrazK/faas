@@ -158,26 +158,33 @@ func TestEdgeClientLimitsCapForwardsAndExemptGRPC(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	if got := (edgeClientLimits{}).forwards(blocking); fmt.Sprintf("%p", got) != fmt.Sprintf("%p", blocking) {
+	if got := (edgeClientLimits{}).forwards(blocking, nil); fmt.Sprintf("%p", got) != fmt.Sprintf("%p", blocking) {
 		t.Fatal("the forward cap wrapped the forwarder with the limits off")
 	}
-	if (edgeClientLimits{on: true, refused: refused}).forwards(nil) != nil {
+	if (edgeClientLimits{on: true, refused: refused}).forwards(nil, nil) != nil {
 		t.Fatal("a missing forwarder became a handler")
 	}
 
-	capped := edgeClientLimits{on: true, refused: refused}.forwards(blocking)
+	capped := edgeClientLimits{on: true, refused: refused}.forwards(blocking, nil)
+	// Each forward from its own address, so the shared cap binds and not
+	// one address's share (ADR-20261107180000).
+	from := func(i int) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/upload", nil)
+		r.RemoteAddr = fmt.Sprintf("198.51.%d.%d:40000", i/250, i%250+1)
+		return r
+	}
 	entered.Add(api.EdgeControlPlaneForwardsInFlightMax)
 	var done sync.WaitGroup
-	for range api.EdgeControlPlaneForwardsInFlightMax {
+	for i := range api.EdgeControlPlaneForwardsInFlightMax {
 		done.Add(1)
 		go func() {
 			defer done.Done()
-			capped.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/upload", nil))
+			capped.ServeHTTP(httptest.NewRecorder(), from(i))
 		}()
 	}
 	entered.Wait()
 	rec := httptest.NewRecorder()
-	capped.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/upload", nil))
+	capped.ServeHTTP(rec, from(api.EdgeControlPlaneForwardsInFlightMax))
 	close(release)
 	done.Wait()
 	if rec.Code != http.StatusServiceUnavailable {

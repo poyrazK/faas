@@ -196,10 +196,15 @@ func (s *PGWebhookStore) Fail(ctx context.Context, deliveryID, message string, n
 	return nil
 }
 
+// Prune deletes succeeded deliveries processed before before and dead ones
+// last touched before it. A dead delivery can be retried until then; kept
+// for ever, stale dead rows held FaasGithubWebhookDeliveryDead firing and
+// hid new failures behind it.
 func (s *PGWebhookStore) Prune(ctx context.Context, before time.Time) error {
 	_, err := s.pool.Exec(ctx, `
 		delete from github_webhook_deliveries
-		where status = 'succeeded' and processed_at < $1`, before)
+		where (status = 'succeeded' and processed_at < $1)
+		   or (status = 'dead' and updated_at < $1)`, before)
 	if err != nil {
 		return fmt.Errorf("githubd: prune webhook deliveries: %w", err)
 	}
