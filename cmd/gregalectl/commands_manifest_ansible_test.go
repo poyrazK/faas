@@ -697,6 +697,7 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			wantDNS := "faas_edgednsd_managed: true\n" +
 				"faas_edgednsd_names: [\"zone-1:pilot.example.dev\"]\n" +
 				"faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n" +
+				"faas_edgednsd_node_private_addresses: [\"fsn-2.faas=10.42.0.2\"]\n" +
 				"faas_edgednsd_dry_run: true\n"
 			if got := strings.Contains(controlVars, wantDNS); got != tc.edgedns {
 				t.Errorf("control plane edgednsd vars = %v, want %v:\n%s", got, tc.edgedns, controlVars)
