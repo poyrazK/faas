@@ -24,6 +24,16 @@ import (
 func (s *Service) restoreProblem(ctx context.Context, acct state.Account, app state.App, restored, current []state.EdgeRule) *api.Problem {
 	enforced := make(map[string][]edgeFeature, len(current))
 	for _, rule := range current {
+		// A rollback replaces the current set, so a restricted credential
+		// may not remove a rule whose host reaches past its app either
+		// (ADR-091 amendment 2026-11-07).
+		if !rule.AttackMode() {
+			if prob := s.StoredRuleReachProblem(ctx, rule); prob != nil {
+				out := *prob
+				out.Detail = fmt.Sprintf("the current %s rule %s would be replaced: %s", rule.Kind, rule.ID, prob.Detail)
+				return &out
+			}
+		}
 		if shape := storedRuleShape(rule); shape.active {
 			enforced[rule.ID] = shape.features()
 		}
