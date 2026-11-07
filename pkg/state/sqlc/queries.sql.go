@@ -66513,6 +66513,71 @@ func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const objectBucketAllVersionStartInventory = `-- name: ObjectBucketAllVersionStartInventory :exec
+INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,state,deadline_at,finished_at,inventory_scope,inventory_verified)
+VALUES($1,$2,'completed',now(),now(),'all_versions',true)
+`
+
+type ObjectBucketAllVersionStartInventoryParams struct {
+	ID       pgtype.UUID
+	BucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketAllVersionStartInventory(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartInventoryParams) error {
+	_, err := db.Exec(ctx, objectBucketAllVersionStartInventory, arg.ID, arg.BucketID)
+	return err
+}
+
+const objectBucketAllVersionStartUsage = `-- name: ObjectBucketAllVersionStartUsage :exec
+INSERT INTO object_storage_bucket_usage(bucket_id,observed_at,attempt_at,inventory_scope)
+VALUES($1,now(),now(),'all_versions')
+`
+
+func (q *Queries) ObjectBucketAllVersionStartUsage(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectBucketAllVersionStartUsage, bucketID)
+	return err
+}
+
+const objectBucketAllVersionStartVersioning = `-- name: ObjectBucketAllVersionStartVersioning :exec
+INSERT INTO object_bucket_versioning(bucket_id,desired_status,observed_status,state,revision,versions_required,propagation_until,capacity_job_id)
+VALUES($1,'Suspended','Suspended','ready',1,true,now(),$2)
+`
+
+type ObjectBucketAllVersionStartVersioningParams struct {
+	BucketID      pgtype.UUID
+	CapacityJobID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketAllVersionStartVersioning(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartVersioningParams) error {
+	_, err := db.Exec(ctx, objectBucketAllVersionStartVersioning, arg.BucketID, arg.CapacityJobID)
+	return err
+}
+
+const objectBucketAllVersionStartable = `-- name: ObjectBucketAllVersionStartable :one
+SELECT (EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=$1::uuid AND b.account_id=$2::uuid AND b.state='provisioning')
+ AND NOT EXISTS(SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_write_admissions WHERE bucket_id=$1::uuid))::boolean AS startable
+`
+
+type ObjectBucketAllVersionStartableParams struct {
+	BucketID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// ADR-20261107214517: a bucket whose provider reports never-versioned as
+// Suspended (GCS) starts in all-version accounting while it is still
+// provisioning and provably empty, so no customer request meets the
+// conversion fence. Startable only before any accounting row exists.
+func (q *Queries) ObjectBucketAllVersionStartable(ctx context.Context, db DBTX, arg ObjectBucketAllVersionStartableParams) (bool, error) {
+	row := db.QueryRow(ctx, objectBucketAllVersionStartable, arg.BucketID, arg.AccountID)
+	var startable bool
+	err := row.Scan(&startable)
+	return startable, err
+}
+
 const objectBucketByName = `-- name: ObjectBucketByName :one
 SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id, org_id FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
@@ -67138,6 +67203,22 @@ type ObjectBucketLockAppParams struct {
 
 func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, objectBucketLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectBucketLockProvisioning = `-- name: ObjectBucketLockProvisioning :one
+SELECT id FROM object_buckets WHERE id=$1 AND account_id=$2 AND state='provisioning' FOR UPDATE
+`
+
+type ObjectBucketLockProvisioningParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectBucketLockProvisioning(ctx context.Context, db DBTX, arg ObjectBucketLockProvisioningParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectBucketLockProvisioning, arg.ID, arg.AccountID)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err

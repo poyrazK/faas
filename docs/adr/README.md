@@ -2212,3 +2212,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261106114500: Key-scoped bucket bindings and `gregale bucket sign`](20261106114500-key-scoped-bucket-bindings.md)
 - [ADR-20261106200000: Immediate domain verification and readiness](20261106200000-domain-verification-readiness.md) — bounded manual checks, durable cooldowns and independent ownership, routing and TLS readiness
 - [ADR-20261107010000: Declarative domain bindings and guarded moves](20261107010000-declarative-domain-bindings.md) — reviewed atomic apply, binding version fences, preserved verification/TLS state and explicit rollback manifests
+- [ADR-20261107214517: GCS buckets start in all-version accounting](20261107214517-gcs-buckets-start-in-all-version-accounting.md) — amends ADR-20261023223000 decision 4: a new GCS bucket records its verified empty all-version inventory and Suspended baseline while provisioning, so its first write and delete are not fenced

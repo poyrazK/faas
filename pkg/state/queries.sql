@@ -14233,6 +14233,33 @@ INSERT INTO object_storage_bucket_usage(bucket_id) VALUES($1) ON CONFLICT(bucket
 -- name: ObjectVersioningNow :one
 SELECT clock_timestamp()::timestamptz AS now;
 
+-- ADR-20261107214517: a bucket whose provider reports never-versioned as
+-- Suspended (GCS) starts in all-version accounting while it is still
+-- provisioning and provably empty, so no customer request meets the
+-- conversion fence. Startable only before any accounting row exists.
+-- name: ObjectBucketAllVersionStartable :one
+SELECT (EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid AND b.state='provisioning')
+ AND NOT EXISTS(SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=sqlc.arg(bucket_id)::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=sqlc.arg(bucket_id)::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=sqlc.arg(bucket_id)::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_key_grants WHERE bucket_id=sqlc.arg(bucket_id)::uuid)
+ AND NOT EXISTS(SELECT 1 FROM object_storage_write_admissions WHERE bucket_id=sqlc.arg(bucket_id)::uuid))::boolean AS startable;
+
+-- name: ObjectBucketLockProvisioning :one
+SELECT id FROM object_buckets WHERE id=$1 AND account_id=$2 AND state='provisioning' FOR UPDATE;
+
+-- name: ObjectBucketAllVersionStartInventory :exec
+INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,state,deadline_at,finished_at,inventory_scope,inventory_verified)
+VALUES($1,$2,'completed',now(),now(),'all_versions',true);
+
+-- name: ObjectBucketAllVersionStartVersioning :exec
+INSERT INTO object_bucket_versioning(bucket_id,desired_status,observed_status,state,revision,versions_required,propagation_until,capacity_job_id)
+VALUES($1,'Suspended','Suspended','ready',1,true,now(),$2);
+
+-- name: ObjectBucketAllVersionStartUsage :exec
+INSERT INTO object_storage_bucket_usage(bucket_id,observed_at,attempt_at,inventory_scope)
+VALUES($1,now(),now(),'all_versions');
+
 -- name: ObjectBucketEncryptionGet :one
 SELECT * FROM object_bucket_encryption WHERE bucket_id=$1;
 
