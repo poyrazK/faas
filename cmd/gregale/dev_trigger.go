@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
-const devTriggerUsage = "usage: gregale dev trigger [--path DIR] [--name PROJECT] <invoke|cron|delayed-task> [args]"
+const devTriggerUsage = "usage: gregale dev trigger <invoke|cron|delayed-task> [--source DIR] [--name PROJECT] [args]"
 
 // loadDevSession reads the selected developer environment without renewing
 // its lease. A missing session gets a next-step hint instead of a bare 404,
@@ -77,7 +77,8 @@ func cmdDevInfo(args []string) int {
 func cmdDevTrigger(args []string) int {
 	fs := newFlagSet("dev trigger", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
-	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
+	sourcePath := fs.String("path", "", "source directory (relative to the current directory); same as --source")
+	source := fs.String("source", "", "source directory (relative to the current directory)")
 	if err := fs.Parse(args); err != nil || fs.NArg() == 0 {
 		PrintUsage(osStderr, devTriggerUsage, "dev")
 		return 1
@@ -88,6 +89,24 @@ func cmdDevTrigger(args []string) int {
 	default:
 		PrintUsage(osStderr, devTriggerUsage, "dev")
 		return 1
+	}
+	// ChronoLake finding 34: --source and --name also work after the verb.
+	// After the verb, --path stays the delegated command's URL path.
+	afterSource, afterName, rest, err := extractDevTriggerSelection(rest)
+	if err != nil {
+		PrintUsage(osStderr, devTriggerUsage, "dev")
+		return printErr("Invalid arguments", err)
+	}
+	selected, err := mergeDevTriggerSelection("source directory", *sourcePath, *source, afterSource)
+	if err == nil {
+		*sourcePath = selected
+		*name, err = mergeDevTriggerSelection("project name", *name, afterName)
+	}
+	if err != nil {
+		return printErr("Invalid arguments", err)
+	}
+	if verb != "cron" && countDevTriggerFlag(rest, "path") > 1 {
+		return printErr("Invalid arguments", fmt.Errorf("--path after %q is the request URL path and was given more than once; pass the source directory as --source DIR", verb))
 	}
 	if code := rejectDevTriggerAppSelection(verb, rest); code != 0 {
 		return code
@@ -115,6 +134,75 @@ func cmdDevTrigger(args []string) int {
 	return runDevTrigger(verb, session.App.Slug, cronPath, rest)
 }
 
+// extractDevTriggerSelection removes --source and --name (the developer
+// environment selection) from the arguments after the verb. Neither invoke
+// nor delayed-task defines them, so they are never the delegated command's.
+func extractDevTriggerSelection(args []string) (source, name string, rest []string, err error) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		flagName, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if !strings.HasPrefix(arg, "-") || (flagName != "source" && flagName != "name") {
+			rest = append(rest, arg)
+			continue
+		}
+		if !hasValue {
+			if i+1 >= len(args) {
+				return "", "", nil, fmt.Errorf("--%s needs a value", flagName)
+			}
+			i++
+			value = args[i]
+		}
+		target := &source
+		if flagName == "name" {
+			target = &name
+		}
+		if *target != "" && *target != value {
+			return "", "", nil, fmt.Errorf("--%s was given twice with different values", flagName)
+		}
+		*target = value
+	}
+	return source, name, rest, nil
+}
+
+// mergeDevTriggerSelection allows the same selection to be given in several
+// places, but refuses conflicting values.
+func mergeDevTriggerSelection(what string, values ...string) (string, error) {
+	selected := ""
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if selected != "" && selected != value {
+			return "", fmt.Errorf("conflicting %s values %q and %q", what, selected, value)
+		}
+		selected = value
+	}
+	return selected, nil
+}
+
+// countDevTriggerFlag counts occurrences of --name / --name=value before any "--".
+func countDevTriggerFlag(args []string, name string) int {
+	count := 0
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		flagName, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if flagName == name {
+			count++
+		}
+	}
+	return count
+}
+
 // rejectDevTriggerAppSelection keeps the developer app the only target: a
 // stray positional slug or --app would silently retarget production.
 func rejectDevTriggerAppSelection(verb string, rest []string) int {
@@ -131,7 +219,7 @@ func rejectDevTriggerAppSelection(verb string, rest []string) int {
 		}
 	case "cron":
 		if len(rest) > 1 {
-			PrintUsage(osStderr, "usage: gregale dev trigger [--path DIR] [--name PROJECT] cron [ROUTE]", "dev")
+			PrintUsage(osStderr, "usage: gregale dev trigger cron [ROUTE] [--source DIR] [--name PROJECT]", "dev")
 			return 1
 		}
 	}
