@@ -13,13 +13,13 @@ func accountWebhookCLISubcommand() cliSub {
 	}
 	add := []cliFlag{
 		{Name: "target-url", Short: "HTTPS receiver URL", Value: "URL", Req: true},
-		{Name: "event", Short: "distinct release event (repeatable)", Value: "EVENT", Req: true, Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
+		{Name: "event", Short: "distinct account event (repeatable)", Value: "EVENT", Req: true, Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
 	}
 	add = append(add, secret...)
 	add = append(add, settings...)
 	update := []cliFlag{
 		{Name: "target-url", Short: "replacement HTTPS receiver URL", Value: "URL"},
-		{Name: "event", Short: "replacement release event filter (repeatable)", Value: "EVENT", Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
+		{Name: "event", Short: "replacement account event filter (repeatable)", Value: "EVENT", Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
 		{Name: "enable", Short: "enable the receiver; mutually exclusive with --disable"},
 		{Name: "disable", Short: "disable the receiver; mutually exclusive with --enable"},
 	}

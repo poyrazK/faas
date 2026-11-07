@@ -3,12 +3,15 @@ package state
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -35,6 +38,13 @@ type AgentApproval struct {
 	DecidedAt  time.Time
 	ConsumedAt time.Time
 	ExpiresAt  time.Time
+	// Note is the person's reason for a denial; empty otherwise.
+	Note string
+	// ReviewURL is the review page, and AgentName the connection's name, for
+	// a new request's webhook event and notification (ADR-20261107140000
+	// §4, §5). Neither is stored on the request.
+	ReviewURL string
+	AgentName string
 }
 
 // AgentApprovalBinding is what an approval allows: one request of the key
@@ -69,14 +79,20 @@ type AgentApprovalStore interface {
 	// binding. It reports false when there is none.
 	ConsumeAgentApproval(ctx context.Context, binding AgentApprovalBinding) (string, bool, error)
 	// RequestAgentApproval returns the key's pending request with the same
-	// binding, or records a new one. ErrTooManyAgentApprovals when the key
-	// has too many undecided requests.
+	// binding, or records a new one, with request.ID when it is set, and
+	// enqueues its agent.approval.requested webhook event.
+	// ErrTooManyAgentApprovals when the key has too many undecided requests.
 	RequestAgentApproval(ctx context.Context, request AgentApproval) (AgentApproval, error)
 	// AgentApproval returns one request.
 	AgentApproval(ctx context.Context, id string) (AgentApproval, error)
-	// DecideAgentApproval approves or denies a pending, unexpired request.
-	// ErrNotFound when there is no such request.
-	DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID string) error
+	// DecideAgentApproval approves or denies a pending, unexpired request; a
+	// denial may carry a note. It enqueues the agent.approval.approved or
+	// .denied webhook event. ErrNotFound when there is no such request.
+	DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID, note string) error
+	// RecentAgentApprovalOutcome returns the key's most recent request with
+	// the binding when it was denied, or expired undecided or unused, within
+	// window (ADR-20261107140000 §6). It reports false otherwise.
+	RecentAgentApprovalOutcome(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error)
 	// ListAgentApprovalsForKey returns the key's requests, newest first.
 	ListAgentApprovalsForKey(ctx context.Context, keyID string, limit int) ([]AgentApproval, error)
 	// ListPendingAgentApprovals returns the pending requests of agents the
@@ -148,15 +164,56 @@ func (s *PgStore) RequestAgentApproval(ctx context.Context, request AgentApprova
 	if int(pending) >= api.MaxPendingAgentApprovals {
 		return AgentApproval{}, ErrTooManyAgentApprovals
 	}
-	request.ID = uuid.NewString()
-	if err := q.InsertAgentApproval(ctx, s.pool, sqlc.InsertAgentApprovalParams{
+	if _, err := uuid.Parse(request.ID); err != nil {
+		request.ID = uuid.NewString()
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return AgentApproval{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := q.InsertAgentApproval(ctx, tx, sqlc.InsertAgentApprovalParams{
 		ID: mustPgUUID(request.ID), KeyID: key, AccountID: mustPgUUID(request.AccountID), OrgID: mustPgUUID(request.OrgID),
 		Category: request.Category, Method: request.Method, Path: request.Path, BodySha256: request.BodySHA256,
 		ExpiresAt: pgTime(request.ExpiresAt),
 	}); err != nil {
 		return AgentApproval{}, mapErr(err)
 	}
+	request.Status = api.AgentApprovalPending
+	if err := enqueueAgentApprovalEvent(ctx, q, tx, api.AgentApprovalRequestedWebhookEvent, request.ID, request); err != nil {
+		return AgentApproval{}, err
+	}
+	if err := insertAgentApprovalNotification(ctx, q, tx, request); err != nil {
+		return AgentApproval{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AgentApproval{}, mapErr(err)
+	}
 	return s.AgentApproval(ctx, request.ID)
+}
+
+// enqueueAgentApprovalEvent queues one agent.approval.* delivery for each
+// account receiver of the connector subscribed to event (ADR-20261107140000
+// §4). sourceID is unique per event of a request.
+func enqueueAgentApprovalEvent(ctx context.Context, q *sqlc.Queries, tx sqlc.DBTX, event, sourceID string, a AgentApproval) error {
+	payload := api.AgentApprovalWebhookPayload{
+		ApprovalID: a.ID, KeyID: a.KeyID, OrgID: a.OrgID, Category: a.Category, Method: a.Method, Path: a.Path,
+		Status: a.Status, ExpiresAt: a.ExpiresAt.UTC().Format(time.RFC3339), Note: a.Note,
+	}
+	if event == api.AgentApprovalRequestedWebhookEvent {
+		payload.ReviewURL = a.ReviewURL
+	}
+	if !a.DecidedAt.IsZero() {
+		payload.DecidedAt = a.DecidedAt.UTC().Format(time.RFC3339)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = q.InsertAgentApprovalWebhookDeliveries(ctx, tx, sqlc.InsertAgentApprovalWebhookDeliveriesParams{
+		Event: event, Payload: body, SourceEventID: mustPgUUID(sourceID), AccountID: mustPgUUID(a.AccountID),
+	})
+	return mapErr(err)
 }
 
 func (s *PgStore) AgentApproval(ctx context.Context, id string) (AgentApproval, error) {
@@ -170,22 +227,59 @@ func (s *PgStore) AgentApproval(ctx context.Context, id string) (AgentApproval, 
 	return agentApprovalFromRow(row), nil
 }
 
-func (s *PgStore) DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID string) error {
+func (s *PgStore) DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID, note string) error {
 	if _, err := uuid.Parse(id); err != nil {
 		return ErrNotFound
 	}
-	status := api.AgentApprovalDenied
-	if approve {
-		status = api.AgentApprovalApproved
-	}
-	n, err := sqlc.New().DecideAgentApproval(ctx, s.pool, sqlc.DecideAgentApprovalParams{Status: status, DecidedBy: mustPgUUID(deciderID), ID: mustPgUUID(id)})
+	status, decisionNote := decisionStatusNote(approve, note)
+	q := sqlc.New()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return mapErr(err)
 	}
-	if n == 0 {
-		return ErrNotFound
+	defer func() { _ = tx.Rollback(ctx) }()
+	row, err := q.DecideAgentApproval(ctx, tx, sqlc.DecideAgentApprovalParams{
+		Status: status, DecidedBy: mustPgUUID(deciderID), DecisionNote: pgText(decisionNote), ID: mustPgUUID(id),
+	})
+	if err != nil {
+		return mapErr(err) // no row: ErrNotFound
 	}
-	return nil
+	event := api.AgentApprovalDeniedWebhookEvent
+	if approve {
+		event = api.AgentApprovalApprovedWebhookEvent
+	}
+	// A request is decided once, so a fresh id keys its decision's deliveries.
+	if err := enqueueAgentApprovalEvent(ctx, q, tx, event, uuid.NewString(), agentApprovalFromRow(row)); err != nil {
+		return err
+	}
+	return mapErr(tx.Commit(ctx))
+}
+
+// decisionStatusNote is the status a decision writes and the note it keeps:
+// only a denial keeps one, trimmed and cut to api.MaxAgentApprovalNoteChars.
+func decisionStatusNote(approve bool, note string) (string, string) {
+	if approve {
+		return api.AgentApprovalApproved, ""
+	}
+	note = strings.TrimSpace(note)
+	if runes := []rune(note); len(runes) > api.MaxAgentApprovalNoteChars {
+		note = strings.TrimSpace(string(runes[:api.MaxAgentApprovalNoteChars]))
+	}
+	return api.AgentApprovalDenied, note
+}
+
+func (s *PgStore) RecentAgentApprovalOutcome(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error) {
+	row, err := sqlc.New().RecentAgentApprovalOutcome(ctx, s.pool, sqlc.RecentAgentApprovalOutcomeParams{
+		KeyID: mustPgUUID(binding.KeyID), Method: binding.Method, Path: binding.Path, BodySha256: binding.BodySHA256,
+		WindowSeconds: int32(window / time.Second),
+	})
+	if err != nil {
+		if err = mapErr(err); errors.Is(err, ErrNotFound) {
+			return AgentApproval{}, false, nil
+		}
+		return AgentApproval{}, false, err
+	}
+	return agentApprovalFromRow(row), true, nil
 }
 
 func (s *PgStore) ListAgentApprovalsForKey(ctx context.Context, keyID string, limit int) ([]AgentApproval, error) {
@@ -219,7 +313,7 @@ func agentApprovalFromRow(row sqlc.AgentApprovalRequest) AgentApproval {
 		ID: pgUUIDString(row.ID), KeyID: pgUUIDString(row.KeyID), AccountID: pgUUIDString(row.AccountID), OrgID: pgUUIDString(row.OrgID),
 		Category: row.Category, Method: row.Method, Path: row.Path, BodySHA256: row.BodySha256, Status: row.Status,
 		DecidedBy: pgUUIDString(row.DecidedBy), CreatedAt: row.CreatedAt.Time, DecidedAt: row.DecidedAt.Time,
-		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time,
+		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time, Note: row.DecisionNote.String,
 	}
 }
 
@@ -328,14 +422,53 @@ func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval
 	if pending >= api.MaxPendingAgentApprovals {
 		return AgentApproval{}, ErrTooManyAgentApprovals
 	}
-	request.ID, request.Status, request.CreatedAt = uuid.NewString(), api.AgentApprovalPending, now
+	if _, err := uuid.Parse(request.ID); err != nil {
+		request.ID = uuid.NewString()
+	}
+	reviewURL, agentName := request.ReviewURL, request.AgentName
+	request.Status, request.CreatedAt, request.ReviewURL, request.AgentName = api.AgentApprovalPending, now, "", ""
 	request.DecidedBy, request.DecidedAt, request.ConsumedAt = "", time.Time{}, time.Time{}
 	request.BodySHA256 = bytes.Clone(request.BodySHA256)
 	if m.agentApprovals == nil {
 		m.agentApprovals = map[string]AgentApproval{}
 	}
 	m.agentApprovals[request.ID] = request
+	event := request
+	event.ReviewURL, event.AgentName = reviewURL, agentName
+	m.enqueueAgentApprovalEventLocked(api.AgentApprovalRequestedWebhookEvent, request.ID, event)
+	m.insertAgentApprovalNotificationLocked(event, now)
 	return cloneAgentApproval(request), nil
+}
+
+// enqueueAgentApprovalEventLocked mirrors enqueueAgentApprovalEvent.
+func (m *MemStore) enqueueAgentApprovalEventLocked(event, sourceID string, a AgentApproval) {
+	payload := api.AgentApprovalWebhookPayload{
+		ApprovalID: a.ID, KeyID: a.KeyID, OrgID: a.OrgID, Category: a.Category, Method: a.Method, Path: a.Path,
+		Status: a.Status, ExpiresAt: a.ExpiresAt.UTC().Format(time.RFC3339), Note: a.Note,
+	}
+	if event == api.AgentApprovalRequestedWebhookEvent {
+		payload.ReviewURL = a.ReviewURL
+	}
+	if !a.DecidedAt.IsZero() {
+		payload.DecidedAt = a.DecidedAt.UTC().Format(time.RFC3339)
+	}
+	body, _ := json.Marshal(payload)
+	now := time.Now()
+	for _, hook := range m.appWebhooks {
+		if hook.Scope != AppWebhookScopeAccount || hook.AccountID != a.AccountID || !hook.Enabled ||
+			!slices.Contains(hook.EventFilter, event) {
+			continue
+		}
+		if m.appWebhookDeliveries == nil {
+			m.appWebhookDeliveries = map[string]AppWebhookDelivery{}
+		}
+		id := uuid.NewString()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AccountID: a.AccountID, Event: AppWebhookEvent(event), Payload: body,
+			Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+	_ = sourceID // Postgres dedupes on it; the map holds each event once.
 }
 
 func cloneAgentApproval(a AgentApproval) AgentApproval {
@@ -353,7 +486,7 @@ func (m *MemStore) AgentApproval(_ context.Context, id string) (AgentApproval, e
 	return cloneAgentApproval(approval), nil
 }
 
-func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve bool, deciderID string) error {
+func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve bool, deciderID, note string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	approval, ok := m.agentApprovals[id]
@@ -361,13 +494,43 @@ func (m *MemStore) DecideAgentApproval(_ context.Context, id string, approve boo
 	if !ok || approval.Status != api.AgentApprovalPending || !now.Before(approval.ExpiresAt) || !m.hasKeyLocked(approval.KeyID) {
 		return ErrNotFound
 	}
-	approval.Status = api.AgentApprovalDenied
-	if approve {
-		approval.Status = api.AgentApprovalApproved
-	}
+	approval.Status, approval.Note = decisionStatusNote(approve, note)
 	approval.DecidedBy, approval.DecidedAt = deciderID, now
 	m.agentApprovals[id] = approval
+	event := api.AgentApprovalDeniedWebhookEvent
+	if approve {
+		event = api.AgentApprovalApprovedWebhookEvent
+	}
+	m.enqueueAgentApprovalEventLocked(event, uuid.NewString(), approval)
 	return nil
+}
+
+func (m *MemStore) RecentAgentApprovalOutcome(_ context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest *AgentApproval
+	for _, approval := range m.agentApprovals {
+		if !sameApprovalBinding(approval, binding) || !m.hasKeyLocked(approval.KeyID) {
+			continue
+		}
+		if latest == nil || approval.CreatedAt.After(latest.CreatedAt) {
+			candidate := approval
+			latest = &candidate
+		}
+	}
+	if latest == nil {
+		return AgentApproval{}, false, nil
+	}
+	now := time.Now()
+	since := now.Add(-window)
+	switch {
+	case latest.Status == api.AgentApprovalDenied && latest.DecidedAt.After(since):
+	case (latest.Status == api.AgentApprovalPending || latest.Status == api.AgentApprovalApproved) &&
+		!now.Before(latest.ExpiresAt) && latest.ExpiresAt.After(since):
+	default:
+		return AgentApproval{}, false, nil
+	}
+	return cloneAgentApproval(*latest), true, nil
 }
 
 func (m *MemStore) ListAgentApprovalsForKey(_ context.Context, keyID string, limit int) ([]AgentApproval, error) {
