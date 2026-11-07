@@ -318,7 +318,8 @@ func (e *Engine) thawAdmissionContext(ctx context.Context, nodeID string, vcpu, 
 	discountVCPU, discountCPU := e.ledger.CPUDiscount(nodeID)
 	return state.WithThawAdmission(ctx, state.NodeAdmission{
 		NodeID: nodeID, ReservationPercent: e.ledger.ReservationPercent(nodeID),
-		Compute: state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU},
+		ReservationDiscountMB: e.ledger.ReservationDiscountMB(nodeID),
+		Compute:               state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU},
 	})
 }
 
