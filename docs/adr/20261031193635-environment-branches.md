@@ -403,12 +403,33 @@ or `production` (refused for branches).
   - **Host-mediated channels.** The outbound relay, workload identity tokens and event
     publishing are refused (`ErrEnvironmentBranchExternalActionDenied`): IP policy cannot
     constrain a vsock channel.
-  - **Refused combinations.** A parent with object storage is refused (409
-    `environment_branch_contained_objects_unsupported`). Overlay buckets are served by
-    the shared public S3 gateway, and admitting it would let a hard-coded production key
-    through; a branch-scoped gateway path is a follow-up. Also refused: rehearsal
-    enrollment, static egress, managed native admission, the build/export and
-    disposable-execution modes, and a runtime without atomic nft transactions.
+  - **Object storage (slice 6c, decided 2026-11-07): the bridge object relay.** Overlay
+    buckets are served by the shared public S3 gateway, and opening a route to it would
+    let a production key compiled into the build through. A contained branch reaches its
+    buckets through a relay on the node instead:
+    - gatewayd-internal listens on bridge TCP 10085. Both netns chains admit that port
+      for contained guests only; no other guest has a use for it.
+    - The guest resolver answers `objects.gregale` (outside `svc.gregale`, so no workload
+      can take it) with the node's bridge address, so the name follows a restored guest
+      to any node. The branch's bucket bindings name `http://objects.gregale:10085`.
+    - The relay resolves the caller's deployment from its bridge source address, as the
+      service proxy does, and requires a contained or simulated branch. It reads the
+      access key ID from the SigV4 `Authorization` header or the presigned
+      `X-Amz-Credential`, and forwards only a key bound to one of that environment's own
+      overlay buckets (`EnvironmentBranchObjectCredentialAllowed`). It refuses unsigned
+      requests, upload grants and requests that carry both kinds of key.
+    - It forwards the request unchanged, Host included, to the node's loopback
+      s3-gatewayd. s3-gatewayd accepts the relay host only from a loopback peer and
+      verifies the signature as usual, so the relay holds no secret and cannot widen a
+      key. Reads through to the parent (`live_parent`) work as for a live branch.
+    - Rollout: the state layer keeps refusing (409
+      `environment_branch_contained_objects_unsupported`) unless apid runs with
+      `FAAS_ENVIRONMENT_BRANCH_CONTAINED_OBJECTS=1`. Set it once every serving
+      gatewayd-internal, vmmd and s3-gatewayd runs this release. A node whose s3-gatewayd
+      is unreachable answers 502.
+  - **Refused combinations.** Rehearsal enrollment, static egress, managed native
+    admission, the build/export and disposable-execution modes, and a runtime without
+    atomic nft transactions.
   - **Rollout.** apid accepts `egress: contained` only with
     `FAAS_ENVIRONMENT_BRANCH_CONTAINMENT=1`. Set it once every serving vmmd, schedd and
     gatewayd-internal runs this release, and `test-metal` has passed on the native host.
@@ -485,7 +506,7 @@ or `production` (refused for branches).
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, its own `environment_branch_captures` table that production lookups cannot read), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
-| 6 | `contained` and `simulated` egress. 6a (built): the contained profile, its authority and the operator gate (section 7). 6b (built): `simulated` through seeded rehearsal twins (section 7): `POST /v1/dev/sessions/{project}/seed` and `from_branch` in `gregale test rehearse`. | 6a: public TCP and non-branch bridge ports are dropped while the service proxy, resolver and the branch's own database are reached, after resets too (`TestMetalEnvironmentBranchContainedProfile`). 6b: a twin boots the branch's build with no source build and serves the branch's values (`TestEnvironmentBranchSeedTwinMetal`); the run itself is covered by the rehearsal native acceptance. |
+| 6 | `contained` and `simulated` egress. 6a (built): the contained profile, its authority and the operator gate (section 7). 6b (built): `simulated` through seeded rehearsal twins (section 7): `POST /v1/dev/sessions/{project}/seed` and `from_branch` in `gregale test rehearse`. 6c (built): contained branches with object storage, through the bridge object relay (section 7). | 6a: public TCP and non-branch bridge ports are dropped while the service proxy, resolver and the branch's own database are reached, after resets too (`TestMetalEnvironmentBranchContainedProfile`). 6b: a twin boots the branch's build with no source build and serves the branch's values (`TestEnvironmentBranchSeedTwinMetal`); the run itself is covered by the rehearsal native acceptance. 6c: a contained branch guest reads and writes its overlay bucket through the relay, while a parent key is refused at the relay and the public gateway stays unreachable (`TestEnvironmentBranchContainedObjectsMetal`). |
 
 ## Consequences
 

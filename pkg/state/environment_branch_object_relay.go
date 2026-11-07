@@ -3,8 +3,6 @@ package state
 import (
 	"context"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // EnvironmentBranchObjectRelayStore answers the bridge object relay
@@ -44,7 +42,7 @@ func (m *MemStore) EnvironmentBranchObjectCredentialAllowed(_ context.Context, e
 
 func (s *PgStore) EnvironmentBranchObjectCredentialAllowed(ctx context.Context, environmentID, accessKeyID string) (bool, error) {
 	accessKeyID = strings.TrimSpace(accessKeyID)
-	if _, err := uuid.Parse(environmentID); err != nil || accessKeyID == "" {
+	if !validUUID(environmentID) || accessKeyID == "" {
 		return false, nil
 	}
 	var allowed bool
