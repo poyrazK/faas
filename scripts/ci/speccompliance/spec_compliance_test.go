@@ -2026,6 +2026,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
+		filepath.Join(root, "pkg", "api", "egress_overage.go"),    // ADR-20261103131742 amendment 2: egress overage choice
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

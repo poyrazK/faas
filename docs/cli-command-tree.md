@@ -99,6 +99,7 @@ touch them. The tables below map each earlier name.
 | `gregale domains` | `gregale domain` |
 | `gregale edge-rule-lists` | `gregale edge rule-list` |
 | `gregale edge-rules` | `gregale edge rule` |
+| `gregale egress-overage` | `gregale billing egress-overage` |
 | `gregale events` | `gregale event` |
 | `gregale flags` | `gregale flag` |
 | `gregale freeze` | `gregale release freeze` |
@@ -118,7 +119,6 @@ touch them. The tables below map each earlier name.
 | `gregale operations` | `gregale job` |
 | `gregale orgs` | `gregale org` |
 | `gregale overage-cap` | `gregale billing spend-cap` |
-| `gregale egress-overage` | `gregale billing egress-overage` |
 | `gregale park` | `gregale app park` |
 | `gregale plan` | `gregale billing plan` |
 | `gregale platform-tenants` | `gregale api tenant` |

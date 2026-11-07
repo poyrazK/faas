@@ -36,7 +36,7 @@ var cliTreeVerbs = []string{
 
 // A path may end with a noun it lists or shows (`app instances`).
 var cliTreeReadNouns = []string{
-	"instances", "requests", "tools", "prompts", "resources", "plan", "invoices", "spend-cap",
+	"instances", "requests", "tools", "prompts", "resources", "plan", "invoices", "spend-cap", "egress-overage",
 	"streaming-cap", "wake-timeline", "trace", "runtime", "chaos", "items", "history", "health",
 	"policy", "actions", "activity", "alerts", "artifacts", "attempts", "backlog", "bundle",
 	"capabilities", "captures", "catalog", "channels", "codeowners", "completeness", "connections",
@@ -59,7 +59,7 @@ var cliTreeCompoundWords = []string{
 	"subscription-capacity", "lock-policy", "deploy-token",
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
-	"grace-window", "payment-method", "server-key",
+	"grace-window", "payment-method", "server-key", "egress-overage",
 	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "request-policy", "legal-hold",
 	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
 }

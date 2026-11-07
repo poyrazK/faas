@@ -22,7 +22,8 @@ func cmdEgressOverage(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() > 1 || (fs.NArg() == 1 && fs.Arg(0) != "on" && fs.Arg(0) != "off") {
+	set := fs.NArg() > 0
+	if set && (fs.NArg() != 1 || (fs.Arg(0) != "on" && fs.Arg(0) != "off")) {
 		PrintUsage(os.Stderr, egressOverageUsage, "egress-overage")
 		return 1
 	}
@@ -33,9 +34,9 @@ func cmdEgressOverage(args []string) int {
 	ctx := context.Background()
 	var out api.EgressOverageResponse
 	switch {
-	case fs.NArg() == 0 && *org == "":
+	case !set && *org == "":
 		out, err = client.GetEgressOverage(ctx)
-	case fs.NArg() == 0:
+	case !set:
 		out, err = client.GetOrgEgressOverage(ctx, *org)
 	case *org == "":
 		out, err = client.SetEgressOverage(ctx, fs.Arg(0) == "on")
