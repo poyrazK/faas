@@ -13,9 +13,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// accountFlowBackend lists only the Store methods these tests call
+// (teststorecheck: never embed state.Store in a test interface).
 type accountFlowBackend interface {
-	state.Store
 	state.AccountFlowStore
+	CreateAccount(ctx context.Context, email string, plan api.Plan) (state.Account, error)
+	AccountByID(ctx context.Context, id string) (state.Account, error)
+	CreateSession(ctx context.Context, id, accountID, issuedIP, issuedUA string) (state.Session, error)
+	UpsertOAuthLink(ctx context.Context, accountID, provider, providerSubject, email string, emailVerified bool) error
 }
 
 func accountFlowBackends(t *testing.T) map[string]func(t *testing.T) accountFlowBackend {
