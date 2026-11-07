@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -455,6 +456,9 @@ type Engine struct {
 	// capabilities holds a capability's background work while its platform
 	// flag is off for the owning account (ADR-20261023115741); nil allows all.
 	capabilities *capflags.Decider
+	// idleLadderRelease decides quiet_pause_unbilled for an app's account
+	// when idle_ladder_idle_out is on (ADR-20261107122928); nil holds none.
+	idleLadderRelease func(platformflags.Subject) bool
 	// profileCaptureMetrics records on-demand captures (ADR-1155); nil records nothing.
 	profileCaptureMetrics *wire.ProfileCaptureMetrics
 	capabilitySubjects    capabilitySubjects
