@@ -90,7 +90,7 @@ func prepareBindingPolicyVerification(ctx context.Context, client *api.Client, s
 
 func validBindingPolicyConfigurationStamp(i api.AppBindingInventory) bool {
 	r := i.RuntimeFreshness
-	return i.Complete && len(i.Issues) == 0 && r != nil && r.Source == "instance_started_at" && !r.ObservedAt.IsZero() && !r.ObservedAt.After(time.Now()) &&
+	return i.Complete && len(i.Issues) == 0 && r != nil && r.Source == "instance_started_at" && !r.ObservedAt.IsZero() && !serverTimeAhead(r.ObservedAt, time.Now()) &&
 		r.ConfigChangedAt != nil && !r.ConfigChangedAt.IsZero() && !r.ConfigChangedAt.After(r.ObservedAt)
 }
 

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,6 +28,11 @@ func cmdEventsSchemaRollout(args []string) int {
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale event schema check SOURCE TYPE --version v2 [--schema @schema.json] [--samples @samples.json] [--from RFC3339 --until RFC3339]", "events")
 		return 1
+	}
+	if strings.TrimSpace(*version) == "" {
+		// Without it the server answered with its schema_versions pattern
+		// ("entries must contain 1..64 ASCII letters ..."), not the missing flag.
+		return printErr("Missing --version", fmt.Errorf("pass the proposed or registered schema version to check, for example --version v2"))
 	}
 	if *schema == "-" && *samples == "-" {
 		return printErr("Invalid input", fmt.Errorf("only one input may read stdin"))

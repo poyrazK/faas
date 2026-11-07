@@ -151,6 +151,21 @@ func (d cliTreeDiscovery) runsToday(words []string) (string, bool) {
 	return path, true
 }
 
+// groupListsRunner reports whether the tree group at path lists, among its
+// verbs, the tree path that runs today's command old: `event backfill` runs
+// `events backfill`, which the table names `event backfill create`.
+func (d cliTreeDiscovery) groupListsRunner(path []string, old string, verbs []cliSub) bool {
+	if len(verbs) == 0 {
+		return false
+	}
+	prefix := strings.Join(path, " ") + " "
+	return slices.ContainsFunc(cliTreeAliases, func(alias cliTreeAlias) bool {
+		verb, under := strings.CutPrefix(alias.New, prefix)
+		return under && alias.Old == old && !strings.Contains(verb, " ") &&
+			slices.ContainsFunc(verbs, func(sub cliSub) bool { return sub.Name == verb })
+	})
+}
+
 // cliTreeRenamesPath reports a path of today's that the table gives a tree
 // name of its own.
 func cliTreeRenamesPath(old string) bool {
@@ -231,6 +246,13 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 					sub.Subcommands = nil
 				case !sub.SubcommandsAfterPositionals:
 					sub.Subcommands = d.treeSubs(child)
+				}
+				if d.groupListsRunner(child, old, sub.Subcommands) {
+					// The group (`event backfill`) runs today's leaf only
+					// through one of its verbs (`create`), so the leaf's
+					// positionals and flags belong to that verb: on the group
+					// they told `get <job-id>` to take `<app> --from ...`.
+					sub.Positionals, sub.Flags, sub.Examples, sub.Notes = nil, nil, nil, nil
 				}
 				add(sub)
 			}
