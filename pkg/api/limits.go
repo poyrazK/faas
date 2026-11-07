@@ -14952,6 +14952,18 @@ const (
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
 
+// The minute tier is kept RequestAnalyticsMinuteRetention, whatever the plan
+// (ADR-20261103113952 amendment 3); the hourly tier keeps the plan's
+// telemetry retention. An analytics window reaching further back than
+// RequestAnalyticsMinuteReadHorizon starts and ends on whole UTC hours, so
+// that part is read from the hourly tier alone. The hour between the two
+// keeps the minutes a window inside the horizon reads from a sweep that runs
+// once an hour.
+const (
+	RequestAnalyticsMinuteRetention   = 48 * time.Hour
+	RequestAnalyticsMinuteReadHorizon = RequestAnalyticsMinuteRetention - time.Hour
+)
+
 // RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
 // adds sampled measures (guest execution, CPU, RSS, cold request and wake
 // boot p95) to analytics answered from rollups; past it they are left out
