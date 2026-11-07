@@ -3224,7 +3224,7 @@ export class OrgsService {
   }
   /**
    * Read the organization's egress overage election.
-   * Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members (ADR-20261104204500).
+   * Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members.
    * @returns EgressOverageResponse The organization's election.
    * @throws ApiError
    */

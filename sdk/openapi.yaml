@@ -6194,11 +6194,10 @@ paths:
       summary: Read the account's egress overage election.
       description: |
         Without the election every plan stops at its monthly egress allowance:
-        meterd parks the account's apps (`quota_exceeded_egress`) until the month
+        the account's apps are parked (`quota_exceeded_egress`) until the month
         ends or the plan grows. With it, egress above the allowance is billed as
-        overage, within the spend cap, while the provider bills egress live
-        (`billing: live`); while `billing` is `off` the allowance still holds
-        (ADR-20261104204500).
+        overage, within the spend cap, while egress billing is live
+        (`billing: live`); while `billing` is `off` the allowance still holds.
       responses:
         '200':
           description: The account's election.
@@ -19425,7 +19424,7 @@ paths:
       tags: [orgs]
       operationId: getOrgEgressOverage
       summary: Read the organization's egress overage election.
-      description: "Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members (ADR-20261104204500)."
+      description: "Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members."
       responses:
         '200':
           description: The organization's election.
@@ -25314,7 +25313,7 @@ components:
           format: int64
           minimum: 0
     EgressOverageRequest:
-      description: Turns the egress overage election on or off (ADR-20261104204500).
+      description: Turns the egress overage election on or off.
       type: object
       required: [enabled]
       properties:
@@ -25323,7 +25322,7 @@ components:
     EgressOverageResponse:
       description: |
         The billing subject's election to pay for egress above its plan's monthly
-        allowance instead of stopping at it (ADR-20261104204500).
+        allowance instead of stopping at it.
       type: object
       required: [enabled, electable, included_gib, billing]
       properties:

@@ -62,11 +62,10 @@ def sync_detailed(
     """Read the account's egress overage election.
 
      Without the election every plan stops at its monthly egress allowance:
-    meterd parks the account's apps (`quota_exceeded_egress`) until the month
+    the account's apps are parked (`quota_exceeded_egress`) until the month
     ends or the plan grows. With it, egress above the allowance is billed as
-    overage, within the spend cap, while the provider bills egress live
-    (`billing: live`); while `billing` is `off` the allowance still holds
-    (ADR-20261104204500).
+    overage, within the spend cap, while egress billing is live
+    (`billing: live`); while `billing` is `off` the allowance still holds.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -92,11 +91,10 @@ def sync(
     """Read the account's egress overage election.
 
      Without the election every plan stops at its monthly egress allowance:
-    meterd parks the account's apps (`quota_exceeded_egress`) until the month
+    the account's apps are parked (`quota_exceeded_egress`) until the month
     ends or the plan grows. With it, egress above the allowance is billed as
-    overage, within the spend cap, while the provider bills egress live
-    (`billing: live`); while `billing` is `off` the allowance still holds
-    (ADR-20261104204500).
+    overage, within the spend cap, while egress billing is live
+    (`billing: live`); while `billing` is `off` the allowance still holds.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,11 +116,10 @@ async def asyncio_detailed(
     """Read the account's egress overage election.
 
      Without the election every plan stops at its monthly egress allowance:
-    meterd parks the account's apps (`quota_exceeded_egress`) until the month
+    the account's apps are parked (`quota_exceeded_egress`) until the month
     ends or the plan grows. With it, egress above the allowance is billed as
-    overage, within the spend cap, while the provider bills egress live
-    (`billing: live`); while `billing` is `off` the allowance still holds
-    (ADR-20261104204500).
+    overage, within the spend cap, while egress billing is live
+    (`billing: live`); while `billing` is `off` the allowance still holds.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,11 +143,10 @@ async def asyncio(
     """Read the account's egress overage election.
 
      Without the election every plan stops at its monthly egress allowance:
-    meterd parks the account's apps (`quota_exceeded_egress`) until the month
+    the account's apps are parked (`quota_exceeded_egress`) until the month
     ends or the plan grows. With it, egress above the allowance is billed as
-    overage, within the spend cap, while the provider bills egress live
-    (`billing: live`); while `billing` is `off` the allowance still holds
-    (ADR-20261104204500).
+    overage, within the spend cap, while egress billing is live
+    (`billing: live`); while `billing` is `off` the allowance still holds.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

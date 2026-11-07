@@ -78,7 +78,7 @@ def sync_detailed(
     """Read the organization's egress overage election.
 
      Requires current organization membership and usage:read. An organization that owns its resources
-    elects egress overage apart from its members (ADR-20261104204500).
+    elects egress overage apart from its members.
 
     Args:
         slug (str):
@@ -110,7 +110,7 @@ def sync(
     """Read the organization's egress overage election.
 
      Requires current organization membership and usage:read. An organization that owns its resources
-    elects egress overage apart from its members (ADR-20261104204500).
+    elects egress overage apart from its members.
 
     Args:
         slug (str):
@@ -137,7 +137,7 @@ async def asyncio_detailed(
     """Read the organization's egress overage election.
 
      Requires current organization membership and usage:read. An organization that owns its resources
-    elects egress overage apart from its members (ADR-20261104204500).
+    elects egress overage apart from its members.
 
     Args:
         slug (str):
@@ -167,7 +167,7 @@ async def asyncio(
     """Read the organization's egress overage election.
 
      Requires current organization membership and usage:read. An organization that owns its resources
-    elects egress overage apart from its members (ADR-20261104204500).
+    elects egress overage apart from its members.
 
     Args:
         slug (str):

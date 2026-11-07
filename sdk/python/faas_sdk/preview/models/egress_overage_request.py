@@ -11,7 +11,7 @@ T = TypeVar("T", bound="EgressOverageRequest")
 
 @_attrs_define
 class EgressOverageRequest:
-    """Turns the egress overage election on or off (ADR-20261104204500)."""
+    """Turns the egress overage election on or off."""
 
     enabled: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * The billing subject's election to pay for egress above its plan's monthly
- * allowance instead of stopping at it (ADR-20261104204500).
+ * allowance instead of stopping at it.
  *
  */
 export type EgressOverageResponse = {
