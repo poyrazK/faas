@@ -245,7 +245,7 @@ A Compose service that publishes `ports:` gets a public URL. One without
 no public URL. So is one whose ports are all bound to a loopback address, such
 as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
 plan warns, and removing the address publishes it. Other services are public unless
-[`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
+the root [`gregale.yaml` `project:` block](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see
 [networking](networking.md) for changing it later.
@@ -345,26 +345,34 @@ is off unless your operator has enabled it; see
 
 ## Without a Compose file
 
-A repository without Compose declares the same things in
-`.gregale/project.yaml` at its root
-([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)):
+A repository without Compose declares the same things in the `project:` block
+of the `gregale.yaml` at its root
+([ADR-20261107180000](adr/20261107180000-one-config-file.md)):
 
 ```yaml
-service_policy: project        # project, declared or account, for every service
-services:
-  billing:
-    visibility: internal       # no public URL; set when the app is created
-    depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
-  admin:
-    service_policy: declared   # admin may call only what it declares
+project:
+  service_policy: project        # project, declared or account, for every service
+  services:
+    billing:
+      visibility: internal       # no public URL; set when the app is created
+      depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
+    admin:
+      service_policy: declared   # admin may call only what it declares
 ```
 
-Service names are the ones the plan shows. The file also applies to Compose
+Service names are the ones the plan shows. The block also applies to Compose
 services, but Compose stays the more specific source: a Compose
 `x-gregale-service-policy` wins, and `depends_on` lists from both are merged.
 A project created before the `project` policy became the default switches by
 setting `service_policy: project` here. An unknown name, key or value fails
-the plan and names the file.
+the plan and names the file. A root `gregale.yaml` that holds only the
+`project:` block is not deployed as a service.
+
+The same settings used to live in `.gregale/project.yaml`. That file still
+works but is deprecated: deploys warn about it, and declaring settings in
+both places fails the plan. Move it with `gregale project import`, which
+appends the block to your `gregale.yaml` without changing the rest of the
+file and deletes the old one (`--dry-run` prints the result first).
 
 ## Configuration
 

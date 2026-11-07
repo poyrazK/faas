@@ -182,7 +182,7 @@ services:
 ```
 
 A repository without Compose declares the same policy, per-service
-visibility and `depends_on` in `.gregale/project.yaml`
+visibility and `depends_on` in the root `gregale.yaml` `project:` block (formerly `.gregale/project.yaml`)
 ([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md));
 a Compose declaration wins where both set a policy.
 

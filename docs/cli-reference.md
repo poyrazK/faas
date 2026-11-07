@@ -1923,6 +1923,20 @@ Only services the latest deploy changed roll back unless --all; services added s
 
 Stops at the first service that fails; run it again to finish.
 
+### project import
+
+Import .gregale/project.yaml into the root gregale.yaml project block
+
+`gregale project import [--dry-run] [<dir>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the new gregale.yaml without writing |  |
+
+Runs locally; nothing is uploaded.
+
+The existing gregale.yaml is kept as written; the block is appended and checked against the old file before anything changes.
+
 
 ## build
 
