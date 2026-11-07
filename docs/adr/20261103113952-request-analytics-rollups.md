@@ -230,3 +230,80 @@ A review of long windows found three more problems.
    on raw-row windows they run unbounded. A failure leaves out
    `deployment_costs` or the route deployment splits, logs a warning, and
    sets `sampled_measures` to `omitted`. A cancelled request still fails.
+
+## Amendment 3 (2026-11-07): smaller rollups
+
+A size review found the minute tier holding about 2.8 GB a day for one app
+at 100 requests/s (689 bytes per row on Postgres 16, 2,840 rows a minute),
+so about 20 GB at Pro's 7-day retention and 39 GB at Scale's 14 days: about
+half the raw telemetry it was meant to replace. Two causes, both fixed:
+
+1. **Dimension rows were split by status and deployment.** Every
+   `country`, `referrer_host`, `ua_family` and `consumer_id` row carried the
+   request's HTTP status and deployment in its key, as route rows do. No
+   reader uses either for those kinds: `group_by=status` and the deployment
+   splits read route rows only, and error counts are a column. apid now
+   writes those rows with status `0` and the nil deployment, so a value is
+   one row per minute. Route rows keep their method, status and deployment.
+   Migration `20261107164340118` lets the status CHECK of both tiers accept
+   `0` on non-route rows (added `NOT VALID`, validated, then the old CHECK
+   dropped); the previous release writes rows it accepts and reads status on
+   route rows only. Rows written before the upgrade age out with retention;
+   readers merge old and new rows of a value as they already merge groups.
+2. **The top-N fold was per flush, not per minute.** Each 10-second flush
+   kept its own busiest `RequestAnalyticsRollupDimensionsMax` values, so a
+   minute stored up to six different sets (about 180 consumers instead of
+   50), and each minute row was upserted about six times. apid now writes a
+   minute once, at the first flush after it closed
+   `RequestAnalyticsRollupMinuteGrace` (30 s) ago, with one fold over the
+   whole minute; rows of a minute that arrive later are added by the next
+   flush. The grace covers gateways holding a minute until it closes, and
+   the minute is still inside `RequestAnalyticsSettleLag`, which readers
+   already report as arriving. A clean shutdown writes the open minutes too.
+   An apid crash now loses up to about 100 s of rollups instead of 10 s;
+   the debugger's raw rows are unaffected. The per-minute value buffer is
+   `RequestAnalyticsRollupDimensionsBufferMax` (now 500), as a value costs
+   one buffered row.
+
+With the same traffic mix, a minute is now 358 rows written once (538 with a
+canary's second deployment), against 2,840 rows from 6,952 upserts: about
+8x less storage and 19x fewer row writes, in both tiers. The hourly tier is
+derived from the same rows, so each hour row is now updated once a minute
+instead of every flush.
+
+Two more reductions follow in the same change:
+
+3. **Minutes are kept 48 hours.** The hourly tier already answers every
+   whole hour of a window, so minute rows matter only for a window's partial
+   edge hours. meterd now sweeps minute rows past
+   `RequestAnalyticsMinuteRetention` (48 h) on every plan, or sooner when the
+   plan's telemetry retention is shorter; hour rows keep the plan ladder.
+   An analytics window whose start or end lies past
+   `RequestAnalyticsMinuteReadHorizon` (47 h, an hour of margin for the
+   hourly sweep) is widened to whole UTC hours: its start moves back to the
+   hour, or forward when that hour precedes the plan's retention, and its
+   end moves forward to the next hour; ends inside the horizon stay as asked,
+   so a recent window still ends now. The response's `from` and `until` show
+   the window answered. Past the horizon the rollups answer only a start the
+   hourly tier holds (on the hour, at or after its coverage); otherwise the
+   read falls back to raw rows, as before coverage. For a 14-day Scale app
+   at 100 requests/s, the minute tier drops from about 5 GB to about 0.7 GB.
+   An apid of the previous release reading a long window during the rollout
+   finds its first partial hour's minutes swept and under-counts that hour.
+   A single cutoff for nearly every row also lets each sweep batch take the
+   oldest rows off the bucket index, instead of walking past Scale rows that
+   Pro and Hobby cutoffs leave behind.
+4. **Integer histograms, expand step.** `latency_hist` is 45 `bigint`s,
+   360 of a row's 689 bytes, but a bucket counts one app's requests in one
+   minute or hour. Migration `20261107175452204` adds the nullable
+   `latency_hist_int4 integer[]` to both tiers, makes `latency_hist`
+   nullable, and requires a row to hold at least one of them. Readers add the
+   two columns bucket by bucket, and this release's writer, adding to a row
+   whose `latency_hist` is NULL, starts from zeros. The writer still writes
+   `latency_hist`: a previous-release reader scans NULL histogram buckets as
+   errors, so a release that wrote integers alone would fail its analytics
+   reads during the rollout or after a rollback. The next release's writer
+   fills `latency_hist_int4` alone and folds a row's bigint histogram into it
+   when it updates the row (`request_analytics_hist_add_int4`); a later
+   contract migration drops `latency_hist`. That saves about 26% of every
+   rollup row.

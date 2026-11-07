@@ -25990,6 +25990,17 @@ $$;
 
 
 --
+-- Name: request_analytics_hist_add_int4(integer[], integer[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_hist_add_int4(a integer[], b integer[]) RETURNS integer[]
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+    SELECT array_agg(x + y ORDER BY i) FROM unnest(a, b) WITH ORDINALITY AS u(x, y, i)
+$$;
+
+
+--
 -- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -54875,7 +54886,8 @@ CREATE TABLE public.request_analytics_hours (
     cold_boots bigint NOT NULL,
     request_time_ms bigint NOT NULL,
     latency_max_ms integer NOT NULL,
-    latency_hist bigint[] NOT NULL,
+    latency_hist bigint[],
+    latency_hist_int4 integer[],
     CONSTRAINT request_analytics_hours_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_bin('01:00:00'::interval, bucket_start, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
     CONSTRAINT request_analytics_hours_check CHECK (((octet_length(method) <= 16) AND ((dimension_kind = 'route'::text) OR (method = ''::text)))),
     CONSTRAINT request_analytics_hours_check1 CHECK (((error_requests >= 0) AND (error_requests <= requests))),
@@ -54883,10 +54895,12 @@ CREATE TABLE public.request_analytics_hours (
     CONSTRAINT request_analytics_hours_dimension_check CHECK (((octet_length(dimension) >= 1) AND (octet_length(dimension) <= 512))),
     CONSTRAINT request_analytics_hours_dimension_kind_check CHECK ((dimension_kind = ANY (ARRAY['route'::text, 'country'::text, 'referrer_host'::text, 'ua_family'::text, 'consumer_id'::text]))),
     CONSTRAINT request_analytics_hours_latency_hist_check CHECK (((cardinality(latency_hist) = 45) AND (array_ndims(latency_hist) = 1) AND (array_position(latency_hist, NULL::bigint) IS NULL))),
+    CONSTRAINT request_analytics_hours_latency_hist_int4_chk CHECK (((latency_hist_int4 IS NULL) OR ((cardinality(latency_hist_int4) = 45) AND (array_ndims(latency_hist_int4) = 1) AND (array_position(latency_hist_int4, NULL::integer) IS NULL)))),
+    CONSTRAINT request_analytics_hours_latency_hist_present_chk CHECK (((latency_hist IS NOT NULL) OR (latency_hist_int4 IS NOT NULL))),
     CONSTRAINT request_analytics_hours_latency_max_ms_check CHECK ((latency_max_ms >= 0)),
     CONSTRAINT request_analytics_hours_request_time_ms_check CHECK ((request_time_ms >= 0)),
     CONSTRAINT request_analytics_hours_requests_check CHECK ((requests >= 1)),
-    CONSTRAINT request_analytics_hours_status_check CHECK (((status >= 100) AND (status <= 599)))
+    CONSTRAINT request_analytics_hours_status_kind_chk CHECK ((((status >= 100) AND (status <= 599)) OR ((status = 0) AND (dimension_kind <> 'route'::text))))
 );
 
 
@@ -54915,7 +54929,8 @@ CREATE TABLE public.request_analytics_minutes (
     cold_boots bigint NOT NULL,
     request_time_ms bigint NOT NULL,
     latency_max_ms integer NOT NULL,
-    latency_hist bigint[] NOT NULL,
+    latency_hist bigint[],
+    latency_hist_int4 integer[],
     CONSTRAINT request_analytics_minutes_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_bin('00:01:00'::interval, bucket_start, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
     CONSTRAINT request_analytics_minutes_check CHECK (((octet_length(method) <= 16) AND ((dimension_kind = 'route'::text) OR (method = ''::text)))),
     CONSTRAINT request_analytics_minutes_check1 CHECK (((error_requests >= 0) AND (error_requests <= requests))),
@@ -54923,10 +54938,12 @@ CREATE TABLE public.request_analytics_minutes (
     CONSTRAINT request_analytics_minutes_dimension_check CHECK (((octet_length(dimension) >= 1) AND (octet_length(dimension) <= 512))),
     CONSTRAINT request_analytics_minutes_dimension_kind_check CHECK ((dimension_kind = ANY (ARRAY['route'::text, 'country'::text, 'referrer_host'::text, 'ua_family'::text, 'consumer_id'::text]))),
     CONSTRAINT request_analytics_minutes_latency_hist_check CHECK (((cardinality(latency_hist) = 45) AND (array_ndims(latency_hist) = 1) AND (array_position(latency_hist, NULL::bigint) IS NULL))),
+    CONSTRAINT request_analytics_minutes_latency_hist_int4_chk CHECK (((latency_hist_int4 IS NULL) OR ((cardinality(latency_hist_int4) = 45) AND (array_ndims(latency_hist_int4) = 1) AND (array_position(latency_hist_int4, NULL::integer) IS NULL)))),
+    CONSTRAINT request_analytics_minutes_latency_hist_present_chk CHECK (((latency_hist IS NOT NULL) OR (latency_hist_int4 IS NOT NULL))),
     CONSTRAINT request_analytics_minutes_latency_max_ms_check CHECK ((latency_max_ms >= 0)),
     CONSTRAINT request_analytics_minutes_request_time_ms_check CHECK ((request_time_ms >= 0)),
     CONSTRAINT request_analytics_minutes_requests_check CHECK ((requests >= 1)),
-    CONSTRAINT request_analytics_minutes_status_check CHECK (((status >= 100) AND (status <= 599)))
+    CONSTRAINT request_analytics_minutes_status_kind_chk CHECK ((((status >= 100) AND (status <= 599)) OR ((status = 0) AND (dimension_kind <> 'route'::text))))
 );
 
 

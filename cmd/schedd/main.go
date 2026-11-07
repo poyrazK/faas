@@ -1857,6 +1857,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
+	switch {
+	case cfg.IdleLadderIdleOut && !cfg.QuietPauseLedger:
+		log.Warn("idle_ladder_idle_out ignored: it needs quiet_pause_ledger (ADR-20261107122928)")
+	case cfg.IdleLadderIdleOut:
+		// The reaper holds an account's paused instances only where meterd
+		// leaves their paused seconds unbilled: the same flag decision.
+		engine.WithIdleLadderIdleOut(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		})
+		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
+			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
+	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -2110,6 +2122,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		WithInstanceActivity(autoscaleReader).
+		WithIdleLadderIdleOutMetrics(sched.NewIdleLadderIdleOutMetrics(ops.Registry())).
 		// Issue #171: shared Prometheus registry (same instance the
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.

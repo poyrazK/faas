@@ -32,7 +32,7 @@ SET requests = m.requests + EXCLUDED.requests,
     cold_boots = m.cold_boots + EXCLUDED.cold_boots,
     request_time_ms = m.request_time_ms + EXCLUDED.request_time_ms,
     latency_max_ms = GREATEST(m.latency_max_ms, EXCLUDED.latency_max_ms),
-    latency_hist = request_analytics_hist_add(m.latency_hist, EXCLUDED.latency_hist);
+    latency_hist = request_analytics_hist_add(COALESCE(m.latency_hist, array_fill(0::bigint, ARRAY[45])), EXCLUDED.latency_hist);
 
 -- name: AddRequestAnalyticsHours :exec
 -- ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
@@ -66,7 +66,7 @@ SET requests = m.requests + EXCLUDED.requests,
     cold_boots = m.cold_boots + EXCLUDED.cold_boots,
     request_time_ms = m.request_time_ms + EXCLUDED.request_time_ms,
     latency_max_ms = GREATEST(m.latency_max_ms, EXCLUDED.latency_max_ms),
-    latency_hist = request_analytics_hist_add(m.latency_hist, EXCLUDED.latency_hist);
+    latency_hist = request_analytics_hist_add(COALESCE(m.latency_hist, array_fill(0::bigint, ARRAY[45])), EXCLUDED.latency_hist);
 
 -- name: RecordRequestAnalyticsRollupCoverage :exec
 -- The first flush that holds an app's rows records its minute, for both
@@ -101,11 +101,13 @@ SELECT covered_since, hours_covered_since FROM request_analytics_rollup_coverage
 -- route/method filter applies to route rows only, so callers pass group_by
 -- 'route' or 'status' with it. A bucket counts when it starts inside the
 -- window. latency_hist is the groups' merged histogram, summed bucket by
--- bucket; callers turn it into percentiles. filtered is not materialized:
+-- bucket; callers turn it into percentiles. A row holds its histogram in
+-- latency_hist, latency_hist_int4 or, while two releases write, both
+-- (amendment 3), so each bucket adds the two. filtered is not materialized:
 -- the top-group pass reads no histograms.
 WITH filtered AS NOT MATERIALIZED (
     SELECT bucket_start, dimension_kind, dimension, method, status,
-           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
     FROM request_analytics_minutes AS rm
     WHERE rm.app_id = sqlc.arg(app_id)
       AND rm.account_id = sqlc.arg(account_id)
@@ -114,7 +116,7 @@ WITH filtered AS NOT MATERIALIZED (
         OR (rm.bucket_start >= sqlc.arg(hours_until)::timestamptz AND rm.bucket_start < sqlc.arg(window_until)::timestamptz))
     UNION ALL
     SELECT bucket_start, dimension_kind, dimension, method, status,
-           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
     FROM request_analytics_hours AS rh
     WHERE rh.app_id = sqlc.arg(app_id)
       AND rh.account_id = sqlc.arg(account_id)
@@ -126,7 +128,7 @@ WITH filtered AS NOT MATERIALIZED (
                 ELSE 'epoch'::timestamptz END AS bucket,
            CASE WHEN sqlc.arg(group_by)::text = 'status' THEN status::text ELSE dimension END AS dimension,
            CASE WHEN sqlc.arg(group_by)::text = 'route' THEN method ELSE '' END AS method,
-           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
     FROM filtered
     WHERE (sqlc.arg(route)::text = '' OR dimension = sqlc.arg(route)::text)
       AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method)::text)
@@ -146,15 +148,21 @@ SELECT f.bucket::timestamptz AS bucket,
        SUM(f.request_time_ms)::bigint AS request_time_ms,
        MAX(f.latency_max_ms)::int AS latency_max_ms,
        ARRAY[
-           SUM(f.latency_hist[1]), SUM(f.latency_hist[2]), SUM(f.latency_hist[3]), SUM(f.latency_hist[4]), SUM(f.latency_hist[5]),
-           SUM(f.latency_hist[6]), SUM(f.latency_hist[7]), SUM(f.latency_hist[8]), SUM(f.latency_hist[9]), SUM(f.latency_hist[10]),
-           SUM(f.latency_hist[11]), SUM(f.latency_hist[12]), SUM(f.latency_hist[13]), SUM(f.latency_hist[14]), SUM(f.latency_hist[15]),
-           SUM(f.latency_hist[16]), SUM(f.latency_hist[17]), SUM(f.latency_hist[18]), SUM(f.latency_hist[19]), SUM(f.latency_hist[20]),
-           SUM(f.latency_hist[21]), SUM(f.latency_hist[22]), SUM(f.latency_hist[23]), SUM(f.latency_hist[24]), SUM(f.latency_hist[25]),
-           SUM(f.latency_hist[26]), SUM(f.latency_hist[27]), SUM(f.latency_hist[28]), SUM(f.latency_hist[29]), SUM(f.latency_hist[30]),
-           SUM(f.latency_hist[31]), SUM(f.latency_hist[32]), SUM(f.latency_hist[33]), SUM(f.latency_hist[34]), SUM(f.latency_hist[35]),
-           SUM(f.latency_hist[36]), SUM(f.latency_hist[37]), SUM(f.latency_hist[38]), SUM(f.latency_hist[39]), SUM(f.latency_hist[40]),
-           SUM(f.latency_hist[41]), SUM(f.latency_hist[42]), SUM(f.latency_hist[43]), SUM(f.latency_hist[44]), SUM(f.latency_hist[45])
+           SUM(COALESCE(f.latency_hist[1], 0) + COALESCE(f.latency_hist_int4[1], 0)), SUM(COALESCE(f.latency_hist[2], 0) + COALESCE(f.latency_hist_int4[2], 0)), SUM(COALESCE(f.latency_hist[3], 0) + COALESCE(f.latency_hist_int4[3], 0)),
+           SUM(COALESCE(f.latency_hist[4], 0) + COALESCE(f.latency_hist_int4[4], 0)), SUM(COALESCE(f.latency_hist[5], 0) + COALESCE(f.latency_hist_int4[5], 0)), SUM(COALESCE(f.latency_hist[6], 0) + COALESCE(f.latency_hist_int4[6], 0)),
+           SUM(COALESCE(f.latency_hist[7], 0) + COALESCE(f.latency_hist_int4[7], 0)), SUM(COALESCE(f.latency_hist[8], 0) + COALESCE(f.latency_hist_int4[8], 0)), SUM(COALESCE(f.latency_hist[9], 0) + COALESCE(f.latency_hist_int4[9], 0)),
+           SUM(COALESCE(f.latency_hist[10], 0) + COALESCE(f.latency_hist_int4[10], 0)), SUM(COALESCE(f.latency_hist[11], 0) + COALESCE(f.latency_hist_int4[11], 0)), SUM(COALESCE(f.latency_hist[12], 0) + COALESCE(f.latency_hist_int4[12], 0)),
+           SUM(COALESCE(f.latency_hist[13], 0) + COALESCE(f.latency_hist_int4[13], 0)), SUM(COALESCE(f.latency_hist[14], 0) + COALESCE(f.latency_hist_int4[14], 0)), SUM(COALESCE(f.latency_hist[15], 0) + COALESCE(f.latency_hist_int4[15], 0)),
+           SUM(COALESCE(f.latency_hist[16], 0) + COALESCE(f.latency_hist_int4[16], 0)), SUM(COALESCE(f.latency_hist[17], 0) + COALESCE(f.latency_hist_int4[17], 0)), SUM(COALESCE(f.latency_hist[18], 0) + COALESCE(f.latency_hist_int4[18], 0)),
+           SUM(COALESCE(f.latency_hist[19], 0) + COALESCE(f.latency_hist_int4[19], 0)), SUM(COALESCE(f.latency_hist[20], 0) + COALESCE(f.latency_hist_int4[20], 0)), SUM(COALESCE(f.latency_hist[21], 0) + COALESCE(f.latency_hist_int4[21], 0)),
+           SUM(COALESCE(f.latency_hist[22], 0) + COALESCE(f.latency_hist_int4[22], 0)), SUM(COALESCE(f.latency_hist[23], 0) + COALESCE(f.latency_hist_int4[23], 0)), SUM(COALESCE(f.latency_hist[24], 0) + COALESCE(f.latency_hist_int4[24], 0)),
+           SUM(COALESCE(f.latency_hist[25], 0) + COALESCE(f.latency_hist_int4[25], 0)), SUM(COALESCE(f.latency_hist[26], 0) + COALESCE(f.latency_hist_int4[26], 0)), SUM(COALESCE(f.latency_hist[27], 0) + COALESCE(f.latency_hist_int4[27], 0)),
+           SUM(COALESCE(f.latency_hist[28], 0) + COALESCE(f.latency_hist_int4[28], 0)), SUM(COALESCE(f.latency_hist[29], 0) + COALESCE(f.latency_hist_int4[29], 0)), SUM(COALESCE(f.latency_hist[30], 0) + COALESCE(f.latency_hist_int4[30], 0)),
+           SUM(COALESCE(f.latency_hist[31], 0) + COALESCE(f.latency_hist_int4[31], 0)), SUM(COALESCE(f.latency_hist[32], 0) + COALESCE(f.latency_hist_int4[32], 0)), SUM(COALESCE(f.latency_hist[33], 0) + COALESCE(f.latency_hist_int4[33], 0)),
+           SUM(COALESCE(f.latency_hist[34], 0) + COALESCE(f.latency_hist_int4[34], 0)), SUM(COALESCE(f.latency_hist[35], 0) + COALESCE(f.latency_hist_int4[35], 0)), SUM(COALESCE(f.latency_hist[36], 0) + COALESCE(f.latency_hist_int4[36], 0)),
+           SUM(COALESCE(f.latency_hist[37], 0) + COALESCE(f.latency_hist_int4[37], 0)), SUM(COALESCE(f.latency_hist[38], 0) + COALESCE(f.latency_hist_int4[38], 0)), SUM(COALESCE(f.latency_hist[39], 0) + COALESCE(f.latency_hist_int4[39], 0)),
+           SUM(COALESCE(f.latency_hist[40], 0) + COALESCE(f.latency_hist_int4[40], 0)), SUM(COALESCE(f.latency_hist[41], 0) + COALESCE(f.latency_hist_int4[41], 0)), SUM(COALESCE(f.latency_hist[42], 0) + COALESCE(f.latency_hist_int4[42], 0)),
+           SUM(COALESCE(f.latency_hist[43], 0) + COALESCE(f.latency_hist_int4[43], 0)), SUM(COALESCE(f.latency_hist[44], 0) + COALESCE(f.latency_hist_int4[44], 0)), SUM(COALESCE(f.latency_hist[45], 0) + COALESCE(f.latency_hist_int4[45], 0))
        ]::bigint[] AS latency_hist
 FROM grouped AS f
 LEFT JOIN top_groups AS t ON t.dimension = f.dimension AND t.method = f.method
