@@ -6728,13 +6728,14 @@ Show the org&#39;s agent policy
 
 Allow or deny agents and cap their capabilities
 
-`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>]`
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--org <SLUG>` | organization slug | required |
 | `--agents <allow|deny>` | allow or deny agents in the org | required |
 | `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
+| `--approvals <LIST>` | kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none |  |
 
 Examples:
 
@@ -6922,7 +6923,7 @@ List org API keys
 
 Create an org API key; the plaintext is shown once
 
-`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>]`
+`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6930,6 +6931,7 @@ Create an org API key; the plaintext is shown once
 | `--label <TEXT>` | key label | required |
 | `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
 | `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
+| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
 
 #### org keys info
 
@@ -7027,18 +7029,20 @@ List API keys
 
 Mint a new API key
 
-`gregale key create [--scopes <SCOPE,...>] [--projects <SLUG,...>] <label>`
+`gregale key create [--scopes <SCOPE,...>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scopes <SCOPE,...>` | comma-separated API key scopes; omit for full admin access |  |
 | `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
+| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
 
 Examples:
 
 ```sh
 gregale key create agent-runner --scopes runs:write
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
+gregale key create sandbox-agent --scopes agent,deploy:write --approvals none
 ```
 
 ### key delete

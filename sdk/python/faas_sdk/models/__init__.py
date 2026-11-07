@@ -34,8 +34,15 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_approval_pending_info import AgentApprovalPendingInfo
+from .agent_approval_pending_info_category import AgentApprovalPendingInfoCategory
+from .agent_approval_response import AgentApprovalResponse
+from .agent_approval_response_category import AgentApprovalResponseCategory
+from .agent_approval_response_status import AgentApprovalResponseStatus
+from .agent_approvals_response import AgentApprovalsResponse
 from .agent_client_request import AgentClientRequest
 from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_approvals_item import AgentConnectionResponseApprovalsItem
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
@@ -58,6 +65,7 @@ from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
+from .api_key_response_approval_categories_item import APIKeyResponseApprovalCategoriesItem
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
 from .app_agent_binding import AppAgentBinding
@@ -441,6 +449,7 @@ from .create_job_run_request_env_overrides import CreateJobRunRequestEnvOverride
 from .create_job_run_request_execution_class import CreateJobRunRequestExecutionClass
 from .create_job_run_request_failure_policy import CreateJobRunRequestFailurePolicy
 from .create_key_request import CreateKeyRequest
+from .create_key_request_approval_categories_item import CreateKeyRequestApprovalCategoriesItem
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
 from .create_managed_execution_workflow_request import CreateManagedExecutionWorkflowRequest
 from .create_managed_execution_workflow_request_failure_policy import CreateManagedExecutionWorkflowRequestFailurePolicy
@@ -457,6 +466,7 @@ from .create_notification_channel_request import CreateNotificationChannelReques
 from .create_notification_channel_request_kind import CreateNotificationChannelRequestKind
 from .create_notification_channel_request_pagerduty_region import CreateNotificationChannelRequestPagerdutyRegion
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
+from .create_org_api_key_request_approval_categories_item import CreateOrgAPIKeyRequestApprovalCategoriesItem
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
 from .create_preview_request import CreatePreviewRequest
@@ -1707,6 +1717,7 @@ from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
 from .org_agent_policy_request import OrgAgentPolicyRequest
 from .org_agent_policy_request_allowed_scopes_item import OrgAgentPolicyRequestAllowedScopesItem
+from .org_agent_policy_request_approval_categories_item import OrgAgentPolicyRequestApprovalCategoriesItem
 from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
@@ -2681,8 +2692,15 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentApprovalPendingInfo",
+    "AgentApprovalPendingInfoCategory",
+    "AgentApprovalResponse",
+    "AgentApprovalResponseCategory",
+    "AgentApprovalResponseStatus",
+    "AgentApprovalsResponse",
     "AgentClientRequest",
     "AgentConnectionResponse",
+    "AgentConnectionResponseApprovalsItem",
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
@@ -2705,6 +2723,7 @@ __all__ = (
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",
+    "APIKeyResponseApprovalCategoriesItem",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
     "AppAgentBinding",
@@ -3086,6 +3105,7 @@ __all__ = (
     "CreateJobRunRequestExecutionClass",
     "CreateJobRunRequestFailurePolicy",
     "CreateKeyRequest",
+    "CreateKeyRequestApprovalCategoriesItem",
     "CreateKeyRequestScopesItem",
     "CreateManagedExecutionWorkflowRequest",
     "CreateManagedExecutionWorkflowRequestFailurePolicy",
@@ -3100,6 +3120,7 @@ __all__ = (
     "CreateNotificationChannelRequestKind",
     "CreateNotificationChannelRequestPagerdutyRegion",
     "CreateOrgAPIKeyRequest",
+    "CreateOrgAPIKeyRequestApprovalCategoriesItem",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
     "CreatePreviewRequest",
@@ -4224,6 +4245,7 @@ __all__ = (
     "OrgActivityResponseData",
     "OrgAgentPolicyRequest",
     "OrgAgentPolicyRequestAllowedScopesItem",
+    "OrgAgentPolicyRequestApprovalCategoriesItem",
     "OrgAgentPolicyResponse",
     "OrgAppListResponse",
     "OrgAppSummary",

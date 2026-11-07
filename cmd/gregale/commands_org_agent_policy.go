@@ -13,17 +13,18 @@ import (
 // cmdOrgsAgentPolicy shows or sets whether agents may act in an
 // organization, and with which capabilities (ADR-20261101225122).
 func cmdOrgsAgentPolicy(args []string) int {
-	const usage = "usage: gregale org agent policy get --org <slug> | set --org <slug> --agents allow|deny [--capabilities LIST]"
+	const usage = "usage: gregale org agent policy get --org <slug> | set --org <slug> --agents allow|deny [--capabilities LIST] [--approvals LIST|none]"
 	if len(args) == 0 || (args[0] != "get" && args[0] != "set") {
 		PrintUsage(os.Stderr, usage, "orgs")
 		return 1
 	}
 	fs := newFlagSet("orgs agent-policy "+args[0], flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
-	var agents, capabilities string
+	var agents, capabilities, approvals string
 	if args[0] == "set" {
 		fs.StringVar(&agents, "agents", "", "allow or deny agents in the org")
 		fs.StringVar(&capabilities, "capabilities", "", "comma-separated capabilities agents may get; empty for read-only")
+		fs.StringVar(&approvals, "approvals", "", "kinds of action every agent must have a person approve: delete,production,credentials,billing, all or none")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
@@ -47,7 +48,11 @@ func cmdOrgsAgentPolicy(args []string) int {
 			// Never nil: --capabilities "" sends [] (read-only), not null.
 			scopes = append([]string{}, splitList(capabilities)...)
 		}
-		if policy, err = client.SetOrgAgentPolicy(ctx, *slug, api.OrgAgentPolicyRequest{AgentsAllowed: &allowed, AllowedScopes: &scopes}); err != nil {
+		floor, err := approvalsFlag(fs, approvals)
+		if err != nil {
+			return printErr("Invalid approvals", err)
+		}
+		if policy, err = client.SetOrgAgentPolicy(ctx, *slug, api.OrgAgentPolicyRequest{AgentsAllowed: &allowed, AllowedScopes: &scopes, ApprovalCategories: floor}); err != nil {
 			return printErr("Could not set the agent policy", err)
 		}
 	}
@@ -65,6 +70,11 @@ func printAgentPolicy(policy api.OrgAgentPolicyResponse) {
 		_, _ = fmt.Fprintln(osStdout, "Agents: allowed, read-only")
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Agents: allowed, with %s\n", strings.Join(policy.AllowedScopes, ", "))
+	}
+	if len(policy.ApprovalCategories) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "Approvals required for every agent: none beyond each connection's own")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Approvals required for every agent: %s\n", strings.Join(policy.ApprovalCategories, ", "))
 	}
 	if policy.Revoked > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Revoked %d agent connection(s) the policy no longer allows\n", policy.Revoked)

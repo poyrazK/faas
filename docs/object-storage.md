@@ -99,6 +99,13 @@ date permits a partial response; a stale validator returns the full current
 object. If the provider ignores the condition, the full-read fallback counts as
 another request and must fit the remaining read and egress allowances.
 
+Reads of a mount are served before your app's edge rules and access control:
+`ip`, `jwt`, `geo`, `limit` and other rules, and the app's public auth mode
+(Basic, bearer, IP allowlist), do not apply to them. Put anything that needs
+those behind your app instead. SVG and XML objects are served with
+`Content-Security-Policy: sandbox`, so opening one directly cannot run script
+on your app's hostname.
+
 ## Upload and download files
 
 From the CLI:
@@ -172,6 +179,12 @@ Organization-bound keys must match the app's organization, and project-limited
 keys can upload and read receipts only for apps in their allowed projects.
 Each request is one PUT and must fit the configured single-upload limit,
 including when the route's stored byte policy is larger.
+
+Active content (HTML, SVG, XML, XSL and JavaScript types) is accepted only when
+the route lists the exact type: an empty list or a wildcard such as `image/*`
+never admits it, so `image/*` does not admit `image/svg+xml`. A route on a
+public bucket mount cannot list an active type at all, and such uploads are
+refused with `415`, because the file would be served on your app's hostname.
 
 ## Use an S3 SDK
 

@@ -53917,6 +53917,51 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-approvals:
+    get:
+      tags: [keys]
+      operationId: listAgentApprovals
+      summary: List agent approval requests.
+      description: |
+        With an agent connection's key: that agent's requests that needed a
+        person's approval, newest first. With any other credential: the
+        pending requests the caller may decide, those of agents they
+        connected and of agents acting in organizations they own or
+        administer. A person decides only on the review page.
+      responses:
+        '200':
+          description: The approval requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentApprovalsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-approvals/{id}:
+    get:
+      tags: [keys]
+      operationId: getAgentApproval
+      summary: Get an agent approval request.
+      description: |
+        An agent reads its own request to learn whether a person approved
+        it; a person reads one they may decide. Any other request answers
+        404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The approval request's id.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The approval request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentApprovalResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/agent-connections/revoke_all:
     post:
       tags: [keys]
@@ -113091,6 +113136,7 @@ components:
         org_id: { type: string, format: uuid, description: The organization the agent acts in. }
         member: { type: string, description: "Email of the member who connected the agent, in an organization's list." }
         projects: { type: array, items: { type: string }, description: "Slugs of the projects the agent is limited to; absent when it reaches every project." }
+        approvals: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action the agent must have a person approve, including its organization's floor." }
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
 
     AgentConnectionsResponse:
@@ -113129,6 +113175,10 @@ components:
           type: array
           description: Capabilities agents may get beyond inspection; empty for read-only.
           items: { type: string, enum: [deploy:write, secrets:request, storage:manage, postgres:manage] }
+        approval_categories:
+          type: array
+          description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
+          items: { type: string, enum: [delete, production, credentials, billing] }
 
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
@@ -113140,8 +113190,48 @@ components:
           type: array
           description: The capabilities agents may carry beyond inspection.
           items: { type: string }
+        approval_categories:
+          type: array
+          description: Kinds of action every agent acting in the organization must have a person approve.
+          items: { type: string }
         updated_at: { type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one. }
         revoked: { type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them. }
+
+    AgentApprovalPendingInfo:
+      description: "The approval request behind an approval_required problem: a person opens review_url to decide, then the agent repeats the same request once."
+      type: object
+      required: [id, category, review_url, expires_at]
+      properties:
+        id: { type: string, format: uuid, description: The id of the pending approval request. }
+        category: { type: string, enum: [delete, production, credentials, billing], description: The kind of action that needs approval. }
+        review_url: { type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request." }
+        expires_at: { type: string, format: date-time, description: When the request and any approval of it expire. }
+
+    AgentApprovalResponse:
+      description: "One request of an agent connection that needed a person's approval."
+      type: object
+      required: [id, category, method, path, body_bound, status, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid, description: The request's id. }
+        category: { type: string, enum: [delete, production, credentials, billing], description: The kind of action. }
+        method: { type: string, description: The HTTP method of the request the approval allows. }
+        path: { type: string, description: The path and query of the request the approval allows. }
+        body_bound: { type: boolean, description: "Whether the approval is tied to the request body; large and multipart bodies are not." }
+        status: { type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made." }
+        review_url: { type: string, format: uri, description: The review page, while the request is pending. }
+        agent: { type: string, description: "The connection's client name or key label." }
+        created_at: { type: string, format: date-time, description: When the agent first made the request. }
+        expires_at: { type: string, format: date-time, description: After this time the request can no longer be approved or used. }
+        decided_at: { type: string, format: date-time, description: When a person approved or denied it. }
+
+    AgentApprovalsResponse:
+      description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentApprovalResponse' }
 
     KeyOrg:
       description: The shared organization an API key acts in.
@@ -113181,6 +113271,7 @@ components:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
         projects: { type: array, items: { type: string }, description: "Project slugs the key was limited to, on the create response of a limited agent key." }
+        approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action the agent key must have a person approve, on the create response when the request chose them." }
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: [apps:read, deploy:write], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
 
     DeployTokenResponse:
@@ -113254,6 +113345,7 @@ components:
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
+        approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field." }
 
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
@@ -113282,6 +113374,7 @@ components:
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }
+        approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none." }
 
     ListOrgAPIKeysResponse:
       description: "GET /v1/orgs/{slug}/keys body. Returns every key minted against the org (active + grace + revoked). Newest first; matches the legacy `GET /v1/keys` ordering."
@@ -119615,6 +119708,7 @@ components:
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
         current_sequence: { type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.' }
+        agent_approval: { $ref: '#/components/schemas/AgentApprovalPendingInfo' }
         condition_field: { type: string }
         condition_index: { type: integer, minimum: 0 }
         field_exists: { type: boolean }

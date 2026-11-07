@@ -4373,6 +4373,9 @@ type APIKeyResponse struct {
 	// Projects are the slugs of the projects an agent key is limited to;
 	// absent for an unlimited key (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action a person must approve for
+	// an agent key, when it chose them (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4480,6 +4483,10 @@ type CreateKeyRequest struct {
 	// Projects limits an agent key to these projects' apps, by slug
 	// (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action an agent key must have a
+	// person approve; absent for every kind, empty for none
+	// (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4497,6 +4504,9 @@ type CreateOrgAPIKeyRequest struct {
 	// Projects limits an agent key to these projects' apps, by slug
 	// (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories: as CreateKeyRequest's; the organization's floor
+	// applies on top (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys

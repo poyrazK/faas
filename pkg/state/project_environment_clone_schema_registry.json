@@ -38,6 +38,26 @@
     "kind": "operational"
   },
   {
+    "table": "agent_approval_requests",
+    "columns": [
+      "account_id",
+      "body_sha256",
+      "category",
+      "consumed_at",
+      "created_at",
+      "decided_at",
+      "decided_by",
+      "expires_at",
+      "id",
+      "key_id",
+      "method",
+      "org_id",
+      "path",
+      "status"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "alert_test_sends",
     "columns": [
       "id",
@@ -53,6 +73,15 @@
       "completed_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "api_key_approval_categories",
+    "columns": [
+      "categories",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "api_key_project_limits",
@@ -13458,6 +13487,7 @@
     "columns": [
       "agents_allowed",
       "allowed_scopes",
+      "approval_categories",
       "org_id",
       "updated_at",
       "updated_by"

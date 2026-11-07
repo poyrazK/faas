@@ -169,6 +169,10 @@ gregale edge rule-list create team-ips --app company-api --kind ip --item 203.0.
 
 Lists are available on Hobby and above; see [Limits](#limits).
 
+Edge rules do not apply to a public bucket mount's paths (`--serve-at`):
+those reads are answered before the rules run. See
+[object storage](object-storage.md#public-buckets).
+
 ## Which rule applies
 
 Rules are evaluated in `priority` order, lowest first (0 to 10000, default

@@ -192,6 +192,16 @@ const (
 // shorter than other non-admin keys' because agents run unattended.
 const AgentKeyLifetime = 90 * 24 * time.Hour
 
+// Agent approvals (ADR-20261104140058): a request waits this long for a
+// person and its approval stays usable until then; one key holds at most
+// MaxPendingAgentApprovals undecided requests; a body up to
+// AgentApprovalBodyBindBytes is bound by its hash, a larger one is not.
+const (
+	AgentApprovalTTL           = 30 * time.Minute
+	MaxPendingAgentApprovals   = 20
+	AgentApprovalBodyBindBytes = 1 << 20
+)
+
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.
@@ -17968,6 +17978,14 @@ const (
 	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
 	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
 	PublicEntryTrackedSourcesMax          = 65536
+	// One address in Cloudflare's ranges carries many clients, but those
+	// ranges also carry every other Cloudflare customer's traffic, so they
+	// get a backstop PublicEntryProxyFactor times the per-source one rather
+	// than none (ADR-20261104221012).
+	PublicEntryProxyFactor                     = 16
+	PublicEntryProxyConnsPerSourceMax          = PublicEntryProxyFactor * PublicEntryConnsPerSourceMax
+	PublicEntryProxyNewConnsPerSecondPerSource = PublicEntryProxyFactor * PublicEntryNewConnsPerSecondPerSource
+	PublicEntryProxyNewConnsBurstPerSource     = PublicEntryProxyFactor * PublicEntryNewConnsBurstPerSource
 	// PublicBlockListRefreshInterval is how often vmmd re-reads the
 	// operator's block list (/etc/faas/public-block-list) and adds its
 	// entries to the firewall's block sets: an edit takes effect within
