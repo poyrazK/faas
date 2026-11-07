@@ -78,11 +78,7 @@ journalctl -u faas-gatewayd-public --since -1h | grep edgecert
   `edge-tls` identity does not open the new key. The recipient edgednsd seals
   to and the identity on the node must be the same pair; re-stage the domain
   with the seal_domains role. A new recipient makes edgednsd order a new
-  certificate on its next check. With several sets of names, a set whose
-  newest certificate does not open keeps serving the certificate the edge
-  already had for it (while that is valid) as the other sets renew, and the
-  reload logs `could not be opened`; fix the identity before the kept one
-  expires.
+  certificate on its next check.
 - `kept` with a database error: the node cannot reach the control plane's
   Postgres. The edge keeps serving its certificate until it expires; fix the
   connection.

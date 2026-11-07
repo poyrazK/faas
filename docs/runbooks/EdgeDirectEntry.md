@@ -34,7 +34,10 @@ through systemd `LoadCredential`:
 | `/etc/faas/secrets/edge-tls/origin.key` | the control plane's `/etc/caddy/tls/cloudflare-origin.key` |
 | `/etc/faas/secrets/edge-tls/origin-pull-ca.pem` | `origin-pull-ca.pem` from step 1 |
 
-Never put them in the repository or in inventory.
+Never put them in the repository or in inventory. The edge and the
+`gatewayd_public_edge_service` role refuse Cloudflare's shared origin-pull CA
+(`CN=origin-pull.cloudflare.net`), which Cloudflare's documentation ships under
+the same file name: every Cloudflare zone satisfies it (ADR-20261107180000).
 
 **Or the certificate edgednsd keeps** (ADR-20261103163954 §3). With nothing
 in front, the edge needs a publicly trusted certificate for the apps domain.
@@ -246,7 +249,18 @@ clients. They are not exempt: every Cloudflare customer connects from them.
 The edge's own connection limits exempt a connection from those ranges only
 once its TLS handshake presented the zone's origin-pull client certificate
 (ADR-20261104221012). Any other connection from them is counted against its
-address after the handshake and reset when that address is over its limits. The drops are counted on their rules:
+address after the handshake and reset when that address is over its limits.
+
+While a handshake is in progress, one address (an IPv4 address or an IPv6
+/64) holds at most 32 of the node's handshake slots, an address in
+Cloudflare's ranges 64, and a connection must send its ClientHello within 3 s
+(ADR-20261107180000). One address also holds at most 16 of the 256 requests
+the edge forwards to the control plane at once. Refusals show in the edge's
+refusal counter as `handshakes_per_address` and
+`forward_in_flight_per_address`.
+
+The firewall counts an IPv4 source by its address and an IPv6 source by its
+/64, as the edge does. The drops are counted on their rules:
 
 ```bash
 sudo nft list chain inet faas input | grep 'per source'
@@ -403,3 +417,25 @@ Cloudflare, and time them (ADR-20261103163954).
 - **GCP addresses:** `APPLY=1 gcp-compute-edge-address.sh delete NODE...`.
 - **Configuration rule:** delete it in the dashboard (Rules > Configuration Rules).
 - **Zone-level Authenticated Origin Pulls:** turn it off in the dashboard (SSL/TLS > Origin Server).
+
+## edgednsd and the node registry (ADR-20261107180000)
+
+Every compute node can write `compute_nodes`, so edgednsd takes only the
+drain flag from it:
+
+- It probes each edge's `/readyz` at the address the manifest gives the
+  host (`FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES`), never the registry's
+  `target_url`. A host missing from that list stays unready.
+- It withdraws drained nodes whose edges still pass only while at least half
+  of the passing nodes stay in. Otherwise it keeps them, logs "refusing to
+  withdraw drained nodes" and sets `edge_dns_drain_refused_nodes{mode}`. A
+  non-zero value with no planned maintenance means someone drained most of
+  the fleet through the registry: check `gregalectl` node lifecycle history
+  and the compute nodes before anything else. To take most nodes out on
+  purpose, stop their edges (they fail their probes and go) or remove them
+  from the manifest.
+
+Only the control plane writes `edge_tls_certificates` (edgednsd, as the
+schema owner or `faas_shared`); compute nodes only read it. An edge serves a
+certificate for the names in its leaf, only while the leaf is valid, and, for
+Let's Encrypt, only when its chain verifies.
