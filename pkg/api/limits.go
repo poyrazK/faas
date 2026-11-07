@@ -3460,13 +3460,21 @@ const (
 	// SnapshotRefreshPassMaxApps bounds one node's pass, most recently parked
 	// first.
 	SnapshotRefreshPassMaxApps = 1000
+
+	// SnapshotRefreshMaxResidencyPercent: a refresh boots only while the
+	// node's admitted tenant RAM is below this share of its ceiling, the
+	// headroom the builder's opportunistic slot requires. A refresh never
+	// waits for room; the next pass tries again.
+	SnapshotRefreshMaxResidencyPercent = 60
+	// SnapshotRefreshMaxRuntime is how long a refresh VM may live. A refresh
+	// parks within a cold boot and a capture; one older than this was left
+	// by a scheduler that stopped mid-refresh and is retired.
+	SnapshotRefreshMaxRuntime = 10 * time.Minute
 )
 
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
-// `on` is accepted once schedd can perform a refresh (ADR-20261106214916
-// step 3b); until then a pass is at most a shadow pass.
 func ValidSnapshotRefresh(v string) bool {
-	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow
+	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
 }
 
 // ValidSnapshotRefreshWindowHours reports whether v is a valid

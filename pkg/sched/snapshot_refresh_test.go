@@ -46,16 +46,21 @@ type refreshFixture struct {
 	ctx          context.Context
 	store        *state.MemStore
 	vmm          *refreshCheckVMM
+	boots        *sched.FakeVMM
 	refresher    *sched.SnapshotRefresher
 	nodeA, nodeB state.ComputeNode
 }
 
 func newRefreshFixture(t *testing.T) *refreshFixture {
 	t.Helper()
-	f := &refreshFixture{ctx: context.Background(), store: state.NewMemStore(), vmm: &refreshCheckVMM{verdicts: map[string]sched.SnapshotBackingVerdict{}}}
+	f := &refreshFixture{ctx: context.Background(), store: state.NewMemStore(), boots: &sched.FakeVMM{}}
+	f.vmm = &refreshCheckVMM{RoutedVMM: f.boots, verdicts: map[string]sched.SnapshotBackingVerdict{}}
 	release := "r1"
 	for _, n := range []*state.ComputeNode{&f.nodeA, &f.nodeB} {
-		node, err := f.store.CreateComputeNode(f.ctx, state.ComputeNode{Name: "node-" + uuid.NewString()[:8], Active: true, ReleaseID: &release})
+		node, err := f.store.CreateComputeNode(f.ctx, state.ComputeNode{
+			Name: "node-" + uuid.NewString()[:8], Active: true, ReleaseID: &release, TargetURL: "unix:///run/faas/vmmd.sock",
+			VPCPUs: 16, MemMB: 64000, MaxConcurrency: 100, AdmissionCeilingMB: 47600, VCPUBudget: 64,
+		})
 		if err != nil {
 			t.Fatalf("CreateComputeNode: %v", err)
 		}
@@ -231,8 +236,8 @@ func TestSnapshotRefreshStopsOnAnOlderVMMD(t *testing.T) {
 
 func TestSnapshotRefreshSettingsCheckTheirBounds(t *testing.T) {
 	f := newRefreshFixture(t)
-	if err := f.refresher.SetMode(api.SnapshotRefreshOn); err == nil {
-		t.Fatal("on accepted before the refresh boot exists")
+	if err := f.refresher.SetMode("yes"); err == nil {
+		t.Fatal("an unknown mode was accepted")
 	}
 	if err := f.refresher.SetWindowHours(api.SnapshotRefreshWindowHoursMax + 1); err == nil {
 		t.Fatal("window above the parked-row retention accepted")
@@ -301,5 +306,110 @@ func TestVMMClientSnapshotBackingCurrentMapsAnswers(t *testing.T) {
 				t.Fatalf("request = %+v", cli.req)
 			}
 		})
+	}
+}
+
+// On, a stale snapshot is refreshed: its row is retired, the app boots on
+// the node in mode refresh, and the refresh VM is captured and parked.
+func TestSnapshotRefreshOnRefreshesAStaleSnapshot(t *testing.T) {
+	f := newRefreshFixture(t)
+	if err := f.refresher.SetMode(api.SnapshotRefreshOn); err != nil {
+		t.Fatal(err)
+	}
+	app, stale := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+	f.vmm.verdicts[stale] = sched.SnapshotBackingStale
+	_, current := f.app(t, f.nodeA.ID, 2*time.Hour, state.Snapshot{})
+	f.vmm.verdicts[current] = sched.SnapshotBackingCurrent
+
+	pass, err := f.refresher.Pass(f.ctx, f.nodeA.ID, "r1")
+	if err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	if pass.Outcomes[sched.SnapshotRefreshRefreshed] != 1 || pass.Outcomes[sched.SnapshotRefreshCurrent] != 1 {
+		t.Fatalf("pass outcomes = %v, want one refreshed and one current", pass.Outcomes)
+	}
+	if cold, snaps, _ := f.boots.XBootCounts(); cold != 1 || snaps != 1 {
+		t.Fatalf("vmm cold boots %d, snapshots %d; want one of each", cold, snaps)
+	}
+	deps, err := f.store.LiveDeployments(f.ctx, app.ID)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("LiveDeployments = %v, %v", deps, err)
+	}
+	live, err := state.LiveSnapshotsForTier(f.ctx, f.store, deps[0].ID, state.SnapshotTierInit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, snap := range live {
+		if snap.StorageKey == stale {
+			t.Fatalf("the stale snapshot %s is still live", stale)
+		}
+	}
+	instances, err := f.store.ListInstancesForApp(f.ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refresh []state.Instance
+	for _, ins := range instances {
+		if state.IsRefresh(ins.Mode) {
+			refresh = append(refresh, ins)
+		}
+	}
+	if len(refresh) != 1 || refresh[0].NodeID != f.nodeA.ID || state.IsLive(refresh[0].State) {
+		t.Fatalf("refresh instances = %+v, want one on node a, no longer live", refresh)
+	}
+	// Invariant 4: the parked refresh holds no resident RAM.
+	if ram := f.refresher.XResidentRAMForNode(f.nodeA.ID); ram != 0 {
+		t.Fatalf("node a resident RAM after the refresh parked = %d MB, want 0", ram)
+	}
+}
+
+// A node without the headroom defers its refreshes and boots nothing; the
+// pass is not recorded, so the next tick tries again.
+func TestSnapshotRefreshDefersWithoutHeadroom(t *testing.T) {
+	f := newRefreshFixture(t)
+	if err := f.refresher.SetMode(api.SnapshotRefreshOn); err != nil {
+		t.Fatal(err)
+	}
+	_, stale := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+	f.vmm.verdicts[stale] = sched.SnapshotBackingStale
+	sched.XFillLedger(t, f.refresher, f.nodeA.ID, api.SnapshotRefreshMaxResidencyPercent)
+
+	pass, err := f.refresher.Pass(f.ctx, f.nodeA.ID, "r1")
+	if err != nil || pass.Outcomes[sched.SnapshotRefreshDeferred] != 1 {
+		t.Fatalf("pass = %+v (err %v), want one deferred", pass, err)
+	}
+	if cold, _, _ := f.boots.XBootCounts(); cold != 0 {
+		t.Fatalf("booted %d refreshes without headroom", cold)
+	}
+	f.refresher.Tick(f.ctx)
+	f.refresher.Tick(f.ctx)
+	if n := len(f.vmm.asked); n != 3 {
+		t.Fatalf("vmmd asked %d times, want the deferred pass retried on every tick", n)
+	}
+}
+
+// A refresh VM that outlived SnapshotRefreshMaxRuntime was left by a
+// scheduler that stopped mid-refresh; the reaper does not idle-reap the mode,
+// so the refresher destroys it and fails its row.
+func TestSnapshotRefreshRetiresOrphanedRefreshes(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.shadow(t)
+	app, _ := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+	orphan, err := f.store.CreateInstanceWithMode(f.ctx, app.ID, "", string(state.StateRunning), 256, f.nodeA.ID, uuid.NewString(), string(state.InstanceModeRefresh))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.refresher.Tick(f.ctx)
+	if got, _ := f.store.InstanceByID(f.ctx, orphan.ID); !state.IsLive(got.State) {
+		t.Fatalf("a young refresh was retired: %s", got.State)
+	}
+	f.refresher.XSetNow(func() time.Time { return time.Now().Add(api.SnapshotRefreshMaxRuntime + time.Minute) })
+	f.refresher.Tick(f.ctx)
+	got, err := f.store.InstanceByID(f.ctx, orphan.ID)
+	if err != nil || got.State != string(state.StateFailed) {
+		t.Fatalf("orphaned refresh = %s (err %v), want failed", got.State, err)
+	}
+	if _, _, destroys := f.boots.XBootCounts(); destroys != 1 {
+		t.Fatalf("destroys = %d, want 1", destroys)
 	}
 }

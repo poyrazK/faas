@@ -1315,3 +1315,32 @@ func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes
 // XNewVMMClient wraps a generated vmmd client for tests of VMMClient's
 // mapping of vmmd answers (ADR-20261106214916).
 func XNewVMMClient(cli vmmdpb.VmmdClient) *VMMClient { return &VMMClient{cli: cli} }
+
+// XBootCounts reports the fake's cold boots, snapshots and destroys.
+func (f *fakeVMM) XBootCounts() (coldBoots, snapshots, destroys int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.coldBoots, f.snapshots, f.destroys
+}
+
+// XFillLedger admits a resident on nodeID that holds percent of the node's
+// admission ceiling (ADR-20261106214916 headroom tests).
+func XFillLedger(t testing.TB, r *SnapshotRefresher, nodeID string, percent int) {
+	t.Helper()
+	l := r.e.ledger
+	ceiling := l.CeilingForNode(nodeID)
+	if err := l.Admit(Request{
+		Instance: "fill-" + nodeID, AppID: "fill-" + nodeID, Plan: api.PlanScale, RAMMB: ceiling * percent / 100,
+		Kind: KindSnapshotPrime, NodeID: nodeID, NodeCeilingMB: ceiling,
+	}); err != nil {
+		t.Fatalf("fill ledger: %v", err)
+	}
+}
+
+// XSetNow replaces the refresher's clock.
+func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
+
+// XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
+func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
+	return r.e.ledger.ResidentRAMForNode(nodeID)
+}
