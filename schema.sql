@@ -183,6 +183,19 @@ END $$;
 CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent,
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit, 0);
+END $$;
+
+
+--
+-- Name: admission_reserve_node(uuid, bigint, integer, boolean, integer, integer, integer, integer, integer, integer, integer, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_quiet_ram_mb integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     node_lifecycle text;
     node_generation bigint;
@@ -196,6 +209,7 @@ DECLARE
     used_cpu bigint;
     quiet_vcpu bigint;
     quiet_cpu bigint;
+    quiet_ram bigint;
 BEGIN
     PERFORM node_admission_lock_capacity();
     SELECT lifecycle::text, lifecycle_generation INTO node_lifecycle, node_generation
@@ -233,11 +247,20 @@ BEGIN
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
     cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
-    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > cap_mb THEN
+    -- ADR-20261107122928: the scheduler leaves out the reservations of
+    -- instances vmmd holds at the idle ladder's freeze level, which measured
+    -- admission books at their measured memory. Only a measured allowance
+    -- takes it, and at most api.IdleLadderReservationDiscountMaxPercent (200)
+    -- of the ceiling.
+    quiet_ram := 0;
+    IF coalesce(p_reservation_percent, 100) > 100 THEN
+        quiet_ram := least(greatest(coalesce(p_quiet_ram_mb, 0), 0), ceiling_mb * 2);
+    END IF;
+    IF ceiling_mb > 0 AND used_mb - quiet_ram + p_ram_mb + p_overhead_mb > cap_mb THEN
         RAISE EXCEPTION 'node RAM headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
-                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
-                                  used_mb, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
+                  DETAIL = format('used_mb=%s discount_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
+                                  used_mb, quiet_ram, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
     END IF;
     IF coalesce(p_vcpu, 0) <= 0 AND coalesce(p_cpu_millicores, 0) <= 0 THEN
         RETURN;
@@ -378,13 +401,29 @@ END $$;
 CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_owner_node_id uuid) RETURNS SETOF public.instances
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    RETURN QUERY SELECT * FROM admit_wake_instance(p_app_id, p_deployment_id, p_state, p_ram_mb, p_node_id, p_wake_id, p_mode,
+        p_expected_generation, p_counts, p_overhead_mb, p_bind_recovery, p_snapshot_id, p_guard_generation, p_reservation_percent,
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit,
+        p_owner_node_id, 0);
+END $$;
+
+
+--
+-- Name: admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint, integer, integer, integer, integer, integer, integer, integer, uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_owner_node_id uuid, p_quiet_ram_mb integer) RETURNS SETOF public.instances
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     admitted instances%ROWTYPE;
     bound integer;
     current_generation bigint;
 BEGIN
     PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent,
-        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit);
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit,
+        p_quiet_ram_mb);
     -- ADR-20261028200212: the admitting scheduler must still own the app.
     PERFORM admission_check_app_owner(p_app_id, p_owner_node_id);
     INSERT INTO instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
