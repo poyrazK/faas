@@ -1784,6 +1784,12 @@ func (s *server) EnvironmentBranchContainmentEnabled() *bool {
 	return &s.environmentBranchContainmentEnabled
 }
 
+// EnvironmentBranchContainedObjectsEnabled is the bridge object relay gate
+// (ADR-20261031193635 slice 6c).
+func (s *server) EnvironmentBranchContainedObjectsEnabled() *bool {
+	return &s.environmentBranchContainedObjectsEnabled
+}
+
 // EnableEnvironmentBranchesForTest turns environment_branches_enabled on.
 func (s *server) EnableEnvironmentBranchesForTest(t *testing.T) {
 	t.Helper()

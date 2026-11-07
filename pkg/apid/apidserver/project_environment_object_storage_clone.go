@@ -148,7 +148,7 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	if !ok {
 		return "", 0, errors.New("object storage credential store is unavailable")
 	}
-	credential, values, err := s.createProjectEnvironmentObjectStorageCredential(r.Context(), acct, target, plan, bucket)
+	credential, values, err := s.createProjectEnvironmentObjectStorageCredential(r.Context(), acct, target, plan, bucket, s.objectStorage.PublicEndpoint)
 	if err != nil {
 		return "", 0, err
 	}
@@ -165,8 +165,9 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 
 // createProjectEnvironmentObjectStorageCredential binds bucket into target
 // with a fresh credential shaped like the plan's source binding: the same
-// label, permission and managed secret prefix.
-func (s *server) createProjectEnvironmentObjectStorageCredential(ctx context.Context, acct state.Account, target string, plan projectEnvironmentBindingClone, bucket state.ObjectBucket) (state.ObjectS3Credential, int, error) {
+// label, permission and managed secret prefix. endpoint is the S3 endpoint
+// the binding's secrets name.
+func (s *server) createProjectEnvironmentObjectStorageCredential(ctx context.Context, acct state.Account, target string, plan projectEnvironmentBindingClone, bucket state.ObjectBucket, endpoint string) (state.ObjectS3Credential, int, error) {
 	store, ok := s.store.(state.ObjectS3CredentialBindingStore)
 	if !ok {
 		return state.ObjectS3Credential{}, 0, errors.New("object storage credential store is unavailable")
@@ -185,7 +186,7 @@ func (s *server) createProjectEnvironmentObjectStorageCredential(ctx context.Con
 	}
 	credentialID := uuid.NewString()
 	values := object.ObjectStorageBindingSecretValues(
-		object.ObjectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), s.objectStorage.PublicEndpoint,
+		object.ObjectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), endpoint,
 		s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey,
 	)
 	limits := api.MustLimitsFor(acct.Plan)

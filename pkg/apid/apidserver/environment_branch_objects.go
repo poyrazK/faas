@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -152,8 +153,21 @@ func (s *server) bindEnvironmentBranchBucket(ctx context.Context, acct state.Acc
 			return nil
 		}
 	}
-	_, _, err = s.createProjectEnvironmentObjectStorageCredential(ctx, acct, branch.Slug, plan, bucket)
+	_, _, err = s.createProjectEnvironmentObjectStorageCredential(ctx, acct, branch.Slug, plan, bucket, environmentBranchObjectEndpoint(branch, s.objectStorage.PublicEndpoint))
 	return err
+}
+
+// environmentBranchObjectEndpoint is the S3 endpoint a branch's bindings
+// name: a contained branch reaches its buckets only through the bridge
+// object relay (ADR-20261031193635 slice 6c), every other one through the
+// public endpoint.
+func environmentBranchObjectEndpoint(branch state.ProjectEnvironmentBranch, public string) string {
+	switch branch.EgressMode {
+	case state.EnvironmentBranchEgressContained, state.EnvironmentBranchEgressSimulated:
+		return api.EnvironmentBranchObjectRelayEndpoint()
+	default:
+		return public
+	}
 }
 
 // deleteEnvironmentBranchBucket revokes a gone branch's credentials on its

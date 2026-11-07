@@ -128,57 +128,61 @@ type server struct {
 	rehearsalNetworkEnabled bool
 	// environmentBranchContainmentEnabled admits contained environment
 	// branches (ADR-20261031193635 slice 6a).
-	environmentBranchContainmentEnabled    bool
-	rehearsalSimulationEnabled             bool
-	rehearsalWorkersEnabled                bool
-	rehearsalWorkerFaultsEnabled           bool
-	rehearsalPostgresFaultsEnabled         bool
-	rehearsalColdStartEnabled              bool
-	rehearsalSuspendResumeEnabled          bool
-	rehearsalRunningSuspendEnabled         bool
-	rehearsalCommandsEnabled               bool
-	rehearsalObjectsEnabled                bool
-	rehearsalObjects                       *objruntime.Service
-	rehearsalPostgresEnabled               bool
-	rehearsalPostgres                      *pgruntime.Service
-	ciConfig                               ci.Config
-	ciBlobs                                *ci.ManagedBlobs
-	ciRuntimeOrigin                        string
-	ciHealthMetrics                        *ci.HealthMetrics
-	hostingConfig                          *hosting.Config
-	hostingMetrics                         *hostingapi.Metrics
-	hosting                                hostingapi.Service
-	issueSlackResponses                    *issueslack.Client
-	issueSlackOAuthConfig                  issueslack.OAuthConfig
-	issueSlackOAuthClient                  *issueslack.Client
-	linearOAuthConfig                      issuetracker.LinearOAuthConfig
-	linearOAuthProvider                    issuetracker.LinearOAuthProvider
-	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
-	nativeTrackerProvider                  issuetracker.StatusProvider
-	nativeTicketProvider                   issuetracker.Provider
-	dataPipelines                          *pipelineapi.Handler
-	environmentGitOpsAcceptanceEnforcement atomic.Bool
-	profileBackend                         profiling.Backend
-	profileQuerySlots                      chan struct{}
-	guestTracingEnabled                    bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durable                                durable.Service // ADR-977; Host wired in newServer
-	object                                 object.Service  // ADR-977; Host wired in newServer
-	devBridgeEnabled                       bool
-	changeTimelineEnabled                  bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
-	anomalyAlertsEnabled                   bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
-	customMetricHistoryEnabled             bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
-	datadogIntegrationEnabled              bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
-	devBridgeURL                           string
-	devBridgeObserver                      *devbridge.Observer
-	operation                              operation.Service // ADR-977; Host wired in newServer
-	productControl                         product.Service
-	appEvents                              appevents.Service     // ADR-977; Host wired in newServer
-	eventPublishLimiter                    events.PublishLimiter // ADR-20261026140000
-	serviceMap                             servicemap.Service    // ADR-1131; Host wired in newServer
-	logSearch                              logsearch.Service     // ADR-20261018083536; Host wired in newServer
-	logReads                               *logsearch.ReadLimiter
-	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
-	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
+	environmentBranchContainmentEnabled bool
+	// environmentBranchContainedObjectsEnabled admits contained branches of
+	// environments with object storage through the bridge object relay
+	// (ADR-20261031193635 slice 6c).
+	environmentBranchContainedObjectsEnabled bool
+	rehearsalSimulationEnabled               bool
+	rehearsalWorkersEnabled                  bool
+	rehearsalWorkerFaultsEnabled             bool
+	rehearsalPostgresFaultsEnabled           bool
+	rehearsalColdStartEnabled                bool
+	rehearsalSuspendResumeEnabled            bool
+	rehearsalRunningSuspendEnabled           bool
+	rehearsalCommandsEnabled                 bool
+	rehearsalObjectsEnabled                  bool
+	rehearsalObjects                         *objruntime.Service
+	rehearsalPostgresEnabled                 bool
+	rehearsalPostgres                        *pgruntime.Service
+	ciConfig                                 ci.Config
+	ciBlobs                                  *ci.ManagedBlobs
+	ciRuntimeOrigin                          string
+	ciHealthMetrics                          *ci.HealthMetrics
+	hostingConfig                            *hosting.Config
+	hostingMetrics                           *hostingapi.Metrics
+	hosting                                  hostingapi.Service
+	issueSlackResponses                      *issueslack.Client
+	issueSlackOAuthConfig                    issueslack.OAuthConfig
+	issueSlackOAuthClient                    *issueslack.Client
+	linearOAuthConfig                        issuetracker.LinearOAuthConfig
+	linearOAuthProvider                      issuetracker.LinearOAuthProvider
+	nativeLinearVerifier                     issuetrackers.LinearConnectionVerifier
+	nativeTrackerProvider                    issuetracker.StatusProvider
+	nativeTicketProvider                     issuetracker.Provider
+	dataPipelines                            *pipelineapi.Handler
+	environmentGitOpsAcceptanceEnforcement   atomic.Bool
+	profileBackend                           profiling.Backend
+	profileQuerySlots                        chan struct{}
+	guestTracingEnabled                      bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durable                                  durable.Service // ADR-977; Host wired in newServer
+	object                                   object.Service  // ADR-977; Host wired in newServer
+	devBridgeEnabled                         bool
+	changeTimelineEnabled                    bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
+	anomalyAlertsEnabled                     bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
+	customMetricHistoryEnabled               bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
+	datadogIntegrationEnabled                bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
+	devBridgeURL                             string
+	devBridgeObserver                        *devbridge.Observer
+	operation                                operation.Service // ADR-977; Host wired in newServer
+	productControl                           product.Service
+	appEvents                                appevents.Service     // ADR-977; Host wired in newServer
+	eventPublishLimiter                      events.PublishLimiter // ADR-20261026140000
+	serviceMap                               servicemap.Service    // ADR-1131; Host wired in newServer
+	logSearch                                logsearch.Service     // ADR-20261018083536; Host wired in newServer
+	logReads                                 *logsearch.ReadLimiter
+	dashboards                               dashboards.Service // ADR-20261022173833; Host wired in newServer
+	incidents                                incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore

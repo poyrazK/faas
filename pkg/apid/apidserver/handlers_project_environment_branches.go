@@ -72,6 +72,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: parent, Slug: req.Slug,
 		ExpiresAt: time.Now().UTC().Add(ttl), EgressMode: egress,
 		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+		ContainedObjects: s.environmentBranchContainedObjectsEnabled,
 	}, limits)
 	if err != nil {
 		api.WriteProblem(w, s.environmentBranchCreateProblem(ctx, acct, project, parent, req.Slug, limits, err))
@@ -168,7 +169,7 @@ func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.
 	case errors.Is(err, state.ErrProjectEnvironmentBranchContainedObjects):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchContainedObjects,
 			"Contained environment branch cannot use object storage",
-			"the parent environment binds object storage; contained branches reach only their branch's services, and overlay buckets are served by the public S3 gateway. Create the branch with live egress.")
+			"the parent environment binds object storage, and the bridge object relay contained branches reach their buckets through is switched off. Create the branch with live egress.")
 	case errors.As(err, &managed):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchManagedData,
 			"Environment branch cannot copy the parent's managed data",
