@@ -407,7 +407,7 @@ jobs:
             remote_stage="$1"
             trap 'rm -f -- "$remote_stage"' EXIT
             test -s /etc/faas/storage.env
-            grep -Eq '^FAAS_STORAGE_BACKEND=(oci|gcs)$' /etc/faas/storage.env
+            grep -Eq '^FAAS_STORAGE_BACKEND=(oci|gcs|s3)$' /etc/faas/storage.env
             getent group faas >/dev/null
             # Unchanged bytes keep their modification time, so deployctl can
             # still hand apid off instead of restarting it (see the

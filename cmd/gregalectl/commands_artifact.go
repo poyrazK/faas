@@ -44,6 +44,12 @@ var storageEnvNames = []string{
 	"FAAS_STORAGE_SPARSE_EXTENTS",
 	"FAAS_STORAGE_FALLBACK_BACKEND",
 	"FAAS_GCS_BUCKET",
+	"FAAS_S3_BUCKET",
+	"FAAS_S3_ENDPOINT",
+	"FAAS_S3_REGION",
+	"FAAS_S3_ACCESS_KEY_ID",
+	"FAAS_S3_SECRET_ACCESS_KEY",
+	"FAAS_S3_PATH_STYLE",
 	"FAAS_OCI_REGISTRY",
 	"FAAS_OCI_REPO_PREFIX",
 	"FAAS_OCI_USERNAME",
@@ -52,7 +58,7 @@ var storageEnvNames = []string{
 	"FAAS_REQUIRE_SHARED_ARTIFACTS",
 }
 
-var storageEnvName = regexp.MustCompile(`^FAAS_(?:STORAGE_[A-Z0-9_]+|APPS_[A-Z0-9_]+|OCI_[A-Z0-9_]+|GCS_[A-Z0-9_]+|REQUIRE_SHARED_ARTIFACTS)$`)
+var storageEnvName = regexp.MustCompile(`^FAAS_(?:STORAGE_[A-Z0-9_]+|APPS_[A-Z0-9_]+|OCI_[A-Z0-9_]+|GCS_[A-Z0-9_]+|S3_[A-Z0-9_]+|REQUIRE_SHARED_ARTIFACTS)$`)
 
 type artifactReport struct {
 	Operation      string `json:"operation"`
@@ -317,7 +323,11 @@ func cmdArtifactLifecycleCheck(args []string) int {
 }
 
 func verifyArtifactLifecycle(ctx context.Context, be storage.StorageBackend, key string, payload []byte) (artifactLifecycleReport, error) {
-	report := artifactLifecycleReport{Operation: "lifecycle-check", Key: key, Backend: "oci", Bytes: len(payload)}
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_STORAGE_BACKEND")))
+	if backend == "" {
+		backend = "oci"
+	}
+	report := artifactLifecycleReport{Operation: "lifecycle-check", Key: key, Backend: backend, Bytes: len(payload)}
 	if err := be.Put(ctx, key, bytes.NewReader(payload)); err != nil {
 		return report, fmt.Errorf("write probe: %w", err)
 	}
@@ -531,7 +541,7 @@ func hashArtifactReader(r io.Reader) (string, int64, error) {
 // nodes unable to wake from the shared-artifact path.
 func validateArtifactStorageContract() error {
 	if !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
-		return fmt.Errorf("shared artifact operations require a remote FAAS_STORAGE_BACKEND (oci or gcs)")
+		return fmt.Errorf("shared artifact operations require a remote FAAS_STORAGE_BACKEND (oci, gcs, or s3)")
 	}
 	shared := strings.TrimSpace(os.Getenv("FAAS_REQUIRE_SHARED_ARTIFACTS"))
 	if !strings.EqualFold(shared, "1") && !strings.EqualFold(shared, "true") {
@@ -617,8 +627,12 @@ func loadStorageEnv(path string) (func(), error) {
 	return restore, nil
 }
 
-// loadImagedStorageEnv overlays only the OCI identity. The shared file stays
-// authoritative for registry location and routing, while imaged gains the
+// imagedLifecycleEnvNames are the only names imaged-storage.env may set: one
+// OCI login or one S3 access key pair (validateImagedStorageEnv).
+var imagedLifecycleEnvNames = []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD", "FAAS_S3_ACCESS_KEY_ID", "FAAS_S3_SECRET_ACCESS_KEY"}
+
+// loadImagedStorageEnv overlays only the lifecycle identity. The shared file
+// stays authoritative for store location and routing, while imaged gains the
 // narrower write/delete authority needed for artifact lifecycle work.
 func loadImagedStorageEnv(path string) (func(), error) {
 	if err := validateImagedStorageEnv(path); err != nil {
@@ -628,15 +642,15 @@ func loadImagedStorageEnv(path string) (func(), error) {
 	if err != nil {
 		return func() {}, fmt.Errorf("read lifecycle env: %w", err)
 	}
-	previous := make(map[string]*string, 2)
-	for _, name := range []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"} {
+	previous := make(map[string]*string, len(imagedLifecycleEnvNames))
+	for _, name := range imagedLifecycleEnvNames {
 		if value, ok := os.LookupEnv(name); ok {
 			valueCopy := value
 			previous[name] = &valueCopy
 		}
 	}
 	restore := func() {
-		for _, name := range []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"} {
+		for _, name := range imagedLifecycleEnvNames {
 			if value, ok := previous[name]; ok {
 				_ = os.Setenv(name, *value)
 			} else {

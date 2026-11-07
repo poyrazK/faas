@@ -428,7 +428,7 @@ func TestBackendFromEnv_OCI_LocalPrefixKeepsNamespace(t *testing.T) {
 // TestBackendFromEnv_OCIRejectsUnknown verifies unknown backend kinds
 // are rejected at startup.
 func TestBackendFromEnv_OCIRejectsUnknown(t *testing.T) {
-	t.Setenv("FAAS_STORAGE_BACKEND", "s3")
+	t.Setenv("FAAS_STORAGE_BACKEND", "azure")
 	_, err := BackendFromEnv()
 	if err == nil {
 		t.Fatal("expected error for unknown backend kind")

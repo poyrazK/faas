@@ -863,10 +863,16 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_SLOT_ID` | gatewayd-public | `default` |  |  | `` | reviewed public gateway slot identity; required only when public edge confirmation is enabled (ADR-699) |
 | `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL` | gatewayd-public | `default` |  |  | `` | default-off public edge withdrawal barrier; requires reviewed confirmation and activity controls (ADR-701) |
 | `FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695) |
+| `FAAS_S3_ACCESS_KEY_ID` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | artifact store access key when `FAAS_STORAGE_BACKEND=s3`; imaged-storage.env may override it with a delete-capable key |
+| `FAAS_S3_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | existing private bucket used when `FAAS_STORAGE_BACKEND=s3` |
+| `FAAS_S3_ENDPOINT` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | HTTPS origin of the S3-compatible API for `FAAS_STORAGE_BACKEND=s3` |
 | `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` | loopback everywhere except the compute unit, which binds 0.0.0.0:9096 for the control plane's scrape behind nftables (ADR-20261031122757) |
 | `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:8084 | `` |  |
 | `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly; compute-only on a compute node runs the gateway in compute mode (ADR-20261031122757) |
 | `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
+| `FAAS_S3_PATH_STYLE` | builderd, imaged, vmmd, shared | `envfile` |  | 0 | `` | 1 addresses the artifact bucket path-style (endpoint/bucket/key) |
+| `FAAS_S3_REGION` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | signing region of the artifact bucket for `FAAS_STORAGE_BACKEND=s3` |
+| `FAAS_S3_SECRET_ACCESS_KEY` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | secret for FAAS_S3_ACCESS_KEY_ID; imaged-storage.env may override it |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN; the control_plane_service role generates the pair when missing (faas_safe_releases_enabled, ADR-1189) |
 | `FAAS_SAFE_RELEASE_DEFAULT_ENABLED` | apid | `default` |  | true | `` | ADR-1446 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy |
@@ -955,7 +961,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_REFRESH` | shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
-| `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional `oci` read/delete fallback during GCS migration; writes remain GCS-only |
+| `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional read/delete fallback during a migration: `oci` under gcs or s3, `gcs` under s3; writes go only to the primary |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
