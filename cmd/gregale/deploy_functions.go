@@ -65,9 +65,12 @@ type functionSetDeploy struct {
 	projectDir  string
 	projectSlug string
 	manifest    *gregalemanifest.Manifest
-	planOnly    bool // --dry-run, --diff, --server-diff or --create-only
-	noTriggers  bool
-	out         io.Writer
+	// fromCode records settings read from handler files
+	// (ADR-20261107193000), for the plan and deploy output.
+	fromCode   []gregalemanifest.InlineConfigSource
+	planOnly   bool // --dry-run, --diff, --server-diff or --create-only
+	noTriggers bool
+	out        io.Writer
 	// deployOne runs the single-function deploy; tests replace it.
 	deployOne func(args []string) int
 	getenv    func(string) string
@@ -84,14 +87,32 @@ type plannedFunction struct {
 // functionSetManifest returns the manifest's functions when this deploy is a
 // plain local-source deploy of a functions manifest.
 func functionSetManifest(sourceDir string) (*gregalemanifest.Manifest, bool, error) {
+	m, _, ok, err := functionSetManifestFromCode(sourceDir)
+	return m, ok, err
+}
+
+// functionSetManifestFromCode also applies config declared in handler files
+// and discovers functions/<name>/ directories that declare one
+// (ADR-20261107193000); gregale.yaml wins over code.
+func functionSetManifestFromCode(sourceDir string) (*gregalemanifest.Manifest, []gregalemanifest.InlineConfigSource, bool, error) {
 	if sourceDir == "" {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	m, found, err := gregalemanifest.Load(sourceDir)
-	if err != nil || !found || len(m.Functions) == 0 {
-		return nil, false, err
+	if err != nil {
+		return nil, nil, false, err
 	}
-	return m, true, nil
+	if !found {
+		m = nil
+	}
+	m, sources, err := gregalemanifest.ApplyInlineConfig(m, sourceDir)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if m == nil || len(m.Functions) == 0 {
+		return nil, nil, false, nil
+	}
+	return m, sources, true, nil
 }
 
 // functionSlug is the app slug of one function in a project.
@@ -208,6 +229,7 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 		}
 	}
 	_, _ = fmt.Fprintf(d.out, "Deploying %d functions from %s\n", len(planned), displayPath(d.cwd, d.projectDir))
+	d.printConfigFromCode()
 	done := make([]string, 0, len(planned))
 	for i, fn := range planned {
 		_, _ = fmt.Fprintf(d.out, "\n[%d/%d] %s → %s (%s, %s)\n", i+1, len(planned), fn.spec.Name, fn.slug, fn.runtime, fn.root)
@@ -251,6 +273,15 @@ type functionSetPlan struct {
 	Inference     string                `json:"inference"`
 	Functions     []functionSetPlanItem `json:"functions"`
 	DeployCommand string                `json:"deploy_command"`
+	// ConfigFromCode lists settings read from handler files.
+	ConfigFromCode []functionConfigFromCode `json:"config_from_code,omitempty"`
+}
+
+type functionConfigFromCode struct {
+	Function   string   `json:"function"`
+	File       string   `json:"file"`
+	Keys       []string `json:"keys"`
+	Discovered bool     `json:"discovered"`
 }
 
 type functionSetPlanItem struct {
@@ -271,6 +302,9 @@ func (d functionSetDeploy) printPlan() int {
 	for _, fn := range planned {
 		plan.Functions = append(plan.Functions, functionSetPlanItem{Name: fn.spec.Name, App: fn.slug, Runtime: fn.runtime, Handler: fn.handler, Root: fn.root})
 	}
+	for _, src := range d.fromCode {
+		plan.ConfigFromCode = append(plan.ConfigFromCode, functionConfigFromCode{Function: src.Function, File: src.File, Keys: src.Keys, Discovered: src.Discovered})
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(plan))
 	}
@@ -278,8 +312,25 @@ func (d functionSetDeploy) printPlan() int {
 	for _, fn := range plan.Functions {
 		_, _ = fmt.Fprintf(d.out, "  %-20s %-28s %-10s %s\n", fn.Name, fn.App, fn.Runtime, fn.Root)
 	}
+	d.printConfigFromCode()
 	_, _ = fmt.Fprintf(d.out, "\nDeploy them: %s\nCompare with remote state: gregale deploy --dry-run\n", plan.DeployCommand)
 	return 0
+}
+
+// printConfigFromCode names each setting read from a handler file, so a
+// value that differs from gregale.yaml is never a mystery.
+func (d functionSetDeploy) printConfigFromCode() {
+	if len(d.fromCode) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(d.out, "\nConfig from code (gregale.yaml wins where both set a value):")
+	for _, src := range d.fromCode {
+		note := ""
+		if src.Discovered {
+			note = " (discovered; not in gregale.yaml)"
+		}
+		_, _ = fmt.Fprintf(d.out, "  %-20s %s: %s%s\n", src.Function, src.File, strings.Join(src.Keys, ", "), note)
+	}
 }
 
 func (d functionSetDeploy) summarize(done []string, failed plannedFunction, skipped []plannedFunction) {

@@ -28,6 +28,8 @@ Public surface:
   request's project release to managed service calls.
 * `verify_webhook` - verify signed outbound deliveries against their raw body
   and return the stable delivery ID for receiver-side deduplication.
+* `function` - decorator declaring a function's deploy settings next to
+  its handler (cron, queue, RAM, ...); `gregale deploy` reads it statically.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
 """
@@ -70,6 +72,7 @@ from .release_context import (
     with_gregale_release,
     with_gregale_request_context,
 )
+from .functions import function
 from .webhook import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
     WEBHOOK_DELIVERY_ID_HEADER,
@@ -117,6 +120,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = (
+    "function",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",
