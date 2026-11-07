@@ -19,7 +19,7 @@ func baselineRetiredError() error {
 	return api.NewProblem(http.StatusGone, api.CodeConflict, "Baseline retired", "This baseline name has been retired permanently. Select an active baseline explicitly; promotion history remains available.")
 }
 func baselineLifetimeLimitError(observed int64) error {
-	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Baseline audit name limit reached", "This stored workflow has reached its lifetime baseline-name limit. Reuse an active name.").WithLimit(api.StoredWorkflowLiveBaselineLifetimeNameLimit, observed).WithDocs("https://gregale.dev/docs/workflows/stored#baselines")
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Baseline audit name limit reached", "This stored workflow has reached its lifetime baseline-name limit. Reuse an active name.").WithLimit(api.StoredWorkflowLiveBaselineLifetimeNameLimit, observed).WithDocs("https://gregale.dev/docs/stored-workflows#baselines")
 }
 func validateBaselineRetirement(alias string, values []string, revision int64) error {
 	if !api.ValidStoredWorkflowLiveBaselineName(alias) || revision <= 0 || revision == math.MaxInt64 {
