@@ -34,6 +34,18 @@ func LocalPostgresURLForTest(dsn string, port int) (string, error) {
 	return localPostgresURL(target, port), nil
 }
 
+// Offline stand-ins (slice 3).
+var (
+	OfflinePostgresRunArgsForTest = func(projectDir string) []string { return postgresRunArgs(offlineNames(projectDir)) }
+	OfflineS3RunArgsForTest       = func(projectDir string) []string { return s3RunArgs(offlineNames(projectDir)) }
+	OfflinePostgresURLForTest     = offlinePostgresURL
+	OfflineBucketEnvForTest       = offlineBucketEnv
+	OfflineOptionsForTest         = func(projectDir string, postgres bool, buckets []string) (bool, []string, error) {
+		opts, err := offlineOptionsFor(projectDir, postgres, buckets, false)
+		return opts.Postgres, opts.Buckets, err
+	}
+)
+
 // DevLocalEnvForTest layers the local session's environment.
 var DevLocalEnvForTest = devLocalEnv
 

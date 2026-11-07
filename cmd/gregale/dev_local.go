@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--port N] [--env-file PATH] [--no-remote] [--no-reload]"
+	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--port N] [--env-file PATH] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
 	devLocalDefaultPort  = 8787
 	devLocalTokenHeader  = "X-Gregale-Local-Token"
 	devLocalTriggerPath  = "/__gregale/trigger"
@@ -83,9 +83,20 @@ func cmdDevLocal(args []string) int {
 	envFile := fs.String("env-file", "", "KEY=VALUE file whose entries every function gets")
 	noReload := fs.Bool("no-reload", false, "do not reload functions when their source changes")
 	noRemote := fs.Bool("no-remote", false, "do not connect to the developer session's database and buckets")
+	offline := fs.Bool("offline", false, "run Postgres and buckets in Docker instead of using the developer session")
+	postgres := fs.Bool("postgres", false, "with --offline, start Postgres and set DATABASE_URL")
+	reset := fs.Bool("reset", false, "with --offline, wipe the local database and bucket files first")
+	var buckets devBucketNames
+	fs.Var(&buckets, "bucket", "with --offline, a local bucket; repeatable")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
 		PrintUsage(osStderr, devLocalUsage, "dev")
 		return 1
+	}
+	if (*postgres || len(buckets) > 0 || *reset) && !*offline {
+		return printErr("Invalid flags", errors.New("--postgres, --bucket and --reset go with --offline; without it the developer session's database and buckets are used"))
+	}
+	if *offline && *noRemote {
+		return printErr("Invalid flags", errors.New("--offline already skips the developer session; drop --no-remote"))
 	}
 	projectDir, fileEnv, err := devLocalInputs(*sourcePath, *envFile)
 	if err != nil {
@@ -102,7 +113,16 @@ func cmdDevLocal(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	remote := &devLocalRemote{Env: map[string]string{}}
-	if !*noRemote {
+	switch {
+	case *offline:
+		opts, err := offlineOptionsFor(projectDir, *postgres, buckets, *reset)
+		if err != nil {
+			return printErr("Invalid flags", err)
+		}
+		if remote, err = startDevLocalOffline(ctx, projectDir, opts, osStderr); err != nil {
+			return printErr("Could not start local resources", err)
+		}
+	case !*noRemote:
 		remote = attachDevLocalRemote(ctx, *sourcePath, osStderr)
 	}
 	defer remote.close()

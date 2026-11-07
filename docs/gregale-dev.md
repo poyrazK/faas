@@ -84,6 +84,19 @@ Serving 3 function(s) on this machine (ctrl-c to stop):
 
   `--no-remote` skips all of this. Without a login or a developer
   environment, functions run with local settings only.
+- `--offline` runs the resources on your machine in Docker instead, with
+  no Gregale account involved:
+
+  ```sh
+  gregale dev --local --offline --postgres --bucket uploads
+  ```
+
+  `--postgres` starts Postgres 16 and sets `DATABASE_URL`; each `--bucket`
+  creates a bucket in a local S3 gateway (Versity, `versity/versitygw`) and
+  sets its `GREGALE_S3_<NAME>_*` settings. `dev.postgres` and
+  `dev.buckets` in `gregale.yaml` are read too. Data stays in Docker
+  volumes for this project between runs; `--reset` wipes them. The
+  containers listen on loopback only and stop when you stop.
 - Settings layer in this order, later winning: your shell, the session's
   resources, `--env-file`, then each function's `env:` in `gregale.yaml`.
 - Run a cron or an async call as Gregale would, with
