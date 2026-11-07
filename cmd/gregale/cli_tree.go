@@ -1250,6 +1250,13 @@ func treeHelpWords(typed []string) ([]string, bool) {
 	if len(words) == 0 {
 		return nil, false
 	}
+	// A fold flag names another command (`realtime send --principal P`
+	// runs `realtime send-principal`); its help is that command's, which
+	// lists the flags the fold adds. The tree's help for the path has only
+	// the path's own flags.
+	if _, folded := rewriteFlagFold(words); folded {
+		return nil, false
+	}
 	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
 	// asks for that command's full manifest help, every option grouped; a
 	// tree-only noun (`release`) has no such help, so the tree's answers.
