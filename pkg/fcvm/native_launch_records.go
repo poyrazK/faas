@@ -221,5 +221,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	if err != nil {
 		return record, err
 	}
+	if link, claimed := nativePreparedClaimFrom(ctx); claimed {
+		if record, err = j.linkPreparedTarget(record, link); err != nil {
+			return record, err
+		}
+	}
 	return record, j.write(record)
 }

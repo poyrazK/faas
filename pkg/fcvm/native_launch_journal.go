@@ -38,6 +38,9 @@ type nativeLaunchRecord struct {
 	// Owner is the vmmd incarnation that published an ordinary version-three
 	// record (ADR-2026101710 Amendment 1).
 	Owner nativeProducerIdentity `json:"owner,omitzero"`
+	// Prepared links a prepared network spare and the instance that claimed
+	// it, on version-four records only (ADR-149 amendment 2026-11-07).
+	Prepared nativePreparedLink `json:"prepared,omitzero"`
 }
 
 type nativeLaunchJournal struct {
@@ -49,11 +52,18 @@ type nativeLaunchJournal struct {
 	// Native records cannot survive into another kernel incarnation even if
 	// an operator places the journal on a persistent filesystem.
 	bootID func() (string, error)
+	// ownerID names this vmmd on version-three and -four records; tests
+	// inject it where the host cannot read a process start time.
+	ownerID func() (nativeProducerIdentity, error)
 	// Tests inject write failure before the child receives authorization.
 	writeRecord func(string, nativeLaunchRecord) error
 	// owners publishes ordinary launches as version three, naming this vmmd.
 	// vmmd binaries without a version-three reader refuse the journal.
 	owners bool
+	// preparedSpares publishes prepared network spares and their claims as
+	// version four. vmmd binaries without a version-four reader refuse the
+	// journal while such a record exists.
+	preparedSpares bool
 }
 
 // False/zero fields are still required. Missing revocation or authorization
@@ -69,7 +79,15 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 		fields, err = nativeJournalObjectFields(data, append(keys, "owner"))
 	}
 	if err != nil {
+		fields, err = nativeJournalObjectFields(data, append(keys, "owner", "prepared"))
+	}
+	if err != nil {
 		return err
+	}
+	if raw, ok := fields["prepared"]; ok {
+		if err := decodeNativePreparedLink(raw); err != nil {
+			return err
+		}
 	}
 	if _, err := nativeJournalObjectFields(fields["lease"], nativeJournalLeaseFields()); err != nil {
 		return fmt.Errorf("native journal: lease fields: %w", err)
@@ -84,8 +102,12 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 	*r = nativeLaunchRecord(decoded)
 	_, producer := fields["producer"]
 	_, owner := fields["owner"]
-	if producer != (r.Version == 2) || owner != (r.Version == 3) {
+	_, prepared := fields["prepared"]
+	if producer != (r.Version == 2) || owner != (r.Version == 3 || r.Version == nativePreparedSpareVersion) || prepared != (r.Version == nativePreparedSpareVersion) {
 		return errors.New("native producer: version requires its exact field set")
+	}
+	if err := r.validatePrepared(); err != nil {
+		return err
 	}
 	return r.validateProducer()
 }
@@ -233,6 +255,11 @@ func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease
 	} else if record, err = j.owned(record); err != nil {
 		return err
 	}
+	if link, claimed := nativePreparedClaimFrom(ctx); claimed {
+		if record, err = j.linkPreparedTarget(record, link); err != nil {
+			return err
+		}
+	}
 	return j.write(record)
 }
 
@@ -242,7 +269,11 @@ func (j *nativeLaunchJournal) owned(record nativeLaunchRecord) (nativeLaunchReco
 	if !j.owners {
 		return record, nil
 	}
-	owner, err := nativeCurrentIdentity(nativeLaunchOwnerProtocol)
+	get := j.ownerID
+	if get == nil {
+		get = func() (nativeProducerIdentity, error) { return nativeCurrentIdentity(nativeLaunchOwnerProtocol) }
+	}
+	owner, err := get()
 	if err != nil {
 		return record, fmt.Errorf("native journal: name launch owner: %w", err)
 	}
@@ -590,6 +621,9 @@ func (r nativeLaunchRecord) validate(instance string) error {
 		return err
 	}
 	if err := r.validateProducer(); err != nil {
+		return err
+	}
+	if err := r.validatePrepared(); err != nil {
 		return err
 	}
 	if r.Lease.Instance != instance {

@@ -175,11 +175,20 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 	if err := tun.inventory(ctx, records); err != nil {
 		return nil, err
 	}
+	prepared, err := classifyNativePrepared(records)
+	if err != nil {
+		return nil, err
+	}
 	byID := make(map[string]nativeLaunchRecord, len(records))
-	var leases []Lease
+	var leases, transferred []Lease
 	for _, record := range records {
 		byID[record.Lease.Instance] = record
-		if !record.ResourcesRemoved {
+		if !record.ResourcesRemoved && prepared[record.Lease.Instance] == nativePreparedTransferred {
+			// The claiming instance's record holds this slot and both
+			// namespace names until the claim is finished (ADR-149
+			// amendment 2026-11-07); only the inventory sees the spare.
+			transferred = append(transferred, record.Lease)
+		} else if !record.ResourcesRemoved {
 			leases = append(leases, record.Lease)
 		} else if err := r.resources(record.Lease, nativeLeaseNetwork(record.Lease)); err != nil {
 			return nil, fmt.Errorf("native recovery: acknowledged resources reappeared: %w", err)
@@ -200,7 +209,7 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 		}
 		leases = append(leases, process.lease())
 	}
-	if err := r.inventory(leases); err != nil {
+	if err := r.inventory(append(append([]Lease(nil), leases...), transferred...)); err != nil {
 		return nil, err
 	}
 	// A legacy fork before exec may have no recognizable command line yet.

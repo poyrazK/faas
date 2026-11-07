@@ -54,7 +54,7 @@ func (r nativeLaunchRecord) validateProducer() error {
 	if r.Version == 1 && r.Producer == none && r.Owner == none {
 		return nil
 	}
-	if r.Version == 3 && r.Producer == none && r.Owner.Protocol == nativeLaunchOwnerProtocol {
+	if (r.Version == 3 || r.Version == nativePreparedSpareVersion) && r.Producer == none && r.Owner.Protocol == nativeLaunchOwnerProtocol {
 		return r.Owner.validate()
 	}
 	if r.Version != 2 || r.Owner != none || r.Producer.Protocol != nativeRepairProducerProtocol || !r.Lease.Networkless || r.Lease.IsBuilder || !canonicalNativeHelperID(r.Lease.Instance) {
