@@ -15993,6 +15993,21 @@ const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
 // Maximum explicit schema versions selected by one event subscription.
 const EventSubscriptionSchemaVersionsMax = 16
 
+// Event subscription filters (event_triggers[].filter) are copied into the
+// recipient snapshot of every event they may receive, so their size bounds
+// per-event storage, including uncharged gregale.* platform events (events
+// hunt #9). EventSubscriptionFilterMaxBytes caps the compact JSON encoding;
+// EventSubscriptionFilterMaxDepth caps object/array nesting, the top-level
+// object counting as 1 ({"data":{"amount":{"$gt":100}}} is depth 3).
+// EventSubscriptionFilterStoredMaxBytes is the event_subscriptions CHECK on
+// octet_length(filter::text): jsonb's text form adds a space after every ':'
+// and ',', so the database backstop allows twice the API cap.
+const (
+	EventSubscriptionFilterMaxBytes       = 8192
+	EventSubscriptionFilterMaxDepth       = 8
+	EventSubscriptionFilterStoredMaxBytes = 2 * EventSubscriptionFilterMaxBytes
+)
+
 // Event schema rollout previews are read-only and bound both input and observation.
 const (
 	EventSchemaRolloutIdentityMaxBytes   = 256

@@ -681,7 +681,7 @@ func (t EventTrigger) Validate(idx int) error {
 	if err := events.ValidatePattern(t.Type); err != nil {
 		return fmt.Errorf("triggers.event[%d].type: %w", idx, err)
 	}
-	if err := events.ValidateFilter(json.RawMessage(t.Filter)); err != nil {
+	if err := events.ValidateSubscriptionFilter(json.RawMessage(t.Filter)); err != nil {
 		return fmt.Errorf("triggers.event[%d].filter: %w", idx, err)
 	}
 	return nil

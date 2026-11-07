@@ -775,6 +775,7 @@ var SetupWithScopes = setupWithScopes
 var SourceDeltaLimits = sourceDeltaLimits
 var SourceRefAsyncRouteTestFixture = sourceRefAsyncRouteTestFixture
 var SourceRefManifestNeedsRollback = sourceRefManifestNeedsRollback
+var SourceRefEventSubscriptionProblem = sourceRefEventSubscriptionProblem
 var SpoolRoot = spoolRoot
 var SseFanIn = sseFanIn
 var StartSSEStream = startSSEStream
