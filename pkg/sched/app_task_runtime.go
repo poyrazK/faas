@@ -173,6 +173,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 			app, dep, acct, placement.NodeID, request.ID, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:         app.EgressPorts,
+		EgressRevision:      app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs: privateNetwork.CIDRs, PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules, PrivateNetworkID: privateNetwork.NetworkID,
 		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: deploymentStaticEgressIP(app, dep),

@@ -100,6 +100,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// wake.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,

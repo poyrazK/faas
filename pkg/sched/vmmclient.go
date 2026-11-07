@@ -490,6 +490,10 @@ type AppSpec struct {
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
 	EgressPorts     []int              // ADR-361; the app's declared extra TCP egress ports on top of 80/443.
+	// EgressRevision is apps.egress_allowlist_revision for EgressAllowlist and
+	// EgressPorts (read in the same row). vmmd prefers this request's policy
+	// over its cached app policy when the revision is newer; 0 = unknown.
+	EgressRevision int64
 	// Quarantine (ADR-732) asks vmmd for a production-fork network: no
 	// guest-originated flow, inbound only from the platform veth. Only
 	// the fork coordinator sets it.
@@ -1980,6 +1984,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		MainDependsOn:      mainDependsOn,
 		EgressAllowlist:    a.EgressAllowlist,
 		EgressPorts:        egressPortsToWire(a.EgressPorts),
+		EgressRevision:     a.EgressRevision,
 		Quarantine:         a.Quarantine,
 		Port:               uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC

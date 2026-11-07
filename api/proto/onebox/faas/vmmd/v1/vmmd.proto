@@ -921,6 +921,13 @@ message AppSpec {
   // forbidden ports again before rendering the per-instance egress_ports
   // set. Empty = base ports only.
   repeated uint32 egress_ports = 29;
+  // egress_revision is apps.egress_allowlist_revision for the
+  // egress_allowlist and egress_ports above, read in the same row. vmmd keeps
+  // the last policy schedd pushed per app and lays it over wake requests;
+  // when this revision is newer than that cached policy the request's own
+  // policy wins (a wake right after an egress change while the app was
+  // parked). 0 = unknown (older schedd): the cache wins as before.
+  int64 egress_revision = 38;
   // liveness_probe_json is the deployment's validated primary-app
   // liveness_probe override (ADR-078), carried like readiness_probe_json.
   // Empty keeps the plan defaults. production-us hunt #8: without this field

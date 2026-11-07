@@ -4073,6 +4073,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// old netns — same contract as RAMMB and MaxConcurrency.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
@@ -6190,6 +6191,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// flattening as the Wake path.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:                 app.EgressPorts,
+		EgressRevision:              app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
 		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
