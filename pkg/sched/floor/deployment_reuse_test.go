@@ -27,7 +27,7 @@ func (p *countingPlanResolver) ResolvePlan(ctx context.Context, accountID string
 // cooldown; once the cooldown has passed it admits.
 func TestTickPerDeploymentReusesSettingsUntilItAdmits(t *testing.T) {
 	ctx := context.Background()
-	cooled := floorApp("app1", api.PlanHobby, 2)
+	cooled := floorApp("app1", api.PlanPro, 2)
 	cooled.ScalingPolicy = &state.ScalingPolicy{ScaleOutCooldownS: 60}
 	listedApp := cooled // the list's copy has no scale-out stamp yet
 	rowApp := cooled
@@ -48,7 +48,7 @@ func TestTickPerDeploymentReusesSettingsUntilItAdmits(t *testing.T) {
 		candidates: []state.Deployment{floorDeployment("d1", "app1", 0)},
 		appReads:   map[string]int{},
 	}
-	plans := &countingPlanResolver{fakePlanResolver: fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanHobby}}}
+	plans := &countingPlanResolver{fakePlanResolver: fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanPro}}}
 	tr := withDeploymentStore(t, &fakeStore{apps: []state.App{listedApp}}, store, ledger, engine, Options{PlanResolver: plans})
 
 	for range 3 {

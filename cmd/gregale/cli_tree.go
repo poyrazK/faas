@@ -506,6 +506,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"automation recovery-response check", "automations recovery-response-preview"},
 	{"automation live check", "automations live gate"},
 	{"automation live run", "automations live suite"},
+	{"billing egress-overage get", "billing egress-overage"},
+	{"billing egress-overage set", "billing egress-overage"},
 	{"billing payment-method get", "billing payment-method"},
 	{"bucket copy-source", "bucket copy-sources"},
 	{"bucket encryption keys", "bucket encryption-keys"},
