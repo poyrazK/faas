@@ -7619,6 +7619,17 @@ const (
 	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
+	// The idle ladder (ADR-20261107122928, proposed): how long a
+	// request-serving instance has had nothing in flight when it reaches
+	// each level. L1 quiet pause, L2 a vmmd-local freeze, L3 and L4 compress
+	// the pages left untouched for that long, and L5 snapshots (parks) the
+	// instance. vmmd's idle_ladder observe mode measures the levels instances
+	// would reach; nothing acts on them yet.
+	IdleLadderQuietPauseAfterMillis = 1000
+	IdleLadderFreezeAfterSeconds    = 10
+	IdleLadderColdAge1Seconds       = 60
+	IdleLadderColdAge2Seconds       = 180
+	IdleLadderSnapshotAfterSeconds  = 600
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds

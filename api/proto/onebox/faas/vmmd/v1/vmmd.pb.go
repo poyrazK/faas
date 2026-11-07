@@ -419,6 +419,13 @@ type AppSpec struct {
 	// app_request_concurrency_max. 0 (an older schedd, or nothing set) keeps the
 	// plan's concurrency_per_vm. vmmd clamps it to api.AppRequestConcurrencyBound.
 	RequestConcurrency int32 `protobuf:"varint,37,opt,name=request_concurrency,json=requestConcurrency,proto3" json:"request_concurrency,omitempty"`
+	// ADR-20261107122928 (idle ladder, proposed): the instance is a
+	// request-serving workload the pause tiers may pause, whatever its declared
+	// pause (schedd's pauseTierWorkload). vmmd's idle_ladder observe mode
+	// measures how long such instances sit idle and which ladder level each
+	// would reach; nothing is paused because of it. False (an older schedd)
+	// leaves the instance out unless quiet_pause_after_ms is set.
+	IdleLadderEligible bool `protobuf:"varint,38,opt,name=idle_ladder_eligible,json=idleLadderEligible,proto3" json:"idle_ladder_eligible,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -710,6 +717,13 @@ func (x *AppSpec) GetRequestConcurrency() int32 {
 		return x.RequestConcurrency
 	}
 	return 0
+}
+
+func (x *AppSpec) GetIdleLadderEligible() bool {
+	if x != nil {
+		return x.IdleLadderEligible
+	}
+	return false
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -19851,7 +19865,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xdd\r\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x8f\x0e\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -19896,7 +19910,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"quarantine\x18# \x01(\bR\n" +
 	"quarantine\x124\n" +
 	"\x16static_egress_excluded\x18$ \x01(\bR\x14staticEgressExcluded\x12/\n" +
-	"\x13request_concurrency\x18% \x01(\x05R\x12requestConcurrency\"\x92\b\n" +
+	"\x13request_concurrency\x18% \x01(\x05R\x12requestConcurrency\x120\n" +
+	"\x14idle_ladder_eligible\x18& \x01(\bR\x12idleLadderEligible\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

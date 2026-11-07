@@ -1410,6 +1410,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.QuietPause || cfg.QuietPauseObserve || cfg.AgentWaitPause {
 		go mgr.RunQuietPause(ctx)
 	}
+	// ADR-20261107122928 idle ladder, observe mode only: measure the level
+	// each request-serving instance's idle time reaches. Nothing is paused.
+	if cfg.IdleLadder == idleLadderObserve {
+		mgr.WithIdleLadderObserve(fcvm.IdleLadderConfig{
+			Activity: activityTracker,
+			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
+		})
+		go mgr.RunIdleLadderObserve(ctx)
+		log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
+	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance
 	// that is serving a request.
