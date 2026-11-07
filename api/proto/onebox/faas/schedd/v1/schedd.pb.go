@@ -1579,8 +1579,16 @@ type InstanceStatsRow struct {
 	// absent-versus-zero semantics for older nodes and first samples.
 	DiskUsedBytes     *wrapperspb.Int64Value `protobuf:"bytes,11,opt,name=disk_used_bytes,json=diskUsedBytes,proto3" json:"disk_used_bytes,omitempty"`
 	DiskCapacityBytes *wrapperspb.Int64Value `protobuf:"bytes,12,opt,name=disk_capacity_bytes,json=diskCapacityBytes,proto3" json:"disk_capacity_bytes,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// departed marks the last row of an instance that has left this schedd's
+	// stats snapshot (it parked or moved to another node), served for
+	// api.MeterFinalNetworkReadingRetention so meterd can checkpoint its final
+	// network counters (ADR-20261103121407). Only its network counters are
+	// meaningful. A live row for the same instance from any node wins over it:
+	// a live-migrated instance keeps its ID and restarts its counters on the new
+	// node (ADR-20261104090000). Older schedds never set it.
+	Departed      bool `protobuf:"varint,13,opt,name=departed,proto3" json:"departed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *InstanceStatsRow) Reset() {
@@ -1695,6 +1703,13 @@ func (x *InstanceStatsRow) GetDiskCapacityBytes() *wrapperspb.Int64Value {
 		return x.DiskCapacityBytes
 	}
 	return nil
+}
+
+func (x *InstanceStatsRow) GetDeparted() bool {
+	if x != nil {
+		return x.Departed
+	}
+	return false
 }
 
 type ListInstanceStatsRequest struct {
@@ -5956,7 +5971,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x1cForceRestartInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x121\n" +
 	"\x15snap_ids_marked_stale\x18\x02 \x03(\tR\x12snapIdsMarkedStale\x12\x1b\n" +
-	"\terror_msg\x18\x03 \x01(\tR\berrorMsg\"\xcf\x03\n" +
+	"\terror_msg\x18\x03 \x01(\tR\berrorMsg\"\xeb\x03\n" +
 	"\x10InstanceStatsRow\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x15\n" +
@@ -5973,7 +5988,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\brx_valid\x18\n" +
 	" \x01(\rR\arxValid\x12C\n" +
 	"\x0fdisk_used_bytes\x18\v \x01(\v2\x1b.google.protobuf.Int64ValueR\rdiskUsedBytes\x12K\n" +
-	"\x13disk_capacity_bytes\x18\f \x01(\v2\x1b.google.protobuf.Int64ValueR\x11diskCapacityBytes\"\x1a\n" +
+	"\x13disk_capacity_bytes\x18\f \x01(\v2\x1b.google.protobuf.Int64ValueR\x11diskCapacityBytes\x12\x1a\n" +
+	"\bdeparted\x18\r \x01(\bR\bdeparted\"\x1a\n" +
 	"\x18ListInstanceStatsRequest\"X\n" +
 	"\x19ListInstanceStatsResponse\x12;\n" +
 	"\x04rows\x18\x01 \x03(\v2'.onebox.faas.schedd.v1.InstanceStatsRowR\x04rows\"\x87\x02\n" +
