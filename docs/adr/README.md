@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261108100000: The guest trace bridge forwards OTLP to the customer's backend and accepts OTLP/gRPC](20261108100000-otlp-forwarding-and-grpc-in-guest.md) — accepted; `tracing.forward` copies every in-VM trace and log export to the customer's OTLP/HTTP endpoint (bounded 4 MiB queue, 3 attempts, SDK retries not forwarded twice, headers from an app secret read at send time), and the bridge also serves OTLP/gRPC on 127.0.0.1:4317 over cleartext HTTP/2
 - [ADR-20261104145353: Mirror VMs bill, object storage has monthly request ceilings, and sign-ups have a platform-wide daily cap](20261104145353-mirror-billing-object-requests-signup-cap.md) — accepted; mirror VMs bill per running second and stop at the spend cap, plans cap object storage requests (Free 50k, Hobby 500k, Pro 2.5M, Scale 10M a month), and at most 2,000 accounts are created in any 24 hours
 - [ADR-20261107203000: Host security evidence leaves the host as it is written](20261107203000-host-security-evidence-off-host.md) — accepted; Alloy ships sshd, sudo, account-change, kernel and auditd records to Loki as `job="faas-security"` and counts high-signal events in `faas_security_events_total`, which the `faas_host_security` alerts read
 

@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -12,6 +14,65 @@ type TracingConfig struct {
 	// SampleRatio is the fraction of requests whose spans the app exports.
 	// Zero means the default of 1 (every request).
 	SampleRatio float64 `json:"sample_ratio,omitempty" yaml:"sample_ratio,omitempty" toml:"sample_ratio"`
+	// Forward, when its endpoint is set, sends a copy of every OTLP trace
+	// and log export the app makes to the customer's own OTLP/HTTP backend,
+	// from inside the VM (ADR-20261108100000). A value struct, so tracing
+	// configs stay comparable with ==.
+	Forward TracingForward `json:"forward,omitzero" yaml:"forward,omitempty" toml:"forward,omitempty"`
+}
+
+// TracingForward names the customer's OTLP/HTTP endpoint. Endpoint is the
+// base URL, as in OTEL_EXPORTER_OTLP_ENDPOINT: /v1/traces and /v1/logs are
+// appended. HeadersSecret names an app secret holding request headers in the
+// OTEL_EXPORTER_OTLP_HEADERS form (key=value,key2=value2); it is read inside
+// the VM at send time, so a rotated secret applies from the next wake.
+type TracingForward struct {
+	Endpoint      string `json:"endpoint,omitempty" yaml:"endpoint,omitempty" toml:"endpoint,omitempty"`
+	HeadersSecret string `json:"headers_secret,omitempty" yaml:"headers_secret,omitempty" toml:"headers_secret,omitempty"`
+}
+
+// Enabled reports whether exports are forwarded.
+func (f TracingForward) Enabled() bool { return f.Endpoint != "" }
+
+// SignalURL returns the endpoint URL for one OTLP signal path, such as
+// TraceLocalTracesPath.
+func (f TracingForward) SignalURL(path string) string {
+	return strings.TrimRight(f.Endpoint, "/") + path
+}
+
+// TraceForwardMaxEndpointBytes bounds tracing.forward.endpoint.
+const TraceForwardMaxEndpointBytes = 2048
+
+// Validate checks the forward settings. The endpoint must be an absolute
+// http or https URL without credentials, query or fragment: headers carry
+// credentials, and the signal paths are appended to it.
+func (f TracingForward) Validate() error {
+	if f.Endpoint == "" {
+		if f.HeadersSecret != "" {
+			return fmt.Errorf("tracing.forward.headers_secret needs tracing.forward.endpoint")
+		}
+		return nil
+	}
+	if len(f.Endpoint) > TraceForwardMaxEndpointBytes {
+		return fmt.Errorf("tracing.forward.endpoint must be at most %d bytes", TraceForwardMaxEndpointBytes)
+	}
+	u, err := url.Parse(f.Endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" {
+		return fmt.Errorf("tracing.forward.endpoint must be an http:// or https:// URL")
+	}
+	if u.User != nil {
+		return fmt.Errorf("tracing.forward.endpoint must not contain credentials; put them in headers_secret")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("tracing.forward.endpoint must not have a query or fragment")
+	}
+	if path := strings.TrimRight(u.Path, "/"); strings.HasSuffix(path, TraceLocalTracesPath) || strings.HasSuffix(path, TraceLocalLogsPath) {
+		return fmt.Errorf("tracing.forward.endpoint is the base URL; /v1/traces and /v1/logs are added for you")
+	}
+	if f.HeadersSecret != "" && ValidateEnvKey(f.HeadersSecret) != nil {
+		return fmt.Errorf("tracing.forward.headers_secret %q is not a valid secret name", f.HeadersSecret)
+	}
+	return nil
 }
 
 // Guest tracing transport bounds (ADR-958). The frame bound applies to the
@@ -32,6 +93,16 @@ const (
 	TraceMaxConcurrentUploads  = 4
 	TraceMaxConcurrentForwards = 16
 	TraceTransportTimeout      = 2 * time.Second
+	// TraceLocalGRPCListen is the guest-local OTLP/gRPC receiver (traces and
+	// logs), served beside the OTLP/HTTP one (ADR-20261108100000).
+	TraceLocalGRPCListen = "127.0.0.1:4317"
+	// Forwarding bounds (ADR-20261108100000): bytes of exports waiting to be
+	// forwarded, attempts and timeout per export, and the window in which an
+	// SDK's retry of the same export is not forwarded twice.
+	TraceForwardMaxQueuedBytes = 4 << 20
+	TraceForwardMaxAttempts    = 3
+	TraceForwardTimeout        = 10 * time.Second
+	TraceForwardDedupWindow    = 2 * time.Minute
 	TraceNodeBootstrapPath     = "/opt/gregale/tracing/node.cjs"
 	TracePythonBootstrapDir    = "/opt/gregale/tracing/python"
 )
@@ -110,6 +181,12 @@ func (c *TracingConfig) Validate(plan Plan) error {
 	}
 	if r := c.SampleRatio; r < 0 || r > 1 || r != r {
 		return fmt.Errorf("tracing.sample_ratio must be greater than 0 and at most 1")
+	}
+	if err := c.Forward.Validate(); err != nil {
+		return err
+	}
+	if c.Forward.Enabled() && !c.Enabled {
+		return fmt.Errorf("tracing.forward needs tracing.enabled: true")
 	}
 	return nil
 }

@@ -1159,6 +1159,7 @@ export type { TemplateView } from './models/TemplateView.js';
 export type { TestAlertPresetResponse } from './models/TestAlertPresetResponse.js';
 export type { TestNotificationChannelResponse } from './models/TestNotificationChannelResponse.js';
 export type { TracingConfig } from './models/TracingConfig.js';
+export type { TracingForward } from './models/TracingForward.js';
 export type { TrafficRuntimeFeatureStatus } from './models/TrafficRuntimeFeatureStatus.js';
 export type { TrafficRuntimeStatus } from './models/TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';

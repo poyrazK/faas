@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.tracing_forward import TracingForward
+
 
 T = TypeVar("T", bound="TracingConfig")
 
@@ -22,12 +26,19 @@ class TracingConfig:
     enabled: bool
     sample_ratio: float | Unset = 1.0
     """Fraction of requests whose spans the app exports."""
+    forward: TracingForward | Unset = UNSET
+    """Sends a copy of every OpenTelemetry trace and log export the app makes to your own OTLP/HTTP endpoint, from
+    inside the app's instance. Requires tracing to be enabled."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
 
         sample_ratio = self.sample_ratio
+
+        forward: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.forward, Unset):
+            forward = self.forward.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -38,19 +49,31 @@ class TracingConfig:
         )
         if sample_ratio is not UNSET:
             field_dict["sample_ratio"] = sample_ratio
+        if forward is not UNSET:
+            field_dict["forward"] = forward
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.tracing_forward import TracingForward
+
         d = dict(src_dict)
         enabled = d.pop("enabled")
 
         sample_ratio = d.pop("sample_ratio", UNSET)
 
+        _forward = d.pop("forward", UNSET)
+        forward: TracingForward | Unset
+        if isinstance(_forward, Unset):
+            forward = UNSET
+        else:
+            forward = TracingForward.from_dict(_forward)
+
         tracing_config = cls(
             enabled=enabled,
             sample_ratio=sample_ratio,
+            forward=forward,
         )
 
         tracing_config.additional_properties = d

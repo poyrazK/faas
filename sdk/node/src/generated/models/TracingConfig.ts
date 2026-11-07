@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TracingForward } from './TracingForward.js';
 /**
  * Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched.
  */
@@ -11,5 +12,6 @@ export type TracingConfig = {
    * Fraction of requests whose spans the app exports.
    */
   sample_ratio?: number;
+  forward?: TracingForward;
 };
 
