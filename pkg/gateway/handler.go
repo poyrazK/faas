@@ -7903,7 +7903,7 @@ haveApp:
 		// declares a lower per_instance_concurrency is full by design
 		// (ADR-20261022203523); its waits are in the queue-wait metric, not
 		// one events row per queued request.
-		if perVMConcurrency >= limits.ConcurrencyPerVMBound {
+		if perVMConcurrency >= limits.RequestConcurrencyBound() {
 			h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 		}
 		waitedFor := time.Since(capacityWaitStarted)
