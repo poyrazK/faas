@@ -5970,18 +5970,19 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...]", "keys")
+			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 0
 		}
 		flags, positional := splitArgsForFlags(args[1:])
 		fs := newFlagSet("keys add", flag.ContinueOnError)
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
 		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
+		approvalsCSV := fs.String("approvals", "", "kinds of action an agent key must have a person approve: delete,production,credentials,billing, all or none (default all)")
 		if err := fs.Parse(flags); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...]", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 1
 		}
 		projects := splitList(*projectsCSV)
@@ -6010,7 +6011,11 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), positional[0], scopes, projects...)
+		approvals, err := approvalsFlag(fs, *approvalsCSV)
+		if err != nil {
+			return printErr("Invalid approvals", err)
+		}
+		k, err := client.CreateKeyWith(context.Background(), api.CreateKeyRequest{Label: positional[0], Scopes: scopes, Projects: projects, ApprovalCategories: approvals})
 		if err != nil {
 			return printErr("Could not create API key", err)
 		}

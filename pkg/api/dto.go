@@ -4307,6 +4307,35 @@ type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
 }
 
+// EgressOverageRequest is PUT /v1/account/egress-overage and
+// PUT /v1/orgs/{slug}/egress-overage.
+type EgressOverageRequest struct {
+	// Enabled turns the election on or off. Required.
+	Enabled *bool `json:"enabled"`
+}
+
+// EgressOverageResponse is the billing subject's egress overage election.
+type EgressOverageResponse struct {
+	// Enabled is whether the election is on.
+	Enabled bool `json:"enabled"`
+	// Electable is whether the plan allows the election.
+	Electable bool `json:"electable"`
+	// EnabledAt is when the election started; it is kept when the election
+	// is turned off and on again.
+	EnabledAt *time.Time `json:"enabled_at,omitempty"`
+	// DisabledAt is when the election was last turned off.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	// IncludedGiB is the plan's monthly egress allowance.
+	IncludedGiB int64 `json:"included_gib"`
+	// Billing is EgressOverageBillingLive or EgressOverageBillingOff.
+	Billing string `json:"billing"`
+	// PriceMillicentsPerGiB prices egress above the allowance while billing
+	// is live.
+	PriceMillicentsPerGiB int64 `json:"price_millicents_per_gib,omitempty"`
+	// Currency is the price's currency.
+	Currency string `json:"currency,omitempty"`
+}
+
 // OrgBillingEmailRequest sets the email an organization bills to. The billing
 // provider sends this address the organization's invoices and lets it sign in
 // to the organization's billing portal (ADR-20261103131742).
@@ -4371,6 +4400,9 @@ type APIKeyResponse struct {
 	// Projects are the slugs of the projects an agent key is limited to;
 	// absent for an unlimited key (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action a person must approve for
+	// an agent key, when it chose them (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4478,6 +4510,10 @@ type CreateKeyRequest struct {
 	// Projects limits an agent key to these projects' apps, by slug
 	// (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action an agent key must have a
+	// person approve; absent for every kind, empty for none
+	// (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4495,6 +4531,9 @@ type CreateOrgAPIKeyRequest struct {
 	// Projects limits an agent key to these projects' apps, by slug
 	// (ADR-20261104085712).
 	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories: as CreateKeyRequest's; the organization's floor
+	// applies on top (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys

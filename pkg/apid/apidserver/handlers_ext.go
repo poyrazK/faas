@@ -5064,6 +5064,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	var k state.APIKey
 	switch {
 	case perr == nil:
@@ -5090,6 +5095,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -5143,6 +5152,9 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = &approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -5655,9 +5667,10 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 			"Bad request", err.Error()))
 		return
 	}
-	if req.OverageCapCents != nil && *req.OverageCapCents < 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"overage_cap_cents must be >= 0 or null", "negative values are rejected"))
+	// ADR-20261105120000: a paid subject keeps a cap, at most its plan's
+	// self-service ceiling.
+	if problem := api.OverageCapProblem(acct.Plan, req.OverageCapCents); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	updated, err := s.raiseOverageCapSvc(r.Context(), acct, req.OverageCapCents)

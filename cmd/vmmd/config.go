@@ -144,6 +144,18 @@ type Config struct {
 	// quiet_pause wins when both are set. Off by default.
 	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// IdleLadder selects the idle ladder mode (ADR-20261107122928,
+	// proposed): "off" (the default), "observe" or "on". Observe measures,
+	// for every request-serving instance whatever its declared pause, the
+	// ladder level its idle time reaches, the RAM held at each level and the
+	// billed MB-seconds the unbilled levels would not bill
+	// (vmmd_idle_ladder_observed_*); it pauses nothing and runs beside quiet
+	// pause. On also applies levels L1 and L2 to the instances quiet pause
+	// pauses: it pauses them after 1 s, and reports those quiet for 10 s at
+	// L2 (InstanceStats.idle_ladder_level), whose memory measured admission
+	// charges with the frozen floor. On needs quiet_pause. FAAS_IDLE_LADDER
+	// overrides TOML.
+	IdleLadder string `toml:"idle_ladder"`
 	// AgentWaitPause enables the model-wait pause of agent runs
 	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
 	// outbound relay and nothing else, and resumes it on the relay's next
@@ -971,6 +983,17 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPauseObserve = enabled
 	}
+	if v := os.Getenv("FAAS_IDLE_LADDER"); v != "" {
+		c.IdleLadder = v
+	}
+	idleLadder, ierr := parseIdleLadderMode(c.IdleLadder)
+	if ierr != nil {
+		return nil, ierr
+	}
+	c.IdleLadder = idleLadder
+	if c.IdleLadder == idleLadderOn && !c.QuietPause {
+		return nil, fmt.Errorf("vmmd: idle_ladder = on needs quiet_pause on (FAAS_IDLE_LADDER, FAAS_QUIET_PAUSE)")
+	}
 	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
 		if perr != nil {
@@ -1511,5 +1534,24 @@ func (c *Config) resourceJournal() fcvm.ResourceJournalConfig {
 		Dir:            c.ResourceJournalDir,
 		VolatileDir:    c.ResourceJournalVolatileDir,
 		VolatileWrites: c.ResourceJournalVolatileWrites,
+	}
+}
+
+// Idle ladder modes (ADR-20261107122928).
+const (
+	idleLadderOff     = "off"
+	idleLadderObserve = "observe"
+	idleLadderOn      = "on"
+)
+
+// parseIdleLadderMode normalizes idle_ladder / FAAS_IDLE_LADDER; empty is off.
+func parseIdleLadderMode(v string) (string, error) {
+	switch mode := strings.ToLower(strings.TrimSpace(v)); mode {
+	case "", idleLadderOff:
+		return idleLadderOff, nil
+	case idleLadderObserve, idleLadderOn:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("vmmd: idle_ladder (FAAS_IDLE_LADDER) must be off, observe or on (got %q)", v)
 	}
 }

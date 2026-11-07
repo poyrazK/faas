@@ -6,6 +6,10 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_org_api_key_request_approval_categories_item import (
+    CreateOrgAPIKeyRequestApprovalCategoriesItem,
+    check_create_org_api_key_request_approval_categories_item,
+)
 from ..models.create_org_api_key_request_scopes_item import (
     CreateOrgAPIKeyRequestScopesItem,
     check_create_org_api_key_request_scopes_item,
@@ -30,6 +34,9 @@ class CreateOrgAPIKeyRequest:
     projects: list[str] | Unset = UNSET
     """Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then
     reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."""
+    approval_categories: list[CreateOrgAPIKeyRequestApprovalCategoriesItem] | Unset = UNSET
+    """Kinds of action the organization's agent key must have a person approve; the organization's floor applies on
+    top. Omit for every kind, empty for none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +53,13 @@ class CreateOrgAPIKeyRequest:
         if not isinstance(self.projects, Unset):
             projects = self.projects
 
+        approval_categories: list[str] | Unset = UNSET
+        if not isinstance(self.approval_categories, Unset):
+            approval_categories = []
+            for approval_categories_item_data in self.approval_categories:
+                approval_categories_item: str = approval_categories_item_data
+                approval_categories.append(approval_categories_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -55,6 +69,8 @@ class CreateOrgAPIKeyRequest:
             field_dict["scopes"] = scopes
         if projects is not UNSET:
             field_dict["projects"] = projects
+        if approval_categories is not UNSET:
+            field_dict["approval_categories"] = approval_categories
 
         return field_dict
 
@@ -74,10 +90,22 @@ class CreateOrgAPIKeyRequest:
 
         projects = cast(list[str], d.pop("projects", UNSET))
 
+        _approval_categories = d.pop("approval_categories", UNSET)
+        approval_categories: list[CreateOrgAPIKeyRequestApprovalCategoriesItem] | Unset = UNSET
+        if _approval_categories is not UNSET:
+            approval_categories = []
+            for approval_categories_item_data in _approval_categories:
+                approval_categories_item = check_create_org_api_key_request_approval_categories_item(
+                    approval_categories_item_data
+                )
+
+                approval_categories.append(approval_categories_item)
+
         create_org_api_key_request = cls(
             label=label,
             scopes=scopes,
             projects=projects,
+            approval_categories=approval_categories,
         )
 
         create_org_api_key_request.additional_properties = d

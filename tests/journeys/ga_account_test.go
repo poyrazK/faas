@@ -35,6 +35,37 @@ func TestBillingAndUsage(t *testing.T) {
 	}
 }
 
+// TestEgressOverageElection reads the account's egress overage election and,
+// on a plan that allows it, turns it the other way and back
+// (ADR-20261104204500). Toggling bills nothing by itself: only egress above
+// the allowance in hours the election covers is billed, and the original
+// state is restored.
+func TestEgressOverageElection(t *testing.T) {
+	tg := needs(t, tierFull, true)
+	t.Parallel()
+	initial := object(t, tg.ok(t, time.Minute, "billing", "egress-overage").stdout)
+	if field(initial, "included_gib") == nil || (str(initial, "billing") != "live" && str(initial, "billing") != "off") {
+		t.Fatalf("egress overage view = %s", compact(initial))
+	}
+	if field(initial, "electable") != true {
+		t.Skipf("plan cannot elect egress overage: %s", compact(initial))
+	}
+	was := "off"
+	if field(initial, "enabled") == true {
+		was = "on"
+	}
+	other := map[string]string{"on": "off", "off": "on"}[was]
+	t.Cleanup(func() { tg.ok(t, time.Minute, "billing", "egress-overage", was) })
+	flipped := object(t, tg.ok(t, time.Minute, "billing", "egress-overage", other).stdout)
+	if field(flipped, "enabled") != (other == "on") {
+		t.Fatalf("after egress-overage %s: %s", other, compact(flipped))
+	}
+	restored := object(t, tg.ok(t, time.Minute, "billing", "egress-overage", was).stdout)
+	if field(restored, "enabled") != (was == "on") || str(restored, "enabled_at") == "" {
+		t.Fatalf("after restoring %s: %s", was, compact(restored))
+	}
+}
+
 // TestAccountExportAndDPA requests the account's GDPR data export (without
 // sealed-secret ciphertext), and reads the account status and DPA (row 153).
 // Account deletion is not run: it needs a disposable account.

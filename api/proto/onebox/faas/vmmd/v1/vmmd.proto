@@ -948,6 +948,13 @@ message AppSpec {
   // app_request_concurrency_max. 0 (an older schedd, or nothing set) keeps the
   // plan's concurrency_per_vm. vmmd clamps it to api.AppRequestConcurrencyBound.
   int32 request_concurrency = 37;
+  // ADR-20261107122928 (idle ladder, proposed): the instance is a
+  // request-serving workload the pause tiers may pause, whatever its declared
+  // pause (schedd's pauseTierWorkload). vmmd's idle_ladder observe mode
+  // measures how long such instances sit idle and which ladder level each
+  // would reach; nothing is paused because of it. False (an older schedd)
+  // leaves the instance out unless quiet_pause_after_ms is set.
+  bool idle_ladder_eligible = 38;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1869,6 +1876,13 @@ message InstanceStats {
   // ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
   // the node does not report this guarantee; the plan cap is for this VM.
   HTTPAdmissionEnforcement http_admission_enforcement = 29;
+  // ADR-20261107122928: the idle ladder level vmmd holds the instance at
+  // while its idle_ladder is on: 1 quiet-paused, 2 quiet-paused and quiet for
+  // at least the ladder's freeze delay (10 s). Measured admission charges a
+  // level-2 instance's memory with the frozen floor (FrozenChargeFloorMB).
+  // 0 when the ladder is off, the instance is running, or it is not on the
+  // ladder.
+  int32 idle_ladder_level = 30;
 }
 
 message HTTPAdmissionEnforcement {

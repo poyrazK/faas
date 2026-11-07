@@ -193,7 +193,7 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 		live[id] = inst
 		switch {
 		case m.quietActivity != nil && m.quietEligibleLocked(id, inst):
-			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.QuietPauseAfter})
+			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: m.quietPauseAfter(inst)})
 		case m.agentWaitEligibleLocked(id, inst):
 			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.AgentWaitPauseAfter, agent: true})
 		}
