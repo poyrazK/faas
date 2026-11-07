@@ -6864,7 +6864,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "48b7b8d6dccd35670697a61db0ac0c1a95efbbb92f1b163c8a61b9c75fd50247",
+      "revision": "6e28671c72b341e1a7d74f0a9327240cbce5f6518f806ae24b8085e5aa411ee1",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10264,6 +10264,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "cfc9daf99753a957b3657c6dc511c460434933a9b6ef82afdbac9503dc7f041a"
+          }
+        },
+        {
+          "id": "74848f2b83ced47227bf66095f41c4c4bd98d05913f352b565193487a2c48db1",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "PgBaseBackupFailed",
+          "definition": {
+            "expression_hash": "f4832a8a81e5e9e141a78d6af714821983e0d5b1ae9ad36ed84562f2c0884d5b",
+            "labels_hash": "3766dc26eadac98297e7b08df7cdc82f859662c1553f289527451b9d8b48dc36",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5762e0539d564329aa691257c6ae802dad32c9de70fc2c2513a8d1138933e87c"
           }
         },
         {
