@@ -4824,8 +4824,22 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
 		}
 	}()
-	if err := m.prepareNativeLease(ctx, lease); err != nil {
+	prepareCtx := ctx
+	if preparedNetwork != nil && preparedNetwork.nativeClaim != nil {
+		// The instance's record links the claimed spare (ADR-149 amendment
+		// 2026-11-07), so its namespace may move only after this write.
+		prepareCtx = withNativePreparedClaim(ctx, *preparedNetwork.nativeClaim)
+	}
+	if err := m.prepareNativeLease(prepareCtx, lease); err != nil {
+		if preparedNetwork != nil && preparedNetwork.nativeClaim != nil {
+			m.abandonNativePreparedClaim(ctx, preparedNetwork)
+		}
 		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
+	}
+	if preparedNetwork != nil && preparedNetwork.nativeClaim != nil {
+		if err := m.completeNativePreparedClaim(ctx, lease, preparedNetwork); err != nil {
+			return nil, fmt.Errorf("manager: claim prepared network: %w", err)
+		}
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.PublicForwarding = m.nativeVMM() != nil

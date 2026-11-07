@@ -143,7 +143,7 @@ func (v *JailerVMM) requireNativeProducerRetirement(ctx context.Context, record 
 			}
 		}
 		if record.Owner != (nativeProducerIdentity{}) {
-			current, err := nativeCurrentIdentity(nativeLaunchOwnerProtocol)
+			current, err := r.journal.currentOwner()
 			if err != nil || current != record.Owner {
 				return errors.New("native owner: local daemon identity changed")
 			}

@@ -66,7 +66,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	}
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:         &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase), owners: v.nativeLaunchOwners},
+		journal:         &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase), owners: v.nativeLaunchOwners, preparedSpares: v.nativePreparedNetworks},
 		retirer:         nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
 		owned:           make(map[string]string),
 		lockWait:        v.readyTimeout,
@@ -415,11 +415,26 @@ func (v *JailerVMM) confirmNativeCleanup(ctx context.Context, lease Lease, nc ne
 	if err := r.resources(lease, nc); err != nil {
 		return err
 	}
+	source, linked := nativePreparedSourceNetwork(record)
+	if linked {
+		// A claim stopped before its move leaves the spare's name in place.
+		if err := r.resources(lease, source); err != nil {
+			return err
+		}
+	}
 	if err := r.journal.confirmResourcesRemoved(ctx, record); err != nil {
 		return err
 	}
+	if linked {
+		if err := r.journal.finishClaim(ctx, record.Prepared); err != nil {
+			return fmt.Errorf("native prepared network: finish claim after cleanup: %w", err)
+		}
+	}
 	r.mu.Lock()
 	delete(r.owned, lease.Instance)
+	if linked && r.owned[record.Prepared.Source] == record.Prepared.SourceGeneration {
+		delete(r.owned, record.Prepared.Source)
+	}
 	r.mu.Unlock()
 	return nil
 }

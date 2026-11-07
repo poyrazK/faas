@@ -211,7 +211,7 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup, f
 				return err
 			}
 			if !skip {
-				for _, argv := range nativeLeaseNetwork(lease).TeardownCommands() {
+				for _, argv := range m.nativeTeardownCommands(networkCtx, lease) {
 					if err := m.runNetworkCommand(networkCtx, argv); err != nil {
 						m.log.Debug("cleanup: native teardown command", "cmd", argv, "err", err)
 					}

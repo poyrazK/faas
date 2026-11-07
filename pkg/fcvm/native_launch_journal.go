@@ -269,16 +269,20 @@ func (j *nativeLaunchJournal) owned(record nativeLaunchRecord) (nativeLaunchReco
 	if !j.owners {
 		return record, nil
 	}
-	get := j.ownerID
-	if get == nil {
-		get = func() (nativeProducerIdentity, error) { return nativeCurrentIdentity(nativeLaunchOwnerProtocol) }
-	}
-	owner, err := get()
+	owner, err := j.currentOwner()
 	if err != nil {
 		return record, fmt.Errorf("native journal: name launch owner: %w", err)
 	}
 	record.Version, record.Owner = 3, owner
 	return record, nil
+}
+
+// currentOwner is this vmmd incarnation's identity as owner records name it.
+func (j *nativeLaunchJournal) currentOwner() (nativeProducerIdentity, error) {
+	if j.ownerID != nil {
+		return j.ownerID()
+	}
+	return nativeCurrentIdentity(nativeLaunchOwnerProtocol)
 }
 
 func (j *nativeLaunchJournal) currentBootID() (string, error) {

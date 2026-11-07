@@ -741,12 +741,21 @@ func validateNativeHostHelperAuthority(owner nativeLaunchRecord, purpose nativeH
 		if owner.Revoked {
 			return errors.New("native helper: effect authority was revoked")
 		}
+		if owner.spare() && owner.Prepared.Target != "" {
+			return errors.New("native helper: a claimed spare has no effect authority")
+		}
 	case nativeHostHelperNetworkCleanup:
 		if !owner.Revoked || !owner.ExitConfirmed || owner.Lease.Networkless || hasInput || len(argv) == 0 || filepath.Base(argv[0]) != "ip" {
 			return errors.New("native helper: network cleanup has no retired lease authority")
 		}
-		for _, allowed := range nativeLeaseNetwork(owner.Lease).TeardownCommands() {
-			if slices.Equal(argv[1:], allowed[1:]) {
+		allowed := nativeLeaseNetwork(owner.Lease).TeardownCommands()
+		if source, linked := nativePreparedSourceNetwork(owner); linked {
+			// A claimed spare's name, if its move never ran (ADR-149
+			// amendment 2026-11-07).
+			allowed = append(allowed, source.TeardownCommands()...)
+		}
+		for _, command := range allowed {
+			if slices.Equal(argv[1:], command[1:]) {
 				return nil
 			}
 		}

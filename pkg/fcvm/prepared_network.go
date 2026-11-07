@@ -46,6 +46,10 @@ type preparedNetworkEntry struct {
 	policy  preparedNetworkPolicy
 	created time.Time
 	adopted bool
+	// native is the spare's launch record under native recovery; nativeClaim
+	// is set from a committed claim until its namespace has moved.
+	native      nativeLaunchRecord
+	nativeClaim *nativePreparedLink
 }
 
 // preparedNetworkPool owns only networks which have never hosted a VM. An
@@ -82,11 +86,16 @@ func (m *Manager) EnablePreparedNetworks(ctx context.Context, capacity int) erro
 	if capacity < 0 || capacity > maxPreparedNetworks {
 		return fmt.Errorf("prepared networks: capacity must be between 0 and %d", maxPreparedNetworks)
 	}
+	spares, nativeSpares := m.nativeSpares()
+	if nativeSpares {
+		// Recovered spares are retired whether or not the pool opens again.
+		m.retireRecoveredNativeSpares(ctx, spares)
+	}
 	if capacity == 0 {
 		return nil
 	}
-	if m.nativeVMM() != nil {
-		return fmt.Errorf("prepared networks: native recovery requires a journaled cache claim; set prepared_networks = 0")
+	if m.nativeVMM() != nil && (!nativeSpares || !spares.nativePreparedSparesEnabled()) {
+		return fmt.Errorf("prepared networks: native recovery requires a journaled cache claim; set prepared_networks = 0 or native_prepared_networks = true")
 	}
 	if m.preparedNetworks != nil {
 		return fmt.Errorf("prepared networks: already enabled")
@@ -173,6 +182,9 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 		p.discard(*entry)
 		return nil
 	}
+	if spares, ok := p.m.nativeSpares(); ok {
+		return p.claimNative(spares, entry, instance)
+	}
 	lease, err := p.m.alloc.adoptNetwork(entry.lease.Instance, instance)
 	if err != nil {
 		p.discard(*entry)
@@ -204,6 +216,27 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 		p.discard(*entry)
 		return nil
 	}
+	return entry
+}
+
+// claimNative commits the claim before the allocator moves the slot. The
+// namespace moves later, once the target's linked record is durable
+// (completeNativePreparedClaim).
+func (p *preparedNetworkPool) claimNative(spares nativePreparedSpareVMM, entry *preparedNetworkEntry, instance string) *preparedNetworkEntry {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.ctx), preparedNetworkTimeout)
+	defer cancel()
+	if err := spares.claimNativeSpare(ctx, entry.native, instance); err != nil {
+		p.discard(*entry)
+		p.m.log.Warn("prepared network claim refused; using ordinary setup", "instance", instance, "err", err)
+		return nil
+	}
+	lease, err := p.m.alloc.adoptNetwork(entry.lease.Instance, instance)
+	if err != nil {
+		p.discard(*entry) // no target record names the spare: it still owns its objects
+		return nil
+	}
+	entry.lease, entry.adopted = lease, true
+	entry.nativeClaim = &nativePreparedLink{Source: entry.native.Lease.Instance, Target: instance, SourceGeneration: entry.native.Generation}
 	return entry
 }
 
@@ -310,9 +343,13 @@ func (p *preparedNetworkPool) fill() {
 		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
 		nc.DatabaseEgress = true        // and may bind a managed database (ADR 20261026150000)
 		nc.EgressCircuitEnabled = p.m.egressCircuitEnabled
+		nc.PublicForwarding = p.m.nativeVMM() != nil // as Wake builds it
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
-		if j := p.m.resourceJournal; j != nil {
+		if spares, ok := p.m.nativeSpares(); ok {
+			// The spare's own record fences every helper that builds it.
+			e.native, err = spares.prepareNativeSpare(ctx, lease)
+		} else if j := p.m.resourceJournal; j != nil {
 			var creator *resourceMountIdentity
 			creator, err = p.m.currentNamespaceContext()
 			if err != nil || creator == nil {
@@ -367,6 +404,10 @@ func (p *preparedNetworkPool) teardown(nc netns.Config) bool {
 }
 
 func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
+	if spares, ok := p.m.nativeSpares(); ok {
+		p.discardNative(spares, e)
+		return
+	}
 	if !p.teardown(e.config) {
 		p.mu.Lock()
 		p.retired = append(p.retired, e)
@@ -380,6 +421,25 @@ func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
 			p.retired = append(p.retired, e)
 			p.mu.Unlock()
 			p.m.log.Error("prepared record retirement failed; retaining slot", "slot", e.lease.Slot, "err", err)
+			return
+		}
+	}
+	if e.adopted {
+		_ = p.m.alloc.Release(e.lease.Instance)
+	} else {
+		p.m.alloc.releaseNetwork(e.lease.Instance)
+	}
+}
+
+// discardNative retires a spare through its launch record. An entry whose
+// record was never published owns nothing but its reserved slot.
+func (p *preparedNetworkPool) discardNative(spares nativePreparedSpareVMM, e preparedNetworkEntry) {
+	if e.native.Generation != "" {
+		if err := p.m.retireNativeSpare(p.ctx, spares, e.native.Lease); err != nil {
+			p.mu.Lock()
+			p.retired = append(p.retired, e)
+			p.mu.Unlock()
+			p.m.log.Error("prepared spare survived retirement; retaining slot", "instance", e.native.Lease.Instance, "slot", e.lease.Slot, "err", err)
 			return
 		}
 	}
@@ -413,6 +473,14 @@ func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepare
 	if prepared != nil {
 		if err := m.checkpointPreparedNamespace(nc); err != nil {
 			return false, err
+		}
+		if m.nativeVMM() != nil {
+			// A port retarget runs under the claiming instance's record.
+			scoped, err := m.nativeNetworkContext(ctx, nc.Instance, "", nativeHostHelperEffect)
+			if err != nil {
+				return false, err
+			}
+			ctx = scoped
 		}
 	}
 	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
