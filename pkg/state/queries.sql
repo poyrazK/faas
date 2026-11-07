@@ -2097,6 +2097,11 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
 from instances where app_id = $1 order by started_at desc;
 
+-- name: CountAccountsCreatedSince :one
+-- Accounts created at or after since (ADR-20261104145353: the platform-wide
+-- daily sign-up cap). Read only on a sign-up attempt.
+select count(*)::bigint from accounts where created_at >= sqlc.arg(since)::timestamptz;
+
 -- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 -- Operator beta funnel: one bounded aggregate read replaces an N+1
 -- ListInstancesForAccount loop. last_request_at is stamped only after a

@@ -900,13 +900,6 @@ func (l *Loop) emitMeteredMB(ctx context.Context, rows []RolledRow) {
 		return
 	}
 	for _, r := range rows {
-		// Mirror rows would be skipped upstream; defensive
-		// check matches IsMeteredSkippableMode so a future
-		// refactor that pulls the filter out of the sampler
-		// can't accidentally emit a mirror row here.
-		if state.IsMeteredSkippableMode(r.Mode) {
-			continue
-		}
 		// A caught-up row (H5-55) may repeat a row an earlier, failed
 		// tick already wrote and counted.
 		if r.CatchUp {
