@@ -98,7 +98,7 @@ test('SQL deadlines bound real repeated transaction retries, cancellation and re
   await assert.rejects(checkSQLDeadlineSetup(owner, role))
   await assert.rejects(promisify(execFile)(process.execPath, [fileURLToPath(new URL('server.mjs', root))], {
     env: { ...process.env, ...env, PORT: '0' }, timeout: 10000,
-  }), error => error.code === 1 && /data_api_configuration_invalid/.test(error.stderr))
+  }), error => error.code === 1 && /data_api_configuration_invalid/.test(error.stderr) && /"stage":"database"/.test(error.stderr))
   assert.equal((await owner.query("SELECT to_regprocedure('gregale_data_api.check_deadline_request()') AS hook")).rows[0].hook, null, 'startup must not install anything')
   // The ordinary schema/migration owner can install without CREATEROLE,
   // superuser privileges or membership permitting SET ROLE to the binding.

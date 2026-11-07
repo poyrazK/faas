@@ -48,6 +48,7 @@ type drainSynth struct {
 	responseStatus int
 	outcomeCode    string
 	hold           time.Duration
+	lastPath       string
 }
 
 func (d *drainSynth) SynthesizeRequest(_ context.Context, _, _, _ string) error { return nil }
@@ -63,6 +64,7 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 		}
 	}
 	d.mu.Lock()
+	d.lastPath = inv.Path
 	perm := d.permanent.Load()
 	trans := d.transient.Load()
 	hold := d.hold

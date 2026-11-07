@@ -3,11 +3,11 @@ package datapipeline
 import (
 	"errors"
 	"net/netip"
-	"slices"
 	"strings"
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/connectioncapacity"
@@ -27,7 +27,19 @@ type Config struct {
 }
 
 func (c Config) Allowed(account string) bool {
-	return c.Enabled && slices.Contains(c.Accounts, account)
+	if !c.Enabled {
+		return false
+	}
+	id, err := uuid.Parse(account)
+	if err != nil {
+		return false
+	}
+	for _, configured := range c.Accounts {
+		if other, err := uuid.Parse(configured); err == nil && other == id {
+			return true
+		}
+	}
+	return false
 }
 func (c Config) Policy() (commit.NetworkPolicy, error) {
 	p := commit.NetworkPolicy{Hosts: map[string]bool{}}

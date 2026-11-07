@@ -2369,7 +2369,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a wake named or selected a deployment other than the entry's production one, or an environment the entry does not serve; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)

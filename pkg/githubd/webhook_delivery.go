@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"log/slog"
 	"time"
 
@@ -218,10 +220,11 @@ func (s *PGWebhookStore) ListWebhookDeliveriesForApp(ctx context.Context, accoun
 		limit = 10
 	}
 	rows, err := s.pool.Query(ctx, `
-		select d.event_type, d.status, coalesce(d.commit_sha, ''),
-		       d.received_at, d.processed_at, d.updated_at, d.skip_reason
+		select d.event_type, case when t.status='succeeded' then 'succeeded' else d.status end, coalesce(d.commit_sha, ''),
+         d.received_at, d.processed_at, greatest(d.updated_at,t.updated_at), coalesce(t.skip_reason,'')
 		from github_webhook_deliveries d
 		join apps a on a.id = $2 and a.account_id = $1
+ left join github_delivery_targets t on t.delivery_id=d.delivery_id and t.account_id=a.account_id
 		where d.installation_id = a.github_install_id
 		  and d.repo_full_name = a.github_repo_full_name
 		order by d.received_at desc
@@ -461,4 +464,21 @@ func completeWebhookDelivery(ctx context.Context, store WebhookDeliveryStore, de
 		return skipper.CompleteSkipped(ctx, deliveryID, reason)
 	}
 	return store.Complete(ctx, deliveryID)
+}
+
+// DeliveryTargetStore keeps account-specific outcomes out of the shared inbox.
+type DeliveryTargetStore interface {
+	RecordDeliveryTarget(context.Context, string, string, bool, string) error
+}
+
+func (s *PGWebhookStore) RecordDeliveryTarget(ctx context.Context, deliveryID, accountID string, success bool, reason string) error {
+	var account pgtype.UUID
+	if err := account.Scan(accountID); err != nil {
+		return err
+	}
+	status := "pending"
+	if success {
+		status = "succeeded"
+	}
+	return sqlc.New().RecordGitHubDeliveryTarget(ctx, s.pool, sqlc.RecordGitHubDeliveryTargetParams{DeliveryID: deliveryID, AccountID: account, Status: status, SkipReason: reason})
 }

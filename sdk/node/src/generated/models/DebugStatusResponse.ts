@@ -6,6 +6,7 @@ import type { DebugRegressionItem } from './DebugRegressionItem.js';
 import type { DebugRolloutExplanation } from './DebugRolloutExplanation.js';
 import type { DebugStatusDeployment } from './DebugStatusDeployment.js';
 import type { DebugStatusHealth } from './DebugStatusHealth.js';
+import type { DebugStatusMemory } from './DebugStatusMemory.js';
 import type { DebugStatusOOMKill } from './DebugStatusOOMKill.js';
 import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 /**
@@ -32,6 +33,7 @@ export type DebugStatusResponse = {
    * The remedy for the newest out-of-memory kill, one suggestion per line.
    */
   oom_fix?: string;
+  memory_pressure?: DebugStatusMemory;
   tracing_enabled: boolean;
   generated_at: string;
 };

@@ -279,6 +279,12 @@ async function upload(ctx) {
     } catch { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
     await drain(stored)
     if (stored.statusCode < 200 || stored.statusCode > 299 || sent !== size) { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
+    // An upload that committed while these bytes streamed replaced the version
+    // read above; read it again just before committing, so its bytes go too
+    // and are not left unreferenced (amendment 2). Only the moment between
+    // this read and the commit remains a race.
+    const latest = await rows(ctx, { method: 'GET', query: `${rowFilter(route)}&${columns}`, token: await ctx.token(false), signal })
+    const replaced = latest.status === 200 && Array.isArray(latest.json) && latest.json.length === 1 ? storedKey(latest.json[0]) : null
     const committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
     if (committed.status < 200 || committed.status > 299 || !Array.isArray(committed.json) || committed.json.length !== 1) {
       // A refused commit, such as a racing upload the policies reject, loses
@@ -286,7 +292,7 @@ async function upload(ctx) {
       await discard(binding, key)
       return committed.status === 401 || committed.status === 403 ? refused(ctx, committed) : ctx.problem(res, 503, 'storage_commit_failed')
     }
-    if (previous !== null && previous !== key) await discard(binding, previous)
+    for (const old of new Set([previous, replaced])) if (old !== null && old !== key) await discard(binding, old)
     sendJSON(res, 200, publicRow(committed.json[0]))
   })
 }
@@ -385,7 +391,8 @@ export function handleStorage(ctx) {
 export function storageAnonymousTarget(route, config) {
   if (route.write) return { code: 'token_required' }
   const listed = config.publicRead?.some(r => r.schema === config.storage.schema && r.relation === storageTable)
-  return listed ? {} : { code: 'public_read_not_allowed' }
+  if (!listed) return { code: 'public_read_not_allowed' }
+  return config.unsafePublicRead?.has(`${config.storage.schema}.${storageTable}`) ? { code: 'data_api_public_read_unsafe' } : {}
 }
 
 // storageServerKeyAllows applies a restricted key: its relations must list

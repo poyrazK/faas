@@ -347,7 +347,16 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 	if value.path == "" {
 		return nil
 	}
-	attributes := []attribute.KeyValue{
+	return value.appendAttributes(make([]attribute.KeyValue, 0, 18))
+}
+
+// appendAttributes appends the decision's span attributes to dst; a decision
+// without a path adds none.
+func (value trafficDecisionSnapshot) appendAttributes(dst []attribute.KeyValue) []attribute.KeyValue {
+	if value.path == "" {
+		return dst
+	}
+	attributes := append(dst,
 		attribute.String("gregale.traffic.decision_version", "v1"),
 		attribute.String("gregale.traffic.path", value.path),
 		attribute.String("gregale.traffic.phase", value.phase.String()),
@@ -365,7 +374,7 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 		attribute.Int64("gregale.traffic.wake_admission_ms", value.durations[trafficWake]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.capacity_wait_ms", value.durations[trafficCapacity]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.retry_backoff_ms", value.durations[trafficBackoff]/int64(time.Millisecond)),
-	}
+	)
 	if value.policyStage != "" {
 		attributes = append(attributes, attribute.String("gregale.traffic.policy_stage", value.policyStage))
 	}

@@ -6,6 +6,8 @@ package analyticsrollup
 
 import (
 	"context"
+	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -41,6 +43,106 @@ func Covers(ctx context.Context, store any, appID string, from time.Time) (Reade
 	}
 	return reader, !from.Before(since.Add(api.RequestAnalyticsSettleLag))
 }
+
+// WindowIncompleteGap is the analytics telemetry gap reason for requests
+// lost during the window; lost rollups report it too.
+const WindowIncompleteGap = "telemetry_window_incomplete"
+
+// WithRollupGaps adds lost rollups to a completeness answer: when the
+// rollups answer the window and apid lost some of its minutes, the window
+// is incomplete. An unknown answer (nil) stays unknown.
+func WithRollupGaps(ctx context.Context, store any, log *slog.Logger, appID string, from, until time.Time, complete *bool, gaps []string) (*bool, []string) {
+	if complete == nil {
+		return complete, gaps
+	}
+	reader, ok := Covers(ctx, store, appID, from)
+	id, parseErr := uuid.Parse(appID)
+	if !ok || parseErr != nil {
+		return complete, gaps
+	}
+	has, err := reader.RequestAnalyticsRollupHasGap(ctx, id, from, until)
+	if err != nil {
+		if log != nil {
+			log.Warn("request analytics rollup gap check failed", "app_id", appID, "err", err)
+		}
+		return nil, nil
+	}
+	if !has {
+		return complete, gaps
+	}
+	incomplete := false
+	if !slices.Contains(gaps, WindowIncompleteGap) {
+		gaps = append(gaps, WindowIncompleteGap)
+	}
+	return &incomplete, gaps
+}
+
+// HourRange is the part of [from, until) read from the hourly tier: the
+// whole UTC hours inside the window that start at or after the hourly
+// tier's coverage plus RequestAnalyticsSettleLag (amendment 2). The minute
+// tier answers the rest. An empty range is returned as [until, until).
+func HourRange(from, until, hoursSince time.Time, hasHours bool) (time.Time, time.Time) {
+	if !hasHours {
+		return until, until
+	}
+	start := from
+	if settled := hoursSince.Add(api.RequestAnalyticsSettleLag); settled.After(start) {
+		start = settled
+	}
+	hoursFrom := ceilHour(start)
+	hoursUntil := until.UTC().Truncate(time.Hour)
+	if !hoursFrom.Before(hoursUntil) {
+		return until, until
+	}
+	return hoursFrom, hoursUntil
+}
+
+func ceilHour(t time.Time) time.Time {
+	floor := t.UTC().Truncate(time.Hour)
+	if floor.Equal(t) {
+		return floor
+	}
+	return floor.Add(time.Hour)
+}
+
+// hourRange looks up the app's hourly coverage and returns its HourRange.
+func hourRange(ctx context.Context, reader Reader, appID string, from, until time.Time) (pgtype.Timestamptz, pgtype.Timestamptz, error) {
+	since, ok := time.Time{}, false
+	if id, err := uuid.Parse(appID); err == nil {
+		if since, ok, err = reader.RequestAnalyticsRollupHoursCoverage(ctx, id); err != nil {
+			return pgtype.Timestamptz{}, pgtype.Timestamptz{}, err
+		}
+	}
+	hf, hu := HourRange(from, until, since, ok)
+	return pgtype.Timestamptz{Time: hf, Valid: true}, pgtype.Timestamptz{Time: hu, Valid: true}, nil
+}
+
+// RouteDeployments returns requests per route, method and deployment from
+// the rollups.
+func RouteDeployments(ctx context.Context, reader Reader, appID, accountID string, from, until time.Time) (map[RouteDeploymentKey]int64, error) {
+	hoursFrom, hoursUntil, err := hourRange(ctx, reader, appID, from, until)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := reader.RequestAnalyticsRollupRouteDeployments(ctx, sqlc.RequestAnalyticsRollupRouteDeploymentsParams{
+		AppID: pgUUID(appID), AccountID: pgUUID(accountID),
+		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+		HoursFrom:   hoursFrom,
+		HoursUntil:  hoursUntil,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[RouteDeploymentKey]int64, len(rows))
+	for _, row := range rows {
+		out[RouteDeploymentKey{Route: row.Route, Method: row.Method, DeploymentID: uuid.UUID(row.DeploymentID.Bytes).String()}] += row.Requests
+	}
+	return out, nil
+}
+
+// RouteDeploymentKey is one route, method and deployment.
+type RouteDeploymentKey struct{ Route, Method, DeploymentID string }
 
 // Query is one rollup read.
 type Query struct {
@@ -90,6 +192,10 @@ func Read(ctx context.Context, reader Reader, q Query) ([]Group, error) {
 	if groupBy == "" {
 		groupBy = "route"
 	}
+	hoursFrom, hoursUntil, err := hourRange(ctx, reader, q.AppID, q.From, q.Until)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := reader.RequestAnalyticsRollupGroups(ctx, sqlc.RequestAnalyticsRollupGroupsParams{
 		Hourly:      q.Hourly,
 		GroupBy:     groupBy,
@@ -97,6 +203,8 @@ func Read(ctx context.Context, reader Reader, q Query) ([]Group, error) {
 		AccountID:   pgUUID(q.AccountID),
 		WindowFrom:  pgtype.Timestamptz{Time: q.From, Valid: true},
 		WindowUntil: pgtype.Timestamptz{Time: q.Until, Valid: true},
+		HoursFrom:   hoursFrom,
+		HoursUntil:  hoursUntil,
 		Route:       q.Route,
 		Method:      q.Method,
 		GroupLimit:  int32(q.Limit),

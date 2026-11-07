@@ -146,3 +146,87 @@ match `(tableoid, ctid)`, as the raw sweep does.
   no view across nodes, and the plan gate lives in apid.
 - **Upsert rollups per row in the insert transaction.** Exact under replay,
   but five upserts per request is more write load than the raw insert.
+
+## Amendment 1 (2026-11-04): hardening after the first review
+
+A review of the shipped rollups found two faults in them and one in the
+telemetry path they read from:
+
+1. **One client could stop an apid's rollups.** The aggregator cut text
+   dimensions at 512 bytes, through a multi-byte rune when a value was
+   longer. A `Referer` host of 253 three-byte runes passes the gateway's
+   normalization, so any client could send one. Postgres refused the whole
+   flush (`invalid byte sequence for encoding "UTF8"`), the aggregator kept
+   the rows for retry, and every later flush on that apid failed, for every
+   app. Coverage was already recorded, so analytics under-reported silently.
+   Now text is cut on a rune boundary (invalid UTF-8 and NUL removed), a
+   flush that Postgres refuses for its data (SQLSTATE class 22 or 23) is split
+   until the refused rows stand alone and those are dropped, and only other
+   errors keep the rows for retry.
+2. **Lost rollups were invisible.** apid now records each app minute whose
+   rollups it lost (refused rows, or a full buffer) in
+   `request_analytics_rollup_gaps`. Analytics answered from rollups report a
+   window holding such a minute as incomplete with `telemetry_window_incomplete`.
+   meterd sweeps markers after 15 days.
+3. **The route deployment split mixed stores.** Each route's total came from
+   the rollups but its per-deployment counts from the capped raw rows, so
+   past the cap "other deployments" absorbed the missing requests and their
+   compute cost. Both deployment splits now take their counts from the
+   rollups (`RequestAnalyticsRollupRouteDeployments`) when rollups answer;
+   commit, tag and CPU still come from raw rows.
+4. **The busiest values were not the ones kept.** A flush kept the first 50
+   values per app minute and kind, so a busy consumer that arrived late went
+   to `__other__`. The buffer now holds up to 200 values and the flush keeps
+   the 50 with the most requests.
+
+The gateway publisher drained one 256-row batch per tick. Its wake hook
+re-arms only when a drain leaves the recorder under half full, so once rows
+arrived faster than one batch could ship, delivery fell to the 5 s ticker,
+256 rows per 5 s. At 1.25 times ship capacity 6% of rows were delivered. A
+tick now keeps draining while a full batch waits, bounded by one pass over
+the ring.
+
+## Amendment 2 (2026-11-05): an hourly tier, and sampled detail is best-effort
+
+A review of long windows found three more problems.
+
+1. **Long windows read too slowly.** A 7-day window of a busy app took 17 to
+   28 s on rollups. Reads summed every minute row (10,080 buckets per group)
+   through a PL/pgSQL histogram aggregate, inside a materialized CTE that
+   also held the histograms for the top-groups pass. Three changes:
+   - apid also adds every flush to `request_analytics_hours`, in the same
+     transaction as `request_analytics_minutes`. It has the same columns and
+     key at hour grain. Reads take the whole hours inside the window from it
+     and the partial edge hours from minutes, so 14 days read 336 buckets per
+     group instead of 20,160, and the answer is the same as minutes alone
+     give.
+   - `request_analytics_rollup_coverage.hours_covered_since` is the first
+     minute the hourly tier holds. The tier is read only from the hour after
+     that minute plus `RequestAnalyticsSettleLag`, so an app whose minutes
+     predate the tier reads minutes until whole hours exist. A flush sets it
+     the way it sets `covered_since`, so the first flush after the upgrade
+     sets it for an existing app. During a rolling upgrade an old apid replica
+     writes minutes but not hours. That is the same window as an old replica
+     not writing rollups at all, which the coverage section above already
+     accepts.
+   - The histogram is summed with native `SUM` per bucket, and the CTEs are
+     `NOT MATERIALIZED`. The top-groups pass ranks on requests without
+     carrying histograms.
+   meterd sweeps hourly rows on the same plan ladder, by `bucket_start`.
+   On a local Postgres 16 holding 7 days of 80 route and status groups
+   (806,400 minute rows), the 7-day route read took 32.5 s from minutes
+   alone and 1.3 to 1.9 s with the hourly tier (15,760 rows read).
+2. **Sampled measures went missing silently.** The raw read for CPU and the
+   latency of sampled rows is bounded by
+   `RequestAnalyticsSampledMeasuresTimeout`. Past it the measures were left
+   out, and nothing in the response said so. The response now has
+   `sampled_measures`: `included`, or `omitted` when any sampled-detail read
+   failed or ran out of time. Counts, error rates and percentiles never
+   depend on it.
+3. **Raw deployment reads were fatal.** The per-deployment cost read and the
+   per-route deployment read run on raw rows even when rollups answer. Either
+   one failing failed the whole analytics response. Both are now
+   best-effort. Beside rollups they share the sampled-measures time budget;
+   on raw-row windows they run unbounded. A failure leaves out
+   `deployment_costs` or the route deployment splits, logs a warning, and
+   sets `sampled_measures` to `omitted`. A cancelled request still fails.

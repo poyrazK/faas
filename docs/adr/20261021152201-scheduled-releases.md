@@ -82,3 +82,13 @@ Schedule outcomes use the release notification outbox of ADR-20261020085706 (`re
 - A parked release that is never started is replaced by the next release, like any 0% deployment.
 - Times are absolute. The CLI turns local times and offsets such as `+2h` into RFC 3339 before sending. Daylight-saving shifts between scheduling and the start do not move a release.
 - Recurring releases, scheduled project promotions and scheduled config changes are out of scope.
+
+## Amendment (2026-11-05): waiting releases do not monopolize the due scan
+
+The worker retains a process-local `(release_at, id)` cursor between bounded
+20-row sweeps. It advances past waiting or failed-to-read candidates and wraps
+after a short or empty page, so earlier releases are revisited when ready.
+Timestamp/ID pagination continues correctly after a processed schedule leaves
+the due set. Each apid worker serializes its own sweep; a restart starts a new
+pass. The transactional start guards, freezes, approvals, per-tick budget and
+one-hour start grace are unchanged.

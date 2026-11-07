@@ -198,3 +198,31 @@ func TestCheckWorkerHonorsAdmissionAndRedactsSourceErrors(t *testing.T) {
 		t.Fatal("private source error escaped worker boundary")
 	}
 }
+
+func TestCheckSerializesDifferentTargetsWithoutLosingLease(t *testing.T) {
+	s, store, _, account := testService(t)
+	ctx := t.Context()
+	c, err := s.CreateConnection(ctx, account, api.CreateDataConnectionRequest{Name: "source-checks", ConnectionURL: "postgres://reader:secret@db.example/db?sslmode=verify-full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.RequestCheck(ctx, account, c.ID, c.Revision, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimCheck(ctx, uuid.NewString())
+	if err != nil || claimed.ID != first.ID {
+		t.Fatal(claimed, err)
+	}
+	target := uuid.NewString()
+	if _, err = store.RequestCheck(ctx, account, c.ID, c.Revision, target); !errors.Is(err, ErrCheckBusy) {
+		t.Fatalf("conflicting check: %v", err)
+	}
+	if err = store.FinishCheck(ctx, claimed, api.DataConnectionCheck{State: "passed"}); err != nil {
+		t.Fatalf("active lease was invalidated: %v", err)
+	}
+	second, err := store.RequestCheck(ctx, account, c.ID, c.Revision, target)
+	if err != nil || second.DatabaseID != target || second.ID == first.ID {
+		t.Fatal(second, err)
+	}
+}

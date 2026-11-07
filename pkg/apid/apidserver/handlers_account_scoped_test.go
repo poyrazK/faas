@@ -661,6 +661,10 @@ func TestListAccountSecrets_RequiresMFA(t *testing.T) {
 	if _, err := store.CreateSession(context.Background(), sid, acct.ID, "192.0.2.30", "mfa-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
+	// A pending envelope models a live MFA requirement (ADR-20261106210000).
+	if _, err := store.SetMFARequired(context.Background(), acct.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	token, err := mgr.IssueWithSession(sid, acct.ID, true) // mfaPending=true
 	if err != nil {
 		t.Fatal(err)

@@ -21,14 +21,14 @@ import (
 // Upload keys are resolved by apid (credentials, ADR 20261029202403): their
 // stored hashes are keyed by a secret only apid holds.
 func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.UploadAuthenticator, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter,
-	hostLookups *objectstorage.HostLookupBudget, enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
-	publicHandler, err := publicObjectReads(store, registry, reads, nil, hostLookups, enabled, domains, next, log)
+	hostLookups *objectstorage.HostLookupBudget, enabled, tenantSurfaces func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	publicHandler, err := publicObjectReads(store, registry, reads, nil, hostLookups, enabled, tenantSurfaces, domains, next, log)
 	if err != nil {
 		return nil, err
 	}
 	upload, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
-		Store: store, Routes: store, Buckets: store, Authenticator: credentials, KeyProjects: store,
-		Registry: registry, Accounting: store, RequestMetrics: store, Enabled: enabled,
+		Store: store, Routes: store, Buckets: store, Authenticator: credentials,
+		Registry: registry, Accounting: store, RequestMetrics: store, Enabled: enabled, TenantSurfacesEnabled: tenantSurfaces,
 		AppsDomain: domains.Apps, Next: publicHandler, Log: log,
 	})
 	if err != nil {
@@ -43,10 +43,10 @@ func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.U
 // next. transfers paces their bodies; nil leaves them unpaced. hostLookups
 // bounds host lookups for names never seen naming an app.
 func publicObjectReads(store *state.EdgeStore, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter, transfers *objectstorage.TransferLimiter,
-	hostLookups *objectstorage.HostLookupBudget, enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	hostLookups *objectstorage.HostLookupBudget, enabled, tenantSurfaces func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
 	h, err := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
 		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, ReadAdmitter: reads,
-		Transfers: transfers, HostLookups: hostLookups, Enabled: enabled, AppsDomain: domains.Apps, Next: next, Log: log,
+		Transfers: transfers, HostLookups: hostLookups, Enabled: enabled, TenantSurfacesEnabled: tenantSurfaces, AppsDomain: domains.Apps, Next: next, Log: log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gatewayd-public: public object storage handler: %w", err)

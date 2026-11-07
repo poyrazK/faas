@@ -4,7 +4,7 @@ import http from 'node:http'
 import { runtimeConfig, changeEventsConfig, limits } from '../config.mjs'
 import { createServer } from '../server.mjs'
 import { createAdmission } from '../admission.mjs'
-import { changeEvent, pack, settlement, unsafeChangeEvents, createChangeRelay } from '../changes.mjs'
+import { changeEvent, changeHooksDrainPath, pack, settlement, unsafeChangeEvents, createChangeRelay } from '../changes.mjs'
 
 // Change hooks relay (ADR-20261022121642).
 
@@ -82,12 +82,23 @@ test('background work borrows only a free admission slot', () => {
 
 // harness runs a relay against a fake PostgREST and platform. step() fires
 // the pending timer and resolves with the timer the cycle schedules next.
-async function harness(t, { claims = [], publish = () => ({ status: 200, body: { results: [] } }), acquire = true, env = {} } = {}) {
-  const rpc = []
+// table describes the change event table delivery reports read: waiting
+// changes, the head's timestamps, rejected changes and the latest code.
+// statusAnswer is the platform's status for a delivery report.
+async function harness(t, { claims = [], publish = () => ({ status: 200, body: { results: [] } }), acquire = true, env = {}, table = {}, statusAnswer = () => 204 } = {}) {
+  const rpc = [], reads = [], reports = []
   const upstream = http.createServer((req, res) => {
     let body = ''
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
+      if (req.method === 'GET') {
+        reads.push({ path: req.url, headers: req.headers, claims: claimsOf(req.headers.authorization) })
+        const rejected = req.url.includes('failed_at=not.is.null')
+        const total = rejected ? table.failed ?? 0 : table.pending ?? 0
+        const rows = total ? [rejected ? { failure_code: table.code } : { captured_at: table.oldest, available_at: table.availableAt ?? '-infinity' }] : []
+        res.setHeader('content-range', total ? `0-0/${total}` : '*/0')
+        return res.end(JSON.stringify(rows))
+      }
       const call = { path: req.url, headers: req.headers, claims: claimsOf(req.headers.authorization), body: JSON.parse(body) }
       rpc.push(call)
       if (req.url === '/rpc/gregale_change_claim') return res.end(JSON.stringify(claims.shift() ?? []))
@@ -103,6 +114,10 @@ async function harness(t, { claims = [], publish = () => ({ status: 200, body: {
   const fetchImpl = async (url, options = {}) => {
     fetches.push({ url: String(url), options })
     if (String(url).startsWith('http://127.0.0.1:9/oidc/token')) return new Response(JSON.stringify({ token_type: 'Bearer', access_token: 'workload.token.sig' }))
+    if (String(url) === config.changeEvents.status) {
+      reports.push({ headers: options.headers, body: JSON.parse(options.body) })
+      return new Response(null, { status: statusAnswer() })
+    }
     const answer = publish(JSON.parse(options.body))
     if (answer instanceof Error) throw answer
     return new Response(JSON.stringify(answer.body ?? {}), { status: answer.status })
@@ -117,7 +132,7 @@ async function harness(t, { claims = [], publish = () => ({ status: 200, body: {
     timers.at(-1).work()
     return next
   }
-  return { relay, rpc, fetches, timers, step, jump: ms => { wall += ms } }
+  return { relay, rpc, reads, reports, fetches, timers, step, jump: ms => { wall += ms }, advance: ms => { mono += ms; wall += ms }, wall: () => wall }
 }
 
 test('the relay claims, publishes in order and settles', async t => {
@@ -179,6 +194,17 @@ test('rejections become failed events; unreachable platforms keep events waiting
   assert.deepEqual(unavailable.rpc[1].body.published, [])
 })
 
+test('a runtime the platform refuses (a stage) returns its claim and stops', async t => {
+  const h = await harness(t, { claims: [[row(1)], [row(2)]], publish: () => ({ status: 403 }) })
+  await h.relay.cycle()
+  assert.deepEqual(h.rpc[1].body, { relay: h.rpc[0].body.relay, published: [], failed: [], retry_after_ms: 0 }, 'the claim goes back untouched')
+  assert.equal(h.timers.length, 1, 'no further cycle is scheduled')
+  h.relay.kick()
+  assert.equal(h.timers.length, 1, 'writes do not wake it')
+  assert.deepEqual(await h.relay.drain(1000), { refused: true })
+  assert.equal(h.rpc.length, 2)
+})
+
 test('an idle relay backs off, never queues for the engine and changes identity after a restore', async t => {
   const idle = await harness(t)
   const delays = []
@@ -228,4 +254,103 @@ test('the gateway hides the change event table and wakes the relay after writes'
   for (let i = 0; i < 50 && claims.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 10))
   assert.equal(claims.length, 2, 'the write woke the relay before its idle poll')
   assert.ok(claims[1] - claims[0] < limits.changeEventsIdleMinMs)
+})
+
+test('the relay reports delivery from its table, when it changes and as a heartbeat', async t => {
+  const h = await harness(t, { table: { pending: 3, oldest: '2026-10-22T12:00:00.000001+00:00', failed: 2, code: 'event_schema_invalid' } })
+  await h.step()
+  assert.equal(h.reports.length, 1, 'a starting relay reports at once')
+  assert.deepEqual(h.reports[0].body, { version: 1, pending: 3, failed: 2, publishing: 'ok', oldest_pending_at: '2026-10-22T12:00:00.000Z', last_failure_code: 'event_schema_invalid' })
+  assert.equal(h.reports[0].headers.Authorization, 'Bearer workload.token.sig')
+  assert.equal(new URL(h.fetches.find(f => f.url.includes('/oidc/token')).url).searchParams.get('audience'), 'gregale:data-api:events')
+  for (const read of h.reads) {
+    assert.equal(read.headers['accept-profile'], 'api')
+    assert.equal(read.headers.prefer, 'count=exact')
+    assert.equal(read.claims.gregale_access, 'hooks', 'only the relay claim reads the table')
+  }
+  const reads = h.reads.length
+  await h.step()
+  assert.equal(h.reads.length, reads, 'the table is read at most once a reporting interval')
+  h.advance(limits.changeHookReportIntervalMs)
+  await h.step()
+  assert.equal(h.reports.length, 1, 'unchanged delivery is not reported again before the heartbeat')
+  h.advance(limits.changeHookReportHeartbeatMs)
+  await h.step()
+  assert.equal(h.reports.length, 2, 'the heartbeat keeps the report fresh')
+})
+
+test('failing publications are reported as retrying at once', async t => {
+  const future = new Date(Date.now() + 3600_000).toISOString()
+  const h = await harness(t, { claims: [[], [row(1)]], publish: () => new Error('connection refused'), table: { pending: 1, oldest: '2026-10-22T12:00:00Z', availableAt: future } })
+  await h.step()
+  h.relay.kick()
+  await h.step()
+  assert.equal(h.reports.length, 2, 'the first failure is news, not left for the interval')
+  assert.equal(h.reports.at(-1).body.publishing, 'retrying')
+  assert.equal(h.reports.at(-1).body.last_published_at, undefined)
+})
+
+test('published changes are reported with when they last published', async t => {
+  const h = await harness(t, { claims: [[row(1)]], publish: body => ({ status: 200, body: { results: body.events.map((_, index) => ({ index, status: 'accepted' })) } }) })
+  await h.step()
+  assert.equal(h.reports.length, 1)
+  assert.equal(h.reports[0].body.last_published_at, new Date(h.wall()).toISOString())
+  assert.deepEqual([h.reports[0].body.pending, h.reports[0].body.failed, h.reports[0].body.publishing], [0, 0, 'ok'])
+})
+
+test('a platform without the report route is not asked again', async t => {
+  const h = await harness(t, { statusAnswer: () => 404, table: { pending: 1, oldest: '2026-10-22T12:00:00Z' } })
+  await h.step()
+  assert.equal(h.reports.length, 1)
+  h.advance(limits.changeHookReportHeartbeatMs)
+  await h.step()
+  assert.equal(h.reports.length, 1)
+  assert.equal((await h.relay.drain(10)).pending, 1, 'a drain still reads delivery')
+  assert.equal(h.reports.length, 1)
+})
+
+test('a drain waits until the relay has nothing more to do', async t => {
+  const h = await harness(t, { claims: [[]], table: { pending: 0 } })
+  await h.step()
+  const drained = h.relay.drain(60_000)
+  await h.step()
+  assert.deepEqual(await drained, { pending: 0, failed: 0, oldestPendingAt: null, publishing: 'ok', lastFailureCode: null })
+  const waiting = await h.relay.drain(5)
+  assert.equal(waiting.pending, 0, 'a drain answers by its deadline even if no cycle runs')
+})
+
+test('only a platform cron drains, and only with hooks on', async t => {
+  let claimed = 0
+  const upstream = http.createServer((req, res) => {
+    if (req.url.startsWith('/rpc/gregale_change_claim')) claimed++
+    if (req.method === 'GET') res.setHeader('content-range', '*/0')
+    res.end(req.url.startsWith('/rpc/') || req.method === 'GET' ? '[]' : '')
+  })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  t.after(() => { upstream.closeAllConnections(); upstream.close() })
+  const serve = async env => {
+    const gateway = createServer(runtimeConfig({ ...baseEnv, ...env }), async () => ({ sub: 'alice', exp: 9999999999 }), upstream.address().port, undefined, () => {})
+    await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+    t.after(() => { gateway.closeAllConnections(); gateway.close() })
+    return headers => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: gateway.address().port, path: changeHooksDrainPath, method: 'POST', headers }, res => {
+        let body = ''
+        res.on('data', chunk => { body += chunk })
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(body) }))
+      })
+      req.on('error', reject)
+      req.end()
+    })
+  }
+  const hooked = await serve(hooksEnv)
+  assert.equal((await hooked({})).status, 404, 'a public request is not a drain')
+  const before = claimed
+  const drained = await hooked({ 'x-faas-cron': 'true' })
+  assert.equal(drained.status, 200)
+  assert.deepEqual(drained.body, { version: 1, pending: 0, failed: 0, publishing: 'ok' })
+  assert.ok(claimed > before, 'the drain ran a relay cycle')
+  const off = await serve({})
+  const refused = await off({ 'x-faas-cron': 'true' })
+  assert.equal(refused.status, 409)
+  assert.equal(refused.body.code, 'data_api_change_hooks_off')
 })

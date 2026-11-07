@@ -14,6 +14,10 @@ import (
 
 const testDataCaseLimit = 100
 
+// Leave room below the OS per-environment-string bound for the variable name
+// and terminator. The limit applies after JSON escaping, as commands receive it.
+const testDataCaseJSONLimit = 64 << 10
+
 type testDataCase struct {
 	Name   string
 	Values map[string]any
@@ -87,9 +91,23 @@ func readTestData(path string) ([]testDataCase, []string, error) {
 				return nil, nil, fmt.Errorf("case data row %d field %q must be a string, number, or boolean", i+1, field)
 			}
 		}
+		if _, err := encodeTestDataCase(row); err != nil {
+			return nil, nil, fmt.Errorf("case data row %d: %w", i+1, err)
+		}
 		cases = append(cases, testDataCase{Name: fmt.Sprintf("row-%d", i+1), Values: row})
 	}
 	return cases, fields, nil
+}
+
+func encodeTestDataCase(values map[string]any) ([]byte, error) {
+	body, err := json.Marshal(values)
+	if err != nil {
+		return nil, errors.New("case data must be JSON-encodable")
+	}
+	if len(body) > testDataCaseJSONLimit {
+		return nil, errors.New("case data exceeds 64 KiB when JSON-encoded for the command environment")
+	}
+	return body, nil
 }
 
 func readTestCSVData(body []byte) ([]map[string]any, error) {

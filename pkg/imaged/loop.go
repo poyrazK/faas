@@ -36,9 +36,12 @@ import (
 
 const (
 	staleDeploymentSweepEvery = 5 * time.Minute
-	staleDeploymentThreshold  = 2 * time.Hour
-	staleDeploymentBatchSize  = 64
-	securityScanSweepEvery    = 6 * time.Hour
+	// signatureRevalidationEvery bounds how long a rolled-back image the
+	// current trust list rejects can serve (ADR-20261020085706 amendment 14).
+	signatureRevalidationEvery = 5 * time.Minute
+	staleDeploymentThreshold   = 2 * time.Hour
+	staleDeploymentBatchSize   = 64
+	securityScanSweepEvery     = 6 * time.Hour
 	// Evidence leases are checked much more frequently than the expensive
 	// scanner sweep so an enforce-mode app cannot continue serving after its
 	// last verified result has expired.
@@ -50,6 +53,16 @@ const (
 type Loop struct {
 	handler *Handler
 	store   state.Store
+	// signatureSweep keeps periodic signature revalidations from overlapping.
+	signatureSweep sync.Mutex
+	// leaseRescans records when an expired-evidence rescan started, per
+	// deployment, so the security lease waits for it once (amendment 14).
+	leaseRescanMu sync.Mutex
+	leaseRescans  map[string]time.Time
+	// sweepNode caches this imaged's compute node ID for the node-scoped
+	// security sweeps (bug hunt O32).
+	sweepNodeMu sync.Mutex
+	sweepNode   string
 	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
 	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
 	crashCaptureCryptoEvery time.Duration
@@ -69,6 +82,11 @@ type Loop struct {
 	securityScanRunning atomic.Bool
 	// prep prepares deployments' images off the loop; nil prepares inline.
 	prep *imagePrepWorkers
+	// releaseApprovalOffset rotates the bounded approval recovery scan.
+	releaseApprovalOffset int
+	// staleDeploymentOffset rotates past active builds and intentional holds.
+	// Both offsets are owned by the loop goroutine.
+	staleDeploymentOffset int
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
@@ -260,6 +278,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer staleDeploymentTicker.Stop()
 	releaseApprovalTicker := time.NewTicker(releaseApprovalHoldSweepEvery)
 	defer releaseApprovalTicker.Stop()
+	signatureTicker := time.NewTicker(signatureRevalidationEvery)
+	defer signatureTicker.Stop()
 	securityScanEvery := l.securityScanEvery
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
@@ -376,6 +396,18 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.reconcileStaleDeployments(ctx)
 		case <-releaseApprovalTicker.C:
 			l.resumeReleaseApprovalHolds(ctx)
+		case <-signatureTicker.C:
+			// ADR-20261020085706 amendment 14: a rollback (manual or
+			// automatic) or signing turned on later can put an image the
+			// current trust list rejects back into service; revalidate every
+			// live signed image periodically, not only on start and signer
+			// changes.
+			if l.signatureSweep.TryLock() {
+				go func() {
+					defer l.signatureSweep.Unlock()
+					l.reconcileSecuritySignatures(ctx, l.now())
+				}()
+			}
 		case tick := <-l.securityScanCh:
 			l.reconcileSecurityScans(ctx, tick, securityScanEvery)
 		case tick := <-l.securityLeaseCh:
@@ -435,7 +467,7 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 			}
 		}
 		return kept
-	})
+	}, &l.staleDeploymentOffset)
 	if err != nil {
 		l.log.Warn("imaged: list stale deployments", "err", err)
 	}
@@ -455,24 +487,38 @@ func staleDeploymentFilter(cutoff time.Time) state.OperatorDeploymentFilter {
 	}
 }
 
-// operatorDeploymentPages bounds one sweep's listing; a backlog past it is
-// reached on the next sweep.
+// operatorDeploymentPages bounds read-only backlog observations. Mutating
+// recovery carries its cursor between ticks and uses a single page.
 const operatorDeploymentPages = 64
 
 // pageOperatorDeployments lists filter page by page. visit returns how many
 // of a page's rows it left in place (did not move out of the filter), so the
-// next page starts after them and none is visited twice in a pass.
-func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int) error {
-	for page := 0; page < operatorDeploymentPages && ctx.Err() == nil; page++ {
+// next page starts after them and none is visited twice in a pass. A cursor
+// limits mutating recovery to one batch per tick and continues on the next
+// tick; read-only observations without a cursor can scan multiple pages.
+func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int, cursor *int) error {
+	pages := operatorDeploymentPages
+	if cursor != nil {
+		filter.Offset = *cursor
+		pages = 1
+	}
+
+	for page := 0; page < pages && ctx.Err() == nil; page++ {
 		rows, err := l.store.ListDeploymentsForOperator(ctx, filter)
 		if err != nil {
 			return err
 		}
 		kept := visit(rows)
 		if len(rows) < filter.Limit {
+			if cursor != nil {
+				*cursor = 0
+			}
 			return nil
 		}
 		filter.Offset += kept
+		if cursor != nil {
+			*cursor = filter.Offset
+		}
 	}
 	return ctx.Err()
 }
@@ -552,7 +598,7 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 			}
 		}
 		return len(rows)
-	})
+	}, nil)
 	if err != nil {
 		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
 		return
@@ -718,6 +764,12 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			l.log.Warn("imaged: per-app gc", "err", err)
 		}
 	}
+	// Step A2: Free-tier disk reaper (spec §4.3, ADR-20261105120000).
+	if n, err := l.evictDormantFreeSnapshots(ctx, rows, stale, now); err != nil {
+		l.log.Warn("imaged: free dormant gc", "err", err)
+	} else if n > 0 {
+		l.log.Info("imaged: gc evicted dormant free snapshots", "evicted", n)
+	}
 	l.removeLocalSnapshotOrphans(ctx, now)
 	if !pressure {
 		return
@@ -744,6 +796,55 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			return
 		}
 	}
+}
+
+// evictDormantFreeSnapshots is the Free-tier disk reaper (spec §4.3,
+// ADR-20261105120000): every snapshot of a Free app with no request, start,
+// park or deployment for FreeTierColdEvictDays is deleted, at most
+// FreeTierColdEvictAppsPerTick apps per tick. Snapshots are cache (ADR-005):
+// the live deployment's app layer stays, so the app cold-boots on its next
+// request. An audit event per app records the eviction.
+func (l *Loop) evictDormantFreeSnapshots(ctx context.Context, rows []state.SnapshotForGC, already []deleteTarget, now time.Time) (int, error) {
+	lister, ok := l.store.(state.DormantFreeAppLister)
+	if !ok {
+		return 0, nil
+	}
+	cutoff := now.Add(-time.Duration(api.FreeTierColdEvictDays) * 24 * time.Hour)
+	ids, err := lister.ListDormantFreeSnapshotApps(ctx, cutoff, api.FreeTierColdEvictAppsPerTick)
+	if err != nil || len(ids) == 0 {
+		return 0, err
+	}
+	dormant := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		dormant[id] = true
+	}
+	targets := dormantFreeTargets(rows, dormant, already)
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	if err := l.deleteSnapshotsAndFiles(ctx, targets); err != nil {
+		return 0, err
+	}
+	perApp := map[string][]deleteTarget{}
+	for _, t := range targets {
+		perApp[t.AppID] = append(perApp[t.AppID], t)
+	}
+	for appID, ts := range perApp {
+		payload, err := json.Marshal(map[string]any{
+			"app_id": appID, "snapshots": len(ts), "idle_days": api.FreeTierColdEvictDays,
+		})
+		if err != nil {
+			continue
+		}
+		var accountID *string
+		if ts[0].AccountID != "" {
+			accountID = &ts[0].AccountID
+		}
+		if err := l.store.AppendEvent(ctx, "imaged", "snapshot.free_dormant_evicted", accountID, payload); err != nil {
+			l.log.Warn("imaged: audit free dormant eviction", "app", appID, "err", err)
+		}
+	}
+	return len(targets), nil
 }
 
 func (l *Loop) retryRemoteDeleteBacklog(ctx context.Context, now time.Time) {

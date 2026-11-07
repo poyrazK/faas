@@ -25,6 +25,13 @@ prompt:
 gregale deploy --yes
 ```
 
+Every service the deploy builds or redeploys counts once against your
+account's hourly deploy limit (`GET /v1/account/rate-limits` shows what is
+left). When the deploy needs more than remain, none of its services deploy,
+so the project never ends up half on the new release; the plan warns first.
+Deploy again after the reset, or deploy fewer services with `--only`. A
+GitHub push that does not fit fails every service's check the same way.
+
 `gregale deploy --project` asks for a project deploy explicitly, for example
 when the root is also an app. `gregale start` offers **All of them, as one
 project** when it finds two or more services. A repository connected to GitHub
@@ -122,7 +129,12 @@ Gregale reads, in this order:
   ([ADR-20261025134512](adr/20261025134512-go-module-commands-as-services.md)).
 
 Datastore images in Compose (`postgres`, `redis`, `mysql`, `mongo` and similar)
-are not run as apps.
+are not run as apps. Only `postgres` has a managed equivalent (below). For the
+others the plan says so and lists each service variable that points at them
+and will have no value, such as `api.REDIS_URL`; set those to an external
+provider before the first request. A GitHub push does not deploy a service
+whose variable is still unset, and its check names the variable
+([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)).
 
 Where [managed PostgreSQL](managed-postgres.md) is available to your account, a
 `postgres` service becomes a managed database named `<project>-<service>` in
@@ -167,7 +179,9 @@ the next push deploys them
 ([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
 
 - `condition: service_healthy` on another service holds this service's new
-  release until that service's deployment is live.
+  release until that service's deployment is live: the one being deployed
+  with it, or the one already serving. A failed or rolled-back release of the
+  dependency does not block it.
 - `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
   a plain dependency, because Gregale does not run the datastore as a service.
   The plan says so; have the service retry its connection until the database
@@ -212,6 +226,13 @@ the next push deploys them
   The migration's `user:` and `working_dir:` must match its owner's settings,
   including when one side inherits the image default. The plan rejects a mismatch
   because the release command runs in the owner's runtime.
+- A service can also declare its own release command in its own directory:
+  `release.command` in its `gregale.yaml`, or `release:` in a `Procfile` there
+  (`services/api/gregale.yaml`, `services/api/Procfile`). It runs before each
+  release of that service, as on a single-app deploy of the directory, and
+  wins over a Compose step. When another service builds from the same
+  directory the deploy fails with the reason, because the command would run
+  once per service; declare it as a Compose step instead.
 
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
@@ -283,8 +304,10 @@ warns when a name cannot be called this way, or when two services share one
 ([ADR-20261026170512](adr/20261026170512-service-dns-names.md)).
 
 Addresses from Docker, such as `http://billing:8080`, do not resolve on Gregale.
-Use the `.internal` name instead, or declare the dependency and read the URL
-Gregale injects:
+A Compose `environment:` value that calls another service this way is imported
+as that service's Gregale address on reviewed deploys, without any opt-in
+(see [Configuration](#configuration)). In code, use the `.internal` name, or
+declare the dependency and read the URL Gregale injects:
 
 ```yaml
 services:
@@ -298,6 +321,27 @@ services a workload declares in `depends_on`, set
 `x-gregale-service-policy: declared` on it in Compose, or set it once for the
 whole file at the top level. [Networking](networking.md) covers caller
 allowlists, per-route scopes, HTTPS between services and timeouts.
+
+### gRPC services
+
+A service that serves gRPC declares it in Compose, so the platform reaches it
+over HTTP/2 from the internet and from its siblings:
+
+```yaml
+services:
+  orders:
+    build: ./orders
+    x-gregale-app-protocol: grpc   # http1 (default), http2 or grpc
+```
+
+Each deploy sets the app's protocol to the declared value; a service that
+declares none keeps the protocol set with
+`gregale app update <app> --app-protocol`. gRPC needs the Hobby plan or
+above, and the plan refuses it on Free.
+
+Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
+is off unless your operator has enabled it; see
+[private TCP](networking.md#private-tcp-between-services).
 
 ## Without a Compose file
 
@@ -375,6 +419,9 @@ address, and the plan says so), keeping the path. The service mesh forwards to t
 is dropped; a value for a second listener of that service, or for another
 protocol, needs its address set by hand
 ([ADR-20261026181020](adr/20261026181020-compose-service-address-import.md)).
+These service addresses are imported even without `x-gregale-env-import`,
+because they are never credentials and the Docker address cannot work here
+([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)); every other plain value still needs the opt-in.
 
 The plan lists imported names under **Imported from Compose**, names each
 rewritten address, and gives the reason beside each value it skips. Gregale
@@ -382,7 +429,9 @@ never overwrites a value already set on the app, never imports secret-looking
 values, other Docker addresses, `${…}` interpolation or `env_file` values, and
 never shows values in the plan.
 Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
-`--repo … --project`); a GitHub push deploy imports nothing. Values in
+`--repo … --project`). A GitHub push imports only the sibling service
+addresses, which a service added by the push needs to call its siblings, and
+leaves every other value to a reviewed deploy. Values in
 `compose.override.yaml` are imported too, so keep local-only settings out of an
 opted-in project.
 See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
@@ -424,7 +473,10 @@ change before anything is applied:
 - **`gregale project delete`** deletes the project but not its services: each one
   keeps running as a standalone app, with its domains, environment values and
   crons. Detached apps are no longer one project, so they cannot call each
-  other by service name; delete them with `gregale app delete`.
+  other by service name; delete them with `gregale app delete`. While its
+  services call each other, `gregale project delete --yes` is refused and names
+  the calls that would stop working; `--dry-run` lists them too. Add
+  `--detach-services` once they no longer call each other by name.
 
 ## Roll back
 
@@ -434,20 +486,30 @@ Each service rolls back on its own, to its previous live deployment:
 gregale rollback shop-api
 ```
 
-To roll the whole project back, preview the order and then run it:
+To roll the project's latest deploy back, preview the plan and then run it:
 
 ```sh
 gregale project rollback shop --dry-run
 gregale project rollback shop --yes
 ```
 
-Every service rolls back to its previous live deployment, one at a time, after
-the services it depends on, as a deploy brings them up. Each step waits until
-the service serves its previous release. The command stops at the first
-service that fails, and names the services already rolled back and those still
-on their current release; roll those back with `gregale rollback <slug>`. A
-rollback across a release command (a migration) needs
-`--acknowledge-releases`, as for one app.
+The services that deploy changed roll back to the release each served before
+it, one at a time, callers first: a service rolls back before the services it
+depends on, the reverse of a deploy, so a caller is never left calling an API
+that has already gone back. Each step waits until the service serves its
+previous release. The plan shows each service's revisions (`v4 -> v3`) and
+which services it leaves as they are:
+
+- a service the latest deploy did not change (it serves another commit, or a
+  release more than 15 minutes older); `--all` rolls those back too;
+- a service added by the latest deploy, which has no earlier release;
+- a service already rolled back.
+
+The command stops at the first service that fails and names the services
+already rolled back and those still on their current release. Fix the cause
+and run it again: the services already rolled back are skipped, so a rerun
+finishes the rollback instead of undoing it. A rollback across a release
+command (a migration) needs `--acknowledge-releases`, as for one app.
 
 A project rollback is a sequence of per-service rollbacks, not one atomic
 switch: for a moment, a rolled-back service can receive calls from a service
@@ -483,8 +545,85 @@ credentials. It gets:
   gregale env set --app shop-web --env pr-preview STRIPE_KEY=sk_test_…
   ```
 
+  To set one for every service of the project at once:
+
+  ```sh
+  gregale project preview secret set shop STRIPE_KEY=sk_test_…
+  printf 'STRIPE_KEY=%s\n' "$KEY" | gregale project preview secret set shop --from-stdin
+  gregale project preview secret unset shop STRIPE_KEY
+  ```
+
+  It writes the value to each service's `pr-preview` scope; a service added
+  later needs the command again ([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)).
+
 `pr-preview` values override the PR's Compose values. See
 [preview environments](preview-environments.md#configuration).
+
+## Service settings in gregale.yaml
+
+A service may keep a `gregale.yaml` in its directory. Its settings apply on
+every deploy of the service, including project deploys and GitHub pushes:
+the `lifecycle` block (`after_restore` and `before_checkpoint` hooks, restart
+policy, timeouts, replicas), `scaling` and `retry_policy`. For example, a
+service that holds a database pool reconnects after a snapshot restore with:
+
+```yaml
+lifecycle:
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 500
+```
+
+See [cold wake](cold-wake.md#refresh-application-state-after-restore).
+Before [ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md) project deploys and GitHub pushes ignored
+these settings.
+
+## Databases and buckets in gregale.yaml
+
+A Compose `postgres` service already becomes a managed database. To declare
+resources by name instead, list them in the `gregale.yaml` at the repository
+root, give each entry the service it binds to, and add `create` for any that
+do not exist yet:
+
+```yaml
+databases:
+  - database: chronolake-db
+    app: gateway
+    create:
+      postgres_major: 17
+buckets:
+  - bucket: segments
+    app: store
+    create: true
+```
+
+The plan lists them before you apply: databases under **Managed PostgreSQL
+(provided by this deploy)**, buckets under **Object storage (from
+gregale.yaml)**. Apply creates whatever is missing and binds it to its service
+after the services exist and before they build, so the first deployment
+starts with its keys. An entry without `create` binds an existing resource, and
+a missing one stops the plan before anything changes
+([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+Deploys never delete a database or bucket. See
+[managed PostgreSQL](postgres.md#connect-an-app) for the database fields;
+object-storage bindings inject the bucket's S3 settings under
+`GREGALE_S3_<BUCKET>_*` unless the entry sets `prefix`. Binding a bucket
+needs a credential with `storage:manage`, and creating a database needs
+`postgres:manage`. Organization projects attach buckets with
+`gregale add bucket` for now; a project deploy refuses `buckets:` there.
+
+## Debugging a project
+
+- `gregale logs --project shop --follow` streams every service's logs, each
+  line prefixed with its service.
+- `gregale debug trace <trace-id>` joins one request's hops across services,
+  with how each was woken. See [tracing](tracing.md).
+- `gregale postgres connect <database>` opens `psql` on your machine through
+  a bound service. See [managed PostgreSQL](postgres.md#connect-from-your-laptop).
+- `gregale app port-forward <service> 5433:<host>:<port>` reaches anything else
+  on a service's network.
+- `gregale dev bridge` runs one service on your machine against the rest of
+  the project in a remote development environment.
 
 ## Cold starts and tracing
 
@@ -495,4 +634,6 @@ under the `project` policy: the first wake restores the services an app lists in
 `depends_on`, and the gateways then learn which siblings it calls after waking.
 `gregale app wake-ahead <app> off` turns it off. See
 [wake-ahead](service-wake-ahead.md). Traces follow a request across services;
-see [tracing](tracing.md) and the [service map](service-map.md).
+see [tracing](tracing.md), a preview on Hobby and above, and the
+[service map](service-map.md), an internal preview available only where your
+operator has enabled it.

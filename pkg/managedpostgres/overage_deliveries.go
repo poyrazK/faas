@@ -216,6 +216,11 @@ func (s *MemoryStore) OverageSubjects(_ context.Context, periodStart time.Time) 
 			merge(OverageSubject{SubjectID: key.subject})
 		}
 	}
+	for key := range s.overagePending {
+		if key.period.Equal(month) {
+			merge(OverageSubject{SubjectID: key.subject})
+		}
+	}
 	out := make([]OverageSubject, 0, len(subjects))
 	for _, subject := range subjects {
 		out = append(out, subject)

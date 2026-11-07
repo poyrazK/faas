@@ -21,7 +21,7 @@
     <h1>Two-factor authentication</h1>
     {{with .Data}}
     {{if .Enrolled}}
-    <p>Enter the 6-digit code from your authenticator app to finish signing in as <strong>{{$.Account.Email}}</strong>.</p>
+    <p>Enter the 6-digit code from your authenticator app to verify your account, <strong>{{$.Account.Email}}</strong>.</p>
     {{if .Reused}}<p class="error" role="alert">That code was already used. Wait for your authenticator app to show the next code.</p>{{else if .Failed}}<p class="error" role="alert">That code did not match. Try the current code.</p>{{end}}
     <form method="POST" action="/dashboard/mfa">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -30,9 +30,9 @@
       <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
       <button type="submit">Verify</button>
     </form>
-    <p>Lost your device? <a href="/dashboard/account/mfa?action=recover">Use a recovery code</a>, or run <code>gregale mfa recover</code> to open recovery.</p>
+    <p>Lost your device? <a href="/dashboard/account/mfa?action=recover&amp;next={{.Next}}">Recover access</a> with a saved code or email.</p>
     {{else}}
-    <p>This account must enroll two-factor authentication before it can use the dashboard. <a href="/dashboard/account/mfa?action=enroll">Set up an authenticator</a>, or run <code>gregale mfa enroll</code> to open setup.</p>
+    <p>This account must enroll two-factor authentication before it can use the dashboard. <a href="/dashboard/account/mfa?action=enroll&amp;next={{.Next}}">Set up an authenticator</a>, or run <code>gregale mfa enroll</code> to open setup.</p>
     {{end}}
     {{end}}
     <form method="POST" action="/logout"><button type="submit">Sign out</button></form>

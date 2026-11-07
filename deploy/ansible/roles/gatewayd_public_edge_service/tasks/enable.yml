@@ -168,6 +168,18 @@
     path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/60-faas-edge-placement.conf
     state: absent
 
+# ADR-20261102081618: direct entry was first turned on by hand, with
+# 60-faas-edge-direct.conf naming the Origin CA certificate files.
+# 99-faas-edge.conf now carries the listener, so the hand-made drop-in goes.
+# Left behind, its certificate files would stop the edge from starting once
+# the certificate comes from the database (ADR-20261103163954 §3: that source
+# takes no files), and the app tunnel reaches apps through this edge.
+- name: gatewayd_public_edge_service — remove the hand-made direct-entry drop-in
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/60-faas-edge-direct.conf
+    state: absent
+
 - name: gatewayd_public_edge_service — install domain layout drop-in (ADR-20261026100000)
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.template:

@@ -115,7 +115,11 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 		var result Database
 		if database.State == StateDeleting {
 			operation = StateDeleting
-			result, err = r.service.Delete(ctx, database.AccountID, database.ID)
+			if database.Restorable(r.now()) {
+				result, err = r.service.reconcileScheduledDelete(ctx, database)
+			} else {
+				result, err = r.service.Delete(ctx, database.AccountID, database.ID)
+			}
 		} else {
 			result, err = r.service.Reconcile(ctx, database.AccountID, database.ID)
 		}

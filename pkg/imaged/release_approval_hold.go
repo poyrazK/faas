@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -37,6 +38,15 @@ func (h *Handler) holdReleaseCommandForApproval(ctx context.Context, app state.A
 	}
 	if !wait.Waits {
 		return false, nil
+	}
+	if ended, err := h.releaseScheduleEnded(ctx, dep); err != nil {
+		return true, err
+	} else if ended != "" {
+		// The schedule said when this release should ship; it ended while
+		// the release waited, so its release command must not run at some
+		// later, unplanned time (ADR-20261020085706 amendment 14).
+		return true, h.failReleaseApproval(ctx, app, dep, wait, api.CodeReleaseApprovalRequired,
+			"the release's schedule ended ("+ended+") while it waited for approval; the release command did not run. Deploy and schedule it again")
 	}
 	switch wait.Status.State {
 	case api.ReleaseApprovalStateApproved:
@@ -88,6 +98,49 @@ func (h *Handler) holdApprovedRelease(ctx context.Context, app state.App, dep st
 	return true, h.failReleaseApproval(ctx, app, dep, wait, api.CodeReleaseFrozen,
 		"a deploy freeze started while the release waited for approval ("+freeze.Summary(app.Slug, blocking)+
 			"); the release command did not run. Deploy again when the freeze ends, or with --override-freeze REASON")
+}
+
+// holdReleaseCommandForPause reports whether dep's release command must wait
+// for the break-glass release pause to be lifted (ADR-20261022140000
+// amendment 2). A release created before the pause still runs its build, but
+// its release command (a migration) changes production data and cannot be
+// undone, so it does not start during the pause. A command already admitted
+// keeps its outcome. The release-approval sweep resumes the release once the
+// pause is lifted.
+func (h *Handler) holdReleaseCommandForPause(ctx context.Context, dep state.Deployment) (bool, error) {
+	if !h.releasePauseOn() {
+		return false, nil
+	}
+	if _, err := h.store.ReleaseAppTaskByDeployment(ctx, dep.ID); err == nil {
+		return false, nil
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return true, fmt.Errorf("imaged: load deployment release task: %w", err)
+	}
+	h.log.Info("imaged: release command waits for the break-glass release pause", "deployment_id", dep.ID, "app_id", dep.AppID)
+	return true, nil
+}
+
+// releaseScheduleEnded names the outcome of dep's schedule when it ended
+// without starting the release, or "" when dep has no schedule or it is
+// still pending.
+func (h *Handler) releaseScheduleEnded(ctx context.Context, dep state.Deployment) (string, error) {
+	schedules, ok := h.store.(interface {
+		LatestScheduledRelease(ctx context.Context, deploymentID string) (state.ScheduledRelease, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	sr, err := schedules.LatestScheduledRelease(ctx, dep.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("imaged: read release schedule: %w", err)
+	}
+	if sr.State == state.ScheduledReleasePending || sr.State == state.ScheduledReleaseStarted {
+		return "", nil
+	}
+	return sr.State, nil
 }
 
 // newFreezes are the active freezes that were not in force when the release
@@ -176,7 +229,7 @@ func (h *Handler) resumeReleaseApprovalHold(ctx context.Context, dep state.Deplo
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return err
 	}
@@ -225,7 +278,7 @@ func (l *Loop) resumeReleaseApprovalHolds(ctx context.Context) {
 			work = append(work, state.BuildImageWork{AppID: d.AppID, DeploymentID: d.ID, NodeID: l.handler.nodeName})
 		}
 		return len(rows)
-	})
+	}, &l.releaseApprovalOffset)
 	if err != nil {
 		l.log.Warn("imaged: list releases held for approval", "err", err)
 	}
@@ -239,7 +292,14 @@ func (l *Loop) releaseApprovalPending(ctx context.Context, d state.Deployment) b
 	if len(d.ReleaseCommand) == 0 || d.Status != state.DeploySnapshotting {
 		return false
 	}
-	app, err := l.store.AppByID(ctx, d.AppID)
+	// A release command the break-glass pause holds waits for the lift
+	// (ADR-20261022140000 amendment 2).
+	if l.handler != nil && l.handler.releasePauseOn() {
+		if _, err := l.store.ReleaseAppTaskByDeployment(ctx, d.ID); errors.Is(err, state.ErrNotFound) {
+			return true
+		}
+	}
+	app, err := state.AppForDeployment(ctx, l.store, d)
 	if err != nil {
 		return false
 	}
@@ -254,4 +314,42 @@ func (l *Loop) releaseApprovalPending(ctx context.Context, d state.Deployment) b
 	}
 	// An approved release the break-glass pause holds waits too (amendment 13).
 	return wait.Pending() || wait.Waits && wait.Status.State == api.ReleaseApprovalStateApproved && l.handler != nil && l.handler.releasePauseOn()
+}
+
+// outpacedReleaseLookback bounds how many of an app's newest deployments a
+// newly admitted release command looks through for older releases to retire.
+const outpacedReleaseLookback = 50
+
+// retireOutpacedReleases supersedes the older releases of dep's app scope
+// whose release commands are still queued, cancelling those commands
+// (ADR-1448 amendment 1). Release commands run one at a time per scope,
+// oldest first, so without this a queued older migration would run before
+// dep's, and its release would only be superseded at go-live. A failure is
+// logged: the claim order still keeps the migrations from overlapping.
+func (h *Handler) retireOutpacedReleases(ctx context.Context, dep state.Deployment) {
+	if _, ok := h.store.(state.OutpacedReleaseStore); !ok {
+		return
+	}
+	recent, err := h.store.ListDeploymentsForApp(ctx, dep.AppID, outpacedReleaseLookback, 0)
+	if err != nil {
+		h.log.Warn("imaged: list releases a new release command outpaces", "deployment_id", dep.ID, "err", err)
+		return
+	}
+	scope := releaseScope(dep.Scope)
+	for _, older := range recent {
+		if older.ID == dep.ID || older.Status != state.DeploySnapshotting || older.Revision >= dep.Revision ||
+			len(older.ReleaseCommand) == 0 || releaseScope(older.Scope) != scope {
+			continue
+		}
+		if _, err := h.supersedeOutpacedRelease(ctx, older); err != nil {
+			h.log.Warn("imaged: retire outpaced release", "deployment_id", older.ID, "newer", dep.ID, "err", err)
+		}
+	}
+}
+
+func releaseScope(scope string) string {
+	if scope = strings.TrimSpace(scope); scope == "" {
+		return "default"
+	}
+	return scope
 }

@@ -165,6 +165,9 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	if err != nil {
 		return err
 	}
+	if err := e.holdCheckedRollbackWorkers(ctx, app, deployments, targets, held); err != nil {
+		return err
+	}
 	if app.Status == state.AppActive {
 		for id := range targets {
 			dep := byDeployment[id]

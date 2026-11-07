@@ -109,3 +109,35 @@ func TestPgStoreKeyProjectLimits(t *testing.T) {
 	}
 	exerciseKeyProjectLimits(t, state.NewPgStore(pool))
 }
+
+// adr: 20261104085712 — the upload edge reads the same restriction apid
+// writes, even though an older credential RPC returns only the raw key.
+func TestPgEdgeStoreKeyProjectLimit(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	store, edge := state.NewPgStore(pool), state.NewEdgeStore(pool)
+	account, err := store.CreateAccount(t.Context(), "edge-project-limit@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sum, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := store.CreateAPIKey(t.Context(), account.ID, sum, "agent", []string{api.ScopeAgent, api.ScopeStorageWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids, limited, err := edge.APIKeyProjectLimit(t.Context(), key.ID); err != nil || limited || len(ids) != 0 {
+		t.Fatalf("unlimited key at edge = %v, %v, %v", ids, limited, err)
+	}
+	projects := []string{uuid.NewString()}
+	if err = store.SetAPIKeyProjectLimit(t.Context(), key.ID, projects); err != nil {
+		t.Fatal(err)
+	}
+	if ids, limited, err := edge.APIKeyProjectLimit(t.Context(), key.ID); err != nil || !limited || !slices.Equal(ids, projects) {
+		t.Fatalf("restricted key at edge = %v, %v, %v", ids, limited, err)
+	}
+}

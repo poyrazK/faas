@@ -24,12 +24,14 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
 	case "connections":
 		return cmdMCPConnections(args[1:])
+	case "approval-channels":
+		return cmdMCPApprovalChannels(args[1:])
 	case "serve":
 		return cmdMCPServe(args[1:])
 	case "init":
@@ -413,6 +415,7 @@ func cmdMCPRemote(command string, args []string) int {
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
 	waitForTask := fs.Bool("wait", false, "wait for a task result and request cancellation if this command times out (call only; implies --tasks)")
+	cancelOnTimeout := fs.Bool("cancel-on-timeout", false, "request task cancellation if a resumed wait times out (task-wait only)")
 	tool := fs.String("tool", "", "tool to call")
 	streamTool := fs.String("stream-tool", "", "explicitly execute this tool to verify live progress (doctor)")
 	inline := fs.String("arguments", "", "tool arguments as a JSON object")
@@ -446,6 +449,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
+	}
+	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
 	}
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
@@ -524,10 +530,10 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "prompt-get" && *promptName == "" {
 		return printErr("MCP prompt get", errors.New("--prompt is required"))
 	}
-	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask)
+	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask, *cancelOnTimeout)
 }
 
-func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask bool) int {
+func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask, cancelOnTimeout bool) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -601,7 +607,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		return jsonOut(writeJSON(task))
 	case "task-wait":
 		task, err := c.WaitTask(ctx, taskID, mcphosting.CallOptions{
-			Responder: respond,
+			Responder: respond, CancelOnTimeout: cancelOnTimeout,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -641,7 +647,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		}
 		var x mcphosting.Exchange
 		x, err = c.CallWithOptions(ctx, candidate, args, mcphosting.CallOptions{
-			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask,
+			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask, CancelOnTimeout: waitForTask,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},

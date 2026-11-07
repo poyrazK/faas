@@ -96,9 +96,29 @@ export function markDatabaseTimings(res, timings) {
 
 export function requestID(res) { return res[trace]?.id }
 
-export function runtimeFailure(event) {
-  const allowed = ['data_api_configuration_invalid', 'data_api_database_unavailable', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_storage_unsafe', 'data_api_change_events_unavailable', 'data_api_change_event_rejected', 'data_api_change_events_unsettled']
-  try { writeLog({ time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }) } catch {}
+const failureStages = new Set(['configuration', 'engine', 'database', 'inspection', 'startup'])
+// Configuration errors name a setting, never its value ("Invalid
+// DATABASE_URL"). A message is logged only when it is plain text of that
+// shape; otherwise only the error's code (a SQLSTATE or ECONNREFUSED) or
+// class name is, so driver text that may quote a host, user or URL never is.
+export function failureReason(error) {
+  const message = typeof error?.message === 'string' ? error.message : ''
+  if (/^[A-Za-z0-9_ ,.()-]{1,160}$/.test(message)) return message
+  const code = typeof error?.code === 'string' ? error.code : ''
+  if (/^[A-Za-z0-9_]{1,40}$/.test(code)) return code
+  const name = typeof error?.name === 'string' ? error.name : ''
+  return /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error'
+}
+
+// runtimeFailure logs an allowlisted event. stage and reason say why startup
+// failed: without them every snapshot_prepare crash read only
+// data_api_configuration_invalid (ChronoLake finding 19).
+export function runtimeFailure(event, { stage, error } = {}) {
+  const allowed = ['data_api_configuration_invalid', 'data_api_database_unavailable', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_storage_unsafe', 'data_api_change_events_unavailable', 'data_api_change_event_rejected', 'data_api_change_events_unsettled', 'data_api_change_hooks_not_production', 'data_api_change_hooks_unbounded', 'data_api_access_recheck_unavailable']
+  const record = { time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }
+  if (failureStages.has(stage)) record.stage = stage
+  if (error !== undefined) record.reason = failureReason(error)
+  try { writeLog(record) } catch {}
 }
 
 const identifier = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/

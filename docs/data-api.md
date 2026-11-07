@@ -109,8 +109,10 @@ has room can use more:
 gregale data-api configure shop-data --pool 6
 ```
 
-The pool takes 1 to 8 connections, and `--pool default` returns to two.
-Requests in flight per instance follow it, and so do per-user concurrency
+The pool takes 1 to 8 connections, and `--pool default` returns to two. A
+pool above two needs an app with at least 512 MB of RAM: the runtime peaks
+near 150 MB with the default pool, which fits a 256 MB app, and near 200 MB
+with eight connections, which does not. Requests in flight per instance follow it, and so do per-user concurrency
 limits and the pool metrics in `data-api health`. The queue stays at eight
 waiters. Data API bindings connect through the provider's connection pooler,
 so a larger pool adds pooled client sessions rather than PostgreSQL server
@@ -980,11 +982,19 @@ runs your migrations against the upgraded runtime.
 gregale data-api delete notes-data --yes
 ```
 
-This revokes the app's managed PostgreSQL bindings, which closes their database
-credentials, and then deletes the app. `gregale app delete` refuses an app that
-still has a live database binding (`app_has_postgres_bindings`), because the
-credential would outlive the app. The database and its data are kept. Delete
-the database separately with `gregale postgres delete`.
+This revokes the app's managed PostgreSQL bindings, on every database the app
+is bound to, which closes their database credentials, and then deletes the
+app. `gregale app delete` refuses an app that still has a live database binding
+(`app_has_postgres_bindings`), because the credential would outlive the app.
+The database and its data are kept. Delete the database separately with
+`gregale postgres delete`.
+
+An API with [file storage](#file-storage) owns a bucket, and an app with
+buckets cannot be deleted, so `data-api delete` refuses it before revoking
+anything. Delete the bucket first with `gregale bucket delete notes-data
+BUCKET_ID`; a bucket that still holds files must be emptied first. A binding
+on a project environment's database copy is removed when that environment is
+torn down.
 
 ## Define your application schema and authorization
 
@@ -1035,8 +1045,14 @@ gregale data-api configure notes-data --no-allow-without-rls   # remove all exem
 Exemptions use the `--public-read` format (at most 64 `schema.relation`
 names). In local development, list them as `"allow_without_rls": [...]` in
 `data-api.dev.json`. The API reads its relations at startup: a table created
-later answers `404 not_found` until `gregale data-api refresh`. Server keys are
-trusted backends and are not checked; anonymous requests follow the
+later answers `404 not_found` until `gregale data-api refresh`. It rechecks
+their row-level security at most once a minute while it serves and after
+every wake, so a migration that disables RLS on a served table, or recreates
+it without RLS, closes it (`403 rls_required`) within a minute, without a
+refresh. A public relation or public function that stops passing the public
+checks answers anonymous callers `503 data_api_public_read_unsafe` or
+`data_api_public_rpc_unsafe` until you fix it. Server keys are trusted
+backends and are not checked; anonymous requests follow the
 [public read](#public-reads) rules.
 
 ## Generate types and use the client
@@ -1387,7 +1403,13 @@ keys keep working. Caps turn usage reporting on.
 
 Caps are enforced from totals the runtime learns every 15 seconds while it
 serves traffic, so several instances can each go slightly past a cap before
-they hear about it. `data-api diagnostics` counts requests refused by caps.
+they hear about it. A cap reached before the API parked stays reached when it
+wakes. Only the production deployment reports and counts: stages and preview
+environments of the app neither report usage nor learn production's totals.
+Those totals come from usage reports, so on a Gregale
+installation that does not accept runtime reports yet `--monthly-caps` is
+refused: a cap there could never be reached. `data-api diagnostics` counts
+requests refused by caps.
 Cap values are stored as app secrets and are not shown again; set them again
 to change them.
 
@@ -1509,7 +1531,9 @@ Each route asks PostgreSQL first, as the caller:
 - **Versions.** Each upload stores its bytes under a new `object_key` and
   replaces the previous version only once its row commits, so two uploads
   racing for one name never mix their bytes; a refused upload leaves the
-  existing file untouched. A row you insert yourself without `object_key`
+  existing file untouched. The replaced version's bytes are deleted after the
+  commit, including a version another upload committed while this one
+  streamed. A row you insert yourself without `object_key`
   names its bytes by `name`.
 - **Before the migration.** Until `storage_objects` exists with RLS, its
   guard trigger and `object_key`, storage routes answer
@@ -1583,6 +1607,39 @@ An event's `data` holds the change:
   stable: deduplicate side effects by them. Changes are published promptly
   after writes through the API; changes made elsewhere publish while the
   Data API is running, within 30 seconds.
+- **While the API is parked.** A parked Data API publishes nothing, so changes
+  that other apps, migrations or SQL jobs record while it is parked wait for
+  the next request to wake it. To bound that wait, add a drain schedule: a
+  platform cron that wakes the API and publishes what is waiting.
+
+  ```sh
+  gregale data-api hooks enable shop-data --drain-every 5m
+  ```
+
+  Intervals are minutes that divide an hour, hours that divide a day, or
+  `24h`. The cron counts against your plan's cron limits (the Free plan has
+  none) and each run is app time. `--drain-every off` removes it. The
+  schedule is stored before hooks turn on, so a plan that refuses it leaves
+  hooks as they were.
+- **Status.** `gregale data-api hooks status shop-data` shows the drain
+  schedule and the delivery the Data API last reported, without waking it:
+  waiting changes and when the oldest was recorded, rejected changes and the
+  latest code, whether publications keep failing, and when changes last
+  published. The API reports while it is awake, at most once a minute.
+- **Production only.** Only the app's production deployment publishes.
+  Stages and preview environments copy the table and its triggers but never
+  publish: their API stops relaying, and `hooks enable --scope` refuses any
+  scope but production.
+- **Platform requirement.** Publishing uses the Data API's workload identity.
+  On a Gregale installation that does not accept runtime reports yet,
+  `hooks enable` refuses and changes nothing.
+- **Backlog bound.** While 100,000 changes wait to publish, because nothing
+  publishes them (a stage, an installation without runtime reports) or
+  publishing keeps failing, new changes are not recorded, so the table cannot
+  fill your database. Changes past the bound are lost; `hooks status` warns
+  from 90,000 waiting. Rejected changes do not count. Tables installed before
+  the bound keep working without it until you apply
+  `gregale data-api hooks export --upgrade` in a migration.
 - **Backfills.** `SET LOCAL gregale_hooks.skip = 'on';` in a migration's
   transaction records nothing for it.
 - **Failures.** An event the platform refuses, such as one that does not match
@@ -1599,8 +1656,8 @@ An event's `data` holds the change:
   runtime is refused and its recorded changes stay in the table; a cloned
   environment that copied the setting publishes nothing.
 - **Turning it off.** `gregale_hooks.disable('api.orders')` stops recording a
-  table. `gregale data-api hooks disable shop-data` stops publishing; recorded
-  changes wait in the table.
+  table. `gregale data-api hooks disable shop-data` stops publishing and
+  removes the drain schedule; recorded changes wait in the table.
 - **Cost.** Each hooked write adds one row insert in its transaction. Events
   count toward your account's event limits like any publication. See
   [ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md).

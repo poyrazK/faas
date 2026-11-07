@@ -237,10 +237,16 @@ On a node with entry addresses (`faas_public_entry_addrs`, vmmd's
 connections to an entry address's 443 before the edge sees them, at twice
 the edge's own limits (`PublicEntry*` in `pkg/api/limits.go`): open
 connections per source, and new connections a second per source.
-Cloudflare's ranges are exempt when the node keeps them
-(`faas_cloudflare_origin_only`, which `front: none` keeps on): a host moved
+Cloudflare's ranges get their own, higher limits when the node keeps them
+(`faas_cloudflare_origin_only`, which `front: none` keeps on):
+`PublicEntryProxy*`, 16 times the per-source values, because a host moved
 back behind Cloudflare arrives from a few of its addresses, each carrying many
-clients. The drops are counted on their rules:
+clients. They are not exempt: every Cloudflare customer connects from them.
+
+The edge's own connection limits exempt a connection from those ranges only
+once its TLS handshake presented the zone's origin-pull client certificate
+(ADR-20261104221012). Any other connection from them is counted against its
+address after the handshake and reset when that address is over its limits. The drops are counted on their rules:
 
 ```bash
 sudo nft list chain inet faas input | grep 'per source'
@@ -294,7 +300,8 @@ records. The owner decides each step marked **owner**.
    wider, and on any other rule that opens 80 or 443 to everyone.
 2. **owner:** run `deploy/scripts/gcp-compute-edge-address.sh entry NODE...`,
    read what it would do, then rerun with `APPLY=1`. It creates
-   `gregale-direct-entry-v4` once and tags each node. The forwarding rule from
+   `gregale-direct-entry-v4` once, in the VPC of the node's first interface
+   (`NETWORK` overrides it), and tags each node. The forwarding rule from
    step 5 must already exist: it carries 443 alone, so the node's own
    addresses stay unreachable.
 3. **owner:** put a publicly trusted certificate for the apps domain (a

@@ -20,6 +20,19 @@ type ProjectReleaseCatalog interface {
 	ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
 }
 
+// ProjectReleaseApps uses the same environment admission as graph publication.
+// A service configured only in another stage must not enter this release's
+// manifest, binding verification, rollback or deactivation.
+func ProjectReleaseApps(ctx context.Context, catalog interface {
+	AppsForProject(context.Context, string, string) ([]state.App, error)
+}, accountID, projectID, environment string) ([]state.App, error) {
+	apps, err := catalog.AppsForProject(ctx, accountID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return state.ProjectAppsForEnvironment(ctx, catalog, accountID, projectID, environment, apps)
+}
+
 func ProjectReleaseMembers(apps []state.App, deployments map[string]string, ttl int) ([]state.ProjectReleaseMember, *api.Problem) {
 	if ttl <= 0 || ttl > api.RevisionPinMaxTTLSeconds || len(deployments) == 0 || len(deployments) > api.ProjectReleaseSetMaxMembers || len(apps) != len(deployments) {
 		return nil, api.ErrValidation("release requires every project workload and a valid revision retention TTL")
@@ -75,7 +88,7 @@ func ValidateCheckedProjectRelease(manifest api.CheckedProjectReleaseManifest, p
 
 func PrepareProjectRelease(ctx context.Context, catalog ProjectReleaseCatalog, accountID string, project state.Project, environment string, request api.PublishProjectReleaseSetRequest) (api.CheckedProjectReleaseManifest, *api.Problem) {
 	result := api.CheckedProjectReleaseManifest{Project: project.Slug, Environment: environment, TTLSeconds: request.TTLSeconds, Deployments: maps.Clone(request.Deployments), ExpectedFallbackDeployments: map[string]string{}, ExpectedPolicyRevisions: map[string]int64{}, ServiceTargets: map[string]map[string]string{}}
-	apps, err := catalog.AppsForProject(ctx, accountID, project.ID)
+	apps, err := ProjectReleaseApps(ctx, catalog, accountID, project.ID, environment)
 	if err != nil {
 		return result, api.ErrCapacity("could not read project workloads")
 	}
@@ -160,7 +173,7 @@ func PrepareProjectRollback(ctx context.Context, catalog ProjectRollbackCatalog,
 	if source.Active || source.ExpiresAt == nil || !time.Now().Before(*source.ExpiresAt) {
 		return result, api.NewProblem(409, "release_graph_changed", "History unavailable", "Rollback requires a retained inactive release.")
 	}
-	apps, err := catalog.AppsForProject(ctx, accountID, project.ID)
+	apps, err := ProjectReleaseApps(ctx, catalog, accountID, project.ID, environment)
 	if err != nil {
 		return result, api.ErrCapacity("could not read project workloads")
 	}
@@ -211,7 +224,7 @@ func PrepareProjectDeactivation(ctx context.Context, catalog ProjectReleaseCatal
 		return result, api.ErrCapacity("could not read active graph")
 	}
 	result.ExpectedActiveReleaseID = &active.ID
-	apps, err := catalog.AppsForProject(ctx, accountID, project.ID)
+	apps, err := ProjectReleaseApps(ctx, catalog, accountID, project.ID, environment)
 	if err != nil {
 		return result, api.ErrCapacity("could not read project workloads")
 	}

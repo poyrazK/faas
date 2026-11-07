@@ -474,9 +474,9 @@ func (s *server) refuseLastRecoveryCodeOrMatch(w http.ResponseWriter, r *http.Re
 		// Refuse to burn the only remaining code: the customer
 		// would otherwise be locked out with no way back in.
 		// The store still has the code (matched-then-not-burnt).
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeMFALastRecoveryCode,
 			"Last recovery code",
-			"burning the only remaining code would lock you out — use /v1/account/mfa/disable with your password instead"))
+			"this is your last recovery code; use it to reset your authenticator, then set up a replacement"))
 		return false
 	}
 	return true
@@ -530,16 +530,19 @@ func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if lastCode {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Last recovery code", "burning the only remaining code would lock you out — disable MFA with your password instead"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeMFALastRecoveryCode,
+			"Last recovery code", "this is your last recovery code; use it to reset your authenticator, then set up a replacement"))
 		return
 	}
-	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
+	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.recover.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
 		return
 	}
 	s.audit.Emit(r.Context(), "account.mfa_recovered", &acct.ID, nil)
+	s.audit.Emit(r.Context(), "auth.step_up_verified", &acct.ID, map[string]any{
+		"path": r.URL.Path, "method": r.Method, "ttl_sec": 300, "factor": "recovery_code",
+	})
 	if !outboxed {
 		s.sendBurnEmail(r.Context(), acct, remaining)
 	}
@@ -646,7 +649,21 @@ func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request
 		method = "recovery_code"
 	}
 	s.alertMFADisabledInline(r.Context(), acct, method)
+	s.finishMFADisable(w, r, acct, method)
+}
+
+// Clear stale pending proof, while preserving an operator or explicit policy.
+func (s *server) finishMFADisable(w http.ResponseWriter, r *http.Request, acct state.Account, method string) {
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": method})
+	fresh, err := s.store.AccountByID(r.Context(), acct.ID)
+	if err == nil {
+		err = s.reissueSessionCookie(w, r, fresh, s.sessionMFAPending(fresh))
+	}
+	if err != nil {
+		s.log.Error("mfa.disable.reissue_cookie", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("MFA was reset; sign in again to continue"))
+		return
+	}
 	writeJSON(w, http.StatusOK, api.MFADisableResponse{})
 }
 
@@ -1040,10 +1057,8 @@ func (s *server) reissueSessionCookie(w http.ResponseWriter, r *http.Request, ac
 // reissueSessionCookieWithStepUp is the IAM-hardening-mega-PR
 // (logical change 6, ADR-077) entry point. Pass a non-zero
 // stepUpAt to refresh the step-up stamp on the cookie envelope
-// (the /v1/account/mfa/verify success branch sets it to
-// time.Now()); pass time.Time{} to leave it cleared (the
-// enrollment-confirm + recovery + disable branches don't
-// refresh step-up because they don't gate on it themselves).
+// (confirmation, authenticator verification and recovery set it to
+// time.Now()); pass time.Time{} to clear it after resetting a factor.
 //
 // The binding-hash is unconditionally refreshed so the
 // stolen-cookie auto-revoke branch (ADR-076) always sees the

@@ -23,6 +23,8 @@ import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
+import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
@@ -87,6 +89,10 @@ export class AccountService {
    * Stages deletion. The account becomes `deleted_pending` for 30 days
    * during which the customer can call `POST /v1/account/restore`. After
    * the grace period, all rows are GC'd.
+   * An account serving as an organization's billing contact while it has
+   * a billing customer must move that contact first (409
+   * `billing_contact_member`). If the billing-contact check cannot
+   * complete, returns retryable 503 without staging deletion.
    *
    * @returns AccountDeletionResponse Staged.
    * @throws ApiError
@@ -110,6 +116,10 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }
@@ -1043,6 +1053,66 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Read the account's egress overage election.
+   * Without the election every plan stops at its monthly egress allowance:
+   * the account's apps are parked (`quota_exceeded_egress`) until the month
+   * ends or the plan grows. With it, egress above the allowance is billed as
+   * overage, within the spend cap, while egress billing is live
+   * (`billing: live`); while `billing` is `off` the allowance still holds.
+   *
+   * @returns EgressOverageResponse The account's election.
+   * @throws ApiError
+   */
+  public static getEgressOverage(): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/egress-overage',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+      },
+    });
+  }
+  /**
+   * Turn the account's egress overage election on or off.
+   * `{"enabled": true|false}`. Requires admin scope and MFA; a dashboard
+   * session also needs a step-up within the last 5 minutes. Turning it on
+   * needs a paid plan (HTTP 402 `plan_egress_overage_not_allowed`); turning
+   * it off is always allowed. Egress already sent while the election was on
+   * is still billed. Audit row `egress_overage.changed` records each change.
+   *
+   * @returns EgressOverageResponse The election after the change.
+   * @throws ApiError
+   */
+  public static setEgressOverage({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: EgressOverageRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/egress-overage',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
       },
     });
   }

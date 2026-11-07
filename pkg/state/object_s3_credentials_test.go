@@ -295,7 +295,7 @@ func objectS3CredentialRotationSuite(t *testing.T, base state.Store) {
 		t.Fatal(err)
 	}
 	key := func(ch string) string { return "GRGA" + strings.Repeat(ch, 16) }
-	parent, err := bindings.CreateObjectS3Credential(ctx, state.ObjectS3Credential{ID: uuid.NewString(), AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: key("A"), SecretSealed: []byte("old-seal"), KID: "age1old", Label: "compute", Permission: state.ObjectBucketPermissionReadWrite, Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: "default", ManagedPrefix: "GREGALE_S3_ASSETS"}, 1)
+	parent, err := bindings.CreateObjectS3Credential(ctx, state.ObjectS3Credential{ID: uuid.NewString(), AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: key("A"), SecretSealed: []byte("old-seal"), KID: "age1old", Label: "compute", Permission: state.ObjectBucketPermissionReadWrite, Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: "default", ManagedPrefix: "GREGALE_S3_ASSETS", KeyPrefix: "segments/L0/"}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,8 +370,14 @@ func objectS3CredentialRotationSuite(t *testing.T, base state.Store) {
 		t.Fatalf("rotated binding = %+v", rotated)
 	}
 	for _, access := range []string{parent.AccessKeyID, req.AccessKeyID} {
-		if _, _, err := bindings.ResolveObjectS3Credential(ctx, access); err != nil {
+		resolved, _, err := bindings.ResolveObjectS3Credential(ctx, access)
+		if err != nil {
 			t.Fatalf("key %s during overlap: %v", access, err)
+		}
+		// ADR-20261106114500: the previous key keeps the binding's key scope
+		// while it overlaps the new one.
+		if resolved.KeyPrefix != "segments/L0/" {
+			t.Fatalf("key %s during overlap has key prefix %q, want the binding's", access, resolved.KeyPrefix)
 		}
 	}
 	listed, err := bindings.ListObjectS3Credentials(ctx, acct.ID, bucket.ID)

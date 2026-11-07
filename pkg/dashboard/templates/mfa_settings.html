@@ -62,15 +62,20 @@
     </section>
     <section id="disable">
       <h2>Turn off two-factor authentication</h2>
-      <p>Enter your password or a recovery code.</p>
+      <p>Use a recovery code{{if index .Data "HasPassword"}} or your password after verifying this session{{end}} to reset your authenticator.</p>
       <form data-action="disable">
-        <label>Password <input name="password" type="password" autocomplete="current-password"></label>
+        {{if index .Data "HasPassword"}}<label>Password <input name="password" type="password" autocomplete="current-password"></label>{{end}}
         <label>Recovery code <input name="recovery_code" autocomplete="off"></label>
-        <button type="submit">Turn off</button>
+        <button type="submit">Reset authenticator</button>
       </form>
     </section>
+    <section id="email-recovery">
+      <h2>Recover by email</h2>
+      <p>If you cannot use your authenticator or saved codes, request a recovery email. The link can reset MFA after a 24-hour waiting period.</p>
+      <form data-action="disable-email"><button type="submit">Send recovery email</button></form>
+    </section>
     {{end}}
-    <p><a href="/dashboard/">Continue to dashboard</a></p>
+    <p><a href="{{index .Data "Next"}}">Continue</a></p>
   </main>
   <script nonce="{{.Nonce}}">
     (() => {
@@ -83,12 +88,16 @@
       async function json(url, options) {
         const response = await fetch(url, {credentials: 'same-origin', ...options});
         const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || result.title || 'Please try again.');
+        if (!response.ok) {
+          const error = new Error(result.detail || result.title || 'Please try again.');
+          error.code = result.code;
+          throw error;
+        }
         return result;
       }
       async function submit(action, body) {
-        if (['confirm', 'recover', 'disable'].includes(action)) {
-          const token = await json('/v1/auth/csrf?action=mfa_' + action);
+        if (['confirm', 'recover', 'disable', 'disable-email'].includes(action)) {
+          const token = await json('/v1/auth/csrf?action=mfa_' + action.replaceAll('-', '_'));
           body.csrf_token = token.csrf_token;
         }
         return json('/v1/account/mfa/' + action, {
@@ -124,12 +133,25 @@
           if (form.dataset.action === 'disable') {
             if (!!body.password === !!body.recovery_code) throw new Error('Enter either your password or one recovery code.');
           }
-          await submit(form.dataset.action, body);
+          try {
+            await submit(form.dataset.action, body);
+          } catch (error) {
+            if (form.dataset.action === 'recover' && error.code === 'mfa_last_recovery_code') {
+              const reset = document.querySelector('form[data-action="disable"]');
+              reset.elements.recovery_code.value = body.code;
+              reset.scrollIntoView();
+              message('This is your last recovery code. Use Reset authenticator below, then set up a replacement.');
+              return;
+            }
+            throw error;
+          }
           form.reset();
-          if (form.dataset.action === 'confirm' || form.dataset.action === 'disable') {
-            location.replace('/dashboard/account/mfa');
+          if (form.dataset.action === 'disable') {
+            location.replace('/dashboard/account/mfa?next=' + encodeURIComponent({{index .Data "Next"}}));
+          } else if (form.dataset.action === 'disable-email') {
+            message('Check your email for the recovery link and its confirmation time. The waiting period is 24 hours.');
           } else {
-            message('Access restored. You can continue to the dashboard.');
+            location.assign({{index .Data "Next"}});
           }
         });
       }));

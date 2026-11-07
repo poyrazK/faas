@@ -66,7 +66,7 @@ func (b ProjectVerificationRunBackend) Create(ctx context.Context, in api.Create
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return old, err
 	}
-	apps, err := b.Catalog.AppsForProject(ctx, b.AccountID, b.Project.ID)
+	apps, err := ProjectReleaseApps(ctx, b.Catalog, b.AccountID, b.Project.ID, b.Environment)
 	if err != nil {
 		return api.ProjectBindingVerificationRun{}, err
 	}

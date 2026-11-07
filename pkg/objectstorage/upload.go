@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -26,43 +26,36 @@ type UploadAuthenticator interface {
 	AuthenticateKey(context.Context, []byte) (state.Account, state.APIKey, error)
 }
 
-// KeyProjectLimits reads the projects an agent or mcp-login key is limited
-// to (ADR-20261104085712).
-type KeyProjectLimits interface {
-	APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error)
-}
-
 type UploadConfig struct {
-	Store         PublicReadStore
-	Routes        state.ObjectUploadRouteStore
-	Buckets       state.ObjectBucketStore
-	Authenticator UploadAuthenticator
-	// KeyProjects, when set, keeps a key limited to projects to their apps.
-	KeyProjects    KeyProjectLimits
-	Registry       *Registry
-	Accounting     state.ObjectStorageAccountingStore
-	RequestMetrics state.ObjectStorageProviderUsageStore
-	Enabled        func() bool
-	AppsDomain     string
-	Next           http.Handler
-	Now            func() time.Time
-	Log            *slog.Logger
+	Store                 PublicReadStore
+	Routes                state.ObjectUploadRouteStore
+	Buckets               state.ObjectBucketStore
+	Authenticator         UploadAuthenticator
+	Registry              *Registry
+	Accounting            state.ObjectStorageAccountingStore
+	RequestMetrics        state.ObjectStorageProviderUsageStore
+	Enabled               func() bool
+	TenantSurfacesEnabled func() bool
+	AppsDomain            string
+	Next                  http.Handler
+	Now                   func() time.Time
+	Log                   *slog.Logger
 }
 
 type uploadHandler struct {
-	store          PublicReadStore
-	routes         state.ObjectUploadRouteStore
-	buckets        state.ObjectBucketStore
-	authenticator  UploadAuthenticator
-	keyProjects    KeyProjectLimits
-	registry       *Registry
-	accounting     state.ObjectStorageAccountingStore
-	requestMetrics state.ObjectStorageProviderUsageStore
-	enabled        func() bool
-	appsDomain     string
-	next           http.Handler
-	now            func() time.Time
-	log            *slog.Logger
+	store                 PublicReadStore
+	routes                state.ObjectUploadRouteStore
+	buckets               state.ObjectBucketStore
+	authenticator         UploadAuthenticator
+	registry              *Registry
+	accounting            state.ObjectStorageAccountingStore
+	requestMetrics        state.ObjectStorageProviderUsageStore
+	enabled               func() bool
+	tenantSurfacesEnabled func() bool
+	appsDomain            string
+	next                  http.Handler
+	now                   func() time.Time
+	log                   *slog.Logger
 }
 
 // NewUploadHandler adds policy-controlled POST /uploads/{route} handling to
@@ -90,7 +83,7 @@ func NewUploadHandler(c UploadConfig) (http.Handler, error) {
 	if domain == "" {
 		domain = "gregale.dev"
 	}
-	return &uploadHandler{store: c.Store, routes: c.Routes, buckets: c.Buckets, authenticator: c.Authenticator, keyProjects: c.KeyProjects, registry: c.Registry, accounting: c.Accounting, requestMetrics: c.RequestMetrics, enabled: c.Enabled, appsDomain: domain, next: c.Next, now: c.Now, log: c.Log}, nil
+	return &uploadHandler{store: c.Store, routes: c.Routes, buckets: c.Buckets, authenticator: c.Authenticator, registry: c.Registry, accounting: c.Accounting, requestMetrics: c.RequestMetrics, enabled: c.Enabled, tenantSurfacesEnabled: c.TenantSurfacesEnabled, appsDomain: domain, next: c.Next, now: c.Now, log: c.Log}, nil
 }
 
 func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +109,17 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	bucket, writer, ok := h.uploadDestination(w, r, app, route)
 	if !ok {
+		return
+	}
+	// A public bucket serves its objects on the app's own origin: an active
+	// file uploaded by one of the app's users would run there with the app's
+	// privileges (stored XSS, ADR-20261104221012). Even a route that names
+	// the type cannot put one there.
+	if PublicServed(bucket) && ActiveContentType(completion.ContentType) {
+		completion.Status = "rejected"
+		completion.ErrorCode = "content_type_not_allowed"
+		h.record(r.Context(), completion)
+		uploadProblem(w, http.StatusUnsupportedMediaType, "active content (HTML, SVG, XML or JavaScript) cannot be uploaded to a bucket served publicly on the app's hostname")
 		return
 	}
 	if tracked, ok := writer.(TrackedObjectWriter); ok {
@@ -205,10 +209,7 @@ func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, r
 			return false
 		}
 	}
-	limit := min(route.MaxBytes, h.registry.MaxUploadBytes)
-	if !route.Encryption.Empty() {
-		limit = min(limit, h.registry.MaxSinglePutBytes)
-	}
+	limit := min(route.MaxBytes, h.registry.MaxUploadBytes, h.registry.MaxSinglePutBytes)
 	status, code, detail := 0, "", ""
 	switch {
 	case !allowedUploadContentType(route.AllowedContentTypes, c.ContentType) || ValidateContentType(c.ContentType) != nil:
@@ -216,7 +217,7 @@ func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, r
 	case r.ContentLength < 0:
 		status, code, detail = http.StatusLengthRequired, "content_length_required", "Content-Length is required for bounded uploads"
 	case r.ContentLength > limit:
-		status, code, detail = http.StatusRequestEntityTooLarge, "size_limit_exceeded", "upload exceeds the route byte limit"
+		status, code, detail = http.StatusRequestEntityTooLarge, "size_limit_exceeded", fmt.Sprintf("upload exceeds the route byte limit: limit %d bytes, observed %d; see %s", limit, r.ContentLength, api.ObjectStorageLimitsDocsURL)
 	}
 	if status == 0 {
 		return true
@@ -385,7 +386,7 @@ func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app
 	}
 	sum := api.HashAPIKey(token)
 	acct, key, err := h.authenticator.AuthenticateKey(r.Context(), sum)
-	if err != nil || acct.ID != app.AccountID {
+	if err != nil || acct.ID != app.AccountID || key.OrgID != "" && key.OrgID != app.OrgID {
 		uploadProblem(w, http.StatusUnauthorized, "the presented API key is not valid for this app")
 		return state.Account{}, state.APIKey{}, nil, false
 	}
@@ -393,36 +394,14 @@ func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app
 		uploadProblem(w, http.StatusForbidden, "an active account and storage write permission for this app are required")
 		return state.Account{}, state.APIKey{}, nil, false
 	}
-	if refused, err := h.keyOutsideProjects(r.Context(), key, app); err != nil {
-		uploadProblem(w, http.StatusServiceUnavailable, "could not check the key's projects; retry shortly")
-		return state.Account{}, state.APIKey{}, nil, false
-	} else if refused {
-		uploadProblem(w, http.StatusForbidden, "the presented API key is limited to other projects")
+	if !h.authorizeUploadProjects(w, r, app, key) {
 		return state.Account{}, state.APIKey{}, nil, false
 	}
 	return acct, key, sum, true
 }
 
-// keyOutsideProjects reports whether key is an agent or mcp-login key limited
-// to projects app is not in (ADR-20261104085712), as the API refuses it.
-func (h *uploadHandler) keyOutsideProjects(ctx context.Context, key state.APIKey, app state.App) (bool, error) {
-	if h.keyProjects == nil || !slices.Contains(key.Scopes, api.ScopeAgent) && key.Label != api.MCPLoginKeyLabel {
-		return false, nil
-	}
-	ids, limited, err := h.keyProjects.APIKeyProjectLimit(ctx, key.ID)
-	if err != nil || !limited {
-		return false, err
-	}
-	return app.ProjectID == "" || !slices.Contains(ids, app.ProjectID), nil
-}
-
 func (h *uploadHandler) lookupApp(r *http.Request) (state.App, error) {
-	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.Host), "."))
-	if hostName, port, err := net.SplitHostPort(host); err == nil && port != "" {
-		host = hostName
-	} else {
-		host = strings.Trim(host, "[]")
-	}
+	host := storageRequestHost(r.Host)
 	if strings.HasSuffix(host, "."+h.appsDomain) {
 		slug := strings.TrimSuffix(host, "."+h.appsDomain)
 		if slug == "" || strings.Contains(slug, ".") {
@@ -430,14 +409,11 @@ func (h *uploadHandler) lookupApp(r *http.Request) (state.App, error) {
 		}
 		return h.store.AppBySlug(r.Context(), slug)
 	}
-	domain, err := h.store.DomainByName(r.Context(), host)
-	if err != nil {
-		return state.App{}, err
+	tenantSurfaces := api.TenantSurfacesEnabled()
+	if h.tenantSurfacesEnabled != nil {
+		tenantSurfaces = h.tenantSurfacesEnabled()
 	}
-	if !domain.Verified() {
-		return state.App{}, state.ErrNotFound
-	}
-	return h.store.AppByID(r.Context(), domain.AppID)
+	return storageDomainApp(r.Context(), h.store, host, tenantSurfaces)
 }
 
 func (h *uploadHandler) record(ctx context.Context, completion state.ObjectUploadCompletion) {
@@ -557,17 +533,50 @@ func normalizedContentType(value string) string {
 	return strings.ToLower(value)
 }
 
+// allowedUploadContentType reports whether a route's allowlist admits
+// contentType. An active type (ActiveContentType) is admitted only when the
+// list names it exactly: "image/*" does not admit image/svg+xml, and an
+// empty list does not admit text/html (ADR-20261104221012).
 func allowedUploadContentType(allowed []string, contentType string) bool {
+	active := ActiveContentType(contentType)
 	if len(allowed) == 0 {
-		return true
+		return !active
 	}
 	for _, value := range allowed {
 		value = strings.ToLower(strings.TrimSpace(value))
-		if value == contentType || strings.HasSuffix(value, "/*") && strings.HasPrefix(contentType, strings.TrimSuffix(value, "*")) {
+		if value == contentType {
+			return true
+		}
+		if !active && strings.HasSuffix(value, "/*") && strings.HasPrefix(contentType, strings.TrimSuffix(value, "*")) {
 			return true
 		}
 	}
 	return false
+}
+
+// ActiveContentType reports a media type a browser runs as a document or
+// script when it is opened: HTML, XHTML, SVG, XML (including any +xml type,
+// which may carry XHTML or XSLT), and JavaScript. Served from an app's own
+// origin, such a file runs with the app's privileges.
+func ActiveContentType(contentType string) bool {
+	media := strings.ToLower(strings.TrimSpace(contentType))
+	if parsed, _, err := mime.ParseMediaType(media); err == nil {
+		media = parsed
+	}
+	switch media {
+	case "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml",
+		"text/xsl", "application/xslt+xml", "text/javascript", "application/javascript",
+		"application/x-javascript", "text/ecmascript", "application/ecmascript", "text/jscript",
+		"application/x-ecmascript", "multipart/x-mixed-replace":
+		return true
+	}
+	return strings.HasSuffix(media, "+xml")
+}
+
+// PublicServed reports a bucket whose objects anyone can open on the app's
+// own hostname.
+func PublicServed(bucket state.ObjectBucket) bool {
+	return bucket.PublicRead && bucket.ServeAt != ""
 }
 
 func uploadProblem(w http.ResponseWriter, status int, detail string) {

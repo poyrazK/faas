@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ OrgActivityOwnershipTransferMutationStore = (*PgStore)(nil)
@@ -45,6 +47,16 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	if fromAccountID == toAccountID {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 	}
+	// Share creation's recipient lock before membership writes. The org lock
+	// prevents a concurrent downgrade from changing the slot decision.
+	q := sqlc.New()
+	if _, err := q.LockSharedOrgCreator(ctx, tx, mustPgUUID(toAccountID)); err != nil {
+		return OrgMembership{}, OrgMembership{}, mapErr(err)
+	}
+	org, err := q.LockOrgOwnershipTransferTarget(ctx, tx, mustPgUUID(orgID))
+	if err != nil {
+		return OrgMembership{}, OrgMembership{}, mapErr(err)
+	}
 	from, err := scanOrgMembership(tx.QueryRow(ctx, `
 		select org_id, account_id, role, invited_by_account_id, joined_at, removed_at
 		  from org_memberships
@@ -71,6 +83,15 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 	}
 	if to.Role == OrgRoleOwner {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
+	}
+	if !org.PersonalOrg && !org.DeletedPending && org.Plan == string(api.PlanFree) {
+		owned, err := q.CountOwnedFreeSharedOrgs(ctx, tx, mustPgUUID(toAccountID))
+		if err != nil {
+			return OrgMembership{}, OrgMembership{}, err
+		}
+		if owned >= int64(api.FreeOrganizationsOwnedMax) {
+			return OrgMembership{}, OrgMembership{}, &OrgFreeLimitError{Owned: int(owned)}
+		}
 	}
 
 	// Demote first to preserve the one-active-owner partial unique index.
