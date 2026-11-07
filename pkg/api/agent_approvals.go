@@ -34,6 +34,14 @@ const (
 // person approves it.
 const CodeApprovalRequired = "approval_required"
 
+// CodeApprovalDenied and CodeApprovalExpired answer an agent that repeats a
+// request a person denied, or that expired undecided or unused, within
+// AgentApprovalOutcomeWindow (ADR-20261107140000 §6).
+const (
+	CodeApprovalDenied  = "approval_denied"
+	CodeApprovalExpired = "approval_expired"
+)
+
 // NormalizeAgentApprovalCategories validates a requested set: "none" alone
 // means no category, "all" every one. It returns them deduplicated in
 // display order.
@@ -68,6 +76,11 @@ type AgentApprovalPendingInfo struct {
 	Category  string `json:"category"`
 	ReviewURL string `json:"review_url"`
 	ExpiresAt string `json:"expires_at"`
+	// Status is set on approval_denied and approval_expired: denied or
+	// expired.
+	Status string `json:"status,omitempty"`
+	// Note is the person's reason for a denial, when they gave one.
+	Note string `json:"note,omitempty"`
 }
 
 // AgentApprovalResponse is one approval request of an agent connection.
@@ -86,6 +99,19 @@ type AgentApprovalResponse struct {
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
 	DecidedAt string `json:"decided_at,omitempty"`
+	// Note is the person's reason for a denial, when they gave one.
+	Note string `json:"note,omitempty"`
+}
+
+// AgentApprovalChannelsRequest replaces the notification channels that get
+// the approval requests of the account's agents (ADR-20261107140000 §3).
+type AgentApprovalChannelsRequest struct {
+	Channels []string `json:"channels"`
+}
+
+// AgentApprovalChannelsResponse names those channels.
+type AgentApprovalChannelsResponse struct {
+	Channels []string `json:"channels"`
 }
 
 // AgentApprovalsResponse lists approval requests, newest first.
@@ -119,5 +145,24 @@ func (c *Client) GetAgentApproval(ctx context.Context, id string) (AgentApproval
 func (c *Client) ListAgentApprovals(ctx context.Context) (AgentApprovalsResponse, error) {
 	var out AgentApprovalsResponse
 	err := c.do(ctx, "GET", "/v1/agent-approvals", nil, &out)
+	return out, err
+}
+
+// GetAgentApprovalChannels names the notification channels that get the
+// account's agents' approval requests (ADR-20261107140000 §3).
+func (c *Client) GetAgentApprovalChannels(ctx context.Context) (AgentApprovalChannelsResponse, error) {
+	var out AgentApprovalChannelsResponse
+	err := c.do(ctx, "GET", "/v1/agent-approvals/channels", nil, &out)
+	return out, err
+}
+
+// SetAgentApprovalChannels replaces those channels; an empty list leaves
+// email only.
+func (c *Client) SetAgentApprovalChannels(ctx context.Context, channels []string) (AgentApprovalChannelsResponse, error) {
+	var out AgentApprovalChannelsResponse
+	if channels == nil {
+		channels = []string{}
+	}
+	err := c.do(ctx, "PUT", "/v1/agent-approvals/channels", AgentApprovalChannelsRequest{Channels: channels}, &out)
 	return out, err
 }

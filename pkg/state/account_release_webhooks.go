@@ -14,7 +14,9 @@ func validAccountReleaseWebhookFilter(events []string) bool {
 		switch AppWebhookEvent(event) {
 		case AppWebhookEventDeploymentLive, AppWebhookEventDeploymentFailed,
 			AppWebhookEventRolloutCompleted, AppWebhookEventRolloutAborted, AppWebhookEventEnvironmentGitOpsChanged,
-			AppWebhookEvent(api.AgentRunFinishedWebhookEvent):
+			AppWebhookEvent(api.AgentRunFinishedWebhookEvent),
+			AppWebhookEvent(api.AgentApprovalRequestedWebhookEvent), AppWebhookEvent(api.AgentApprovalApprovedWebhookEvent),
+			AppWebhookEvent(api.AgentApprovalDeniedWebhookEvent):
 		default:
 			return false
 		}

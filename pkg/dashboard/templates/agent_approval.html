@@ -15,5 +15,5 @@
 <dt>Request expires</dt><dd>{{index .Data "ExpiresAt"}}</dd></dl>
 <p>Approving lets the agent make this request once. You are signed in as {{index .Data "Account"}}.</p>
 <form method="post" action="/cli-auth"><input type="hidden" name="agent_approval" value="{{index .Data "ID"}}"><input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}"><input type="hidden" name="decision" value="approve"><button type="submit">Approve</button></form>
-<form method="post" action="/cli-auth"><input type="hidden" name="agent_approval" value="{{index .Data "ID"}}"><input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}"><input type="hidden" name="decision" value="deny"><button type="submit">Deny</button></form>
+<form method="post" action="/cli-auth"><input type="hidden" name="agent_approval" value="{{index .Data "ID"}}"><input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}"><input type="hidden" name="decision" value="deny"><label>Reason for the agent (optional) <input type="text" name="note" maxlength="280" autocomplete="off"></label> <button type="submit">Deny</button></form>
 {{end}}</main></body></html>

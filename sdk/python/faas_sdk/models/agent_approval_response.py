@@ -44,6 +44,8 @@ class AgentApprovalResponse:
     """The connection's client name or key label."""
     decided_at: datetime.datetime | Unset = UNSET
     """When a person approved or denied it."""
+    note: str | Unset = UNSET
+    """Why the person denied this request, if they said; absent otherwise."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +73,8 @@ class AgentApprovalResponse:
         if not isinstance(self.decided_at, Unset):
             decided_at = self.decided_at.isoformat()
 
+        note = self.note
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -91,6 +95,8 @@ class AgentApprovalResponse:
             field_dict["agent"] = agent
         if decided_at is not UNSET:
             field_dict["decided_at"] = decided_at
+        if note is not UNSET:
+            field_dict["note"] = note
 
         return field_dict
 
@@ -124,6 +130,8 @@ class AgentApprovalResponse:
         else:
             decided_at = datetime.datetime.fromisoformat(_decided_at)
 
+        note = d.pop("note", UNSET)
+
         agent_approval_response = cls(
             id=id,
             category=category,
@@ -136,6 +144,7 @@ class AgentApprovalResponse:
             review_url=review_url,
             agent=agent,
             decided_at=decided_at,
+            note=note,
         )
 
         agent_approval_response.additional_properties = d

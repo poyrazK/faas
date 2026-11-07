@@ -19,6 +19,10 @@ export type OrgAgentPolicyResponse = {
    */
   approval_categories?: Array<string>;
   /**
+   * Your notification channels that get this organization's agents' approval requests.
+   */
+  approval_channels?: Array<string>;
+  /**
    * When the policy last changed; absent for an organization that never set one.
    */
   updated_at?: string;

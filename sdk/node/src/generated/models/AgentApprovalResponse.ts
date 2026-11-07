@@ -50,5 +50,9 @@ export type AgentApprovalResponse = {
    * When a person approved or denied it.
    */
   decided_at?: string;
+  /**
+   * Why the person denied this request, if they said; absent otherwise.
+   */
+  note?: string;
 };
 
