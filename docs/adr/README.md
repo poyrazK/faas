@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261106214916: Refresh recently active apps' snapshots after a release, unbilled](20261106214916-refresh-stale-snapshots-after-a-release.md) — proposed; after a node takes a release, schedd re-captures the stale snapshots of apps woken in the last 7 days (exact ADR-510 check via a new scheduler-only vmmd RPC), paced below tenant wakes, in a new never-routed, unbilled `refresh` instance mode, so users' first post-release requests restore (~0.3 s) instead of cold-booting (3.9 s median; 205 of 207 restore fallbacks in 7 days followed a release); switch `snapshot_refresh` off/shadow/on
+
 - [ADR-20261106105015: gregale.yaml creates what it binds, `postgres connect`, and SDK lifecycle hooks](20261106105015-declarative-resources-connect-and-lifecycle-helpers.md) — accepted; `create` on gregale.yaml databases and buckets (project and single-app deploys; project deploys now apply root `buckets:`), `gregale postgres connect` through a bound app's task VM, and Go/Node/Python helpers for the before_checkpoint/after_restore hooks
 
 - [ADR-20261105181403: Bound outbound work and pace retries without an explicit policy](20261105181403-outbound-reliability-defaults.md)

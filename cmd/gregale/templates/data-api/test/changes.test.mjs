@@ -194,6 +194,17 @@ test('rejections become failed events; unreachable platforms keep events waiting
   assert.deepEqual(unavailable.rpc[1].body.published, [])
 })
 
+test('a runtime the platform refuses (a stage) returns its claim and stops', async t => {
+  const h = await harness(t, { claims: [[row(1)], [row(2)]], publish: () => ({ status: 403 }) })
+  await h.relay.cycle()
+  assert.deepEqual(h.rpc[1].body, { relay: h.rpc[0].body.relay, published: [], failed: [], retry_after_ms: 0 }, 'the claim goes back untouched')
+  assert.equal(h.timers.length, 1, 'no further cycle is scheduled')
+  h.relay.kick()
+  assert.equal(h.timers.length, 1, 'writes do not wake it')
+  assert.deepEqual(await h.relay.drain(1000), { refused: true })
+  assert.equal(h.rpc.length, 2)
+})
+
 test('an idle relay backs off, never queues for the engine and changes identity after a restore', async t => {
   const idle = await harness(t)
   const delays = []

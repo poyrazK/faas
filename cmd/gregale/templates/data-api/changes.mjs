@@ -16,6 +16,10 @@ import { runtimeFailure } from './logging.mjs'
 // oldest waiting change, whether publications keep failing) to the platform,
 // so owners see it without waking the API, and a platform cron may wake a
 // parked API to drain changes other writers recorded meanwhile.
+//
+// Amendment 2: only production publishes. The platform refuses a stage,
+// preview or cloned environment for good (403); its relay returns the claim
+// and stops, and capture's backlog bound keeps that database's table finite.
 
 export const changeEventsTable = 'gregale_change_events'
 // The drain route a drain schedule's cron calls (api.DataAPIChangeHooksDrainPath).
@@ -28,7 +32,9 @@ const failureCode = /^[a-z0-9_]{1,64}$/
 const changeEventsQuery = `SELECT c.relkind AS kind, c.relrowsecurity AS rls,
  has_table_privilege(current_user, c.oid, 'SELECT') AND has_table_privilege(current_user, c.oid, 'UPDATE') AND has_table_privilege(current_user, c.oid, 'DELETE') AS settles,
  (SELECT count(*) FROM pg_proc p WHERE p.pronamespace = c.relnamespace AND p.proname IN ('gregale_change_claim', 'gregale_change_settle')
-   AND NOT p.prosecdef AND has_function_privilege(current_user, p.oid, 'EXECUTE'))::int AS functions
+   AND NOT p.prosecdef AND has_function_privilege(current_user, p.oid, 'EXECUTE'))::int AS functions,
+ EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace pn ON pn.oid = p.pronamespace
+   WHERE pn.nspname = 'gregale_hooks' AND p.proname = 'capture' AND p.prosrc LIKE '%gregale:backlog-bound%') AS bounded
  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2`
 
 // unsafeChangeEvents explains why the catalog cannot serve the relay.
@@ -41,6 +47,9 @@ export function unsafeChangeEvents(row) {
   return null
 }
 
+// checkChangeEvents refuses an unsafe installation and reports whether its
+// capture has the backlog bound (amendment 2); one installed before it still
+// works, and `gregale data-api hooks export --upgrade` adds the bound.
 export async function checkChangeEvents(connection, schema) {
   const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
@@ -48,6 +57,7 @@ export async function checkChangeEvents(connection, schema) {
     const { rows } = await client.query(changeEventsQuery, [schema, changeEventsTable])
     const unsafe = unsafeChangeEvents(rows[0])
     if (unsafe) throw new UnsafeConfiguration(`Change hooks are not installed: ${unsafe}`)
+    return { bounded: rows[0].bounded === true }
   } finally { await client.end() }
 }
 
@@ -111,6 +121,8 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   // Delivery reports: the last one sent, whether the platform takes them, and
   // when this relay last published.
   let reportedAt = -Infinity, reported = null, reportsRefused = false, publishedAt = null, forceReport = true, retrying = false
+  // The platform refused this runtime for good: not a production deployment.
+  let refused = false
   const drains = new Set()
 
   // Snapshot restores copy this process; each copy takes a new identity so
@@ -236,7 +248,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       const response = await fetchImpl(settings.status, { method: 'POST', redirect: 'error', signal,
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: signature })
       await response.body?.cancel()
-      if (response.status === 404) reportsRefused = true
+      if (response.status === 404 || response.status === 403) reportsRefused = true
       else if (response.ok) reported = signature
     } catch { /* Never log tokens or platform errors; the next interval retries. */ }
     return state
@@ -263,6 +275,8 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
         return Array.isArray(answer?.results) ? { results: answer.results } : null
       }
       await response.body?.cancel()
+      // A runtime the platform refuses (403) never publishes; its changes stay.
+      if (response.status === 403) return { refused: true }
       // A refused publication cannot succeed on retry; the owner can retry it.
       return [400, 413, 422].includes(response.status) ? { rejected: `publication_rejected_${response.status}` } : null
     } catch { return null /* Never log tokens or platform errors. */ }
@@ -293,6 +307,14 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       const events = pack(batch.map(changeEvent))
       const sent = batch.slice(0, events.length)
       const answer = events.length ? await publish(events) : { results: [] }
+      if (answer?.refused) {
+        // Return the claim untouched and stop: nothing here will publish.
+        await rpc('gregale_change_settle', { relay, published: [], failed: [], retry_after_ms: 0 }, limits.changeEventsPublishMs)
+        refused = true
+        runtimeFailure('data_api_change_hooks_not_production')
+        settleDrains()
+        return
+      }
       const outcome = answer?.rejected ? { published: [], failed: sent.map(row => ({ id: row.id, code: answer.rejected })), retry: false } : settlement(sent, answer?.results ?? null)
       outcome.failed.push(...invalid.filter(row => Number.isSafeInteger(row?.id)).map(row => ({ id: row.id, code: 'invalid_change_event' })))
       const settled = await rpc('gregale_change_settle', { relay, published: outcome.published, failed: outcome.failed, retry_after_ms: outcome.retry ? retry : 0 }, limits.changeEventsPublishMs)
@@ -310,7 +332,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     } catch { next = retry } finally {
       busy = false
       if (again) { again = false; next = 0 }
-      schedule(next)
+      if (!refused) schedule(next)
     }
   }
 
@@ -319,6 +341,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   // waitMs, then reports delivery and answers it.
   async function drain(waitMs) {
     if (stopped) return null
+    if (refused) return { refused: true }
     await new Promise(resolve => {
       const deadline = setTimeout(() => { drains.delete(done); resolve() }, waitMs)
       deadline.unref?.()
@@ -333,7 +356,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
 
   schedule(0)
   return Object.freeze({
-    kick: () => { idle = limits.changeEventsIdleMinMs; schedule(0) },
+    kick: () => { if (refused) return; idle = limits.changeEventsIdleMinMs; schedule(0) },
     stop: () => { stopped = true; clearTimer(timer); settleDrains() },
     drain,
     // Tests drive cycles directly.
