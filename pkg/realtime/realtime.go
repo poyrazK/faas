@@ -1125,6 +1125,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// v1 sockets never re-check the token, so they end when it
 				// expires instead of living out MaxConnectionAge on it.
 				tokenExpiry = verifiedTokenExpiry(token)
+				// The verifier allows clock-skew leeway past exp, but such a
+				// socket would end the moment it opened, after the app's
+				// connect callback had admitted an expired identity. Refuse it.
+				if err == nil && !tokenExpiry.IsZero() && !time.Now().Before(tokenExpiry) {
+					err = ErrUnauthorized
+				}
 			}
 			if err != nil || strings.TrimSpace(principal) == "" {
 				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
