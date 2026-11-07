@@ -3422,6 +3422,45 @@ Set a verified domain as the app default
 
 `gregale domain default set <domain>`
 
+### domain plan
+
+Review declared domain bindings without changing them
+
+`gregale domain plan --file <PATH> [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | domain manifest YAML or JSON | required |
+| `--out <PATH>` | save a new reviewed JSON plan |  |
+
+### domain apply
+
+Atomically apply a reviewed domain plan
+
+`gregale domain apply --plan <PATH> [--confirm] [--rollback-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed plan JSON | required |
+| `--confirm` | confirm every reviewed binding change |  |
+| `--rollback-out <PATH>` | save previous bindings as a new manifest |  |
+
+### domain move
+
+Move a verified domain to a serving app or environment
+
+`gregale domain move --app <SLUG> [--env <ENV>] [--dry-run] [--confirm] [--rollback-out <PATH>] <domain>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | destination app slug | required |
+| `--env <ENV>` | destination environment; omitted selects default routing (also --environment) |  |
+| `--dry-run` | review without applying |  |
+| `--confirm` | confirm the move |  |
+| `--rollback-out <PATH>` | save previous binding as a new manifest |  |
+
+Keeps TXT proof, certificate state and wildcard issuance budgets. Use --dry-run to review or --confirm to commit.
+
 ### domain setup
 
 Guide DNS setup and wait for verification and TLS
@@ -3476,9 +3515,17 @@ Remove a custom domain binding
 
 Check DNS and certificate verification status
 
-`gregale domain verify <domain>`
+`gregale domain verify [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <domain>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for verified ownership, correct routing, and HTTPS |  |
+| `--timeout <DURATION>` | maximum wait (default 10m, maximum 1h) |  |
+| `--poll-interval <DURATION>` | check interval (5s..1m, default 5s) |  |
 
 Exits nonzero while pending.
+
+Checks ownership and routing immediately; --wait waits for HTTPS readiness.
 
 ### domain get
 

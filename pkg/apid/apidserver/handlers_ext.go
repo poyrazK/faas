@@ -3699,14 +3699,29 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		"domain":      d.Domain,
 		"environment": req.Environment,
 	})
+	s.domainChecks.Wake()
 	writeJSON(w, http.StatusAccepted, s.domainResponseWithDefault(r.Context(), d))
 }
 
 func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
-	_, ok := s.loadDomain(w, r, acct, domain)
+	d, ok := s.loadDomain(w, r, acct, domain)
 	if !ok {
 		return
+	}
+	if !d.Verified() && d.ClaimLive(time.Now()) {
+		if checks, available := s.store.(state.CustomDomainManualCheckStore); available {
+			allowed, err := checks.BeginCustomDomainManualCheck(r.Context(), d, time.Now(), api.DomainVerificationManualCooldown)
+			if err != nil {
+				s.manualDomainCheckProblem(w, err)
+				return
+			}
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(int(api.DomainVerificationManualCooldown/time.Second)))
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+		}
 	}
 	type retrier interface {
 		RetryCustomDomainVerification(context.Context, string) error
@@ -3718,6 +3733,7 @@ func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain cannot be retried", err.Error()))
 		return
 	}
+	s.domainChecks.Wake()
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -3877,50 +3893,31 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 		"app_id": d.AppID,
 		"domain": d.Domain,
 	})
-	resp := domainResponse(d)
+	resp := s.domainResponseWithDefault(r.Context(), d)
 	resp.Default = true
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// verifyDomain (issue #961 / Mega-A PR-3) is the
-// POST /v1/domains/{domain}/verify handler. Re-runs the DNS + cert
-// walk and returns the canonical CustomDomainResponse (with
-// CertNotAfter / CertSANs populated when the cert dial succeeds).
-//
-// The handler is idempotent — POSTing twice does not change the
-// domain's verification state; it just re-reads the wire. The
-// `verifying` state machine is owned by the DNSVerifier goroutine
-// (cmd/apid/dns_poller.go); this handler is the read sibling.
-//
-// CRIT-1 + MED-4 fix: dialCert failures are surfaced rather than
-// silently returned as 200-with-empty-fields. The CDN mismatch maps
-// to 422 CodeDomainCertNotIssued (existing); any other dial failure
-// maps to 422 CodeDomainVerificationFailed with reason
-// "dial_failed:<subreason>" so the customer can distinguish "DNS not
-// propagated" from "cert not yet issued" from "TLS handshake
-// refused". The show endpoint (getDomain) intentionally keeps the
-// soft-fail behaviour — it is a read; the customer re-polls.
+// verifyDomain runs a bounded, coalesced ownership and routing/TLS check.
+// Readiness failures are reported as structured conditions, while unavailable
+// probes and changed bindings return an HTTP problem.
 func (s *server) verifyDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	domain := strings.ToLower(r.PathValue("domain"))
+	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
 	d, ok := s.loadDomain(w, r, acct, domain)
 	if !ok {
 		return
 	}
-	resp, certErr := s.domainResponseWithCert(r.Context(), d)
-	if certErr != nil {
-		if errors.Is(certErr, errCDNCert) {
-			api.WriteProblem(w, api.ErrDomainCertNotIssued(d.Domain, certErr.Error()))
-			return
-		}
-		if errors.Is(certErr, errCertFailure) {
-			api.WriteProblem(w, api.ErrDomainVerificationFailed(d.Domain, "cert dial failed: "+certErr.Error()))
-			return
-		}
-		// Unwrap transport-level errors (net.OpError, context errors).
-		api.WriteProblem(w, api.ErrDomainVerificationFailed(d.Domain, "transport: "+certErr.Error()))
+	if err := s.checkDomainNow(r.Context(), d); err != nil {
+		s.manualDomainCheckProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	current, ok := s.loadDomain(w, r, acct, domain)
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", strconv.Itoa(int(api.DomainVerificationManualCooldown/time.Second)))
+	writeJSON(w, http.StatusOK, s.domainResponseWithDefault(r.Context(), current))
 }
 
 // getDomain (issue #961 / Mega-A PR-3) is the GET /v1/domains/{domain}
@@ -3964,19 +3961,19 @@ func (s *server) loadDomain(w http.ResponseWriter, r *http.Request, acct state.A
 	return d, true
 }
 
-// domainResponseWithCert is the building block for verify + show.
+// domainResponseWithCert serves the live certificate details used by show.
 // It mirrors the existing domainResponse (line ~3309) but extends
 // the wire with the live cert details. d is the loaded domain row
 // (already ownership-checked).
 //
 // MED-4 fix: the cert dial error is returned alongside the response.
 // On success the caller can write a 200 with CertStatus="issued".
-// On failure the caller decides whether to surface the error (verify
-// → 422) or to keep the soft-fail shape (show → 200 with
-// CertStatus="dial_failed:<reason>").
-func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (api.CustomDomainResponse, error) {
+// Show keeps a soft-fail response with CertStatus="dial_failed:<reason>".
+// Manual verification uses the doctor and returns structured readiness.
+func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomain) (resp api.CustomDomainResponse, certErr error) {
 	ctx = state.WithCustomDomainProbe(ctx, d)
-	resp := s.domainResponseWithDefault(ctx, d)
+	resp = s.domainResponseWithDefault(ctx, d)
+	defer func() { s.decorateDomainResponse(ctx, d, &resp) }()
 	if !d.Verified() {
 		if d.CertStatus != state.CustomDomainCertDNSDrifted {
 			resp.CertStatus = certStatusPending
@@ -3985,6 +3982,17 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	}
 	dialDomain, _ := state.WildcardProbeHost(d.Domain)
 	points, routingProbe := checkDomainRouting(ctx, d.Domain)
+	routingCheck := api.DomainDoctorCheck{Name: "points_to_gregale", Status: string(points.Status), Detail: points.Detail, Observed: points.Observed, Remediation: points.Remediation, CheckedAt: points.ObservedAt.UTC().Format(time.RFC3339Nano)}
+	found := false
+	for i := range resp.Checks {
+		if resp.Checks[i].Name == routingCheck.Name {
+			resp.Checks[i] = routingCheck
+			found = true
+		}
+	}
+	if !found {
+		resp.Checks = append(resp.Checks, routingCheck)
+	}
 	if points.Status == probeFail {
 		err := fmt.Errorf("%w: %w", errCertFailure, errCertRoutingMismatch)
 		resp.CertStatus = classifyCertError(err)
@@ -4040,6 +4048,7 @@ func (s *server) domainResponseWithDefault(ctx context.Context, d state.CustomDo
 			resp.Default = isDefault
 		}
 	}
+	s.decorateDomainResponse(ctx, d, &resp)
 	return resp
 }
 
@@ -6956,6 +6965,10 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	if !d.VerificationExpiresAt.IsZero() {
 		r.VerificationExpiresAt = d.VerificationExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
+	if !d.Verified() && !d.VerificationNextCheckAt.IsZero() {
+		r.VerificationNextCheckAt = d.VerificationNextCheckAt.UTC().Format(time.RFC3339Nano)
+	}
+	r.VerificationAttempts = d.VerificationAttempts
 	r.VerificationExpired = r.VerificationExpiredAt(time.Now())
 	if r.VerificationExpired {
 		r.ChallengeToken = ""

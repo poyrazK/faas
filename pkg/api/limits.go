@@ -17892,6 +17892,11 @@ const (
 	// One verification pass shares workers between custom domains and tenant
 	// hostnames, leaving time for the doctor on the same 30-second ticker.
 	DomainVerificationWorkers        = 16
+	DomainVerificationManualWorkers  = 8
+	DomainPlanMaxBindings            = 20
+	DomainPlanMaxBytes               = 128 << 10
+	DomainVerificationManualTimeout  = 12 * time.Second
+	DomainVerificationManualCooldown = 15 * time.Second
 	DomainVerificationPassTimeout    = 25 * time.Second
 	DomainVerificationCleanupTimeout = 3 * time.Second
 )

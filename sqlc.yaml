@@ -334,6 +334,8 @@ sql:
       - "pkg/state/operator_restart_queries.sql"
       - "pkg/state/org_object_ownership_queries.sql"
       - "pkg/state/account_billing_queries.sql"
+      - "pkg/state/custom_domain_manual_check_queries.sql"
+      - "pkg/state/domain_plan_queries.sql"
       - "pkg/state/org_admission_queries.sql"
       - "pkg/state/org_queue_ownership_queries.sql"
       - "pkg/state/password_credential_queries.sql"

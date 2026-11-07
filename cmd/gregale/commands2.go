@@ -5350,17 +5350,24 @@ func cmdTraffic(args []string) int {
 	}
 }
 
-// cmdDomains dispatches list/add/rm. Adding prints the TXT record the
+// cmdDomains dispatches domain setup, reviewed bindings and lifecycle commands.
+// Adding prints the TXT record the
 // customer must publish for verification (spec §7).
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor|host> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|move|plan|apply|rm|set-default|verify|show|status|wait|doctor|host> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
 	case "setup":
 		return cmdDomainsSetup(args[1:])
+	case "plan":
+		return cmdDomainsPlan(args[1:])
+	case "apply":
+		return cmdDomainsApply(args[1:])
+	case "move":
+		return cmdDomainsMove(args[1:])
 	case subList:
 		return cmdDomainsList(args[1:])
 	case subAdd:

@@ -4014,6 +4014,7 @@
     "columns": [
       "app_id",
       "app_id_redirect",
+      "binding_version",
       "cert_expires_at",
       "cert_failed_at",
       "cert_last_error",
@@ -4027,6 +4028,7 @@
       "org_id",
       "verification_attempts",
       "verification_expires_at",
+      "verification_manual_check_at",
       "verification_next_check_at",
       "verified_at"
     ],

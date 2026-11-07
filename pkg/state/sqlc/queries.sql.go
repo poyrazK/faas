@@ -109677,7 +109677,9 @@ func (q *Queries) UpsertAutomationPublishReceipt(ctx context.Context, db DBTX, a
 const upsertCustomDomainProbeObservation = `-- name: UpsertCustomDomainProbeObservation :execrows
 WITH claim AS (
  SELECT domain FROM custom_domains WHERE domain=$2::text::citext
- AND app_id=$3::text::uuid AND challenge_token=$4::text FOR SHARE
+ AND app_id=$3::text::uuid AND challenge_token=$4::text
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at <= ($1::jsonb->>'observed_at')::timestamptz)
+ FOR SHARE
 )
 INSERT INTO domain_doctor_observations (domain,surface_id,observed_at,dns_record_found,points_to_gregale,
  caa_permits,ipv6_conflict,observed_target,observed_aaaa,caa_observed,cert_state,cert_not_after,last_error,dns_checked_at,cert_checked_at)

@@ -28626,7 +28626,9 @@ WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::u
 -- cannot be installed between the ownership check and the upsert.
 WITH claim AS (
  SELECT domain FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext
- AND app_id=sqlc.arg(app_id)::text::uuid AND challenge_token=sqlc.arg(token)::text FOR SHARE
+ AND app_id=sqlc.arg(app_id)::text::uuid AND challenge_token=sqlc.arg(token)::text
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at <= (sqlc.arg(observation)::jsonb->>'observed_at')::timestamptz)
+ FOR SHARE
 )
 INSERT INTO domain_doctor_observations (domain,surface_id,observed_at,dns_record_found,points_to_gregale,
  caa_permits,ipv6_conflict,observed_target,observed_aaaa,caa_observed,cert_state,cert_not_after,last_error,dns_checked_at,cert_checked_at)
