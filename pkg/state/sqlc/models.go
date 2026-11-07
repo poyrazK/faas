@@ -94,6 +94,10 @@ type Account struct {
 	DeletionIncludesManagedPostgres bool
 	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
 	PlanChangedAt pgtype.Timestamptz
+	// When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).
+	EgressOverageEnabledAt pgtype.Timestamptz
+	// When the egress overage election ended; NULL while it is on (ADR-20261104204500).
+	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -200,6 +204,24 @@ type Agent struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
+}
+
+// ADR-20261104140058 agent requests awaiting or holding a person's approval; apid is the only writer.
+type AgentApprovalRequest struct {
+	ID         pgtype.UUID
+	KeyID      pgtype.UUID
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	Category   string
+	Method     string
+	Path       string
+	BodySha256 []byte
+	Status     string
+	DecidedBy  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	DecidedAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
@@ -806,6 +828,13 @@ type ApiKeyAgentClient struct {
 	AccountID  pgtype.UUID
 	ClientName string
 	ClientSite string
+	CreatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261104140058 the action categories an agent key must have a person approve; apid is the only writer.
+type ApiKeyApprovalCategory struct {
+	KeyID      pgtype.UUID
+	Categories []string
 	CreatedAt  pgtype.Timestamptz
 }
 
@@ -10626,6 +10655,10 @@ type Org struct {
 	DeletionRequestedAt pgtype.Timestamptz
 	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
 	PlanChangedAt pgtype.Timestamptz
+	// When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).
+	EgressOverageEnabledAt pgtype.Timestamptz
+	// When the egress overage election ended; NULL while it is on (ADR-20261104204500).
+	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
@@ -10668,11 +10701,12 @@ type OrgActivityOutbox struct {
 
 // ADR-20261101225122 whether agents may act in an organization and with which capabilities; apid is the only writer.
 type OrgAgentPolicy struct {
-	OrgID         pgtype.UUID
-	AgentsAllowed bool
-	AllowedScopes []string
-	UpdatedAt     pgtype.Timestamptz
-	UpdatedBy     pgtype.UUID
+	OrgID              pgtype.UUID
+	AgentsAllowed      bool
+	AllowedScopes      []string
+	UpdatedAt          pgtype.Timestamptz
+	UpdatedBy          pgtype.UUID
+	ApprovalCategories []string
 }
 
 type OrgAppQuotaFence struct {
