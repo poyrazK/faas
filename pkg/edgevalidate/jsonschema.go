@@ -364,6 +364,9 @@ func (c *CompiledSchema) Validate(body []byte) (*FieldError, error) {
 		// schema_digest + sample first-byte for forensics.
 		return &FieldError{Field: "", Expected: "json", Got: "non-json"}, nil //nolint:nilerr
 	}
+	if fe := duplicateKeyProblem(body); fe != nil {
+		return fe, nil
+	}
 	if err := c.Schema.Validate(v); err != nil {
 		// jsonschema/v6 returns a *ValidationError. errors.As
 		// walks the wrap chain (the library nests via

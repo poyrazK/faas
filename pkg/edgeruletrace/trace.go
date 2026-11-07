@@ -2337,7 +2337,7 @@ func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleVal
 	if prob := p.Validate(rule.MatchPath); prob != nil {
 		return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
 	}
-	query, err := url.ParseQuery(input.Query)
+	query, err := api.ParseEdgeRuleQuery(input.Query)
 	if err != nil {
 		return "unavailable", "the request query string could not be parsed", true
 	}
@@ -2747,7 +2747,13 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	if err != nil {
 		return false
 	}
-	return program.Matches(api.EdgeRuleMatchInput{
+	matches := program.Matches
+	if api.EdgeRuleKindUsesProtectivePathMatch(rule.Kind) {
+		// A gate's condition holds for any path form its match_path covers,
+		// as at the gateway (ADR-20261107190000).
+		matches = program.MatchesProtective
+	}
+	return matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
 		VerifiedBot:       traceVerifiedBot(input.VerifiedBot, headers),
