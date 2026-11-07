@@ -31,7 +31,7 @@ cooldown limits repeat notifications; age is current state rather than a
 window average. The preset supports webhook notifications only.
 
 ```bash
-printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable automation_backlog \
+printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable stored_workflow_backlog \
   --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 

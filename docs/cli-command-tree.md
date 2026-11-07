@@ -177,6 +177,8 @@ touch them. The tables below map each earlier name.
 | `gregale apps rm` | `gregale app delete` |
 | `gregale apps streaming-cap` | `gregale app streaming-cap` |
 | `gregale billing budget-preview` | `gregale billing budgets create --dry-run` |
+| `gregale billing egress-overage` | `gregale billing egress-overage get` |
+| `gregale billing egress-overage` | `gregale billing egress-overage set` |
 | `gregale billing payment-method` | `gregale billing payment-method get` |
 | `gregale billing portal` | `gregale billing portal open` |
 | `gregale bindings probe-policy` | `gregale app binding probe-policy set` |

@@ -33,6 +33,7 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 			t.Fatal(err)
 		}
 		provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
+		electEgressOverage(t, ctx, store, acct.ID)
 		pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(2 * time.Hour) }, nil)
 		completeUsageThrough(t, ctx, store, start.Add(2*time.Hour))
 		if pending {
@@ -67,6 +68,7 @@ func TestEgressCapDoesNotRoundFractionalComputeDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
 	completeUsageThrough(t, ctx, store, start.Add(time.Hour))
 	if _, err := pusher.PushPending(ctx, 24*time.Hour); err != nil {
@@ -91,6 +93,7 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
 	completeUsageThrough(t, ctx, store, start.Add(time.Hour))
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 2 {
@@ -107,6 +110,12 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 type failedCapReadStore struct {
 	state.Store
 	err error
+}
+
+// EgressOverageElection forwards to the wrapped store, which the embedded
+// interface hides (ADR-20261104204500).
+func (s *failedCapReadStore) EgressOverageElection(ctx context.Context, subjectID string) (state.EgressOverageElection, error) {
+	return billing.EgressOverageElectionFor(ctx, s.Store, subjectID)
 }
 
 func (s *failedCapReadStore) UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]state.Usage, error) {
@@ -128,6 +137,7 @@ func TestCombinedCapReadFailureLeavesUsagePending(t *testing.T) {
 	readErr := errors.New("cannot read egress liability")
 	store := &failedCapReadStore{Store: mem, err: readErr}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
+	electEgressOverage(t, ctx, mem, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
 	completeUsageThrough(t, ctx, mem, start.Add(time.Hour))
 	if pushed, err := pusher.PushPending(ctx, time.Hour); pushed != 0 || !errors.Is(err, readErr) {

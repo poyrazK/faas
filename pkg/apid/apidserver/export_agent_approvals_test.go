@@ -45,11 +45,18 @@ func RenderAgentApprovalForTestAs(t *testing.T, srv http.Handler, id, email stri
 // "deny") with the cookie and token RenderAgentApprovalForTestAs returned.
 func DecideAgentApprovalForTest(t *testing.T, srv http.Handler, id, cookieValue, formValue, decision string) *httptest.ResponseRecorder {
 	t.Helper()
+	return DecideAgentApprovalWithNoteForTest(t, srv, id, cookieValue, formValue, decision, "")
+}
+
+// DecideAgentApprovalWithNoteForTest is DecideAgentApprovalForTest with the
+// reason a person gives the agent (ADR-20261107140000 §6).
+func DecideAgentApprovalWithNoteForTest(t *testing.T, srv http.Handler, id, cookieValue, formValue, decision, note string) *httptest.ResponseRecorder {
+	t.Helper()
 	h, ok := srv.(*cliAuthTestServer)
 	if !ok {
 		t.Fatal("DecideAgentApprovalForTest: unexpected handler type")
 	}
-	form := url.Values{"agent_approval": {id}, "decision": {decision}, middleware.FormFieldName: {formValue}}
+	form := url.Values{"agent_approval": {id}, "decision": {decision}, "note": {note}, middleware.FormFieldName: {formValue}}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")

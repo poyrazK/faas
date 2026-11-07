@@ -507,6 +507,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"workflow stored live run", "stored-workflows live suite"},
 	// `live baseline <verb>` would be five words under `workflow stored`.
 	{"workflow stored baseline", "stored-workflows live baseline"},
+	{"billing egress-overage get", "billing egress-overage"},
+	{"billing egress-overage set", "billing egress-overage"},
 	{"billing payment-method get", "billing payment-method"},
 	{"bucket copy-source", "bucket copy-sources"},
 	{"bucket encryption keys", "bucket encryption-keys"},

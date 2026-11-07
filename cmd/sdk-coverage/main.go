@@ -558,6 +558,8 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"GET /v1/orgs/{slug}/egress-overage":                                                                               "GetOrgEgressOverage", // ADR-20261104204500
+	"PUT /v1/orgs/{slug}/egress-overage":                                                                               "SetOrgEgressOverage",
 	"PUT /v1/orgs/{slug}/billing/email":                                                                                "SetOrgBillingEmail",   // ADR-20261103131742
 	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
 	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
@@ -1245,6 +1247,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
 	"GET /v1/agent-approvals":                                                                    "ListAgentApprovals",
 	"GET /v1/agent-approvals/{id}":                                                               "GetAgentApproval",
+	"GET /v1/agent-approvals/channels":                                                           "GetAgentApprovalChannels",
+	"PUT /v1/agent-approvals/channels":                                                           "SetAgentApprovalChannels",
 	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
@@ -1440,8 +1444,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/tasks/{id}":                             "GetAppTask",
 	"DELETE /v1/apps/{slug}/tasks/{id}":                          "CancelAppTask",
 	"POST /v1/account/restore":                                   "RestoreAccount",
-	"GET /v1/account/overage-cap":                                "GetOverageCap",   // saved monthly spend cap
-	"POST /v1/account/overage-cap":                               "RaiseOverageCap", // issue #561 spend cap
+	"GET /v1/account/overage-cap":                                "GetOverageCap",    // saved monthly spend cap
+	"POST /v1/account/overage-cap":                               "RaiseOverageCap",  // issue #561 spend cap
+	"GET /v1/account/egress-overage":                             "GetEgressOverage", // ADR-20261104204500
+	"PUT /v1/account/egress-overage":                             "SetEgressOverage",
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
 	"GET /v1/apps/{slug}/forks":                                  "ListAppForks",

@@ -721,7 +721,7 @@
       "id": "billing",
       "name": "Billing",
       "category": "billing",
-      "description": "Choose a plan, see usage and invoices and set an overage cap.",
+      "description": "Choose a plan, see usage and invoices, set an overage cap and elect to pay for egress above the allowance.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -743,6 +743,7 @@
         "/dashboard/upgrade",
         "/dashboard/usage",
         "/v1/account/billing",
+        "/v1/account/egress-overage",
         "/v1/account/overage-cap",
         "/v1/account/plan",
         "/v1/account/statement-invoices",
@@ -755,6 +756,7 @@
         "/v1/billing/status",
         "/v1/invoices",
         "/v1/orgs/{}/billing",
+        "/v1/orgs/{}/egress-overage",
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
@@ -770,7 +772,8 @@
         "invoices",
         "plan",
         "usage",
-        "overage-cap"
+        "overage-cap",
+        "billing egress-overage"
       ]
     },
     {

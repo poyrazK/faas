@@ -2,10 +2,14 @@
 -- name: LockSharedOrgCreator :one
 SELECT id FROM accounts WHERE id=$1 FOR UPDATE;
 
+-- A Free organization deleted this UTC month still holds its slot until the
+-- month ends (ADR-20261104211412): its Free allowance was already used for the
+-- month, so deleting and recreating it must not grant a fresh one.
 -- name: CountOwnedFreeSharedOrgs :one
 SELECT count(*) FROM orgs o JOIN org_memberships m ON m.org_id=o.id
 WHERE m.account_id=$1 AND m.role='owner' AND m.removed_at IS NULL
-  AND NOT o.personal_org AND NOT o.deleted_pending AND o.plan='free';
+  AND NOT o.personal_org AND o.plan='free'
+  AND (NOT o.deleted_pending OR o.deletion_requested_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC');
 
 -- name: InsertFreeSharedOrg :one
 INSERT INTO orgs (id,slug,name) VALUES ($1,$2,$3)

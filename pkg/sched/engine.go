@@ -3369,9 +3369,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// ADR-1162: explicit-deployment admissions (min-instance floors,
 		// service replicas, workers, per-deployment wakes) skip the request
 		// gates but not the account spend cap; otherwise always-on capacity
-		// keeps running past the cap. Deployment smoke verifies a release and
-		// mirror instances are never metered, so both stay exempt.
-		if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		// keeps running past the cap. Deployment smoke verifies a release, so
+		// it stays exempt; mirror VMs bill (ADR-20261104145353) and stop at
+		// the cap like any other capacity.
+		if !deploymentSmoke {
 			if reached, observed, capped := e.admitSpendCap(ctx, &app); reached {
 				outcome, obsCents, capCents = wakeOverageCapReached, observed, capped
 			}
@@ -4107,6 +4108,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		QuietPauseAfterMS:        quietPauseAfterMS(app, mode, privateNetwork.NetworkID),
+		IdleLadderEligible:       pauseTierWorkload(app, mode, privateNetwork.NetworkID),
+		IdleLadderGuardedPause:   idleLadderGuardedPause(app, mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -6212,6 +6215,8 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		QuietPauseAfterMS:        quietPauseAfterMS(app, ins.Mode, privateNetwork.NetworkID),
+		IdleLadderEligible:       pauseTierWorkload(app, ins.Mode, privateNetwork.NetworkID),
+		IdleLadderGuardedPause:   idleLadderGuardedPause(app, ins.Mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto

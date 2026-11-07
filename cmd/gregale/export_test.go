@@ -2229,12 +2229,12 @@ func (r *authCreateOptions) EmailAPIKey() *string   { return &r.emailAPIKey }
 func (r *authCreateOptions) EmailFrom() *string     { return &r.emailFrom }
 func (r *authCreateOptions) EmailProvider() *string { return &r.emailProvider }
 
-// Members of automationLiveSuiteOptions
+// Members of storedWorkflowLiveSuiteOptions
 func (r *storedWorkflowLiveSuiteOptions) Interval() *time.Duration           { return &r.interval }
 func (r *storedWorkflowLiveSuiteOptions) Path() *string                      { return &r.path }
 func (r *storedWorkflowLiveSuiteOptions) Plan() *storedWorkflowLiveSuitePlan { return &r.plan }
 
-// Members of automationScenarioCoverage
+// Members of storedWorkflowScenarioCoverage
 func (r storedWorkflowScenarioCoverage) XHints(p0 api.WorkflowSpec) []storedWorkflowCoverageHint {
 	return r.hints(p0)
 }

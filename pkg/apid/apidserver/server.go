@@ -2160,6 +2160,10 @@ func (s *server) handler() http.Handler {
 	// also needs a recent step-up, as the dashboard and organization cap
 	// routes do (ADR-20261103131742 amendment 1).
 	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.raiseOverageCap))))))
+	// ADR-20261104204500: electing to pay for egress above the plan's
+	// allowance is a billing change, guarded like the spend cap.
+	mux.HandleFunc("GET /v1/account/egress-overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEgressOverage))))
+	mux.HandleFunc("PUT /v1/account/egress-overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.putEgressOverage))))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
 	// admin-only (POST /v1/keys/{id}/rotate mirrors the same
@@ -4354,6 +4358,11 @@ func (s *server) handler() http.Handler {
 	// the ones they may decide. Deciding happens only on the review page.
 	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))
 	mux.HandleFunc("GET /v1/agent-approvals/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.GetApproval(agentConnections))))
+	// ADR-20261107140000 §3: the channels that also get the account's agents'
+	// requests. Only a person (admin scope, which agent keys never hold)
+	// changes them, so an agent cannot silence its own requests.
+	mux.HandleFunc("GET /v1/agent-approvals/channels", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.GetApprovalChannels(agentConnections))))
+	mux.HandleFunc("PUT /v1/agent-approvals/channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.PutApprovalChannels(agentConnections)))))
 
 	// Per-app deploy tokens. These credentials are minted by an
 	// administrator, carry only deploy:write, and are accepted by
@@ -4889,6 +4898,9 @@ func (s *server) handler() http.Handler {
 	// ADR-20261030093512: an organization billing subject has its own spend cap.
 	mux.HandleFunc("GET /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionView, s.getOverageCap))
 	mux.HandleFunc("POST /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionChangePlan, s.raiseOverageCap))
+	// ADR-20261104204500: an organization billing subject elects egress overage itself.
+	mux.HandleFunc("GET /v1/orgs/{slug}/egress-overage", s.orgBillingRoute(authz.OrgActionView, s.getEgressOverage))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/egress-overage", s.orgBillingRoute(authz.OrgActionChangePlan, s.putEgressOverage))
 	// ADR-20261031211500: an organization that owns its resources pays for
 	// them, so it holds the costs and budgets for that usage.
 	mux.HandleFunc("GET /v1/orgs/{slug}/billing/costs", s.orgFinancialBudgetRoute(false, s.getFinancialCosts))
