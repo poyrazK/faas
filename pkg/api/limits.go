@@ -17957,6 +17957,18 @@ const (
 	EdgeHostTrackedMax              = 100_000
 	EdgeTLSHandshakesInFlightPerCPU = 128
 	EdgeTLSHandshakeTimeout         = 10 * time.Second
+	// ADR-20261107180000: one client address (an IPv4 address or an IPv6
+	// /64) holds at most EdgeTLSHandshakesInFlightPerAddrMax of those
+	// handshakes at once, an address in Cloudflare's ranges
+	// EdgeTLSHandshakesInFlightPerProxyAddrMax (it carries many clients when
+	// a host is back behind Cloudflare, and the listener does not count it
+	// until its handshake settles), so one address cannot hold every slot
+	// with connections that never finish. A connection must send its
+	// ClientHello within EdgeTLSClientHelloTimeout; the rest of the
+	// handshake keeps EdgeTLSHandshakeTimeout.
+	EdgeTLSHandshakesInFlightPerAddrMax      = 32
+	EdgeTLSHandshakesInFlightPerProxyAddrMax = 64
+	EdgeTLSClientHelloTimeout                = 3 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17968,6 +17980,10 @@ const (
 	// (uploads, public reads, OTLP), so direct clients cannot push more at
 	// the control plane than Cloudflare let through.
 	EdgeControlPlaneForwardsInFlightMax = 256
+	// One client address holds at most
+	// EdgeControlPlaneForwardsInFlightPerAddrMax of them, so slow uploads
+	// from one client cannot hold every slot (ADR-20261107180000).
+	EdgeControlPlaneForwardsInFlightPerAddrMax = 16
 )
 
 // The host firewall's backstop for a compute edge's public entry address
@@ -18025,6 +18041,11 @@ const (
 	// EdgeCertificateListenRetry.
 	EdgeCertificateReloadInterval = 10 * time.Minute
 	EdgeCertificateListenRetry    = 5 * time.Second
+	// A reload reads at most EdgeCertificateLiveMax live certificates,
+	// newest first: every one is opened, so an unopenable newest row never
+	// hides an older good one (ADR-20261107180000). A cell holds one or two
+	// live certificates per set of names.
+	EdgeCertificateLiveMax = 32
 	// edgednsd's Certificate Transparency watch reads the apps domain's
 	// unexpired issuances from Cert Spotter every
 	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter

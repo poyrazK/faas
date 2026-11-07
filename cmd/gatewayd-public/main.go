@@ -639,7 +639,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: %w", err)
 		}
 		// ADR-20261103163954 §4: bounded however many clients send them.
-		edgeForward = edgeLimits.forwards(edgeForward)
+		edgeForward = edgeLimits.forwards(edgeForward, trustedIngressCIDRs)
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
