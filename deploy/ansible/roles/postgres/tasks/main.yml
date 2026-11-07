@@ -399,6 +399,17 @@
   failed_when: false
   notify: reload postgresql
 
+# Older deploy steps appended owner mappings outside the managed block (for
+# example cd-controlplane's `faas_map  faas-outboundd  faas`). Once the owner
+# is contracted, no OS user but root may map to it anywhere in the file.
+- name: postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/pg_ident.conf"
+    regexp: '^faas_map\s+(?!root\s)\S+\s+faas\s*$'
+    state: absent
+  notify: reload postgresql
+  when: faas_postgres_owner_contracted | default(false) | bool
+
 - name: postgres — verify unix-socket-only listeners (defensive)
   ansible.builtin.command: pg_lsclusters
   register: pg_lsclusters
