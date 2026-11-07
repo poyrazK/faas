@@ -90,7 +90,7 @@ func (m *MemStore) CaptureProjectEnvironmentCloneValues(_ context.Context, accou
 	if _, err := m.projectEnvironmentBySlugLocked(projectID, source); err != nil {
 		return ProjectEnvironmentCloneValuesSnapshot{}, err
 	}
-	scopes, err := m.projectCloneValueScopesLocked(m.projectCloneAppsLocked(projectID), ProjectEnvironmentClone{ProjectID: projectID, SourceSlug: source})
+	scopes, err := m.projectCloneValueScopesLocked(m.projectCloneAppsLocked(projectID, source), ProjectEnvironmentClone{ProjectID: projectID, SourceSlug: source})
 	if err != nil {
 		return ProjectEnvironmentCloneValuesSnapshot{}, err
 	}

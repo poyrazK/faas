@@ -118,7 +118,15 @@ func (s *PgStore) reconcileEventSubscriptionIntent(ctx context.Context, deployme
 	}
 	status := cronDeploymentDisposition(d.Status, d.Scope, d.RolloutState, int(d.TrafficPercent), int(d.CanaryTotalSteps), d.TrafficPercentExplicit, d.CompetingTraffic, d.DeploymentID, d.LatestID)
 	if status == "prepared" {
-		return nil, nil
+		// Still waiting (a traffic split, a canary, a scheduled release):
+		// stamp it so the next batch reaches newer intents. The worker reads
+		// the 64 least recently stamped intents, so 64 that wait for days
+		// starved every newer deploy's subscriptions, as staged crons would
+		// without TouchCronActivation.
+		if err := q.SettleEventSubscriptionIntent(ctx, tx, sqlc.SettleEventSubscriptionIntentParams{Status: status, Reason: "", DeploymentID: mustPgUUID(deploymentID)}); err != nil {
+			return nil, fmt.Errorf("state: stamp waiting event subscription intent: %w", err)
+		}
+		return nil, tx.Commit(ctx)
 	}
 	reason := cronDispositionReason(d.Status, d.Scope, d.RolloutState, int(d.TrafficPercent), int(d.CanaryTotalSteps), d.TrafficPercentExplicit, d.CompetingTraffic, d.DeploymentID, d.LatestID)
 	var change *EventSubscriptionActivationChange
@@ -206,7 +214,7 @@ func (m *MemStore) policyDeploymentDispositionLocked(d Deployment) (string, bool
 	var newest Deployment
 	competing := false
 	for _, candidate := range m.deployments {
-		if candidate.AppID != d.AppID || normalizedDeploymentScope(candidate.Scope) != DefaultEnvScope {
+		if candidate.AppID != d.AppID || normalizedDeploymentScope(candidate.Scope) != normalizedDeploymentScope(d.Scope) {
 			continue
 		}
 		if candidate.ID != d.ID && candidate.Status == DeployLive && candidate.TrafficPercent > 0 {

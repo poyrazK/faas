@@ -17,6 +17,9 @@ type OrgAgentPolicy struct {
 	OrgID         string
 	AgentsAllowed bool
 	AllowedScopes []string
+	// ApprovalCategories must have a person's approval for every agent
+	// acting in the organization (ADR-20261104140058).
+	ApprovalCategories []string
 	// UpdatedAt is zero for an organization that never set a policy.
 	UpdatedAt time.Time
 	UpdatedBy string
@@ -25,7 +28,7 @@ type OrgAgentPolicy struct {
 // DefaultOrgAgentPolicy is the policy of an organization that set none:
 // agents are allowed with every grantable capability.
 func DefaultOrgAgentPolicy(orgID string) OrgAgentPolicy {
-	return OrgAgentPolicy{OrgID: orgID, AgentsAllowed: true, AllowedScopes: slices.Clone(api.MCPGrantableScopes)}
+	return OrgAgentPolicy{OrgID: orgID, AgentsAllowed: true, AllowedScopes: slices.Clone(api.MCPGrantableScopes), ApprovalCategories: []string{}}
 }
 
 // OrgAgentStore keeps organizations' agent policies and the organization a
@@ -59,7 +62,8 @@ func (s *PgStore) SetOrgAgentPolicy(ctx context.Context, policy OrgAgentPolicy) 
 		updatedBy = mustPgUUID(policy.UpdatedBy)
 	}
 	row, err := sqlc.New().UpsertOrgAgentPolicy(ctx, s.pool, sqlc.UpsertOrgAgentPolicyParams{
-		OrgID: mustPgUUID(policy.OrgID), AgentsAllowed: policy.AgentsAllowed, AllowedScopes: nonNilStrings(policy.AllowedScopes), UpdatedBy: updatedBy,
+		OrgID: mustPgUUID(policy.OrgID), AgentsAllowed: policy.AgentsAllowed, AllowedScopes: nonNilStrings(policy.AllowedScopes),
+		ApprovalCategories: nonNilStrings(policy.ApprovalCategories), UpdatedBy: updatedBy,
 	})
 	if err != nil {
 		return OrgAgentPolicy{}, mapErr(err)
@@ -68,7 +72,8 @@ func (s *PgStore) SetOrgAgentPolicy(ctx context.Context, policy OrgAgentPolicy) 
 }
 
 func orgAgentPolicyFromRow(row sqlc.OrgAgentPolicy) OrgAgentPolicy {
-	return OrgAgentPolicy{OrgID: pgUUIDString(row.OrgID), AgentsAllowed: row.AgentsAllowed, AllowedScopes: nonNilStrings(row.AllowedScopes), UpdatedAt: row.UpdatedAt.Time, UpdatedBy: pgUUIDString(row.UpdatedBy)}
+	return OrgAgentPolicy{OrgID: pgUUIDString(row.OrgID), AgentsAllowed: row.AgentsAllowed, AllowedScopes: nonNilStrings(row.AllowedScopes),
+		ApprovalCategories: nonNilStrings(row.ApprovalCategories), UpdatedAt: row.UpdatedAt.Time, UpdatedBy: pgUUIDString(row.UpdatedBy)}
 }
 
 func (s *PgStore) SetCliAuthCodeOrg(ctx context.Context, tokenHash []byte, orgID string) error {
@@ -104,6 +109,7 @@ func (m *MemStore) OrgAgentPolicy(_ context.Context, orgID string) (OrgAgentPoli
 	defer m.mu.Unlock()
 	if policy, ok := m.orgAgentPolicies[orgID]; ok {
 		policy.AllowedScopes = slices.Clone(policy.AllowedScopes)
+		policy.ApprovalCategories = nonNilStrings(slices.Clone(policy.ApprovalCategories))
 		return policy, nil
 	}
 	return DefaultOrgAgentPolicy(orgID), nil
@@ -120,10 +126,16 @@ func (m *MemStore) SetOrgAgentPolicy(_ context.Context, policy OrgAgentPolicy) (
 			return OrgAgentPolicy{}, ErrConflict
 		}
 	}
+	for _, category := range policy.ApprovalCategories {
+		if !slices.Contains(api.AgentApprovalCategories, category) {
+			return OrgAgentPolicy{}, ErrConflict
+		}
+	}
 	if m.orgAgentPolicies == nil {
 		m.orgAgentPolicies = map[string]OrgAgentPolicy{}
 	}
 	policy.AllowedScopes = nonNilStrings(slices.Clone(policy.AllowedScopes))
+	policy.ApprovalCategories = nonNilStrings(slices.Clone(policy.ApprovalCategories))
 	policy.UpdatedAt = time.Now()
 	m.orgAgentPolicies[policy.OrgID] = policy
 	return policy, nil

@@ -66,6 +66,12 @@ their output reads as empty and truncated (`gregale job logs` prints only
 | `--request ID`, `--trace TRACE_ID` | One request, or every request of a trace |
 | `--explain` | A short summary of the latest failure and repeated errors |
 
+`--deployment ID` on a deployment that never served (failed, cancelled or
+still building) prints its build and deploy log, then its failure reason. With
+`--json` each entry is a `{"type":"log"}` record and the last record is a
+`{"type":"summary"}` with the deployment's `status`, `error` and `error_code`.
+`--explain` is a terminal summary and is refused with `--json`.
+
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
 `[ERROR]` or `level=error`. Lines with no recognisable level are left out when
@@ -157,4 +163,10 @@ gregale logs drain health my-api <drain-id>
 - An account can hold a limited number of log streams open at once (Free 2,
   Hobby 5, Pro 20, Scale 50); more answer `429 log_streams_limit`.
 - `--follow` reconnects by itself after ten quiet minutes.
+- Each instance can write a limited amount of log output per UTC hour:
+  Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB. Past it, Gregale
+  writes one line saying so and drops the rest of the hour's output
+  ([ADR-20261104085150](adr/20261104085150-log-volume-allowance.md)).
+- A log drain delivers at most 1 MiB of lines a second (bursts to 4 MiB);
+  lines past that are dropped and counted in `health`.
 - Logs have no separate charge.

@@ -69,7 +69,21 @@ session a fresh MFA verification. Accounts with a password must enter their
 current password to confirm setup. A pending setup cannot verify a session
 or provide recovery access. An already-enrolled account uses `verify`
 for further challenges; repeating `confirm` returns a conflict. A suspended
-account can obtain the CSRF token needed to use its saved recovery codes.
+account can enroll, verify, recover or reset its authenticator so billing
+recovery never depends on first restoring billing.
+
+MFA is optional for ordinary accounts. Plan changes, billing details and key
+creation ask for recent verification only when MFA is enabled or explicitly
+required. Enrollment, an authenticator code and a saved recovery code each
+establish five minutes of recent verification; enrollment needs no second code.
+Resetting MFA also clears the browser's pending challenge unless an explicit
+policy or operator access requires a replacement.
+
+If your last recovery code remains, use it to reset the authenticator and set
+up a replacement. If neither the device nor codes are available, choose email
+recovery. Its link can be confirmed after the existing 24-hour waiting period.
+`gregale org invitation accept TOKEN` opens the invitation in a browser so
+acceptance uses your own session and enabled MFA policy, rather than a CLI key.
 
 For shared applications, the current organization role and the credential's
 scope both apply. Use an organization-bound key to work on a teammate's app;

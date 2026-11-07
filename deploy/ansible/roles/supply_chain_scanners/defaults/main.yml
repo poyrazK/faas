@@ -35,12 +35,16 @@ grype_release:
     sha256_linux_amd64: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
 
 # Syft — SBOM generator (CycloneDX 1.5 JSON). Same quarterly-
-# review cadence as Grype; pinned to a release vetted against
-# pkg/imaged/sbom.go's expected output schema (-o cyclonedx-json).
-syft_version: "1.0.0"
+# review cadence as Grype; pkg/imaged/sbom.go pins the output schema
+# (-o cyclonedx-json@1.5). Matches the CI pin in
+# scripts/ci/install-syft.sh callers (cve-check.yml, images.yml) and
+# cd-controlplane.yml's install_syft — keep them in lock-step.
+syft_version: "1.49.0"
 syft_release:
   "1.0.0":
     sha256_linux_amd64: "27dfeaca134cd8aeff6135ba349ff922109bd89b955755459601667d69fed88e"
+  "1.49.0":
+    sha256_linux_amd64: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
 
 # install_root is the prefix the role installs into; grype / syft
 # binaries are placed at <install_root>/bin/<tool>. Picked to

@@ -13,8 +13,15 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err
 	}
+	receipt, err := m.prepareEnvironmentPromotionReceiptLocked(ctx, promotion)
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
 	for _, existing := range m.projectEnvironmentPromotions {
 		if existing.AccountID == promotion.AccountID && existing.IdempotencyKey == promotion.IdempotencyKey {
+			if _, modern, _ := environmentPromotionIntent(ctx); modern {
+				return ProjectEnvironmentPromotion{}, nil, ErrEnvironmentPromotionAttemptConflict
+			}
 			return ProjectEnvironmentPromotion{}, nil, ErrConflict
 		}
 	}
@@ -99,6 +106,13 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 		approval.ConsumedAt = &at
 		m.projectEnvironmentApprovals[approval.ID] = *approval
 		promotion.ConsumedApproval = approval
+	}
+	if receipt != nil {
+		receipt.PromotionID = promotion.ID
+		if m.environmentPromotionReceipts == nil {
+			m.environmentPromotionReceipts = map[string]api.EnvironmentPromotionReceipt{}
+		}
+		m.environmentPromotionReceipts[promotion.ID] = *receipt
 	}
 	stored := promotion
 	stored.Approval, stored.ConsumedApproval = nil, nil
@@ -268,6 +282,10 @@ func (m *MemStore) StartProjectEnvironmentPromotionRollback(ctx context.Context,
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
 	}
+	receipt, err := m.prepareEnvironmentRollbackReceiptLocked(ctx, promotion)
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	if promotion.RollbackIdempotencyKey != "" && promotion.RollbackIdempotencyKey != idempotencyKey {
 		return ProjectEnvironmentPromotion{}, ErrConflict
 	}
@@ -283,6 +301,12 @@ func (m *MemStore) StartProjectEnvironmentPromotionRollback(ctx context.Context,
 	}
 	promotion.RollbackCompletedAt = nil
 	promotion.UpdatedAt = now
+	if receipt != nil {
+		if m.environmentRollbackReceipts == nil {
+			m.environmentRollbackReceipts = map[string]api.EnvironmentRollbackReceipt{}
+		}
+		m.environmentRollbackReceipts[id] = *receipt
+	}
 	m.projectEnvironmentPromotions[id] = promotion
 	return cloneProjectEnvironmentPromotion(promotion), nil
 }

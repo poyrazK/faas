@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // DeployTokenStore is the optional store surface used by the per-app deploy
@@ -34,10 +36,8 @@ func (m *MemStore) CreateDeployToken(_ context.Context, accountID, appID string,
 	if len(scopes) == 0 {
 		scopes = []string{"deploy:write"}
 	}
-	for _, scope := range scopes {
-		if scope != "deploy:write" {
-			return DeployToken{}, fmt.Errorf("state: unsupported deploy token scope %q", scope)
-		}
+	if err := api.ValidateDeployTokenScopes(scopes); err != nil {
+		return DeployToken{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

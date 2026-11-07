@@ -174,6 +174,12 @@ type Metrics struct {
 	// non-zero rate means Postgres is unreachable from this gateway
 	// and the data plane is coasting on cached routes.
 	routeLookupStaleServed prometheus.Counter
+	// routeLookupUnknownHost (ADR-20261103163954 §4) counts host lookups
+	// answered without a store read by the route miss guard, by outcome:
+	// remembered_miss (404 from a remembered miss) or shed (503, the
+	// new-host budget was spent). A sustained shed rate is a flood of names
+	// that route nowhere.
+	routeLookupUnknownHost *prometheus.CounterVec
 	// inflightRequests (issue #587 / PR-A) is the per-daemon
 	// drain.Tracker in-flight gauge (see SetInflightRequests).
 	inflightRequests *prometheus.GaugeVec
@@ -2273,8 +2279,14 @@ func NewMetrics() *Metrics {
 		Name: "gateway_route_lookup_stale_served_total",
 		Help: "Requests routed from the last-known-good route tier because the authoritative route lookup errored (ADR-190). Bounded by FAAS_GATEWAY_ROUTE_STALE_TTL; a sustained rate means Postgres is unreachable from this gateway.",
 	})
+	m.routeLookupUnknownHost = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gateway_route_lookup_unknown_host_total",
+		Help: "Host lookups answered without a store read (ADR-20261103163954 §4): outcome=remembered_miss is a 404 from a recent store answer that the host routes nowhere; outcome=shed is a 503 because this gateway spent its budget of reads for hosts it has never seen route. A sustained shed rate means a flood of names that route nowhere.",
+	}, []string{"outcome"})
+	m.routeLookupUnknownHost.WithLabelValues("remembered_miss")
+	m.routeLookupUnknownHost.WithLabelValues("shed")
 	m.initMCPMetrics(reg)
-	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
+	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed, m.routeLookupUnknownHost)
 	return m
 }
 
@@ -2320,6 +2332,15 @@ func (m *Metrics) ObserveRouteLookupStaleServed() {
 		return
 	}
 	m.routeLookupStaleServed.Inc()
+}
+
+// ObserveRouteLookupUnknownHost increments
+// gateway_route_lookup_unknown_host_total{outcome}. Nil-safe.
+func (m *Metrics) ObserveRouteLookupUnknownHost(outcome string) {
+	if m == nil || m.routeLookupUnknownHost == nil {
+		return
+	}
+	m.routeLookupUnknownHost.WithLabelValues(outcome).Inc()
 }
 
 // ObserveDrainWait (issue #587 / PR-A) records the wall-clock
@@ -2508,6 +2529,17 @@ func (m *Metrics) RequestCountHandler() http.Handler {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(m.requests, m.appInflight)
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
+}
+
+// ForgetAppRequestCounts drops a deleted app's request counters. Their
+// series stayed for the gateway's lifetime, one per status code, and
+// schedd reads them every second (ADR 20261104091530). The in-flight gauge
+// stays: a request still finishing would bring it back below zero.
+func (m *Metrics) ForgetAppRequestCounts(appID string) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.requests.DeletePartialMatch(prometheus.Labels{"app": appID})
 }
 
 // AdjustAppInflight moves appID's in-flight request gauge by delta.
@@ -3973,12 +4005,20 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 		"cold", cold,
 		"request_id", logsanitize.Field(requestID),
 	}
-	hotSuccess := len(code) == 3 && code[0] == '2'
-	if cold || !hotSuccess {
+	if requestLogLevel(code, cold) == slog.LevelInfo {
 		l.log.Info("gateway_request", fields...)
 		return
 	}
 	l.log.Debug("gateway_request", fields...)
+}
+
+// requestLogLevel is the level requestLogger.Log writes a request at: a warm
+// 2xx at Debug, anything else at Info.
+func requestLogLevel(code string, cold bool) slog.Level {
+	if cold || len(code) != 3 || code[0] != '2' {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
 }
 
 // Issue #676 / ADR-080 follow-up, PR-B: closed-set label constants

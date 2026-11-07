@@ -42,6 +42,7 @@ func mcpCLICommand() cliCommand {
 	taskWaitFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
 		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
+		cliFlag{Name: "cancel-on-timeout", Short: "request cancellation when the resumed wait times out"},
 	)
 	for i := range taskWaitFlags {
 		if taskWaitFlags[i].Name == "timeout" {
@@ -53,7 +54,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "transport", Short: "management MCP transport (default stdio)", Value: "TRANSPORT", ClosedSet: []string{"stdio", "streamable-http"}},
 			{Name: "timeout", Short: "per-tool API timeout (default 30s, maximum 1m)", Value: "DURATION"},
 			{Name: "allow-writes", Short: "enable reviewed deploy, promotion, and rollback actions", Bool: true},
-			{Name: "tools", Short: "toolsets to list, comma-separated: core, release, diagnose, provision (default all)", Value: "TOOLSETS"},
+			{Name: "tools", Short: "toolsets to list, comma-separated: core, release, diagnose, provision, operate or all (default core)", Value: "TOOLSETS"},
 			{Name: "listen", Short: "HTTP listen address behind TLS proxy (default 127.0.0.1:8787)", Value: "ADDR"},
 			{Name: "resource-url", Short: "public HTTPS URL ending in /mcp (required for HTTP)", Value: "URL"},
 			{Name: "oauth-onboarding", Short: "remote onboarding (default browser)", Value: "MODE", ClosedSet: []string{"browser", "api-key"}},

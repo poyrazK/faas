@@ -161,7 +161,10 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/data-api/contract-tasks":     authz.OrgActionConfigureApp,
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}": authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/runtime":             authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/data-api/status":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/usage":               authz.OrgActionReadApp,
+	// Binding metadata contains no credentials or live database access.
+	"GET /v1/apps/{slug}/postgres-bindings": authz.OrgActionReadApp,
 	// data-repair
 	"GET /v1/apps/{slug}/data-repair/doctor":                            authz.OrgActionReadAppLogs,
 	"POST /v1/apps/{slug}/data-repair/operations":                       authz.OrgActionDeployApp,
@@ -783,8 +786,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	// rename
 	"POST /v1/apps/{slug}/rename": authz.OrgActionConfigureApp,
 	// route-budgets
-	"GET /v1/apps/{slug}/route-budgets": authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/route-budgets": authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/route-budgets":                       authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/route-budgets":                       authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}": authz.OrgActionReadApp,
 	// route-lifecycle
 	"POST /v1/apps/{slug}/route-lifecycle/approvals":              authz.OrgActionConfigureApp,
 	"GET /v1/apps/{slug}/route-lifecycle/approvals/{approval_id}": authz.OrgActionReadApp,

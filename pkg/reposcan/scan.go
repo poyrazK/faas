@@ -171,6 +171,10 @@ type Workload struct {
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
+	// AppProtocol is the wire protocol a Compose service declares with
+	// x-gregale-app-protocol (http1, http2 or grpc); empty keeps the app's
+	// (ADR-20261105095300).
+	AppProtocol string `json:"app_protocol,omitempty"`
 	// AllowedServiceCallers is the target-side service policy. Nil permits
 	// legacy same-account callers; a non-nil empty list denies every caller.
 	AllowedServiceCallers *[]string
@@ -487,7 +491,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		highestTier = TierSingle
 	}
 
-	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(dropShadowedGoCommands(seeds)))
+	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(foldCoveredRoots(dropShadowedGoCommands(seeds))))
 	if err != nil {
 		return Result{}, err
 	}

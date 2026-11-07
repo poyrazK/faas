@@ -13,6 +13,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -68,6 +69,69 @@ func (a storeAuthAdapter) DeploymentAppID(ctx context.Context, deploymentID stri
 		return "", err
 	}
 	return d.AppID, nil
+}
+
+// A key limited to projects reaches only their apps, projects and deployments
+// (ADR-20261104085712).
+var (
+	_ middleware.KeyProjectLimiter = storeAuthAdapter{}
+	_ middleware.ProjectResolver   = storeAuthAdapter{}
+	_ middleware.AppByIDResolver   = storeAuthAdapter{}
+)
+
+// APIKeyProjectLimit forwards the optional limit store; a store without it
+// limits no key.
+func (a storeAuthAdapter) APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error) {
+	store, ok := a.Store.(state.KeyProjectLimitStore)
+	if !ok {
+		return nil, false, nil
+	}
+	return store.APIKeyProjectLimit(ctx, keyID)
+}
+
+// An agent key's risky requests wait for a person's approval
+// (ADR-20261104140058).
+var (
+	_ middleware.AgentApprovalGate    = storeAuthAdapter{}
+	_ middleware.OrgAgentPolicyReader = storeAuthAdapter{}
+)
+
+// errNoApprovalStore fails a gated request closed on a store that cannot
+// record approvals.
+var errNoApprovalStore = errors.New("store has no agent approvals")
+
+func (a storeAuthAdapter) APIKeyApprovalCategories(ctx context.Context, keyID string) ([]string, bool, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return nil, false, nil
+	}
+	return store.APIKeyApprovalCategories(ctx, keyID)
+}
+
+func (a storeAuthAdapter) ConsumeAgentApproval(ctx context.Context, binding state.AgentApprovalBinding) (string, bool, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return "", false, errNoApprovalStore
+	}
+	return store.ConsumeAgentApproval(ctx, binding)
+}
+
+func (a storeAuthAdapter) RequestAgentApproval(ctx context.Context, request state.AgentApproval) (state.AgentApproval, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return state.AgentApproval{}, errNoApprovalStore
+	}
+	return store.RequestAgentApproval(ctx, request)
+}
+
+// OrgAgentPolicy forwards the organization's agent policy; a store without
+// it has the default policy, with no approval floor.
+func (a storeAuthAdapter) OrgAgentPolicy(ctx context.Context, orgID string) (state.OrgAgentPolicy, error) {
+	store, ok := a.Store.(state.OrgAgentStore)
+	if !ok {
+		return state.DefaultOrgAgentPolicy(orgID), nil
+	}
+	return store.OrgAgentPolicy(ctx, orgID)
 }
 
 // AuthenticatePlatformTenantAccessToken forwards this optional credential

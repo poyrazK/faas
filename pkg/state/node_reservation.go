@@ -50,6 +50,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,6 +215,13 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		}
 	}
 
+	if booked := nodeBookedCPUMillicores(ctx, nodeID); booked > 0 {
+		// capture_instance_capacity stores it on the row this transaction
+		// inserts (ADR-20261101160231 step 5b).
+		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(booked)); err != nil {
+			return Instance{}, fmt.Errorf("state: node reservation: booked CPU (node=%s): %w", nodeID, err)
+		}
+	}
 	inst, err := insert(tx)
 	if err != nil {
 		return Instance{}, mapErr(err)
@@ -283,8 +291,8 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint,
 		       coalesce((select sum(case
 		                          when i.startup_cpu_boost_until > now() then
-		                            greatest(case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end, $3)
-		                          else case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end
+		                            greatest(coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end), $3)
+		                          else coalesce(i.booked_cpu_millicores, case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end)
 		                        end)
 		                   from instances i
 		                   join apps a on a.id = i.app_id
@@ -387,10 +395,7 @@ func (m *MemStore) nodeLiveComputeLocked(nodeID string, now time.Time) (vcpu, cp
 		if !ok {
 			continue
 		}
-		cpu := app.CPUMillicores
-		if cpu <= 0 {
-			cpu = api.DefaultAppCPUMillicores
-		}
+		cpu := m.instanceCPUBookingLocked(ins, app)
 		if ins.StartupCPUBoostUntil != nil && ins.StartupCPUBoostUntil.After(now) && cpu < api.DefaultAppCPUMillicores {
 			cpu = api.DefaultAppCPUMillicores
 		}

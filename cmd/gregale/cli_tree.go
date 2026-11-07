@@ -108,6 +108,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
 	{"release timeline", "deployment timeline"},
+	{"release resolve", "deployment resolve"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},
@@ -128,6 +129,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"preview", "preview"},
 	{"environment migration recover", "projects environments recover-migration"},
 	{"environment", "projects environments"},
+	// #6612 added `projects preview-secrets`; the tree takes no hyphenated
+	// words, so its verbs sit under `project preview secret`.
+	{"project preview secret", "projects preview-secrets"},
 	{"project", "projects"},
 	{"build", "build"},
 	{"github", "github"},
@@ -771,6 +775,13 @@ func rewriteTreePath(args []string) ([]string, error) {
 	if folded, ok := rewriteFlagFold(args); ok {
 		return folded, nil
 	}
+	if path, flags, ok := onlyFoldPath(args); ok {
+		// Help for the path comes from the tree manifest (treeHelpWords).
+		if hasHelpFlag(args) {
+			return args, nil
+		}
+		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
+	}
 	alias, used, ok := matchCliTreeAlias(args)
 	if !ok {
 		return args, nil
@@ -1263,7 +1274,9 @@ func printTreeManifestHelp(w io.Writer, words []string) bool {
 	if noun, ok := lookupCliTreeNoun(words[0]); ok {
 		// An operator command (postgres) stays out of the tree.
 		if !cliTreeListsNoun(noun.Name) {
-			return false
+			// A path that exists only through its folds (`edge cache set`)
+			// has no command of today's to print help for.
+			return printOnlyFoldHelp(w, words)
 		}
 		tree, ok := d.treeCommand(noun)
 		if !ok {
@@ -1282,6 +1295,26 @@ func printTreeManifestHelp(w io.Writer, words []string) bool {
 	}
 	// printLocalHelpFlags spells flags for display (cliTreeFlagsForDisplay).
 	return printManifestHelp(w, command, words[1:])
+}
+
+// printOnlyFoldHelp prints help for a path that exists only through its
+// flag folds, or for its parent (`edge cache`, whose command of today's
+// lists the folded verbs GET and HEAD), from the tree manifest the reference
+// renders. It reports false for any other path.
+func printOnlyFoldHelp(w io.Writer, words []string) bool {
+	path := leadingTreeWords(words)
+	if !slices.ContainsFunc(cliTreeFlagFolds, func(fold cliTreeFlagFold) bool {
+		fields := strings.Fields(fold.New)
+		return fold.Only && len(path) > 1 && len(path) <= len(fields) && slices.Equal(fields[:len(path)], path)
+	}) {
+		return false
+	}
+	for _, command := range cliTreeManifest(discoverableCliCommands()) {
+		if command.Name == words[0] {
+			return printManifestHelp(w, command, words[1:])
+		}
+	}
+	return false
 }
 
 // cliHelpRenderedByCommand reports today's paths whose help is written by
@@ -1526,7 +1559,7 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 	}
 	if slices.Equal(typed, args) {
 		// Help reached by an earlier name is spelled in the tree too.
-		words := typed[:oldPathDepth(typed)]
+		words := manifestVerbNames(typed[:oldPathDepth(typed)])
 		spelled, ok := cliTreeSpelling(words)
 		if !ok {
 			return "", "", false
@@ -1547,6 +1580,28 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 		to += " " + typed[used]
 	}
 	return from, to, true
+}
+
+// manifestVerbNames spells each verb of today's path by its manifest name,
+// as help prints it: `cors ls` reads `cors list` once list takes ls as an
+// alias.
+func manifestVerbNames(path []string) []string {
+	if len(path) == 0 {
+		return path
+	}
+	command, ok := lookupCliCommand(path[0])
+	if !ok {
+		return path
+	}
+	out, subs := slices.Clone(path), command.Subcommands
+	for i := 1; i < len(out); i++ {
+		sub, ok := findCliSubcommand(subs, out[i])
+		if !ok {
+			break
+		}
+		out[i], subs = sub.Name, sub.Subcommands
+	}
+	return out
 }
 
 // renameHelpPath spells `gregale <from>` as `gregale <to>` in help text. Its

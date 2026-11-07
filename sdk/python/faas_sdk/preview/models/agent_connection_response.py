@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.agent_connection_response_approvals_item import (
+    AgentConnectionResponseApprovalsItem,
+    check_agent_connection_response_approvals_item,
+)
 from ..models.agent_connection_response_kind import AgentConnectionResponseKind, check_agent_connection_response_kind
 from ..types import UNSET, Unset
 
@@ -34,6 +38,8 @@ class AgentConnectionResponse:
     """The key's display prefix."""
     scopes: list[str]
     created_at: datetime.datetime
+    app_id: str | Unset = UNSET
+    """Immutable app boundary of an app_agent connection."""
     client_name: str | Unset = UNSET
     """The client name a hosted sign-in's consent page showed."""
     client_site: str | Unset = UNSET
@@ -47,6 +53,10 @@ class AgentConnectionResponse:
     """The organization the agent acts in."""
     member: str | Unset = UNSET
     """Email of the member who connected the agent, in an organization's list."""
+    projects: list[str] | Unset = UNSET
+    """Slugs of the projects the agent is limited to; absent when it reaches every project."""
+    approvals: list[AgentConnectionResponseApprovalsItem] | Unset = UNSET
+    """Kinds of action the agent must have a person approve, including its organization's floor."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +69,8 @@ class AgentConnectionResponse:
         scopes = self.scopes
 
         created_at = self.created_at.isoformat()
+
+        app_id = self.app_id
 
         client_name = self.client_name
 
@@ -80,6 +92,17 @@ class AgentConnectionResponse:
 
         member = self.member
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
+        approvals: list[str] | Unset = UNSET
+        if not isinstance(self.approvals, Unset):
+            approvals = []
+            for approvals_item_data in self.approvals:
+                approvals_item: str = approvals_item_data
+                approvals.append(approvals_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -91,6 +114,8 @@ class AgentConnectionResponse:
                 "created_at": created_at,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
         if client_name is not UNSET:
             field_dict["client_name"] = client_name
         if client_site is not UNSET:
@@ -105,6 +130,10 @@ class AgentConnectionResponse:
             field_dict["org_id"] = org_id
         if member is not UNSET:
             field_dict["member"] = member
+        if projects is not UNSET:
+            field_dict["projects"] = projects
+        if approvals is not UNSET:
+            field_dict["approvals"] = approvals
 
         return field_dict
 
@@ -120,6 +149,8 @@ class AgentConnectionResponse:
         scopes = cast(list[str], d.pop("scopes"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        app_id = d.pop("app_id", UNSET)
 
         client_name = d.pop("client_name", UNSET)
 
@@ -150,12 +181,24 @@ class AgentConnectionResponse:
 
         member = d.pop("member", UNSET)
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
+        _approvals = d.pop("approvals", UNSET)
+        approvals: list[AgentConnectionResponseApprovalsItem] | Unset = UNSET
+        if _approvals is not UNSET:
+            approvals = []
+            for approvals_item_data in _approvals:
+                approvals_item = check_agent_connection_response_approvals_item(approvals_item_data)
+
+                approvals.append(approvals_item)
+
         agent_connection_response = cls(
             id=id,
             kind=kind,
             prefix=prefix,
             scopes=scopes,
             created_at=created_at,
+            app_id=app_id,
             client_name=client_name,
             client_site=client_site,
             label=label,
@@ -163,6 +206,8 @@ class AgentConnectionResponse:
             expires_at=expires_at,
             org_id=org_id,
             member=member,
+            projects=projects,
+            approvals=approvals,
         )
 
         agent_connection_response.additional_properties = d

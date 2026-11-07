@@ -36,9 +36,12 @@ import (
 
 const (
 	staleDeploymentSweepEvery = 5 * time.Minute
-	staleDeploymentThreshold  = 2 * time.Hour
-	staleDeploymentBatchSize  = 64
-	securityScanSweepEvery    = 6 * time.Hour
+	// signatureRevalidationEvery bounds how long a rolled-back image the
+	// current trust list rejects can serve (ADR-20261020085706 amendment 14).
+	signatureRevalidationEvery = 5 * time.Minute
+	staleDeploymentThreshold   = 2 * time.Hour
+	staleDeploymentBatchSize   = 64
+	securityScanSweepEvery     = 6 * time.Hour
 	// Evidence leases are checked much more frequently than the expensive
 	// scanner sweep so an enforce-mode app cannot continue serving after its
 	// last verified result has expired.
@@ -50,6 +53,16 @@ const (
 type Loop struct {
 	handler *Handler
 	store   state.Store
+	// signatureSweep keeps periodic signature revalidations from overlapping.
+	signatureSweep sync.Mutex
+	// leaseRescans records when an expired-evidence rescan started, per
+	// deployment, so the security lease waits for it once (amendment 14).
+	leaseRescanMu sync.Mutex
+	leaseRescans  map[string]time.Time
+	// sweepNode caches this imaged's compute node ID for the node-scoped
+	// security sweeps (bug hunt O32).
+	sweepNodeMu sync.Mutex
+	sweepNode   string
 	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
 	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
 	crashCaptureCryptoEvery time.Duration
@@ -69,6 +82,11 @@ type Loop struct {
 	securityScanRunning atomic.Bool
 	// prep prepares deployments' images off the loop; nil prepares inline.
 	prep *imagePrepWorkers
+	// releaseApprovalOffset rotates the bounded approval recovery scan.
+	releaseApprovalOffset int
+	// staleDeploymentOffset rotates past active builds and intentional holds.
+	// Both offsets are owned by the loop goroutine.
+	staleDeploymentOffset int
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
@@ -258,6 +276,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer jobMaterializationTicker.Stop()
 	staleDeploymentTicker := time.NewTicker(staleDeploymentSweepEvery)
 	defer staleDeploymentTicker.Stop()
+	releaseApprovalTicker := time.NewTicker(releaseApprovalHoldSweepEvery)
+	defer releaseApprovalTicker.Stop()
+	signatureTicker := time.NewTicker(signatureRevalidationEvery)
+	defer signatureTicker.Stop()
 	securityScanEvery := l.securityScanEvery
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
@@ -372,6 +394,20 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-staleDeploymentTicker.C:
 			l.reconcileStaleDeployments(ctx)
+		case <-releaseApprovalTicker.C:
+			l.resumeReleaseApprovalHolds(ctx)
+		case <-signatureTicker.C:
+			// ADR-20261020085706 amendment 14: a rollback (manual or
+			// automatic) or signing turned on later can put an image the
+			// current trust list rejects back into service; revalidate every
+			// live signed image periodically, not only on start and signer
+			// changes.
+			if l.signatureSweep.TryLock() {
+				go func() {
+					defer l.signatureSweep.Unlock()
+					l.reconcileSecuritySignatures(ctx, l.now())
+				}()
+			}
 		case tick := <-l.securityScanCh:
 			l.reconcileSecurityScans(ctx, tick, securityScanEvery)
 		case tick := <-l.securityLeaseCh:
@@ -419,7 +455,27 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 	}
 	now := l.now().UTC()
 	cutoff := now.Add(-staleDeploymentThreshold)
-	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+	// Every candidate is visited: rows deliberately left in flight (a release
+	// waiting for approval, an MCP hold, a running build) must not fill the
+	// batch and hide a stuck deployment behind them (ADR-20261020085706
+	// amendment 13).
+	err := l.pageOperatorDeployments(ctx, staleDeploymentFilter(cutoff), func(rows []state.Deployment) int {
+		kept := 0
+		for _, deployment := range rows {
+			if !l.reconcileStaleDeployment(ctx, deployment, now, cutoff) {
+				kept++
+			}
+		}
+		return kept
+	}, &l.staleDeploymentOffset)
+	if err != nil {
+		l.log.Warn("imaged: list stale deployments", "err", err)
+	}
+	l.observeStaleDeploymentBacklog(ctx, cutoff, now)
+}
+
+func staleDeploymentFilter(cutoff time.Time) state.OperatorDeploymentFilter {
+	return state.OperatorDeploymentFilter{
 		ExcludeMCPTaskHolds: true,
 		Statuses: []state.DeploymentStatus{
 			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
@@ -428,60 +484,101 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		CreatedBefore:  cutoff,
 		OldestFirst:    true,
 		Limit:          staleDeploymentBatchSize,
-	})
-	if err != nil {
-		l.log.Warn("imaged: list stale deployments", "err", err)
-		return
 	}
-	for _, deployment := range rows {
-		hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)
-		if holdErr != nil {
-			l.log.Warn("imaged: inspect MCP task hold before stale cancellation", "deployment", deployment.ID, "err", holdErr)
-			continue
+}
+
+// operatorDeploymentPages bounds read-only backlog observations. Mutating
+// recovery carries its cursor between ticks and uses a single page.
+const operatorDeploymentPages = 64
+
+// pageOperatorDeployments lists filter page by page. visit returns how many
+// of a page's rows it left in place (did not move out of the filter), so the
+// next page starts after them and none is visited twice in a pass. A cursor
+// limits mutating recovery to one batch per tick and continues on the next
+// tick; read-only observations without a cursor can scan multiple pages.
+func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int, cursor *int) error {
+	pages := operatorDeploymentPages
+	if cursor != nil {
+		filter.Offset = *cursor
+		pages = 1
+	}
+
+	for page := 0; page < pages && ctx.Err() == nil; page++ {
+		rows, err := l.store.ListDeploymentsForOperator(ctx, filter)
+		if err != nil {
+			return err
 		}
-		if hold != nil {
-			continue
-		}
-		entered := pipelineStageEnteredAt(deployment)
-		if !entered.Before(cutoff) {
-			// A rollback re-entered the pipeline recently; created_at alone
-			// would cancel every rollback to a deployment older than the
-			// threshold (hunt #9: a rollback cancelled six seconds in).
-			continue
-		}
-		if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
-			// A staged artifact is deliberately waiting for its graph, rather
-			// than a lost snapshot handoff. Its coordinator owns cancellation.
-			continue
-		}
-		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
-		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
-			continue
-		}
-		if buildErr != nil && !errors.Is(buildErr, state.ErrNotFound) {
-			l.log.Warn("imaged: inspect stale deployment build", "deployment", deployment.ID, "err", buildErr)
-			continue
-		}
-		started := time.Now()
-		age := now.Sub(entered).Round(time.Second)
-		principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
-		_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
-		if l.handler != nil && l.handler.ops != nil {
-			l.handler.ops.Observe("stale_deployment_reconcile", time.Since(started), cancelErr)
-		}
-		if cancelErr != nil {
-			if errors.Is(cancelErr, state.ErrInvalidStateTransition) || errors.Is(cancelErr, state.ErrCancelLiveForbidden) {
-				continue
+		kept := visit(rows)
+		if len(rows) < filter.Limit {
+			if cursor != nil {
+				*cursor = 0
 			}
-			l.log.Warn("imaged: reconcile stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "err", cancelErr)
-			continue
+			return nil
 		}
-		if l.handler != nil && l.handler.ops != nil {
-			l.handler.ops.IncrementStaleDeploymentsReconciled()
+		filter.Offset += kept
+		if cursor != nil {
+			*cursor = filter.Offset
 		}
-		l.log.Info("imaged: reconciled stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "actor", principal)
 	}
-	l.observeStaleDeploymentBacklog(ctx, cutoff, now)
+	return ctx.Err()
+}
+
+// reconcileStaleDeployment cancels one stale candidate and reports whether
+// the row left the candidate set (cancelled, or found live or terminal).
+func (l *Loop) reconcileStaleDeployment(ctx context.Context, deployment state.Deployment, now, cutoff time.Time) bool {
+	hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)
+	if holdErr != nil {
+		l.log.Warn("imaged: inspect MCP task hold before stale cancellation", "deployment", deployment.ID, "err", holdErr)
+		return false
+	}
+	if hold != nil {
+		return false
+	}
+	entered := pipelineStageEnteredAt(deployment)
+	if !entered.Before(cutoff) {
+		// A rollback re-entered the pipeline recently; created_at alone
+		// would cancel every rollback to a deployment older than the
+		// threshold (hunt #9: a rollback cancelled six seconds in).
+		return false
+	}
+	if deployment.EnvironmentWorkloadHeld() && deployment.Status == state.DeploySnapshotting && (deployment.RootfsPath != "" || deployment.RootfsKey != "") {
+		// A staged artifact is deliberately waiting for its graph, rather
+		// than a lost snapshot handoff. Its coordinator owns cancellation.
+		return false
+	}
+	if l.releaseApprovalPending(ctx, deployment) {
+		// Waiting for approval before its release command
+		// (ADR-20261020085706 amendment 12); the policy's timeout
+		// closes it.
+		return false
+	}
+	build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
+	if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
+		return false
+	}
+	if buildErr != nil && !errors.Is(buildErr, state.ErrNotFound) {
+		l.log.Warn("imaged: inspect stale deployment build", "deployment", deployment.ID, "err", buildErr)
+		return false
+	}
+	started := time.Now()
+	age := now.Sub(entered).Round(time.Second)
+	principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
+	_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
+	if l.handler != nil && l.handler.ops != nil {
+		l.handler.ops.Observe("stale_deployment_reconcile", time.Since(started), cancelErr)
+	}
+	if cancelErr != nil {
+		if !errors.Is(cancelErr, state.ErrInvalidStateTransition) && !errors.Is(cancelErr, state.ErrCancelLiveForbidden) {
+			l.log.Warn("imaged: reconcile stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "err", cancelErr)
+		}
+		// An invalid transition means the row moved on (live or terminal).
+		return errors.Is(cancelErr, state.ErrInvalidStateTransition) || errors.Is(cancelErr, state.ErrCancelLiveForbidden)
+	}
+	if l.handler != nil && l.handler.ops != nil {
+		l.handler.ops.IncrementStaleDeploymentsReconciled()
+	}
+	l.log.Info("imaged: reconciled stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "actor", principal)
+	return true
 }
 
 // observeStaleDeploymentBacklog refreshes the alert gauge after mutations, so
@@ -493,25 +590,18 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 	if l.handler == nil || l.handler.ops == nil {
 		return
 	}
-	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
-		ExcludeMCPTaskHolds: true,
-		Statuses: []state.DeploymentStatus{
-			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
-		},
-		IncludeDeleted: true,
-		CreatedBefore:  cutoff,
-		OldestFirst:    true,
-		Limit:          staleDeploymentBatchSize,
-	})
+	var oldest time.Duration
+	err := l.pageOperatorDeployments(ctx, staleDeploymentFilter(cutoff), func(rows []state.Deployment) int {
+		for _, deployment := range rows {
+			if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) && !l.releaseApprovalPending(ctx, deployment) {
+				oldest = max(oldest, now.Sub(entered))
+			}
+		}
+		return len(rows)
+	}, nil)
 	if err != nil {
 		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
 		return
-	}
-	var oldest time.Duration
-	for _, deployment := range rows {
-		if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) {
-			oldest = max(oldest, now.Sub(entered))
-		}
 	}
 	l.handler.ops.SetStaleDeploymentOldestAge(oldest)
 }

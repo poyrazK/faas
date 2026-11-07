@@ -50,6 +50,7 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
     assert.equal(req.headers.authorization, 'Bearer private-owner-token')
     if (req.url === '/v1/apps/notes') return res.end(JSON.stringify({ slug: 'notes', canonical_url: `https://127.0.0.1:${serving.address().port}` }))
     if (req.url === '/v1/apps/notes/data-api/connection-budget') return res.end(JSON.stringify({ version: 1, app: 'notes', state: 'not_applicable', truncated: false, databases: [] }))
+    if (req.url === '/v1/apps/notes/data-api/status') return res.end(JSON.stringify({ runtime_version: runtimeVersion, runtime_reports: 'available' }))
     if (req.url === '/v1/apps/notes/data-api/runtime') {
       return res.end(JSON.stringify({ version: runtimeVersion, archive_sha256: createHash('sha256').update(servedArchive).digest('hex'), archive: servedArchive.toString('base64') }))
     }

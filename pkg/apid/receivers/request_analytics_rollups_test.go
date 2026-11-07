@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -18,14 +20,34 @@ type fakeRollupStore struct {
 	err      error
 	rows     []state.RequestAnalyticsRollup
 	coverage []state.RequestAnalyticsCoverage
+	gaps     []state.RequestAnalyticsGap
+	// refuse fails, as Postgres does for bad data, any write holding a row
+	// it matches.
+	refuse func(state.RequestAnalyticsRollup) bool
 }
 
 func (s *fakeRollupStore) AddRequestAnalyticsRollups(_ context.Context, rows []state.RequestAnalyticsRollup, coverage []state.RequestAnalyticsCoverage) error {
 	if s.err != nil {
 		return s.err
 	}
+	for _, r := range rows {
+		if s.refuse != nil && s.refuse(r) {
+			return &pgconn.PgError{Code: "22021", Message: "invalid byte sequence for encoding \"UTF8\""}
+		}
+		if !utf8.ValidString(r.Dimension) || len(r.Dimension) > 512 || len(r.Method) > 16 {
+			return &pgconn.PgError{Code: "22021", Message: "row Postgres would refuse"}
+		}
+	}
 	s.rows = append(s.rows, rows...)
 	s.coverage = append(s.coverage, coverage...)
+	return nil
+}
+
+func (s *fakeRollupStore) RecordRequestAnalyticsRollupGaps(_ context.Context, gaps []state.RequestAnalyticsGap) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.gaps = append(s.gaps, gaps...)
 	return nil
 }
 

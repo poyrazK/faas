@@ -56,6 +56,9 @@ func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.W
 	var reasons []string
 	for _, workload := range workloads {
 		reasons = append(reasons, composeResourcesAdmissionReasons(plan, workload)...)
+		if workload.AppProtocol != "" && !plan.AppProtocolAllowed(workload.AppProtocol) {
+			reasons = append(reasons, fmt.Sprintf("workload %q: the %s plan does not include x-gregale-app-protocol %s", workload.Name, plan, workload.AppProtocol))
+		}
 		// Built services carry Compose process overrides too (ADR-20261022160000).
 		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))

@@ -1,3 +1,4 @@
+import http.client
 import json
 import threading
 from datetime import UTC, datetime, timedelta
@@ -7,6 +8,54 @@ from types import SimpleNamespace
 import pytest
 
 from faas_sdk.preview.issues import IssueReporter
+
+
+def test_protocol_error_retries_without_stopping_worker(monkeypatch):
+    received = []
+    attempts = 0
+
+    class Response:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    class Opener:
+        def open(self, request, timeout):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise http.client.BadStatusLine("malformed upstream response")
+            received.append(json.loads(request.data))
+            return Response()
+
+    reporter = IssueReporter("http://localhost", "exports", "g_issue_test")
+    reporter._opener = Opener()
+    try:
+        assert reporter.capture_exception(ValueError("first"))
+        assert reporter.capture_exception(ValueError("second"))
+        assert reporter.flush(timeout=3)
+        assert [event["message"] for event in received] == ["first", "second"]
+        assert reporter.stats() == {"queued": 0, "accepted": 2, "dropped": 0}
+    finally:
+        reporter.close(timeout=0)
+
+
+def test_http_status_context_is_validated_and_delivered(monkeypatch):
+    received = []
+    monkeypatch.setattr(IssueReporter, "_send", lambda self, event: (received.append(event), True)[1])
+    reporter = IssueReporter("http://localhost", "exports", "g_issue_test", grouping_strategy="failure-site-v1")
+    try:
+        assert reporter.capture_exception(ValueError("first"), route="/checkout", http_status=502)
+        assert reporter.capture_exception(ValueError("second"), http_status=200)
+        assert reporter.flush()
+        assert received[0]["http_status"] == 502
+        assert "http_status" not in received[1]
+    finally:
+        reporter.close(timeout=0)
 
 
 def test_optional_correlation_is_validated_before_delivery(monkeypatch):

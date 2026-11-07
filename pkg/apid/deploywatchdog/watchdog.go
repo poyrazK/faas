@@ -60,6 +60,10 @@ func (w *Watchdog) Sweep(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	failed := 0
+	// A release that may be waiting for approval before its release command
+	// is never listed (ADR-20261020085706 amendments 12-13): imaged closes it
+	// at the policy's timeout, and a Go-side skip let such releases fill the
+	// batch and hide stuck deployments behind them.
 	for _, d := range stuck {
 		code, message := Failure(d)
 		if _, ok, err := w.Store.FailStuckDeployment(ctx, d, queuedBefore, stalledBefore, code, message); err != nil {

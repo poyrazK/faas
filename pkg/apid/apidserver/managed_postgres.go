@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -130,12 +131,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	var fleet *managedpostgres.Service
-	capLimits := managedPostgresCapLimits(store, accountStore, overage)
+	billingAllowances := managedpg.OverageAllowances(managedPostgresCapLimits(store, accountStore, overage), accountStore, time.Now)
 	usageOptions.AfterSweep = func(ctx context.Context) {
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
 		}
-		deliverManagedPostgresOverage(ctx, store, hooks.charges(), capLimits, log)
+		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, log)
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
@@ -352,6 +353,20 @@ func hostCredentialIdentities() []*age.X25519Identity {
 	return nil
 }
 
+// managedPostgresCapNoticeReady refuses compute cap enforcement while the
+// cap notice email cannot be sent: enforcement suspends a subject's
+// databases at its ceiling, and the threshold email is the customer's only
+// warning (bug hunt H88). The notice goes through the internal mail
+// producer outbox behind its own opt-in.
+func managedPostgresCapNoticeReady(getenv func(string) string) error {
+	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) {
+		return nil
+	}
+	return fmt.Errorf("%s=on suspends databases at their ceiling, and customers are warned only by the cap notice email: "+
+		"set %s=1 with the internal mail producer outbox enabled, or keep enforcement at shadow",
+		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
+}
+
 // loadManagedPostgresCapEnforcer builds the compute cap enforcer
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
@@ -379,6 +394,9 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
+		if err := managedPostgresCapNoticeReady(getenv); err != nil {
+			return nil, err
+		}
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
 		if err != nil {
 			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.CapEnforcementEnv, managedpostgres.CapQualificationPathEnv, err)
@@ -429,7 +447,7 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 // deliverManagedPostgresOverage charges overage through the billing provider
 // after a cap sweep (ADR-20261031110037). Without a provider, or with its
 // managed PostgreSQL policy off, nothing is charged or recorded.
-func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.CapCeiling, log *slog.Logger) {
+func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.OverageAllowance, log *slog.Logger) {
 	if sink == nil {
 		return
 	}

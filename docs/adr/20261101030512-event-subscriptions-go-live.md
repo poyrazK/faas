@@ -79,3 +79,22 @@ The same review found three more problems with the reconcile:
 - New table `deployment_event_subscription_intents` (expand). An older apid
   writes no intents, and an older apid's worker does not exist, so mixed
   versions only add.
+
+## Amendment 1 (2026-11-03)
+
+A code review found two gaps:
+
+- **Waiting intents starved newer ones.** The worker reads the 64 prepared
+  intents with the oldest `updated_at`, and it left an intent that was
+  still waiting untouched. 64 deployments that wait for days (a traffic
+  split, a canary, a far `--release-at`) therefore filled every batch, and
+  no newer deploy's subscriptions ever applied, on any app. A waiting
+  intent is now re-stamped on each pass, as `TouchCronActivation` does for
+  staged crons.
+- **The named `production` scope only added.** Only deploys to the default
+  scope recorded their declared set, though `state.IsProductionScope` (and
+  staged crons) treat the named `production` scope as production too. A
+  trigger dropped from `gregale.yaml` never stopped on such an app. Such a
+  deploy now records its set, and the disposition compares the deployment
+  with the latest and competing deployments of its own scope, as
+  `ReadCronActivationDeployment` does.

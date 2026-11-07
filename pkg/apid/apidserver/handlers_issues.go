@@ -119,6 +119,8 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	}
 
 	switch {
+	case errors.Is(err, state.ErrIssuePolicyChanged):
+		api.WriteProblem(w, api.NewProblem(403, "issue_policy_changed", "Issues unavailable", "the app owner is inactive or its current plan does not permit Issues"))
 	case errors.Is(err, state.ErrIssueLifecycleAlertRevision):
 		api.WriteProblem(w, api.NewProblem(409, "issue_lifecycle_alert_policy_changed", "Policy changed", "reload the lifecycle alert policy before saving"))
 	case errors.Is(err, state.ErrIssueCompoundAlertRevision):
@@ -179,7 +181,7 @@ func (s *server) ingestIssueEvent(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrValidation("application ingestion accepts exception or worker events"))
 		return
 	}
-	out, err := st.RecordIssue(r.Context(), state.RecordIssueParams{Credential: credential, Event: event, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersionFor(event), Limits: acct.Plan.IssueLimits(), Now: now})
+	out, err := st.RecordIssue(r.Context(), state.RecordIssueParams{Credential: credential, Event: event, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersionFor(event), Limits: acct.Plan.IssueLimits(), Now: now, EnforceResourcePolicy: true})
 	s.observeIssueEvent(out, err)
 	if err != nil {
 		writeIssueError(w, err)

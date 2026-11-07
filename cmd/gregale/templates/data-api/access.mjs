@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIP } from 'node:net'
 import pg from 'pg'
 import { limits, relationPart, UnsafeConfiguration } from './config.mjs'
+import { runtimeFailure } from './logging.mjs'
 
 // Access kinds are gateway-owned claims (ADR 20261018170742). Every kind uses the
 // binding login as its SQL role; PostgreSQL policies decide which rows match.
@@ -106,6 +107,9 @@ export function publicReadTarget(req, config) {
   if (selects.length > 1) return { code: 'public_read_not_allowed' }
   const embedded = selects.length ? selectEmbeddings(selects[0]) : []
   if (!embedded || embedded.some(name => !listed(name))) return { code: 'public_read_not_allowed' }
+  // A listed relation that is no longer row-secured is closed until the owner
+  // restores RLS (the gate rereads the catalog; amendment 1).
+  if ([relation, ...embedded].some(name => config.unsafePublicRead?.has(`${schema}.${name}`))) return { code: 'data_api_public_read_unsafe' }
   return { schema, relation, embedded }
 }
 
@@ -127,6 +131,8 @@ export function publicRpcTarget(req, config, rpc) {
   const embedded = selects.length ? selectEmbeddings(selects[0]) : []
   const readable = name => config.publicRead?.some(entry => entry.schema === rpc.schema && entry.relation === name)
   if (!embedded || !embedded.every(readable)) return { code: 'public_read_not_allowed' }
+  if (config.unsafePublicRpc?.has(`${rpc.schema}.${rpc.name}`)) return { code: 'data_api_public_rpc_unsafe' }
+  if (embedded.some(name => config.unsafePublicRead?.has(`${rpc.schema}.${name}`))) return { code: 'data_api_public_read_unsafe' }
   return { schema: rpc.schema, rpc: rpc.name, embedded }
 }
 
@@ -213,6 +219,70 @@ export async function loadRowSecurity(connection, schemas) {
     if (rows.length > limits.relations) throw new Error('Too many exposed relations')
     return new Map(rows.map(row => [`${row.schema}.${row.relation}`, rowSecured(row)]))
   } finally { await client.end() }
+}
+
+// readAccessSafety reads the catalog state the access gate decides on: which
+// exposed relations are row-secured, and which public relations and public
+// RPCs are unsafe now (ADR 20261026140223 amendment 1).
+export async function readAccessSafety(connection, config) {
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
+  await client.connect()
+  try {
+    const { rows } = await client.query(servingRelationsQuery, [config.schemas])
+    if (rows.length > limits.relations) throw new Error('Too many exposed relations')
+    const safety = { rowSecurity: new Map(rows.map(row => [`${row.schema}.${row.relation}`, rowSecured(row)])), unsafePublicRead: new Set(), unsafePublicRpc: new Set() }
+    if (config.publicRead) {
+      const read = await client.query(publicRelationsQuery, [config.publicRead.map(r => r.schema), config.publicRead.map(r => r.relation)])
+      safety.unsafePublicRead = new Set(unsafePublicRelations(read.rows))
+    }
+    if (config.publicRpc) {
+      const rpc = await client.query(publicFunctionsQuery, [config.publicRpc.map(f => f.schema), config.publicRpc.map(f => f.name)])
+      safety.unsafePublicRpc = new Set(unsafePublicFunctions(config.publicRpc, rpc.rows, config.functions ?? []))
+    }
+    return safety
+  } finally { await client.end() }
+}
+
+// createAccessSafety keeps the access gate current while the API serves. The
+// boot contract is read once and every wake restores it, while owners keep
+// migrating: a table whose RLS was disabled, or dropped and recreated without
+// it, a public relation or function made unsafe, would stay reachable until
+// the next refresh. The gate is reread at most every accessRecheckMs while
+// requests arrive, without holding them, and after each restore before the
+// API serves again. A failed reread keeps the last state and tries again at
+// the next request; PostgREST cannot reach the database either then.
+export function createAccessSafety(config, { read = readAccessSafety, monotonic = () => performance.now() } = {}) {
+  // running is any reread; restoring only the one a restore started, which
+  // requests wait for. A periodic reread never holds a request.
+  let checkedAt = monotonic(), running = null, restoring = null
+  const apply = safety => {
+    config.rowSecurity = safety.rowSecurity
+    config.unsafePublicRead = safety.unsafePublicRead
+    config.unsafePublicRpc = safety.unsafePublicRpc
+  }
+  const refresh = () => {
+    if (running) return running
+    running = read(config.connection, config).then(apply, () => runtimeFailure('data_api_access_recheck_unavailable'))
+      .finally(() => { checkedAt = monotonic(); running = null })
+    return running
+  }
+  return Object.freeze({
+    // maybeRefresh starts a reread when the last one is old; it never waits.
+    maybeRefresh: () => { if (monotonic() - checkedAt >= limits.accessRecheckMs) void refresh() },
+    // restored rereads now; ready waits for that reread within waitMs.
+    restored: () => {
+      const current = refresh()
+      restoring = current
+      void current.finally(() => { if (restoring === current) restoring = null })
+    },
+    ready: async waitMs => {
+      if (!restoring) return true
+      let timer
+      const expired = new Promise(resolve => { timer = setTimeout(() => resolve(false), Math.max(0, waitMs)); timer.unref?.() })
+      try { return await Promise.race([restoring.then(() => true), expired]) } finally { clearTimeout(timer) }
+    },
+    refresh,
+  })
 }
 
 // Signed-in requests reach only row-secured relations, or ones the owner lists

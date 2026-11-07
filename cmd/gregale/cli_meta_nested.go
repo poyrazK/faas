@@ -81,7 +81,7 @@ func appNetworkCLISubcommand() cliSub {
 func debugRequestFilterCLIFlags() []cliFlag {
 	return []cliFlag{
 		{Name: "since", Short: "lookback window", Value: "DURATION"},
-		{Name: "route", Short: "exact route filter", Value: "PATH"},
+		{Name: "route", Short: "route filter: /path matches every method", Value: "PATH"},
 		{Name: "deployment-id", Short: "deployment filter", Value: "UUID"},
 		{Name: "status", Short: "exact HTTP status (100..599)", Value: "N"},
 		{Name: "cold-boot", Short: "cold-start filter", Value: "BOOL", ClosedSet: []string{"true", "false"}},
@@ -105,7 +105,7 @@ func debugRequestsCLISubcommand() cliSub {
 		{Name: "list", Short: "List recent request telemetry", Positionals: []string{"<slug>"}, Flags: list},
 		{Name: "export", Short: "Export metadata-only request telemetry", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 			{Name: "since", Short: "lookback window", Value: "DURATION"},
-			{Name: "route", Short: "exact route filter", Value: "PATH"},
+			{Name: "route", Short: "route filter: /path matches every method", Value: "PATH"},
 			{Name: "format", Short: "export format (default ndjson)", Value: "FORMAT", ClosedSet: []string{"ndjson", "csv"}},
 			{Name: "limit", Short: "maximum exported rows (1..10000)", Value: "N"},
 			{Name: "output", Short: "destination file; - writes stdout", Value: "PATH"},

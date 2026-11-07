@@ -533,6 +533,7 @@ type enqueueCall struct {
 	tag                string
 	githubSourceRef    string
 	githubInstallation int64
+	addresses          map[string]string
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
@@ -546,6 +547,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 		tag:                spec.Tag,
 		githubSourceRef:    spec.GitHubSourceRef,
 		githubInstallation: spec.GitHubInstallationID,
+		addresses:          spec.ComposeServiceAddresses,
 	})
 	if r.err != nil {
 		return state.Build{}, r.err

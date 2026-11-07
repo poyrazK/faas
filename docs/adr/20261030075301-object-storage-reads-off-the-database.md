@@ -147,3 +147,27 @@ Consequence: revoking a credential, deleting its bucket or suspending its
 owner stops that credential's reads within 2 s, or 30 s during a database
 outage. Its writes stop at once.
 
+## Amendment 2 (2026-11-05): share local budgets by owner and preserve in-flight counts
+
+Bucket decisions retain their individual readiness, inventory and access
+checks. Their request, authorization and egress totals share a ledger for the
+billing owner and month returned by the store. This uses the same organization
+enrollment and accounting cutover as the database counters; a bucket with an
+organization ID can still be account-billed. Reading a different bucket cannot
+reuse that owner's remaining allowance.
+
+The ledger counts recorded usage plus all unwritten usage, including a batch
+currently being flushed. A successful flush moves its counts between those
+totals; a failed flush leaves them unwritten for retry. Cold database decision
+snapshots run concurrently with one another, but do not overlap a local flush.
+This prevents a refreshed snapshot from counting that flush twice. The gate
+uses the existing read timeout; a stalled write still permits cached reads
+within the existing stale window. Hot admissions and egress reservations do
+not wait for database writes.
+
+Owner ledgers outlive bucket decision eviction and month boundaries so delayed
+object bodies retain their allowance. Once an owner has no unwritten usage,
+its ledger is removed after the existing maximum transfer lifetime of
+inactivity. Database counters remain authoritative on a later cold read.
+The cross-process approximation and unbilled safety-meter contract are unchanged.
+

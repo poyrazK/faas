@@ -28,6 +28,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -673,18 +674,19 @@ func cmdInvitationsAccept(args []string) int {
 		return 1
 	}
 	token := fs.Arg(0)
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	m, err := client.AcceptInvitation(context.Background(), token)
-	if err != nil {
-		return printErr("Could not accept invitation", err)
-	}
+	target := dashboardBaseURL(apiBase()) + "/dashboard/invitations/" + url.PathEscape(token)
 	if jsonOutput {
-		return jsonOut(writeJSON(m))
+		return jsonOut(writeJSON(struct {
+			URL             string `json:"url"`
+			RequiresBrowser bool   `json:"requires_browser"`
+		}{target, true}))
 	}
-	PrintOK(osStdout, "Joined %s as %s", m.AccountID, m.Role)
+	PrintProgress(osStdout, "Review and accept this invitation in your signed-in browser: %s", target)
+	if !nonInteractive {
+		if err := openBrowser(target); err != nil {
+			PrintProgress(osStderr, "Open the URL above in your browser: %v", err)
+		}
+	}
 	return 0
 }
 
@@ -810,14 +812,17 @@ func cmdOrgsKeysAdd(args []string) int {
 	slug := fs.String("org", "", "org slug (required)")
 	label := fs.String("label", "", "key label (required)")
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
+	projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
+	approvalsCSV := fs.String("approvals", "", "kinds of action an agent key must have a person approve: delete,production,credentials,billing, all or none (default all)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if *slug == "" || *label == "" {
-		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...]", "orgs")
+	projects := splitList(*projectsCSV)
+	if *slug == "" || *label == "" || flagWasSet(fs, "projects") && len(projects) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...] [--approvals category,...|none]", "orgs")
 		return 1
 	}
 	var scopes []string
@@ -833,7 +838,11 @@ func cmdOrgsKeysAdd(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	k, err := client.CreateOrgAPIKey(context.Background(), *slug, *label, scopes)
+	approvals, err := approvalsFlag(fs, *approvalsCSV)
+	if err != nil {
+		return printErr("Invalid approvals", err)
+	}
+	k, err := client.CreateOrgAPIKeyWith(context.Background(), *slug, api.CreateOrgAPIKeyRequest{Label: *label, Scopes: scopes, Projects: projects, ApprovalCategories: approvals})
 	if err != nil {
 		return printErr("Could not create org API key", err)
 	}

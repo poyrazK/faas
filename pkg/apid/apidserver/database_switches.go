@@ -52,32 +52,88 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 			_, err := state.InvalidateAppSnapshots(ctx, s.store, appID)
 			return err
 		},
-		AppChanged:   func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
-		Ownership:    s.databaseSwitchOwnership,
-		Observe:      s.observeDatabaseSwitch,
-		Report:       s.reportDatabaseSwitchTick,
-		ReleaseGuard: s.databaseSwitchReleaseGuard,
-		Log:          s.log,
+		AppChanged:     func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
+		Ownership:      s.databaseSwitchOwnership,
+		Observe:        s.observeDatabaseSwitch,
+		Report:         s.reportDatabaseSwitchTick,
+		ReleaseGuard:   s.databaseSwitchReleaseGuard,
+		PromoteRelease: s.databaseSwitchPromoteRelease,
+		Log:            s.log,
 	}
+}
+
+// databaseSwitchPromoteRelease retains enforced binding checks on the
+// database switch's code change and on its compensating code change. These
+// checks cover the currently published bindings; the cutover separately
+// verifies every replacement credential before it publishes the copy.
+func (s *server) databaseSwitchPromoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	app, err := s.store.AppByID(ctx, sw.AppID)
+	if err != nil {
+		return err
+	}
+	account, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return err
+	}
+	deployment, err := s.store.DeploymentByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if deployment.Status == state.DeploySnapshotting && deployment.TrafficPercent == 0 {
+		markers, ok := s.store.(state.RollbackPreparedStore)
+		if !ok {
+			return fmt.Errorf("prepared database rollback marker is unavailable")
+		}
+		prepared, err := markers.DeploymentRollbackPrepared(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !prepared {
+			return state.ErrNoRollbackTarget
+		}
+		ctx = context.WithValue(ctx, preparedBindingRollbackKey{}, id)
+	}
+	ctx = context.WithValue(ctx, bindingReleaseWorkerReadsKey{}, true)
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	if err != nil {
+		return err
+	}
+	observations, problem := s.serviceRecipientBindingObservation(r, account, app, deployment)
+	if problem != nil {
+		return fmt.Errorf("database rollback binding check: %s", problem.Code)
+	}
+	problem, err = s.withBindingReleaseObservations(r, account, app, observations, func(writeCtx context.Context) error {
+		if sw.LeaseToken != "" {
+			writeCtx = state.WithDatabaseSwitchLease(writeCtx, sw)
+		}
+		return s.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(writeCtx), id)
+	})
+	if problem != nil {
+		return fmt.Errorf("database rollback binding check: %s", problem.Code)
+	}
+	return err
 }
 
 // databaseSwitchReleaseGuard holds a switch's rollback target, just before
 // it goes live, to the guards its rollback met when requested
 // (rollbackTargetApprovalProblem). It returns why the target may not go live
-// now, or "".
-func (s *server) databaseSwitchReleaseGuard(ctx context.Context, sw state.DatabaseSwitch) string {
+// now, or "". An unreadable guard returns an error so the worker retries.
+func (s *server) databaseSwitchReleaseGuard(ctx context.Context, sw state.DatabaseSwitch) (string, error) {
 	app, err := s.store.AppByID(ctx, sw.AppID)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read database switch app: %w", err)
 	}
 	target, err := s.store.DeploymentByID(ctx, sw.TargetDeploymentID)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read database switch target: %w", err)
 	}
 	if p := s.rollbackTargetApprovalProblem(ctx, app, target); p != nil {
-		return "The rollback target may no longer go live: " + p.Detail
+		if p.Status >= http.StatusInternalServerError {
+			return "", fmt.Errorf("check database switch release: %s", p.Code)
+		}
+		return "The rollback target may no longer go live: " + p.Detail, nil
 	}
-	return ""
+	return "", nil
 }
 
 // databaseSwitchOwnership scopes a switch's managed PostgreSQL calls to the

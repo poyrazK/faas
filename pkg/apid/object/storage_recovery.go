@@ -72,6 +72,9 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 			if err == nil {
 				err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
 			}
+			if err == nil {
+				err = s.revokeDeletedBucketBindings(callCtx, b)
+			}
 		}
 	}
 	// Only the provider's own refusal says the credentials are bad; a bucket

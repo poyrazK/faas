@@ -18,13 +18,13 @@ import (
 
 type fakeOVHUsageAPI map[string]OVHBucketUsage
 
-func (f fakeOVHUsageAPI) UsageForPeriod(context.Context, time.Time, time.Time) (map[string]OVHBucketUsage, error) {
-	return f, nil
+func (f fakeOVHUsageAPI) UsageForPeriod(_ context.Context, from, observed time.Time) (OVHUsageSnapshot, error) {
+	return OVHUsageSnapshot{PeriodStart: from, ObservedAt: observed, Buckets: f}, nil
 }
 
 func TestOVHUsageExporterAggregatesBucketsAndRequests(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	period := utcMonth(now)
 	exporter := OVHUsageExporter{
 		API: fakeOVHUsageAPI{
 			"gregale-a": {StoredByteHours: 10, EgressBytes: 20, CostMillicents: 30},
@@ -60,7 +60,7 @@ func TestOVHUsageExporterAggregatesBucketsAndRequests(t *testing.T) {
 
 func TestOVHUsageExporterFailsClosedWithoutCompleteRequestMetrics(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	period := utcMonth(now)
 	exporter := OVHUsageExporter{
 		API: fakeOVHUsageAPI{"gregale-a": {}},
 		Catalog: func(context.Context, string, string) ([]OVHUsageBucket, error) {
@@ -78,7 +78,7 @@ func TestOVHUsageExporterFailsClosedWithoutCompleteRequestMetrics(t *testing.T) 
 
 func TestOVHUsageExporterRejectsUnknownProviderBucket(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	period := utcMonth(now)
 	exporter := OVHUsageExporter{
 		API: fakeOVHUsageAPI{"unowned": {}},
 		Catalog: func(context.Context, string, string) ([]OVHUsageBucket, error) {
@@ -95,6 +95,8 @@ func TestOVHUsageExporterRejectsUnknownProviderBucket(t *testing.T) {
 }
 
 func TestOVHUsageClientFetchesAndSignsHistory(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	period := utcMonth(now).AddDate(0, -1, 0)
 	const applicationSecret = "application-secret"
 	const consumerKey = "consumer-key"
 	const timestamp = int64(1728000000)
@@ -115,11 +117,9 @@ func TestOVHUsageClientFetchesAndSignsHistory(t *testing.T) {
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/usage/history"):
-			_ = json.NewEncoder(w).Encode([]ovhUsageHistory{{ID: "hour-1"}, {ID: "hour-2"}})
-		case strings.HasSuffix(r.URL.Path, "/usage/history/hour-1"):
-			_ = json.NewEncoder(w).Encode(ovhUsageHistoryDetail{HourlyUsage: &ovhHourlyResources{Storage: []ovhHourlyStorage{{BucketName: "gregale-a", Stored: &ovhStored{Quantity: &ovhQuantity{Value: 2, Unit: "GiBh"}}, OutgoingBandwidth: &ovhBandwidth{Quantity: &ovhQuantity{Value: 3, Unit: "GiB"}}, TotalPrice: ovhPrice{CurrencyCode: "EUR", PriceInUcents: ptrInt64(1001)}}}}})
-		case strings.HasSuffix(r.URL.Path, "/usage/history/hour-2"):
-			_ = json.NewEncoder(w).Encode(ovhUsageHistoryDetail{HourlyUsage: &ovhHourlyResources{Storage: []ovhHourlyStorage{{BucketName: "gregale-a", Stored: &ovhStored{Quantity: &ovhQuantity{Value: 1, Unit: "GiBh"}}, OutgoingInternalBandwidth: &ovhBandwidth{Quantity: &ovhQuantity{Value: 1, Unit: "GiB"}}, TotalPrice: ovhPrice{CurrencyCode: "EUR", PriceInUcents: ptrInt64(2000)}}}}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "month", "period": map[string]any{"from": period, "to": period.AddDate(0, 1, 0)}, "lastUpdate": period.AddDate(0, 1, 0)}})
+		case strings.HasSuffix(r.URL.Path, "/usage/history/month"):
+			_ = json.NewEncoder(w).Encode(ovhNativeUsageDocument(period, period.AddDate(0, 1, 0)))
 		default:
 			http.NotFound(w, r)
 		}
@@ -137,18 +137,16 @@ func TestOVHUsageClientFetchesAndSignsHistory(t *testing.T) {
 			return timestamp, nil
 		},
 	}
-	now := time.Now().UTC().Truncate(time.Second)
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
 	usage, err := client.UsageForPeriod(context.Background(), period, now)
 	if err != nil {
 		t.Fatalf("UsageForPeriod() error = %v", err)
 	}
-	got := usage["gregale-a"]
-	if got.StoredByteHours != 3*ovhGiBBytes || got.EgressBytes != 4*ovhGiBBytes || got.CostMillicents != 4 {
+	got := usage.Buckets["gregale-a"]
+	if got.StoredByteHours != 3*ovhGiBBytes || got.EgressBytes != 4*ovhGiBBytes || got.CostMillicents != 125000 {
 		t.Fatalf("usage = %#v, want normalized values", got)
 	}
-	if len(requests) != 3 {
-		t.Fatalf("requests = %v, want history plus two details", requests)
+	if len(requests) != 2 {
+		t.Fatalf("requests = %v, want history plus one complete monthly detail", requests)
 	}
 	parsed, err := url.Parse(requests[0])
 	if err != nil {
@@ -158,8 +156,6 @@ func TestOVHUsageClientFetchesAndSignsHistory(t *testing.T) {
 		t.Fatalf("history path = %q", parsed.Path)
 	}
 }
-
-func ptrInt64(v int64) *int64 { return &v }
 
 var _ UsageReportExporter = OVHUsageExporter{}
 var _ OVHUsageAPI = (*OVHUsageClient)(nil)

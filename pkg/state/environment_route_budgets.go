@@ -2,8 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -108,15 +106,10 @@ func (s *PgStore) SetEnvironmentRouteBudgets(ctx context.Context, account, app, 
 	if req.ProjectID != current.ProjectID || req.EnvironmentID != current.EnvironmentID {
 		return current, ErrRouteHealthRevision
 	}
-	body, err := json.Marshal(struct {
-		Scope   string
-		Request api.SetEnvironmentRouteBudgetsRequest
-	}{scope, req})
+	hash, err := api.EnvironmentRouteBudgetRequestHash(scope, req)
 	if err != nil {
 		return current, err
 	}
-	digest := sha256.Sum256(body)
-	hash := hex.EncodeToString(digest[:])
 	receipt, err := sqlc.New().ReadEnvironmentBudgetReceipt(ctx, tx, sqlc.ReadEnvironmentBudgetReceiptParams{AccountID: mustPgUUID(account), RequestID: mustPgUUID(req.RequestID)})
 	if err == nil {
 		if receipt.RequestHash != hash {

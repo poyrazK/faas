@@ -26,7 +26,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
-const edgeClientLimitsEnv = "FAAS_EDGE_CLIENT_LIMITS"
+const (
+	edgeClientLimitsEnv = "FAAS_EDGE_CLIENT_LIMITS"
+	// edgeProxyCIDRsEnv lists Cloudflare's ranges on an edge with no front:
+	// a host moved back behind Cloudflare, the flood fallback, arrives from a
+	// few of its addresses, each carrying many clients, so the per-address
+	// connection limits skip them. Their clients are limited per request by
+	// CF-Connecting-IP, which the edge trusts only with the zone's client
+	// certificate.
+	edgeProxyCIDRsEnv = "FAAS_EDGE_PROXY_CIDRS"
+)
 
 // edgeClientLimits switches the per-address limits on. The request rate
 // applies on any front, keyed on the client address the gateway trusts
@@ -36,6 +45,7 @@ const edgeClientLimitsEnv = "FAAS_EDGE_CLIENT_LIMITS"
 // counts every refusal by reason; it must be set before the limits serve.
 type edgeClientLimits struct {
 	on      bool
+	proxies []netip.Prefix
 	refused *prometheus.CounterVec
 }
 
@@ -47,10 +57,31 @@ func edgeClientLimitsFromEnv(mode publicEdgeMode, getenv func(string) string) (e
 		if mode != edgeModeCompute {
 			return edgeClientLimits{}, fmt.Errorf("gatewayd-public: %s is for a compute edge (%s=%s)", edgeClientLimitsEnv, publicEdgeModeEnv, edgeModeCompute)
 		}
-		return edgeClientLimits{on: true}, nil
+		proxies, err := parseEdgeProxyCIDRs(getenv(edgeProxyCIDRsEnv))
+		if err != nil {
+			return edgeClientLimits{}, err
+		}
+		return edgeClientLimits{on: true, proxies: proxies}, nil
 	default:
 		return edgeClientLimits{}, fmt.Errorf("gatewayd-public: %s=%q, want 0 or 1", edgeClientLimitsEnv, v)
 	}
+}
+
+// parseEdgeProxyCIDRs reads a comma-separated prefix list, empty for none.
+func parseEdgeProxyCIDRs(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, field := range strings.Split(v, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(field)
+		if err != nil || p != p.Masked() {
+			return nil, fmt.Errorf("gatewayd-public: %s entry %q is not a network prefix", edgeProxyCIDRsEnv, field)
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func (l edgeClientLimits) count(reason string) { l.refused.WithLabelValues(reason).Inc() }
@@ -71,6 +102,32 @@ func (l edgeClientLimits) requests(h http.Handler, trusted []netip.Prefix) http.
 		return addr, err == nil
 	}
 	return clientlimit.Requests(h, limits, clientAddr, l.count, nil)
+}
+
+// hosts limits each hostname's request rate on this node in front of h,
+// after the per-address limit, so one client's flood is charged to the
+// client first.
+func (l edgeClientLimits) hosts(h http.Handler) http.Handler {
+	if !l.on {
+		return h
+	}
+	limits := clientlimit.RequestLimits{
+		PerSecond:       api.EdgeHostRequestsPerSecond,
+		Burst:           api.EdgeHostRequestsBurst,
+		TrackedAddrsMax: api.EdgeHostTrackedMax,
+	}
+	return clientlimit.Hosts(h, limits, edgeRequestHost, l.count, nil)
+}
+
+// edgeRequestHost is r's hostname, lowercased, without a port or a trailing
+// dot.
+func edgeRequestHost(r *http.Request) (string, bool) {
+	host := strings.ToLower(strings.TrimSpace(r.Host))
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(host, ".")
+	return host, host != ""
 }
 
 // body ends a request whose body arrives slower than the minimum rate. gRPC
@@ -108,7 +165,23 @@ func (l edgeClientLimits) tlsListener(ctx context.Context, raw net.Listener, cfg
 		NewPerSecond:    api.EdgeClientNewConnsPerSecondPerAddr,
 		NewBurst:        api.EdgeClientNewConnsBurstPerAddr,
 		TrackedAddrsMax: api.EdgeClientTrackedAddrsMax,
+		Exempt:          l.proxies,
 	}, l.count, nil)
 	return clientlimit.NewHandshakeGate(ctx, tls.NewListener(limited, cfg),
-		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed)
+		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed).
+		WithSettle(func(tc *tls.Conn) bool { return l.settle(limited, tc) })
+}
+
+// settle keeps a connection from Cloudflare's ranges exempt only when it
+// presented the zone's own client certificate. Every Cloudflare customer's
+// zone, Worker and WARP user connects from those ranges, so the address
+// alone proves nothing (ADR-20261104221012); without the certificate the
+// connection is counted against its address like any client's.
+func (l edgeClientLimits) settle(limited *clientlimit.Listener, tc *tls.Conn) bool {
+	vouched := len(tc.ConnectionState().VerifiedChains) > 0
+	reason, ok := limited.Settle(tc.NetConn(), vouched)
+	if !ok {
+		l.count(reason)
+	}
+	return ok
 }

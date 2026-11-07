@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // StaticEgressRoutingMark is set only on bridged traffic from live pinned
@@ -674,6 +676,9 @@ func (h HostPolicy) Render() string {
 	for _, e := range h.DenySet.Entries {
 		fmt.Fprintf(&b, "  counter %s {}\n", e.CounterName)
 	}
+	for _, family := range publicEntryFamilies(h.PublicEntryAddrs) {
+		writePublicEntrySets(&b, family, publicEntryProxies(h.PublicInputSourceCIDRs, family))
+	}
 	if h.TenantEgressIface != "" && len(h.StaticEgressRules) > 0 {
 		b.WriteString("  chain static_egress_route {\n")
 		b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
@@ -695,6 +700,13 @@ func (h HostPolicy) Render() string {
 	}
 	b.WriteString("  chain input {\n")
 	b.WriteString("    type filter hook input priority 0; policy drop;\n")
+	// A blocked source is cut off on the entry addresses before the
+	// established accept, so its open connections stop too.
+	for _, a := range h.PublicEntryAddrs {
+		family := addrFamily(a)
+		fmt.Fprintf(&b, "    %s daddr %s %s saddr @public_block_%s counter drop comment %q\n",
+			family, a, family, publicEntrySetSuffix(family), "public entry block list")
+	}
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    iif lo accept\n")
 	// A guest reaches the host only where platform services listen: the
@@ -711,7 +723,7 @@ func (h HostPolicy) Render() string {
 		// The drops come before sshd's accept, so the entry addresses carry
 		// 443 and nothing else.
 		for _, a := range h.PublicEntryAddrs {
-			fmt.Fprintf(&b, "    %s daddr %s tcp dport 443 accept comment %q\n", addrFamily(a), a, "public entry")
+			writePublicEntryAccept(&b, a, len(publicEntryProxies(h.PublicInputSourceCIDRs, addrFamily(a))) > 0)
 		}
 		for _, a := range h.PublicEntryAddrs {
 			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
@@ -921,6 +933,97 @@ func (h HostPolicy) Render() string {
 // joinInts renders a port slice as comma-joined digits: "25,465,587". The
 // nftables tcp-dport set syntax is `{ 25,465,587 } drop`.
 // addrFamily is the nftables address family keyword for a.
+// publicEntryFamilies lists the address families of addrs, IPv4 first, each
+// once.
+func publicEntryFamilies(addrs []netip.Addr) []string {
+	var has4, has6 bool
+	for _, a := range addrs {
+		has4 = has4 || a.Is4()
+		has6 = has6 || a.Is6()
+	}
+	var out []string
+	if has4 {
+		out = append(out, "ip")
+	}
+	if has6 {
+		out = append(out, "ip6")
+	}
+	return out
+}
+
+// publicEntrySetSuffix names a family's public-entry sets.
+func publicEntrySetSuffix(family string) string {
+	if family == "ip" {
+		return "v4"
+	}
+	return "v6"
+}
+
+// publicEntryProxies is the part of the Cloudflare source list in family.
+func publicEntryProxies(sources []netip.Prefix, family string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range sources {
+		if (family == "ip") == p.Addr().Is4() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// writePublicEntrySets declares the sources the firewall counts on the
+// public entry addresses of one family (ADR-20261103163954 §4): their new
+// connections per second, and their open connections. proxies, Cloudflare's
+// ranges when the node keeps them, are exempt: a host moved back behind
+// Cloudflare reaches the edge from a few of its addresses, each carrying many
+// clients, and the edge limits those clients by CF-Connecting-IP instead.
+func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Prefix) {
+	suffix, keyType := publicEntrySetSuffix(family), "ipv4_addr"
+	if family == "ip6" {
+		keyType = "ipv6_addr"
+	}
+	fmt.Fprintf(b, "  set public_entry_rate_%s {\n    type %s\n    size %d\n    flags dynamic,timeout\n    timeout 1m\n  }\n",
+		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	fmt.Fprintf(b, "  set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }\n",
+		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	// The operator's block list: vmmd adds the elements, each with its own
+	// timeout, after every reload (public_block.go).
+	fmt.Fprintf(b, "  set public_block_%s {\n    type %s\n    flags interval,timeout\n  }\n", suffix, keyType)
+	if len(proxies) == 0 {
+		return
+	}
+	elements := make([]string, len(proxies))
+	for i, p := range proxies {
+		elements[i] = p.String()
+	}
+	fmt.Fprintf(b, "  set public_entry_proxy_%s {\n    type %s\n    flags interval\n    auto-merge\n    elements = { %s }\n  }\n",
+		suffix, keyType, strings.Join(elements, ", "))
+}
+
+// writePublicEntryAccept admits 443 on a public entry address, after dropping
+// a source's new connections past the kernel backstop: the edge's own
+// per-address limits act only on connections the kernel already accepted.
+// With exempt, Cloudflare's ranges get a higher backstop rather than none:
+// those ranges also carry every other Cloudflare customer's zone, so an
+// address in them is not proof of a proxy we trust (ADR-20261104221012).
+func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
+	family := addrFamily(a)
+	suffix := publicEntrySetSuffix(family)
+	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
+	if exempt {
+		proxy := match + fmt.Sprintf(" %s saddr @public_entry_proxy_%s", family, suffix)
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
+			proxy, suffix, family, api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource, "public entry new connections per proxy source")
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
+			proxy, suffix, family, api.PublicEntryProxyConnsPerSourceMax, "public entry connections per proxy source")
+		match += fmt.Sprintf(" %s saddr != @public_entry_proxy_%s", family, suffix)
+	}
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
+		match, suffix, family, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
+	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
+		match, suffix, family, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
+	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
+}
+
 func addrFamily(a netip.Addr) string {
 	if a.Is4() {
 		return "ip"

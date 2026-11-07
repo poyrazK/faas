@@ -16,7 +16,10 @@ import (
 // a branch inside its source's project, so both share one counter and quota.
 // Neon counts CPU seconds, and one compute unit is one vCPU, so the quota is
 // in the compute-unit seconds the ledger uses; staging qualification checks
-// that the two agree before enforcement is turned on.
+// that the two agree before enforcement is turned on. Neon moves the counter
+// rarely and checks the quota only when it moves, so the quota is a backstop:
+// the sweep reads use from the consumption report and holds the computes
+// itself (ADR-20261025094915 amendment 2026-11-05).
 
 var _ managedpostgres.ComputeCapProvider = (*Provider)(nil)
 

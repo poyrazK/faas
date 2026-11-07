@@ -79,6 +79,8 @@ func OrgList(d OrgDeps) httpkit.AccountHandler {
 		for _, k := range keys {
 			item := response(k, clients[k.ID], prefixes[k.ID])
 			item.Member = members[k.AccountID]
+			item.Projects = d.projects(r.Context(), k.ID)
+			item.Approvals = d.approvals(r.Context(), k)
 			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)
@@ -204,7 +206,12 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("agent policies unavailable"))
 			return
 		}
-		policy, err := store.SetOrgAgentPolicy(r.Context(), state.OrgAgentPolicy{OrgID: orgID, AgentsAllowed: *req.AgentsAllowed, AllowedScopes: *req.AllowedScopes, UpdatedBy: acct.ID})
+		approvals, prob := d.policyApprovals(r.Context(), store, orgID, req.ApprovalCategories)
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		policy, err := store.SetOrgAgentPolicy(r.Context(), state.OrgAgentPolicy{OrgID: orgID, AgentsAllowed: *req.AgentsAllowed, AllowedScopes: *req.AllowedScopes, ApprovalCategories: approvals, UpdatedBy: acct.ID})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not save the agent policy"))
 			return
@@ -224,6 +231,7 @@ func policyResponse(policy state.OrgAgentPolicy, revoked int) api.OrgAgentPolicy
 	if out.AllowedScopes == nil {
 		out.AllowedScopes = []string{}
 	}
+	out.ApprovalCategories = append([]string{}, policy.ApprovalCategories...)
 	if !policy.UpdatedAt.IsZero() {
 		out.UpdatedAt = policy.UpdatedAt.UTC().Format(time.RFC3339)
 	}
@@ -239,4 +247,22 @@ func joinScopes() string {
 		out += scope
 	}
 	return out
+}
+
+// policyApprovals is the floor a policy change sets: the requested
+// categories, or the current ones when the request names none
+// (ADR-20261104140058).
+func (d OrgDeps) policyApprovals(ctx context.Context, store state.OrgAgentStore, orgID string, requested *[]string) ([]string, *api.Problem) {
+	if requested == nil {
+		current, err := store.OrgAgentPolicy(ctx, orgID)
+		if err != nil {
+			return nil, api.ErrCapacity("could not load the agent policy")
+		}
+		return current.ApprovalCategories, nil
+	}
+	categories, err := api.NormalizeAgentApprovalCategories(*requested)
+	if err != nil {
+		return nil, api.ErrValidation(err.Error())
+	}
+	return categories, nil
 }

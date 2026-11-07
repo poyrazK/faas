@@ -4226,6 +4226,8 @@ type AccountAbuseHoldActionResponse struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
+	// KeyApp is present only for an app-bound agent principal.
+	KeyApp *AppAgentBinding `json:"key_app,omitempty"`
 	// AbuseHold is present while the account is on an ADR-361 abuse hold:
 	// nothing runs or deploys until an operator releases it.
 	AbuseHold     *AccountAbuseHold `json:"abuse_hold,omitempty"`
@@ -4261,6 +4263,9 @@ type AccountResponse struct {
 	// KeyOrg is the shared organization that key acts in; absent for a
 	// personal key or a session (ADR-20261101225122).
 	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+	// KeyProjects are the slugs of the projects that key is limited to;
+	// absent for an unlimited key or a session (ADR-20261104085712).
+	KeyProjects []string `json:"key_projects,omitempty"`
 }
 
 // KeyOrg names the shared organization an API key acts in.
@@ -4363,6 +4368,12 @@ type APIKeyResponse struct {
 	RotatedFromID string   `json:"rotated_from_id,omitempty"` // predecessor key id
 	// Plaintext appears ONLY on the create + rotate responses, never persisted.
 	Plaintext string `json:"plaintext,omitempty"`
+	// Projects are the slugs of the projects an agent key is limited to;
+	// absent for an unlimited key (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action a person must approve for
+	// an agent key, when it chose them (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4390,11 +4401,19 @@ type ListDeployTokensResponse struct {
 }
 
 // CreateDeployTokenRequest controls a per-app deploy token mint. Scopes are
-// intentionally not caller-controlled in v1: the token is always limited to
-// deploy:write. ExpiresAt is optional and defaults to 90 days.
+// deploy:write unless Agent selects the narrow app-agent scope vocabulary.
+// ExpiresAt is optional and defaults to 90 days.
 type CreateDeployTokenRequest struct {
-	Label     string `json:"label,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Agent     bool     `json:"agent,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	ExpiresAt string   `json:"expires_at,omitempty"`
+}
+
+// AppAgentBinding pins the credential's immutable app identity.
+type AppAgentBinding struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
 }
 
 // RotateDeployTokenRequest mirrors CreateDeployTokenRequest. An empty label
@@ -4459,6 +4478,13 @@ type GraceWindowResponse struct {
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories are the kinds of action an agent key must have a
+	// person approve; absent for every kind, empty for none
+	// (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4473,6 +4499,12 @@ type CreateKeyRequest struct {
 type CreateOrgAPIKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
+	// ApprovalCategories: as CreateKeyRequest's; the organization's floor
+	// applies on top (ADR-20261104140058).
+	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys
@@ -4518,6 +4550,12 @@ type RotateOrgAPIKeyResponse struct {
 // alt names, useful for the `gregale domains show` listing). All three
 // fields are omitempty so pre-PR-3 clients see bit-identical payloads.
 type CustomDomainResponse struct {
+	// Readiness keeps DNS ownership, routing, and HTTPS readiness independent.
+	Readiness               *DomainReadiness    `json:"readiness,omitempty"`
+	VerificationNextCheckAt string              `json:"verification_next_check_at,omitempty"`
+	VerificationAttempts    int                 `json:"verification_attempts,omitempty"`
+	CertRetryAt             string              `json:"cert_retry_at,omitempty"`
+	Checks                  []DomainDoctorCheck `json:"checks,omitempty"`
 	// VerificationExpiresAt is the hard deadline for an unverified claim.
 	// Expired claims require a fresh create request and a new TXT proof.
 	VerificationExpiresAt string   `json:"verification_expires_at,omitempty"`
@@ -7651,8 +7689,13 @@ type PlanManaged struct {
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
 	// provided: unavailable, plan, quota, unsupported, configured,
-	// not_referenced or permission. Empty for other datastores.
+	// not_referenced or permission. Empty for other datastores, which have
+	// no managed equivalent.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+	// Unbound names the selected services' keys that point at a datastore
+	// apply does not provide and will have no value ("api.REDIS_URL"), so a
+	// reviewer sees which services start without it (ADR-20261104221217).
+	Unbound []string `json:"unbound,omitempty"`
 }
 
 // PlanManagedProvision is a managed database a project apply provides.
@@ -12472,7 +12515,20 @@ type RequestAnalyticsResponse struct {
 	// TelemetryGaps names each reason requests may be missing.
 	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
 	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
+	// SampledMeasures says whether the detail only raw sampled rows carry
+	// (group CPU and latency of sampled rows, per-deployment costs and
+	// per-route deployment splits) is in this response: "included", or
+	// "omitted" when reading it failed or ran past its time budget. Counts
+	// and percentiles never depend on it.
+	SampledMeasures string `json:"sampled_measures,omitempty"`
 }
+
+// RequestAnalyticsSampledMeasures* are the RequestAnalyticsResponse
+// sampled_measures values.
+const (
+	RequestAnalyticsSampledMeasuresIncluded = "included"
+	RequestAnalyticsSampledMeasuresOmitted  = "omitted"
+)
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
 // by GET /v1/apps/{slug}/analytics/timeseries. Counts include collapsed

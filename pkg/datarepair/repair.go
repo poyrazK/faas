@@ -7,16 +7,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -125,7 +127,7 @@ var (
 	ErrPurged         = errors.New("datarepair: captured payload has been purged; retained identities cannot be reused")
 )
 
-var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var digestPattern = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 // Rehearser is a trusted runner, configured by the application operator. Only
 // this runner may produce rehearsal evidence; the HTTP API accepts no evidence.
@@ -394,6 +396,10 @@ func runCheck(ctx context.Context, tx pgx.Tx, query string) bool {
 		return false
 	}
 	defer rows.Close()
+	fields := rows.FieldDescriptions()
+	if len(fields) != 1 || fields[0].DataTypeOID != 16 {
+		return false
+	}
 	var passed *bool
 	if !rows.Next() || rows.Scan(&passed) != nil || passed == nil || !*passed {
 		return false

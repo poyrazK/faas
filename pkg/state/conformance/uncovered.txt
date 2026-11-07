@@ -396,7 +396,6 @@ ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
-LiveDeploymentForScope
 LiveDeployments
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
@@ -436,7 +435,6 @@ NodeListDrainable
 NodeListRecoverable
 NodeMarkDrainCompleted
 NodeMarkRecovered
-OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
 OperatorAuditTraceCoverage
@@ -451,7 +449,6 @@ PaddleOverageDedupeSchema
 PerAccountRateLimitAggregate
 Ping
 ProjectByID
-ProjectByRepo
 ProjectBySlug
 ProjectEnvironmentApprovalByID
 ProjectEnvironmentApprovalByToken
@@ -599,7 +596,6 @@ UpsertDeploymentSecretFindings
 UpsertDoctorObservation
 UpsertGithubWebhookSecret
 UpsertNodeKey
-UpsertOAuthLink
 UpsertRegressionObservation
 UpsertRuntimeConfig
 UsageByAccount

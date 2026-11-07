@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -415,6 +416,9 @@ func (o *leasedRealtimeOwner) resolve(ctx context.Context, endpointID, connectio
 
 func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(state.ManagedRealtimeConnectionOwner, RealtimeNodeOperator) error) error {
 	for attempt := 0; attempt < 2; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		lease, op, err := o.resolve(ctx, endpointID, connectionID)
 		if err != nil {
 			return err

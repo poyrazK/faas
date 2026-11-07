@@ -1818,3 +1818,132 @@ A review of main after round 8 found these gaps.
    this release refuses (`api.EdgeRuleEnforcementProblem`, the same check the
    gateway runs). A release that tightens those bounds must first find the
    stored rules outside them (docs/release-compatibility.md).
+
+## Amendment (2026-11-04): review round 10 — preset references, list and preset scope, exports
+
+A review of main after round 9 found these gaps.
+
+1. **Rules kept no preset.** `ActionFromBody` copied only a cors action's
+   inline fields, so a rule naming `cors_preset_id`, written through the API
+   or the dashboard, was stored as an empty CORS rule; a preset that did not
+   exist was accepted; and `edge_rules.cors_preset_id`, which the preset's
+   fencing, authorization and `ON DELETE SET NULL` work from, was set only by
+   the manifest path. Rule writes now keep the reference in the action and
+   the column (an update that replaces a cors action sets or clears both),
+   and refuse a preset the account does not have, one scoped to another app,
+   or, for a company app, an account-wide preset of the member whose account
+   holds the app's rules. Rules written before this release lost their
+   reference and must be saved again with it. Deleting a preset that rules
+   use is refused (409 naming them), as for lists: it left those rules naming
+   a missing preset, failing their hosts closed.
+2. **A rule names only lists of its app's scope.** List references resolved
+   anywhere in the account's namespace, so naming the app creator's private
+   list from a company rule made it readable to the organization, the error
+   told which private names existed, and naming an organization list from a
+   personal rule froze it for the organization. A company app's rule now
+   names its organization's lists (and personal lists only its
+   organization's apps already use); a personal app's rule names personal
+   lists. Anything else reads as unknown. Lists keep their namespace, which
+   is where the gateway resolves them, so a list created through one
+   member's company app is not available to an app another member created;
+   the refusal says to create it with `--app` for that app. One namespace per
+   organization would need the gateway to resolve lists by organization and
+   is a separate decision.
+3. **Exports and presets of a company app stay with the organization.** The
+   account export carried the organization lists held in a member's
+   account, also after the member left; it now carries personal lists only,
+   and adds the account's CORS presets (account-wide and those of exported
+   apps; rules naming them were exported without them). On the personal
+   path, an app-scoped preset now passes the check of its app's route
+   permission, so a member who left can no longer read, change or delete a
+   company app's presets.
+4. **Each list scope has its own cap.** The per-account list cap counted
+   organization and personal lists together; it now counts the new list's
+   scope.
+
+## Amendment (2026-11-04, later): review round 11 — override methods on declared routes, audit floods, async callers, public-suffix CORS, host cache shares
+
+An eleventh review found five gaps.
+
+1. **Declared routes ignored method overrides.** The 2026-11-02 amendment
+   made the nine protective kinds match a POST that asks the app to run it as
+   another method (`X-HTTP-Method-Override`, `X-HTTP-Method`,
+   `X-Method-Override`, `?_method=`), but `only_allow_declared_routes` still
+   checked only the request line: an app declaring `POST /items/{id}` but not
+   `DELETE` ran a DELETE sent as such a POST. The override method must now be
+   declared too; the 404 names it (`POST (as DELETE) /items/1`).
+2. **Refusals a client produces at will wrote one audit row each.** The
+   repeat throttle covered only `edge_rule.*_matched`. `throttle_rejected`,
+   `throttle_identity_missing`, `validate_failed`,
+   `validate_unsupported_media_type`, `limit_rejected`, `caller_ip_forged` and
+   `ingress_ip_forged` wrote one control-plane events row per refused
+   request, so a flood against a throttle rule became a flood of inserts, and
+   the node's one audit queue (4,096 rows, shared by every tenant) dropped
+   other tenants' evidence. These now repeat at most once a minute per rule
+   and app, carrying the suppressed count, and stay ahead of informational
+   rows in the queue. `edge_rule.async_enqueued`, written per accepted request
+   of ordinary traffic, is informational. The sampled security events
+   (ADR-964) and the metrics still see every request.
+3. **Async routes lost the caller.** The stored request drops
+   `Authorization` and `Cookie` (a token would also have expired by
+   delivery), and the identity a `jwt` rule verified lived only in the
+   request context, so an app behind a `jwt` gate received anonymous jobs.
+   The gateway now hands the app the caller as `X-Faas-Edge-Jwt-Subject` and
+   `X-Faas-Edge-Jwt-Issuer` (the token's `sub`, the rule's `issuer`) on
+   direct requests, and an async route stores them on the invocation
+   (`invocations.edge_jwt_subject` / `edge_jwt_issuer`, migration
+   20261104132656410, expand-only). Delivery reads them from the stored row
+   in the dispatch authority read, never from the transport that names the
+   invocation; replays copy them. Like every `x-faas-*` header, a client's
+   own copies never cross the guest boundary; the forwarder adds the values
+   from the request context. Values over `MaxEdgeJWTIdentityBytes` (1 KiB)
+   or that HTTP cannot carry are not forwarded.
+4. **Credentialed CORS wildcards over public suffixes.** The shared-domain
+   guard (amendment 2026-10-28) refused `https://*.<apps domain>` with
+   `allow_credentials`, but `https://*.com`, `https://*.co.uk`,
+   `https://*.github.io` and `https://*.vercel.app` passed, letting any site
+   registered there read credentialed responses. A wildcard directly under a
+   Public Suffix List entry (ICANN or private) or an unlisted top-level label
+   is now refused with credentials, for rules and presets. Stored rules keep
+   compiling.
+5. **One app's hostnames could empty the host cache.** The edge-rule cache
+   is one 10,000-entry LRU per node keyed by host and app, and a wildcard
+   custom domain gives its app unbounded hostnames: random subdomains missed
+   on every request and evicted every other tenant's sets. An app now holds at
+   most an eighth of the cache (1,250 sets, at least 64); past that, its own
+   least recently used set goes first.
+
+## Amendment (2026-11-04, latest): review round 12 — JWKS cache bounds, validate body shares, gated edge answers, attack mode on routes
+
+A twelfth review found four gaps.
+
+1. **The JWKS cache never let go.** The gateway registered every `jwks_url`
+   on the first token checked against it and never dropped one, and each
+   held up to `MaxResponseBytes` (2 MiB, 1,024 keys). A rule whose
+   `jwks_url` kept changing, even only in its query string, left another
+   keyset resident per edit on a daemon every tenant on the node shares.
+   The cache now holds at most `MaxCachedJWKSURLs` (512) URLs and
+   `MaxCachedJWKSBytes` (64 MiB) of fetched documents, dropping the least
+   recently used; a later token for a dropped URL registers and fetches it
+   again.
+2. **Validate bodies shared one heap budget with no shares.** A
+   `kind=validate` body reserved the node's 96 MiB heap budget under no
+   client or owner key, and a body without `Content-Length` reserved the
+   whole rule cap (up to 25 MiB) until the request ended, so about four slow
+   chunked uploads to any app with a validate rule answered every other
+   tenant's validate-gated requests 503. One app owner now holds at most a
+   third of the budget (32 MiB, above the 25 MiB cap) and one client address
+   (an IPv6 /56) at most four bodies, and a body of unknown length reserves
+   64 KiB at a time as it is read.
+3. **The health answer and a parked app's `HEAD /` ran before the gates.**
+   They answered before `ip`, `geo`, `jwt`, `maintenance`, `challenge` and
+   attack mode, so a client those rules refuse got 200 or 204, and the
+   health path's last wake failure reason. They now answer after the access
+   gates and before rate limits and wake, so they still never wake a parked
+   app. `robots.txt` and `favicon.ico` stay where they were. A monitor of a
+   gated app must be admitted by its gates.
+4. **Attack mode did not cover routed paths.** A request a `route` rule
+   serves on another app runs as that app, so the source app's `@app`
+   rules do not apply, and attack mode is one of them: switching it on left
+   every path the app's hosts route elsewhere open. The source app's
+   attack-mode rule, and only it, now also challenges routed requests.

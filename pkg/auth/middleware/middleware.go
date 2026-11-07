@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -223,12 +224,18 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 type Middleware struct {
 	HostingAutomationEnabled func() bool
 	HostingOIDCEnabled       func() bool
-	Authn                    Authenticator
-	Sessions                 Sessions
-	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
-	Audit                    Auditor             // nil-safe; nil disables audit emit
-	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
-	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// MandatoryMFA adds deployment policy such as the operator allowlist.
+	// When configured, a factor reset can also clear a stale pending cookie.
+	MandatoryMFA func(state.Account) bool
+	Authn        Authenticator
+	Sessions     Sessions
+	Lookups      SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
+	Audit        Auditor             // nil-safe; nil disables audit emit
+	Log          *slog.Logger        // nil-safe; nil disables the Warn path
+	Limiter      *middleware.Limiter // shared per-IP bucket for RequireLimited
+	// ApprovalReviewURL is the page where a person decides an agent's
+	// approval request (ADR-20261104140058).
+	ApprovalReviewURL func(id string) string
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -600,6 +607,16 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 				}
+				// ADR-20261104085712: an agent or mcp-login key limited to
+				// projects reaches only their apps and routes.
+				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
+				}
+				// ADR-20261104140058: an agent's risky request waits for a
+				// person's approval.
+				if m.requireAgentApproval(w, r, acct, key) {
+					return
+				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
 				// detached context + bounded timeout so a slow PG
@@ -825,7 +842,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						//nolint:contextcheck // same pointer-mutation contract: withPrincipal derives from r.Context() so the principal stamps into the OUTER r, not a captured local ctx.
 						*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: nil, Membership: nil}))
 						//nolint:contextcheck // same pointer-mutation contract: withMFAPending derives from r.Context() so the flag stamps into the OUTER r.
-						*r = *r.WithContext(withMFAPending(r.Context(), session.IsMFAPending(env)))
+						pending := session.IsMFAPending(env)
+						if m.MandatoryMFA != nil && !m.accountRequiresMFA(acct) {
+							pending = false
+						}
+						*r = *r.WithContext(withMFAPending(r.Context(), pending))
 						// IAM-hardening-mega-PR (logical change 6,
 						// ADR-077): stamp the step-up timestamp the
 						// /v1/account/mfa/verify handler last sealed
@@ -1059,18 +1080,31 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
-	// (3.5) binding-hash mismatch = stolen-cookie auto-revoke
+	// (3.5) binding mismatch = stolen-cookie auto-revoke
 	// (IAM hardening mega-PR, logical change 5, ADR-076).
-	// Compare the envelope and live row, then recompute the fingerprint from
-	// this request. Two unchanged stored values cannot detect a copied cookie.
-	// Either side empty = "binding not armed" (pre-PR-076 cookie
-	// or unix-socket code path); cross-check is skipped in that
-	// case. Mismatch ⇒ auto-revoke + audit + 401.
-	presentedBinding := env.BindingHash
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" && env.BindingHash == sess.BindingHash {
-		presentedBinding = bindinghash.Compute(middleware.ClientIP(r), bindinghash.UAFamily(r.UserAgent()), m.BindingKeyFn)
+	// The envelope's binding hash (sealed at mint) must equal the
+	// live row's, and this request's browser family must equal the
+	// family the session was issued to, so a cookie copied into a
+	// different client (curl, another browser) is still caught.
+	//
+	// The client IP is deliberately NOT re-checked per request. The
+	// console reaches apid through a proxy (Vercel) whose egress
+	// address changes between requests, and browsers move between
+	// networks and between IPv4 and IPv6. rc.321 recomputed the
+	// IP-keyed hash on every request and revoked every console
+	// session on its first request from a new egress address.
+	//
+	// Either hash empty = "binding not armed" (pre-PR-076 cookie
+	// or unix-socket code path); the check is skipped in that
+	// case. An empty issued UA skips only the family comparison.
+	// Mismatch ⇒ auto-revoke + audit + 401.
+	bindingArmed := m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != ""
+	issuedFamily, presentedFamily := "", ""
+	if bindingArmed && sess.IssuedUA != "" {
+		issuedFamily = bindinghash.UAFamily(sess.IssuedUA)
+		presentedFamily = bindinghash.UAFamily(r.UserAgent())
 	}
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" && presentedBinding != sess.BindingHash {
+	if bindingArmed && (env.BindingHash != sess.BindingHash || issuedFamily != presentedFamily) {
 		// Best-effort revoke. Failure is logged but the
 		// 401 still returns — the request is rejected
 		// regardless of the revoke's success.
@@ -1083,11 +1117,13 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		// Audit emit (best-effort — never blocks the 401).
 		if m.Audit != nil {
 			m.Audit.Emit(ctx, "auth.session.binding_mismatch", &env.AccountID, map[string]any{
-				"sid":              env.Sid,
-				"method":           r.Method,
-				"path":             r.URL.Path,
-				"expected_prefix":  prefix8(sess.BindingHash),
-				"presented_prefix": prefix8(presentedBinding),
+				"sid":                 env.Sid,
+				"method":              r.Method,
+				"path":                r.URL.Path,
+				"expected_prefix":     prefix8(sess.BindingHash),
+				"presented_prefix":    prefix8(env.BindingHash),
+				"expected_ua_family":  issuedFamily,
+				"presented_ua_family": presentedFamily,
 			})
 		}
 		m.clearSessionCookie(w)
@@ -1255,7 +1291,11 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover", "GET /v1/auth/csrf":
+		"POST /v1/account/mfa/enroll", "POST /v1/account/mfa/confirm",
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover",
+		"POST /v1/account/mfa/disable", "POST /v1/account/mfa/disable-email",
+		"POST /v1/account/mfa/disable-email/confirm", "GET /auth/reset/mfa",
+		"HEAD /auth/reset/mfa", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1450,8 +1490,8 @@ const (
 //
 //	requireMFA → requireScope(admin) → requireStepUp(5m) → handler
 //
-// The new stamp is written by /v1/account/mfa/verify on every
-// success — see cmd/apid/handlers_mfa.go reissueSessionCookie.
+// Confirmation, authenticator verification and recovery all refresh the
+// stamp. Customer sessions without enabled or required MFA bypass this gate.
 //
 // RequireStepUpStrict is the opt-in for operations where a bearer must
 // never be enough proof. Invitation acceptance and provider-admin
@@ -1473,10 +1513,8 @@ func (m *Middleware) RequireStepUp(ttl time.Duration) func(AccountHandler) Accou
 // mutations use the same strict gate so bearer/API-key principals are
 // rejected consistently across the control plane.
 //
-// The cookie path is unchanged — the absence of a step-up stamp
-// on a session-cookie principal still fails-fast (the v1 cookie
-// branch already did, and the Envelope.StepUpAt omission is the
-// same condition).
+// Strict cookie sessions require a recent stamp even if the account has
+// not enrolled yet. This preserves mandatory operator verification.
 func (m *Middleware) RequireStepUpStrict(ttl time.Duration) func(AccountHandler) AccountHandler {
 	return m.requireStepUp(ttl, true)
 }
@@ -1491,6 +1529,15 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 	}
 	return func(next AccountHandler) AccountHandler {
 		return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			// Customer MFA is opt-in; strict provider operations keep their gate.
+			actor := acct
+			if principal, _, ok := AccountFromContext(r); ok {
+				actor = principal
+			}
+			if !strict && !m.accountRequiresMFA(actor) {
+				next(w, r, acct)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			// Lax mode: bearer-key principal (no step-up stamp) bypasses.
 			// Pre-PR-077 cookie without step_up_at is also bypass-
@@ -1541,11 +1588,21 @@ func (m *Middleware) requireStepUp(ttl time.Duration, strict bool) func(AccountH
 // same bypass rules. The stamp is read off r.Context() the same
 // way RequireStepUp reads it via StepUpFrom.
 func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) http.Handler {
+	return m.RequireStepUpHandlerWithRedirect(ttl, nil)
+}
+
+// RequireStepUpHandlerWithRedirect lets browser forms visit a challenge.
+// An empty destination retains the structured API refusal.
+func (m *Middleware) RequireStepUpHandlerWithRedirect(ttl time.Duration, redirect func(*http.Request) string) func(http.Handler) http.Handler {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if acct, _, ok := AccountFromContext(r); ok && !m.accountRequiresMFA(acct) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ts, has := StepUpFrom(r)
 			if !has {
 				next.ServeHTTP(w, r)
@@ -1559,7 +1616,6 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 			if !ts.IsZero() {
 				reason = stepUpReasonExpired
 			}
-			api.WriteProblem(w, api.ErrStepUpRequired())
 			if m.Audit != nil {
 				// Dashboard routes don't carry a state.Account on
 				// the request context the way RequireSession's
@@ -1577,6 +1633,13 @@ func (m *Middleware) RequireStepUpHandler(ttl time.Duration) func(http.Handler) 
 					"ttl_sec": int(ttl.Seconds()),
 				})
 			}
+			if redirect != nil {
+				if target := redirect(r); target != "" {
+					http.Redirect(w, r, target, http.StatusSeeOther)
+					return
+				}
+			}
+			api.WriteProblem(w, api.ErrStepUpRequired())
 		})
 	}
 }
@@ -1647,7 +1710,7 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 			"Not found", "no such app"))
 		return state.App{}, false
 	}
-	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" && p.Key.AppID != app.ID {
+	if p, ok := principalFrom(r); ok && p.Key != nil && (p.Key.AppID != "" && p.Key.AppID != app.ID || AppOutsideKeyProjects(p.Key, app)) {
 		// App-bound deploy tokens must not be usable against another
 		// app in the same account. Collapse the mismatch to the same
 		// 404 shape as a cross-account slug probe.
@@ -1684,6 +1747,11 @@ func IsUploadSessionPath(path string) bool {
 // /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
 // and nothing else. It answers the request and reports true when it refuses.
 func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
+	// App agents inspect their own minimal principal and platform capabilities
+	// before connecting to MCP. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+		return false
+	}
 	// The resumable upload routes are the CLI's default source
 	// deploy path. They name their app in the request body or the
 	// stored session, so the app binding is enforced where the

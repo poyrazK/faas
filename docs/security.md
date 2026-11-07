@@ -477,7 +477,8 @@ gregale edge rule events --app my-site --outcome rejected
 
 Attack mode is one switch for when an app is flooded from too many
 addresses for rules to keep up. While it is on, every request to every host
-of the app is challenged the way a `kind=challenge` rule challenges it:
+of the app is challenged the way a `kind=challenge` rule challenges it,
+including requests a `route` rule serves on another app:
 
 - Browsers solve the short check once and continue for an hour.
 - Verified search crawlers and requests with a verified API key, consumer

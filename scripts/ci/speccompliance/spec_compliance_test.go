@@ -63,6 +63,8 @@ const (
 	corsPresetsFile                  = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile                = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile              = "managed_postgres.go"
+	envBatchFile                     = "env_batch.go"        // ADR-20261103171917
+	agentInspectionFile              = "agent_inspection.go" // ADR-20261103211147
 	openapiContractFile              = "openapi_contract.go"
 	executionsFile                   = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
 	appTasksFile                     = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
@@ -93,6 +95,7 @@ const (
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	releaseOutcomeFile               = "release_outcome.go"      // ADR-1448 amendment 1 release outcome checks
 	releaseTimelineFile              = "release_timeline.go"     // ADR-20261022120744 release page timeline
 	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	databaseSwitchFile               = "database_switch.go"      // ADR-20261023181931 rollbacks that restore the database
@@ -556,6 +559,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mfa":                                           true, // HTML form, TOTP challenge
 	"GET /dashboard/account/export":                                 true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/mfa":                                    true, // ADR-20261103202000: browser-only session form over the documented /v1/account/mfa actions
+	"GET /dashboard/invitations/{token}":                            true, // ADR-20261106210000: browser-only review page over the documented invitation peek/accept APIs
 	"GET /dashboard/account/dpa":                                    true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                             true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                       true, // HTML form (hosted-checkout hand-off)
@@ -1021,6 +1025,10 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Browser management envelopes are anonymous structs in
+	// handlers_github_accounts.go and middleware's named-CSRF decoder.
+	"GitHubAccountConnections":      true,
+	"GitHubConnectionManageRequest": true,
 	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
 	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
 	"AutomationLiveBaselinePolicy":          true,
@@ -1125,6 +1133,7 @@ var schemaSpecOnly = map[string]bool{
 	// pkg/apihostingreceipt structs, not pkg/api DTOs.
 	// TestSpecComplianceDeploymentStageState checks their fields and enums.
 	"DeploymentStageState":          true,
+	"DeploymentRetryIntent":         true,
 	"DeploymentStageHistoryEntry":   true,
 	"DeploymentDependencyGate":      true,
 	"DeploymentDependencyPin":       true,
@@ -1599,6 +1608,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
 		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
+		filepath.Join(root, "pkg", "api", "data_api_status.go"),              // ADR-20261022121642 amd 1: Data API status and change hook reports.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
@@ -1728,6 +1738,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_promotion_migration_recovery.go"),
 		filepath.Join(root, "pkg", "api", "project_promotion_secrets.go"),
 		filepath.Join(root, "pkg", "api", "deployment_readiness.go"),
+		filepath.Join(root, "pkg", "api", "domain_readiness.go"),
+		filepath.Join(root, "pkg", "api", "domain_plan.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
@@ -1810,6 +1822,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "source_review.go"),
 		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
 		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
+		filepath.Join(root, "pkg", "api", "deployment_promotion_receipts.go"),
+		filepath.Join(root, "pkg", "api", "environment_promotion_receipts.go"), // ADR-20261105153007
+		filepath.Join(root, "pkg", "api", "environment_rollback_receipts.go"),  // ADR-20261105102920
+		filepath.Join(root, "pkg", "api", "service_abort_attempts.go"),         // ADR-20261104144000
+		filepath.Join(root, "pkg", "api", "environment_route_budget_receipts.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),
@@ -1863,6 +1880,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", envBatchFile),
+		filepath.Join(root, "pkg", "api", "app_scaling.go"), // ADR-20261104104521
+		filepath.Join(root, "pkg", "api", agentInspectionFile),
+		filepath.Join(root, "pkg", "api", "app_resource_inventory.go"),
 		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
 		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
@@ -1929,6 +1950,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", releaseOutcomeFile),
 		filepath.Join(root, "pkg", "api", releaseTimelineFile),
 		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", databaseSwitchFile),
@@ -2021,6 +2043,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
+		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
@@ -2099,6 +2122,19 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	for name, schema := range map[string]string{"Table": "ScenarioPostgresTable", "Spec": "ScenarioPostgresSpec", "CreateRequest": "CreateScenarioPostgresRequest", "SealRequest": "SealScenarioPostgresRequest", "Receipt": "ScenarioPostgresReceipt", "Snapshot": "ScenarioPostgresSnapshot", "Delta": "ScenarioPostgresDelta", "Evidence": "ScenarioPostgresEvidence"} {
 		dtos[schema] = postgresDTOs[name]
 	}
+
+	// Browser connection DTOs live in their domain and state packages, rather
+	// than pkg/api. Check those actual JSON fields under the OpenAPI names.
+	connectionDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "apid", "githubconnect", "accounts.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub connection DTOs: %v", err)
+	}
+	verificationDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "state", "github_account_connections.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub verification DTOs: %v", err)
+	}
+	dtos["GitHubAccountConnection"] = connectionDTOs["Connection"]
+	dtos["GitHubConnectionVerification"] = verificationDTOs["GitHubConnectionVerification"]
 
 	// Git approval evidence is shared with githubd and the state transaction
 	// without importing pkg/api there. Check its actual JSON fields under the
