@@ -28,15 +28,15 @@ func cmdBillingEgressOverage(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	var enabled *bool
-	switch {
-	case fs.NArg() == 0:
-	case fs.NArg() == 1 && (fs.Arg(0) == "on" || fs.Arg(0) == "off"):
-		on := fs.Arg(0) == "on"
-		enabled = &on
-	default:
+	// No positional reads the election; exactly one, on or off, sets it.
+	if fs.NArg() != 0 && (fs.NArg() != 1 || (fs.Arg(0) != "on" && fs.Arg(0) != "off")) {
 		PrintUsage(os.Stderr, billingEgressOverageUsage, "billing")
 		return 1
+	}
+	var enabled *bool
+	if fs.NArg() == 1 {
+		on := fs.Arg(0) == "on"
+		enabled = &on
 	}
 	client, err := authedClient()
 	if err != nil {

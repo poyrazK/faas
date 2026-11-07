@@ -19273,6 +19273,60 @@ Set or clear a spending cap for usage beyond your plan
 |---|---|---|
 | `--clear` | remove the overage cap |  |
 
+### billing egress-overage
+
+Show or set billing for egress above the monthly allowance
+
+`gregale billing egress-overage <get|set> [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | Use the election of an organization that owns its resources |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage
+gregale billing egress-overage on
+gregale billing egress-overage off --org acme
+```
+
+#### billing egress-overage get
+
+Show or set billing for egress above the monthly allowance
+
+`gregale billing egress-overage get [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | Use the election of an organization that owns its resources |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage get
+gregale billing egress-overage get on
+gregale billing egress-overage get off --org acme
+```
+
+#### billing egress-overage set
+
+Show or set billing for egress above the monthly allowance
+
+`gregale billing egress-overage set [--org <SLUG>] [on|off]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | Use the election of an organization that owns its resources |  |
+
+Examples:
+
+```sh
+gregale billing egress-overage set
+gregale billing egress-overage set on
+gregale billing egress-overage set off --org acme
+```
+
 ### billing payment-method
 
 Show the card on file
