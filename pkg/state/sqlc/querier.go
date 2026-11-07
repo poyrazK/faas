@@ -757,6 +757,9 @@ type Querier interface {
 	CountOperationConcurrencyPolicies(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountOperationsInFlight(ctx context.Context, db DBTX, arg CountOperationsInFlightParams) (int64, error)
 	CountOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg CountOwnedActiveOperationJobTasksForPurgeParams) (int64, error)
+	// A Free organization deleted this UTC month still holds its slot until the
+	// month ends (ADR-20261104211412): its Free allowance was already used for the
+	// month, so deleting and recreating it must not grant a fresh one.
 	CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountPendingAgentApprovals(ctx context.Context, db DBTX, keyID pgtype.UUID) (int32, error)
 	CountPendingCustomerOperations(ctx context.Context, db DBTX, arg CountPendingCustomerOperationsParams) (int64, error)
