@@ -81,7 +81,7 @@ type OrgAgentPolicyResponse struct {
 	// organization's agents' approval requests.
 	ApprovalChannels []string `json:"approval_channels"`
 	UpdatedAt        string   `json:"updated_at,omitempty"`
-	Revoked            int      `json:"revoked,omitempty"`
+	Revoked          int      `json:"revoked,omitempty"`
 }
 
 // AgentClientRequest names the client of the calling hosted MCP key. Site

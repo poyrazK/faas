@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/agentapprovalnotify"
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -188,5 +189,61 @@ func TestNotifier_PersonalOrganizationOwnerIsTheRecipient(t *testing.T) {
 	f.run()
 	if sent := f.mail.take(); len(sent) != 1 || sent[0].to != "solo@example.com" {
 		t.Fatalf("emailed %+v; want the personal organization's owner", sent)
+	}
+}
+
+type fakeChannels struct {
+	mu   sync.Mutex
+	sent []alertchannels.Message
+	to   [][]string
+}
+
+func (f *fakeChannels) SendToChannels(_ context.Context, chans []state.NotificationChannel, msg alertchannels.Message, _ time.Time) (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := []string{}
+	for _, ch := range chans {
+		names = append(names, ch.Name)
+	}
+	f.sent, f.to = append(f.sent, msg), append(f.to, names)
+	return len(chans), len(chans)
+}
+
+// A request goes to its bound channels once, even when its email waits for
+// the interval and the notification is claimed again (§3).
+func TestNotifier_SendsToBoundChannelsOnce(t *testing.T) {
+	f := newFixture(t)
+	channels := &fakeChannels{}
+	f.notifier.Channels = channels
+	ctx := t.Context()
+	connector := f.account("channels@example.com")
+	ch, err := f.store.CreateNotificationChannel(ctx, state.NotificationChannel{AccountID: connector.ID, Name: "ops", Kind: "email", Email: "ops@example.com"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SetAgentApprovalChannels(ctx, connector.ID, "", []string{ch.ID}); err != nil {
+		t.Fatal(err)
+	}
+	key := f.key(connector, "chatty-agent")
+	if err := f.store.RecordAgentApprovalEmailSent(ctx, connector.ID, key.ID); err != nil {
+		t.Fatal(err)
+	}
+	a := f.request(key, "", "fff")
+
+	f.run()
+	if len(f.outcomes) != 1 || f.outcomes[0] != agentapprovalnotify.OutcomeDeferred {
+		t.Fatalf("outcomes = %v; want the email deferred", f.outcomes)
+	}
+	if len(channels.sent) != 1 || len(channels.to[0]) != 1 || channels.to[0][0] != "ops" ||
+		channels.sent[0].DashboardURL != "https://gregale.test/cli-auth?agent_approval="+a.ID ||
+		!strings.Contains(channels.sent[0].Summary, "DELETE /v1/apps/fff") || !strings.Contains(channels.sent[0].RuleName, "chatty-agent") {
+		t.Fatalf("channel messages = %+v to %v", channels.sent, channels.to)
+	}
+	if err := f.store.DeferAgentApprovalNotification(ctx, a.ID, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	f.run()
+	if len(channels.sent) != 1 {
+		t.Fatalf("a re-claimed notification went to its channels again: %d messages", len(channels.sent))
 	}
 }

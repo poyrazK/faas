@@ -115,6 +115,56 @@ func exerciseAgentApprovalNotifications(t *testing.T, store contractTestStore) {
 	if at, ok, err := store.AgentApprovalEmailLastSent(ctx, acct.ID, key.ID); err != nil || !ok || time.Since(at) > time.Minute {
 		t.Fatalf("email log = %v, %v, %v", at, ok, err)
 	}
+
+	// §3: channels bound for the account's keys, and for the organization by
+	// another member, both reach a request; another account's channel can't
+	// be bound.
+	channel := func(owner state.Account, name string) state.NotificationChannel {
+		t.Helper()
+		ch, err := store.CreateNotificationChannel(ctx, state.NotificationChannel{
+			AccountID: owner.ID, Name: name, Kind: "email", Email: name + "@example.com",
+		}, 10)
+		if err != nil {
+			t.Fatalf("CreateNotificationChannel %s: %v", name, err)
+		}
+		return ch
+	}
+	other, err := store.CreateAccount(ctx, "approval-notify-admin-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, orgChannel, foreign := channel(acct, "own-ops"), channel(other, "org-ops"), channel(other, "not-yours")
+	if err := store.SetAgentApprovalChannels(ctx, acct.ID, "", []string{own.ID, foreign.ID}); err != nil {
+		t.Fatalf("SetAgentApprovalChannels(account): %v", err)
+	}
+	if bound, err := store.AgentApprovalChannels(ctx, acct.ID, ""); err != nil || len(bound) != 1 || bound[0].ID != own.ID {
+		t.Fatalf("account bindings = %+v, %v; want only the account's own channel", bound, err)
+	}
+	orgID := uuid.NewString()
+	if err := store.SetAgentApprovalChannels(ctx, other.ID, orgID, []string{orgChannel.ID}); err != nil {
+		t.Fatalf("SetAgentApprovalChannels(org): %v", err)
+	}
+	reached, err := store.NotificationChannelsForAgentApproval(ctx, acct.ID, orgID)
+	if err != nil || len(reached) != 2 {
+		t.Fatalf("channels for a request in the org = %+v, %v; want the account's and the org's", reached, err)
+	}
+	if reached, err := store.NotificationChannelsForAgentApproval(ctx, acct.ID, uuid.NewString()); err != nil || len(reached) != 1 || reached[0].ID != own.ID {
+		t.Fatalf("channels for a request in another org = %+v, %v; want the account's only", reached, err)
+	}
+	if err := store.SetAgentApprovalChannels(ctx, acct.ID, "", nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if bound, err := store.AgentApprovalChannels(ctx, acct.ID, ""); err != nil || len(bound) != 0 {
+		t.Fatalf("cleared bindings = %+v, %v", bound, err)
+	}
+
+	third := request("/v1/apps/three", "https://example.com/review/3")
+	if err := store.MarkAgentApprovalChannelsNotified(ctx, third.ID); err != nil {
+		t.Fatalf("MarkAgentApprovalChannelsNotified: %v", err)
+	}
+	if claimed := claimOwn(); len(claimed) != 1 || claimed[0].ApprovalID != third.ID || !claimed[0].ChannelsNotified {
+		t.Fatalf("claimed = %+v; want the third request marked as sent to its channels", claimed)
+	}
 }
 
 func TestMemStoreAgentApprovalNotifications(t *testing.T) {

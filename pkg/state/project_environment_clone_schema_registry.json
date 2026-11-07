@@ -38,6 +38,21 @@
     "kind": "operational"
   },
   {
+    "table": "agent_approval_channel_bindings",
+    "columns": [
+      "account_id",
+      "channel_id",
+      "created_at",
+      "org_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
     "table": "agent_approval_email_log",
     "columns": [
       "key_id",
@@ -54,6 +69,7 @@
       "approval_id",
       "attempts",
       "available_at",
+      "channels_notified_at",
       "created_at",
       "finished_at",
       "key_id",

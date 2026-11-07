@@ -26,6 +26,7 @@ type contractTestStore interface {
 	state.AgentApprovalStore
 	state.AgentApprovalNotificationStore
 	state.AgentApprovalChannelStore
+	state.NotificationChannelStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
 	state.AuditEventOutboxStore

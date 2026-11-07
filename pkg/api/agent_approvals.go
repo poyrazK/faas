@@ -147,3 +147,22 @@ func (c *Client) ListAgentApprovals(ctx context.Context) (AgentApprovalsResponse
 	err := c.do(ctx, "GET", "/v1/agent-approvals", nil, &out)
 	return out, err
 }
+
+// GetAgentApprovalChannels names the notification channels that get the
+// account's agents' approval requests (ADR-20261107140000 §3).
+func (c *Client) GetAgentApprovalChannels(ctx context.Context) (AgentApprovalChannelsResponse, error) {
+	var out AgentApprovalChannelsResponse
+	err := c.do(ctx, "GET", "/v1/agent-approvals/channels", nil, &out)
+	return out, err
+}
+
+// SetAgentApprovalChannels replaces those channels; an empty list leaves
+// email only.
+func (c *Client) SetAgentApprovalChannels(ctx context.Context, channels []string) (AgentApprovalChannelsResponse, error) {
+	var out AgentApprovalChannelsResponse
+	if channels == nil {
+		channels = []string{}
+	}
+	err := c.do(ctx, "PUT", "/v1/agent-approvals/channels", AgentApprovalChannelsRequest{Channels: channels}, &out)
+	return out, err
+}
