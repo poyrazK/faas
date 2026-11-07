@@ -219,7 +219,7 @@ func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state
 	}
 	app, _, _, err := e.resolveAppAccount(ctx, c.AppID)
 	if err != nil {
-		return SnapshotRefreshSkippedIneligible, err.Error(), nil
+		return lookupOutcome(SnapshotRefreshSkippedIneligible, err)
 	}
 	if !e.ownsApp(app) {
 		return "", "", nil
@@ -230,7 +230,7 @@ func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state
 	}
 	snap, ok, err := r.initSnapshotOnNode(ctx, dep.ID, nodeID)
 	if err != nil {
-		return SnapshotRefreshUnknown, err.Error(), nil
+		return lookupOutcome(SnapshotRefreshUnknown, err)
 	}
 	if !ok {
 		return SnapshotRefreshNoSnapshot, "", nil
@@ -244,7 +244,7 @@ func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state
 	}
 	baseKey, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
 	if err != nil {
-		return SnapshotRefreshUnknown, err.Error(), nil
+		return lookupOutcome(SnapshotRefreshUnknown, err)
 	}
 	router, ok := e.vmm.(snapshotBackingRouter)
 	if !ok {
@@ -264,6 +264,12 @@ func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state
 	default:
 		return SnapshotRefreshUnknown, detail, nil
 	}
+}
+
+// lookupOutcome is a candidate's outcome when a lookup about it failed: the
+// failure decides that one candidate and is its detail; the pass goes on.
+func lookupOutcome(outcome string, failure error) (string, string, error) {
+	return outcome, failure.Error(), nil
 }
 
 // refreshableDeployment is the candidate's deployment when the platform may
