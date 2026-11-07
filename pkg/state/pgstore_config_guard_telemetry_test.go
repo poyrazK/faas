@@ -14,7 +14,9 @@ import (
 func TestPgStore_ConfigGuardTelemetryCountsStartupCrashes(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	accountID, appID, deploymentID := seedLiveDeploy(t, s, ctx, "-guard-crash")
-	changedAt := time.Now().UTC().Add(-2 * time.Minute)
+	// The guard opens after the deployment exists: the query only judges
+	// deployments that existed when it opened.
+	changedAt := time.Now().UTC()
 	insert := func(deployment string, status, count int, refusal bool) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, `INSERT INTO request_telemetry
