@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261107102846648_account_email_changes.sql
 
 -- +goose Up
