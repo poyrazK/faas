@@ -379,6 +379,8 @@ func (s *server) provisionOrFetchGoogleAccount(r *http.Request, info GoogleUserI
 		// safe.
 		if err := s.store.UpsertOAuthLink(ctx, acct.ID, "google", info.ID, email, info.VerifiedEmail); err != nil {
 			s.log.Error("google.upsert_link", "err", err)
+		} else {
+			s.alertSignInMethodLinked(ctx, acct, "google")
 		}
 		return s.verifyOAuthAccountEmail(ctx, acct)
 	}

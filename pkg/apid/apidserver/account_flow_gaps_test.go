@@ -13,6 +13,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/authcode"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -172,6 +175,228 @@ func TestUnverifiedAccountRestrictedAfterGrace(t *testing.T) {
 	}
 	if code := flowBearer(h, http.MethodGet, "/v1/apps", key, "").Code; code != http.StatusOK {
 		t.Errorf("after verifying /v1/apps = %d, want 200", code)
+	}
+}
+
+// flowSession mints a dashboard session cookie for accountID.
+func flowSession(t *testing.T, store state.Store, mgr *session.Manager, accountID string) *http.Cookie {
+	t.Helper()
+	tok, err := apidserver.MintDashboardSession(t.Context(), store, mgr, accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: apidserver.SessionCookie, Value: tok}
+}
+
+// flowSessionJSON sends a same-origin JSON request on a browser session,
+// with a CSRF token for action when action is set.
+func flowSessionJSON(t *testing.T, h http.Handler, mgr *session.Manager, cookie *http.Cookie, accountID, method, path, action string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	if body == nil {
+		body = map[string]any{}
+	}
+	csrf := ""
+	if action != "" {
+		tok, err := middleware.IssueForAuthenticated(mgr, action, accountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		csrf = tok
+		body["csrf_token"] = tok
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(method, path, strings.NewReader(string(raw)))
+	req.AddCookie(cookie)
+	if csrf != "" {
+		req.AddCookie(&http.Cookie{Name: middleware.CookieNameAuthenticated, Value: csrf})
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func flowMailsTo(mailer *apidserver.RecordingMailer, to string) []string {
+	var out []string
+	for _, m := range mailer.Snapshot() {
+		for _, rcpt := range m.To {
+			if rcpt == to {
+				out = append(out, m.TextBody)
+			}
+		}
+	}
+	return out
+}
+
+// An email change is requested from a browser session, confirmed from the
+// new address, signs out every session and notifies the old address. An
+// API key cannot request it, and a taken address is mailed nothing.
+func TestEmailChangeConfirmsNewAddress(t *testing.T) {
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	mgr := *srv.Sessions()
+	acct, key := flowAccountKey(t, store, "before@example.com", true)
+	flowAccountKey(t, store, "taken@example.com", true)
+	cookie := flowSession(t, store, mgr, acct.ID)
+
+	if code := flowBearer(h, http.MethodPost, "/v1/account/email", key, `{"email":"after@example.com"}`).Code; code != http.StatusForbidden {
+		t.Fatalf("email change with an API key = %d, want 403", code)
+	}
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change", map[string]any{"email": "taken@example.com"}); rec.Code != http.StatusAccepted {
+		t.Fatalf("change to taken address = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	if got := flowMailsTo(mailer, "taken@example.com"); len(got) != 0 {
+		t.Fatalf("taken address was mailed: %q", got)
+	}
+	srv.ResetSecurityMailLimiter()
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change", map[string]any{"email": "After@Example.com"}); rec.Code != http.StatusAccepted {
+		t.Fatalf("change = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	token := flowLastToken(t, mailer, regexp.MustCompile(`/auth/email-change\?token=([A-Za-z0-9_-]+)`))
+	if got := flowMailsTo(mailer, "after@example.com"); len(got) != 1 {
+		t.Fatalf("confirmation mails to the new address = %d, want 1", len(got))
+	}
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/auth/email-change?token="+token, nil))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `action="/auth/email-change"`) {
+		t.Fatalf("confirm page = %d %s", page.Code, page.Body.String())
+	}
+	if acct2, _ := store.AccountByID(t.Context(), acct.ID); acct2.Email != "before@example.com" {
+		t.Fatal("rendering the confirm page changed the email")
+	}
+	rec := flowForm(h, "/auth/email-change", url.Values{"token": {token}})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "email_changed=1") {
+		t.Fatalf("confirm = %d %s", rec.Code, rec.Body.String())
+	}
+	moved, err := store.AccountByEmail(t.Context(), "after@example.com")
+	if err != nil || moved.ID != acct.ID || !moved.EmailVerified() {
+		t.Fatalf("account after change: %+v err=%v", moved, err)
+	}
+	if got := flowMailsTo(mailer, "before@example.com"); len(got) != 1 || !strings.Contains(got[0], "a***@example.com") {
+		t.Fatalf("old address notice = %q", got)
+	}
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodGet, "/v1/account", "", nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("session after email change = %d, want 401", rec.Code)
+	}
+	if rec := flowForm(h, "/auth/email-change", url.Values{"token": {token}}); rec.Code < 400 {
+		t.Errorf("second use of the link = %d, want refusal", rec.Code)
+	}
+}
+
+// A password account proves the current password to change its email.
+func TestEmailChangeNeedsCurrentPassword(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	mgr := *srv.Sessions()
+	flowSignup(t, h, "pw@example.com", "pw-password-123!")
+	acct, err := store.AccountByEmail(t.Context(), "pw@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := flowSession(t, store, mgr, acct.ID)
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change",
+		map[string]any{"email": "pw2@example.com", "current_password": "wrong-password-123!"}); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong current password = %d %s, want 401", rec.Code, rec.Body.String())
+	}
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodPost, "/v1/account/email", "account_email_change",
+		map[string]any{"email": "pw2@example.com", "current_password": "pw-password-123!"}); rec.Code != http.StatusAccepted {
+		t.Fatalf("right current password = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+}
+
+// Linked providers are listed and can be removed unless they are the last
+// way to sign in.
+func TestSignInMethodsListAndUnlink(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	mgr := *srv.Sessions()
+	acct, key := flowAccountKey(t, store, "linked@example.com", true)
+	for _, p := range []string{"google", "github"} {
+		if err := store.UpsertOAuthLink(t.Context(), acct.ID, p, p+"-sub", "linked@example.com", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := flowBearer(h, http.MethodGet, "/v1/account/sign-in-methods", key, "")
+	var methods api.SignInMethodsResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &methods) != nil || len(methods.Providers) != 2 || methods.Password {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
+	}
+	cookie := flowSession(t, store, mgr, acct.ID)
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodDelete, "/v1/account/sign-in-methods/github", "sign_in_method_unlink", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("unlink github = %d %s, want 204", rec.Code, rec.Body.String())
+	}
+	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodDelete, "/v1/account/sign-in-methods/google", "sign_in_method_unlink", nil); rec.Code != http.StatusConflict {
+		t.Fatalf("unlink last method = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+}
+
+// A step-up session replaces every recovery code; the old ones stop working.
+func TestRecoveryCodesRegenerate(t *testing.T) {
+	e := apidserver.SetupWithMFA(t, api.PlanPro, false, false)
+	oldCodes, _, fresh := e.GenerateEnrolledAccount(t)
+	acct := *e.Acct()
+	mgr := *(*e.Srv()).Sessions()
+	rec := flowSessionJSON(t, *e.H(), mgr, fresh, acct.ID, http.MethodPost, "/v1/account/mfa/recovery-codes", "mfa_recovery_codes", nil)
+	var out api.RecoveryCodesResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil || len(out.RecoveryCodes) != len(oldCodes) {
+		t.Fatalf("regenerate = %d %s", rec.Code, rec.Body.String())
+	}
+	for i, code := range []string{oldCodes[0], out.RecoveryCodes[0]} {
+		presented, err := authcode.HashRecoveryCode(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matched, _, err := (*e.Store()).MatchRecoveryCode(t.Context(), acct.ID, presented)
+		if err != nil || matched != (i == 1) {
+			t.Fatalf("code %d matched=%v err=%v (old codes must stop working, new ones must work)", i, matched, err)
+		}
+	}
+}
+
+// PATCH /v1/account sets the display name; GET returns it.
+func TestDisplayName(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, key := flowAccountKey(t, store, "named@example.com", true)
+	if rec := flowBearer(h, http.MethodPatch, "/v1/account", key, `{"display_name":"  Ada Lovelace "}`); rec.Code != http.StatusOK {
+		t.Fatalf("patch = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := flowBearer(h, http.MethodGet, "/v1/account", key, ""); !strings.Contains(rec.Body.String(), `"display_name":"Ada Lovelace"`) {
+		t.Fatalf("whoami = %s", rec.Body.String())
+	}
+	if rec := flowBearer(h, http.MethodPatch, "/v1/account", key, `{"display_name":"`+strings.Repeat("x", api.DisplayNameMaxChars+1)+`"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("too long = %d, want 400", rec.Code)
+	}
+}
+
+// A sign-in is new only when no recent session shares its browser family
+// and network; an account's first sign-in is not.
+func TestSignInIsNew(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	acct, _ := flowAccountKey(t, store, "devices@example.com", true)
+	chrome := "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+	firefox := "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0"
+	if srv.SignInIsNew(t.Context(), acct.ID, "198.51.100.7", chrome) {
+		t.Fatal("first sign-in reported as new")
+	}
+	if _, err := store.CreateSession(t.Context(), "11111111-1111-1111-1111-111111111111", acct.ID, "198.51.100.7", chrome); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		ip, ua string
+		want   bool
+	}{
+		{"198.51.100.99", chrome, false},
+		{"203.0.113.5", chrome, true},
+		{"198.51.100.7", firefox, true},
+	} {
+		if got := srv.SignInIsNew(t.Context(), acct.ID, tc.ip, tc.ua); got != tc.want {
+			t.Errorf("SignInIsNew(%s, %s) = %v, want %v", tc.ip, tc.ua[:20], got, tc.want)
+		}
 	}
 }
 

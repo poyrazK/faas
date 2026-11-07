@@ -3587,6 +3587,14 @@ type AccountData struct {
 	// VerifyResendConfirmToken backs the "send a new verification link"
 	// form shown while the account's address is unverified.
 	VerifyResendConfirmToken string
+	// EmailChangeConfirmToken backs the change-sign-in-email form;
+	// EmailChangeNeedsPassword asks for the current password when the
+	// account has one and no second factor.
+	EmailChangeConfirmToken  string
+	EmailChangeNeedsPassword bool
+	// DisplayName and DisplayNameConfirmToken back the profile name form.
+	DisplayName             string
+	DisplayNameConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a

@@ -40,7 +40,7 @@ func EmailChangedNoticeBody(oldEmail, newEmail string, at time.Time) (subject, b
 	body = fmt.Sprintf(`Hi,
 
 At %s the Gregale account that used %s changed its sign-in email to
-%s. Other signed-in sessions were signed out.
+%s. Every signed-in session was signed out.
 
 If you did not make this change, contact support@gregale.dev right away.
 

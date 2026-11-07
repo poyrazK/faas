@@ -622,6 +622,14 @@ const setPasswordStepUpTTL = 5 * time.Minute
 // whether a password already existed. On refusal it has written the
 // problem and returns ok=false.
 func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct state.Account) (proof string, replacing bool, ok bool) {
+	return s.accountChangeProof(w, r, acct, setPasswordPath, r.FormValue("current_password"))
+}
+
+// accountChangeProof is the proof-of-presence ladder documented on
+// postSetPassword, shared by every account change that a stolen session
+// alone must not make (password, sign-in email). path names the route in
+// the audit rows; current is the submitted current password.
+func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct state.Account, path, current string) (proof string, replacing bool, ok bool) {
 	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
 	replacing = err == nil
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -644,7 +652,7 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 	// proof-selection handler instead of RequireMFA.
 	if acct.MFARequired && !acct.MFAEnrolled() {
 		s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
-			"path":   setPasswordPath,
+			"path":   path,
 			"method": http.MethodPost,
 		})
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired,
@@ -667,7 +675,7 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 		// request: the row is identical, and nothing request-derived
 		// flows into the audit payload.
 		s.audit.Emit(r.Context(), "auth.step_up_required", &acct.ID, map[string]any{
-			"path":    setPasswordPath,
+			"path":    path,
 			"method":  http.MethodPost,
 			"reason":  reason,
 			"ttl_sec": int(setPasswordStepUpTTL.Seconds()),
@@ -677,7 +685,6 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 	}
 
 	if replacing {
-		current := r.FormValue("current_password")
 		matched, verr := auth.VerifyContext(r.Context(), hash, current)
 		if passwordNotChecked(verr) {
 			writePasswordCheckUnavailable(w)

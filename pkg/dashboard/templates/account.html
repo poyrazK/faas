@@ -47,6 +47,21 @@
         <button type="submit">Send a new verification link</button>
       </form>
       {{end}}
+      <h2>Profile</h2>
+      <form method="POST" action="/dashboard/account/display-name">
+        <input type="hidden" name="csrf_token" value="{{$d.DisplayNameConfirmToken}}">
+        <label>Display name <input type="text" name="display_name" value="{{$d.DisplayName}}" maxlength="80" autocomplete="name"></label>
+        <button type="submit">Save</button>
+      </form>
+      <form method="POST" action="/dashboard/account/email">
+        <input type="hidden" name="csrf_token" value="{{$d.EmailChangeConfirmToken}}">
+        <label>New sign-in email <input type="email" name="email" required autocomplete="email"></label>
+        {{if $d.EmailChangeNeedsPassword}}
+        <label>Current password <input type="password" name="current_password" required autocomplete="current-password"></label>
+        {{end}}
+        <button type="submit">Change email</button>
+      </form>
+      <p class="muted">We email a confirmation link to the new address. Accounts with two-factor authentication confirm with a code first.</p>
       <h2>API keys</h2>
       <p>Create a key with the CLI: <code>gregale keys add &lt;label&gt;</code>. Plaintext shows ONCE; store it now.</p>
       {{if $d.Keys}}

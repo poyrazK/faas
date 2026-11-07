@@ -41,6 +41,7 @@ type Querier interface {
 	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
 	AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error)
+	AccountDisplayName(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	// An installation ID is globally unique (github_installations_installation_id_uidx).
 	AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error)
 	// First-use GitHub Actions bootstrap through an OAuth-verified install
@@ -539,6 +540,8 @@ type Querier interface {
 	ClearMovedDomainDefault(ctx context.Context, db DBTX, domain string) error
 	ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
+	// Account flow queries (ADR 20261107103000).
+	ClearPendingAccountEmailChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ClearProjectPromotionDeployment(ctx context.Context, db DBTX, arg ClearProjectPromotionDeploymentParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
@@ -659,6 +662,11 @@ type Querier interface {
 	// Enrollment and spending its proof commit together against the exact factor
 	// verified by the caller. A stale or repeated confirmation changes nothing.
 	ConfirmPendingMFA(ctx context.Context, db DBTX, arg ConfirmPendingMFAParams) (pgtype.UUID, error)
+	// Lock the account before the change row, like verification and reset. The
+	// change applies only while the account still has the address it was
+	// requested from. A unique violation on accounts.email rolls the whole
+	// statement back and leaves the link usable.
+	ConsumeAccountEmailChange(ctx context.Context, db DBTX, tokenHash []byte) (ConsumeAccountEmailChangeRow, error)
 	// The parent run lock serializes this consumption with guest reporting and
 	// coordinator transitions. A missing HTTP response never releases delivery.
 	ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error)
@@ -974,6 +982,7 @@ type Querier interface {
 	// dismissed scopes. list_secrets-shaped variant of DeleteAPIKey.
 	DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg DeleteAPIKeyReturningParams) (DeleteAPIKeyReturningRow, error)
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	DeleteAccountOAuthLink(ctx context.Context, db DBTX, arg DeleteAccountOAuthLinkParams) (int64, error)
 	DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error)
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
@@ -2503,6 +2512,7 @@ type Querier interface {
 	InitializeWorkflowForEach(ctx context.Context, db DBTX, arg InitializeWorkflowForEachParams) error
 	// ADR-20261104085712: limits a key to projects; set once, when it is minted.
 	InsertAPIKeyProjectLimit(ctx context.Context, db DBTX, arg InsertAPIKeyProjectLimitParams) error
+	InsertAccountEmailChange(ctx context.Context, db DBTX, arg InsertAccountEmailChangeParams) (int64, error)
 	InsertActivatedManagedPostgresBinding(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresBindingParams) error
 	InsertActivatedManagedPostgresSecret(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresSecretParams) error
 	InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error
@@ -3378,6 +3388,7 @@ type Querier interface {
 	// tenants. Only explicit public summary fields cross this operator boundary.
 	ListAccountCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsBySubjectParams) ([][]byte, error)
 	ListAccountDeletedApps(ctx context.Context, db DBTX, arg ListAccountDeletedAppsParams) ([]ListAccountDeletedAppsRow, error)
+	ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAccountOAuthLinksRow, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
 	// plan's DebugTelemetryRetentionDays cap. Observations that include the
@@ -6400,6 +6411,7 @@ type Querier interface {
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantAutomationSchedules(ctx context.Context, db DBTX, arg RearmTenantAutomationSchedulesParams) error
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
+	RecentAccountSessions(ctx context.Context, db DBTX, arg RecentAccountSessionsParams) ([]RecentAccountSessionsRow, error)
 	ReclaimOperatorIntentAttempts(ctx context.Context, db DBTX, threshold pgtype.Timestamptz) (int64, error)
 	RecomputeCustomerOperationJobRun(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)
@@ -6692,6 +6704,7 @@ type Querier interface {
 	// has already lapsed.
 	RenewTriggerRecordClaims(ctx context.Context, db DBTX, arg RenewTriggerRecordClaimsParams) (int64, error)
 	ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error)
+	ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg ReplaceAccountRecoveryCodesParams) (int64, error)
 	ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
 	ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error)
@@ -7273,6 +7286,7 @@ type Querier interface {
 	// ADR-20261030133644: names the agent client of one of the account's keys.
 	// The first write wins; another account's key is left alone.
 	SetAPIKeyAgentClient(ctx context.Context, db DBTX, arg SetAPIKeyAgentClientParams) error
+	SetAccountDisplayName(ctx context.Context, db DBTX, arg SetAccountDisplayNameParams) (int64, error)
 	// Password writers lock/update the account before its credential row, matching
 	// reset redemption, producer handoff and account erasure. The revision survives
 	// password deletion, so restoring an old PHC never revives an older reset link.

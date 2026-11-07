@@ -45,7 +45,8 @@ recent step-up when MFA is enrolled, otherwise the current password when one
 is set. A single-use link (keyed digest in `account_email_changes`, 1 hour) is
 mailed to the new address; the confirm page posts it back, so mail scanners
 cannot consume it. Confirming switches the address, marks it verified and
-revokes every other session. The old address receives an informational notice
+signs out every session (the link may be opened on any device). API keys are
+kept. The old address receives an informational notice
 without a revert link. A new address that already has an account is answered
 like any other request and nothing is mailed.
 
