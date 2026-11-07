@@ -74,6 +74,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		registry: state.NewPgStore(pool),
 		probe:    edgedns.HTTPProbe{Client: &http.Client{Timeout: edgedns.ProbeTimeout}},
 		public:   cfg.public,
+		private:  cfg.private,
 		edgePort: cfg.edgePort,
 		// A staging certificate chains to a root no client trusts; the probe
 		// then checks the names alone.
