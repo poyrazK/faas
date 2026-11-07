@@ -111,8 +111,18 @@
 - **Status:** proposed. The decision of record stays the one above until
   this amendment is accepted. Phase 1 is implemented behind the vmmd setting
   `native_prepared_networks` (default off; requires `native_process_recovery`
-  and `native_launch_owner_records`), with unit coverage only; no node has
-  run it. Phase 2 (strict-egress spares) is not implemented.
+  and `native_launch_owner_records`). Phase 2 (strict-egress spares) is not
+  implemented.
+- **n2 evidence (2026-11-07, network level, no VMs):**
+  `TestMetalNativePreparedNetworkRecovery` builds a real spare under native
+  recovery in a child process that exits after each claim step (ready,
+  claimed, linked, moved, finished). In every case a new process on the same
+  journal left no namespace, veth or held slot, and archived the spare.
+  `TestMetalNativePreparedNetworkClaimBench` (40 cycles) measured building a
+  native spare (what a miss pays in `setup_network`) at p50 285 ms / p95
+  301 ms, and the extra work of a hit (claim, move, finish) at p50 12 ms /
+  p95 14 ms. A full-stack native wake bench (`setup_network` p95 on a hit
+  against a non-native hit) has not run yet.
 - **Why now:** strict budgets activate only on nodes whose vmmd runs
   `native_process_recovery` (ADR-1750,
   [ADR 20261107160000](20261107160000-budgets-ga-and-strict-billing-subject.md)),
