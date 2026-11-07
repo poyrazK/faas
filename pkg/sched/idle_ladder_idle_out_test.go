@@ -120,7 +120,7 @@ func TestMemoryEvictionTakesLadderSurplusFirst(t *testing.T) {
 	surplus := sched.InstanceInfo{
 		Instance: "surplus", AppID: "b", Plan: api.PlanHobby, State: state.StateRunning, NodeID: "n",
 		AppType: string(state.AppTypeApp), RAMMB: 512, Started: now.Add(-time.Hour),
-		LastRequest: now.Add(-120 * time.Second), // Hobby's is 60 s
+		LastRequest:     now.Add(-120 * time.Second), // Hobby's is 60 s
 		IdleLadderLevel: 2, IdleLadderHold: true,
 	}
 	used, ceiling := map[string]int{"n": 10_100}, map[string]int{"n": 10_000}
