@@ -7743,7 +7743,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err := sqlc.New().GuardWorkflowAdmissionSnapshot(ctx, tx, d.AppID); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, d); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, d); err != nil {
 		return Deployment{}, 0, err
 	}
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
@@ -10807,7 +10807,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if dep.EnvironmentWorkloadManaged() || managed {
 		return ErrConflict
 	}
-	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
+	if err := s.checkDeploymentStoredWorkflows(ctx, tx, dep); err != nil {
 		return err
 	}
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {

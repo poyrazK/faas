@@ -112,14 +112,14 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation := nonInteractive
-	defer func() { nonInteractive = previousAutomation }()
+	previousStoredWorkflow := nonInteractive
+	defer func() { nonInteractive = previousStoredWorkflow }()
 	nonInteractive = false
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
 	insecureAPIWarned = false
-	var automationErr error
-	args, automationErr = extractAutomationFlag(args)
+	var storedWorkflowErr error
+	args, storedWorkflowErr = extractStoredWorkflowFlag(args)
 	previousProfile := profileOverride
 	defer func() { profileOverride = previousProfile }()
 	profileOverride = ""
@@ -134,8 +134,8 @@ func run(args []string) (status int) {
 		PrintUsage(os.Stderr, "invalid --json value "+invalidJSON+"; use true or false", "cli")
 		return 1
 	}
-	if automationErr != nil {
-		return printErr("Invalid automation option", automationErr)
+	if storedWorkflowErr != nil {
+		return printErr("Invalid stored workflow option", storedWorkflowErr)
 	}
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
@@ -715,9 +715,9 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "data-repair":

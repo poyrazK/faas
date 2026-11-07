@@ -120,7 +120,7 @@ var cliCommands = []cliCommand{
 			{Name: "profile", Short: "Save, list, inspect or disable immutable execution profiles", Flags: []cliFlag{
 				{Name: "name", Short: "immutable profile name"}, {Name: "id", Short: "profile UUID"}, {Name: "revision", Short: "revision UUID"}, {Name: "binding", Short: "verified binding UUID"}, {Name: "template", Short: "JOB=materialized Jobs UUID; repeat for each job"},
 			}},
-			{Name: "automation", Short: "Configure explicit branch-push admission through a saved profile", Flags: []cliFlag{
+			{Name: "stored_workflow", Short: "Configure explicit branch-push admission through a saved profile", Flags: []cliFlag{
 				{Name: "binding", Short: "verified binding UUID"}, {Name: "profile", Short: "saved profile UUID"}, {Name: "push-branches", Short: "exact trusted push branches"},
 			}},
 		},

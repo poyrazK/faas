@@ -1039,7 +1039,7 @@ func cmdAppsRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
+	if code := requireStoredWorkflowConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
 		return code
 	}
 	slug := fs.Arg(0)

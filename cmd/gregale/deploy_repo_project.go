@@ -31,7 +31,7 @@ func confirmProjectPlan(plan api.PlanResponse, excludeList []string, showAffecte
 		}
 		return 0
 	}
-	if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+	if code := requireStoredWorkflowConfirmation(false, "--yes"); code != 0 {
 		return code
 	}
 	// JSON output is intentionally non-interactive: prompting would corrupt

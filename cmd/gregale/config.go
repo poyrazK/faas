@@ -306,7 +306,7 @@ func savedLoginShadowedBy(env string) bool {
 // validPersistedToken keeps the on-disk/keychain stores aligned with the
 // server's long-lived API-key contract. FAAS_TOKEN is handled separately in
 // loadToken because explicit environment overrides are also used for
-// short-lived bearer credentials in automation.
+// short-lived bearer credentials in stored_workflow.
 func validPersistedToken(token string) bool {
 	return api.ValidAPIKeyFormat(token)
 }

@@ -92,8 +92,8 @@ workflow concurrency quota remains shared.
 
 An app owner can add `tenant_configurable: true` to a schedule trigger to let a
 linked customer manage its own cron expression, timezone, overlap behavior, and
-enabled state. The customer token needs `platform_tenant:automations:read` to
-list opted-in schedules and `platform_tenant:automations:manage` to update one:
+enabled state. The customer token needs `platform_tenant:stored_workflows:read` to
+list opted-in schedules and `platform_tenant:stored_workflows:manage` to update one:
 
 ```http
 GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules

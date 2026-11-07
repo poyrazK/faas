@@ -7012,7 +7012,7 @@ func (c *Client) DeleteAppLogDrain(ctx context.Context, slug, id string) error {
 //
 // DPA = Data Processing Addendum. Public, no-auth endpoint that
 // returns the GDPR DPA template as text/markdown (cmd/apid/handlers_account.go:231).
-// Customers pipe the body into their vendor-onboarding automation.
+// Customers pipe the body into their vendor-onboarding stored_workflow.
 //
 // c.do unmarshals JSON; doBytes returns the raw response so the
 // caller gets the markdown verbatim.

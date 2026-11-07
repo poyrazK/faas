@@ -110,7 +110,7 @@ func (s *server) getGitHubInstallStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, status)
 }
 
-// getGitHubConnection is the bearer/API-key surface for customer automation.
+// getGitHubConnection is the bearer/API-key surface for customer stored_workflow.
 // It intentionally does not mint or return a CSRF envelope; browser callers
 // stay on the session-only /install routes above.
 func (s *server) getGitHubConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {

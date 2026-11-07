@@ -751,17 +751,17 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeRealtimeConditionConflict      = "realtime_condition_conflict"
-	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
-	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
+	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
+	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
+	CodeConflict                        = "conflict"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.
@@ -2143,8 +2143,8 @@ const (
 	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
 	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWebhookWorkflowUnavailable        = "webhook_workflow_unavailable"
+	CodeWebhookWorkflowConflict           = "webhook_workflow_conflict"
 	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
@@ -2202,7 +2202,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
+	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2272,7 +2272,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookWorkflowUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -2282,8 +2282,8 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
-		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeStoredWorkflowVersionConflict, CodeStoredWorkflowOwnershipConflict,
+		CodeWebhookWorkflowConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,

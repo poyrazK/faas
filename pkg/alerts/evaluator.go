@@ -1418,7 +1418,7 @@ type investigationPaths struct {
 	appID            string
 	workflowRuns     string
 	workflowDeadRuns string
-	automations      string
+	storedWorkflows  string
 }
 
 func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule) investigationPaths {
@@ -1435,7 +1435,7 @@ func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule
 	}
 	slug, rng := url.PathEscape(app.Slug), url.QueryEscape(string(rule.WindowSpec))
 	if workflow {
-		paths := investigationPaths{appID: app.ID, automations: "/v1/apps/" + slug + "/automations"}
+		paths := investigationPaths{appID: app.ID, storedWorkflows: "/v1/apps/" + slug + "/workflows/stored"}
 		paths.workflowRuns = "/v1/apps/" + slug + "/workflows/runs"
 		if rule.Metric == state.AlertMetricWorkflowFailures {
 			paths.workflowDeadRuns = paths.workflowRuns + "?status=dead"
@@ -1511,7 +1511,7 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	if paths.workflowRuns != "" {
 		m["app_id"] = paths.appID
 		m["workflow_runs_path"] = paths.workflowRuns
-		m["automations_path"] = paths.automations
+		m["stored_workflows_path"] = paths.storedWorkflows
 		if paths.workflowDeadRuns != "" {
 			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
 		}

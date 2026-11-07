@@ -50,7 +50,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  $tokens = $commandAst.ToString() -split '\\s+'")
 	_, _ = fmt.Fprintln(w, "  if ($tokens.Count -lt 2) {")
 	for _, c := range cliCommands {
-		_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
+		_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
 			c.Name, c.Name, c.Name, escapePS(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "    return")
@@ -68,7 +68,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 	if len(c.Subcommands) > 0 {
 		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq 2) {\n")
 		for _, s := range c.Subcommands {
-			_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
+			_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
 				s.Name, s.Name, s.Name, escapePS(s.Short))
 		}
 		_, _ = fmt.Fprintln(w, "      return")
@@ -78,17 +78,17 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 	// invoke, metrics, slo, wake-timeline — driven by hasSlugFirst).
 	if len(c.ClosedSet) > 0 {
 		for _, v := range c.ClosedSet {
-			_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterValue', %q) }\n",
+			_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new(%q, %q, 'ParameterValue', %q) }\n",
 				v, v, v, v)
 		}
 	} else if c.hasSlugFirst() {
 		_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")
-		_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+		_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
 		_, _ = fmt.Fprintln(w, "    }")
 	}
 	// Flags.
 	for _, f := range c.Flags {
-		_, _ = fmt.Fprintf(w, "    if ('--%s' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--%s', '%s', 'ParameterName', %q) }\n",
+		_, _ = fmt.Fprintf(w, "    if ('--%s' -like \"$wordToComplete*\") { [System.Management.stored_workflow.CompletionResult]::new('--%s', '%s', 'ParameterName', %q) }\n",
 			f.Name, f.Name, f.Name, escapePS(f.Short))
 	}
 	_, _ = fmt.Fprintln(w, "    return")

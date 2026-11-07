@@ -70,8 +70,8 @@ from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
-from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
+from .advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
 from .after_restore_hook import AfterRestoreHook
 from .agent_approval_pending_info import AgentApprovalPendingInfo
 from .agent_approval_pending_info_category import AgentApprovalPendingInfoCategory
@@ -516,83 +516,6 @@ from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
 from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
-from .automation_check_attempt import AutomationCheckAttempt
-from .automation_check_attempt_outcome import AutomationCheckAttemptOutcome
-from .automation_check_evidence import AutomationCheckEvidence
-from .automation_check_exclusion import AutomationCheckExclusion
-from .automation_check_exclusion_code import AutomationCheckExclusionCode
-from .automation_check_expectation import AutomationCheckExpectation
-from .automation_check_expectation_state import AutomationCheckExpectationState
-from .automation_check_scenario import AutomationCheckScenario
-from .automation_failure_policy import AutomationFailurePolicy
-from .automation_failure_policy_response import AutomationFailurePolicyResponse
-from .automation_failure_transition import AutomationFailureTransition
-from .automation_failure_transition_reason import AutomationFailureTransitionReason
-from .automation_failure_transition_state import AutomationFailureTransitionState
-from .automation_health_response import AutomationHealthResponse
-from .automation_health_response_status_counts import AutomationHealthResponseStatusCounts
-from .automation_health_run import AutomationHealthRun
-from .automation_health_run_status import AutomationHealthRunStatus
-from .automation_health_step_failure import AutomationHealthStepFailure
-from .automation_live_baseline import AutomationLiveBaseline
-from .automation_live_baseline_case_health import AutomationLiveBaselineCaseHealth
-from .automation_live_baseline_case_health_status import AutomationLiveBaselineCaseHealthStatus
-from .automation_live_baseline_health import AutomationLiveBaselineHealth
-from .automation_live_baseline_health_evidence_status import AutomationLiveBaselineHealthEvidenceStatus
-from .automation_live_baseline_health_renewal_status import AutomationLiveBaselineHealthRenewalStatus
-from .automation_live_baseline_history import AutomationLiveBaselineHistory
-from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
-from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
-from .automation_live_baseline_retirement import AutomationLiveBaselineRetirement
-from .automation_live_expectation import AutomationLiveExpectation
-from .automation_live_expectation_state import AutomationLiveExpectationState
-from .automation_live_report import AutomationLiveReport
-from .automation_live_suite import AutomationLiveSuite
-from .automation_live_suite_case import AutomationLiveSuiteCase
-from .automation_live_suite_case_comparison import AutomationLiveSuiteCaseComparison
-from .automation_live_suite_case_comparison_change import AutomationLiveSuiteCaseComparisonChange
-from .automation_live_suite_case_outcome import AutomationLiveSuiteCaseOutcome
-from .automation_live_suite_comparison import AutomationLiveSuiteComparison
-from .automation_live_suite_comparison_counts import AutomationLiveSuiteComparisonCounts
-from .automation_live_suite_counts import AutomationLiveSuiteCounts
-from .automation_live_suite_member import AutomationLiveSuiteMember
-from .automation_live_suite_observation import AutomationLiveSuiteObservation
-from .automation_live_suite_observation_result import AutomationLiveSuiteObservationResult
-from .automation_live_suite_outcome import AutomationLiveSuiteOutcome
-from .automation_live_suite_summary import AutomationLiveSuiteSummary
-from .automation_live_test import AutomationLiveTest
-from .automation_live_test_expected_run_status import AutomationLiveTestExpectedRunStatus
-from .automation_live_verification import AutomationLiveVerification
-from .automation_publish_check_scenario import AutomationPublishCheckScenario
-from .automation_publish_policy import AutomationPublishPolicy
-from .automation_publish_policy_mode import AutomationPublishPolicyMode
-from .automation_queue_health import AutomationQueueHealth
-from .automation_queue_health_reason_counts import AutomationQueueHealthReasonCounts
-from .automation_response import AutomationResponse
-from .automation_response_source import AutomationResponseSource
-from .automation_revision_response import AutomationRevisionResponse
-from .automation_simulation_attempt import AutomationSimulationAttempt
-from .automation_simulation_attempt_outcome import AutomationSimulationAttemptOutcome
-from .automation_simulation_mock_attempt import AutomationSimulationMockAttempt
-from .automation_simulation_mock_attempt_outcome import AutomationSimulationMockAttemptOutcome
-from .automation_simulation_step import AutomationSimulationStep
-from .automation_simulation_step_kind import AutomationSimulationStepKind
-from .automation_simulation_step_state import AutomationSimulationStepState
-from .automation_test_case import AutomationTestCase
-from .automation_test_case_result import AutomationTestCaseResult
-from .automation_test_case_result_issue import AutomationTestCaseResultIssue
-from .automation_test_inputs import AutomationTestInputs
-from .automation_test_inputs_mock_attempts import AutomationTestInputsMockAttempts
-from .automation_test_inputs_mock_item_attempts import AutomationTestInputsMockItemAttempts
-from .automation_test_inputs_mock_item_attempts_additional_property import (
-    AutomationTestInputsMockItemAttemptsAdditionalProperty,
-)
-from .automation_test_inputs_mock_item_outputs import AutomationTestInputsMockItemOutputs
-from .automation_test_inputs_mock_outputs import AutomationTestInputsMockOutputs
-from .automation_test_report import AutomationTestReport
-from .automation_test_step_result import AutomationTestStepResult
-from .automation_test_step_result_mismatches_item import AutomationTestStepResultMismatchesItem
-from .automation_test_suite import AutomationTestSuite
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -734,11 +657,11 @@ from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
-from .check_automation_publication_request import CheckAutomationPublicationRequest
-from .check_automation_publication_response import CheckAutomationPublicationResponse
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
+from .check_stored_workflow_publication_request import CheckStoredWorkflowPublicationRequest
+from .check_stored_workflow_publication_response import CheckStoredWorkflowPublicationResponse
 from .checked_project_release_manifest import CheckedProjectReleaseManifest
 from .checked_project_release_manifest_deployments import CheckedProjectReleaseManifestDeployments
 from .checked_project_release_manifest_expected_fallback_deployments import (
@@ -2533,11 +2456,6 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
-from .list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
-from .list_automation_live_suites_response import ListAutomationLiveSuitesResponse
-from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
-from .list_automation_revisions_response import ListAutomationRevisionsResponse
-from .list_automations_response import ListAutomationsResponse
 from .list_billing_run_items_outcome import ListBillingRunItemsOutcome
 from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
@@ -2653,6 +2571,11 @@ from .list_release_gates_response import ListReleaseGatesResponse
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_statement_invoices_status import ListStatementInvoicesStatus
+from .list_stored_workflow_live_baselines_response import ListStoredWorkflowLiveBaselinesResponse
+from .list_stored_workflow_live_suites_response import ListStoredWorkflowLiveSuitesResponse
+from .list_stored_workflow_live_verifications_response import ListStoredWorkflowLiveVerificationsResponse
+from .list_stored_workflow_revisions_response import ListStoredWorkflowRevisionsResponse
+from .list_stored_workflows_response import ListStoredWorkflowsResponse
 from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_tenant_workflow_schedules_response import ListTenantWorkflowSchedulesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
@@ -4815,8 +4738,8 @@ from .project_worker_health import ProjectWorkerHealth
 from .project_worker_health_status import ProjectWorkerHealthStatus
 from .project_worker_job_sample import ProjectWorkerJobSample
 from .project_workload_response import ProjectWorkloadResponse
-from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
+from .promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -4842,7 +4765,6 @@ from .public_status_update import PublicStatusUpdate
 from .public_status_update_components_item import PublicStatusUpdateComponentsItem
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
-from .publish_automation_request import PublishAutomationRequest
 from .publish_event_batch_request import PublishEventBatchRequest
 from .publish_event_batch_response import PublishEventBatchResponse
 from .publish_event_batch_result import PublishEventBatchResult
@@ -4855,6 +4777,7 @@ from .publish_issue_source_maps_request import PublishIssueSourceMapsRequest
 from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
+from .publish_stored_workflow_request import PublishStoredWorkflowRequest
 from .put_api_consumer_billing_policy_request import PutAPIConsumerBillingPolicyRequest
 from .put_api_consumer_spend_cap_request import PutAPIConsumerSpendCapRequest
 from .put_api_consumer_trial_request import PutAPIConsumerTrialRequest
@@ -4894,8 +4817,8 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
-from .put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
-from .put_webhook_automation_binding_request_filter import PutWebhookAutomationBindingRequestFilter
+from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
+from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
 from .queue_binding_canary_status import QueueBindingCanaryStatus
 from .queue_binding_response import QueueBindingResponse
@@ -5156,14 +5079,14 @@ from .resource_profile import ResourceProfile
 from .resource_status import ResourceStatus
 from .resource_status_kind import ResourceStatusKind
 from .restore_app_body import RestoreAppBody
-from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
-from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
+from .restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
 from .resume_project_migration_request import ResumeProjectMigrationRequest
+from .resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
-from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
+from .retire_stored_workflow_live_baseline_request import RetireStoredWorkflowLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_event_execution_lineage_case_request import RetryEventExecutionLineageCaseRequest
@@ -5464,7 +5387,7 @@ from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
-from .run_automation_tests_request import RunAutomationTestsRequest
+from .run_stored_workflow_tests_request import RunStoredWorkflowTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -5491,12 +5414,12 @@ from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgr
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
 from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
 from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
-from .save_automation_draft_request import SaveAutomationDraftRequest
-from .save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
-from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
+from .save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
+from .save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
+from .save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
 from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
@@ -5715,10 +5638,6 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
-from .set_automation_enabled_request import SetAutomationEnabledRequest
-from .set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
-from .set_automation_publish_policy_request import SetAutomationPublishPolicyRequest
-from .set_automation_publish_policy_request_mode import SetAutomationPublishPolicyRequestMode
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
@@ -5769,6 +5688,10 @@ from .set_route_priorities_request import SetRoutePrioritiesRequest
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
 from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
+from .set_stored_workflow_enabled_request import SetStoredWorkflowEnabledRequest
+from .set_stored_workflow_failure_policy_request import SetStoredWorkflowFailurePolicyRequest
+from .set_stored_workflow_publish_policy_request import SetStoredWorkflowPublishPolicyRequest
+from .set_stored_workflow_publish_policy_request_mode import SetStoredWorkflowPublishPolicyRequestMode
 from .set_workflow_recovery_policy_request import SetWorkflowRecoveryPolicyRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
@@ -5786,15 +5709,15 @@ from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
-from .simulate_automation_request import SimulateAutomationRequest
-from .simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
-from .simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
-from .simulate_automation_request_mock_item_attempts_additional_property import (
-    SimulateAutomationRequestMockItemAttemptsAdditionalProperty,
+from .simulate_stored_workflow_request import SimulateStoredWorkflowRequest
+from .simulate_stored_workflow_request_mock_attempts import SimulateStoredWorkflowRequestMockAttempts
+from .simulate_stored_workflow_request_mock_item_attempts import SimulateStoredWorkflowRequestMockItemAttempts
+from .simulate_stored_workflow_request_mock_item_attempts_additional_property import (
+    SimulateStoredWorkflowRequestMockItemAttemptsAdditionalProperty,
 )
-from .simulate_automation_request_mock_item_outputs import SimulateAutomationRequestMockItemOutputs
-from .simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
-from .simulate_automation_response import SimulateAutomationResponse
+from .simulate_stored_workflow_request_mock_item_outputs import SimulateStoredWorkflowRequestMockItemOutputs
+from .simulate_stored_workflow_request_mock_outputs import SimulateStoredWorkflowRequestMockOutputs
+from .simulate_stored_workflow_response import SimulateStoredWorkflowResponse
 from .slo_duration import SLODuration
 from .slo_response import SLOResponse
 from .slo_response_sli import SLOResponseSli
@@ -5809,14 +5732,14 @@ from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .stage_project_release_request import StageProjectReleaseRequest
-from .start_automation_live_suite_request import StartAutomationLiveSuiteRequest
-from .start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
 from .start_durable_entity_registry_cleanup_response_200 import StartDurableEntityRegistryCleanupResponse200
 from .start_durable_entity_retirement_body import StartDurableEntityRetirementBody
 from .start_durable_entity_retirement_response_200 import StartDurableEntityRetirementResponse200
+from .start_stored_workflow_live_suite_request import StartStoredWorkflowLiveSuiteRequest
+from .start_stored_workflow_live_verification_request import StartStoredWorkflowLiveVerificationRequest
 from .statement_invoice_export_response import StatementInvoiceExportResponse
 from .statement_invoice_export_response_collection import StatementInvoiceExportResponseCollection
 from .statement_invoice_export_response_payment_status import StatementInvoiceExportResponsePaymentStatus
@@ -5835,6 +5758,83 @@ from .step_durable_entity_retirement_body import StepDurableEntityRetirementBody
 from .step_durable_entity_retirement_response_200 import StepDurableEntityRetirementResponse200
 from .storage_usage_list_response import StorageUsageListResponse
 from .storage_usage_response import StorageUsageResponse
+from .stored_workflow_check_attempt import StoredWorkflowCheckAttempt
+from .stored_workflow_check_attempt_outcome import StoredWorkflowCheckAttemptOutcome
+from .stored_workflow_check_evidence import StoredWorkflowCheckEvidence
+from .stored_workflow_check_exclusion import StoredWorkflowCheckExclusion
+from .stored_workflow_check_exclusion_code import StoredWorkflowCheckExclusionCode
+from .stored_workflow_check_expectation import StoredWorkflowCheckExpectation
+from .stored_workflow_check_expectation_state import StoredWorkflowCheckExpectationState
+from .stored_workflow_check_scenario import StoredWorkflowCheckScenario
+from .stored_workflow_failure_policy import StoredWorkflowFailurePolicy
+from .stored_workflow_failure_policy_response import StoredWorkflowFailurePolicyResponse
+from .stored_workflow_failure_transition import StoredWorkflowFailureTransition
+from .stored_workflow_failure_transition_reason import StoredWorkflowFailureTransitionReason
+from .stored_workflow_failure_transition_state import StoredWorkflowFailureTransitionState
+from .stored_workflow_health_response import StoredWorkflowHealthResponse
+from .stored_workflow_health_response_status_counts import StoredWorkflowHealthResponseStatusCounts
+from .stored_workflow_health_run import StoredWorkflowHealthRun
+from .stored_workflow_health_run_status import StoredWorkflowHealthRunStatus
+from .stored_workflow_health_step_failure import StoredWorkflowHealthStepFailure
+from .stored_workflow_live_baseline import StoredWorkflowLiveBaseline
+from .stored_workflow_live_baseline_case_health import StoredWorkflowLiveBaselineCaseHealth
+from .stored_workflow_live_baseline_case_health_status import StoredWorkflowLiveBaselineCaseHealthStatus
+from .stored_workflow_live_baseline_health import StoredWorkflowLiveBaselineHealth
+from .stored_workflow_live_baseline_health_evidence_status import StoredWorkflowLiveBaselineHealthEvidenceStatus
+from .stored_workflow_live_baseline_health_renewal_status import StoredWorkflowLiveBaselineHealthRenewalStatus
+from .stored_workflow_live_baseline_history import StoredWorkflowLiveBaselineHistory
+from .stored_workflow_live_baseline_policy import StoredWorkflowLiveBaselinePolicy
+from .stored_workflow_live_baseline_policy_version import StoredWorkflowLiveBaselinePolicyVersion
+from .stored_workflow_live_baseline_retirement import StoredWorkflowLiveBaselineRetirement
+from .stored_workflow_live_expectation import StoredWorkflowLiveExpectation
+from .stored_workflow_live_expectation_state import StoredWorkflowLiveExpectationState
+from .stored_workflow_live_report import StoredWorkflowLiveReport
+from .stored_workflow_live_suite import StoredWorkflowLiveSuite
+from .stored_workflow_live_suite_case import StoredWorkflowLiveSuiteCase
+from .stored_workflow_live_suite_case_comparison import StoredWorkflowLiveSuiteCaseComparison
+from .stored_workflow_live_suite_case_comparison_change import StoredWorkflowLiveSuiteCaseComparisonChange
+from .stored_workflow_live_suite_case_outcome import StoredWorkflowLiveSuiteCaseOutcome
+from .stored_workflow_live_suite_comparison import StoredWorkflowLiveSuiteComparison
+from .stored_workflow_live_suite_comparison_counts import StoredWorkflowLiveSuiteComparisonCounts
+from .stored_workflow_live_suite_counts import StoredWorkflowLiveSuiteCounts
+from .stored_workflow_live_suite_member import StoredWorkflowLiveSuiteMember
+from .stored_workflow_live_suite_observation import StoredWorkflowLiveSuiteObservation
+from .stored_workflow_live_suite_observation_result import StoredWorkflowLiveSuiteObservationResult
+from .stored_workflow_live_suite_outcome import StoredWorkflowLiveSuiteOutcome
+from .stored_workflow_live_suite_summary import StoredWorkflowLiveSuiteSummary
+from .stored_workflow_live_test import StoredWorkflowLiveTest
+from .stored_workflow_live_test_expected_run_status import StoredWorkflowLiveTestExpectedRunStatus
+from .stored_workflow_live_verification import StoredWorkflowLiveVerification
+from .stored_workflow_publish_check_scenario import StoredWorkflowPublishCheckScenario
+from .stored_workflow_publish_policy import StoredWorkflowPublishPolicy
+from .stored_workflow_publish_policy_mode import StoredWorkflowPublishPolicyMode
+from .stored_workflow_queue_health import StoredWorkflowQueueHealth
+from .stored_workflow_queue_health_reason_counts import StoredWorkflowQueueHealthReasonCounts
+from .stored_workflow_response import StoredWorkflowResponse
+from .stored_workflow_response_source import StoredWorkflowResponseSource
+from .stored_workflow_revision_response import StoredWorkflowRevisionResponse
+from .stored_workflow_simulation_attempt import StoredWorkflowSimulationAttempt
+from .stored_workflow_simulation_attempt_outcome import StoredWorkflowSimulationAttemptOutcome
+from .stored_workflow_simulation_mock_attempt import StoredWorkflowSimulationMockAttempt
+from .stored_workflow_simulation_mock_attempt_outcome import StoredWorkflowSimulationMockAttemptOutcome
+from .stored_workflow_simulation_step import StoredWorkflowSimulationStep
+from .stored_workflow_simulation_step_kind import StoredWorkflowSimulationStepKind
+from .stored_workflow_simulation_step_state import StoredWorkflowSimulationStepState
+from .stored_workflow_test_case import StoredWorkflowTestCase
+from .stored_workflow_test_case_result import StoredWorkflowTestCaseResult
+from .stored_workflow_test_case_result_issue import StoredWorkflowTestCaseResultIssue
+from .stored_workflow_test_inputs import StoredWorkflowTestInputs
+from .stored_workflow_test_inputs_mock_attempts import StoredWorkflowTestInputsMockAttempts
+from .stored_workflow_test_inputs_mock_item_attempts import StoredWorkflowTestInputsMockItemAttempts
+from .stored_workflow_test_inputs_mock_item_attempts_additional_property import (
+    StoredWorkflowTestInputsMockItemAttemptsAdditionalProperty,
+)
+from .stored_workflow_test_inputs_mock_item_outputs import StoredWorkflowTestInputsMockItemOutputs
+from .stored_workflow_test_inputs_mock_outputs import StoredWorkflowTestInputsMockOutputs
+from .stored_workflow_test_report import StoredWorkflowTestReport
+from .stored_workflow_test_step_result import StoredWorkflowTestStepResult
+from .stored_workflow_test_step_result_mismatches_item import StoredWorkflowTestStepResultMismatchesItem
+from .stored_workflow_test_suite import StoredWorkflowTestSuite
 from .stream_app_logs_archive import StreamAppLogsArchive
 from .stream_app_logs_follow import StreamAppLogsFollow
 from .stream_app_logs_level import StreamAppLogsLevel
@@ -6078,8 +6078,8 @@ from .usage_export_response import UsageExportResponse
 from .usage_response import UsageResponse
 from .usage_summary_response import UsageSummaryResponse
 from .usage_summary_response_egress_billing_mode import UsageSummaryResponseEgressBillingMode
-from .validate_automation_request import ValidateAutomationRequest
-from .validate_automation_response import ValidateAutomationResponse
+from .validate_stored_workflow_request import ValidateStoredWorkflowRequest
+from .validate_stored_workflow_response import ValidateStoredWorkflowResponse
 from .vulnerability import Vulnerability
 from .vulnerability_severity import VulnerabilitySeverity
 from .wake_timeline_app import WakeTimelineApp
@@ -6093,12 +6093,12 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
-from .webhook_automation_binding_response import WebhookAutomationBindingResponse
-from .webhook_automation_binding_response_filter import WebhookAutomationBindingResponseFilter
-from .webhook_automation_receipt_response import WebhookAutomationReceiptResponse
-from .webhook_automation_receipt_response_ignored_reason import WebhookAutomationReceiptResponseIgnoredReason
-from .webhook_automation_receipt_response_routing_status import WebhookAutomationReceiptResponseRoutingStatus
-from .webhook_automation_receipt_response_status import WebhookAutomationReceiptResponseStatus
+from .webhook_workflow_binding_response import WebhookWorkflowBindingResponse
+from .webhook_workflow_binding_response_filter import WebhookWorkflowBindingResponseFilter
+from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
+from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
+from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
+from .webhook_workflow_receipt_response_status import WebhookWorkflowReceiptResponseStatus
 from .work_decision import WorkDecision
 from .work_decision_action import WorkDecisionAction
 from .work_policy_list_response import WorkPolicyListResponse
@@ -6414,8 +6414,8 @@ __all__ = (
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
-    "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
+    "AdvanceStoredWorkflowLiveSuiteRequest",
     "AfterRestoreHook",
     "AgentApprovalPendingInfo",
     "AgentApprovalPendingInfoCategory",
@@ -6856,81 +6856,6 @@ __all__ = (
     "AutomaticRouteCheckLastErrorCode",
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
-    "AutomationCheckAttempt",
-    "AutomationCheckAttemptOutcome",
-    "AutomationCheckEvidence",
-    "AutomationCheckExclusion",
-    "AutomationCheckExclusionCode",
-    "AutomationCheckExpectation",
-    "AutomationCheckExpectationState",
-    "AutomationCheckScenario",
-    "AutomationFailurePolicy",
-    "AutomationFailurePolicyResponse",
-    "AutomationFailureTransition",
-    "AutomationFailureTransitionReason",
-    "AutomationFailureTransitionState",
-    "AutomationHealthResponse",
-    "AutomationHealthResponseStatusCounts",
-    "AutomationHealthRun",
-    "AutomationHealthRunStatus",
-    "AutomationHealthStepFailure",
-    "AutomationLiveBaseline",
-    "AutomationLiveBaselineCaseHealth",
-    "AutomationLiveBaselineCaseHealthStatus",
-    "AutomationLiveBaselineHealth",
-    "AutomationLiveBaselineHealthEvidenceStatus",
-    "AutomationLiveBaselineHealthRenewalStatus",
-    "AutomationLiveBaselineHistory",
-    "AutomationLiveBaselinePolicy",
-    "AutomationLiveBaselinePolicyVersion",
-    "AutomationLiveBaselineRetirement",
-    "AutomationLiveExpectation",
-    "AutomationLiveExpectationState",
-    "AutomationLiveReport",
-    "AutomationLiveSuite",
-    "AutomationLiveSuiteCase",
-    "AutomationLiveSuiteCaseComparison",
-    "AutomationLiveSuiteCaseComparisonChange",
-    "AutomationLiveSuiteCaseOutcome",
-    "AutomationLiveSuiteComparison",
-    "AutomationLiveSuiteComparisonCounts",
-    "AutomationLiveSuiteCounts",
-    "AutomationLiveSuiteMember",
-    "AutomationLiveSuiteObservation",
-    "AutomationLiveSuiteObservationResult",
-    "AutomationLiveSuiteOutcome",
-    "AutomationLiveSuiteSummary",
-    "AutomationLiveTest",
-    "AutomationLiveTestExpectedRunStatus",
-    "AutomationLiveVerification",
-    "AutomationPublishCheckScenario",
-    "AutomationPublishPolicy",
-    "AutomationPublishPolicyMode",
-    "AutomationQueueHealth",
-    "AutomationQueueHealthReasonCounts",
-    "AutomationResponse",
-    "AutomationResponseSource",
-    "AutomationRevisionResponse",
-    "AutomationSimulationAttempt",
-    "AutomationSimulationAttemptOutcome",
-    "AutomationSimulationMockAttempt",
-    "AutomationSimulationMockAttemptOutcome",
-    "AutomationSimulationStep",
-    "AutomationSimulationStepKind",
-    "AutomationSimulationStepState",
-    "AutomationTestCase",
-    "AutomationTestCaseResult",
-    "AutomationTestCaseResultIssue",
-    "AutomationTestInputs",
-    "AutomationTestInputsMockAttempts",
-    "AutomationTestInputsMockItemAttempts",
-    "AutomationTestInputsMockItemAttemptsAdditionalProperty",
-    "AutomationTestInputsMockItemOutputs",
-    "AutomationTestInputsMockOutputs",
-    "AutomationTestReport",
-    "AutomationTestStepResult",
-    "AutomationTestStepResultMismatchesItem",
-    "AutomationTestSuite",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -7070,8 +6995,6 @@ __all__ = (
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
     "CheckAccountWorkflowReadinessBody",
-    "CheckAutomationPublicationRequest",
-    "CheckAutomationPublicationResponse",
     "CheckedProjectReleaseManifest",
     "CheckedProjectReleaseManifestDeployments",
     "CheckedProjectReleaseManifestExpectedFallbackDeployments",
@@ -7083,6 +7006,8 @@ __all__ = (
     "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
+    "CheckStoredWorkflowPublicationRequest",
+    "CheckStoredWorkflowPublicationResponse",
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
@@ -8793,11 +8718,6 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
-    "ListAutomationLiveBaselinesResponse",
-    "ListAutomationLiveSuitesResponse",
-    "ListAutomationLiveVerificationsResponse",
-    "ListAutomationRevisionsResponse",
-    "ListAutomationsResponse",
     "ListBillingRunItemsOutcome",
     "ListBindingVerificationRunsStatus",
     "ListBucketObjectsResponse200",
@@ -8881,6 +8801,11 @@ __all__ = (
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
     "ListStatementInvoicesStatus",
+    "ListStoredWorkflowLiveBaselinesResponse",
+    "ListStoredWorkflowLiveSuitesResponse",
+    "ListStoredWorkflowLiveVerificationsResponse",
+    "ListStoredWorkflowRevisionsResponse",
+    "ListStoredWorkflowsResponse",
     "ListTenantSurfacesResponse",
     "ListTenantWorkflowSchedulesResponse",
     "ListTriggerDeadLetterResponse",
@@ -10855,8 +10780,8 @@ __all__ = (
     "ProjectWorkerHealthStatus",
     "ProjectWorkerJobSample",
     "ProjectWorkloadResponse",
-    "PromoteAutomationLiveBaselineRequest",
     "PromoteProjectEnvironmentRequest",
+    "PromoteStoredWorkflowLiveBaselineRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -10882,7 +10807,6 @@ __all__ = (
     "PublicStatusUpdateComponentsItem",
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
-    "PublishAutomationRequest",
     "PublishEventBatchRequest",
     "PublishEventBatchResponse",
     "PublishEventBatchResult",
@@ -10895,6 +10819,7 @@ __all__ = (
     "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
+    "PublishStoredWorkflowRequest",
     "PutAPIConsumerBillingPolicyRequest",
     "PutAPIConsumerSpendCapRequest",
     "PutAPIConsumerTrialRequest",
@@ -10934,8 +10859,8 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
-    "PutWebhookAutomationBindingRequest",
-    "PutWebhookAutomationBindingRequestFilter",
+    "PutWebhookWorkflowBindingRequest",
+    "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
     "QueueBindingCanaryStatus",
     "QueueBindingResponse",
@@ -11190,14 +11115,14 @@ __all__ = (
     "ResourceStatus",
     "ResourceStatusKind",
     "RestoreAppBody",
-    "RestoreAutomationRevisionRequest",
     "RestoreDeletedAppBody",
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
-    "ResumeAutomationFailurePauseRequest",
+    "RestoreStoredWorkflowRevisionRequest",
     "ResumeProjectMigrationRequest",
+    "ResumeStoredWorkflowFailurePauseRequest",
     "ResumeWorkflowRunRequest",
-    "RetireAutomationLiveBaselineRequest",
+    "RetireStoredWorkflowLiveBaselineRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryEventExecutionLineageCaseRequest",
@@ -11492,7 +11417,7 @@ __all__ = (
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",
-    "RunAutomationTestsRequest",
+    "RunStoredWorkflowTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -11519,13 +11444,13 @@ __all__ = (
     "SafeApplyProjectProjectReleaseMode",
     "SafeApplyProjectProjectStabilization",
     "SafeApplyProjectProjectWorkerHealth",
-    "SaveAutomationDraftRequest",
-    "SaveAutomationLiveSuiteRequest",
-    "SaveAutomationTestSuiteRequest",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
     "SaveRouteRequirementsRequest",
+    "SaveStoredWorkflowDraftRequest",
+    "SaveStoredWorkflowLiveSuiteRequest",
+    "SaveStoredWorkflowTestSuiteRequest",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
@@ -11739,10 +11664,6 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetApplicationStandardLocalIntentRequest",
     "SetAppStaticEgressIPRequest",
-    "SetAutomationEnabledRequest",
-    "SetAutomationFailurePolicyRequest",
-    "SetAutomationPublishPolicyRequest",
-    "SetAutomationPublishPolicyRequestMode",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
     "SetCanaryRouteGateRequest",
@@ -11789,6 +11710,10 @@ __all__ = (
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
     "SetServiceWakeAheadRequest",
+    "SetStoredWorkflowEnabledRequest",
+    "SetStoredWorkflowFailurePolicyRequest",
+    "SetStoredWorkflowPublishPolicyRequest",
+    "SetStoredWorkflowPublishPolicyRequestMode",
     "SetWorkflowRecoveryPolicyRequest",
     "SeverityCounts",
     "Sidecar",
@@ -11806,13 +11731,13 @@ __all__ = (
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",
     "SidecarType",
-    "SimulateAutomationRequest",
-    "SimulateAutomationRequestMockAttempts",
-    "SimulateAutomationRequestMockItemAttempts",
-    "SimulateAutomationRequestMockItemAttemptsAdditionalProperty",
-    "SimulateAutomationRequestMockItemOutputs",
-    "SimulateAutomationRequestMockOutputs",
-    "SimulateAutomationResponse",
+    "SimulateStoredWorkflowRequest",
+    "SimulateStoredWorkflowRequestMockAttempts",
+    "SimulateStoredWorkflowRequestMockItemAttempts",
+    "SimulateStoredWorkflowRequestMockItemAttemptsAdditionalProperty",
+    "SimulateStoredWorkflowRequestMockItemOutputs",
+    "SimulateStoredWorkflowRequestMockOutputs",
+    "SimulateStoredWorkflowResponse",
     "SLODuration",
     "SLOResponse",
     "SLOResponseSli",
@@ -11827,14 +11752,14 @@ __all__ = (
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StageProjectReleaseRequest",
-    "StartAutomationLiveSuiteRequest",
-    "StartAutomationLiveVerificationRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",
     "StartDurableEntityRegistryCleanupResponse200",
     "StartDurableEntityRetirementBody",
     "StartDurableEntityRetirementResponse200",
+    "StartStoredWorkflowLiveSuiteRequest",
+    "StartStoredWorkflowLiveVerificationRequest",
     "StatementInvoiceExportResponse",
     "StatementInvoiceExportResponseCollection",
     "StatementInvoiceExportResponsePaymentStatus",
@@ -11853,6 +11778,81 @@ __all__ = (
     "StepDurableEntityRetirementResponse200",
     "StorageUsageListResponse",
     "StorageUsageResponse",
+    "StoredWorkflowCheckAttempt",
+    "StoredWorkflowCheckAttemptOutcome",
+    "StoredWorkflowCheckEvidence",
+    "StoredWorkflowCheckExclusion",
+    "StoredWorkflowCheckExclusionCode",
+    "StoredWorkflowCheckExpectation",
+    "StoredWorkflowCheckExpectationState",
+    "StoredWorkflowCheckScenario",
+    "StoredWorkflowFailurePolicy",
+    "StoredWorkflowFailurePolicyResponse",
+    "StoredWorkflowFailureTransition",
+    "StoredWorkflowFailureTransitionReason",
+    "StoredWorkflowFailureTransitionState",
+    "StoredWorkflowHealthResponse",
+    "StoredWorkflowHealthResponseStatusCounts",
+    "StoredWorkflowHealthRun",
+    "StoredWorkflowHealthRunStatus",
+    "StoredWorkflowHealthStepFailure",
+    "StoredWorkflowLiveBaseline",
+    "StoredWorkflowLiveBaselineCaseHealth",
+    "StoredWorkflowLiveBaselineCaseHealthStatus",
+    "StoredWorkflowLiveBaselineHealth",
+    "StoredWorkflowLiveBaselineHealthEvidenceStatus",
+    "StoredWorkflowLiveBaselineHealthRenewalStatus",
+    "StoredWorkflowLiveBaselineHistory",
+    "StoredWorkflowLiveBaselinePolicy",
+    "StoredWorkflowLiveBaselinePolicyVersion",
+    "StoredWorkflowLiveBaselineRetirement",
+    "StoredWorkflowLiveExpectation",
+    "StoredWorkflowLiveExpectationState",
+    "StoredWorkflowLiveReport",
+    "StoredWorkflowLiveSuite",
+    "StoredWorkflowLiveSuiteCase",
+    "StoredWorkflowLiveSuiteCaseComparison",
+    "StoredWorkflowLiveSuiteCaseComparisonChange",
+    "StoredWorkflowLiveSuiteCaseOutcome",
+    "StoredWorkflowLiveSuiteComparison",
+    "StoredWorkflowLiveSuiteComparisonCounts",
+    "StoredWorkflowLiveSuiteCounts",
+    "StoredWorkflowLiveSuiteMember",
+    "StoredWorkflowLiveSuiteObservation",
+    "StoredWorkflowLiveSuiteObservationResult",
+    "StoredWorkflowLiveSuiteOutcome",
+    "StoredWorkflowLiveSuiteSummary",
+    "StoredWorkflowLiveTest",
+    "StoredWorkflowLiveTestExpectedRunStatus",
+    "StoredWorkflowLiveVerification",
+    "StoredWorkflowPublishCheckScenario",
+    "StoredWorkflowPublishPolicy",
+    "StoredWorkflowPublishPolicyMode",
+    "StoredWorkflowQueueHealth",
+    "StoredWorkflowQueueHealthReasonCounts",
+    "StoredWorkflowResponse",
+    "StoredWorkflowResponseSource",
+    "StoredWorkflowRevisionResponse",
+    "StoredWorkflowSimulationAttempt",
+    "StoredWorkflowSimulationAttemptOutcome",
+    "StoredWorkflowSimulationMockAttempt",
+    "StoredWorkflowSimulationMockAttemptOutcome",
+    "StoredWorkflowSimulationStep",
+    "StoredWorkflowSimulationStepKind",
+    "StoredWorkflowSimulationStepState",
+    "StoredWorkflowTestCase",
+    "StoredWorkflowTestCaseResult",
+    "StoredWorkflowTestCaseResultIssue",
+    "StoredWorkflowTestInputs",
+    "StoredWorkflowTestInputsMockAttempts",
+    "StoredWorkflowTestInputsMockItemAttempts",
+    "StoredWorkflowTestInputsMockItemAttemptsAdditionalProperty",
+    "StoredWorkflowTestInputsMockItemOutputs",
+    "StoredWorkflowTestInputsMockOutputs",
+    "StoredWorkflowTestReport",
+    "StoredWorkflowTestStepResult",
+    "StoredWorkflowTestStepResultMismatchesItem",
+    "StoredWorkflowTestSuite",
     "StreamAppLogsArchive",
     "StreamAppLogsFollow",
     "StreamAppLogsLevel",
@@ -12068,8 +12068,8 @@ __all__ = (
     "UsageResponse",
     "UsageSummaryResponse",
     "UsageSummaryResponseEgressBillingMode",
-    "ValidateAutomationRequest",
-    "ValidateAutomationResponse",
+    "ValidateStoredWorkflowRequest",
+    "ValidateStoredWorkflowResponse",
     "Vulnerability",
     "VulnerabilitySeverity",
     "WakeTimelineApp",
@@ -12083,12 +12083,12 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
-    "WebhookAutomationBindingResponse",
-    "WebhookAutomationBindingResponseFilter",
-    "WebhookAutomationReceiptResponse",
-    "WebhookAutomationReceiptResponseIgnoredReason",
-    "WebhookAutomationReceiptResponseRoutingStatus",
-    "WebhookAutomationReceiptResponseStatus",
+    "WebhookWorkflowBindingResponse",
+    "WebhookWorkflowBindingResponseFilter",
+    "WebhookWorkflowReceiptResponse",
+    "WebhookWorkflowReceiptResponseIgnoredReason",
+    "WebhookWorkflowReceiptResponseRoutingStatus",
+    "WebhookWorkflowReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
     "WorkerAdmissionBlocker",

@@ -10,7 +10,7 @@
     {"path": "api-hosting-openapi", "source": "docs/api-hosting-openapi.md"},
     {"path": "api-monetization", "external": true},
     {"path": "apps", "source": "docs/apps.md"},
-    {"path": "automations", "source": "docs/automation-authoring.md", "unpublished": "internal capability; not a customer feature"},
+    {"path": "stored-workflows", "source": "docs/stored-workflow-authoring.md", "unpublished": "internal capability; not a customer feature"},
     {"path": "auth", "source": "docs/auth.md"},
     {"path": "billing", "source": "docs/billing.md"},
     {"path": "broker-triggers", "source": "docs/broker-triggers.md", "unpublished": "preview capability; published when it reaches beta"},

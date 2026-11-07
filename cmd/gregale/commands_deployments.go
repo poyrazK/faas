@@ -12,7 +12,7 @@
 //   - JSON output for the list path is the *envelope* ({items,next_before})
 //     rather than NDJSON per record. This is a deliberate break from
 //     the apps/crons/keys convention; the endpoint is paginated and
-//     dropping next_before is worse for automation. The singular
+//     dropping next_before is worse for stored_workflow. The singular
 //     `gregale deployment <id>` JSON path is the dotted envelope object
 //     (one indented JSON object), matching AccountResponse / AppResponse.
 //

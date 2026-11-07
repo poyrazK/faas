@@ -1188,7 +1188,7 @@ export type { WakeTimelineEvent } from './models/WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './models/WakeTimelineJSONRow.js';
 export type { WakeTimelinePage } from './models/WakeTimelinePage.js';
 export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
-export type { WebhookAutomationReceiptResponse } from './models/WebhookAutomationReceiptResponse.js';
+export type { WebhookWorkflowReceiptResponse } from './models/WebhookWorkflowReceiptResponse.js';
 export type { WorkDecision } from './models/WorkDecision.js';
 export type { WorkerRolloutObservation } from './models/WorkerRolloutObservation.js';
 export type { WorkerScaling } from './models/WorkerScaling.js';

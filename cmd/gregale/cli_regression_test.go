@@ -18,9 +18,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type forbiddenAutomationInput struct{ t *testing.T }
+type forbiddenStoredWorkflowInput struct{ t *testing.T }
 
-func (r forbiddenAutomationInput) Read([]byte) (int, error) {
+func (r forbiddenStoredWorkflowInput) Read([]byte) (int, error) {
 	r.t.Fatal("non-interactive command read stdin")
 	return 0, io.EOF
 }
@@ -50,7 +50,7 @@ func assertOneProblem(t *testing.T, output string) api.Problem {
 	return p
 }
 
-func TestCLIRegressionAutomationPrefixAndForwarding(t *testing.T) {
+func TestCLIRegressionStoredWorkflowPrefixAndForwarding(t *testing.T) {
 	setupCLIRegression(t)
 	for _, tc := range []struct {
 		args, want []string
@@ -65,25 +65,25 @@ func TestCLIRegressionAutomationPrefixAndForwarding(t *testing.T) {
 	} {
 		nonInteractive = false
 		original := append([]string(nil), tc.args...)
-		got, err := extractAutomationFlag(tc.args)
+		got, err := extractStoredWorkflowFlag(tc.args)
 		if err != nil || !reflect.DeepEqual(got, tc.want) || nonInteractive != tc.enabled || !reflect.DeepEqual(tc.args, original) {
 			t.Fatalf("args=%v got=%v mode=%t err=%v", tc.args, got, nonInteractive, err)
 		}
 	}
 	nonInteractive = false
-	if _, err := extractAutomationFlag([]string{"--non-interactive=maybe", "apps"}); err == nil {
+	if _, err := extractStoredWorkflowFlag([]string{"--non-interactive=maybe", "apps"}); err == nil {
 		t.Fatal("invalid boolean accepted")
 	}
 }
 
-func TestCLIRegressionAutomationFailsBeforeInputOrRequests(t *testing.T) {
+func TestCLIRegressionStoredWorkflowFailsBeforeInputOrRequests(t *testing.T) {
 	setupCLIRegression(t)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(500) }))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", testAPIKey('a'))
-	osStdin = forbiddenAutomationInput{t}
+	osStdin = forbiddenStoredWorkflowInput{t}
 	// mfa disable is absent: it only prints the dashboard link that finishes
 	// in a browser, reads no input and sends no request (commands_mfa_test.go).
 	for _, args := range [][]string{{"login"}, {"start"}, {"account", "delete"}, {"apps", "--yes=false", "demo"}, {"triggers", "delete", "trigger-1"}, {"orgs", "rm", "demo"}, {"billing", "cancel"}, {"signup"}} {
@@ -108,12 +108,12 @@ func TestCLIRegressionAutomationFailsBeforeInputOrRequests(t *testing.T) {
 	if err := openBrowser("https://example.com"); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatal("browser launch was not blocked")
 	}
-	if _, err := readInteractivePassword(bufio.NewReader(forbiddenAutomationInput{t}), "secret:"); err == nil {
+	if _, err := readInteractivePassword(bufio.NewReader(forbiddenStoredWorkflowInput{t}), "secret:"); err == nil {
 		t.Fatal("secret prompt allowed")
 	}
 }
 
-func TestCLIRegressionAutomationExplicitInputAndConfirmation(t *testing.T) {
+func TestCLIRegressionStoredWorkflowExplicitInputAndConfirmation(t *testing.T) {
 	setupCLIRegression(t)
 	token := testAPIKey('b')
 	var logins, deletions atomic.Int32
@@ -151,7 +151,7 @@ func TestCLIRegressionAutomationExplicitInputAndConfirmation(t *testing.T) {
 	}
 	profileOverride = ""
 	output.Reset()
-	osStdin = forbiddenAutomationInput{t}
+	osStdin = forbiddenStoredWorkflowInput{t}
 	code = captureStdoutSwap(t, &output, func() int {
 		return run([]string{"--profile", "staging", "--json", "--non-interactive", "apps", "--yes", "demo"})
 	})

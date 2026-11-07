@@ -8,7 +8,7 @@ Status: Accepted (owner decisions 2026-11-07); implementation in progress
 Gregale has two nouns for one engine. An *automation* is a set of steps with
 a manual, scheduled or event start, authored as JSON through the dashboard,
 API or SDK; it already runs on the durable workflow executor
-(`docs/automation-authoring.md`). A *workflow* is the same executor driven by
+(then `docs/automation-authoring.md`). A *workflow* is the same executor driven by
 code or by `gregale.yaml` `workflows:`. Every feature (runs, recovery, failure
 policies, tests, live verification) is explained and built for both names.
 
@@ -34,29 +34,40 @@ In scope: the product feature only.
 |---|---|---|
 | Tables (11) | `workflow_automation_definitions`, `_revisions`, `_failure_guards`, `_failure_history`, `_failure_policies`, `_live_baseline_promotions`, `_live_baseline_retirements`, `_live_suites`, `_live_verifications`, `_publish_policies`, `_publish_receipts` | `stored_workflows`, `stored_workflow_revisions`, `stored_workflow_failure_guards`, … (same suffixes under `stored_workflow_`) |
 | API | `/v1/apps/{slug}/automations[...]` (16 path groups) | `/v1/apps/{slug}/workflows/stored[...]`; collection actions `:simulate`, `:validate`, `:publish-policy` keep their verbs |
-| Event kinds | `automation.paused`, `automation.recovery_*` | `stored_workflow.paused`, `stored_workflow.recovery_*` |
-| Alert rule kinds | `automation_unpublished`, `automation_paused`, `automation_failures`, `automation_backlog` | `stored_workflow_unpublished`, … |
+| Event kinds | `automation.paused`, `automation.recovery_*`; pause payload key `automation_name` | `stored_workflow.paused`, `stored_workflow.recovery_*`; `stored_workflow_name` |
+| Webhook bindings | `/inbound-webhooks/{id}/automation-binding`, `/automation-receipts`, `webhook_automation_*` codes | `/workflow-binding`, `/workflow-receipts`, `webhook_workflow_*` |
+| Ignore reasons, agent trigger | `automation_unpublished`, `automation_paused`, `automation_failure_paused`; agent run trigger `automation` | `stored_workflow_*`; `stored_workflow` |
+| Tenant token scopes | `platform_tenant:automations:read`, `:manage` | `platform_tenant:stored_workflows:read`, `:manage` |
+| Capability and flag | capability `automations`, platform flag `automations` | capability `stored-workflows`, flag `stored_workflows` |
+| Alert presets | `automation_backlog`, `automation_failures` | `stored_workflow_backlog`, `stored_workflow_failures` |
 | Error codes | `automation_invalid`, `automation_version_conflict`, `automation_ownership_conflict` | `stored_workflow_invalid`, … |
 | CLI | `gregale automation …` | `gregale workflow stored …` |
 | Go packages | `pkg/automationgate`, `automationchecks`, `automationtemplates`, `automationlive` | `pkg/storedworkflowgate`, `storedworkflowchecks`, `storedworkflowtemplates`, `storedworkflowlive` |
 | SDKs | Node/Python/Go automation types and methods | regenerated from OpenAPI under stored-workflow names |
 | Dashboard | app → Workflows → "Build and manage automations" | one Workflows section listing code and stored workflows |
-| Docs | `automation-authoring.md` | `stored-workflows.md`, linked from the workflows docs |
+| Docs | `automation-authoring.md` | `stored-workflow-authoring.md`, linked from the workflows docs |
 
 Out of scope, a different meaning of the word: `ci_automation_*` tables and
-code (GitHub pull-request automation), `hosting_automation_credentials`, and
-the `webhook_automation_*` codes. They keep their names.
+code (GitHub pull-request automation), `hosting_automation_credentials` and
+the site automation credentials, workflow recovery automation (the automatic
+retry policy), and the generic English word. They keep their names.
+Inbound webhook bindings to a stored workflow were first listed here and are
+in scope: they start stored workflows.
 
 ## Decision
 
 ### Storage
 
-One migration renames the 11 tables (`ALTER TABLE … RENAME TO …`; indexes,
-constraints and foreign keys follow the table and keep working under their
-old names). In the same transaction it rewrites stored event kinds in
-event rows and in webhook and event subscription filters, rewrites stored
-alert-rule kinds, and replaces the CHECK constraints that list those values,
-so no stored subscription or alert rule keeps a kind that no longer exists.
+One migration renames the 11 tables with their indexes, constraints and
+sequence, the `automation_version` columns, and the functions that name
+them. In the same transaction it rewrites stored values that drive
+behavior: outbox event kinds and the pause payload key, app webhook event
+filters, webhook receipt ignore reasons, agent run triggers, alert preset
+names, and the capability's platform flag rows. No stored tenant token
+carries the old scopes: the token table's CHECK never admitted them. It
+replaces each CHECK constraint that lists those values, so no stored
+subscription, token or flag keeps a value that no longer exists. Down
+reverses every step; up then down reproduces the previous schema.
 
 ### Contracts
 

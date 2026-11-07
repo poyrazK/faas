@@ -38,7 +38,7 @@ func cmdDeploysClearObsolete(args []string) int {
 	if *olderThan < 0 {
 		return printErr("Invalid --older-than", fmt.Errorf("--older-than must be >= 0; got %s", olderThan.String()))
 	}
-	if code := requireAutomationConfirmation(*force || *dryRun, "--yes (or --dry-run)"); code != 0 {
+	if code := requireStoredWorkflowConfirmation(*force || *dryRun, "--yes (or --dry-run)"); code != 0 {
 		return code
 	}
 	client, err := authedClient()

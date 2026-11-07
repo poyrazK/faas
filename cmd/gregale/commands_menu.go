@@ -64,7 +64,7 @@ func cmdMenu(args []string) int {
 		return 1
 	}
 	// json_flag.go: this launcher is terminal-only; child commands retain
-	// their own machine-readable forms for automation.
+	// their own machine-readable forms for stored_workflow.
 	if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
 		return printErr("Interactive terminal required", errors.New("gregale menu requires terminal input and output; use gregale help to choose a command for scripts"))
 	}

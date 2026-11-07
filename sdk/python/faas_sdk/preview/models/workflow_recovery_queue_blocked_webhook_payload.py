@@ -31,11 +31,12 @@ T = TypeVar("T", bound="WorkflowRecoveryQueueBlockedWebhookPayload")
 
 @_attrs_define
 class WorkflowRecoveryQueueBlockedWebhookPayload:
-    """Historical automation.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or child
-    evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery identifies
-    initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than successful
-    execution. Capturing this event does not finalize a child, release its execution slot, or authorize another retry.
-    Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
+    """Historical stored_workflow.recovery_queue_blocked event. Saved-failure retries capture changes in exact parent or
+    child evidence diagnosis and proven clearance, with diagnosis URL and CLI guidance. Initial automatic recovery
+    identifies initial_failure_id. Unchanged blockers stay quiet; recovery identifies cleared evidence rather than
+    successful execution. Capturing this event does not finalize a child, release its execution slot, or authorize
+    another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver
+    deduplication.
 
     """
 

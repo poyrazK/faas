@@ -39,7 +39,7 @@ func TestPgPlatformTenantOffboardingApplyRevokesAndPersistsReceipt(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := store.CreatePlatformTenantAccessToken(ctx, state.PlatformTenantAccessTokenInput{
-		AccountID: accountID, TenantID: created.Tenant.ID, Name: "automation", Prefix: tokenPrefix, TokenHash: tokenHash,
+		AccountID: accountID, TenantID: created.Tenant.ID, Name: "stored_workflow", Prefix: tokenPrefix, TokenHash: tokenHash,
 		Scopes: []string{api.ScopePlatformTenantConsumersManage}, ExpiresAt: time.Now().UTC().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)

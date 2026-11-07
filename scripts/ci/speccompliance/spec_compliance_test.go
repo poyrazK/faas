@@ -606,8 +606,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/incidents/{id}/notes":                          true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/notes
 	"GET /dashboard/releases/{id}":                                  true, // ADR-20261022120744 HTML page over GET /v1/deployments/{id}/timeline
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
-	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
-	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
+	"GET /dashboard/apps/{slug}/workflows/stored":                   true, // ADR-1285 HTML authoring console
+	"POST /dashboard/apps/{slug}/workflows/stored/{action}":         true, // ADR-1285 app-bound CSRF forms
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -675,9 +675,9 @@ var routeExclude = map[string]bool{
 	"PUT /v1/apps/{slug}/operation-concurrency":    true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 
 	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
-	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
-	"POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
-	"POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
+	"GET /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
+	"POST /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
+	"POST /dashboard/apps/{slug}/workflows/stored/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
 }
 
 func init() {
@@ -839,7 +839,7 @@ var dtoExclude = map[string]bool{
 	// ADR-1193: the operation input delivered to the app, not an apid request or response.
 	"OperationWebhookInput":                  true,
 	"OperationWebhookEvent":                  true,
-	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
+	"StoredWorkflowHealthOptions":            true, // client-only query parameters for the documented automation health response
 	"WorkflowRunListOptions":                 true, // client-only history query parameters for the documented run list response
 	"ListWorkflowScheduleOccurrencesOptions": true, // client-only history query parameters; the occurrence response DTOs are in the public spec
 	"InboundWebhookEndpointRow":              true,
@@ -1030,8 +1030,8 @@ var schemaSpecOnly = map[string]bool{
 	"GitHubAccountConnections":      true,
 	"GitHubConnectionManageRequest": true,
 	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
-	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
-	"AutomationLiveBaselinePolicy":          true,
+	// pkg/storedworkflowgate; the API carries canonical policy JSON in its DTOs.
+	"StoredWorkflowLiveBaselinePolicy":      true,
 	"ApplicationStandardSettings":           true, // appstandards field map checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardAdoption":           true, // appstandards wire types checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardSource":             true,
@@ -1763,20 +1763,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "workflow_code.go"), // ADR-20261021204307 code-first workflow spec
 		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
 		filepath.Join(root, "pkg", "api", "workflow_queued_cancel.go"),
-		filepath.Join(root, "pkg", "api", "automations.go"),
-		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
-		filepath.Join(root, "pkg", "api", "automation_check_evidence.go"),
-		filepath.Join(root, "pkg", "api", "automation_publish_checks.go"),
-		filepath.Join(root, "pkg", "api", "automation_tests.go"),
-		filepath.Join(root, "pkg", "api", "automation_live.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_baselines.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_baseline_listing.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_baseline_retirement.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflows.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_simulation.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_check_evidence.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_publish_checks.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_tests.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_baselines.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_baseline_listing.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_baseline_retirement.go"),
 
-		filepath.Join(root, "pkg", "api", "automation_live_suites.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_suite_execution.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_suite_comparison.go"),
-		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_suites.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_suite_execution.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_suite_comparison.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),
 		filepath.Join(root, "pkg", "api", "workflow_join.go"),

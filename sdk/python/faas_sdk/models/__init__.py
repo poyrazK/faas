@@ -2411,10 +2411,10 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
-from .webhook_automation_receipt_response import WebhookAutomationReceiptResponse
-from .webhook_automation_receipt_response_ignored_reason import WebhookAutomationReceiptResponseIgnoredReason
-from .webhook_automation_receipt_response_routing_status import WebhookAutomationReceiptResponseRoutingStatus
-from .webhook_automation_receipt_response_status import WebhookAutomationReceiptResponseStatus
+from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
+from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
+from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
+from .webhook_workflow_receipt_response_status import WebhookWorkflowReceiptResponseStatus
 from .work_decision import WorkDecision
 from .work_decision_action import WorkDecisionAction
 from .worker_rollout_observation import WorkerRolloutObservation
@@ -4897,10 +4897,10 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
-    "WebhookAutomationReceiptResponse",
-    "WebhookAutomationReceiptResponseIgnoredReason",
-    "WebhookAutomationReceiptResponseRoutingStatus",
-    "WebhookAutomationReceiptResponseStatus",
+    "WebhookWorkflowReceiptResponse",
+    "WebhookWorkflowReceiptResponseIgnoredReason",
+    "WebhookWorkflowReceiptResponseRoutingStatus",
+    "WebhookWorkflowReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
     "WorkerRolloutObservation",

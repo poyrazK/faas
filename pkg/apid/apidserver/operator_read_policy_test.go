@@ -61,7 +61,7 @@ func newOperatorPolicyEnv(t *testing.T, bearerReads string) operatorPolicyEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateAPIKey(ctx, acct.ID, hash, "operator-automation", api.ScopesAdminOnly); err != nil {
+	if _, err := store.CreateAPIKey(ctx, acct.ID, hash, "operator-stored_workflow", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
 	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})

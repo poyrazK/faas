@@ -69,7 +69,7 @@
       "id": "agents",
       "name": "Agents",
       "category": "runtime",
-      "description": "Run a coding-agent harness in a one-shot microVM from the API, an automation step or a broker trigger.",
+      "description": "Run a coding-agent harness in a one-shot microVM from the API, a stored workflow step or a broker trigger.",
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
@@ -668,28 +668,6 @@
       ],
       "cli": [
         "audit-events"
-      ]
-    },
-    {
-      "id": "automations",
-      "name": "Automations",
-      "category": "async",
-      "description": "Run steps against an app manually, on a schedule or on an event.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/automations",
-      "acceptance_test": "pkg/apid/apidserver/handlers_automations_test.go::TestAutomationAPI",
-      "routes": [
-        "/dashboard/apps/{}/automations",
-        "/v1/apps/{}/automations",
-        "/v1/apps/{}/automations:publish-policy",
-        "/v1/apps/{}/automations:simulate",
-        "/v1/apps/{}/automations:validate",
-        "/v1/apps/{}/inbound-webhooks/{}/automation-binding",
-        "/v1/apps/{}/inbound-webhooks/{}/automation-receipts"
-      ],
-      "cli": [
-        "automations"
       ]
     },
     {
@@ -5617,6 +5595,28 @@
       "routes": [
         "/status",
         "/v1/status"
+      ]
+    },
+    {
+      "id": "stored-workflows",
+      "name": "Stored workflows",
+      "category": "async",
+      "description": "Run steps against an app manually, on a schedule or on an event.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/stored-workflows",
+      "acceptance_test": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI",
+      "routes": [
+        "/dashboard/apps/{}/workflows/stored",
+        "/v1/apps/{}/workflows/stored",
+        "/v1/apps/{}/workflows/stored:publish-policy",
+        "/v1/apps/{}/workflows/stored:simulate",
+        "/v1/apps/{}/workflows/stored:validate",
+        "/v1/apps/{}/inbound-webhooks/{}/workflow-binding",
+        "/v1/apps/{}/inbound-webhooks/{}/workflow-receipts"
+      ],
+      "cli": [
+        "stored-workflows"
       ]
     },
     {

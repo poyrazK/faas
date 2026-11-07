@@ -4,8 +4,8 @@
 -- after them), the live tables' automation_version column, the functions
 -- whose bodies name those tables, and the stored values that drive behavior:
 -- webhook event kinds (outbox rows, their CHECK and app webhook filters),
--- agent run triggers, workflow webhook ignore reasons and the two alert
--- presets. CI ("ci_automation_*") and hosting ("hosting_automation_*")
+-- the pause payload key, agent run triggers, workflow webhook ignore
+-- reasons, the two alert presets and the capability's platform flag rows. CI ("ci_automation_*") and hosting ("hosting_automation_*")
 -- tables are a different meaning of the word and are not touched.
 -- One helper does both directions so Down is the exact inverse of Up.
 
@@ -32,6 +32,10 @@ DECLARE
     new_prefix text := CASE WHEN forward THEN 'stored_workflow_' ELSE 'workflow_automation_' END;
     old_event text := CASE WHEN forward THEN 'automation.' ELSE 'stored_workflow.' END;
     new_event text := CASE WHEN forward THEN 'stored_workflow.' ELSE 'automation.' END;
+    old_flag text := CASE WHEN forward THEN 'automations' ELSE 'stored_workflows' END;
+    new_flag text := CASE WHEN forward THEN 'stored_workflows' ELSE 'automations' END;
+    old_name_key text := CASE WHEN forward THEN 'automation_name' ELSE 'stored_workflow_name' END;
+    new_name_key text := CASE WHEN forward THEN 'stored_workflow_name' ELSE 'automation_name' END;
     old_reason text := CASE WHEN forward THEN 'automation_' ELSE 'stored_workflow_' END;
     new_reason text := CASE WHEN forward THEN 'stored_workflow_' ELSE 'automation_' END;
     old_trigger text := CASE WHEN forward THEN 'automation' ELSE 'stored_workflow' END;
@@ -100,6 +104,10 @@ BEGIN
     ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
     UPDATE app_webhook_event_outbox SET event = new_event || substr(event, length(old_event) + 1)
      WHERE strpos(event, old_event) = 1;
+    -- The pause payload names the stored workflow under the new key.
+    UPDATE app_webhook_event_outbox
+       SET payload = (payload - old_name_key) || jsonb_build_object(new_name_key, payload -> old_name_key)
+     WHERE event = new_event || 'paused' AND payload ? old_name_key;
     EXECUTE 'ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk '
         || replace(def, '''' || old_event, '''' || new_event);
     UPDATE app_webhooks SET event_filter = (
@@ -125,6 +133,10 @@ BEGIN
      WHERE strpos(ignored_reason, old_reason) = 1;
     EXECUTE 'ALTER TABLE workflow_webhook_receipts ADD CONSTRAINT workflow_webhook_receipts_ignored_reason_check '
         || replace(def, '''' || old_reason, '''' || new_reason);
+
+    -- The capability's platform flag and its opt-ins follow the capability id.
+    UPDATE runtime_config_entries SET config_key = replace(config_key, old_flag, new_flag)
+     WHERE config_key IN ('platform_flag.' || old_flag, 'platform_flag_opt_ins.' || old_flag);
 
     -- Alert presets are addressed by name (`gregale alert preset enable <name>`).
     UPDATE alert_presets SET name = new_reason || substr(name, length(old_reason) + 1),
@@ -163,6 +175,10 @@ DECLARE
     new_prefix text := CASE WHEN forward THEN 'stored_workflow_' ELSE 'workflow_automation_' END;
     old_event text := CASE WHEN forward THEN 'automation.' ELSE 'stored_workflow.' END;
     new_event text := CASE WHEN forward THEN 'stored_workflow.' ELSE 'automation.' END;
+    old_flag text := CASE WHEN forward THEN 'automations' ELSE 'stored_workflows' END;
+    new_flag text := CASE WHEN forward THEN 'stored_workflows' ELSE 'automations' END;
+    old_name_key text := CASE WHEN forward THEN 'automation_name' ELSE 'stored_workflow_name' END;
+    new_name_key text := CASE WHEN forward THEN 'stored_workflow_name' ELSE 'automation_name' END;
     old_reason text := CASE WHEN forward THEN 'automation_' ELSE 'stored_workflow_' END;
     new_reason text := CASE WHEN forward THEN 'stored_workflow_' ELSE 'automation_' END;
     old_trigger text := CASE WHEN forward THEN 'automation' ELSE 'stored_workflow' END;
@@ -231,6 +247,10 @@ BEGIN
     ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
     UPDATE app_webhook_event_outbox SET event = new_event || substr(event, length(old_event) + 1)
      WHERE strpos(event, old_event) = 1;
+    -- The pause payload names the stored workflow under the new key.
+    UPDATE app_webhook_event_outbox
+       SET payload = (payload - old_name_key) || jsonb_build_object(new_name_key, payload -> old_name_key)
+     WHERE event = new_event || 'paused' AND payload ? old_name_key;
     EXECUTE 'ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk '
         || replace(def, '''' || old_event, '''' || new_event);
     UPDATE app_webhooks SET event_filter = (
@@ -256,6 +276,10 @@ BEGIN
      WHERE strpos(ignored_reason, old_reason) = 1;
     EXECUTE 'ALTER TABLE workflow_webhook_receipts ADD CONSTRAINT workflow_webhook_receipts_ignored_reason_check '
         || replace(def, '''' || old_reason, '''' || new_reason);
+
+    -- The capability's platform flag and its opt-ins follow the capability id.
+    UPDATE runtime_config_entries SET config_key = replace(config_key, old_flag, new_flag)
+     WHERE config_key IN ('platform_flag.' || old_flag, 'platform_flag_opt_ins.' || old_flag);
 
     -- Alert presets are addressed by name (`gregale alert preset enable <name>`).
     UPDATE alert_presets SET name = new_reason || substr(name, length(old_reason) + 1),
