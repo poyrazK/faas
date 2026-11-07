@@ -955,6 +955,12 @@ message AppSpec {
   // would reach; nothing is paused because of it. False (an older schedd)
   // leaves the instance out unless quiet_pause_after_ms is set.
   bool idle_ladder_eligible = 38;
+  // ADR-20261107122928 §6: the instance is a request-serving app that
+  // declared no pause and is not a function, so vmmd may quiet-pause it
+  // between requests behind the idle ladder's activity guard when its
+  // idle_ladder_apps switch is on. An app that declared when_idle or never
+  // keeps what it declared. False (an older schedd) never pauses it.
+  bool idle_ladder_guarded_pause = 39;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
