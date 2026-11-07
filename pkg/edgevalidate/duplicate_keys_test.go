@@ -26,6 +26,9 @@ func TestValidateRefusesDuplicateAndCaseVariantKeys(t *testing.T) {
 		{"exact duplicate", `{"role":"admin","role":"user"}`, "/role"},
 		{"nested object", `{"role":"user","items":[{"id":1,"ID":2}]}`, "/items/0/ID"},
 		{"distinct keys that share a prefix", `{"role":"user","roles":["a"]}`, ""},
+		// encoding/json folds U+017F (long s) to "s" and U+212A (Kelvin) to "k".
+		{"long s folds to s", "{\"role\":\"user\",\"amount\":1,\"items\":[{\"status\":1,\"ſtatus\":2}]}", "/items/0/ſtatus"},
+		{"Kelvin sign folds to k", "{\"role\":\"user\",\"items\":[{\"kind\":1,\"Kind\":2}]}", "/items/0/Kind"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fe, err := c.Validate([]byte(tc.body))

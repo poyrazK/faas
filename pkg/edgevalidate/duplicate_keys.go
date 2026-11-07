@@ -46,7 +46,10 @@ func walkDuplicateKeys(dec *json.Decoder, path string) (*FieldError, error) {
 				return nil, err
 			}
 			key, _ := keyTok.(string)
-			folded := strings.ToLower(key)
+			// encoding/json folds names with Unicode simple folding, so "ſ"
+			// (U+017F) matches "s" and the Kelvin sign matches "k";
+			// lower(upper(x)) maps both orbits onto one key.
+			folded := strings.ToLower(strings.ToUpper(key))
 			if first, dup := seen[folded]; dup {
 				got := "duplicate property " + strconv.Quote(key)
 				if first != key {
