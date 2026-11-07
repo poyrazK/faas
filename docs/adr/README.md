@@ -40,6 +40,7 @@
 
 - [ADR-20261104104521: Recoverable app scaling](20261104104521-recoverable-app-scaling.md) — accepted; native app/environment identity and revision guards, atomic scaling receipts, safe MCP retries, and configuration verification.
 
+- [ADR-20261107170000: API ground rules](20261107170000-api-ground-rules.md) — accepted; six rules (reads have no side effects, server enforces safety checks, honest error classes, replay only completed operations, a response the app never answered is not billed, every non-public path is a documented exception); gateway 4xx refusals after attribution stop being billed
 - [ADR-20261104140058: Human approval for risky agent actions](20261104140058-human-approval-for-risky-agent-actions.md) — accepted; apid answers an agent key's deletes, production deploys, credential and billing changes with 428 approval_required and a review link; a signed-in member who connected the agent, or an org owner/admin, approves; the identical retry consumes the approval once
 - [ADR-20261104085712: Agent connections can be limited to projects](20261104085712-agent-connections-limited-to-projects.md) — accepted; agent and hosted MCP keys may carry a set of projects; apid refuses everything outside it
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
