@@ -38,6 +38,50 @@
     "kind": "operational"
   },
   {
+    "table": "agent_approval_channel_bindings",
+    "columns": [
+      "account_id",
+      "channel_id",
+      "created_at",
+      "org_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "agent_approval_email_log",
+    "columns": [
+      "key_id",
+      "last_sent_at",
+      "recipient_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_approval_notifications",
+    "columns": [
+      "account_id",
+      "agent_name",
+      "approval_id",
+      "attempts",
+      "available_at",
+      "channels_notified_at",
+      "created_at",
+      "finished_at",
+      "key_id",
+      "last_error",
+      "lease_until",
+      "org_id",
+      "review_url",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_approval_requests",
     "columns": [
       "account_id",
@@ -47,6 +91,7 @@
       "created_at",
       "decided_at",
       "decided_by",
+      "decision_note",
       "expires_at",
       "id",
       "key_id",

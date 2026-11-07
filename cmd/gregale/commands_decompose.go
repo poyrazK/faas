@@ -1338,26 +1338,18 @@ func planProblem(plan api.PlanResponse) api.Problem {
 			Detail: fmt.Sprintf("plan caps apps at %d; you have %d.", plan.LimitApps, plan.ObservedApps),
 		}
 	}
-	if !plan.CanApplyPreExclude {
-		// The OLD test invariant: when ObservedCrons > LimitCrons
-		// (the implicit cron-quota case that fell through to the
-		// CronQuota fallback), the wire code stays plan_cron_quota.
-		// The GateBlocked path catches every other gate-block
-		// case — typically a future gate type that doesn't have a
-		// specific wire code yet, or a multi-reason block where
-		// cron-quota is not the primary reason. Without the
-		// ObservedCrons <= LimitCrons guard we would re-route the
-		// `cron-limit` case (TestPlanProblem_Mapping/cron-limit in
-		// commands_decompose_test.go) onto CodePlanGateBlocked,
-		// breaking the wire-shape parity test that ADRs pin.
-		if plan.ObservedCrons <= plan.LimitCrons {
-			return api.Problem{
-				Status: 403,
-				Code:   api.CodePlanGateBlocked,
-				Title:  "Plan gate blocked",
-				Detail: fmt.Sprintf("gate was blocked pre-exclude; reasons: %s",
-					strings.Join(plan.CanApplyReasons, "; ")),
-			}
+	// Only an account over its cron cap keeps plan_cron_quota
+	// (TestPlanProblem_Mapping/cron-limit). Every other block — a
+	// pre-exclude gate, or an admission reason found after --only /
+	// --exclude such as a dependency or slug-ownership problem — carries
+	// its own reasons. Reporting those as "plan caps crons at 500; you
+	// have 10" hid the real cause (ChronoLake finding 11).
+	if plan.ObservedCrons <= plan.LimitCrons {
+		return api.Problem{
+			Status: 403,
+			Code:   api.CodePlanGateBlocked,
+			Title:  "Plan gate blocked",
+			Detail: "project plan cannot be applied: " + planBlockedError(plan).Error(),
 		}
 	}
 	return api.Problem{

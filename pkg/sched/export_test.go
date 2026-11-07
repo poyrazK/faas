@@ -234,6 +234,8 @@ var QuietPauseAfterMS = quietPauseAfterMS
 
 var PauseTierWorkload = pauseTierWorkload
 
+var IdleLadderGuardedPause = idleLadderGuardedPause
+
 var VMInstanceStatFromProto = vmInstanceStatFromProto
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
