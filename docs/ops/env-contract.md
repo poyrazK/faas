@@ -760,6 +760,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PROMOTION_ROLLOUT_TRUST_KEY` | apid, shared | `default` |  |  | `` | operator-installed base64 Ed25519 public trust key path; read once at APID startup; signing keys stay off the host |
 | `FAAS_PROMOTION_SERVICE_GRAPH_ENABLED` | apid, shared | `default` |  |  | `` | default-off admission for destination-aware HTTP service graph promotion; requires health gating and native qualification |
 | `FAAS_PROMOTION_WORKERS_ENABLED` | apid, shared | `default` |  |  | `` | default-off admission for coordinated HTTP/push-worker promotions; requires health gating and scoped rollout approval |
+| `FAAS_PUBLIC_API_URL` | schedd | `default` |  |  | `` | optional public API base URL schedd hands workloads as GREGALE_API_URL (ADR-20261018101500 amendment 2026-10-31) unless the app sets it; unset leaves the SDK default |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a compute-node edge forwards public object reads, uploads and the OTLP endpoint to this control-plane gatewayd-public URL (http://<private>:<port>); unset answers them 503 |
 | `FAAS_PUBLIC_EDGE_MODE` | gatewayd-public | `unit` |  |  | `` | ADR-1343; "compute" runs gatewayd-public as a compute-node app edge (app hosts only, node-local gateway first); unset is the control-plane edge |

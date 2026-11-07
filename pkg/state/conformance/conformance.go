@@ -4304,10 +4304,13 @@ func testAccountCredits(t *testing.T, fx *Fixture) {
 // into a Go zero would report "no overage allowed" for an account that
 // never set a cap, and stop billing that should happen.
 func testOverageCap(t *testing.T, fx *Fixture) {
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	// An unset cap reads as the plan's effective cap: none on Free, the
+	// plan's self-service ceiling on a paid plan (ADR-20261105120000).
+	unsetCents, unsetOK := state.EffectiveOverageCapCents(fx.Account.Plan, nil)
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(unset): %v", err)
-	} else if ok {
-		t.Error("a fresh account reported a cap; want ok=false (no cap)")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("a fresh account reported (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 
 	zero := int64(0)
@@ -4335,10 +4338,10 @@ func testOverageCap(t *testing.T, fx *Fixture) {
 	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(cleared): %v", err)
-	} else if ok {
-		t.Error("cap still reported after clearing with nil; want ok=false")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("cleared cap read back as (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 }
 

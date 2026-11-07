@@ -74,6 +74,12 @@ func TestSourceRefManifestAppliesQueueBindings(t *testing.T) {
 		t.Fatalf("jobs binding = %+v, want an enabled pull worker binding with concurrency 4", jobs)
 	}
 	second := &gregalemanifest.Manifest{Worker: worker, QueueBindings: []gregalemanifest.QueueBinding{{Name: "emails", QueueName: "emails"}}}
+	// The settings step compares against the app it is handed, so the second
+	// deploy starts from the app the first one left.
+	app, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, second, "", true)
 	if problem != nil {
 		t.Fatalf("apply second manifest: %s: %s", problem.Code, problem.Detail)
