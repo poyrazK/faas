@@ -43,9 +43,10 @@ active apps on that node in the background, before their users ask for them.
 The customer is not billed for this work.
 
 1. **What starts a pass.** A node's `compute_nodes.release_id` changes (the
-   release install stamps it). An operator can also start a pass for a node,
-   for a base, kernel or Firecracker change made outside a release. schedd
-   queues one refresh pass for that node.
+   release install stamps it), and once per node when schedd starts, since
+   schedd restarts during a release. schedd runs one refresh pass for that
+   node. A pass for a base, kernel or Firecracker change made outside a
+   release, started by an operator, is a later addition.
 2. **Which snapshots.** For each app with a gateway wake in the last
    `snapshot_refresh_window_hours` (default 168), schedd asks the node's vmmd
    whether the app's live snapshot would restore there. A new
@@ -60,25 +61,30 @@ The customer is not billed for this work.
      apps;
    - workers, jobs and apps whose deployment cannot be primed
      (`releaseAllowsPrime`, managed PostgreSQL admission);
-   - snapshots already captured after the node's release.
+   - snapshots already captured after the node's release: the node answers
+     `current` for them.
 4. **How.** A refresh is the deploy pipeline's prime: cold boot the app's
    current deployment on the node that holds its snapshot, wait for
    readiness, capture and park (`snapshotAndParkPrime`). The new snapshot is
    local to that node, so the next wake restores locally. Replicas upload as
    usual.
-5. **Order and pace.** Most recent wake first. At most
-   `snapshot_refresh_per_node` refreshes at once per node (default 1). A
-   refresh is admitted only while the node keeps the headroom the builder's
-   second slot requires (tenant residency below 60%). It never outranks a
-   tenant wake: a wake that needs the capacity is admitted first, and a
-   refresh still waiting for admission is dropped from the pass.
+5. **Order and pace.** Most recent park first. One refresh at a time per
+   node; nodes are passed concurrently. A refresh is admitted only while the
+   node keeps the headroom the builder's second slot requires (admitted
+   tenant RAM below 60% of the node's ceiling). It never waits for room and
+   never outranks a tenant wake: without room it is deferred, keeps its
+   stale snapshot, and the node's pass runs again on the next tick.
+   The stale row is retired once the refresh is admitted, as a wake whose
+   restore fell back retires it; otherwise imaged would keep it over the
+   new capture.
 6. **A new instance mode, `refresh`.** The refresh VM:
    - is never routed;
    - is not counted toward `max_concurrency`, as forks are not (ADR-732), so
      a user's wake for the same app is never blocked by it;
    - counts toward the node RAM ceiling and admission;
    - is not idle-reaped: the refresh coordinator parks it after the capture,
-     or destroys it on failure;
+     or destroys it on failure; one older than 10 minutes, left by a
+     scheduler that stopped mid-refresh, is destroyed on the next tick;
    - is not billed (below).
 7. **Rollout.**
    - `shadow` logs and counts each pass's candidates and skip reasons without
@@ -155,13 +161,19 @@ The property tests gain `refresh` instances in their generators.
     interval function, expand-only, `lock_timeout`);
   - one additive vmmd RPC;
   - a schedd refresh coordinator;
-  - three runtime config keys, with defaults in `pkg/api/limits.go`.
+  - two runtime config keys, `snapshot_refresh` and
+    `snapshot_refresh_window_hours` (1 to 720, inside the 30-day retention
+    of the parked rows the window is read from), with defaults in
+    `pkg/api/limits.go`.
 
 ## Metrics
 
-- `schedd_snapshot_refresh_total{outcome}`, with outcome in `refreshed`,
-  `current`, `skipped_live`, `skipped_ineligible`, `preempted`, `failed`.
-- `schedd_snapshot_refresh_pending{node}` gauge.
+- `schedd_snapshot_refresh_total{outcome}`, one per candidate app per pass,
+  with outcome in `current`, `would_refresh` (stale; counted by a shadow
+  pass), `refreshed`, `deferred` (no headroom), `failed`, `unknown`,
+  `no_snapshot`, `skipped_live` and `skipped_ineligible`.
+- `schedd_snapshot_refresh_pending{node}`: stale snapshots the node's last
+  pass found and the platform has not refreshed yet.
 - The existing restore-fallback reason counter shows the effect:
   `snapshot_stale` fallbacks after a release should fall toward zero for
   refreshed apps.
