@@ -31,7 +31,7 @@ could be neither emptied nor deleted. The customer journey
   a `Deleted` time) in a version listing or history proof, by a non-latest item
   of a version listing, or by Gregale's own bucket versioning state, which
   already fences writes during a versioning change.
-- Migration `20261105105936402` drops the CHECK that required
+- Migration `20261107201212427` drops the CHECK that required
   `versions_observed` for every non-null identity (expand: the previous
   release still writes true). The monotonic trigger and one-way
   `all_versions` scope are unchanged.
