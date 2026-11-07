@@ -5780,11 +5780,14 @@ var cliCommands = []cliCommand{
 				}},
 			}},
 			{Name: "hooks", Short: "Change hooks: publish committed row changes as events", Subcommands: []cliSub{
-				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers."}, Flags: []cliFlag{
+				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers.",
+					"Changes stop recording while 100,000 wait to publish. --upgrade prints only that bound for hooks installed before it."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
-				}, Examples: []string{"gregale data-api hooks export > migrations/0006_change_hooks.sql"}},
+					{Name: "upgrade", Short: "print only the backlog bound upgrade for an existing installation"},
+				}, Examples: []string{"gregale data-api hooks export > migrations/0006_change_hooks.sql", "gregale data-api hooks export --upgrade > migrations/0009_change_hooks_bound.sql"}},
 				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"},
-					Notes: []string{"--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan's cron limits and each run is app time."}, Flags: []cliFlag{
+					Notes: []string{"--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan's cron limits and each run is app time.",
+						"Only production publishes, and only on a platform that accepts runtime reports; otherwise enable changes nothing."}, Flags: []cliFlag{
 						{Name: "drain-every", Value: "DURATION|off", Short: "wake a parked API this often to publish waiting changes (1m-30m dividing an hour, 1h-12h dividing a day, or 24h)"},
 						{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 						{Name: "no-restart", Short: "store settings without a fresh restart"},

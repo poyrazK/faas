@@ -3443,6 +3443,43 @@ func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
 }
 
+// Snapshot refresh after a release (ADR-20261106214916). schedd's
+// `snapshot_refresh` runtime config is off, shadow (find and count the
+// snapshots a release made stale, boot nothing) or on.
+const (
+	SnapshotRefreshOff    = "off"
+	SnapshotRefreshShadow = "shadow"
+	SnapshotRefreshOn     = "on"
+	// DefaultSnapshotRefresh is the compiled `snapshot_refresh`.
+	DefaultSnapshotRefresh = SnapshotRefreshOff
+
+	// DefaultSnapshotRefreshWindowHours is the compiled
+	// `snapshot_refresh_window_hours`: an app parked on a node within this
+	// many hours is a candidate on that node.
+	DefaultSnapshotRefreshWindowHours = 168
+	SnapshotRefreshWindowHoursMin     = 1
+	// SnapshotRefreshWindowHoursMax stays inside the 30-day retention of the
+	// parked instance rows the window is read from (DefaultInstanceRetention).
+	SnapshotRefreshWindowHoursMax = 720
+
+	// SnapshotRefreshPassMaxApps bounds one node's pass, most recently parked
+	// first.
+	SnapshotRefreshPassMaxApps = 1000
+)
+
+// ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
+// `on` is accepted once schedd can perform a refresh (ADR-20261106214916
+// step 3b); until then a pass is at most a shadow pass.
+func ValidSnapshotRefresh(v string) bool {
+	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow
+}
+
+// ValidSnapshotRefreshWindowHours reports whether v is a valid
+// `snapshot_refresh_window_hours`.
+func ValidSnapshotRefreshWindowHours(v int) bool {
+	return v >= SnapshotRefreshWindowHoursMin && v <= SnapshotRefreshWindowHoursMax
+}
+
 // CPUShape holds the runtime-config values that shape the CPU of an app on
 // schedd's `guest_vcpu_from_cpu_apps` list (ADR-20261101215228). A zero field
 // takes the compiled value, so the zero CPUShape is ADR-20261101160231 as
@@ -15487,6 +15524,20 @@ const (
 	DataAPIChangeHooksDrainWait        = 45 * time.Second
 	DataAPIChangeHooksDrainCronTimeout = 60 * time.Second
 	DataAPIChangeHooksDrainPath        = "/__gregale/hooks/drain"
+	// The change event table stops recording while this many changes wait to
+	// publish (ADR-20261022121642 amendment 2): a stage or an installation
+	// without workload identity never publishes, and the trigger would
+	// otherwise grow the table until it fills the customer's database. The
+	// CLI renders it into `data-api hooks export`; status warns from
+	// DataAPIChangeHooksBacklogWarnPercent of it.
+	DataAPIChangeHooksBacklogMax         = 100_000
+	DataAPIChangeHooksBacklogWarnPercent = 90
+	// The runtime rereads its access gate (which relations are row-secured,
+	// whether public reads and RPCs are still safe) at most this often while
+	// it serves, and after every snapshot restore (ADR 20261026140223
+	// amendment 1): a migration that disables RLS reaches the gate within it,
+	// not at the next refresh. Each reread is one short catalog connection.
+	DataAPIAccessRecheckInterval = time.Minute
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

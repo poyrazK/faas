@@ -160,8 +160,8 @@ runuser -u postgres -- "${LIVE_PG_BIN}/initdb" -D "$RESTORE_PGDATA" --auth=peer 
 ok "initdb complete"
 
 tar -xzf "$RESTORE_STAGE/base.tar.gz" -C "$RESTORE_PGDATA"
-# `-X fetch` places required WAL inside base.tar.gz. A separately streamed
-# pg_wal.tar.gz is accepted for compatibility with older/operator-made backups.
+# The nightly backup streams WAL (`-X stream`) into pg_wal.tar.gz. Backups made
+# before 2026-11-07 used `-X fetch` and carry that WAL inside base.tar.gz.
 [[ -f "$RESTORE_STAGE/pg_wal.tar.gz" ]] \
   && tar -xzf "$RESTORE_STAGE/pg_wal.tar.gz" -C "$RESTORE_PGDATA"
 chown -R postgres:postgres "$RESTORE_PGDATA"

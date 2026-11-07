@@ -16895,7 +16895,7 @@ paths:
       tags: [managed_postgres]
       operationId: reportDataAPIUsage
       summary: Report Data API usage deltas
-      description: Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+      description: Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a live instance of an active app; account, app and instance come from it, never from the body. Only a production deployment reports; a stage, preview or cloned environment is refused for good with 403 workload_not_production, so its usage never counts against production's caps and its access settings never govern production's live reads. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
       x-internal: true
       security:
         - dataAPIUsageWorkloadIdentity: []
@@ -16912,6 +16912,7 @@ paths:
               schema: { $ref: '#/components/schemas/DataAPIUsageReportResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/data-api/events:
@@ -16919,7 +16920,7 @@ paths:
       tags: [managed_postgres]
       operationId: publishDataAPIChangeEvents
       summary: Publish recorded Data API row changes
-      description: Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+      description: Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Only a production deployment publishes; a stage, preview or cloned environment is refused for good with 403 workload_not_production. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
       x-internal: true
       security:
         - dataAPIEventsWorkloadIdentity: []
@@ -16936,6 +16937,7 @@ paths:
               schema: { $ref: '#/components/schemas/DataAPIChangeEventBatchResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '413':
           description: The publication exceeds 1 MiB.
           content:
@@ -16960,6 +16962,7 @@ paths:
         '204': { description: The report is stored. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:

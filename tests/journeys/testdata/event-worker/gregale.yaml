@@ -1,0 +1,11 @@
+function:
+  runtime: node22
+  handler: handler.handler
+
+# Fixed for every run, so the source digest stays the same and a deploy is a
+# build-cache hit. TestEventDelivery publishes its own event ids; a
+# concurrent run's events only add recipients its assertions ignore.
+event_triggers:
+  - source: e2ej.journeys
+    type: journey.ping
+    filter: '{"data":{"deliver":true}}'

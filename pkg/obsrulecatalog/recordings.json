@@ -2832,7 +2832,7 @@
       ]
     },
     {
-      "revision": "723f72fb5561b5966d875aa39e4505e8b54a150349f92e2cce6724e1e1dab335",
+      "revision": "1c3c892b430c301197c5e734560221afa082d3195ea1fbc687f981d96f92b8b2",
       "expected": {
         "id": "gregale-full-v1",
         "revision": "fdfb015f00046499c20f4d13eaa6971fa728e8e3292a3f6186a2965c135f13d1",
@@ -4081,8 +4081,8 @@
           }
         ]
       },
-      "alert_set_revision": "48b7b8d6dccd35670697a61db0ac0c1a95efbbb92f1b163c8a61b9c75fd50247",
-      "alert_count": 550,
+      "alert_set_revision": "6e28671c72b341e1a7d74f0a9327240cbce5f6518f806ae24b8085e5aa411ee1",
+      "alert_count": 551,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",

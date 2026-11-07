@@ -671,7 +671,14 @@ func (r *composedWaveFixture) Vmm() **composedWaveNativeVMM { return &r.vmm }
 func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &r.identity }
 
 // Members of drainSynth
-func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
+func (r *drainSynth) Calls() *atomic.Int64 { return &r.calls }
+
+// LastPath is the path of the newest delivered invocation.
+func (r *drainSynth) LastPath() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastPath
+}
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 
@@ -1316,3 +1323,7 @@ func VMMRequestConcurrency(app state.App, limits api.Limits) int32 {
 
 // DrainWithdrawsRoutes exposes drainWithdrawsRoutes to package sched_test.
 func DrainWithdrawsRoutes(ins state.Instance) bool { return drainWithdrawsRoutes(ins) }
+
+// XNewVMMClient wraps a generated vmmd client for tests of VMMClient's
+// mapping of vmmd answers (ADR-20261106214916).
+func XNewVMMClient(cli vmmdpb.VmmdClient) *VMMClient { return &VMMClient{cli: cli} }
