@@ -62,11 +62,13 @@ func (q *Queries) CountPendingAgentApprovals(ctx context.Context, db DBTX, keyID
 	return column_1, err
 }
 
-const decideAgentApproval = `-- name: DecideAgentApproval :execrows
+const decideAgentApproval = `-- name: DecideAgentApproval :one
 UPDATE agent_approval_requests
 SET status = $1, decided_by = $2::uuid, decided_at = now(),
     decision_note = $3
 WHERE id = $4::uuid AND status = 'pending' AND expires_at > now()
+RETURNING id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
+          created_at, decided_at, consumed_at, expires_at, decision_note
 `
 
 type DecideAgentApprovalParams struct {
@@ -77,18 +79,34 @@ type DecideAgentApprovalParams struct {
 }
 
 // A person approves or denies a request that is still pending and unexpired;
-// a denial may carry a note for the agent (ADR-20261107140000 §6).
-func (q *Queries) DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (int64, error) {
-	result, err := db.Exec(ctx, decideAgentApproval,
+// a denial may carry a note for the agent (ADR-20261107140000 §6). It returns
+// the decided request for its webhook event (§4).
+func (q *Queries) DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (AgentApprovalRequest, error) {
+	row := db.QueryRow(ctx, decideAgentApproval,
 		arg.Status,
 		arg.DecidedBy,
 		arg.DecisionNote,
 		arg.ID,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i AgentApprovalRequest
+	err := row.Scan(
+		&i.ID,
+		&i.KeyID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.Category,
+		&i.Method,
+		&i.Path,
+		&i.BodySha256,
+		&i.Status,
+		&i.DecidedBy,
+		&i.CreatedAt,
+		&i.DecidedAt,
+		&i.ConsumedAt,
+		&i.ExpiresAt,
+		&i.DecisionNote,
+	)
+	return i, err
 }
 
 const findPendingAgentApproval = `-- name: FindPendingAgentApproval :one
@@ -216,6 +234,39 @@ func (q *Queries) InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAg
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const insertAgentApprovalWebhookDeliveries = `-- name: InsertAgentApprovalWebhookDeliveries :execrows
+INSERT INTO app_webhook_deliveries (webhook_id, app_id, account_id, event, payload, source_event_id)
+SELECT w.id, NULL, w.account_id, $1::text, $2::jsonb, $3::uuid
+  FROM app_webhooks w
+ WHERE w.account_id = $4::uuid AND w.scope = 'account' AND w.enabled
+   AND $1::text = ANY(w.event_filter)
+ON CONFLICT DO NOTHING
+`
+
+type InsertAgentApprovalWebhookDeliveriesParams struct {
+	Event         string
+	Payload       []byte
+	SourceEventID pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+// ADR-20261107140000 §4, ADR-224: one pending delivery per enabled account
+// receiver of the connector's account subscribed to the event. The ADR-076
+// dispatcher signs, sends and retries it. source_event_id is unique per
+// receiver, so each event of a request is enqueued once.
+func (q *Queries) InsertAgentApprovalWebhookDeliveries(ctx context.Context, db DBTX, arg InsertAgentApprovalWebhookDeliveriesParams) (int64, error) {
+	result, err := db.Exec(ctx, insertAgentApprovalWebhookDeliveries,
+		arg.Event,
+		arg.Payload,
+		arg.SourceEventID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listAgentApprovalsForKey = `-- name: ListAgentApprovalsForKey :many

@@ -3,11 +3,13 @@ package state_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -51,13 +53,59 @@ func exerciseAgentApprovals(t *testing.T, store contractTestStore) {
 		t.Fatalf("changing the categories = %v, want ErrConflict", err)
 	}
 
+	// adr: 20261107140000 — an account receiver subscribed to the approval
+	// events gets one delivery per new request and per decision.
+	hook, err := store.CreateAccountReleaseWebhookIfUnderQuota(ctx, state.AppWebhook{
+		AccountID: acct.ID, Scope: state.AppWebhookScopeAccount, TargetURL: "https://example.com/approvals",
+		SecretSealed: []byte("sealed"), RetryPolicy: state.AppWebhookRetryDefault, Enabled: true,
+		EventFilter: []string{api.AgentApprovalRequestedWebhookEvent, api.AgentApprovalDeniedWebhookEvent},
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("CreateAccountReleaseWebhookIfUnderQuota: %v", err)
+	}
+	approvalEvents := func(event string) []api.AgentApprovalWebhookPayload {
+		t.Helper()
+		deliveries, _, err := store.ListAccountReleaseWebhookDeliveries(ctx, acct.ID, hook.ID, 200, "")
+		if err != nil {
+			t.Fatalf("ListAccountReleaseWebhookDeliveries: %v", err)
+		}
+		var out []api.AgentApprovalWebhookPayload
+		for _, delivery := range deliveries {
+			if string(delivery.Event) != event {
+				continue
+			}
+			var payload api.AgentApprovalWebhookPayload
+			if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+				t.Fatalf("payload %s: %v", delivery.Payload, err)
+			}
+			out = append(out, payload)
+		}
+		return out
+	}
+
 	body := sha256.Sum256([]byte(`{"confirm":true}`))
 	request := state.AgentApproval{
 		KeyID: key.ID, AccountID: acct.ID, OrgID: key.OrgID, Category: api.AgentApprovalDelete,
 		Method: "DELETE", Path: "/v1/apps/web", BodySHA256: body[:], ExpiresAt: time.Now().Add(api.AgentApprovalTTL),
 	}
 	binding := state.AgentApprovalBinding{KeyID: key.ID, Method: "DELETE", Path: "/v1/apps/web", BodySHA256: body[:]}
-	first, err := store.RequestAgentApproval(ctx, request)
+	withLink := request
+	withLink.ID = uuid.NewString()
+	withLink.ReviewURL = "https://example.com/review/" + withLink.ID
+	first, err := store.RequestAgentApproval(ctx, withLink)
+	if err == nil && first.ID != withLink.ID {
+		t.Fatalf("a new request took id %s, want the caller's %s", first.ID, withLink.ID)
+	}
+	if requested := approvalEvents(api.AgentApprovalRequestedWebhookEvent); len(requested) != 1 || requested[0].ApprovalID != withLink.ID ||
+		requested[0].ReviewURL != withLink.ReviewURL || requested[0].Status != api.AgentApprovalPending || requested[0].Category != api.AgentApprovalDelete {
+		t.Fatalf("requested events = %+v; want one for the new request with its review link", requested)
+	}
+	if _, err := store.RequestAgentApproval(ctx, request); err != nil {
+		t.Fatalf("repeat request: %v", err)
+	}
+	if requested := approvalEvents(api.AgentApprovalRequestedWebhookEvent); len(requested) != 1 {
+		t.Fatalf("a reused request enqueued again: %+v", requested)
+	}
 	if err != nil {
 		t.Fatalf("RequestAgentApproval: %v", err)
 	}
@@ -115,6 +163,13 @@ func exerciseAgentApprovals(t *testing.T, store contractTestStore) {
 	}
 	if err := store.DecideAgentApproval(ctx, denied.ID, false, acct.ID, "  not on a Friday  "); err != nil {
 		t.Fatalf("deny: %v", err)
+	}
+	if deniedEvents := approvalEvents(api.AgentApprovalDeniedWebhookEvent); len(deniedEvents) != 1 || deniedEvents[0].ApprovalID != denied.ID ||
+		deniedEvents[0].Note != "not on a Friday" || deniedEvents[0].DecidedAt == "" || deniedEvents[0].ReviewURL != "" {
+		t.Fatalf("denied events = %+v; want one with the note", deniedEvents)
+	}
+	if approved := approvalEvents(api.AgentApprovalApprovedWebhookEvent); len(approved) != 0 {
+		t.Fatalf("the receiver did not subscribe to approved, got %+v", approved)
 	}
 	if _, ok, err := store.ConsumeAgentApproval(ctx, binding); err != nil || ok {
 		t.Fatalf("consuming a denied request = %v, %v; want nothing", ok, err)

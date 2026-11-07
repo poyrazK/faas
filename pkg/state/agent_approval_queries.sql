@@ -57,14 +57,6 @@ SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, stat
        created_at, decided_at, consumed_at, expires_at, decision_note
 FROM agent_approval_requests WHERE id = sqlc.arg(id)::uuid;
 
--- name: DecideAgentApproval :execrows
--- A person approves or denies a request that is still pending and unexpired;
--- a denial may carry a note for the agent (ADR-20261107140000 §6).
-UPDATE agent_approval_requests
-SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by)::uuid, decided_at = now(),
-    decision_note = sqlc.narg(decision_note)
-WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND expires_at > now();
-
 -- name: ListAgentApprovalsForKey :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
        created_at, decided_at, consumed_at, expires_at, decision_note
@@ -102,3 +94,26 @@ FROM (
 WHERE (status = 'denied' AND decided_at > now() - sqlc.arg(window_seconds)::int * interval '1 second')
    OR (status IN ('pending', 'approved') AND expires_at <= now()
        AND expires_at > now() - sqlc.arg(window_seconds)::int * interval '1 second');
+
+-- name: InsertAgentApprovalWebhookDeliveries :execrows
+-- ADR-20261107140000 §4, ADR-224: one pending delivery per enabled account
+-- receiver of the connector's account subscribed to the event. The ADR-076
+-- dispatcher signs, sends and retries it. source_event_id is unique per
+-- receiver, so each event of a request is enqueued once.
+INSERT INTO app_webhook_deliveries (webhook_id, app_id, account_id, event, payload, source_event_id)
+SELECT w.id, NULL, w.account_id, sqlc.arg(event)::text, sqlc.arg(payload)::jsonb, sqlc.arg(source_event_id)::uuid
+  FROM app_webhooks w
+ WHERE w.account_id = sqlc.arg(account_id)::uuid AND w.scope = 'account' AND w.enabled
+   AND sqlc.arg(event)::text = ANY(w.event_filter)
+ON CONFLICT DO NOTHING;
+
+-- name: DecideAgentApproval :one
+-- A person approves or denies a request that is still pending and unexpired;
+-- a denial may carry a note for the agent (ADR-20261107140000 §6). It returns
+-- the decided request for its webhook event (§4).
+UPDATE agent_approval_requests
+SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by)::uuid, decided_at = now(),
+    decision_note = sqlc.narg(decision_note)
+WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND expires_at > now()
+RETURNING id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
+          created_at, decided_at, consumed_at, expires_at, decision_note;

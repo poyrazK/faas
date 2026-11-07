@@ -955,8 +955,9 @@ type Querier interface {
 	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// A person approves or denies a request that is still pending and unexpired;
-	// a denial may carry a note for the agent (ADR-20261107140000 §6).
-	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (int64, error)
+	// a denial may carry a note for the agent (ADR-20261107140000 §6). It returns
+	// the decided request for its webhook event (§4).
+	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (AgentApprovalRequest, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 	// separate method because every decrement site is a terminal event
@@ -2523,6 +2524,11 @@ type Querier interface {
 	InsertActivatedManagedPostgresBinding(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresBindingParams) error
 	InsertActivatedManagedPostgresSecret(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresSecretParams) error
 	InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAgentApprovalParams) error
+	// ADR-20261107140000 §4, ADR-224: one pending delivery per enabled account
+	// receiver of the connector's account subscribed to the event. The ADR-076
+	// dispatcher signs, sends and retries it. source_event_id is unique per
+	// receiver, so each event of a request is enqueued once.
+	InsertAgentApprovalWebhookDeliveries(ctx context.Context, db DBTX, arg InsertAgentApprovalWebhookDeliveriesParams) (int64, error)
 	InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error
 	// Only channels owned by the rule's account are bound.
 	InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error

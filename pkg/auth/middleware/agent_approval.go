@@ -131,10 +131,13 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		m.writeApprovalOutcome(w, acct, key, outcome)
 		return true
 	}
+	// The id is chosen here so a new request's webhook event can carry its
+	// review link (ADR-20261107140000 §4).
+	id := uuid.NewString()
 	request, err := gate.RequestAgentApproval(ctx, state.AgentApproval{
-		KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
+		ID: id, KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
-		ExpiresAt: time.Now().Add(api.AgentApprovalTTL),
+		ExpiresAt: time.Now().Add(api.AgentApprovalTTL), ReviewURL: m.reviewURL(id),
 	})
 	if errors.Is(err, state.ErrTooManyAgentApprovals) {
 		limit, observed := int64(api.MaxPendingAgentApprovals), int64(api.MaxPendingAgentApprovals)
@@ -146,10 +149,7 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		m.storeUnavailable(w, r, err, "could not record the approval request; retry shortly")
 		return true
 	}
-	reviewURL := ""
-	if m.ApprovalReviewURL != nil {
-		reviewURL = m.ApprovalReviewURL(request.ID)
-	}
+	reviewURL := m.reviewURL(request.ID)
 	problem := api.NewProblem(http.StatusPreconditionRequired, api.CodeApprovalRequired, "Approval required",
 		"this "+rule.Category+" request needs a person's approval: ask them to open "+reviewURL+", then repeat the same request").
 		WithHint("Show the person the review link and wait; after they approve, repeat exactly the same request once.")
@@ -161,13 +161,19 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 	return true
 }
 
+// reviewURL is the page where a person decides request id; empty when the
+// server has none configured.
+func (m *Middleware) reviewURL(id string) string {
+	if m.ApprovalReviewURL == nil {
+		return ""
+	}
+	return m.ApprovalReviewURL(id)
+}
+
 // writeApprovalOutcome tells an agent that repeats a denied or expired
 // request what happened, so it stops asking (ADR-20261107140000 §6).
 func (m *Middleware) writeApprovalOutcome(w http.ResponseWriter, acct state.Account, key state.APIKey, outcome state.AgentApproval) {
-	reviewURL := ""
-	if m.ApprovalReviewURL != nil {
-		reviewURL = m.ApprovalReviewURL(outcome.ID)
-	}
+	reviewURL := m.reviewURL(outcome.ID)
 	retryAt := outcome.DecidedAt
 	status := api.AgentApprovalDenied
 	if outcome.Status != api.AgentApprovalDenied {
