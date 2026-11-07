@@ -5566,7 +5566,7 @@ func TestGetApp_SurfacesRequireAuthn(t *testing.T) {
 // pre-update cap (zero in this fixture → the response is the
 // first ever raise).
 func TestRaiseOverageCap_Raise(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	rec := e.do(t, "POST", "/v1/account/overage-cap", map[string]any{
 		"overage_cap_cents": int64(5000),
 	}, nil)
@@ -5687,7 +5687,7 @@ func assertCapInt(t *testing.T, label string, got any, want int64) {
 // audit row is NOT emitted (cap was unchanged), and the storage
 // stays untouched.
 func TestRaiseOverageCap_Invalid(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	rec := e.do(t, "POST", "/v1/account/overage-cap", map[string]any{
 		"overage_cap_cents": int64(-100),
 	}, nil)
@@ -5716,7 +5716,7 @@ func TestRaiseOverageCap_Invalid(t *testing.T) {
 // malformed JSON surfaces as 400 + CodeValidation, the storage
 // stays untouched, and no audit row is emitted.
 func TestRaiseOverageCap_BadJSON(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	req := httptest.NewRequest("POST", "/v1/account/overage-cap", strings.NewReader("{not-json"))
 	req.Header.Set("Authorization", "Bearer "+e.key)
 	rec := httptest.NewRecorder()
@@ -5735,7 +5735,7 @@ func TestRaiseOverageCap_BadJSON(t *testing.T) {
 // unauthenticated POST surfaces as 401. The handler is mounted
 // under s.withAuth → no audit row, no storage write.
 func TestRaiseOverageCap_NoAuth(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	body, _ := json.Marshal(map[string]any{"overage_cap_cents": int64(500)})
 	req := httptest.NewRequest("POST", "/v1/account/overage-cap", bytes.NewReader(body))
 	// Note: NO Authorization header.
