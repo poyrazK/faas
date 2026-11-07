@@ -1,4 +1,4 @@
--- filename: 20261107213000000_legal_acceptances.sql
+-- filename: 20261107211535529_legal_acceptances.sql
 
 -- legal_acceptances: which version of a legal document (pkg/legal) an
 -- account accepted, when, and through which sign-up method. Self-service
