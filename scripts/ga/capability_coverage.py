@@ -244,7 +244,7 @@ RULES = [
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),
     (r"webhook|account-release-webhook|delivery-format", "Outbound webhooks"),
-    (r"automation", "Automations:"),
+    (r"stored-workflow|storedworkflow|stored_workflow|workflows/stored", "Stored workflows:"),
     (r"operation|business-(invariant|decision|effect|compensation)|customer-operation", "Operations:"),
     (r"inbox|outbox|messaging|application-message|send$|deliver$", "Application inbox and outbox"),
     (r"worker-pool|^workers$|worker-replica", "Worker pools"),
@@ -360,7 +360,7 @@ PRIORITY_RULES = [
     (r"^signed-urls$", "Object storage"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
-    (r"automation-test", "Automations:"),
+    (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),
