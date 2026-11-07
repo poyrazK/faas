@@ -5566,7 +5566,7 @@ func TestGetApp_SurfacesRequireAuthn(t *testing.T) {
 // pre-update cap (zero in this fixture → the response is the
 // first ever raise).
 func TestRaiseOverageCap_Raise(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	rec := e.do(t, "POST", "/v1/account/overage-cap", map[string]any{
 		"overage_cap_cents": int64(5000),
 	}, nil)
@@ -5616,7 +5616,9 @@ func TestRaiseOverageCap_Raise(t *testing.T) {
 // the audit row's new_cents surfaces as the literal string "null"
 // so the audit reader can distinguish a clear from a 0-set.
 func TestRaiseOverageCap_Clear(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	// Free may clear its cap; a paid plan keeps one (ADR-20261105120000,
+	// TestRaiseOverageCap_PaidPlanCeiling).
+	e := setup(t, api.PlanFree)
 	// Pre-set a cap to make the clear visible.
 	if err := e.store.UpdateAccountOverageCapCents(context.Background(), e.acct.ID, ptrInt64(7500)); err != nil {
 		t.Fatalf("seed cap: %v", err)
@@ -5685,7 +5687,7 @@ func assertCapInt(t *testing.T, label string, got any, want int64) {
 // audit row is NOT emitted (cap was unchanged), and the storage
 // stays untouched.
 func TestRaiseOverageCap_Invalid(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	rec := e.do(t, "POST", "/v1/account/overage-cap", map[string]any{
 		"overage_cap_cents": int64(-100),
 	}, nil)
@@ -5714,7 +5716,7 @@ func TestRaiseOverageCap_Invalid(t *testing.T) {
 // malformed JSON surfaces as 400 + CodeValidation, the storage
 // stays untouched, and no audit row is emitted.
 func TestRaiseOverageCap_BadJSON(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	req := httptest.NewRequest("POST", "/v1/account/overage-cap", strings.NewReader("{not-json"))
 	req.Header.Set("Authorization", "Bearer "+e.key)
 	rec := httptest.NewRecorder()
@@ -5733,7 +5735,7 @@ func TestRaiseOverageCap_BadJSON(t *testing.T) {
 // unauthenticated POST surfaces as 401. The handler is mounted
 // under s.withAuth → no audit row, no storage write.
 func TestRaiseOverageCap_NoAuth(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := setup(t, api.PlanFree)
 	body, _ := json.Marshal(map[string]any{"overage_cap_cents": int64(500)})
 	req := httptest.NewRequest("POST", "/v1/account/overage-cap", bytes.NewReader(body))
 	// Note: NO Authorization header.

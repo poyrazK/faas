@@ -361,6 +361,8 @@ type Querier interface {
 	CheckpointAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointAutomaticApplicationStandardObservationParams) (int64, error)
 	CheckpointRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error)
 	CheckpointRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	// meterd leases due notifications; a lapsed lease makes a row due again.
+	ClaimAgentApprovalNotifications(ctx context.Context, db DBTX, arg ClaimAgentApprovalNotificationsParams) ([]ClaimAgentApprovalNotificationsRow, error)
 	// Lock order matches ApplyProjectPlan (resource namespace, then its apps).
 	// The insert's account_id foreign key needs a key-share lock on the
 	// namespace; taking it here with SKIP LOCKED skips an app whose namespace is
@@ -957,8 +959,10 @@ type Querier interface {
 	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
 	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
-	// A person approves or denies a request that is still pending and unexpired.
-	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (int64, error)
+	// A person approves or denies a request that is still pending and unexpired;
+	// a denial may carry a note for the agent (ADR-20261107140000 §6). It returns
+	// the decided request for its webhook event (§4).
+	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (AgentApprovalRequest, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 	// separate method because every decrement site is a terminal event
@@ -972,6 +976,8 @@ type Querier interface {
 	// tail_count > 0 early-out. Returns ErrNotFound when the instance
 	// row is missing.
 	DecrementInstanceTailCount(ctx context.Context, db DBTX, arg DecrementInstanceTailCountParams) error
+	// The recipient was emailed about this key recently: wait for the window.
+	DeferAgentApprovalNotification(ctx context.Context, db DBTX, arg DeferAgentApprovalNotificationParams) error
 	// Requeues a running claim to wait for an identical build. Fenced like
 	// RequeueBuildIfClaim: a stale worker cannot defer a newer claim.
 	DeferBuildBehind(ctx context.Context, db DBTX, arg DeferBuildBehindParams) (int64, error)
@@ -988,6 +994,8 @@ type Querier interface {
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error)
+	// ADR-20261107140000 §3: clear one scope's bindings before setting them.
+	DeleteAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg DeleteAgentApprovalChannelBindingsParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
 	DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
 	DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -1976,6 +1984,7 @@ type Querier interface {
 	FindProjectReleaseSecretVersions(ctx context.Context, db DBTX, arg FindProjectReleaseSecretVersionsParams) ([][]byte, error)
 	FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRuntimeReleaseParams) (RuntimeRelease, error)
 	FindTenantHostnameWildcardOverlap(ctx context.Context, db DBTX, names []string) (string, error)
+	FinishAgentApprovalNotifications(ctx context.Context, db DBTX, arg FinishAgentApprovalNotificationsParams) error
 	FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkParams) (AppFork, error)
 	FinishAppForkExec(ctx context.Context, db DBTX, arg FinishAppForkExecParams) (AppForkExec, error)
 	FinishAppHealthCollection(ctx context.Context, db DBTX, arg FinishAppHealthCollectionParams) error
@@ -2063,6 +2072,8 @@ type Querier interface {
 	GetAPIKeyProjectLimit(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]pgtype.UUID, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID) (AgentApprovalRequest, error)
+	GetAgentApprovalEmailLastSent(ctx context.Context, db DBTX, arg GetAgentApprovalEmailLastSentParams) (pgtype.Timestamptz, error)
+	GetAgentApprovalRequestState(ctx context.Context, db DBTX, id pgtype.UUID) (GetAgentApprovalRequestStateRow, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
 	GetAppConfigGuard(ctx context.Context, db DBTX, id pgtype.UUID) (AppConfigGuard, error)
 	GetAppConfigRevision(ctx context.Context, db DBTX, arg GetAppConfigRevisionParams) (GetAppConfigRevisionRow, error)
@@ -2525,6 +2536,16 @@ type Querier interface {
 	InsertActivatedManagedPostgresBinding(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresBindingParams) error
 	InsertActivatedManagedPostgresSecret(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresSecretParams) error
 	InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAgentApprovalParams) error
+	// The channel must be the account's own.
+	InsertAgentApprovalChannelBinding(ctx context.Context, db DBTX, arg InsertAgentApprovalChannelBindingParams) error
+	// ADR-20261107140000 §5: tell people about a new request; apid inserts it in
+	// the request's transaction.
+	InsertAgentApprovalNotification(ctx context.Context, db DBTX, arg InsertAgentApprovalNotificationParams) error
+	// ADR-20261107140000 §4, ADR-224: one pending delivery per enabled account
+	// receiver of the connector's account subscribed to the event. The ADR-076
+	// dispatcher signs, sends and retries it. source_event_id is unique per
+	// receiver, so each event of a request is enqueued once.
+	InsertAgentApprovalWebhookDeliveries(ctx context.Context, db DBTX, arg InsertAgentApprovalWebhookDeliveriesParams) (int64, error)
 	InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error
 	// Only channels owned by the rule's account are bound.
 	InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error
@@ -3411,6 +3432,8 @@ type Querier interface {
 	// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
 	// Read only after the node's epoch moves, so a scan of the live set is fine.
 	ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error)
+	// One scope's bound channels, by name.
+	ListAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg ListAgentApprovalChannelBindingsParams) ([]NotificationChannel, error)
 	ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg ListAgentApprovalsForKeyParams) ([]AgentApprovalRequest, error)
 	ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error)
 	ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
@@ -3663,6 +3686,14 @@ type Querier interface {
 	ListDoctorDomains(ctx context.Context, db DBTX) ([]string, error)
 	ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error)
 	ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error)
+	// ListDormantFreeSnapshotApps (Free-tier disk reaper, spec §4.3,
+	// ADR-20261105120000) returns apps whose every possible billing
+	// subject is on Free (the creator's account, and its shared organization when
+	// it has one), with a snapshot, no live instance, and neither a request, a
+	// start, a park nor a deployment since the cutoff. Instance rows are retained
+	// 30 days, longer than the 14-day window, so a request inside the window is
+	// always seen.
+	ListDormantFreeSnapshotApps(ctx context.Context, db DBTX, arg ListDormantFreeSnapshotAppsParams) ([]pgtype.UUID, error)
 	ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DBTX, maxRows int32) ([]ReleaseDatabaseSwitch, error)
 	// ADR-1196: HTTP executions carry the deadline themselves; workflow runs
 	// have none, so the sweeper stops them.
@@ -4656,6 +4687,7 @@ type Querier interface {
 	ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error)
 	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
+	MarkAgentApprovalChannelsNotified(ctx context.Context, db DBTX, approvalID pgtype.UUID) error
 	MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppForkRunningParams) (AppFork, error)
 	MarkCheckedRollbackReady(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
@@ -4817,6 +4849,9 @@ type Querier interface {
 	//        'maintenance'     → drain_completed_at (last step of a
 	//                             successful operator drain)
 	NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error)
+	// The channels a request reaches: those the connector bound for its own keys
+	// and those bound for the organization the key acts in (§3).
+	NotificationChannelsForAgentApproval(ctx context.Context, db DBTX, arg NotificationChannelsForAgentApprovalParams) ([]NotificationChannel, error)
 	NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error)
 	NotifyAlertRollbackTraffic(ctx context.Context, db DBTX, arg NotifyAlertRollbackTrafficParams) error
 	NotifyAlertServiceRollback(ctx context.Context, db DBTX, arg NotifyAlertServiceRollbackParams) error
@@ -5296,6 +5331,9 @@ type Querier interface {
 	PauseEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg PauseEnvironmentGitOpsJobUpdateParams) error
 	PauseEnvironmentWorkloadRetirementJob(ctx context.Context, db DBTX, arg PauseEnvironmentWorkloadRetirementJobParams) error
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
+	// The key's notifications still waiting whose requests are still pending and
+	// unexpired: what one email lists.
+	PendingAgentApprovalNotificationsForKey(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]PendingAgentApprovalNotificationsForKeyRow, error)
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
 	// ADR-20261019121546: settled managed S3 credentials of a graph's enforced
@@ -6426,9 +6464,14 @@ type Querier interface {
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantAutomationSchedules(ctx context.Context, db DBTX, arg RearmTenantAutomationSchedulesParams) error
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
+	// ADR-20261107140000 §6: the key's most recent request with the same binding,
+	// when it was denied, or expired undecided or unused, within the window. A
+	// newer request of any other status (pending, approved, consumed) hides it.
+	RecentAgentApprovalOutcome(ctx context.Context, db DBTX, arg RecentAgentApprovalOutcomeParams) (AgentApprovalRequest, error)
 	ReclaimOperatorIntentAttempts(ctx context.Context, db DBTX, threshold pgtype.Timestamptz) (int64, error)
 	RecomputeCustomerOperationJobRun(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)
+	RecordAgentApprovalEmailSent(ctx context.Context, db DBTX, arg RecordAgentApprovalEmailSentParams) error
 	RecordAppConfigGuardChange(ctx context.Context, db DBTX, arg RecordAppConfigGuardChangeParams) (int64, error)
 	RecordAppSecretDeliveryFailure(ctx context.Context, db DBTX, arg RecordAppSecretDeliveryFailureParams) (int64, error)
 	RecordAppSecretDeliverySuccess(ctx context.Context, db DBTX, arg RecordAppSecretDeliverySuccessParams) (int64, error)
@@ -6962,6 +7005,8 @@ type Querier interface {
 	RetireSecretEncryptionKey(ctx context.Context, db DBTX, kid string) error
 	RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
+	// A failed send waits and tries again; after the last attempt it fails.
+	RetryAgentApprovalNotification(ctx context.Context, db DBTX, arg RetryAgentApprovalNotificationParams) error
 	RetryCustomDomainVerificationClaim(ctx context.Context, db DBTX, arg RetryCustomDomainVerificationClaimParams) (int64, error)
 	RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error)
 	RetryDeploymentDependencyGate(ctx context.Context, db DBTX, arg RetryDeploymentDependencyGateParams) error

@@ -16,6 +16,8 @@ import type { CreateFinancialBudgetRequest } from '../models/CreateFinancialBudg
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
+import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
 import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
 import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
@@ -1859,6 +1861,95 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's egress overage election.
+   * Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members.
+   * @returns EgressOverageResponse The organization's election.
+   * @throws ApiError
+   */
+  public static getOrgEgressOverage({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/egress-overage',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Turn the organization's egress overage election on or off.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+   * paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+   *
+   * @returns EgressOverageResponse The organization's election after the change.
+   * @throws ApiError
+   */
+  public static setOrgEgressOverage({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: EgressOverageRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/egress-overage',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_egress_overage_not_allowed — the organization's plan stops at its egress allowance; move the organization to a paid plan.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

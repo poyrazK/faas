@@ -128,8 +128,8 @@ func TestDashboardWidgetValidation(t *testing.T) {
 		t.Fatalf("bad name = %d, want 400", w.Code)
 	}
 	off, acct := newService(false)
-	if w := call(t, off.List, acct, http.MethodGet, "", ""); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("gate off = %d, want 503", w.Code)
+	if w := call(t, off.List, acct, http.MethodGet, "", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("gate off = %d, want 403", w.Code)
 	}
 }
 
