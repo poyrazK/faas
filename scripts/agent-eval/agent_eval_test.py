@@ -289,6 +289,7 @@ class HostedRunTests(unittest.TestCase):
         self.assertEqual(seen_env["GREGALE_EVAL_AGENT_KEY"], "fp_live_agent")
         self.assertEqual(calls[0][:2], ("POST", "/v1/keys"))
         self.assertEqual(calls[0][2]["scopes"], ["agent", "deploy:write"])
+        self.assertEqual(calls[0][2]["approval_categories"], [])
         self.assertIn(("DELETE", "/v1/keys/k1", None), calls)
 
 

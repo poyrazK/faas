@@ -250,10 +250,15 @@ class Gregale:
         return self.request("GET", path)
 
     def mint_agent_key(self, label: str, writes: bool) -> tuple[str, str]:
-        """A fresh agent key for one hosted run: (id, plaintext)."""
+        """A fresh agent key for one hosted run: (id, plaintext).
+
+        No person watches an eval run, so the key asks for no approvals
+        (ADR-20261104140058); an org approval floor would still apply.
+        """
         scopes = ["agent", "deploy:write"] if writes else ["agent"]
+        body = {"label": label, "scopes": scopes, "approval_categories": []}
         try:
-            key = self.request("POST", "/v1/keys", {"label": label, "scopes": scopes})
+            key = self.request("POST", "/v1/keys", body)
         except urllib.error.HTTPError as error:
             raise EvalError(f"minting the hosted run's agent key failed: HTTP {error.code}") from None
         if not key.get("id") or not key.get("plaintext"):
