@@ -106,10 +106,11 @@ func TestEventDelivery(t *testing.T) {
 		id := prefix + "fail"
 		tg.ok(t, time.Minute, "event", "publish", eventJourneySource, eventJourneyType,
 			"--id", id, "--data", `{"deliver":true,"fail":true}`)
-		// Every attempt fails, so the delivery spends the plan's retry
-		// budget (25 attempts on Scale, 5 s apart) and is dead-lettered.
+		// Every attempt fails, so the delivery spends the fixture's
+		// retry_policy (two attempts a second apart) and is dead-lettered.
+		// The plan's own budget would back off for up to 95 minutes.
 		var dead map[string]any
-		eventually(t, "failed delivery in `gregale dlq list`", 15*time.Minute, 10*time.Second, func() (bool, string) {
+		eventually(t, "failed delivery in `gregale dlq list`", 5*time.Minute, 5*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "dlq", "list", slug, "--source", "invocation", "--limit", "200")
 			if res.exit != 0 {
 				return false, res.problem()

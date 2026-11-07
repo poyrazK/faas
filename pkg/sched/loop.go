@@ -2922,7 +2922,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				AppType:      string(a.Type),
 				NodeID:       ins.NodeID,
 				// Filled with the pinned environment policy below.
-				MinInstances:           a.EffectiveMinInstances(),
+				MinInstances:           planCappedFloor(plan, a.EffectiveMinInstances()),
 				WarmPoolSize:           a.WarmPoolSize,
 				ConfiguredMinInstances: a.EffectiveMinInstances(),
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],

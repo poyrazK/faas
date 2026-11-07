@@ -51,6 +51,10 @@ func (s *objectStorageLineItemRecorder) PublishObjectStorageCharge(_ context.Con
 	return nil
 }
 
+func (s *objectStorageBillingStore) EgressOverageElection(_ context.Context, subjectID string) (state.EgressOverageElection, error) {
+	return s.elections[subjectID], nil
+}
+
 type objectStorageBillingStore struct {
 	snapshots  map[string]state.ObjectUsageSnapshot
 	records    map[string]state.ObjectStorageBillingRecord
@@ -59,6 +63,8 @@ type objectStorageBillingStore struct {
 	// carry their hour in Month.
 	caps  map[string]int64
 	usage map[string][]state.Usage
+	// elections are the egress overage elections (ADR-20261104204500).
+	elections map[string]state.EgressOverageElection
 	// progress is the charge ledger (ADR-20261027093220), written at now.
 	progress map[string]state.ObjectStorageBillingProgress
 	now      time.Time

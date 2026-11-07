@@ -186,10 +186,7 @@ func (a *scheddCPUAdapter) refreshContext(ctx context.Context) {
 		// tripwire).
 		return
 	}
-	m := make(map[string]scheddgrpc.InstanceStatsRow, len(rows))
-	for _, r := range rows {
-		m[r.InstanceID] = r
-	}
+	m := preferLiveStatsRows(rows)
 	a.mu.Lock()
 	a.rows = m
 	a.fetched = a.now()
