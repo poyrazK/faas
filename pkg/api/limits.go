@@ -7630,6 +7630,13 @@ const (
 	IdleLadderColdAge1Seconds       = 60
 	IdleLadderColdAge2Seconds       = 180
 	IdleLadderSnapshotAfterSeconds  = 600
+	// The idle ladder's activity guard (ADR-20261107122928 §6): an app quiet
+	// pause does not pause counts as idle only when, over the last
+	// IdleLadderQuietPauseAfterMillis, nothing was in flight, its VM cgroup
+	// used at most IdleLadderGuardCPUMaxMillis of CPU and its veth moved at
+	// most IdleLadderGuardNetMaxBytes in each direction.
+	IdleLadderGuardCPUMaxMillis = 10
+	IdleLadderGuardNetMaxBytes  = 512
 	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
 	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
 	// measured admission books like a frozen instance.
