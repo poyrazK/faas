@@ -825,12 +825,14 @@ func probeSource(t *testing.T, version string) string {
 // labelled e2ej-<run>-<name> and revoked when the journey ends.
 func (tg *target) scopedKey(t *testing.T, name string, scopes ...string) string {
 	t.Helper()
-	key, _ := tg.scopedKeyWithID(t, name, scopes...)
+	key, _ := tg.scopedKeyWithID(t, t, name, scopes...)
 	return key
 }
 
-// scopedKeyWithID is scopedKey that also returns the key's id.
-func (tg *target) scopedKeyWithID(t *testing.T, name string, scopes ...string) (key, id string) {
+// scopedKeyWithID is scopedKey that also returns the key's id. The key is
+// revoked when owner ends: a story step that mints a key later steps use
+// passes the journey's top-level test.
+func (tg *target) scopedKeyWithID(t, owner *testing.T, name string, scopes ...string) (key, id string) {
 	t.Helper()
 	args := []string{"keys", "add", tg.slug(name)}
 	if len(scopes) > 0 {
@@ -842,7 +844,7 @@ func (tg *target) scopedKeyWithID(t *testing.T, name string, scopes ...string) (
 	if key == "" || id == "" {
 		t.Fatalf("key create printed no key or id")
 	}
-	t.Cleanup(func() { tg.run(t, time.Minute, "key", "delete", id) })
+	owner.Cleanup(func() { tg.run(owner, time.Minute, "key", "delete", id) })
 	return key, id
 }
 

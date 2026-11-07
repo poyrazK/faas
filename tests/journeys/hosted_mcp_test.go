@@ -24,13 +24,18 @@ import (
 // may deploy, an organization agent key lists the organization's apps and
 // not the account's, and denying agents revokes that key.
 
-const mcpProtocolVersion = "2026-07-28"
+// mcpProtocolVersion is the newest version the hosted server speaks: it keeps
+// sessions, and the go-sdk serves 2026-07-28 (per-request `_meta` versions)
+// only on stateless servers.
+const mcpProtocolVersion = "2025-11-25"
 
 // TestHostedMCP is the hosted management MCP journey (row 160).
 func TestHostedMCP(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
 	t.Parallel()
-	j := &hostedMCPJourney{tg: tg, endpoint: strings.TrimRight(tg.api, "/") + "/mcp"}
+	// Keys and the org outlive the step that makes them; they are removed when
+	// the journey ends, newest first.
+	j := &hostedMCPJourney{tg: tg, root: t, endpoint: strings.TrimRight(tg.api, "/") + "/mcp"}
 	s := newStory(t)
 	s.step("discovery", j.discovery)
 	s.step("probe_app", func(t *testing.T) { j.probe, _ = tg.sharedProbe(t) })
@@ -49,6 +54,7 @@ func TestHostedMCP(t *testing.T) {
 
 type hostedMCPJourney struct {
 	tg       *target
+	root     *testing.T // owns cleanups for what later steps use
 	endpoint string
 	probe    string // the shared probe app: the account's, not the org's
 	admin    string // admin key for the connected-agents API
@@ -85,7 +91,7 @@ func (j *hostedMCPJourney) discovery(t *testing.T) {
 // agentKeySession: a read-only agent key opens a session that lists the
 // read tools and none of the write tools.
 func (j *hostedMCPJourney) agentKeySession(t *testing.T) {
-	key, id := j.tg.scopedKeyWithID(t, "mcp-agent", "agent")
+	key, id := j.tg.scopedKeyWithID(t, j.root, "mcp-agent", "agent")
 	j.keyID = id
 	j.session = openMCP(t, j.endpoint, key)
 	tools := j.session.toolNames(t)
@@ -116,7 +122,7 @@ func (j *hostedMCPJourney) nonAgentKeyRefused(t *testing.T) {
 }
 
 func (j *hostedMCPJourney) connectionListed(t *testing.T) {
-	j.admin = j.tg.scopedKey(t, "mcp-admin", "admin")
+	j.admin, _ = j.tg.scopedKeyWithID(t, j.root, "mcp-admin", "admin")
 	if !j.listsConnection(t, "/v1/agent-connections", j.keyID) {
 		t.Fatalf("GET /v1/agent-connections does not list agent key %s", j.keyID)
 	}
@@ -137,7 +143,7 @@ func (j *hostedMCPJourney) connectionRevoked(t *testing.T) {
 func (j *hostedMCPJourney) orgCreated(t *testing.T) {
 	j.org = j.tg.slug("mcp-org")
 	j.tg.ok(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
-	t.Cleanup(func() { j.tg.run(t, time.Minute, "org", "delete", j.org, "--yes") })
+	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "org", "delete", j.org, "--yes") })
 }
 
 // orgPolicyReadOnly: an owner sets the policy that lets agents in with
@@ -171,7 +177,7 @@ func (j *hostedMCPJourney) orgKeyListsOrgApps(t *testing.T) {
 	if key == "" || j.orgKeyID == "" {
 		t.Fatal("org key create printed no key or id")
 	}
-	t.Cleanup(func() { j.tg.run(t, time.Minute, "org", "keys", "rm", "--org", j.org, j.orgKeyID) })
+	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "org", "keys", "rm", "--org", j.org, j.orgKeyID) })
 	j.orgMCP = openMCP(t, j.endpoint, key)
 	if text := j.orgMCP.callTool(t, "gregale_list_apps", map[string]any{}); strings.Contains(text, j.probe) {
 		t.Fatalf("the organization's agent lists the account's probe app %s: %s", j.probe, tail(text, 400))
