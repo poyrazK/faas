@@ -100,6 +100,13 @@
       <p class="forgot"><a href="/login/forgot">Forgot password?</a></p>
     </form>
 
+    <form method="POST" action="/login/magic-link" class="magic-link">
+      <label for="magic-email">Or sign in with a link sent to your email
+        <input id="magic-email" name="email" type="email" required autocomplete="email">
+      </label>
+      <button type="submit">Email me a sign-in link</button>
+    </form>
+
     {{if .Auth}}{{if or .Auth.GoogleEnabled .Auth.GitHubEnabled}}
     <div class="providers">
       {{if .Auth.GoogleEnabled}}<a class="oauth-link" href="/v1/auth/google{{with .Data}}{{with index . "Next"}}?next={{.}}{{end}}{{end}}">Continue with Google</a>{{end}}

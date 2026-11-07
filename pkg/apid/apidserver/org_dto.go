@@ -51,15 +51,19 @@ func orgToRow(o state.Org) api.OrgRow {
 // place-holder email is what the customer sees until PR 8's GDPR
 // purge runs).
 func (s *server) memberToRow(ctx context.Context, mem state.OrgMembership) api.OrgMemberRow {
-	email := ""
+	email, name := "", ""
 	if acct, err := s.store.AccountByID(ctx, mem.AccountID); err == nil {
 		email = acct.Email
 	}
+	if flow, ok := s.store.(state.AccountFlowStore); ok {
+		name, _ = flow.AccountDisplayName(ctx, mem.AccountID)
+	}
 	return api.OrgMemberRow{
-		AccountID: mem.AccountID,
-		Email:     email,
-		Role:      string(mem.Role),
-		JoinedAt:  mem.JoinedAt,
+		AccountID:   mem.AccountID,
+		Email:       email,
+		DisplayName: name,
+		Role:        string(mem.Role),
+		JoinedAt:    mem.JoinedAt,
 	}
 }
 

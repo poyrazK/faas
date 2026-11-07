@@ -95,6 +95,14 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// Account profile and security notices (ADR 20261107103000). A display name
+// is at most DisplayNameMaxChars characters. A browser sign-in whose device
+// and network match no session of the last NewSignInLookback mails a notice.
+const (
+	DisplayNameMaxChars = 80
+	NewSignInLookback   = 90 * 24 * time.Hour
+)
+
 // Queue receive long-polls one account, and one apid in all, may hold at a
 // time; past them a receive answers 429. A receive waits on apid's shared
 // completion listener, not on a database connection, so the caps bound

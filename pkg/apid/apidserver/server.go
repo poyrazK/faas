@@ -488,6 +488,9 @@ type server struct {
 	// loginFailures caps failed password sign-ins per email address across
 	// client addresses (login_failure_limit.go).
 	loginFailures *loginFailureLimiter
+	// verificationClock is the clock the email-verification grace reads;
+	// nil means time.Now (test seam).
+	verificationClock func() time.Time
 	// resetMail runs forgot-password lookups and mail off the request path
 	// (background_mail.go, H86).
 	resetMail *backgroundWork
@@ -2116,6 +2119,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.inviteOrgMember)))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.removeOrgMember)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/leave", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.leaveOrg)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
 	mux.HandleFunc("GET /v1/invitations/{token}", s.authLimited(s.peekInvitation))
 	// Invitation acceptance requires the invitee's verified browser session.
@@ -2209,6 +2213,9 @@ func (s *server) handler() http.Handler {
 	// devices (a "lock everything else down" panic path). The
 	// wildcard DELETE /v1/auth/sessions/{id} is matched by the
 	// prefix-check seam in isMFAAllowlisted.
+	mux.HandleFunc("PATCH /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAccountProfile))))
+	mux.HandleFunc("POST /v1/account/email", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.postAccountEmailChange))))
+	mux.HandleFunc("POST /v1/auth/verify-email/resend", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.resendEmailVerification))))
 	mux.HandleFunc("POST /v1/auth/logout", s.auth(s.requireMFA(s.logout)))
 	// The session inventory carries the owner's sign-in IPs and user
 	// agents, so a narrow automation key (usage:read, deploy:write, an
@@ -4949,6 +4956,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/mfa/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaConfirm))))
 	mux.HandleFunc("POST /v1/account/mfa/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaVerify))))
 	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaRecover))))
+	mux.HandleFunc("POST /v1/account/mfa/recovery-codes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.mfaRegenerateRecoveryCodes)))))
+	mux.HandleFunc("GET /v1/account/sign-in-methods", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSignInMethods))))
+	mux.HandleFunc("DELETE /v1/account/sign-in-methods/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.unlinkSignInMethod)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisable))))
 	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
 	mux.HandleFunc("/auth/reset/mfa", s.mfaDisableEmailPageRoute())
@@ -5142,6 +5152,12 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /auth/verify", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
 	}, s.fromTrustedOrigin(http.HandlerFunc(auth.verifyConfirmed))))
+	mux.Handle("GET /auth/email-change", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, http.HandlerFunc(s.emailChangeConfirmForm)))
+	mux.Handle("POST /auth/email-change", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.confirmEmailChange))))
 	mux.Handle("GET /v1/auth/verify-email", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
 	}, http.HandlerFunc(s.verifyEmailConfirm)))
@@ -5162,6 +5178,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))
+	mux.Handle("POST /login/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.fromTrustedOrigin(browserAuthForm(http.HandlerFunc(s.postV1AuthSignupMagicLink), auth.finishBrowserMagicLink))))
 	mux.Handle("POST /v1/auth/signup/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.postV1AuthSignupMagicLink)))
@@ -5298,6 +5317,11 @@ func (s *server) handler() http.Handler {
 	// cancelDeletion from handlers_account.go so audit, email, and
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardDelete)))))
+	mux.Handle("POST /dashboard/account/sessions/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRevokeSession))))
+	mux.Handle("POST /dashboard/account/providers/{provider}/unlink", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUnlinkProvider))))
+	mux.Handle("POST /dashboard/account/display-name", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetDisplayName))))
+	mux.Handle("POST /dashboard/account/email", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRequestEmailChange))))
+	mux.Handle("POST /dashboard/account/verify-email/resend", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardResendVerification))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
 	// TOTP challenge for mfa_pending sessions (sessionAuth confines them
 	// here). The POST shares the dashboard's per-IP auth-failure bucket

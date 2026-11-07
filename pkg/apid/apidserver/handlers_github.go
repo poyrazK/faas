@@ -470,6 +470,8 @@ func (s *server) provisionOrFetchOAuthAccount(r *http.Request, provider, sub, em
 	if err == nil {
 		if err := s.store.UpsertOAuthLink(ctx, acct.ID, provider, sub, email, true); err != nil {
 			s.log.Error("oauth.upsert_link", "provider", provider, "err", err)
+		} else {
+			s.alertSignInMethodLinked(ctx, acct, provider)
 		}
 		return s.verifyOAuthAccountEmail(ctx, acct)
 	}

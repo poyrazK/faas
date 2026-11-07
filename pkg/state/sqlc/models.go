@@ -94,6 +94,7 @@ type Account struct {
 	DeletionIncludesManagedPostgres bool
 	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
 	PlanChangedAt pgtype.Timestamptz
+	DisplayName   string
 }
 
 type AccountAsyncQuotum struct {
@@ -133,6 +134,16 @@ type AccountDeployRateLimit struct {
 	DeploysUsed        int32
 	DeploysWindowStart pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+}
+
+type AccountEmailChange struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	OldEmail   string
+	NewEmail   string
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
 }
 
 type AccountPassword struct {

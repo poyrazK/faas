@@ -1104,6 +1104,8 @@ type MemStore struct {
 	// PK enforces it in Postgres. NUL separator is safe — neither
 	// Google subs nor GitHub IDs contain it.
 	oauthLinks map[string]OAuthLink
+	// accountFlow holds email changes and display names (account_flow.go).
+	accountFlow memAccountFlow
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic

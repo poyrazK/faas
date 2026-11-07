@@ -2180,6 +2180,17 @@ func (s *server) RunDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 // request path (H86).
 func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }
 
+// SignInIsNew exposes the new-device check behind the sign-in notice.
+func (r *server) SignInIsNew(ctx context.Context, accountID, ip, ua string) bool {
+	return r.signInIsNew(ctx, accountID, ip, ua)
+}
+
+// ResetSecurityMailLimiter forgets every throttled security-mail send.
+func (r *server) ResetSecurityMailLimiter() { r.securityMail = newSecurityMailLimiter() }
+
+// SetVerificationClock moves the clock the email-verification grace reads.
+func (r *server) SetVerificationClock(now func() time.Time) { r.verificationClock = now }
+
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
 func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }

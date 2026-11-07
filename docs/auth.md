@@ -82,6 +82,25 @@ policy or operator access requires a replacement.
 If your last recovery code remains, use it to reset the authenticator and set
 up a replacement. If neither the device nor codes are available, choose email
 recovery. Its link can be confirmed after the existing 24-hour waiting period.
+To replace your recovery codes while you still have your authenticator, run
+`gregale account mfa rotate` (or use **New recovery codes** on the
+two-factor page) after verifying the session; the previous codes stop working
+and you get an email.
+
+## Email verification
+
+A password signup must verify its email address. Until it does, deploying and
+billing changes answer `email_verification_required`. Send a new 24-hour link
+with `gregale account email verify` or the account page's button. After 30
+days unverified the account keeps its data, but password sign-in and existing
+sessions and keys only reach the account page, logout, deletion and the resend;
+opening a verification link, a magic sign-in link, or signing in with Google or
+GitHub at the same address lifts the restriction.
+
+If you never verified and forgot your password, use **Forgot password** anyway:
+an unverified account receives a magic sign-in link. Opening it proves the
+address, signs out anything the earlier signup created, and lets you set a new
+password from the account page.
 `gregale org invitation accept TOKEN` opens the invitation in a browser so
 acceptance uses your own session and enabled MFA policy, rather than a CLI key.
 

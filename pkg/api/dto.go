@@ -4234,6 +4234,8 @@ type AccountResponse struct {
 	ID            string            `json:"id"`
 	Email         string            `json:"email"`
 	EmailVerified bool              `json:"email_verified"`
+	// DisplayName is the account's optional human name; omitted when unset.
+	DisplayName string `json:"display_name,omitempty"`
 	// EmailVerificationGraceEndsAt is present only for unverified password
 	// accounts so API and dashboard clients can render the 30-day deadline.
 	EmailVerificationGraceEndsAt *time.Time    `json:"email_verification_grace_ends_at,omitempty"`

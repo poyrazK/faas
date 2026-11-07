@@ -14,11 +14,13 @@ from .account_deletion_response import AccountDeletionResponse
 from .account_deletion_response_status import AccountDeletionResponseStatus
 from .account_deploy_rate_limit import AccountDeployRateLimit
 from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtraResponse
+from .account_email_change_request import AccountEmailChangeRequest
 from .account_export_response import AccountExportResponse
 from .account_export_response_schema_version import AccountExportResponseSchemaVersion
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
+from .account_profile_update import AccountProfileUpdate
 from .account_rate_limits_response import AccountRateLimitsResponse
 from .account_release_webhook_response import AccountReleaseWebhookResponse
 from .account_release_webhook_response_delivery_format import AccountReleaseWebhookResponseDeliveryFormat
@@ -1600,6 +1602,8 @@ from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
 from .egress_flow_log_response import EgressFlowLogResponse
+from .email_verification_resend_response import EmailVerificationResendResponse
+from .email_verification_resend_response_status import EmailVerificationResendResponseStatus
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
@@ -2503,6 +2507,8 @@ from .labels_response_labels import LabelsResponseLabels
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
+from .linked_sign_in import LinkedSignIn
+from .linked_sign_in_provider import LinkedSignInProvider
 from .list_account_operations_state import ListAccountOperationsState
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
 from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
@@ -3055,6 +3061,7 @@ from .mfa_enroll_request import MFAEnrollRequest
 from .mfa_enroll_response import MFAEnrollResponse
 from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
+from .mfa_regenerate_recovery_codes_body import MfaRegenerateRecoveryCodesBody
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
 from .migration_cutover import MigrationCutover
@@ -5053,6 +5060,7 @@ from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
+from .recovery_codes_response import RecoveryCodesResponse
 from .refresh_automatic_route_check_response_202 import RefreshAutomaticRouteCheckResponse202
 from .refresh_automatic_route_check_response_202_status import RefreshAutomaticRouteCheckResponse202Status
 from .refund_account_invoice_body import RefundAccountInvoiceBody
@@ -5121,6 +5129,8 @@ from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailure
 from .replay_retryable_event_fanout_failures_request import ReplayRetryableEventFanoutFailuresRequest
 from .replay_retryable_event_fanout_failures_response import ReplayRetryableEventFanoutFailuresResponse
 from .repo_response import RepoResponse
+from .request_account_email_change_response_202 import RequestAccountEmailChangeResponse202
+from .request_account_email_change_response_202_status import RequestAccountEmailChangeResponse202Status
 from .request_analytics_compute_cost import RequestAnalyticsComputeCost
 from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
 from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
@@ -5786,6 +5796,7 @@ from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
 from .sidecar_type import SidecarType
+from .sign_in_methods_response import SignInMethodsResponse
 from .simulate_automation_request import SimulateAutomationRequest
 from .simulate_automation_request_mock_attempts import SimulateAutomationRequestMockAttempts
 from .simulate_automation_request_mock_item_attempts import SimulateAutomationRequestMockItemAttempts
@@ -5925,6 +5936,7 @@ from .trigger_work_binding import TriggerWorkBinding
 from .trusted_signer import TrustedSigner
 from .udp_listener_response import UDPListenerResponse
 from .udp_listener_response_protocol import UDPListenerResponseProtocol
+from .unlink_account_sign_in_method_provider import UnlinkAccountSignInMethodProvider
 from .unregister_managed_realtime_push_device_response_200 import UnregisterManagedRealtimePushDeviceResponse200
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
@@ -6360,11 +6372,13 @@ __all__ = (
     "AccountDeletionResponseStatus",
     "AccountDeployRateLimit",
     "AccountEgressAllowlistExtraResponse",
+    "AccountEmailChangeRequest",
     "AccountExportResponse",
     "AccountExportResponseSchemaVersion",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
+    "AccountProfileUpdate",
     "AccountRateLimitsResponse",
     "AccountReleaseWebhookResponse",
     "AccountReleaseWebhookResponseDeliveryFormat",
@@ -7908,6 +7922,8 @@ __all__ = (
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
     "EgressFlowLogResponse",
+    "EmailVerificationResendResponse",
+    "EmailVerificationResendResponseStatus",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableDurableEntityRegistryBody",
@@ -8769,6 +8785,8 @@ __all__ = (
     "LabelsResponse",
     "LabelsResponseLabels",
     "LatestDeploymentsByAppResponse",
+    "LinkedSignIn",
+    "LinkedSignInProvider",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
     "ListAccountOperationsState",
@@ -9259,6 +9277,7 @@ __all__ = (
     "MFAEnrollResponse",
     "MFARecoverRequest",
     "MFARecoverResponse",
+    "MfaRegenerateRecoveryCodesBody",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
     "MigrationCutover",
@@ -11087,6 +11106,7 @@ __all__ = (
     "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
+    "RecoveryCodesResponse",
     "RefreshAutomaticRouteCheckResponse202",
     "RefreshAutomaticRouteCheckResponse202Status",
     "RefundAccountInvoiceBody",
@@ -11155,6 +11175,8 @@ __all__ = (
     "ReplayRetryableEventFanoutFailuresRequest",
     "ReplayRetryableEventFanoutFailuresResponse",
     "RepoResponse",
+    "RequestAccountEmailChangeResponse202",
+    "RequestAccountEmailChangeResponse202Status",
     "RequestAnalyticsComputeCost",
     "RequestAnalyticsComputeCostAllocationMethod",
     "RequestAnalyticsComputeCostBasis",
@@ -11806,6 +11828,7 @@ __all__ = (
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",
     "SidecarType",
+    "SignInMethodsResponse",
     "SimulateAutomationRequest",
     "SimulateAutomationRequestMockAttempts",
     "SimulateAutomationRequestMockItemAttempts",
@@ -11935,6 +11958,7 @@ __all__ = (
     "TrustedSigner",
     "UDPListenerResponse",
     "UDPListenerResponseProtocol",
+    "UnlinkAccountSignInMethodProvider",
     "UnregisterManagedRealtimePushDeviceResponse200",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",

@@ -7066,6 +7066,16 @@ func ErrEmailVerificationRequired() *Problem {
 		WithDocs(docsBase + "/auth#email-verification")
 }
 
+// ErrEmailVerificationOverdue is returned once an unverified account is past
+// its verification grace period: it keeps its data, but signing in and using
+// existing credentials wait until the address is verified.
+func ErrEmailVerificationOverdue() *Problem {
+	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
+		"Email verification required",
+		"this account's email address was not verified within 30 days. We sent a new verification link; open it to continue.").
+		WithDocs(docsBase + "/auth#email-verification")
+}
+
 // ErrVerificationLinkInvalid intentionally collapses malformed, expired and
 // consumed verification links into one public response. This avoids revealing
 // token state while still telling the customer how to recover.
