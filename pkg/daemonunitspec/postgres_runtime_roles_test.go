@@ -243,6 +243,12 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 			t.Errorf("%q runs before the contract's live check", later)
 		}
 	}
+	stray := byName["postgres — remove owner mappings outside the managed block when contracted — ADR-20261023104734"]
+	strayArgs, _ := stray.body["ansible.builtin.lineinfile"].(map[string]any)
+	if strayArgs["state"] != "absent" || !strings.Contains(fmt.Sprint(strayArgs["regexp"]), "(?!root\\s)") ||
+		!strings.Contains(whenClauses(stray), "faas_postgres_owner_contracted") {
+		t.Errorf("the contract no longer removes owner mappings written outside the managed block (keeping root's): %v", stray.body)
+	}
 	probe, _ := byName["postgres — read the logins that still use the owner — ADR-20261023104734"].body["ansible.builtin.command"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(probe["argv"]), "usename = 'faas'") {
 		t.Error("the contract's live check no longer looks for sessions logged in as the owner")
