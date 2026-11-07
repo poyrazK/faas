@@ -1326,7 +1326,7 @@ gregale release runtime v42 --app my-function --target RELEASE_ID --json
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale release rollback <status> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback [status] [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2271,7 +2271,7 @@ Show the step-by-step timeline of one app wake
 
 Inspect an app&#39;s resource bindings and credential rotation
 
-`gregale app binding <call|probe-policy|verification|release-policy|service|check|verify> [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
+`gregale app binding [call|probe-policy|verification|release-policy|service|check|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3649,7 +3649,7 @@ Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 Switch attack mode on, off, or show it
 
-`gregale edge rule attack-mode <set|get> [--app <slug>] [--for <DURATION>] [on|off|status]`
+`gregale edge rule attack-mode [set|get] [--app <slug>] [--for <DURATION>] [on|off|status]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3712,7 +3712,7 @@ Attack mode challenges every visitor to the app for a while (15m to 24h); client
 
 Add a protection recipe&#39;s rule to an app in log mode
 
-`gregale edge rule recipe <apply> [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
+`gregale edge rule recipe [apply] [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4344,7 +4344,7 @@ Create, attach and restore managed PostgreSQL databases
 
 Durably switch between idle suspension and always-on compute
 
-`gregale postgres compute-policy <set|status> --scale-to-zero <BOOL> --request-id <UUID> <database>`
+`gregale postgres compute-policy [set|status] --scale-to-zero <BOOL> --request-id <UUID> <database>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4372,7 +4372,7 @@ Read compute policy change progress
 
 Durably resize compute; clients may disconnect
 
-`gregale postgres resize <status> --class <CLASS> --request-id <UUID> <database>`
+`gregale postgres resize [status] --class <CLASS> --request-id <UUID> <database>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4574,7 +4574,7 @@ Schedule requests and commands
 
 Fire one cron immediately or choose and follow a manual request
 
-`gregale cron run <get> [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
+`gregale cron run [get] [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6174,7 +6174,7 @@ Includes request evidence when available. Usage: running &lt;slug&gt; [--since D
 
 List, watch, triage, or roll back regressions
 
-`gregale debug regressions <watch|ack|acknowledge|dismiss|resolve|reopen|rollback> [--since <DURATION>] [--all] [<slug>]`
+`gregale debug regressions [watch|ack|acknowledge|dismiss|resolve|reopen|rollback] [--since <DURATION>] [--all] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7063,7 +7063,7 @@ Set or clear a spending cap for usage beyond your plan
 
 Show or set billing for egress above the monthly allowance
 
-`gregale billing egress-overage <get|set> [--org <SLUG>] [on|off]`
+`gregale billing egress-overage [get|set] [--org <SLUG>] [on|off]`
 
 | Flag | Meaning | |
 |---|---|---|
