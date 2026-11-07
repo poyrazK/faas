@@ -5667,9 +5667,10 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 			"Bad request", err.Error()))
 		return
 	}
-	if req.OverageCapCents != nil && *req.OverageCapCents < 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"overage_cap_cents must be >= 0 or null", "negative values are rejected"))
+	// ADR-20261105120000: a paid subject keeps a cap, at most its plan's
+	// self-service ceiling.
+	if problem := api.OverageCapProblem(acct.Plan, req.OverageCapCents); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	updated, err := s.raiseOverageCapSvc(r.Context(), acct, req.OverageCapCents)

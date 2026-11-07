@@ -130,6 +130,8 @@ type resourceAdoptionInstance struct {
 	LivenessProbe      json.RawMessage `json:"liveness_probe,omitempty"`
 	ReadinessProbe     json.RawMessage `json:"readiness_probe,omitempty"`
 	QuietPauseAfterMs  int64           `json:"quiet_pause_after_ms,omitempty"`
+	IdleLadderEligible bool            `json:"idle_ladder_eligible,omitempty"`
+	IdleLadderGuarded  bool            `json:"idle_ladder_guarded_pause,omitempty"`
 	FrameworkReadyAt   *time.Time      `json:"framework_ready_at,omitempty"`
 	// WarmPaused is a resident warm-pool restore (Instance.Paused), claimed
 	// or not. WarmSpare is one not yet claimed: its pause must survive
@@ -512,6 +514,8 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			LivenessProbe:            append(json.RawMessage(nil), inst.LivenessProbe...),
 			ReadinessProbe:           append(json.RawMessage(nil), inst.ReadinessProbe...),
 			QuietPauseAfterMs:        inst.QuietPauseAfter.Milliseconds(),
+			IdleLadderEligible:       inst.IdleLadderEligible,
+			IdleLadderGuarded:        inst.IdleLadderGuardedPause,
 			WarmPaused:               inst.Paused,
 			WarmSpare:                inst.warmSpare,
 			DevPatched:               inst.devPatched,
