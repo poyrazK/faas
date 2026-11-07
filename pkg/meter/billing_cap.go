@@ -2,6 +2,7 @@ package meter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -107,14 +108,31 @@ func (p *Pusher) computeWithinCap(ctx context.Context, acct state.Account, hour 
 		return 0, err
 	}
 	hour = hour.UTC().Truncate(time.Hour)
+	egress, err := p.liveEgressReserved(ctx, acct, hour, hour.Add(time.Hour), policy)
+	if err != nil {
+		return 0, err
+	}
+	return clampToAllowance(before, after, capComputeAllowance(capCents, egress, &policy, objectStorage)), nil
+}
+
+// liveEgressReserved is the egress the cap reserves for acct's month of hour,
+// before through: what the month is billed in live delivery by the egress
+// hour rules, so egress the subject is not billed for (overage off, Free
+// hours) never spends the cap. A store that cannot read usage by hour
+// reserves all usage above policy's allowance, the older bound.
+func (p *Pusher) liveEgressReserved(ctx context.Context, acct state.Account, hour, through time.Time, policy billing.MeterUsagePolicy) (int64, error) {
+	billed, err := monthLiveEgressBilled(ctx, p.store, p.pusher, acct, hour, through)
+	if !errors.Is(err, errNoHourlyUsage) {
+		return billed, err
+	}
+	hour = hour.UTC()
 	start := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 	if policy.EffectiveFrom.After(start) {
 		start = policy.EffectiveFrom
 	}
-	raw, err := sumMeterUsageRows(ctx, p.store, acct.ID, state.BillingMeterEgress, start, hour.Add(time.Hour))
+	raw, err := sumMeterUsageRows(ctx, p.store, acct.ID, state.BillingMeterEgress, start, through)
 	if err != nil {
 		return 0, err
 	}
-	egress := max(raw-policy.IncludedQuantity, 0)
-	return clampToAllowance(before, after, capComputeAllowance(capCents, egress, &policy, objectStorage)), nil
+	return max(raw-policy.IncludedQuantity, 0), nil
 }

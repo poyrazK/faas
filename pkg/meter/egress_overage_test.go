@@ -136,7 +136,8 @@ func TestPushPendingEgressPricedByTheHoursPlan(t *testing.T) {
 }
 
 // adr: 20261103131742 — egress past the allowance counts toward the spend cap
-// only for a subject that had egress overage on this month.
+// only when it was sent while the subject's egress overage was on, the bytes
+// the subject is billed for.
 func TestRunQuotaOnce_EgressWithOverageOffDoesNotCountTowardCap(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
@@ -161,7 +162,8 @@ func TestRunQuotaOnce_EgressWithOverageOffDoesNotCountTowardCap(t *testing.T) {
 	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || found {
 		t.Fatalf("spend cap hold found=%v err=%v; want none", found, err)
 	}
-	// Overage turned on earlier this month and off again still counts.
+	// Overage on earlier this month and off again: bytes sent while it was
+	// off are still not billed, so they still do not count.
 	if err := store.SetEgressOverage(ctx, acct.ID, true, now.Add(-48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,15 @@ func TestRunQuotaOnce_EgressWithOverageOffDoesNotCountTowardCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop.RunQuotaOnce(ctx)
+	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || found {
+		t.Fatalf("spend cap hold found=%v err=%v; want none for bytes sent with overage off", found, err)
+	}
+	// Bytes above the allowance sent while overage was on are billed and count.
+	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1", now.Add(-36*time.Hour), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	loop.RunQuotaOnce(ctx)
 	if _, found, err := store.GetSpendCapHold(ctx, acct.ID); err != nil || !found {
-		t.Fatalf("spend cap hold found=%v err=%v; want the month's overage counted", found, err)
+		t.Fatalf("spend cap hold found=%v err=%v; want the overage billed while it was on counted", found, err)
 	}
 }

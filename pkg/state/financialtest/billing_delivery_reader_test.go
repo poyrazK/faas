@@ -52,6 +52,20 @@ func TestBillingDeliveryReaderStores(t *testing.T) {
 			if _, err := store.DeliveredComputeMBSeconds(t.Context(), "polar", a.ID, end, start); !errors.Is(err, state.ErrInvalidArgument) {
 				t.Fatalf("inverted range: %v", err)
 			}
+			// Egress receipts sum apart from compute, first quantity wins.
+			record("polar", a.ID, state.BillingMeterEgress, start.Add(3*time.Hour), 1) // replay keeps 4096
+			record("polar", a.ID, state.BillingMeterEgress, start.Add(4*time.Hour), 0) // a settled zero hour
+			record("polar", other.ID, state.BillingMeterEgress, start.Add(3*time.Hour), 8)
+			record("polar", a.ID, state.BillingMeterEgress, end, 77) // next month
+			if got, err := store.DeliveredEgressBytes(t.Context(), "polar", a.ID, start, end); err != nil || got != 4096 {
+				t.Fatalf("delivered egress = %d, %v; want 4096", got, err)
+			}
+			if got, err := store.DeliveredEgressBytes(t.Context(), "paddle", a.ID, start, end); err != nil || got != 0 {
+				t.Fatalf("delivered egress to paddle = %d, %v; want 0", got, err)
+			}
+			if _, err := store.DeliveredEgressBytes(t.Context(), "polar", a.ID, end, start); !errors.Is(err, state.ErrInvalidArgument) {
+				t.Fatalf("inverted egress range: %v", err)
+			}
 		})
 	}
 }
