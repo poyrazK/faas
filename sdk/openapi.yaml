@@ -1626,7 +1626,7 @@ paths:
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403':
-          description: 'An API key was used, or a recent authenticator verification is required (`step_up_required`).'
+          description: 'Recovery codes need a browser session with a recent authenticator verification (`step_up_required`); API keys are refused.'
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '409':
           description: Two-factor authentication is not set up.
