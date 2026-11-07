@@ -719,6 +719,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	hostidentity.Configure(domains)
 	ownedDomainsFunc = domains.OwnedDomains
+	// ADR-20261107180000: the labels of the host names edgednsd manages are
+	// not for customers' apps.
+	api.SetOperatorReservedAppSlugs(strings.Split(deps.getenv("FAAS_RESERVED_APP_SLUGS"), ","))
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {

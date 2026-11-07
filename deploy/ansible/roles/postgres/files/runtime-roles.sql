@@ -71,6 +71,15 @@ BEGIN
 	IF to_regclass('public.platform_release_activations') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE ON public.platform_release_activations FROM faas_runtime;
 	END IF;
+	-- ADR-20261107180000: the apps domains' certificates are edgednsd's.
+	-- Every compute node logs in as a faas_runtime member (faas_compute), and
+	-- a row it wrote would be served by every edge and trusted by the
+	-- Certificate Transparency watch. Only faas_shared, the control plane's
+	-- `faas` OS user that edgednsd runs as, inserts and prunes them.
+	IF to_regclass('public.edge_tls_certificates') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.edge_tls_certificates FROM faas_runtime;
+		GRANT INSERT, DELETE ON public.edge_tls_certificates TO faas_shared;
+	END IF;
 END
 $$;
 -- Objects the next migrations create carry the same grants. Only objects the
