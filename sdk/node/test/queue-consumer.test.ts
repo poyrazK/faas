@@ -84,7 +84,7 @@ test('acks messages that finish together in one call', async () => {
   await c.stop();
   const acks = fake.calls.filter(call => call.verb === 'ack');
   assert.equal(acks.length, 1);
-  assert.deepEqual([...(acks[0].body.receipts as string[])].sort(), ['m0.r', 'm1.r', 'm2.r', 'm3.r', 'm4.r']);
+  assert.deepEqual([...(acks[0]?.body.receipts as string[])].sort(), ['m0.r', 'm1.r', 'm2.r', 'm3.r', 'm4.r']);
 });
 
 test('authenticates with a cached gregale:queues workload token', async () => {
