@@ -1,4 +1,4 @@
--- filename: 20261107160000000_edge_tls_certificates_edgednsd_only.sql
+-- filename: 20261107183742837_edge_tls_certificates_edgednsd_only.sql
 -- migration-compat: contract
 -- Apply in a full release only. edgednsd runs on the control plane as the
 -- faas OS user, which logs in as the schema owner or faas_shared; both keep
