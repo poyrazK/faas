@@ -315,7 +315,9 @@ reached. Header content past that is not inspected, which keeps one client's
 oversized headers from slowing every other app's checks. Because a client
 could pad its headers to hide an attack past that point, a `warn` or `block`
 rule counts a request with a header value over 4 KiB, or more than 16 KiB of
-headers, as a detection (category `uninspected-headers`): `block` answers
+headers, as a detection (category `uninspected-headers`). Cookies are measured
+one by one, so a long `Cookie` header made of ordinary cookies is checked, not
+refused: `block` answers
 `403` and `warn` adds `X-WAF-Warning`. Such a request never puts the client in
 a penalty box. If your app legitimately receives larger headers (very large
 cookies or tokens), keep the rule in `observe` for those paths.

@@ -23,6 +23,9 @@ func TestWAFHeadersPastTheInspectionBoundAreADetection(t *testing.T) {
 		"one value past the value bound": {headers: map[string]string{"User-Agent": pad + "x"}, wantBlock: true},
 		"headers past the total bound":   {headers: map[string]string{"A1": pad, "A2": pad, "A3": pad, "A4": pad, "X-Payload": "x"}, wantBlock: true},
 		"headers within both bounds":     {headers: map[string]string{"User-Agent": "curl/8", "Cookie": pad[:3000]}},
+		// A browser joins every cookie into one header; each is bounded alone.
+		"a long Cookie header of normal cookies": {headers: map[string]string{"Cookie": "a=" + pad[:3000] + "; b=" + pad[:3000]}},
+		"one cookie past the value bound":        {headers: map[string]string{"Cookie": "a=1; big=" + pad}, wantBlock: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			box := NewPenaltyBox()

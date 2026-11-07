@@ -1406,6 +1406,9 @@ request whose headers exceed either bound
 (`api.EdgeWAFHeadersExceedInspection`) as a detection with category
 `uninspected-headers`, without running the check: `block` answers 403, `warn`
 adds `X-WAF-Warning`. Like a cookie-only detection it never boxes the client.
+A Cookie header is measured and scored one cookie per value
+(`api.EdgeWAFInspectHeaders`): browsers join every cookie into one header,
+often past 4 KiB, while capping each cookie at 4 KiB.
 `observe` is unchanged. Apps that legitimately receive larger headers keep
 those paths in `observe`; the bound itself, and so the cost of a check, is
 unchanged. Node.js already refuses more than 16 KiB of headers by default.
