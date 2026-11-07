@@ -139,6 +139,12 @@ type Client struct {
 	// noConfigGuard sends `guard=false` on env and secret writes, so they
 	// open no config guard (ADR-1451, CLI --no-guard).
 	noConfigGuard bool
+
+	// approvalWait makes a call answered approval_required wait for a
+	// person's decision and retry once (WaitForApproval).
+	approvalWait   bool
+	approvalNotify func(AgentApprovalPendingInfo)
+	approvalPoll   time.Duration
 }
 
 // WithoutConfigGuard returns a client whose env and secret writes open no
@@ -351,12 +357,22 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 	} else {
 		idempotencyKey = ""
 	}
+	waitedForApproval := false
 	for attempt := 1; ; attempt++ {
 		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
 		if err != nil {
 			return err
 		}
 		err = c.doReq(cli, req, out)
+		if pending, ok := pendingApproval(err); ok && c.approvalWait && !waitedForApproval {
+			// The approval gate answers before the idempotency layer, so
+			// the retry may carry the same Idempotency-Key.
+			waitedForApproval = true
+			if waitErr := c.awaitApproval(ctx, pending, err); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
 		pause, retry := trafficPolicyRetryPause(err, attempt)
 		if !retry {
 			return err
