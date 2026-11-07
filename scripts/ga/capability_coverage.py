@@ -310,7 +310,7 @@ RULES = [
     (r"wake-ahead", "Service wake-ahead"),
     (r"autoscal|scale-up|scaling|min-instance|max-instance|max-concurrency|concurrency", "Autoscaling and min instances"),
     (r"prewarm|park|wake", "Manual park / wake"),
-    (r"runner|runtime|function|node22|node24|python3|go124|binary", "Function runtimes"),
+    (r"runner|runtime|function|handler-api|node22|node24|python3|go124|binary", "Function runtimes"),
     (r"firecracker|jailer|isolation|vmm", "Firecracker isolation"),
     (r"scale-to-zero|idle|cold-wake|cold-boot|reaper", "Scale to zero"),
     # --- releases
