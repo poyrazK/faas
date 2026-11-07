@@ -7228,7 +7228,7 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
 		"Free organization limit reached",
-		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
@@ -7237,7 +7237,7 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 // ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
 func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
 	p := ErrOrgFreeLimitExceeded(limit, observed)
-	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade one before accepting another; a Free organization deleted this month counts until the month ends.", observed, limit)
 	return p
 }
 
