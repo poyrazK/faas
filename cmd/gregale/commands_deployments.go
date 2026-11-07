@@ -369,6 +369,8 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentDiff(args[1:])
 	case "timeline":
 		return cmdDeploymentTimeline(args[1:])
+	case "resolve":
+		return cmdDeploymentResolve(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	case subStatus:
@@ -466,7 +468,7 @@ func cmdDeploymentWait(args []string) int {
 				}
 				return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
 			}
-			if *rollout && d.CanaryTotalSteps > 0 && d.RolloutState == rolloutStateAborted {
+			if *rollout && d.RolloutState == rolloutStateAborted {
 				if jsonOutput {
 					_ = writeJSON(d)
 				}

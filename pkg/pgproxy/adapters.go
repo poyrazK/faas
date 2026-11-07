@@ -89,6 +89,8 @@ func (d *VmmdDialer) Dial(ctx context.Context, target, databaseID string) (io.Re
 	// The session must outlive the setup context, so it keeps ctx's values
 	// but not its cancellation.
 	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stopSetup := context.AfterFunc(ctx, cancel)
+	defer stopSetup()
 	stream, err := c.DatabaseSession(streamCtx)
 	if err != nil {
 		cancel()
@@ -97,6 +99,10 @@ func (d *VmmdDialer) Dial(ctx context.Context, target, databaseID string) (io.Re
 	if err := stream.Send(&vmmdpb.DatabaseSessionFrame{DatabaseId: databaseID}); err != nil {
 		cancel()
 		return nil, err
+	}
+	if !stopSetup() || ctx.Err() != nil {
+		cancel()
+		return nil, ctx.Err()
 	}
 	return &sessionStream{stream: stream, cancel: cancel}, nil
 }
@@ -151,8 +157,8 @@ func (s *sessionStream) Write(p []byte) (int, error) {
 }
 
 func (s *sessionStream) Close() error {
-	_ = s.stream.CloseSend()
 	s.cancel()
+	_ = s.stream.CloseSend()
 	return nil
 }
 

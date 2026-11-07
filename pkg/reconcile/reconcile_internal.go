@@ -122,6 +122,9 @@ func (s *Service) reconcile(
 	}
 	out.Added = applied.Added
 	s.labelAddedApps(ctx, applied.Added, scan.Workloads)
+	if err := s.syncAppProtocols(ctx, project, scan.Workloads); err != nil {
+		return out, err
+	}
 	out.Changed = applied.Changed
 	out.Removed = applied.Removed
 	out.Alerts = append(out.Alerts, applied.Alerts...)

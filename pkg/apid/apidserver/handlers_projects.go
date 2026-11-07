@@ -548,6 +548,9 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug string, req api.CreateProjectEnvironmentRequest, acct state.Account, err error) {
 	var quota *state.ProjectEnvironmentCloneQuotaError
 	switch {
+	case errors.Is(err, state.ErrProjectEnvironmentCleanupPending):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_cleanup_pending", "Environment cleanup in progress",
+			"Managed resources from the previous environment are still being removed. Retry after cleanup finishes."))
 	case errors.Is(err, errProjectEnvironmentCloneCleanup):
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Clone cleanup incomplete",
 			"resource cleanup could not be confirmed; the target environment may exist. Inspect it before retrying."))
@@ -668,7 +671,7 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",
-				"only unprotected, non-production environments without live releases can be deleted"))
+				"only unprotected, non-production environments without live or in-progress deployments can be deleted"))
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not delete project environment"))
 		}

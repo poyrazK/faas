@@ -187,11 +187,16 @@ func (e *EgressDriftSubscriber) reconcileAppCPULimit(ctx context.Context, appID 
 }
 
 func (e *EgressDriftSubscriber) applyCPULimitTarget(ctx context.Context, store state.AppCPUPolicyConvergenceStore, target state.AppCPUPolicyApplyTarget) {
-	var applyErr error
-	if router, ok := e.router.(appCPULimitPolicyRouter); ok {
-		applyErr = router.UpdateAppCPULimit(ctx, target.NodeID, target.AppID, target.Revision, target.CPUMillicores)
-	} else {
-		applyErr = errors.New("app CPU policy update is unsupported by routed VMM")
+	// A listed app's instances run at its plan's burst ceiling; pushing the
+	// configured value would lower them again (ADR-20261101160231).
+	cpu, applyErr := e.engine.policyAppCPUMillicores(ctx, target.AppID, target.CPUMillicores)
+	if applyErr == nil {
+		target.CPUMillicores = cpu
+		if router, ok := e.router.(appCPULimitPolicyRouter); ok {
+			applyErr = router.UpdateAppCPULimit(ctx, target.NodeID, target.AppID, target.Revision, target.CPUMillicores)
+		} else {
+			applyErr = errors.New("app CPU policy update is unsupported by routed VMM")
+		}
 	}
 	if err := store.RecordAppCPUPolicyApply(ctx, target.AppID, target.NodeID, target.Revision, applyErr); err != nil {
 		e.log.Warn("schedd: record app CPU policy apply failed", "app", target.AppID, "node", target.NodeID,

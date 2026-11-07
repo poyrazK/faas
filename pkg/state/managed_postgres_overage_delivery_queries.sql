@@ -5,7 +5,7 @@
 -- Subjects that may owe overage for the month: those that reached the
 -- compute allowance (as the cap sweep recorded it), those with overage on,
 -- whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
--- those already charged.
+-- those already charged or with a reserved step awaiting reconciliation.
 SELECT s.subject_id, max(s.allowance_unit_seconds)::bigint AS allowance_unit_seconds,
     bool_or(s.overage_enabled) AS overage_enabled
 FROM (
@@ -20,6 +20,10 @@ FROM (
     SELECT d.subject_id, 0::bigint, false
     FROM managed_postgres_overage_deliveries d
     WHERE d.period_start = sqlc.arg(period_start)::timestamptz
+    UNION ALL
+    SELECT p.subject_id, 0::bigint, false
+    FROM managed_postgres_overage_pending p
+    WHERE p.period_start = sqlc.arg(period_start)::timestamptz
 ) s
 GROUP BY s.subject_id
 ORDER BY s.subject_id;
@@ -82,3 +86,12 @@ RETURNING true AS reserved;
 DELETE FROM managed_postgres_overage_pending
 WHERE provider = sqlc.arg(provider)::text AND subject_id = sqlc.arg(subject_id)::uuid
   AND period_start = sqlc.arg(period_start)::timestamptz AND target_millicents = sqlc.arg(target_millicents)::bigint;
+
+-- name: ListManagedPostgresOveragePending :many
+-- Reservations survive month close and are paged without starving later keys
+-- when an older provider delivery keeps failing.
+SELECT subject_id,period_start FROM managed_postgres_overage_pending
+WHERE provider=sqlc.arg(provider)::text AND period_start<=sqlc.arg(through)::timestamptz
+ AND (sqlc.narg(after_period)::timestamptz IS NULL
+  OR (period_start,subject_id)>(sqlc.narg(after_period)::timestamptz,sqlc.narg(after_subject)::uuid))
+ORDER BY period_start,subject_id LIMIT sqlc.arg(page_limit)::int;

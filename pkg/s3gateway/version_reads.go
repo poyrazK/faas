@@ -60,7 +60,7 @@ func (h *Handler) resolveReadVersion(w http.ResponseWriter, r *http.Request, req
 }
 
 func (h *Handler) presignGatewayRead(r *http.Request, req requestContext, key, native string) (objectstorage.SignedRequest, error) {
-	mode := headerOrQueryValue(r, "x-amz-checksum-mode")
+	mode := checksumMode(r)
 	if native != "" {
 		presigner := req.provider.(objectstorage.VersionReadPresigner)
 		signed, err := presigner.PresignVersionRead(r.Context(), req.bucket.PhysicalName, r.Method, key, native, mode == "ENABLED", 60)

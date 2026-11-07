@@ -2531,6 +2531,17 @@ func (m *Metrics) RequestCountHandler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
 }
 
+// ForgetAppRequestCounts drops a deleted app's request counters. Their
+// series stayed for the gateway's lifetime, one per status code, and
+// schedd reads them every second (ADR 20261104091530). The in-flight gauge
+// stays: a request still finishing would bring it back below zero.
+func (m *Metrics) ForgetAppRequestCounts(appID string) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.requests.DeletePartialMatch(prometheus.Labels{"app": appID})
+}
+
 // AdjustAppInflight moves appID's in-flight request gauge by delta.
 // Nil-receiver safe.
 func (m *Metrics) AdjustAppInflight(appID string, delta float64) {
@@ -3994,12 +4005,20 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 		"cold", cold,
 		"request_id", logsanitize.Field(requestID),
 	}
-	hotSuccess := len(code) == 3 && code[0] == '2'
-	if cold || !hotSuccess {
+	if requestLogLevel(code, cold) == slog.LevelInfo {
 		l.log.Info("gateway_request", fields...)
 		return
 	}
 	l.log.Debug("gateway_request", fields...)
+}
+
+// requestLogLevel is the level requestLogger.Log writes a request at: a warm
+// 2xx at Debug, anything else at Info.
+func requestLogLevel(code string, cold bool) slog.Level {
+	if cold || len(code) != 3 || code[0] != '2' {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
 }
 
 // Issue #676 / ADR-080 follow-up, PR-B: closed-set label constants

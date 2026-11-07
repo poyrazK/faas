@@ -4,14 +4,46 @@ package main
 import (
 	"context"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// withCert returns env with a complete certificate configuration, then
+// overrides applied.
+func withCert(env, overrides map[string]string) map[string]string {
+	out := map[string]string{
+		"FAAS_EDGEDNS_CERT_NAMES":            "gregale.dev, *.Gregale.dev",
+		"FAAS_EDGEDNS_CERT_ZONE_ID":          "zone-1",
+		"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "/run/credentials/faas-edgednsd.service/acme_account_key",
+		"FAAS_EDGEDNS_CERT_RECIPIENT_FILE":   "/run/credentials/faas-edgednsd.service/edge_tls_recipient",
+	}
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
+
+// withWatch returns env with the transparency settings in overrides.
+func withWatch(env, overrides map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
 
 func TestConfigFromEnv(t *testing.T) {
 	base := map[string]string{
@@ -67,6 +99,37 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "a bad address", env: with("FAAS_EDGEDNS_NODE_ADDRESSES", "gregale-compute-1=not-an-ip"), wantErr: "<node>=<address>"},
 		{name: "no token", env: with("FAAS_EDGEDNS_CF_TOKEN_FILE", ""), wantErr: "TOKEN_FILE"},
 		{name: "too short an interval", env: with("FAAS_EDGEDNS_INTERVAL", "100ms"), wantErr: "at least 1s"},
+		{name: "no certificate by default", env: base, check: func(t *testing.T, c config) {
+			if c.cert.enabled() {
+				t.Fatalf("cert = %+v, want off", c.cert)
+			}
+		}},
+		{name: "certificate", env: withCert(base, nil), check: func(t *testing.T, c config) {
+			if !c.cert.enabled() || strings.Join(c.cert.names, ",") != "*.gregale.dev,gregale.dev" || c.cert.ca != edgecert.CALetsEncryptStaging || c.cert.zoneID != "zone-1" {
+				t.Fatalf("cert = %+v; want both names, staging first", c.cert)
+			}
+		}},
+		{name: "certificate from production", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_CA": "letsencrypt"}), check: func(t *testing.T, c config) {
+			if c.cert.ca != edgecert.CALetsEncrypt {
+				t.Fatalf("ca = %q", c.cert.ca)
+			}
+		}},
+		{name: "an unknown CA", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_CA": "zerossl"}), wantErr: "FAAS_EDGEDNS_ACME_CA"},
+		{name: "a certificate without its files", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "", "FAAS_EDGEDNS_CERT_ZONE_ID": ""}), wantErr: "FAAS_EDGEDNS_CERT_ZONE_ID, FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE"},
+		{name: "a bad certificate name", env: withCert(base, map[string]string{"FAAS_EDGEDNS_CERT_NAMES": "*.*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CERT_NAMES"},
+		{name: "certificate settings without names", env: with("FAAS_EDGEDNS_ACME_CA", "letsencrypt"), wantErr: "names no host"},
+		{name: "no transparency watch by default", env: base, check: func(t *testing.T, c config) {
+			if c.watch.enabled() {
+				t.Fatalf("watch = %+v, want off", c.watch)
+			}
+		}},
+		{name: "transparency watch", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_DOMAIN": "Gregale.dev", "FAAS_EDGEDNS_CT_ALLOW_NAMES": "*.gregale.dev, Operations.gregale.dev"}), check: func(t *testing.T, c config) {
+			if !c.watch.enabled() || c.watch.domain != "gregale.dev" || strings.Join(c.watch.allow, ",") != "*.gregale.dev,operations.gregale.dev" || c.watch.apiKeyFile != "" {
+				t.Fatalf("watch = %+v", c.watch)
+			}
+		}},
+		{name: "a wildcard watch domain", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_DOMAIN": "*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CT_*"},
+		{name: "watch settings without a domain", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_ALLOW_NAMES": "gregale.dev"}), wantErr: "names no domain"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := configFromEnv(func(k string) string { return tc.env[k] })
@@ -137,6 +200,63 @@ func TestNodeSourceJoinsRegistryAddressesAndProbes(t *testing.T) {
 	}
 	if len(probe.urls) != 2 {
 		t.Fatalf("probed %v, want the two nodes with a private address", probe.urls)
+	}
+}
+
+type fakeDirect struct {
+	mu     sync.Mutex
+	serves map[string]bool // "<addr> <host>"
+	probed []string
+}
+
+func (p *fakeDirect) Serves(_ context.Context, addr netip.Addr, host string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := addr.String() + " " + host
+	p.probed = append(p.probed, key)
+	return p.serves[key]
+}
+
+// TestNodeSourceProbesEachPublicAddressForEveryDNSOnlyName: a node serves
+// direct entry only when its public address completes a handshake for every
+// DNS-only name; a node without a public address is not probed.
+func TestNodeSourceProbesEachPublicAddressForEveryDNSOnlyName(t *testing.T) {
+	direct := &fakeDirect{serves: map[string]bool{
+		"203.0.113.1 a.gregale.dev": true, "203.0.113.1 b.gregale.dev": true,
+		"203.0.113.2 a.gregale.dev": true,
+	}}
+	src := nodeSource{
+		registry: fakeRegistry{
+			{Name: "n1", TargetURL: "tcp://10.10.0.1:50051", Active: true},
+			{Name: "n2", TargetURL: "tcp://10.10.0.2:50051", Active: true},
+			{Name: "n3", TargetURL: "tcp://10.10.0.3:50051", Active: true},
+		},
+		probe: &fakeProbe{ready: map[string]bool{}},
+		public: map[string]netip.Addr{
+			"n1": netip.MustParseAddr("203.0.113.1"), "n2": netip.MustParseAddr("203.0.113.2"),
+		},
+		edgePort:    "9109",
+		direct:      direct,
+		directHosts: dnsOnlyHosts([]edgedns.Name{{Host: "*.gregale.dev"}, {Host: "a.gregale.dev", DNSOnly: true}, {Host: "b.gregale.dev", DNSOnly: true}}),
+	}
+	nodes, err := src.nodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []bool{nodes[0].Direct, nodes[1].Direct, nodes[2].Direct}; !slices.Equal(got, []bool{true, false, false}) {
+		t.Fatalf("direct = %v, want only the node serving both DNS-only names", got)
+	}
+	if len(direct.probed) != 4 {
+		t.Fatalf("probed %v, want both DNS-only names on the two nodes with a public address", direct.probed)
+	}
+
+	src.directHosts = nil
+	direct.probed = nil
+	if _, err := src.nodes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(direct.probed) != 0 {
+		t.Fatalf("probed %v with no DNS-only name", direct.probed)
 	}
 }
 

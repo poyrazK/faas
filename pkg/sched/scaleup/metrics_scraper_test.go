@@ -4,6 +4,7 @@ package scaleup
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -156,5 +157,32 @@ func TestHTTPPromScraper_RejectsOversizedResponse(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("oversized response map = %v, want empty", got)
+	}
+}
+
+// A node with thousands of apps exposes more than the former 1 MiB cap; the
+// streaming parse reads it (ADR 20261104091530).
+func TestHTTPPromScraper_ParsesLargeExposition(t *testing.T) {
+	const apps = 20000
+	var b strings.Builder
+	b.WriteString("# TYPE gateway_requests_total counter\n")
+	for i := range apps {
+		fmt.Fprintf(&b, "gateway_requests_total{app=\"app-%05d\",code=\"200\",plan=\"pro\"} 3\n", i)
+		fmt.Fprintf(&b, "gateway_requests_total{app=\"app-%05d\",code=\"404\",plan=\"pro\"} 2\n", i)
+		fmt.Fprintf(&b, "gateway_app_inflight_requests{app=\"app-%05d\"} 1\n", i)
+	}
+	if b.Len() <= 1<<20 {
+		t.Fatalf("fixture is %d bytes, want over 1 MiB", b.Len())
+	}
+	s := &HTTPPromScraper{URL: "http://localhost/metrics", Client: &fakeHTTPFetcher{body: b.String()}}
+	counts, inflight, err := s.ScrapeLoad(context.Background())
+	if err != nil {
+		t.Fatalf("ScrapeLoad: %v", err)
+	}
+	if len(counts) != apps || counts["app-00042"] != 5 {
+		t.Fatalf("counts: %d apps, app-00042=%d; want %d apps, 5", len(counts), counts["app-00042"], apps)
+	}
+	if len(inflight) != apps || inflight["app-19999"] != 1 {
+		t.Fatalf("inflight: %d apps, app-19999=%d; want %d apps, 1", len(inflight), inflight["app-19999"], apps)
 	}
 }

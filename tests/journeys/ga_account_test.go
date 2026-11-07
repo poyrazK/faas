@@ -181,8 +181,16 @@ func TestCustomDomainBinding(t *testing.T) {
 	s := newStory(t)
 
 	s.step("add", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "domain", "create", "--app", slug, domain)
-		t.Logf("domains add: %s", tail(string(res.stdout), 500))
+		dir := t.TempDir()
+		manifest, plan := filepath.Join(dir, "domains.yaml"), filepath.Join(dir, "domains.plan.json")
+		if err := os.WriteFile(manifest, []byte("version: 1\ndomains:\n  - domain: "+domain+"\n    app: "+slug+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		tg.ok(t, time.Minute, "domain", "plan", "--file", manifest, "--out", plan)
+		if res := tg.ok(t, time.Minute, "domain", "list"); strings.Contains(string(res.stdout), domain) {
+			t.Fatal("planning attached a domain")
+		}
+		tg.ok(t, time.Minute, "domain", "apply", "--plan", plan, "--confirm")
 	})
 	s.check("pending_with_records", func(t *testing.T) {
 		res := tg.ok(t, time.Minute, "domain", "get", domain)
@@ -196,7 +204,7 @@ func TestCustomDomainBinding(t *testing.T) {
 	})
 	s.check("verify_fails_without_dns", func(t *testing.T) {
 		res := tg.run(t, time.Minute, "domain", "verify", domain)
-		if res.exit == 0 && strings.Contains(strings.ToLower(string(res.stdout)), `"verified": true`) {
+		if res.exit == 0 {
 			t.Errorf("a domain with no DNS records verified")
 		}
 	})

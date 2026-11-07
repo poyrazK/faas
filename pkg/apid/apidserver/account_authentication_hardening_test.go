@@ -172,7 +172,10 @@ func TestAccountOwnershipClaimUsesFreshMFAState(t *testing.T) {
 			if err = st.IssueLoginToken(t.Context(), api.HashToken(raw), acct.ID, time.Now().Add(time.Minute)); err != nil {
 				t.Fatal(err)
 			}
-			rec := accountSecurityJSON(t, srv.Handler(), nil, "GET", "/auth/verify?token="+base64.RawURLEncoding.EncodeToString(raw), nil)
+			open := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+base64.RawURLEncoding.EncodeToString(raw), nil)
+			open.Header.Set("Sec-Fetch-Site", "none")
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, open)
 			c := accountSecurityCookie(rec)
 			if rec.Code != 302 || c == nil {
 				t.Fatalf("claim: %d", rec.Code)

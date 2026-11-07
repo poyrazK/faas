@@ -67,6 +67,13 @@ to the journeys and steps that test it, and lists what is not covered.
 enables `TestGitHubDeploys` against a fixture repository the account's
 GitHub App installation can see (e.g. `poyrazK/gregale-e2e-fixture`).
 
+To run `TestGitHubDeploysSharedInstallation`, independently connect that same
+GitHub installation in a second Gregale fixture account and set
+`GREGALE_E2E_GITHUB_SECOND_TOKEN` to its API token. The journey binds a separate
+app in each account and verifies that one fixture push deploys both. It skips
+when the second credential is absent. Use disposable fixture accounts and a
+dedicated repository; the journey changes its `version.txt` on `main`.
+
 ## Known bugs, history and trends
 
 - `known_failures.json` lists steps that fail on a known platform bug. Such a
@@ -139,3 +146,15 @@ once). Redeploys outside the safe-release journey should pass
 `--rollout immediate`. `go test ./tests/journeys` with no target runs only
 the harness's own unit tests; `python3 -I tests/journeys/report_test.py`
 tests the reporter.
+
+The shared-installation journey also requires two distinct account checks on
+the same commit and automatic PR previews in both accounts, without a manual
+preview fallback. `GREGALE_E2E_GITHUB_FIRST_SESSION` optionally enables the
+browser-only account disconnect step for the first disposable fixture account;
+it then checks that a later push still deploys the second account, the first
+keeps its running version, and both account identities remain unchanged. This
+step removes that fixture account's connection and requires reconnecting it
+before the next run. Supply only a dedicated staging session, never a live
+customer's session. Without live fixtures, the journey skips; local HTTP and
+PostgreSQL acceptance tests cover CSRF, verification, account-only disconnect,
+unchanged credentials in the other account, and exclusive GitHub login.

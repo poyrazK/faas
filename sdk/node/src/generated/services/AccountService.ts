@@ -89,6 +89,10 @@ export class AccountService {
    * Stages deletion. The account becomes `deleted_pending` for 30 days
    * during which the customer can call `POST /v1/account/restore`. After
    * the grace period, all rows are GC'd.
+   * An account serving as an organization's billing contact while it has
+   * a billing customer must move that contact first (409
+   * `billing_contact_member`). If the billing-contact check cannot
+   * complete, returns retryable 503 without staging deletion.
    *
    * @returns AccountDeletionResponse Staged.
    * @throws ApiError
@@ -112,6 +116,10 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

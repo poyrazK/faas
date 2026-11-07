@@ -97,7 +97,7 @@ RULES = [
     (r"grype|vuln|secret-scan|show-scan|scanview", "Deploy-time vulnerability scan"),
     (r"focus", "Plans, usage, invoices"),
     (r"release-command|release-config\.|^release$", "Release commands"),
-    (r"after-restore|before-checkpoint|lifecycle-config\.(after|before)", "Snapshot lifecycle hooks"),
+    (r"after-restore|before-checkpoint|lifecycle-config\.(after|before)|lifecycle-hooks", "Snapshot lifecycle hooks"),
     (r"scaling-schedule|scaling-target|scaling-config|worker-scale-spec", "Autoscaling and min instances"),
     (r"amqp|rabbitmq|kafka-config|nats-config|redis-streams-config|sqs-compat-config|sasl-config|tls-config\.|filter-criteria|filter-clause|retry-policy-config|function-bucket-event|function-webhook|^trigger\.|event-trigger", "Triggers and event sources"),
     (r"path-route|async-route\.", "Edge rules (incl"),
@@ -140,6 +140,9 @@ RULES = [
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),
+    # Preloaded app hosts for the edge and gateway new-host lookup budgets
+    # (ADR-20261103163954 §4); edge plumbing, no capability of its own.
+    (r"^knownhosts$", "INFRA"),
     # Each family's ring and rollout switches (amendment 1).
     (r"^credential-(scheduler|outbound|uploads|attach|dev-bridge|data-api)-(keys-file|writes|plain-lookup)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
@@ -321,7 +324,7 @@ RULES = [
     (r"release-gate|gate", "Release gates"),
     (r"preview", "Pull-request previews"),
     (r"alias", "Deployment aliases"),
-    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion", "Progressive rollouts"),
+    (r"canary|rollout|progressive|safe-release|safedeploy|traffic-split|promotion|service-aborts|service-abort-attempts", "Progressive rollouts"),
     (r"rollback", "Rollback to a named revision"),
     # --- deploy and build
     (r"queue-control|reorder|deploy-immediately|queued-deploy|cancel-ops|reorder-ops", "Deploy queue controls"),

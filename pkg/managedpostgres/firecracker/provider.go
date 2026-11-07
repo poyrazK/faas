@@ -384,6 +384,13 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 	return spec
 }
 
+var _ managedpostgres.UpdateObserver = (*Provider)(nil)
+
+// ObserveUpdate reads schedd's configuration and resize-pending state.
+func (p *Provider) ObserveUpdate(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
+	return p.Inspect(ctx, req.ResourceID)
+}
+
 // Update changes a database's class, storage limit or compute policy in
 // place, or upgrades it to a later major (upgrade). The region and restore
 // window are fixed, and storage only grows. A class or storage change resizes the VM through schedd, which

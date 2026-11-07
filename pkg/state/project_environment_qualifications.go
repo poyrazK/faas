@@ -182,7 +182,12 @@ func validateProjectEnvironmentQualificationScope(accountID, projectID, environm
 }
 
 func normalizeProjectEnvironmentQualificationSecretRevisionHashes(hashes map[string]string, checks []ProjectEnvironmentQualificationCheck) (map[string]string, error) {
-	if len(checks) == 0 || len(hashes) != len(checks[0].Results) {
+	_, shared := hashes[api.ProjectSecretsRevisionKey]
+	count := len(hashes)
+	if shared {
+		count--
+	}
+	if len(checks) == 0 || count != len(checks[0].Results) {
 		return nil, ErrInvalidArgument
 	}
 	normalized := make(map[string]string, len(hashes))
@@ -192,6 +197,13 @@ func normalizeProjectEnvironmentQualificationSecretRevisionHashes(hashes map[str
 			return nil, ErrInvalidArgument
 		}
 		normalized[result.WorkloadSlug] = hash
+	}
+	if shared {
+		hash := hashes[api.ProjectSecretsRevisionKey]
+		if !api.ValidProjectEnvironmentConfigHash(hash) {
+			return nil, ErrInvalidArgument
+		}
+		normalized[api.ProjectSecretsRevisionKey] = hash
 	}
 	return normalized, nil
 }
@@ -281,15 +293,11 @@ func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, acc
 	if err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
-	if !sameProjectEnvironmentSecretRevisionHashes(normalizedSecretRevisionHashes, currentSecretRevisionHashes) {
-		return ProjectEnvironmentQualification{}, ErrConflict
-	}
-	// ADR-1139: the server records the shared secrets the probes ran with.
-	projectSecrets, err := projectEnvironmentSecretsDB(ctx, tx, accountID, projectID, environment)
+	sharedRevision, err := projectEnvironmentSharedSecretRevisionDB(ctx, tx, accountID, projectID, environment)
 	if err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
-	if normalizedSecretRevisionHashes, err = WithProjectSecretRevision(normalizedSecretRevisionHashes, projectSecrets); err != nil {
+	if normalizedSecretRevisionHashes, err = validateQualificationSecretRevisions(normalizedSecretRevisionHashes, currentSecretRevisionHashes, sharedRevision); err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}
 	if err := validateQualificationResultsForReleaseSet(ctx, tx, accountID, releaseSetID, normalized); err != nil {

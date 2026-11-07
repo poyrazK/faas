@@ -93,6 +93,7 @@ func cmdAddBucket(args []string) int {
 	permission := fs.String("permission", api.ObjectBucketPermissionReadWrite, "compute binding permission: read|write|read_write")
 	label := fs.String("label", "compute", "label for the bucket-scoped compute credential")
 	prefix := fs.String("prefix", "", "uppercase prefix for injected storage secret names")
+	keyPrefix := fs.String("key-prefix", "", "limit the binding to object keys under this prefix, e.g. segments/L0/ (preview)")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the bucket to become ready")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -102,7 +103,7 @@ func cmdAddBucket(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--wait-timeout DURATION]"
+	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
 	if strings.TrimSpace(*scope) == "" {
 		// Outside a linked project the scope has no default; the usage line
 		// alone did not say which argument was missing (Snapbox SB-2).
@@ -166,11 +167,14 @@ func cmdAddBucket(args []string) int {
 		return printErr("Could not list object-storage bindings", err)
 	}
 	binding, bindingFound := findAddBucketBinding(bindings.Items, bucket.Scope, bindingPrefix)
+	if bindingFound && binding.KeyPrefix != *keyPrefix {
+		return printErr("Could not attach object-storage bucket", fmt.Errorf("binding %s already exists with key prefix %q; use another --prefix, or delete it first", bindingPrefix, binding.KeyPrefix))
+	}
 	bindingCreated := false
 	if !bindingFound {
-		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", appName, bucket.ID, bucket.Scope, bindingPrefix))
+		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", bucketBindingKeyParts(appName, bucket.ID, bucket.Scope, bindingPrefix, *keyPrefix)...))
 		binding, err = client.CreateObjectStorageComputeBinding(bindingCtx, appName, bucket.ID, api.CreateObjectStorageComputeBindingRequest{
-			Label: strings.TrimSpace(*label), Permission: *permission, Prefix: bindingPrefix,
+			Label: strings.TrimSpace(*label), Permission: *permission, Prefix: bindingPrefix, KeyPrefix: *keyPrefix,
 		})
 		if err != nil {
 			return printErr("Could not attach object-storage bucket", err)
@@ -591,4 +595,16 @@ func addResourceIdempotencyKey(kind string, parts ...string) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "gregale:add:%s:%s", kind, strings.Join(parts, "\x00"))
 	return "gregale-add-" + kind + "-" + hex.EncodeToString(h.Sum(nil))
+}
+
+// bucketBindingKeyParts names a bucket binding for its idempotency key. A key
+// prefix joins the key only when set, so retries of an unscoped binding keep
+// the key they always had, and a binding re-created with another prefix
+// (ADR-20261106114500) never replays the earlier response.
+func bucketBindingKeyParts(app, bucketID, scope, envPrefix, keyPrefix string) []string {
+	parts := []string{app, bucketID, scope, envPrefix}
+	if keyPrefix != "" {
+		parts = append(parts, "key-prefix", keyPrefix)
+	}
+	return parts
 }

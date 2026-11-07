@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 )
@@ -189,5 +190,10 @@ type DeployAnnotations struct {
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {
-	return sourcecontext.StorageRoot(raw)
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	// Preserve an explicit archive-root selection instead of omitting it and
+	// accidentally using the app's configured nested root.
+	return sourcecontext.Normalize(raw)
 }

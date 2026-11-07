@@ -378,6 +378,39 @@ func TestLoadConfig_OwnerCache(t *testing.T) {
 	}
 }
 
+// ADR-20261105090246: async wake finalize is off by default;
+// async_wake_finalize or FAAS_ASYNC_WAKE_FINALIZE turns it on, and the env wins.
+func TestLoadConfig_AsyncWakeFinalize(t *testing.T) {
+	for _, tc := range []struct {
+		name, toml, env string
+		want, wantErr   bool
+	}{
+		{name: "default off"},
+		{name: "toml on", toml: "async_wake_finalize = true\n", want: true},
+		{name: "env off over toml", toml: "async_wake_finalize = true\n", env: "false"},
+		{name: "env on", env: "true", want: true},
+		{name: "env not a boolean", env: "maybe", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAAS_ASYNC_WAKE_FINALIZE", tc.env)
+			path := filepath.Join(t.TempDir(), "schedd.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("LoadConfig accepted a non-boolean FAAS_ASYNC_WAKE_FINALIZE")
+				}
+				return
+			}
+			if err != nil || cfg.AsyncWakeFinalize != tc.want {
+				t.Fatalf("AsyncWakeFinalize = %v, %v; want %v", cfg != nil && cfg.AsyncWakeFinalize, err, tc.want)
+			}
+		})
+	}
+}
+
 // ADR-1151 step 3: frozen_tier_apps extends the tier to apps, on by default
 // since the 2026-10-27 amendment; TOML or FAAS_FROZEN_TIER_APPS turns it off.
 func TestLoadConfig_FrozenTierApps(t *testing.T) {
