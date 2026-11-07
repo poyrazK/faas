@@ -15736,12 +15736,17 @@ List recent request telemetry
 
 Export metadata-only request telemetry
 
-`gregale debug requests export [--since <DURATION>] [--route <PATH>] [--format <FORMAT>] [--limit <N>] [--output <PATH>] <slug>`
+`gregale debug requests export [--since <DURATION>] [--route <PATH>] [--release <UUID>] [--status <N>] [--cold-boot <BOOL>] [--consumer-id <ID>] [--min-latency-ms <N>] [--format <FORMAT>] [--limit <N>] [--output <PATH>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
 | `--route <PATH>` | route filter: /path matches every method |  |
+| `--release <UUID>` | deployment filter (also --deployment-id) |  |
+| `--status <N>` | exact HTTP status (100..599) |  |
+| `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
+| `--consumer-id <ID>` | consumer UUID or __anonymous__ |  |
+| `--min-latency-ms <N>` | minimum latency bucket in milliseconds |  |
 | `--format <FORMAT>` | export format (default ndjson) | one of `ndjson` · `csv` |
 | `--limit <N>` | maximum exported rows (1..10000) |  |
 | `--output <PATH>` | destination file; - writes stdout |  |

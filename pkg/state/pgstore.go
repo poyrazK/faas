@@ -21621,7 +21621,7 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 func (s *PgStore) RequestsNotRetained(ctx context.Context, appID string, bucketFrom, bucketUntil time.Time) (int64, bool, error) {
 	id, err := uuid.Parse(appID)
 	if err != nil {
-		return 0, false, nil
+		return 0, false, fmt.Errorf("requests not retained: app id: %w", err)
 	}
 	row, err := sqlc.New().RequestAnalyticsCountedRequests(ctx, s.pool, sqlc.RequestAnalyticsCountedRequestsParams{
 		AppID:       pgtype.UUID{Bytes: id, Valid: true},
@@ -21639,7 +21639,7 @@ func (s *PgStore) RequestsNotRetained(ctx context.Context, appID string, bucketF
 func (s *PgStore) ListEventsBySubjectKind(ctx context.Context, subject, kind string, since time.Time, limit int) ([]Event, error) {
 	id, err := uuid.Parse(subject)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("list events by kind: subject: %w", err)
 	}
 	rows, err := sqlc.New().ListEventsBySubjectKind(ctx, s.pool, sqlc.ListEventsBySubjectKindParams{
 		Subject: pgtype.UUID{Bytes: id, Valid: true}, Kind: kind,
