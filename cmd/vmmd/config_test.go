@@ -241,6 +241,41 @@ func TestLoadConfig_PreparedNetworksDefaultOnAndOverridable(t *testing.T) {
 	}
 }
 
+// adr: 149 — amendment 2026-11-07: native_prepared_networks journals the
+// cache's spares and claims, so under native recovery the default opens it.
+func TestLoadConfig_NativePreparedNetworks(t *testing.T) {
+	const native = "native_process_recovery = true\nnative_launch_owner_records = true\n"
+	for _, tc := range []struct {
+		name, toml string
+		want       int
+		wantErr    string
+	}{
+		{name: "default size", toml: native + "native_prepared_networks = true\n", want: api.DefaultPreparedNetworkCacheSize},
+		{name: "explicit size", toml: native + "native_prepared_networks = true\nprepared_networks = 3\n", want: 3},
+		{name: "explicitly off", toml: native + "native_prepared_networks = true\nprepared_networks = 0\n", want: 0},
+		{name: "without owner records", toml: "native_process_recovery = true\nnative_prepared_networks = true\n",
+			wantErr: "native_prepared_networks requires"},
+		{name: "without native recovery", toml: "native_prepared_networks = true\n", wantErr: "native_prepared_networks requires"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vmmd.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !cfg.NativePreparedNetworks || cfg.PreparedNetworks != tc.want {
+				t.Fatalf("got native=%v size=%d err=%v, want size %d", cfg.NativePreparedNetworks, cfg.PreparedNetworks, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_RestoreConcurrencyOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
 	if err := os.WriteFile(path, []byte("restore_concurrency = 2\n"), 0o600); err != nil {

@@ -108,8 +108,11 @@
 
 ## Amendment 2026-11-07 (proposed): prepared networks under native recovery
 
-- **Status:** proposed, for review before any code or node run. The
-  decision of record stays the one above until this amendment is accepted.
+- **Status:** proposed. The decision of record stays the one above until
+  this amendment is accepted. Phase 1 is implemented behind the vmmd setting
+  `native_prepared_networks` (default off; requires `native_process_recovery`
+  and `native_launch_owner_records`), with unit coverage only; no node has
+  run it. Phase 2 (strict-egress spares) is not implemented.
 - **Why now:** strict budgets activate only on nodes whose vmmd runs
   `native_process_recovery` (ADR-1750,
   [ADR 20261107160000](20261107160000-budgets-ga-and-strict-billing-subject.md)),

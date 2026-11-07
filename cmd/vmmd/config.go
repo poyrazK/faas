@@ -61,6 +61,14 @@ type Config struct {
 	// Amendment 1). Older vmmd binaries refuse such a journal: enable it only
 	// once every compute node and any rollback target can read version three.
 	NativeLaunchOwnerRecords bool `toml:"native_launch_owner_records"`
+	// NativePreparedNetworks opens the prepared network cache (ADR-149)
+	// under native recovery: each spare and its claim are version-four
+	// records (ADR-149 amendment 2026-11-07), and prepared_networks then
+	// defaults to api.DefaultPreparedNetworkCacheSize. Older vmmd binaries
+	// refuse such a journal: enable it only once every compute node and any
+	// rollback target can read version four. Requires
+	// native_launch_owner_records.
+	NativePreparedNetworks bool `toml:"native_prepared_networks"`
 	// NativeQualificationCapture opens GitOps qualification capture, restore
 	// and retirement on this host (ADR 20261023093000). It requires native
 	// process recovery and both private roots above, and stays off on a host
@@ -104,8 +112,8 @@ type Config struct {
 
 	// PreparedNetworks bounds the cache of unused namespaces (ADR-149).
 	// Defaults to api.DefaultPreparedNetworkCacheSize, or to zero under
-	// NativeProcessRecovery; zero disables it; FAAS_PREPARED_NETWORKS
-	// overrides TOML.
+	// NativeProcessRecovery without NativePreparedNetworks; zero disables
+	// it; FAAS_PREPARED_NETWORKS overrides TOML.
 	PreparedNetworks int `toml:"prepared_networks"`
 	// PreparedNetworksExplicit records that vmmd.toml or the environment
 	// chose the size. A default-sized cache yields to a host without the
@@ -756,9 +764,10 @@ func LoadConfig(path string) (*Config, error) {
 			*sw.dst = on
 		}
 	}
-	// Native recovery refuses the cache until its claims are journaled
-	// (ADR-568), so the default must not stop such a node from starting.
-	if c.NativeProcessRecovery && !preparedNetworksSet {
+	// Native recovery refuses the cache unless its claims are journaled
+	// (ADR-568; ADR-149 amendment 2026-11-07), so the default must not stop
+	// such a node from starting.
+	if c.NativeProcessRecovery && !c.NativePreparedNetworks && !preparedNetworksSet {
 		c.PreparedNetworks = 0
 	}
 	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
@@ -1269,6 +1278,9 @@ func validateNativeRuntimeCaptureConfig(c *Config) error {
 	}
 	if c.NativeLaunchOwnerRecords && !c.NativeProcessRecovery {
 		return errors.New("vmmd: native_launch_owner_records requires native_process_recovery = true")
+	}
+	if c.NativePreparedNetworks && (!c.NativeProcessRecovery || !c.NativeLaunchOwnerRecords) {
+		return errors.New("vmmd: native_prepared_networks requires native_process_recovery = true and native_launch_owner_records = true")
 	}
 	if !c.NativeRuntimeCapture {
 		return nil

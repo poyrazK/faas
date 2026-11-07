@@ -43,6 +43,17 @@
 # Default: false
 # native_launch_owner_records = true
 
+# native_prepared_networks: open the prepared network cache (ADR-149) under
+# native recovery. Each unused namespace and each claim of one is journaled as
+# a version-4 launch record (ADR-149 amendment 2026-11-07), and
+# prepared_networks then defaults to the standard cache size instead of 0.
+# Strict-egress wakes still build their own network. vmmd binaries without a
+# version-4 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Requires native_process_recovery
+# and native_launch_owner_records.
+# Default: false
+# native_prepared_networks = true
+
 # adoption_record: write version-7 adoption blocks into the resource journal
 # (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
 # startup classifies records in a dry run either way. vmmd binaries without a
