@@ -95,7 +95,7 @@ type appLogDrainProvenance struct {
 }
 
 // appLogDrainAppLookupStore resolves the app slug a datadog drain reports as
-// its Datadog service tag (ADR-752).
+// its Datadog service tag (ADR-752) and an otlp drain as service.name.
 type appLogDrainAppLookupStore interface {
 	AppByID(context.Context, string) (state.App, error)
 }
@@ -640,10 +640,11 @@ func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame sched
 	return resolved
 }
 
-// drainServiceName is the app slug for datadog drains; other kinds do not
-// use it. A failed lookup falls back to the app ID so logs still arrive.
+// drainServiceName is the app slug for datadog drains (the service tag) and
+// otlp drains (the service.name resource attribute); http_json does not use
+// it. A failed lookup falls back to the app ID so logs still arrive.
 func (m *appLogDrainManager) drainServiceName(ctx context.Context, spec state.AppLogDrain) string {
-	if spec.Kind != state.AppLogDrainKindDatadog {
+	if spec.Kind != state.AppLogDrainKindDatadog && spec.Kind != state.AppLogDrainKindOTLP {
 		return ""
 	}
 	if lookup, ok := m.store.(appLogDrainAppLookupStore); ok {

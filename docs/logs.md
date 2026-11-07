@@ -130,6 +130,14 @@ gregale logs drain health my-api <drain-id>
 - `--kind http_json` (the default) posts each line as one JSON object;
   `--kind otlp` sends OTLP/HTTP log records in batches of up to 100 lines,
   as does the Datadog integration.
+- OTLP records use the standard fields, so your backend can link lines to
+  traces, filter by level and group by app without custom mapping: the
+  request's trace id is the record's `traceId`; stderr lines are `ERROR`
+  and other lines `INFO` (`severityText` and `severityNumber`); and the
+  resource carries `service.name` (the app's slug), `service.instance.id`,
+  `service.version` (the deployed commit), `deployment.environment.name` and
+  `cloud.region`. The `faas.*` record attributes (app, deployment, request
+  and trace ids) are still sent.
 - A drain picks up where it left off after a restart or a change: lines
   still held by the running instances are forwarded once, and lines that
   were no longer available are counted as gaps in `health`.
