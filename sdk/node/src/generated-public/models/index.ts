@@ -348,6 +348,8 @@ export type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
 export type { EdgeWAFExclusionsRequest } from './EdgeWAFExclusionsRequest.js';
 export type { EdgeWAFReviewGroup } from './EdgeWAFReviewGroup.js';
 export type { EdgeWAFReviewResponse } from './EdgeWAFReviewResponse.js';
+export type { EgressOverageRequest } from './EgressOverageRequest.js';
+export type { EgressOverageResponse } from './EgressOverageResponse.js';
 export type { EmailVerificationResendResponse } from './EmailVerificationResendResponse.js';
 export type { EnableAlertPresetRequest } from './EnableAlertPresetRequest.js';
 export type { EnableEdgeAttackModeRequest } from './EnableEdgeAttackModeRequest.js';

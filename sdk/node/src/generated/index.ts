@@ -851,6 +851,8 @@ export type { EdgeWAFReviewResponse } from './models/EdgeWAFReviewResponse.js';
 export type { EgressCircuitBreakerPolicy } from './models/EgressCircuitBreakerPolicy.js';
 export type { EgressFlowLogEntry } from './models/EgressFlowLogEntry.js';
 export type { EgressFlowLogResponse } from './models/EgressFlowLogResponse.js';
+export type { EgressOverageRequest } from './models/EgressOverageRequest.js';
+export type { EgressOverageResponse } from './models/EgressOverageResponse.js';
 export type { EmailVerificationResendResponse } from './models/EmailVerificationResendResponse.js';
 export type { EnableAlertPresetRequest } from './models/EnableAlertPresetRequest.js';
 export type { EnableEdgeAttackModeRequest } from './models/EnableEdgeAttackModeRequest.js';

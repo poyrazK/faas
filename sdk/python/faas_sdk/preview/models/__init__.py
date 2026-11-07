@@ -1602,6 +1602,9 @@ from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
 from .egress_flow_log_response import EgressFlowLogResponse
+from .egress_overage_request import EgressOverageRequest
+from .egress_overage_response import EgressOverageResponse
+from .egress_overage_response_billing import EgressOverageResponseBilling
 from .email_verification_resend_response import EmailVerificationResendResponse
 from .email_verification_resend_response_status import EmailVerificationResendResponseStatus
 from .enable_alert_preset_request import EnableAlertPresetRequest
@@ -7922,6 +7925,9 @@ __all__ = (
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
     "EgressFlowLogResponse",
+    "EgressOverageRequest",
+    "EgressOverageResponse",
+    "EgressOverageResponseBilling",
     "EmailVerificationResendResponse",
     "EmailVerificationResendResponseStatus",
     "EnableAlertPresetRequest",

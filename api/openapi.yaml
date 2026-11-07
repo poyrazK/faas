@@ -29484,6 +29484,58 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /v1/account/egress-overage:
+    get:
+      tags: [account]
+      operationId: getEgressOverage
+      summary: Read the account's egress overage election.
+      description: |
+        Without the election every plan stops at its monthly egress allowance:
+        the account's apps are parked (`quota_exceeded_egress`) until the month
+        ends or the plan grows. With it, egress above the allowance is billed as
+        overage, within the spend cap, while egress billing is live
+        (`billing: live`); while `billing` is `off` the allowance still holds.
+      responses:
+        '200':
+          description: The account's election.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EgressOverageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [account]
+      operationId: setEgressOverage
+      summary: Turn the account's egress overage election on or off.
+      description: |
+        `{"enabled": true|false}`. Requires admin scope and MFA; a dashboard
+        session also needs a step-up within the last 5 minutes. Turning it on
+        needs a paid plan (HTTP 402 `plan_egress_overage_not_allowed`); turning
+        it off is always allowed. Egress already sent while the election was on
+        is still billed. Audit row `egress_overage.changed` records each change.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EgressOverageRequest' }
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The election after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EgressOverageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the plan stops at its egress allowance; upgrade to a paid plan.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/apps/{slug}/rename:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -65530,6 +65582,56 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{slug}/egress-overage:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgEgressOverage
+      summary: Read the organization's egress overage election.
+      description: "Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members."
+      responses:
+        '200':
+          description: The organization's election.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EgressOverageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [orgs]
+      operationId: setOrgEgressOverage
+      summary: Turn the organization's egress overage election on or off.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+        paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EgressOverageRequest' }
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The organization's election after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EgressOverageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: 'code: plan_egress_overage_not_allowed — the organization''s plan stops at its egress allowance; move the organization to a paid plan.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{slug}/billing/costs:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -87735,6 +87837,51 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+
+    EgressOverageRequest:
+      description: Turns the egress overage election on or off.
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
+    EgressOverageResponse:
+      description: |
+        The billing subject's election to pay for egress above its plan's monthly
+        allowance instead of stopping at it.
+      type: object
+      required: [enabled, electable, included_gib, billing]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the election is on.
+        electable:
+          type: boolean
+          description: Whether the plan allows the election; Free does not.
+        enabled_at:
+          type: string
+          format: date-time
+          description: When the election started; kept when it is turned off and on again.
+        disabled_at:
+          type: string
+          format: date-time
+          description: When the election was last turned off.
+        included_gib:
+          type: integer
+          format: int64
+          description: The plan's monthly egress allowance in GiB.
+        billing:
+          type: string
+          enum: [live, "off"]
+          description: live when egress above the allowance is billed while the election is on; off while egress is not billed, when the allowance still holds.
+        price_millicents_per_gib:
+          type: integer
+          format: int64
+          description: Price of a GiB above the allowance while billing is live, in millicents.
+        currency:
+          type: string
+          description: Currency of the price.
 
     OrgBillingEmailRequest:
       description: The email an organization bills to; invoices and the billing portal sign-in go to it.

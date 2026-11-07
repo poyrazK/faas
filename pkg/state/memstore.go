@@ -157,6 +157,9 @@ type MemStore struct {
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
+	// egressOverage is each account's or org's egress overage election
+	// (EgressOverageStore, ADR-20261104204500).
+	egressOverage map[string]EgressOverageElection
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                        map[string]int64

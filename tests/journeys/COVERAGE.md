@@ -47,7 +47,7 @@ covered. Update this table when a journey or a GA row changes.
 | 142 | Signup, login, MFA, reset, verification, CLI login, account self-service | the CLI login every journey uses; `TestAccountAndKeys/account_security_surface` (display name, sign-in providers, browser sessions, verification status) | signup, password and magic-link login, MFA, reset, verification links, email change, unlinking a provider, leaving an org (no disposable accounts or inboxes) |
 | 143 | Customer notification emails | — | all (no test inbox) |
 | 144 | API keys with scopes | `TestAccountAndKeys` | — |
-| 151 | Plans, usage, invoices, overage cap, costs, forecast | `TestBillingAndUsage` (read-only views) | changing plan or overage cap (would bill the account), FOCUS export |
+| 151 | Plans, usage, invoices, overage cap, costs, forecast, egress overage election | `TestBillingAndUsage` (read-only views); `TestEgressOverageElection` (read, toggle and restore the election) | changing plan or overage cap (would bill the account), FOCUS export |
 | 153 | GDPR export, account deletion and restore, DPA | `TestAccountExportAndDPA` (export, status, DPA) | deletion and restore (no disposable accounts) |
 | 156 | `gregale` CLI | every journey, `TestCLITools` (version, context, doctor, completion, man, help) | interactive `start` and `menu` |
 | 157 | Web dashboard | — | all (dashboard journeys not enabled) |
