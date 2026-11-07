@@ -11,6 +11,8 @@ T = TypeVar("T", bound="AccountProfileUpdate")
 
 @_attrs_define
 class AccountProfileUpdate:
+    """Body for `PATCH /v1/account`."""
+
     display_name: str
     """Empty clears the display name."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

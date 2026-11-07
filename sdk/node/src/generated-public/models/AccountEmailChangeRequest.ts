@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Body for `POST /v1/account/email`.
+ */
 export type AccountEmailChangeRequest = {
   email: string;
   /**

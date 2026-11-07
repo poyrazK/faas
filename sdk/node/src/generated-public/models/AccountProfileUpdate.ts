@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Body for `PATCH /v1/account`.
+ */
 export type AccountProfileUpdate = {
   /**
    * Empty clears the display name.

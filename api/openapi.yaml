@@ -12636,6 +12636,7 @@ paths:
       - name: provider
         in: path
         required: true
+        description: Linked sign-in provider to remove.
         schema: { type: string, enum: [google, github] }
     delete:
       tags: [account]
@@ -12647,7 +12648,7 @@ paths:
         last way to sign in; set a password or link another provider first.
         CSRF: action `sign_in_method_unlink`.
       responses:
-        '204': { description: Removed. }
+        '204': { description: Sign-in method unlinked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: The provider is not linked to this account.
@@ -13224,7 +13225,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RecoveryCodesResponse' }
         '400':
-          description: CSRF check failed.
+          description: CSRF token missing or wrong for a browser session.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
@@ -119325,11 +119326,13 @@ components:
           items: { $ref: '#/components/schemas/SessionInfo' }
 
     AccountProfileUpdate:
+      description: "Body for `PATCH /v1/account`."
       type: object
       required: [display_name]
       properties:
         display_name: { type: string, maxLength: 80, description: "Empty clears the display name." }
     AccountEmailChangeRequest:
+      description: "Body for `POST /v1/account/email`."
       type: object
       required: [email]
       properties:
@@ -119337,12 +119340,14 @@ components:
         current_password: { type: string, description: "Required when the account has a password and no two-factor authentication." }
         csrf_token: { type: string }
     EmailVerificationResendResponse:
+      description: "Result of `POST /v1/auth/verify-email/resend`."
       type: object
       required: [status]
       properties:
         status: { type: string, enum: [sent, already_verified] }
         email: { type: string, format: email }
     SignInMethodsResponse:
+      description: "The ways the account can sign in."
       type: object
       required: [password, mfa, providers]
       properties:
@@ -119352,6 +119357,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/LinkedSignIn' }
     LinkedSignIn:
+      description: "A Google or GitHub identity linked to the account."
       type: object
       required: [provider, email, linked_at]
       properties:
@@ -119359,6 +119365,7 @@ components:
         email: { type: string, format: email }
         linked_at: { type: string, format: date-time }
     RecoveryCodesResponse:
+      description: "New MFA recovery codes, shown once."
       type: object
       required: [recovery_codes]
       properties:

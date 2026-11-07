@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { LinkedSignIn } from './LinkedSignIn.js';
+/**
+ * The ways the account can sign in.
+ */
 export type SignInMethodsResponse = {
   password: boolean;
   mfa: boolean;

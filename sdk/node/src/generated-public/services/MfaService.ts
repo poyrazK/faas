@@ -148,7 +148,7 @@ export class MfaService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `CSRF check failed.`,
+        400: `CSRF token missing or wrong for a browser session.`,
         401: `code: unauthorized`,
         403: `A recent authenticator verification is required (\`step_up_required\`).`,
         409: `Two-factor authentication is not set up.`,

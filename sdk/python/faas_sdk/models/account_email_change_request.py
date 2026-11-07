@@ -13,6 +13,8 @@ T = TypeVar("T", bound="AccountEmailChangeRequest")
 
 @_attrs_define
 class AccountEmailChangeRequest:
+    """Body for `POST /v1/account/email`."""
+
     email: str
     current_password: str | Unset = UNSET
     """Required when the account has a password and no two-factor authentication."""

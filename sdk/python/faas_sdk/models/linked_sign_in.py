@@ -14,6 +14,8 @@ T = TypeVar("T", bound="LinkedSignIn")
 
 @_attrs_define
 class LinkedSignIn:
+    """A Google or GitHub identity linked to the account."""
+
     provider: LinkedSignInProvider
     email: str
     linked_at: datetime.datetime

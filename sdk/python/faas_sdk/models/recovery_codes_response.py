@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RecoveryCodesResponse")
 
 @_attrs_define
 class RecoveryCodesResponse:
+    """New MFA recovery codes, shown once."""
+
     recovery_codes: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -92,7 +92,7 @@ def sync_detailed(
     and no email. CSRF: action `account_email_change`.
 
     Args:
-        body (AccountEmailChangeRequest):
+        body (AccountEmailChangeRequest): Body for `POST /v1/account/email`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,7 +130,7 @@ def sync(
     and no email. CSRF: action `account_email_change`.
 
     Args:
-        body (AccountEmailChangeRequest):
+        body (AccountEmailChangeRequest): Body for `POST /v1/account/email`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,7 +163,7 @@ async def asyncio_detailed(
     and no email. CSRF: action `account_email_change`.
 
     Args:
-        body (AccountEmailChangeRequest):
+        body (AccountEmailChangeRequest): Body for `POST /v1/account/email`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,7 +199,7 @@ async def asyncio(
     and no email. CSRF: action `account_email_change`.
 
     Args:
-        body (AccountEmailChangeRequest):
+        body (AccountEmailChangeRequest): Body for `POST /v1/account/email`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

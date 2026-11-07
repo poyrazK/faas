@@ -81,7 +81,7 @@ def sync_detailed(
     clears it. At most 80 characters, no control characters.
 
     Args:
-        body (AccountProfileUpdate):
+        body (AccountProfileUpdate): Body for `PATCH /v1/account`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -114,7 +114,7 @@ def sync(
     clears it. At most 80 characters, no control characters.
 
     Args:
-        body (AccountProfileUpdate):
+        body (AccountProfileUpdate): Body for `PATCH /v1/account`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,7 +142,7 @@ async def asyncio_detailed(
     clears it. At most 80 characters, no control characters.
 
     Args:
-        body (AccountProfileUpdate):
+        body (AccountProfileUpdate): Body for `PATCH /v1/account`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +173,7 @@ async def asyncio(
     clears it. At most 80 characters, no control characters.
 
     Args:
-        body (AccountProfileUpdate):
+        body (AccountProfileUpdate): Body for `PATCH /v1/account`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

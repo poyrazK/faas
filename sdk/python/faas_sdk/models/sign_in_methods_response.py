@@ -15,6 +15,8 @@ T = TypeVar("T", bound="SignInMethodsResponse")
 
 @_attrs_define
 class SignInMethodsResponse:
+    """The ways the account can sign in."""
+
     password: bool
     mfa: bool
     providers: list[LinkedSignIn]

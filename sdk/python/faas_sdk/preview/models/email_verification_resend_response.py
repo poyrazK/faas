@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EmailVerificationResendResponse")
 
 @_attrs_define
 class EmailVerificationResendResponse:
+    """Result of `POST /v1/auth/verify-email/resend`."""
+
     status: EmailVerificationResendResponseStatus
     email: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

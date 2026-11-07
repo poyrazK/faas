@@ -8,6 +8,26 @@ import (
 	"unicode/utf8"
 )
 
+// AccountProfileUpdate is the PATCH /v1/account body. An empty
+// DisplayName clears the name.
+type AccountProfileUpdate struct {
+	DisplayName string `json:"display_name"`
+}
+
+// AccountEmailChangeRequest is the POST /v1/account/email body.
+type AccountEmailChangeRequest struct {
+	Email           string `json:"email"`
+	CurrentPassword string `json:"current_password,omitempty"`
+	CSRFToken       string `json:"csrf_token,omitempty"`
+}
+
+// EmailVerificationResendResponse is POST /v1/auth/verify-email/resend.
+// Status is "sent" or "already_verified".
+type EmailVerificationResendResponse struct {
+	Status string `json:"status"`
+	Email  string `json:"email,omitempty"`
+}
+
 // SignInMethodsResponse is GET /v1/account/sign-in-methods.
 type SignInMethodsResponse struct {
 	Password  bool           `json:"password"`

@@ -28,16 +28,14 @@ func (c *Client) RevokeAllSessions(ctx context.Context) (SessionsRevokeAllRespon
 // account's address is unverified. The status is "sent" or
 // "already_verified".
 func (c *Client) ResendEmailVerification(ctx context.Context) (string, error) {
-	var out struct {
-		Status string `json:"status"`
-	}
+	var out EmailVerificationResendResponse
 	err := c.do(ctx, "POST", "/v1/auth/verify-email/resend", nil, &out)
 	return out.Status, err
 }
 
 // SetDisplayName sets (or with "" clears) the account display name.
 func (c *Client) SetDisplayName(ctx context.Context, name string) error {
-	return c.do(ctx, "PATCH", "/v1/account", map[string]string{"display_name": name}, nil)
+	return c.do(ctx, "PATCH", "/v1/account", AccountProfileUpdate{DisplayName: name}, nil)
 }
 
 // SignInMethods lists the account's password, MFA and linked providers.

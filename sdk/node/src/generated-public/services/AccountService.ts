@@ -209,6 +209,9 @@ export class AccountService {
   public static unlinkAccountSignInMethod({
     provider,
   }: {
+    /**
+     * Linked sign-in provider to remove.
+     */
     provider: 'google' | 'github',
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
