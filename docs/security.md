@@ -312,7 +312,13 @@ not affected.
 A check scores the whole URL and query, and up to 16 KiB of request headers:
 each header value up to 4 KiB, and headers in name order until the total is
 reached. Header content past that is not inspected, which keeps one client's
-oversized headers from slowing every other app's checks.
+oversized headers from slowing every other app's checks. Because a client
+could pad its headers to hide an attack past that point, a `warn` or `block`
+rule counts a request with a header value over 4 KiB, or more than 16 KiB of
+headers, as a detection (category `uninspected-headers`): `block` answers
+`403` and `warn` adds `X-WAF-Warning`. Such a request never puts the client in
+a penalty box. If your app legitimately receives larger headers (very large
+cookies or tokens), keep the rule in `observe` for those paths.
 
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
