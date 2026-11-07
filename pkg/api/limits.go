@@ -7697,6 +7697,14 @@ const (
 	// most IdleLadderGuardNetMaxBytes in each direction.
 	IdleLadderGuardCPUMaxMillis = 10
 	IdleLadderGuardNetMaxBytes  = 512
+	// IdleLadderReservationDiscountMaxPercent bounds the RAM measured
+	// admission leaves out of a node's reservation cap for instances vmmd
+	// holds at the idle ladder's freeze level (ADR-20261107122928): at most
+	// this percent of the node's admission ceiling. With the ADR-909 cap of
+	// MeasuredAdmissionMaxOvercommitPercent, reservations including those
+	// instances reach at most 400% of the ceiling; the measured figure still
+	// bounds what the node holds.
+	IdleLadderReservationDiscountMaxPercent = 200
 	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
 	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
 	// measured admission books like a frozen instance.

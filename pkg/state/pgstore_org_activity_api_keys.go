@@ -145,6 +145,9 @@ func (s *PgStore) RotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKey
 	if err != nil {
 		return APIKey{}, APIKey{}, 0, err
 	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
+		return APIKey{}, APIKey{}, 0, err
+	}
 	if graceWindow == 0 {
 		old, err = scanAPIKeyRow(ctx, tx,
 			`update api_keys
