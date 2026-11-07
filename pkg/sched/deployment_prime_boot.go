@@ -73,7 +73,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(e.guestVCPUs(app, limits)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(e.appCPUMillicores(app, limits)),
-		EgressMbit: int32(limits.EgressMbit),
+		EgressMbit: int32(limits.EgressMbit), RequestConcurrency: vmmRequestConcurrency(app, limits),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),

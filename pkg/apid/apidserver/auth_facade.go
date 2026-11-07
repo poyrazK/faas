@@ -311,11 +311,26 @@ func (s *server) requireStepUpStrict(ttl time.Duration) func(accountHandler) acc
 	return s.requireStepUpVariant(ttl, s.authMw.RequireStepUpStrict)
 }
 
+// Invitations need the invitee's browser session. Its MFA policy remains
+// optional, while a bearer key never substitutes for interactive acceptance.
+func (s *server) requireInvitationSession(ttl time.Duration) func(accountHandler) accountHandler {
+	return func(next accountHandler) accountHandler {
+		strict, customer := s.requireStepUpStrict(ttl)(next), s.requireStepUp(ttl)(next)
+		return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			if _, key, ok := middleware.AccountFromContext(r); !ok || key != nil {
+				strict(w, r, acct)
+				return
+			}
+			customer(w, r, acct)
+		}
+	}
+}
+
 // requireAdminMutation is the single authentication policy for provider
 // control-plane writes. Unlike the legacy RequireMFA/RequireStepUp pair, the
 // strict step-up gate rejects bearer/API-key principals instead of treating a
 // key as an equivalent proof. Provider mutations must be performed from a
-// verified operator session with a recent TOTP step-up.
+// verified operator session with recent MFA proof.
 //
 // Keep this helper next to the auth facade so adding a new /v1/admin mutation
 // requires choosing this policy explicitly at the route table rather than
@@ -512,7 +527,26 @@ func (s *server) requireStepUpVariant(
 // through sessionAuth → http.Handler, not through AccountHandler).
 // Same TTL semantics as requireStepUp.
 func (s *server) requireStepUpHandler(ttl time.Duration) func(http.Handler) http.Handler {
-	return s.authMw.RequireStepUpHandler(ttl)
+	return s.authMw.RequireStepUpHandlerWithRedirect(ttl, dashboardStepUpRedirect)
+}
+
+// Return to the confirmation page after verification; never replay a write.
+func dashboardStepUpRedirect(r *http.Request) string {
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		return ""
+	}
+	next := "/dashboard/account"
+	switch r.URL.Path {
+	case "/dashboard/upgrade":
+		next = "/dashboard/upgrade?plan=" + url.QueryEscape(r.FormValue("plan"))
+	case "/dashboard/postgres/overage":
+		next = "/dashboard/postgres"
+	case "/dashboard/raise-overage-cap":
+		next = "/dashboard/billing"
+	case "/dashboard/account/delete":
+		next = "/dashboard/account/delete"
+	}
+	return dashboardMFAPath + "?next=" + url.QueryEscape(next)
 }
 
 // requireScope delegates to pkg/auth.Middleware.RequireScope. Same

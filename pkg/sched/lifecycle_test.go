@@ -535,6 +535,7 @@ func TestReconcileServiceApp_ReadinessTimeoutRestoresPrevious(t *testing.T) {
 	}
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.now = func() time.Time { return time.Now().Add(serviceRolloutTimeout + time.Minute) }
 	e.ReconcileServiceApp(context.Background(), app.ID)
 
 	failed, err := store.DeploymentByID(context.Background(), rollout.ID)

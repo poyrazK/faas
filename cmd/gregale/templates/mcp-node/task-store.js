@@ -47,6 +47,7 @@ const CREATE_SCHEMA = `
     result_encrypted bytea,
     error_encrypted bytea,
     input_state_encrypted bytea,
+    output_schema jsonb CHECK (output_schema IS NULL OR jsonb_typeof(output_schema) = 'object'),
     input_methods text[] NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -258,6 +259,7 @@ function rowTask(row, payloadKey, namespace, includeArguments = false) {
     lease_token: row.lease_token == null ? null : String(row.lease_token),
     cancel_requested_at: row.cancel_requested_at,
     input_methods: Array.isArray(row.input_methods) ? row.input_methods : [],
+    output_schema: row.output_schema ?? null,
   };
   if (includeArguments) task.arguments = decryptJSON(row.arguments_encrypted, payloadKey, taskAAD(namespace, taskID, 'arguments'));
   if (row.result_encrypted != null) task.result = decryptJSON(row.result_encrypted, payloadKey, taskAAD(namespace, taskID, 'result'));
@@ -419,6 +421,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
     },
     async migrate({ admissionHandlers = [] } = {}) {
       return withTransaction(pool, async (client, dedicated) => {
+        await client.query("SET LOCAL lock_timeout = '5s'");
         if (dedicated) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [TABLE]);
         await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_schema (
           singleton boolean PRIMARY KEY CHECK (singleton), version integer NOT NULL CHECK (version > 0),
@@ -468,6 +471,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
            GROUP BY namespace, owner_hash
           ON CONFLICT (namespace, owner_hash) DO NOTHING
         `, [namespace]);
+        await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK (output_schema IS NULL OR jsonb_typeof(output_schema) = 'object')`);
         await initializeMcpTaskAdmission(client, namespace, admissionHandlers, { schema: version < 1 });
         // Verify every retained field before registering or retiring keys.
         await authenticateRetainedMcpTaskPayloads(client, namespace, payloadKey);
@@ -528,7 +532,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       await pool.query(`DELETE FROM ${WORKER_TABLE} WHERE namespace = $1 AND worker_id = $2::uuid`, [namespace, workerID]);
     },
     queueMetrics: createMcpTaskQueueObserver({ pool, namespace, maxRunning, maxRunningPerOwner, maxAttempts }).queueMetrics,
-    async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [] }) {
+    async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [], outputSchema }) {
       if (!isMcpTaskToolName(toolName)) throw new Error('Invalid MCP task tool name');
       if (typeof handlerVersion !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handlerVersion)) throw new Error('Invalid MCP task handler version');
       if (!Array.isArray(inputMethods) || inputMethods.some(method => !SUPPORTED_INPUT_METHODS.has(method))) throw new Error('Invalid MCP task input capabilities');
@@ -554,12 +558,12 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         return client.query(`
         INSERT INTO ${TABLE} (
           namespace, task_id, owner_hash, tool_name, handler_version,
-          arguments_encrypted, input_methods, status, expires_at
-        ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::text[], 'queued', clock_timestamp() + ($8::double precision * interval '1 millisecond'))
+          arguments_encrypted, input_methods, status, expires_at, output_schema
+        ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::text[], 'queued', clock_timestamp() + ($8::double precision * interval '1 millisecond'), $9::jsonb)
         RETURNING task_id::text AS task_id, tool_name, handler_version, status,
                   created_at, updated_at, expires_at, attempt_count,
                   lease_token, cancel_requested_at, input_methods
-        `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs]);
+        `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs, outputSchema === undefined ? null : JSON.stringify(outputSchema)]);
       }).catch(error => {
         if (error.code === '23514' && error.constraint === 'gregale_mcp_task_admission') {
           const denied = new Error('MCP Task handler version is not accepting new Tasks');
@@ -773,7 +777,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                     task.attempt_count, task.lease_token::text AS lease_token,
                     task.cancel_requested_at, task.arguments_encrypted,
                     task.result_encrypted, task.error_encrypted,
-                    task.input_state_encrypted, task.input_methods
+                    task.input_state_encrypted, task.input_methods, task.output_schema
         ),
         advanced AS (
           UPDATE ${FAIRNESS_TABLE} AS fairness
@@ -788,7 +792,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                claimed.attempt_count, claimed.lease_token,
                claimed.cancel_requested_at, claimed.arguments_encrypted,
                claimed.result_encrypted, claimed.error_encrypted,
-               claimed.input_state_encrypted, claimed.input_methods, false AS busy
+               claimed.input_state_encrypted, claimed.input_methods, claimed.output_schema, false AS busy
           FROM claimed
           JOIN advanced USING (namespace, owner_hash)
         UNION ALL
@@ -796,7 +800,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                NULL::timestamptz, NULL::timestamptz, NULL::timestamptz,
                NULL::integer, NULL::text, NULL::timestamptz,
                NULL::bytea, NULL::bytea, NULL::bytea, NULL::bytea,
-               NULL::text[], true AS busy
+               NULL::text[], NULL::jsonb, true AS busy
          WHERE NOT EXISTS (SELECT 1 FROM claimed)
            AND EXISTS (
              SELECT 1 FROM ${FAIRNESS_TABLE} AS fairness

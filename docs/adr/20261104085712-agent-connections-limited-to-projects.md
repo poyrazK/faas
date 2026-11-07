@@ -43,6 +43,11 @@ limit (one primary-key read) onto the principal.
   with the 404 they give a cross-account app. This covers routes that address
   the app by path and those that resolve it from the body or a stored session
   (uploads, domains, crons, deployment reads).
+- **Storage copy sources.** Granting cross-bucket copy authority checks the
+  source bucket's owning app against the same project set independently of
+  the destination app in the route. An excluded source, including an app
+  outside every project, returns 404 without creating a grant. Admin scope
+  does not override a key's project restriction.
 - **Projects.** `/v1/projects/{slug}` routes refuse a project outside the set
   (404).
 - **Lists.** `GET /v1/apps`, `GET /v1/orgs/{slug}/apps` and
@@ -89,3 +94,20 @@ return `projects`.
 - Limiting by environment within a project.
 - Changing a connection's projects without reconnecting.
 - Limits for keys other than agent and `mcp-login` keys.
+
+## Amendment (2026-11-05): App-hosted object uploads enforce key boundaries
+
+`POST /uploads/{route}` and `GET /uploads/{route}/receipts/{id}` run at the
+public edge outside apid's HTTP middleware. They enforce the key's organization
+as well as its existing account and app boundaries. An explicitly organization-
+bound key cannot reach an app of another organization or an unattributed legacy
+app. Unscoped legacy account keys retain their account boundary.
+
+For agent and `mcp-login` keys the edge reads the immutable project restriction
+through `EdgeStore`'s narrow `APIKeyProjectLimitReader`. Credential resolution
+still belongs to apid; this read contains no credential material and works even
+while an older apid returns a key without the middleware's project projection.
+A missing or failed restriction read returns 503, never unlimited access. An
+app outside the allowed projects, including an app with no project, returns 403
+before an upload is admitted or a receipt is read. Unlimited keys and allowed
+projects retain upload and receipt access.

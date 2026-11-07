@@ -16,6 +16,12 @@ import (
 
 func restartProgressDashboardCookie(t *testing.T, e testEnv, accountID string, pending bool) *http.Cookie {
 	t.Helper()
+	if pending {
+		// A pending envelope models a live MFA requirement, not a reset factor.
+		if _, err := e.store.SetMFARequired(t.Context(), accountID, true); err != nil {
+			t.Fatal(err)
+		}
+	}
 	sid := uuid.NewString()
 	if _, err := e.store.CreateSession(t.Context(), sid, accountID, "192.0.2.10", "restart-progress-test"); err != nil {
 		t.Fatal(err)

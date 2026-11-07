@@ -436,3 +436,62 @@ tenant-surfaces flag. Caddy on-demand mode skips both discovery and legacy
 issuance; Ansible propagates that same mode to the internal gateway. Deploy the
 expand migration before the gateway update. Ownership-verification retry APIs
 keep their existing unverified-claim semantics.
+
+## Amendment 12 (2026-11-05): nonblocking refresh and recent admissions
+
+After the first complete TLS admission inventory, a replacement scan runs in
+the background while requests use the previous filter. Initial warm-up still
+fails closed until an inventory completes. One shared refresh is active at a
+time, and its cursor survives timeouts.
+
+When the unknown-host lookup bucket is empty, an edge can catch up from the
+bounded recent admission ledger. It reads at most one week's fleet admission
+budget plus one three-hour window, at most once per second per edge. Concurrent
+requests share the read; at most 512 requests wait, and their own deadlines
+still apply. A request that joined a read started before it arrived may wait
+for one subsequent read. Only hosts with a current verified claim are added as
+membership hints; live ownership, plan, allowlist, and issuance-budget checks
+still decide admission. The latest catch-up set is also merged into a completed
+inventory replacement, preserving hosts inserted behind its cursor by another
+edge. Requests fail closed if the waiter bound or deadline is exhausted, or if
+the database cannot confirm the admission.
+
+## Amendment 13 (2026-11-05): DNS uncertainty and recent route hints
+
+A failed fixed wildcard DNS probe is checked against an unpredictable second
+name before the doctor revokes verification. This prevents an explicit DNS
+record for the fixed probe name from misclassifying a healthy wildcard. If the
+second name succeeds, certificate probing stays pending: the doctor does not
+mint certificates for arbitrary probe names. The same check gates recovery.
+
+An inconclusive DNS or IPv6 probe leaves the observation's DNS check time
+null. New readers render the DNS checks pending without prescribing a record
+change; existing readers retain their conservative boolean behavior. The
+observation start time still orders concurrent state changes. A configured edge
+address is required to classify a returned IPv6 address as a conflict.
+
+Route-budget preloads include previously admitted concrete wildcard hosts,
+never wildcard patterns. A bounded, shared recent-host read also recovers
+concrete admissions and exact claims verified within two minutes after a
+lookup budget or TLS negative cache denies a request. Reads are limited to one
+per second, with 512 waiters and a three-second route deadline; actual routing
+and certificate permission still use their live checks. The recent verified
+query has an online partial index. Deploy that expand migration before this
+release; older binaries continue using the existing tables and booleans.
+
+## Amendment 14 (2026-11-05): bounded wildcard recovery
+
+The route inventory also includes verified wildcard patterns. A pattern never
+grants a free lookup: when the ordinary unknown-host budget is spent, a matching
+concrete name may spend a separate per-process wildcard recovery budget before
+the normal live route and authorization checks. The gateway and public object
+matcher each allow a burst of 50 and refill at five lookups per second. This
+lets legacy DNS-01 wildcard hosts recover after a restart during an unrelated
+unknown-host flood, while a flood under a claimed wildcard remains bounded and
+may still exhaust that recovery budget.
+
+The recent verification inventory includes wildcard claims. When one covers a
+TLS negative-cache entry, the edge drops that entry, then spends the ordinary
+lookup budget and checks the live claim, plan, allowlist and issuance limits.
+Patterns never enter the concrete-host admission filter. The recent index
+covers all verified claims, including wildcards.

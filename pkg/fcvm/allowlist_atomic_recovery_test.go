@@ -59,7 +59,7 @@ func (r *allowlistTxnRunner) apply(namespace, script string) error {
 					}
 				}
 			}
-			if fields[0] == "insert" || fields[0] == "add" && strings.Contains(command, "tcp dport != 25 accept") {
+			if fields[0] == "insert" || fields[0] == "add" && strings.Contains(command, "tcp dport != ") && strings.HasSuffix(strings.TrimSpace(command), "accept") {
 				r.next++
 				next[family] = r.next
 			} else if fields[0] == "delete" && next[family] == prior[family] {

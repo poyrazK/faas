@@ -426,6 +426,9 @@ Discovery is bounded to the first 128 public relations in catalog name order,
 result. Truncation is explicit and only reported, supported tables are eligible.
 One check job is retained per connection. A dead worker's 60-second lease can
 be reclaimed, and a replaced job or credential revision cannot publish results.
+A different check cannot replace pending or running work. While setup needs its
+source or mirror check, a conflicting request returns `data_connection_check_busy`;
+wait for setup to advance, then retry. Matching requests share the existing job.
 
 ## Operator staging pilot
 
@@ -572,13 +575,21 @@ receiver messages and retained WAL alone never establish applied freshness.
 The worker samples a new checkpoint after confirming the previous one; it does
 not write heartbeat rows or require new source write privileges.
 
-`health` is evaluated when status is read. A recent confirmed checkpoint and
-current monitoring yield `healthy`; expired monitoring yields `unknown` even
-when the last persisted lifecycle state is `live`. A checkpoint without recent
-confirmation yields `apply_unconfirmed`. An idle publication may not advance its
-replication origin, so this is **not** proof of stalled replication or measured
-time lag. If selected rows are changing, investigate apply health. Do not resync
+`health` is evaluated when status is read. A recent confirmed checkpoint, a
+live pipeline and current monitoring yield `healthy`; a pipeline catching up
+reports pending even when a previous checkpoint is recent. Expired monitoring
+yields `unknown` even when the last persisted lifecycle state is `live`. A
+checkpoint without recent confirmation yields `apply_unconfirmed`. An idle
+publication may not advance its replication origin, so this is **not** proof of
+stalled replication or measured time lag. If selected rows are changing,
+investigate apply health. Do not resync
 solely because a quiet source has an unconfirmed checkpoint.
+
+New verification requests require a running desired state. If an in-progress
+verification is paused, its saved progress is retained; a CLI verification wait
+reports the pause and asks the operator to resume instead of waiting until its
+deadline. A primary-key verification limit requires reducing oversized key
+values before retrying; changing the key definition requires a resync.
 
 The dashboard displays in-app alerts and recovery guidance for stale monitoring,
 credential failures, blocked sync, retention pressure (80% of the existing
@@ -1162,8 +1173,23 @@ pilot, start the independent monitor explicitly with
 `systemctl enable --now faas-apid-data-pipeline-alert-worker` and inspect
 `journalctl -u faas-apid-data-pipeline-alert-worker`. Startup does not require the
 pipeline decryption files; delivery loads the configured key paths lazily.
+The monitor refreshes its pilot accounts and key paths from the config while
+running. Invalid or disabled config pauses new monitoring and deliveries until
+a valid config is available; a delivery already in flight may still finish.
+Restart apid and the replication worker after changing their configuration.
+Restart the alert worker as well if its control-catalog connection changes;
+only its pilot scope and key paths reload while it is running.
 Stopping both workers or losing the control catalog cannot be detected by this
 monitor itself.
+
+Both worker units stay opt-in. An `apid` per-unit release restarts active
+workers onto the new binary and leaves inactive workers stopped. Ansible also
+restarts an active worker after its unit or database runtime-role drop-in
+changes. The services wait for a temporarily unavailable catalog at startup
+and retry catalog outages during operation, including after PostgreSQL restarts.
+The units remain compatible with older binaries during rollout and rollback;
+systemd can report a worker active while it is still waiting for the catalog.
+The independent monitor reports missing observations once the catalog recovers.
 
 Conditions must persist for two minutes after detection. Monitoring is checked
 every 15 seconds, with a 90-second observation freshness allowance:
@@ -1213,7 +1239,8 @@ same event ID and body, while their signing timestamp is refreshed;
 `X-Faas-Webhook-Attempt` reports the recorded attempt number.
 
 Delivery is **at least once**: an accepted request whose acknowledgment is lost
-can repeat. The durable queue preserves incident-before-recovery attempt order;
+can repeat. A bounded pool delivers different pipelines concurrently. The durable queue
+preserves incident-before-recovery attempt order for each pipeline;
 recovery can proceed after an incident is delivered or its retry budget is
 exhausted. Only 2xx responses acknowledge an event. Redirects are rejected without
 following them. Other non-408/429 4xx responses and denied egress are terminal;

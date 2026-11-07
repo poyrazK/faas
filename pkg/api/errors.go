@@ -51,10 +51,18 @@ const CodeApplicationStandardVersionStale = "application_standard_version_stale"
 
 const CodeApplicationStandardsPending = "application_standards_pending"
 
-// PreviewNotEnabledHint is the remediation for a dark-launched preview's 503.
+// PreviewNotEnabledHint is the remediation for a dark-launched preview.
 // Without it the CLI's generic 5xx hint told customers to check Gregale's
 // service status and inspect deployments before retrying (Hunt 14 H14-37).
-const PreviewNotEnabledHint = "This preview is not enabled for this account; retrying will not help. Ask Gregale support for access."
+const PreviewNotEnabledHint = "This preview is not enabled for this account or installation; retrying will not help. Ask Gregale support for access."
+
+// ErrPreviewNotEnabled answers a request for a dark-launched preview. It is a
+// 403: the gate is permanent until an operator enables it, and a 503 made the
+// CLI exit 3 (temporary_failure) and harnesses retry it (ChronoLake finding
+// 33). The code stays the feature's own *_unavailable code.
+func ErrPreviewNotEnabled(code, title, detail string) *Problem {
+	return NewProblem(http.StatusForbidden, code, title, detail).WithHint(PreviewNotEnabledHint)
+}
 
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
@@ -95,6 +103,9 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// AgentApproval is the request behind approval_required: the link a
+	// person opens to approve it (ADR-20261104140058).
+	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`
 	// Freezes lists the active freezes behind release_frozen
 	// (ADR-20261019071733).
 	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
@@ -704,6 +715,11 @@ const (
 	// (ADR-20261027125625). Nothing was accepted; retry after Retry-After.
 	CodeEventsPaused = "events_paused"
 	CodeUnauthorized = "unauthorized"
+	// CodeWorkloadNotProduction refuses a private runtime report (Data API
+	// usage, change events, change hook status) from a valid workload that
+	// does not serve a production deployment: a stage, preview or cloned
+	// environment. The refusal is final; the runtime stops reporting.
+	CodeWorkloadNotProduction = "workload_not_production"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -819,6 +835,8 @@ const (
 	// the dashboard can pivot the message from "your key is wrong"
 	// to "complete enrollment or step-up to continue".
 	CodeMFARequired = "mfa_required"
+	// The remaining code can reset the factor, preserving a way back in.
+	CodeMFALastRecoveryCode = "mfa_last_recovery_code"
 	// CodeStepUpRequired is returned by RequireStepUp (ADR-077 +
 	// PR-8 acceptance) when a session-cookie principal's
 	// Envelope.StepUpAt stamp is missing or older than the route's
@@ -978,6 +996,9 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeProjectReleaseRollbackRequired means a graph still selects another
+	// deployment, so changing app weights cannot recover the environment.
+	CodeProjectReleaseRollbackRequired = "project_release_rollback_required"
 	// CodeRollbackTargetDatabaseRestored means a database switch restored
 	// the app's database to before the target's own release command
 	// (ADR-20261023181931). The target cannot run on that database; deploy
@@ -1287,6 +1308,11 @@ const (
 	// actionable retry guidance ("raise your plan or lower
 	// --min-instances").
 	CodeMaxMinInstancesExceeded = "max_min_instances_exceeded"
+	// CodeOverageCapRequired and CodeOverageCapAboveMax (ADR-20261105120000):
+	// a paid subject keeps a spend cap, at most its plan's self-service
+	// ceiling.
+	CodeOverageCapRequired = "overage_cap_required"
+	CodeOverageCapAboveMax = "overage_cap_above_max"
 
 	// CodePlanTrafficSplitNotAllowed (issue #556 / traffic
 	// splitting across deployments) is a 403 for plan-tier
@@ -1864,6 +1890,12 @@ const (
 	// fails before serving VMs are booted so the command cannot be silently
 	// skipped.
 	CodeReleasePhaseUnavailable = "release_phase_unavailable"
+	// CodeReleaseOutcomeUncertain means an earlier release command of the
+	// app scope started but ended without an exit code, so its effect on the
+	// database is unknown. The deployment fails before its own release
+	// command runs; a person checks the database and records it with
+	// POST /v1/deployments/{id}/release-outcome (ADR-1448 amendment 1).
+	CodeReleaseOutcomeUncertain = "release_outcome_uncertain"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -2370,7 +2402,8 @@ func StatusForCode(code string) int {
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
-		CodeReleasePhaseUnavailable:
+		CodeReleasePhaseUnavailable,
+		CodeReleaseOutcomeUncertain:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail
@@ -5969,6 +6002,36 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 // can render actionable retry guidance ("raise your plan or lower
 // --min-instances"). Distinct from ErrInvalidMinInstances which
 // rejects negative values or values above MaxConcurrency.
+// OverageCapProblem validates a spend cap a subject on plan asks for
+// (ADR-20261105120000). nil clears the cap: allowed on Free, which stops at
+// its allowance, and refused on a paid plan. A paid cap may not exceed the
+// plan's self-service ceiling.
+func OverageCapProblem(plan Plan, cents *int64) *Problem {
+	if cents != nil && *cents < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"overage_cap_cents must be >= 0 or null", "negative values are rejected")
+	}
+	ceiling, paid := plan.MaxSelfServiceOverageCapCents()
+	if !paid {
+		return nil
+	}
+	if cents == nil {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapRequired,
+			"Spend cap required",
+			fmt.Sprintf("a paid plan keeps a spend cap; set overage_cap_cents to at most %d. Contact support for a higher cap.", ceiling)).
+			WithLimit(ceiling, 0).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	if *cents > ceiling {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapAboveMax,
+			"Spend cap above plan maximum",
+			fmt.Sprintf("overage_cap_cents must be at most %d on this plan; got %d. Contact support for a higher cap.", ceiling, *cents)).
+			WithLimit(ceiling, *cents).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	return nil
+}
+
 func ErrMaxMinInstancesExceeded(got, planMax int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMaxMinInstancesExceeded,
 		"min_instances exceeds plan cap",
@@ -7169,7 +7232,7 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
 		"Free organization limit reached",
-		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
@@ -7178,7 +7241,7 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 // ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
 func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
 	p := ErrOrgFreeLimitExceeded(limit, observed)
-	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade one before accepting another; a Free organization deleted this month counts until the month ends.", observed, limit)
 	return p
 }
 

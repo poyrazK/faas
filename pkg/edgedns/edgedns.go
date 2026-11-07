@@ -38,6 +38,11 @@ type Node struct {
 	Active bool
 	// Ready reports whether the node's edge answered its readiness probe.
 	Ready bool
+	// Direct reports whether the node's public address completed a verified
+	// TLS handshake for every DNS-only name. A DNS-only name's clients
+	// connect there themselves, so it takes only nodes that are Ready and
+	// Direct; proxied names need only Ready.
+	Direct bool
 }
 
 // Name is one managed host name and the zone that holds it.
@@ -186,8 +191,11 @@ type Reconciler struct {
 	dns     DNS
 	metrics *Metrics
 	log     *slog.Logger
-	nodes   map[string]*health
-	seeded  bool
+	// nodes is each node's health for the proxied names, direct for the
+	// DNS-only names.
+	nodes  map[string]*health
+	direct map[string]*health
+	seeded bool
 }
 
 // NewReconciler returns a Reconciler. metrics may be nil.
@@ -204,7 +212,7 @@ func NewReconciler(cfg Config, dns DNS, metrics *Metrics, log *slog.Logger) (*Re
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Reconciler{cfg: cfg, dns: dns, metrics: metrics, log: log, nodes: map[string]*health{}}, nil
+	return &Reconciler{cfg: cfg, dns: dns, metrics: metrics, log: log, nodes: map[string]*health{}, direct: map[string]*health{}}, nil
 }
 
 // Step folds one tick's registry and probe view into each node's health and
@@ -224,10 +232,14 @@ func (r *Reconciler) Step(ctx context.Context, nodes []Node) error {
 	if !r.seeded {
 		r.seed(nodes, current)
 	}
-	desired := r.observe(nodes)
+	proxied, direct := r.observe(nodes)
 
 	var errs []error
 	for _, name := range r.cfg.Names {
+		desired := proxied
+		if name.DNSOnly {
+			desired = direct
+		}
 		if held[name] {
 			// The tunnel's CNAME still holds the name; the operator moves it.
 			r.log.Warn("edgedns: a CNAME holds the name; leaving it", "name", name.Host)
@@ -263,56 +275,78 @@ func (r *Reconciler) Step(ctx context.Context, nodes []Node) error {
 	return errors.Join(errs...)
 }
 
-// seed starts the nodes already behind a managed name in.
+// seed starts the nodes already behind a managed name in, for that name's
+// mode.
 func (r *Reconciler) seed(nodes []Node, current map[Name][]Record) {
-	listed := map[netip.Addr]bool{}
-	for _, records := range current {
+	listed := map[bool]map[netip.Addr]bool{false: {}, true: {}}
+	for name, records := range current {
 		for _, rec := range records {
-			listed[rec.Addr] = true
+			listed[name.DNSOnly][rec.Addr] = true
 		}
 	}
 	for _, n := range nodes {
-		r.nodes[n.Name] = &health{in: n.Public.IsValid() && listed[n.Public]}
+		r.nodes[n.Name] = &health{in: n.Public.IsValid() && listed[false][n.Public]}
+		r.direct[n.Name] = &health{in: n.Public.IsValid() && listed[true][n.Public]}
 	}
 	r.seeded = true
 }
 
 // observe updates each node's health and returns the addresses of the nodes
-// that are in, in node order.
-func (r *Reconciler) observe(nodes []Node) []netip.Addr {
-	var desired []netip.Addr
-	for _, n := range nodes {
-		h := r.nodes[n.Name]
-		if h == nil {
-			h = &health{}
-			r.nodes[n.Name] = h
-		}
-		if n.Ready {
-			h.passes, h.fails = h.passes+1, 0
-		} else {
-			h.passes, h.fails = 0, h.fails+1
-			// Only a node that could be behind the names counts: a drained
-			// node or one without an address is not expected to answer.
-			if n.Active && n.Public.IsValid() {
-				r.metrics.probeFailed(n.Name)
-			}
-		}
-		switch {
-		case !n.Active || !n.Public.IsValid():
-			h.in = false
-		case h.in && h.fails >= r.cfg.FailAfter:
-			h.in = false
-			r.log.Warn("edgedns: node's edge stopped answering; withdrawing it", "node", n.Name, "misses", h.fails)
-		case !h.in && h.passes >= r.cfg.RestoreAfter:
-			h.in = true
-			r.log.Info("edgedns: node's edge is ready; adding it", "node", n.Name)
-		}
-		r.metrics.setNodeIn(n.Name, h.in)
-		if h.in {
-			desired = append(desired, n.Public)
-		}
+// that are in for the proxied names and for the DNS-only names, in node
+// order.
+func (r *Reconciler) observe(nodes []Node) (proxied, direct []netip.Addr) {
+	hasProxied, hasDirect := false, false
+	for _, name := range r.cfg.Names {
+		hasProxied = hasProxied || !name.DNSOnly
+		hasDirect = hasDirect || name.DNSOnly
 	}
-	return desired
+	for _, n := range nodes {
+		// Only a node that could be behind the names counts: a drained
+		// node or one without an address is not expected to answer.
+		expected := n.Active && n.Public.IsValid()
+		if expected && (!n.Ready || hasDirect && !n.Direct) {
+			r.metrics.probeFailed(n.Name)
+		}
+		in := false
+		if hasProxied && r.step(r.nodes, n, n.Ready, "node's edge stopped answering; withdrawing it", "node's edge is ready; adding it") {
+			proxied = append(proxied, n.Public)
+			in = true
+		}
+		if hasDirect && r.step(r.direct, n, n.Ready && n.Direct,
+			"node's public address stopped serving its DNS-only names; withdrawing it from them",
+			"node's public address serves its DNS-only names; adding it to them") {
+			direct = append(direct, n.Public)
+			in = true
+		}
+		r.metrics.setNodeIn(n.Name, in)
+	}
+	return proxied, direct
+}
+
+// step folds one probe result into n's health in healths and reports
+// whether n is in.
+func (r *Reconciler) step(healths map[string]*health, n Node, pass bool, withdrawn, added string) bool {
+	h := healths[n.Name]
+	if h == nil {
+		h = &health{}
+		healths[n.Name] = h
+	}
+	if pass {
+		h.passes, h.fails = h.passes+1, 0
+	} else {
+		h.passes, h.fails = 0, h.fails+1
+	}
+	switch {
+	case !n.Active || !n.Public.IsValid():
+		h.in = false
+	case h.in && h.fails >= r.cfg.FailAfter:
+		h.in = false
+		r.log.Warn("edgedns: "+withdrawn, "node", n.Name, "misses", h.fails)
+	case !h.in && h.passes >= r.cfg.RestoreAfter:
+		h.in = true
+		r.log.Info("edgedns: "+added, "node", n.Name)
+	}
+	return h.in
 }
 
 func (r *Reconciler) apply(ctx context.Context, c Change) error {

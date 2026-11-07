@@ -24,7 +24,7 @@ func TestDLQListFiltersBySourceAndTrigger(t *testing.T) {
 			{"id":"e-inv","source":"invocation","source_id":"i1","last_failed_at":"2026-10-26T10:00:00Z"},
 			{"id":"e-trg","source":"trigger_record","source_id":"t1","trigger_id":"trg-a","last_failed_at":"2026-10-26T10:00:00Z"},
 			{"id":"e-trg-b","source":"trigger_record","source_id":"t2","trigger_id":"trg-b","last_failed_at":"2026-10-26T10:00:00Z"},
-			{"id":"e-web","source":"webhook_delivery","source_id":"w1","last_failed_at":"2026-10-26T10:00:00Z"}
+			{"id":"e-web","source":"webhook_delivery","source_id":"w1","last_failed_at":"2026-10-26T10:00:00Z","replayed_at":"2026-10-26T11:00:00Z"}
 		],"next_before":"cursor-2"}`)
 	}))
 	defer srv.Close()
@@ -39,6 +39,9 @@ func TestDLQListFiltersBySourceAndTrigger(t *testing.T) {
 		{[]string{"dlq", "list", "demo", "--source", "trigger"}, []string{"e-trg", "e-trg-b"}},
 		{[]string{"dlq", "list", "demo", "--source=webhook_delivery"}, []string{"e-web"}},
 		{[]string{"dlq", "list", "demo", "--trigger", "trg-b"}, []string{"e-trg-b"}},
+		// ChronoLake finding 28: replayed (or webhook-retried) events can
+		// be hidden; the bool flag must not swallow the app positional.
+		{[]string{"dlq", "list", "--unreplayed", "demo"}, []string{"e-inv", "e-trg", "e-trg-b"}},
 	} {
 		code, stdout, stderr := runCLI(t, append([]string{"--json"}, tc.args...)...)
 		if code != 0 {

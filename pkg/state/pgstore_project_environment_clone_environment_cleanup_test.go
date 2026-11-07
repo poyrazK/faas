@@ -363,8 +363,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_clone_postgres_verifications.scope",
 		"project_environment_config_versions.environment_slug",
 		"project_environment_edge_policies.environment_slug",
+		"project_environment_promotion_receipts.environment_id", // Retained promotion receipts.
 		"project_environment_qualifications.environment_slug",
 		"project_environment_queue_runtime_sets.environment_id",
+		"project_environment_rollback_receipts.environment_id", // Retained rollback receipts.
 		"project_environment_route_policies.environment_slug",
 		"project_environment_secrets.environment_slug", // ADR-1139: a trigger deletes them with the environment row.
 		"project_environment_workload_heads.environment_id",

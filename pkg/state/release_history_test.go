@@ -25,19 +25,19 @@ func TestReleaseRunsCrossedByMem(t *testing.T) { releaseRunsSuite(t, state.NewMe
 func TestReleaseRunsCrossedByPG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	fx := releaseRunsSuite(t, s)
-	if _, err := pool.Exec(ctx, `UPDATE deployments SET serving_ended_at = $2 WHERE id = $1`, fx.target.ID, fx.base.Add(15*time.Second)); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE deployments SET serving_ended_at = $2 WHERE id = $1`, fx.target.ID, fx.succeededAt.Add(fx.failedAt.Sub(fx.succeededAt)/2)); err != nil {
 		t.Fatal(err)
 	}
 	runs, err := s.ReleaseRunsCrossedBy(ctx, fx.app.ID, fx.target.ID)
 	if err != nil || len(runs) != 1 || runs[0].DeploymentID != fx.failed.ID {
-		t.Fatalf("runs after the target served until +15s = %+v, %v; want only the failed release", runs, err)
+		t.Fatalf("runs after the target served between the two admissions = %+v, %v; want only the failed release", runs, err)
 	}
 }
 
 type releaseRunFixture struct {
-	app            state.App
-	target, failed state.Deployment
-	base           time.Time
+	app                   state.App
+	target, failed        state.Deployment
+	succeededAt, failedAt time.Time
 }
 
 // releaseRunsSuite pins ADR-1448's crossing rule at the store: started
@@ -54,6 +54,7 @@ func releaseRunsSuite(t *testing.T, store releaseRunTestStore) releaseRunFixture
 		t.Fatal(err)
 	}
 	base := time.Now().UTC().Truncate(time.Second).Add(time.Second)
+	admitted := map[string]time.Time{}
 	release := func(scope string, offset time.Duration, status state.AppTaskStatus) state.Deployment {
 		t.Helper()
 		d, err := store.CreateDeployment(ctx, state.Deployment{
@@ -83,12 +84,18 @@ func releaseRunsSuite(t *testing.T, store releaseRunTestStore) releaseRunFixture
 		if err != nil || claimed.ID != task.ID {
 			t.Fatalf("claim = %+v, %v", claimed, err)
 		}
-		if _, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, started); err != nil {
-			t.Fatal(err)
+		running, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, started)
+		if err != nil || running.StartedAt == nil {
+			t.Fatalf("running task: %+v %v", running, err)
+		}
+		admitted[d.ID] = *running.StartedAt
+		finished := started.Add(time.Second)
+		if authoritative := running.StartedAt.Add(time.Second); authoritative.After(finished) {
+			finished = authoritative
 		}
 		exit := 0
 		completion := state.CompleteAppTaskParams{
-			ID: task.ID, LeaseToken: *claimed.LeaseToken, Status: status, ExitCode: &exit, FinishedAt: started.Add(time.Second),
+			ID: task.ID, LeaseToken: *claimed.LeaseToken, Status: status, ExitCode: &exit, FinishedAt: finished,
 		}
 		if status == state.AppTaskFailed {
 			exit = 1
@@ -122,7 +129,7 @@ func releaseRunsSuite(t *testing.T, store releaseRunTestStore) releaseRunFixture
 		d      state.Deployment
 		status state.AppTaskStatus
 		at     time.Time
-	}{{succeeded, state.AppTaskSucceeded, base.Add(10 * time.Second)}, {failed, state.AppTaskFailed, base.Add(20 * time.Second)}}
+	}{{succeeded, state.AppTaskSucceeded, admitted[succeeded.ID]}, {failed, state.AppTaskFailed, admitted[failed.ID]}}
 	for i, w := range want {
 		r := runs[i]
 		if r.DeploymentID != w.d.ID || r.Revision != w.d.Revision || r.Status != w.status || !r.StartedAt.Equal(w.at) {
@@ -135,7 +142,7 @@ func releaseRunsSuite(t *testing.T, store releaseRunTestStore) releaseRunFixture
 	if runs, err := store.ReleaseRunsCrossedBy(ctx, uuid.NewString(), target.ID); err != nil || len(runs) != 0 {
 		t.Fatalf("runs for another app's target = %+v, %v; want none", runs, err)
 	}
-	return releaseRunFixture{app: app, target: target, failed: failed, base: base}
+	return releaseRunFixture{app: app, target: target, failed: failed, succeededAt: admitted[succeeded.ID], failedAt: admitted[failed.ID]}
 }
 
 // TestReleaseMigrationDatabasesPG lists only live migration bindings that

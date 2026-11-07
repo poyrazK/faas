@@ -100,11 +100,9 @@ func execLimited(fsize int64, vec execVectors) error {
 	if err := setLimits(fsize); err != nil {
 		return err
 	}
-	_, _, errno := syscall.RawSyscall(syscall.SYS_EXECVE,
-		uintptr(unsafe.Pointer(vec.path)),     //nolint:gosec // G103: raw execve, so nothing allocates under the limits.
-		uintptr(unsafe.Pointer(&vec.argv[0])), //nolint:gosec // G103: see above.
-		uintptr(unsafe.Pointer(&vec.envv[0]))) //nolint:gosec // G103: see above.
-	return fmt.Errorf("exec: %w", errno)
+	limit := unix.Rlimit{Cur: sandboxAddressSize, Max: sandboxAddressSize}
+	errno := execWithAddressLimit(vec.path, &vec.argv[0], &vec.envv[0], &limit)
+	return fmt.Errorf("exec under address-space limit: %w", errno)
 }
 
 func parseHelperArgs(args []string) (helperSpec, error) {
@@ -380,7 +378,6 @@ func setLimits(fsize int64) error {
 	}{
 		{unix.RLIMIT_CORE, 0},
 		{unix.RLIMIT_CPU, sandboxCPUSeconds},
-		{unix.RLIMIT_AS, sandboxAddressSize},
 		{unix.RLIMIT_FSIZE, uint64(fsize)},
 		{unix.RLIMIT_NOFILE, sandboxOpenFiles},
 	}

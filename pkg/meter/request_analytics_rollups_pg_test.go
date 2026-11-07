@@ -74,6 +74,15 @@ func TestRequestAnalyticsRollupsAddUpAndAgeOutOnThePlanLadder(t *testing.T) {
 	if requests != 5 || maxMS != 900 || len(hist) != api.RequestAnalyticsLatencyBuckets || hist[3] != 3 || hist[24] != 2 {
 		t.Fatalf("merged row = requests %d max %d hist %v, want 5, 900, 3 at [3] and 2 at [24]", requests, maxMS, hist)
 	}
+	// The hourly tier adds the same flushes up by hour.
+	var hourRequests int64
+	if err := pool.QueryRow(ctx, `SELECT requests FROM request_analytics_hours WHERE app_id = $1 AND bucket_start = $2`,
+		appID, now.Truncate(time.Hour)).Scan(&hourRequests); err != nil {
+		t.Fatal(err)
+	}
+	if hourRequests != 5 {
+		t.Fatalf("hourly row = %d requests, want 5", hourRequests)
+	}
 	since, ok, err := store.RequestAnalyticsRollupCoverage(ctx, appID)
 	if err != nil || !ok || !since.Equal(old) {
 		t.Fatalf("coverage = %v %v %v, want %v", since, ok, err, old)
@@ -94,11 +103,11 @@ func TestRequestAnalyticsRollupsAddUpAndAgeOutOnThePlanLadder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retention: %v", err)
 	}
-	var left, gapsLeft int
-	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM request_analytics_minutes WHERE app_id = $1), (SELECT count(*) FROM request_analytics_rollup_gaps WHERE app_id = $1)`, appID).Scan(&left, &gapsLeft); err != nil {
+	var left, hoursLeft, gapsLeft int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM request_analytics_minutes WHERE app_id = $1), (SELECT count(*) FROM request_analytics_hours WHERE app_id = $1), (SELECT count(*) FROM request_analytics_rollup_gaps WHERE app_id = $1)`, appID).Scan(&left, &hoursLeft, &gapsLeft); err != nil {
 		t.Fatal(err)
 	}
-	if deleted != 2 || left != 1 || gapsLeft != 1 {
-		t.Fatalf("retention deleted %d, left %d rows and %d gaps; want the 4-day-old Hobby row and the 20-day-old gap gone", deleted, left, gapsLeft)
+	if deleted != 3 || left != 1 || hoursLeft != 1 || gapsLeft != 1 {
+		t.Fatalf("retention deleted %d, left %d minute rows, %d hour rows and %d gaps; want the 4-day-old Hobby minute and hour and the 20-day-old gap gone", deleted, left, hoursLeft, gapsLeft)
 	}
 }

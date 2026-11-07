@@ -31,7 +31,9 @@ var cliTreeVerbs = []string{
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
 	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
-	"open", "fail",
+	"open", "fail", "move",
+	// `bucket sign` mints a signed URL (ADR-20261106114500).
+	"sign",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -59,7 +61,7 @@ var cliTreeCompoundWords = []string{
 	"subscription-capacity", "lock-policy", "deploy-token",
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
-	"grace-window", "payment-method", "server-key",
+	"grace-window", "payment-method", "server-key", "egress-overage",
 	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "request-policy", "legal-hold",
 	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
 }

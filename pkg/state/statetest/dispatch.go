@@ -27,6 +27,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"CompleteSnapshotPrimeHandoff":           true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
 	"EvaluateAutomationFailurePolicies":      true,
@@ -52,6 +53,7 @@ var memDispatched = map[string]bool{
 	"ClaimQueuedBuild":                                        true,
 	"ListBuildsAwaitingImage":                                 true,
 	"ListDeploymentsForOperator":                              true,
+	"SetDeploymentRuntimeProfile":                             true,
 	"ListResumableImagePreparations":                          true,
 	"PublishImagePreparationLayer":                            true,
 	"RequeueBuildIfClaim":                                     true,
@@ -1961,6 +1963,10 @@ func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]st
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"ListEdgeRulesForApp":                                                    true,
+	"SetDeploymentFailed":                                                    true,
+	"CompleteSnapshotPrimeHandoff":                                           true,
+	"FailDeploymentWithHostingReceipt":                                       true,
 	"AccountByID":                                                            true,
 	"SetAccountKeyGraceWindow":                                               true,
 	"DeploymentByID":                                                         true,
@@ -2104,6 +2110,15 @@ var pgDispatched = map[string]bool{
 
 	"WithPublicHostPolicySnapshot":  true,
 	"WithInvocationVersionSnapshot": true,
+}
+
+func (s *Pg) FailDeploymentWithHostingReceipt(ctx context.Context, id string, raw []byte, code, message string) (bool, error) {
+	if o, ok := s.over.(interface {
+		FailDeploymentWithHostingReceipt(context.Context, string, []byte, string, string) (bool, error)
+	}); ok {
+		return o.FailDeploymentWithHostingReceipt(ctx, id, raw, code, message)
+	}
+	return s.PgStore.FailDeploymentWithHostingReceipt(ctx, id, raw, code, message)
 }
 
 func (s *Pg) AccountByID(ctx context.Context, accountID string) (state.Account, error) {
@@ -4673,6 +4688,15 @@ func (s *Mem) RuntimeReleaseQualification(p0 context.Context, p1 string) (state.
 	return s.MemStore.RuntimeReleaseQualification(p0, p1)
 }
 
+func (s *Mem) SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error {
+	if f, ok := s.over.(interface {
+		SetDeploymentRuntimeProfile(context.Context, string, []byte) error
+	}); ok {
+		return f.SetDeploymentRuntimeProfile(ctx, id, profile)
+	}
+	return s.MemStore.SetDeploymentRuntimeProfile(ctx, id, profile)
+}
+
 func (s *Mem) SetDeploymentFailed(p0 context.Context, p1 string, p2 string, p3 string) (state.Deployment, error) {
 	if o, ok := s.over.(interface {
 		SetDeploymentFailed(context.Context, string, string, string) (state.Deployment, error)
@@ -4977,4 +5001,38 @@ func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error
 		return o.GetSLO(p0, p1, p2)
 	}
 	return s.MemStore.GetSLO(p0, p1, p2)
+}
+
+func (s *Mem) CompleteSnapshotPrimeHandoff(ctx context.Context, i state.Instance, next, channel string, payload json.RawMessage) error {
+	if o, ok := s.over.(interface {
+		CompleteSnapshotPrimeHandoff(context.Context, state.Instance, string, string, json.RawMessage) error
+	}); ok {
+		return o.CompleteSnapshotPrimeHandoff(ctx, i, next, channel, payload)
+	}
+	return s.MemStore.CompleteSnapshotPrimeHandoff(ctx, i, next, channel, payload)
+}
+func (s *Pg) CompleteSnapshotPrimeHandoff(ctx context.Context, i state.Instance, next, channel string, payload json.RawMessage) error {
+	if o, ok := s.over.(interface {
+		CompleteSnapshotPrimeHandoff(context.Context, state.Instance, string, string, json.RawMessage) error
+	}); ok {
+		return o.CompleteSnapshotPrimeHandoff(ctx, i, next, channel, payload)
+	}
+	return s.PgStore.CompleteSnapshotPrimeHandoff(ctx, i, next, channel, payload)
+}
+
+func (s *Pg) ListEdgeRulesForApp(ctx context.Context, app string) ([]state.EdgeRule, error) {
+	if o, ok := s.over.(interface {
+		ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+	}); ok {
+		return o.ListEdgeRulesForApp(ctx, app)
+	}
+	return s.PgStore.ListEdgeRulesForApp(ctx, app)
+}
+func (s *Pg) SetDeploymentFailed(ctx context.Context, id, code, detail string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		SetDeploymentFailed(context.Context, string, string, string) (state.Deployment, error)
+	}); ok {
+		return o.SetDeploymentFailed(ctx, id, code, detail)
+	}
+	return s.PgStore.SetDeploymentFailed(ctx, id, code, detail)
 }

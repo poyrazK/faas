@@ -110,6 +110,12 @@ JOIN data_pipeline_connections c ON c.id=ch.connection_id AND c.account_id=ch.ac
 WHERE ch.account_id=sqlc.arg(account_id)::text::uuid AND ch.connection_id=sqlc.arg(connection_id)::text::uuid
 FOR SHARE OF c,ch;
 
+-- name: PipelineSetupCheckOwner :one
+SELECT phase,database_id::text AS database_id FROM data_pipeline_setups
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND source_connection_id=sqlc.arg(connection_id)::text::uuid
+ AND state='working' AND phase IN ('checking_source','provisioning','checking_mirror','starting') AND pipeline_id=''
+FOR UPDATE;
+
 -- name: PipelineCheckRequest :one
 INSERT INTO data_connection_checks(connection_id,account_id,id,connection_revision,database_id)
 VALUES(sqlc.arg(connection_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(id)::text::uuid,sqlc.arg(connection_revision),sqlc.arg(database_id))

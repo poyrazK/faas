@@ -124,6 +124,8 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		h.Message, h.Recovery = "Verification was stopped.", "Retry the approved schema workflow to start a fresh check. Reads remain gated."
 	case p.Reason == "verification_row_limit" || p.Reason == "verification_range_limit":
 		h.Message, h.Recovery = "Verification reached its work limit.", "Review the verification limits, then retry or confirm an explicit resync. Reads remain gated for schema changes."
+	case p.Reason == "verification_key_limit":
+		h.Message, h.Recovery = "Verification reached its primary-key size limit.", "Reduce oversized primary-key values before retrying. Changing the key definition requires a resync; reads remain gated for schema changes."
 	case p.Reason == "verification_tracking_lost":
 		h.Message, h.Recovery, h.Action, h.RequiresConfirmation = "Verification tracking was lost.", "The destination no longer has complete change tracking. Confirm a resync to restore a trustworthy mirror.", "resync", true
 	case p.Reason == "schema_receipt_conflict":
@@ -138,6 +140,8 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		h.Code, h.Message, h.Recovery, h.Action = "retention_pressure", "Retained WAL is approaching the safety limit.", "Check destination apply progress and available capacity. Resume if paused; increasing retention requires operator review.", ""
 	case p.State == "copying" || p.State == "validating":
 		h.State, h.Code, h.Message, h.Recovery = "pending", "initial_copy", "The initial copy is not complete.", "Wait for all selected tables to become ready."
+	case p.State == "catching_up":
+		h.State, h.Code, h.Message, h.Recovery = "pending", "catching_up", "Replication is catching up.", "Wait for replication to become live and check source and mirror health if it remains behind."
 	default:
 		applied, err := time.Parse(time.RFC3339Nano, p.AppliedThroughAt)
 		if err != nil || now.Before(applied) || now.Sub(applied) >= api.DataPipelineObservationMaxAge {

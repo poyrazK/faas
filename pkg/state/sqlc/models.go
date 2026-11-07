@@ -94,6 +94,10 @@ type Account struct {
 	DeletionIncludesManagedPostgres bool
 	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
 	PlanChangedAt pgtype.Timestamptz
+	// When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).
+	EgressOverageEnabledAt pgtype.Timestamptz
+	// When the egress overage election ended; NULL while it is on (ADR-20261104204500).
+	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -200,6 +204,58 @@ type Agent struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
+}
+
+// ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
+type AgentApprovalChannelBinding struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+	ChannelID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-20261107140000 when meterd last emailed a recipient about an agent key; meterd is the only writer.
+type AgentApprovalEmailLog struct {
+	RecipientAccountID pgtype.UUID
+	KeyID              pgtype.UUID
+	LastSentAt         pgtype.Timestamptz
+}
+
+// ADR-20261107140000 agent approval requests to tell people about; apid inserts, meterd delivers.
+type AgentApprovalNotification struct {
+	ApprovalID         pgtype.UUID
+	AccountID          pgtype.UUID
+	OrgID              pgtype.UUID
+	KeyID              pgtype.UUID
+	AgentName          string
+	ReviewUrl          string
+	State              string
+	Attempts           int32
+	AvailableAt        pgtype.Timestamptz
+	LeaseUntil         pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	ChannelsNotifiedAt pgtype.Timestamptz
+	LastError          pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+}
+
+// ADR-20261104140058 agent requests awaiting or holding a person's approval; apid is the only writer.
+type AgentApprovalRequest struct {
+	ID           pgtype.UUID
+	KeyID        pgtype.UUID
+	AccountID    pgtype.UUID
+	OrgID        pgtype.UUID
+	Category     string
+	Method       string
+	Path         string
+	BodySha256   []byte
+	Status       string
+	DecidedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	DecidedAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+	DecisionNote pgtype.Text
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
@@ -806,6 +862,13 @@ type ApiKeyAgentClient struct {
 	AccountID  pgtype.UUID
 	ClientName string
 	ClientSite string
+	CreatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261104140058 the action categories an agent key must have a person approve; apid is the only writer.
+type ApiKeyApprovalCategory struct {
+	KeyID      pgtype.UUID
+	Categories []string
 	CreatedAt  pgtype.Timestamptz
 }
 
@@ -3147,6 +3210,8 @@ type CustomDomain struct {
 	VerificationExpiresAt         pgtype.Timestamptz
 	EnvironmentID                 pgtype.UUID
 	CertRetryAt                   pgtype.Timestamptz
+	VerificationManualCheckAt     pgtype.Timestamptz
+	BindingVersion                pgtype.UUID
 }
 
 type CustomDomainTlsAdmission struct {
@@ -4024,6 +4089,7 @@ type Deployment struct {
 	MailFailureAppRevision     pgtype.Int8
 	MailFailureSuccessRevision pgtype.Int8
 	PromotedAt                 pgtype.Timestamptz
+	RollbackReleaseReview      []byte
 }
 
 type DeploymentAlias struct {
@@ -6325,6 +6391,21 @@ type GithubCheckUpdate struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type GithubConnectionVerification struct {
+	AccountID      pgtype.UUID
+	InstallationID int64
+	VerifiedAt     pgtype.Timestamptz
+	Access         []byte
+}
+
+type GithubDeliveryTarget struct {
+	DeliveryID string
+	AccountID  pgtype.UUID
+	Status     string
+	SkipReason string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type GithubDeployBranch struct {
 	ProjectID pgtype.UUID
 	Branch    string
@@ -6367,6 +6448,13 @@ type GithubInstallation struct {
 	LastReconcileError           string
 	LastReconcileRepositoryCount int32
 	LastReconcileDetachedCount   int32
+}
+
+type GithubTransportRecovery struct {
+	DeliveryGuid  string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
 }
 
 type GithubWebhookDelivery struct {
@@ -7092,6 +7180,8 @@ type Invocation struct {
 	ReplayRootInvocationID   pgtype.UUID
 	ReplayRootCreatedAt      pgtype.Timestamptz
 	AsyncQuotaSubjectID      pgtype.UUID
+	EdgeJwtIssuer            pgtype.Text
+	EdgeJwtSubject           pgtype.Text
 }
 
 type InvocationAttemptHistory struct {
@@ -7303,7 +7393,7 @@ type IssueApplicationResponseAccess struct {
 	AppID             pgtype.UUID
 	OwnerAccountID    pgtype.UUID
 	ActorAccountID    pgtype.UUID
-	OwnerPlan         string
+	OwnerPlan         interface{}
 	ResponsibleTeamID interface{}
 	RoutedTeamID      pgtype.UUID
 }
@@ -7600,6 +7690,7 @@ type IssueTeamSlackDelivery struct {
 	ReminderID                pgtype.UUID
 	RoutingRevision           int64
 	RoutingRuleKey            string
+	AttemptClaimID            pgtype.UUID
 }
 
 type IssueTeamSlackDestination struct {
@@ -8480,15 +8571,23 @@ type ManagedPostgresLiveKey struct {
 
 // ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
 type ManagedPostgresLiveLogin struct {
-	DatabaseID         pgtype.UUID
-	AccountID          pgtype.UUID
-	SealedLogin        []byte
-	Recipient          string
-	ProviderIdentityID string
-	Slot               string
-	Awake              string
-	CreatedAt          pgtype.Timestamptz
-	SealedLoginSig     []byte
+	DatabaseID           pgtype.UUID
+	AccountID            pgtype.UUID
+	SealedLogin          []byte
+	Recipient            string
+	ProviderIdentityID   string
+	Slot                 string
+	Awake                string
+	CreatedAt            pgtype.Timestamptz
+	SealedLoginSig       []byte
+	DataResourceID       pgtype.Text
+	AuthorizedIdentityID pgtype.Text
+}
+
+// Last durable recovery attempt; untried and oldest attempts run first, independently of provider success.
+type ManagedPostgresLiveLoginAttempt struct {
+	DatabaseID  pgtype.UUID
+	AttemptedAt pgtype.Timestamptz
 }
 
 // Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
@@ -10260,6 +10359,7 @@ type ObjectStorageS3Credential struct {
 	UrlReceiptID         pgtype.UUID
 	IssuerAccountID      pgtype.UUID
 	IssuerAccessRevision pgtype.Int8
+	KeyPrefix            pgtype.Text
 }
 
 type ObjectStorageTimelineAcceptance struct {
@@ -10589,6 +10689,10 @@ type Org struct {
 	DeletionRequestedAt pgtype.Timestamptz
 	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
 	PlanChangedAt pgtype.Timestamptz
+	// When the subject elected to pay for egress above its allowance; NULL = never (ADR-20261104204500).
+	EgressOverageEnabledAt pgtype.Timestamptz
+	// When the egress overage election ended; NULL while it is on (ADR-20261104204500).
+	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
@@ -10631,11 +10735,12 @@ type OrgActivityOutbox struct {
 
 // ADR-20261101225122 whether agents may act in an organization and with which capabilities; apid is the only writer.
 type OrgAgentPolicy struct {
-	OrgID         pgtype.UUID
-	AgentsAllowed bool
-	AllowedScopes []string
-	UpdatedAt     pgtype.Timestamptz
-	UpdatedBy     pgtype.UUID
+	OrgID              pgtype.UUID
+	AgentsAllowed      bool
+	AllowedScopes      []string
+	UpdatedAt          pgtype.Timestamptz
+	UpdatedBy          pgtype.UUID
+	ApprovalCategories []string
 }
 
 type OrgAppQuotaFence struct {
@@ -11734,6 +11839,7 @@ type PrPreviewSet struct {
 	ClosedAt       pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	SetupError     pgtype.Text
+	AccountID      pgtype.UUID
 }
 
 type PrewarmIntent struct {
@@ -12299,6 +12405,7 @@ type ProjectEnvironmentApproval struct {
 	TokenKind           string
 	ConsumedAt          pgtype.Timestamptz
 	ApprovedByAccountID pgtype.UUID
+	ApprovedByPrincipal pgtype.Text
 }
 
 type ProjectEnvironmentCleanupJob struct {
@@ -13272,6 +13379,18 @@ type ProjectEnvironmentPromotionMigrationRecovery struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ProjectEnvironmentPromotionReceipt struct {
+	AccountID         pgtype.UUID
+	PromotionID       pgtype.UUID
+	AttemptID         string
+	RequestHash       string
+	PromotionHash     string
+	ProjectID         pgtype.UUID
+	FromEnvironmentID pgtype.UUID
+	EnvironmentID     pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentPromotionReleaseConfig struct {
 	PromotionID pgtype.UUID
 	Payload     []byte
@@ -13348,6 +13467,18 @@ type ProjectEnvironmentQueueRuntimeSet struct {
 	BookHash       string
 	State          string
 	CreatedAt      pgtype.Timestamptz
+}
+
+type ProjectEnvironmentRollbackReceipt struct {
+	AccountID         pgtype.UUID
+	PromotionID       pgtype.UUID
+	AttemptID         string
+	RequestHash       string
+	PromotionHash     string
+	ProjectID         pgtype.UUID
+	FromEnvironmentID pgtype.UUID
+	EnvironmentID     pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
 }
 
 type ProjectEnvironmentRoutePolicy struct {
@@ -13548,6 +13679,7 @@ type ProjectReleaseSet struct {
 	RollbackSourceReleaseID   pgtype.UUID
 	RollbackPreviousReleaseID pgtype.UUID
 	Deactivation              []byte
+	FallbackHiddenAt          pgtype.Timestamptz
 }
 
 type ProjectReleaseStage struct {
@@ -13782,6 +13914,16 @@ type ReleaseGateProbeResult struct {
 	Failures     int32
 }
 
+type ReleaseOutcomeCheck struct {
+	TaskID       pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	CheckedBy    string
+	Note         string
+	CheckedAt    pgtype.Timestamptz
+}
+
 type ReleaseSecretKeyRetirement struct {
 	Kid       string
 	RetiredAt pgtype.Timestamptz
@@ -13796,6 +13938,24 @@ type ReleaseSecretRekeyDocument struct {
 	Kind    string
 	ID      interface{}
 	Payload []byte
+}
+
+// Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
+type RequestAnalyticsHour struct {
+	AppID         pgtype.UUID
+	BucketStart   pgtype.Timestamptz
+	DimensionKind string
+	Dimension     string
+	Method        string
+	Status        int16
+	DeploymentID  pgtype.UUID
+	AccountID     pgtype.UUID
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	RequestTimeMs int64
+	LatencyMaxMs  int32
+	LatencyHist   []int64
 }
 
 // Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).
@@ -13818,8 +13978,9 @@ type RequestAnalyticsMinute struct {
 
 // First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).
 type RequestAnalyticsRollupCoverage struct {
-	AppID        pgtype.UUID
-	CoveredSince pgtype.Timestamptz
+	AppID             pgtype.UUID
+	CoveredSince      pgtype.Timestamptz
+	HoursCoveredSince pgtype.Timestamptz
 }
 
 // App minutes whose analytics rollups apid lost; written only by apid, swept only by meterd (ADR-20261103113952 amendment 1).
@@ -14373,14 +14534,15 @@ type RuntimeEnvironmentScalingState struct {
 }
 
 type RuntimeInstanceConfigProof struct {
-	InstanceID        pgtype.UUID
-	WakeID            pgtype.UUID
-	NodeID            pgtype.UUID
-	DeploymentID      pgtype.UUID
-	EnvironmentID     pgtype.UUID
-	Scope             string
-	SecretFingerprint string
-	ConfigFingerprint string
+	InstanceID             pgtype.UUID
+	WakeID                 pgtype.UUID
+	NodeID                 pgtype.UUID
+	DeploymentID           pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	Scope                  string
+	SecretFingerprint      string
+	ConfigFingerprint      string
+	PrimeActivationHandoff []byte
 }
 
 type RuntimeRelease struct {

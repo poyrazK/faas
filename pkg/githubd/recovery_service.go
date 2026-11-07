@@ -161,3 +161,13 @@ func (s *RecoveryService) GetAppActivity(ctx context.Context, accountID, appID s
 	}
 	return out, nil
 }
+
+func (s *RecoveryService) GetInstallationAccess(ctx context.Context, accountID string, installID int64) (githubdgrpc.InstallationAccess, error) {
+	service, ok := s.Service.(interface {
+		GetInstallationAccess(context.Context, string, int64) (githubdgrpc.InstallationAccess, error)
+	})
+	if !ok {
+		return githubdgrpc.InstallationAccess{}, status.Error(codes.Unimplemented, "GitHub verification unavailable")
+	}
+	return service.GetInstallationAccess(ctx, accountID, installID)
+}

@@ -49,6 +49,7 @@ async function startServer(t, { taskRuntime, resourceUpdateAdapter } = {}) {
   let requestID = 0;
   return {
     api,
+    server,
     nextResponseClose() {
       const closed = deferred();
       server.once('request', (_req, res) => res.once('close', closed.resolve));
@@ -79,6 +80,36 @@ async function assertFullCapacity(app) {
   const excess = await firstMessage(await app.send().promise);
   assert.equal(excess.error?.message, 'Subscription limit reached');
 }
+
+test('a reader that stops consuming is disconnected and releases stream capacity', { timeout: 15000 }, async t => {
+  const app = await startServer(t);
+  const closed = app.nextResponseClose();
+  let response;
+  app.server.once('request', (_req, res) => { response = res; });
+  const { promise } = app.send({ resourceSubscriptions: ['greeting://welcome'] });
+  assert.equal((await firstMessage(await promise)).method, 'notifications/subscriptions/acknowledged');
+  for (let i = 0; i < 10000; i++) app.api.notifyResourceUpdated('greeting://welcome');
+  await closed;
+  assert.equal(response.destroyed, true);
+  assert.ok(response.writableLength <= 1 << 20);
+  await assertFullCapacity(app);
+});
+
+test('event bursts during asynchronous setup are bounded and late adapters are disposed', { timeout: 15000 }, async t => {
+  let disposed = 0;
+  const app = await startServer(t, { resourceUpdateAdapter: {
+    publish() {},
+    async subscribe(uri, listener) {
+      for (let i = 0; i < 10000; i++) listener(uri);
+      return () => { disposed++; };
+    },
+  } });
+  const closed = app.nextResponseClose();
+  await assert.rejects(app.send({ resourceSubscriptions: ['greeting://welcome'] }).promise);
+  await closed;
+  assert.equal(disposed, 1);
+  await assertFullCapacity(app);
+});
 
 test('pending task lookups reserve subscription capacity atomically', { timeout: 15000 }, async t => {
   const release = deferred();

@@ -84,3 +84,28 @@ servers, receipt identity and recovery without source files. Native-host accepta
 must exercise actual schema expansion, guest configuration, task isolation and
 lost-result recovery with both release/task runtime gates enabled before production
 enablement; no native VM acceptance is claimed by control-plane unit tests.
+
+## Amendment 1 (2026-11-06): per-service release declarations
+
+A multi-service project deployed with `gregale deploy --project` dropped a
+service's own `gregale.yaml` `release.command`, and a `Procfile` `release:` in
+the service's own directory, without a word: only a single-workload project,
+the repository root `Procfile` and a Compose completion dependency
+(ADR-20261102192943) ran one. Managed PostgreSQL delivers migration
+credentials only to release tasks, so such a project could never migrate
+(ChronoLake field report, rc.325).
+
+A declaration in a directory that exactly one workload builds from is not
+ambiguous, so it now applies, on plain and `--migrate` project deploys alike
+(`projectWorkloadReleaseCommand`):
+
+- A service's `gregale.yaml` `release.command`, or a `Procfile` `release:` in
+  its directory (the repository root `Procfile` stays reposcan's single
+  assignment), is that service's release command.
+- When another workload builds from the same directory the declaration is
+  refused with the reason, since it would run once per service. Projects that
+  had such a declaration ignored now get an error instead of a deploy without
+  the migration.
+- The service's own declaration wins over a Compose completion dependency,
+  as on its single-app and GitHub deploys (ADR-20261102192943).
+- `--migrate` still admits one release command per project.

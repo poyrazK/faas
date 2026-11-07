@@ -5,7 +5,8 @@ import (
 	"net/http"
 )
 
-// CodeGitHubAccountConflict identifies an installation owned by another account.
+// CodeGitHubAccountConflict is retained for an older service/schema that
+// requires exclusive deployment connections. It is not a login conflict.
 const CodeGitHubAccountConflict = "github_account_conflict"
 
 // Connect GitHub outcomes a customer can act on (ADR-20261101160300). Each
@@ -37,13 +38,12 @@ const (
 // GitHubConnectDocsURL documents connecting GitHub and binding an app.
 const GitHubConnectDocsURL = "https://gregale.dev/docs/deploy-from-github"
 
-// ErrGitHubAccountConflict never identifies the account that owns the
-// installation. The OAuth user may know the GitHub installation without
-// having access to the other Gregale account.
+// ErrGitHubAccountConflict preserves the rolling-upgrade wire contract without
+// identifying another account or recommending a login transfer.
 func ErrGitHubAccountConflict() *Problem {
-	const recovery = "This GitHub installation is already connected to another Gregale account. Sign in to the connected account, or contact support to move this connection to your current account."
+	const recovery = "Gregale could not save this deployment connection because the installation is already connected to another Gregale account. Deployment connections can be shared; try again later, or contact support if this continues."
 	return NewProblem(http.StatusConflict, CodeGitHubAccountConflict,
-		"GitHub account conflict", recovery).WithHint(recovery)
+		"GitHub deployment connection could not be saved", recovery).WithHint(recovery).WithDocs(GitHubConnectDocsURL)
 }
 
 // ErrGitHubAppNotInstalled keeps the phrase "user has no app installations",

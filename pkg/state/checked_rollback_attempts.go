@@ -31,8 +31,14 @@ func checkedRollbackAttemptID(ctx context.Context) (string, error) {
 func checkedRollbackAttemptError(r api.RollbackOperation, app, target, current, reason string) error {
 	original := api.RollbackRequest{TargetDeploymentID: &r.TargetDeploymentID, ExpectedCurrentDeploymentID: &r.CurrentDeploymentID, Reason: r.Reason}
 	proposed := api.RollbackRequest{TargetDeploymentID: &target, ExpectedCurrentDeploymentID: &current, Reason: reason}
-	if api.RollbackRequestHash(r.AppID, original) != api.RollbackRequestHash(app, proposed) || r.Scope != api.DefaultEnvScope || r.Service {
+	if api.RollbackRequestHash(r.AppID, original) != api.RollbackRequestHash(app, proposed) || r.Scope != api.DefaultEnvScope || r.Trigger != "" {
 		return ErrRollbackAttemptConflict
 	}
 	return ErrRollbackAttemptAccepted
+}
+
+// The attempt contract is manual and default-scoped; worker rollback has a
+// separate consumer-selection workflow.
+func checkedRollbackAttemptMode(mode string) bool {
+	return mode == "" || mode == api.ExecutionModeRequest || mode == api.ExecutionModeService
 }

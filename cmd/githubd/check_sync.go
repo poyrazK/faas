@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/githubscope"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,14 +20,14 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if deploymentID == "" {
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
-	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope, appStatus string
+	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope, appStatus, accountID string
 	var rolloutState, rolloutAbortedReason string
 	var canaryStep, canaryTotalSteps, trafficPercent int
 	var reason, tag, deployedBy string
 	var previewPRNumber, prNumber int
 	var installationID int64
 	err := pool.QueryRow(ctx, `
-		select coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
+		select a.account_id::text, coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
 		       coalesce(d.rollout_state, ''), coalesce(d.rollout_aborted_reason, ''),
 		       coalesce(d.canary_step, 0), coalesce(d.canary_total_steps, 0), coalesce(d.traffic_percent, 0),
 		       coalesce(d.reason, ''), coalesce(d.tag, ''), coalesce(nullif(d.deployed_by, ''), d.pusher_login, ''), coalesce(d.pr_number, 0),
@@ -49,12 +50,13 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			order by updated_at desc limit 1
 		) preview_set on true
 		where d.id = $1`, deploymentID).Scan(
-		&commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
+		&accountID, &commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
 		&canaryStep, &canaryTotalSteps, &trafficPercent, &reason, &tag, &deployedBy, &prNumber,
 		&repo, &appSlug, &previewOf, &previewPRNumber, &appStatus, &installationID)
 	if err != nil {
 		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
 	}
+	ctx = githubscope.WithAccount(ctx, accountID)
 	// Pre-annotation preview rows kept the PR number on the preview app;
 	// use it when the deployment row predates the annotation columns.
 	if prNumber <= 0 && previewPRNumber > 0 {
@@ -66,6 +68,14 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	}
 	if !project {
 		return nil
+	}
+	// Preview-set history can retain its installation after account disconnect.
+	// An outbox notification must not recover that account's access from it.
+	if _, err := state.NewPgStore(pool).GitHubInstallForAccountInstallation(ctx, accountID, installationID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("githubd: verify check connection: %w", err)
 	}
 	if appStatus == string(state.AppDeleted) && (kind == string(state.DeploymentKindPreview) || previewOf != "") {
 		preview := tornDownPreview{

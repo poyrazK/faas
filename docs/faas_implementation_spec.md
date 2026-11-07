@@ -909,7 +909,7 @@ The list below covers **all** customer-facing kinds as of PR #291. Prior kinds (
 | `app.rolled_back` | apid `handlers_ext.go::rollbackApp` | `{app_id, from: deployment_id, to: deployment_id}` |
 | `domain.added` | apid `handlers_ext.go::createDomain` | `{app_id, domain}` — `domain` is the canonical lowercased form stored on the row |
 | `domain.removed` | apid `handlers_ext.go::deleteDomain` | `{app_id, domain}` |
-| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once when a verified domain's CNAME leaves Gregale and verification is revoked |
+| `domain.drifted` | apid `dns_poller.go::runDoctorForDomain` | `{app_id, domain, observed_target, checked_at, reason}` — emitted once after two consecutive conclusive routing failures revoke verification (ADR-20261106200000) |
 | `cron.created` | apid `handlers_ext.go::createCron` | `{cron_id, app_id, schedule, path, enabled}` — only emitted on the success path; the PR #340 plan-tier gate (402) suppresses this row for Free accounts |
 | `cron.updated` | apid `handlers_ext.go::updateCron` | `{cron_id, app_id, old, new}` |
 | `cron.deleted` | apid `handlers_ext.go::deleteCron` | `{cron_id, app_id}` |
@@ -1483,6 +1483,13 @@ maximum-age deadline. See [ADR-376](adr/376-platform-tenant-async-invocations.md
   IPv6 conflict) with per-check remediation lines; backed by the persisted
   `domain_doctor_observations` table the `dns_poller` writes every 30s. See
   [`docs/domains/doctor.md`](../domains/doctor.md).
+  **Binding changes (ADR-20261107010000):** explicit domain manifests support
+  read-only plan and atomic apply. Verified domains can move between serving
+  apps/environments within the same account namespace and organization without
+  deleting TXT proof, TLS state or wildcard issuance budgets. Reviewed digests
+  fence claim/release changes and intervening moves. Omitted bindings stay;
+  moved source defaults are cleared. Public smoke tests remain owned by guided
+  production cutover. See [`docs/domains.md`](domains.md).
 
 ---
 
@@ -1668,7 +1675,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_db_notify_hub_dropped_total{channel}` rate | 0 | > 0 sustained 15 m warn (ADR-190 §4 — a subscriber is not draining its fan-out buffer; the durable table + safety tick recover the work, but the consumer is falling behind) |
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
 | `vmmd_snapshot_materialize_bytes_total{artifact,source}` rate | n/a | none — diagnostic. Divided by the histogram it gives effective fetch throughput, which separates "the object is large" from "the fetch was slow". The `source="materialized"` series is the fleet's remote snapshot read volume |
-| `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`, and the wake's ADR-473 resource-journal `journal_sync` fsyncs and `journal_lock_wait`, which overlap the staging phases), so a regression in one phase is attributable without Debug logs (hunt #9) |
+| `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`, and the wake's ADR-473 resource-journal `journal_sync` fsyncs and `journal_lock_wait`, which overlap the staging phases), so a regression in one phase is attributable without Debug logs (hunt #9). `bind_tun` is partitioned by `tun_journal_checks`, `tun_wait_mntns`, `tun_wait_chroot`, `tun_setup_jail` and `cgroup_fence` (ADR-20261105100000; never sum across the phase labels): a first restore after a quiet spell that stalls in `bind_tun` shows whether the jailer (the two waits), the native journal (`tun_journal_checks`) or the device-setup helper (`tun_setup_jail`) was slow |
+| `vmmd_resident_exec_stages_total{binary,outcome}` rate | `staged` 1 per binary per vmmd start; `fallback` 0 | > 0 `fallback` is a launch that read the installed jailer or firecracker from disk because the verified tmpfs copy could not be made (ADR-20261105100000) — diagnostic, no alert; the vmmd log names the cause once |
 | `vmmd_resume_guest_stage_duration_seconds{stage}` p50/p95 | Go guest `total` ≪ `resume_hook`; Node/Python dominated by `userspace_reseed` | none — diagnostic, operator-only. The guest's own split of `resume_hook` from the ADR-022 timing frame: kernel reseed (`entropy`, `hwrng`), `clock`, `uuid_marker`, the ADR-687 `userspace_reseed` barrier, `after_restore`, the guest `total`, and `outside_guest` (the host's ack wait minus `total`: vsock transport plus the time before guest-init's handler ran). Guests captured before the frame shipped are not observed |
 | `vmmd_restore_journal_commits_total` rate | ~26 per restore (production-us bpftrace, rc.285) | none — diagnostic. Divided by the restore count (`vmmd_restore_phase_duration_seconds_count{phase="journal_sync"}`) it is the resource-journal commits per restore; with the `journal_sync` phase it gives the cost per commit |
 | `vmmd_restore_pre_boot_files_total{outcome}` ratio | `skipped` dominates once captures are learned (#3490) | none — diagnostic. A `written` share near 100 % means the learned pre-boot skip is not firing |
@@ -3211,6 +3219,31 @@ rechecked before release. No MCP tools or quotas are added. Named service aborts
 ADR-20261104173000 above; service rollback remains separate. See
 [ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
 
+## Management MCP service rollback acceptance recovery (ADR-20261105082446)
+
+Exact default-environment service rollbacks can retain the original native
+operation identity before submission. The optional `Rollback-Attempt-ID` commits
+as that operation's UUID under the app lock. Matching accepted attempts cannot
+start another readiness/handoff cycle, including after terminal failure;
+conflicting original pairs or reasons are rejected. Existing serving CAS,
+artifact, approval, release and binding guards still apply. Workers, named
+scopes, database restoration and release acknowledgement are excluded.
+
+After a lost response, encrypted bridge restart or plan expiry, follow retained
+history to `gregale_get_action_outcome`. It verifies the exact original service
+operation and returns redacted historical acceptance. `observation` reads the
+operation, `rollout_observation` inspects target handoff/drain and
+`health_observation` reads current app health. Invoke them separately: acceptance
+does not prove ACKs, drain completion, current serving traffic or health.
+
+Service references use an independent encrypted namespace with a tagged binding,
+shared history retention and grant cleanup. N-1 journal writes preserve it;
+legacy attempted plans never gain new identities. Missing evidence remains
+unresolved. Reads, prompts and resources work with writes disabled, recheck
+consent/identity/retention/storage, and never replay, modify history or renew
+expired authority. The existing tools, prompts and resource templates suffice.
+See [ADR-20261105082446](adr/20261105082446-management-mcp-service-rollback-outcomes.md).
+
 ## Management MCP request rollback outcomes (ADR-20261105000513)
 
 An exact default-scope manual request rollback may carry a 32-character lowercase
@@ -3394,3 +3427,50 @@ review uses `gregale_get_saved_plan`; operation receipts retain `gregale_get_pla
 Existing storage formats, limits and
 native APIs are unchanged. See
 [ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+
+
+### Original environment rollback acceptance (ADR-20261105102920)
+
+Project-level environment rollback accepts paired optional original-attempt and
+request-hash headers. The request fingerprint binds canonical project/source/target
+UUIDs and exact promotion UUID/hash. Admission locks and validates the original
+promotion and current environment identities, then atomically stores a minimal
+immutable acceptance receipt with rollback intent. Accepted attempt-bearing requests cannot admit work
+again, including after terminal failure. Explicit legacy retries preserve their
+original-key checkpoint continuation and cannot alter the acceptance receipt;
+legacy/automatic rollback state cannot be adopted into a new receipt. The additive receipt table retains one row
+per promotion and cascades with promotion/account/project deletion.
+
+Read-only personal and organization project receipt endpoints refuse foreign or
+replacement scope identities. Management MCP exposes exact acceptance through
+`gregale_get_environment_action_outcome` and passive environment history/recovery
+recipes after plan expiry and encrypted restart. Current source/target consent,
+all project workload identities, storage, retention and the unchanged reference
+remain mandatory at release. Missing evidence stays unresolved; lookup never
+changes history, reruns a write, reconstructs a request or renews authority.
+Restoration progress, each workload's handoff and health are explicit separate
+observations. Promotion acceptance recovery is separate work.
+
+Validation: `TestEnvironmentRollbackReceiptMem`,
+`TestEnvironmentRollbackReceiptPG`, `TestEnvironmentRollbackReceiptPGAtomicFailure`,
+`TestEnvironmentRollbackReceiptHTTPLostReply`,
+`TestEnvironmentRollbackOutcomeLostReplyExpiry`,
+`TestEnvironmentRollbackOutcomeEvidenceAndGuards`, and the pinned real-client
+acceptance fixture. Portable fixtures do not qualify provider deployment.
+
+### Management MCP environment promotion outcomes (ADR-20261105153007)
+
+Project environment promotion acceptance can be recovered by its original opaque
+attempt after a lost response, encrypted restart or plan expiry. The native
+receipt commits atomically with admission and approval consumption; original
+project/source/target IDs and the reviewed promotion fingerprint bind it.
+Repeated modern accepted attempts cannot dispatch again, while existing explicit
+legacy checkpoint continuation retains its guards and cannot adopt receipts.
+The existing environment outcome tool reads exact receipts and returns the
+native promotion ID with a separate progress observation. It never retries,
+replans, approves, renews authority or changes recorded uncertainty. Current
+scope/workload identities, consent, storage and retention remain mandatory;
+missing evidence remains unresolved and replacement scopes cannot inherit it.
+No tool/prompt/template counts or GA capability levels change. Portable fixtures
+do not qualify provider/native execution. See ADR-20261105153007 for the wire hash,
+receipt lifecycle and SDK contract.

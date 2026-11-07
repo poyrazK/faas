@@ -130,3 +130,22 @@ caps before storing any setting when it is `unavailable`. `--usage-reporting
 on` and `gregale data-api live enable` are stored with a warning: they take
 effect once the installation accepts reports. A control plane without the
 status route is not second-guessed.
+
+## Amendment (2026-11-05): only production reports; caps hold across restores
+
+A stage, preview or cloned environment runs under the production app's id. Its
+usage reports landed in production's rows: its traffic counted against
+production's monthly caps, and its access settings replaced the ones live
+reads use to decide tokenless access to the production database
+(`live_queries.go`). The usage route now accepts the same workloads as the
+change event routes: a `gregale:data-api:usage` token from a live instance of
+an active app whose token environment and deployment are production
+(`pkg/apid/dataapiworkload`). A valid token from anything else is refused for
+good with `403 workload_not_production`; the runtime stops reporting. Other
+refusals stay `401` and are retried.
+
+Month-to-date totals no longer reset on a snapshot restore. They only grow
+within a month, so the last totals known are a floor: a cap reached before
+an app parked stays reached while the first report after the wake is on its
+way, or while the platform cannot be reached. Pending counts are still
+dropped on restore, as before.

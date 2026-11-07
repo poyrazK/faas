@@ -52,6 +52,7 @@ type overageFixture struct {
 	store     *overageUsageStore
 	now       time.Time
 	limits    CapLimits
+	monthly   map[string]CapLimits
 	published []OverageChargeStep
 	fail      error
 	// lostResponse makes the next publish reach the provider and then fail,
@@ -68,9 +69,12 @@ func newOverageFixture(t *testing.T, now time.Time) *overageFixture {
 func (f *overageFixture) biller(t *testing.T, live bool, from time.Time) *OverageBiller {
 	t.Helper()
 	options := OverageBillerOptions{Provider: "polar", EffectiveFrom: from, Now: func() time.Time { return f.now },
-		Allowance: func(_ context.Context, subject string) (CapLimits, error) {
+		Allowance: func(_ context.Context, subject string, month time.Time) (CapLimits, error) {
 			if subject == "gone" {
 				return CapLimits{}, ErrNotFound
+			}
+			if limits, ok := f.monthly[month.Format("2006-01")]; ok {
+				return limits, nil
 			}
 			return f.limits, nil
 		}}

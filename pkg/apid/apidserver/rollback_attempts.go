@@ -15,8 +15,8 @@ func (s *server) rollbackAttempt(ctx context.Context, r *http.Request, acct stat
 	if len(values) == 0 {
 		return "", nil
 	}
-	if len(values) != 1 || !api.ValidDeploymentAttemptID(values[0]) || req.TargetDeploymentID == nil || req.ExpectedCurrentDeploymentID == nil || req.AlertRuleID != nil || req.RestoreDatabases || req.AcknowledgeReleases || app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest {
-		return "", api.ErrValidation("Rollback-Attempt-ID requires an exact manual request-deployment rollback without release acknowledgement")
+	if len(values) != 1 || !api.ValidDeploymentAttemptID(values[0]) || req.TargetDeploymentID == nil || req.ExpectedCurrentDeploymentID == nil || req.AlertRuleID != nil || req.RestoreDatabases || req.AcknowledgeReleases || app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest && app.Manifest.ExecutionMode != api.ExecutionModeService {
+		return "", api.ErrValidation("Rollback-Attempt-ID requires an exact manual default-scope request or service rollback without database restore or release acknowledgement")
 	}
 	target, e1 := uuid.Parse(*req.TargetDeploymentID)
 	current, e2 := uuid.Parse(*req.ExpectedCurrentDeploymentID)
@@ -30,7 +30,7 @@ func (s *server) rollbackAttempt(ctx context.Context, r *http.Request, acct stat
 	prior, err := store.GetCheckedRollback(ctx, acct.ID, app.ID, uuid.MustParse(values[0]).String())
 	if err == nil {
 		original := api.RollbackRequest{TargetDeploymentID: &prior.TargetDeploymentID, ExpectedCurrentDeploymentID: &prior.CurrentDeploymentID, Reason: prior.Reason}
-		if prior.AppID != app.ID || api.RollbackRequestHash(prior.AppID, original) != api.RollbackRequestHash(app.ID, req) || prior.Scope != api.DefaultEnvScope || prior.Service {
+		if prior.AppID != app.ID || api.RollbackRequestHash(prior.AppID, original) != api.RollbackRequestHash(app.ID, req) || prior.Scope != api.DefaultEnvScope || prior.Trigger != "" {
 			return "", rollbackAttemptProblem(state.ErrRollbackAttemptConflict)
 		}
 		return "", rollbackAttemptProblem(state.ErrRollbackAttemptAccepted)

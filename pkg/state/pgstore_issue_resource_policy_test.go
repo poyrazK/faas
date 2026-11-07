@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -126,13 +127,20 @@ func TestPgIssueCompanySlackAndReminderUseResourceOwner(t *testing.T) {
 	if err = s.AddOrgMember(ctx, org.ID, creator.ID, state.OrgRoleOwner, nil); err != nil {
 		t.Fatal(err)
 	}
+	responder, err := s.CreateAccount(ctx, "issue-company-responder-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddOrgMember(ctx, org.ID, responder.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
 	app, err := s.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "issue-slack-" + uuid.NewString()[:8]})
 	if err != nil {
 		t.Fatal(err)
 	}
 	deployment := seedPgDeployment(t, s, ctx, app)
 	now := time.Now().UTC()
-	team, err := s.PutIssueTeam(ctx, app.ID, creator.ID, creator.ID, "responders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{creator.ID}}, now)
+	team, err := s.PutIssueTeam(ctx, app.ID, creator.ID, creator.ID, "responders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{creator.ID, responder.ID}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +164,18 @@ func TestPgIssueCompanySlackAndReminderUseResourceOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = s.UpdateAccountStatus(ctx, creator.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.GetIssueApplicationTriage(ctx, app.ID, creator.ID, responder.ID, out.IssueID); err != nil {
+		t.Fatalf("company response followed suspended creator: %v", err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE orgs SET plan=$2 WHERE id=$1`, org.ID, string(api.PlanFree)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.GetIssueApplicationTriage(ctx, app.ID, creator.ID, responder.ID, out.IssueID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("free company retained response access: %v", err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE orgs SET plan=$2 WHERE id=$1`, org.ID, string(api.PlanPro)); err != nil {
 		t.Fatal(err)
 	}
 	claim, ok, err := s.ClaimIssueSlackDelivery(ctx)

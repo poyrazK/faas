@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiworkload/workloadtest"
 	usage "github.com/onebox-faas/faas/pkg/state/dataapiusage"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -110,7 +111,7 @@ func TestReportHandlerAuthenticatesAndBoundsReports(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeStore{}
-			h := ReportHandler{Store: store, Verifier: verifier, Now: func() time.Time { return now }}
+			h := ReportHandler{Store: store, Verifier: verifier, Workloads: workloadtest.Production(account, app, instance), Now: func() time.Time { return now }}
 			req := httptest.NewRequest(http.MethodPost, "/v1/runtime/data-api/usage", strings.NewReader(tc.body))
 			if tc.bearer != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.bearer)
@@ -140,11 +141,59 @@ func TestReportHandlerAuthenticatesAndBoundsReports(t *testing.T) {
 	}
 }
 
+// A stage shares the production app's id: its usage would count against
+// production's caps and its access settings would govern production's live
+// reads (ADR-20261019102108 amendment 2026-11-05). Only live production instances report.
+func TestReportHandlerAcceptsOnlyLiveProductionInstances(t *testing.T) {
+	s, verifier := signer(t)
+	account, app, instance := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	production, _ := s.Mint(now, account, app, instance, workloadidentity.DataAPIUsageAudience)
+	stage, _ := s.MintEnvironment(now, account, app, instance, "staging", workloadidentity.DataAPIUsageAudience)
+	for _, tc := range []struct {
+		name   string
+		token  string
+		change func(*workloadtest.Store)
+		status int
+		code   string
+	}{
+		{"production", production.AccessToken, nil, 200, ""},
+		{"stage token", stage.AccessToken, nil, 403, api.CodeWorkloadNotProduction},
+		{"stage deployment", production.AccessToken, func(s *workloadtest.Store) { s.Deployment.Scope = "staging" }, 403, api.CodeWorkloadNotProduction},
+		{"parked instance", production.AccessToken, func(s *workloadtest.Store) { s.Instance.State = "parked" }, 401, api.CodeUnauthorized},
+		{"deleted app", production.AccessToken, func(s *workloadtest.Store) { s.App.Status = "deleted" }, 401, api.CodeUnauthorized},
+		{"suspended account", production.AccessToken, func(s *workloadtest.Store) { s.Account.Status = "suspended" }, 401, api.CodeUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			live := workloadtest.Production(account, app, instance)
+			if tc.change != nil {
+				tc.change(live)
+			}
+			store := &fakeStore{}
+			body, _ := json.Marshal(api.DataAPIUsageReport{Version: 1, ReportID: "r", Access: &api.DataAPIAccessConfig{Version: 1, Schemas: []string{"api"}, PublicRead: []string{"api.products"}}})
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			rec := httptest.NewRecorder()
+			ReportHandler{Store: store, Verifier: verifier, Workloads: live, Now: func() time.Time { return now }}.ServeHTTP(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.status, rec.Body)
+			}
+			if tc.code != "" && !strings.Contains(rec.Body.String(), `"code":"`+tc.code+`"`) {
+				t.Fatalf("body = %s, want code %s", rec.Body, tc.code)
+			}
+			if (tc.status == 200) != (store.calls == 1) {
+				t.Fatalf("store calls = %d", store.calls)
+			}
+		})
+	}
+}
+
 func TestReportHandlerMapsStoreFailures(t *testing.T) {
 	s, verifier := signer(t)
-	token, _ := s.Mint(now, uuid.NewString(), uuid.NewString(), uuid.NewString(), workloadidentity.DataAPIUsageAudience)
+	account, app, instance := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	live := workloadtest.Production(account, app, instance)
+	token, _ := s.Mint(now, account, app, instance, workloadidentity.DataAPIUsageAudience)
 	for err, status := range map[error]int{usage.ErrNotFound: 404, errors.New("db down"): 503} {
-		h := ReportHandler{Store: &fakeStore{err: err}, Verifier: verifier, Now: func() time.Time { return now }}
+		h := ReportHandler{Store: &fakeStore{err: err}, Verifier: verifier, Workloads: live, Now: func() time.Time { return now }}
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(report(t, "r")))
 		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 		rec := httptest.NewRecorder()
@@ -156,7 +205,7 @@ func TestReportHandlerMapsStoreFailures(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(report(t, "r")))
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	ReportHandler{Verifier: verifier, Now: func() time.Time { return now }}.ServeHTTP(rec, req)
+	ReportHandler{Verifier: verifier, Workloads: live, Now: func() time.Time { return now }}.ServeHTTP(rec, req)
 	if rec.Code != 503 {
 		t.Fatalf("without a store: %d", rec.Code)
 	}
@@ -199,7 +248,9 @@ func TestQueryHandlerZeroFillsBucketsAndTotals(t *testing.T) {
 
 func TestReportHandlerStoresOnlyValidAccessSettings(t *testing.T) {
 	s, verifier := signer(t)
-	token, _ := s.Mint(now, uuid.NewString(), uuid.NewString(), uuid.NewString(), workloadidentity.DataAPIUsageAudience)
+	account, app, instance := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	live := workloadtest.Production(account, app, instance)
+	token, _ := s.Mint(now, account, app, instance, workloadidentity.DataAPIUsageAudience)
 	hash := strings.Repeat("ab", 32)
 	send := func(access *api.DataAPIAccessConfig) (int, *fakeStore) {
 		body, _ := json.Marshal(api.DataAPIUsageReport{Version: 1, ReportID: "r", Access: access})
@@ -207,7 +258,7 @@ func TestReportHandlerStoresOnlyValidAccessSettings(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
 		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 		rec := httptest.NewRecorder()
-		ReportHandler{Store: store, Verifier: verifier, Now: func() time.Time { return now }}.ServeHTTP(rec, req)
+		ReportHandler{Store: store, Verifier: verifier, Workloads: live, Now: func() time.Time { return now }}.ServeHTTP(rec, req)
 		return rec.Code, store
 	}
 	readOnly := false

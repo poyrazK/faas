@@ -15,6 +15,12 @@ import (
 // pending deletion) after the task was queued.
 var ErrAppTaskAccountInactive = errors.New("sched: app task account is not active")
 
+// ErrAppTaskNotOwner reports a task claimed by a schedd whose node does not own
+// the task's app, so its placement would refuse the app. Nothing was
+// dispatched: the coordinator leaves the restoring lease to the sweep, which
+// requeues the task for the owning node's schedd instead of failing it.
+var ErrAppTaskNotOwner = errors.New("sched: app task app is owned by another node")
+
 const (
 	accountInactiveFailureCode    = "account_inactive"
 	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
@@ -79,6 +85,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	// scheduled for retry) before the suspension must not boot a VM.
 	if !acct.Active() {
 		return ResolvedAppTaskRuntime{}, ErrAppTaskAccountInactive
+	}
+	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", ErrAppTaskNotOwner)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{

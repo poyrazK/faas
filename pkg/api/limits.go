@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -42,8 +43,12 @@ const (
 	TrafficStaleTargetQuarantine = 30 * time.Second
 	// Reusable bridges acknowledge exchange cleanup before node capacity is
 	// released. Failure fences and reaps the bridge process instead.
-	TrafficBridgeCompletionTimeout    = 5 * time.Second
-	TrafficBridgeCompletionMaxEntries = 128
+	TrafficBridgeCompletionTimeout = 5 * time.Second
+	// TrafficBridgeCompletionMaxEntries bounds a bridge's open exchanges. It
+	// is the largest per-instance request limit runtime config may set
+	// (AppRequestConcurrencyBound, ADR-20261101215228): an open entry is a
+	// map entry and a channel, about 200 bytes.
+	TrafficBridgeCompletionMaxEntries = AppRequestConcurrencyBound
 	// A bridge keeps this many recent completions, so vmmd's fallback wait
 	// after a canceled exchange still finds one that just finished.
 	TrafficBridgeCompletionRetained = 1024
@@ -160,9 +165,17 @@ const (
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
 // client address, and one network (IPv4 /24, IPv6 /48), may create per day.
+//
+// SignupAccountsPerDay caps the self-service accounts the whole platform
+// creates in any 24 hours (ADR-20261104145353). Each account carries a full
+// Free allowance, and the per-address and per-network caps reset with every
+// new address, so this bounds the Free compute, egress and storage a signup
+// farm can claim in a day. It counts every account created, so an operator-
+// or support-created account uses the same budget.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+	SignupAccountsPerDay           = 2_000
 )
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
@@ -178,6 +191,34 @@ const (
 // AgentKeyLifetime is an agent key's default expiry (ADR-20261029085359):
 // shorter than other non-admin keys' because agents run unattended.
 const AgentKeyLifetime = 90 * 24 * time.Hour
+
+// Agent approvals (ADR-20261104140058): a request waits this long for a
+// person and its approval stays usable until then; one key holds at most
+// MaxPendingAgentApprovals undecided requests; a body up to
+// AgentApprovalBodyBindBytes is bound by its hash, a larger one is not.
+const (
+	AgentApprovalTTL           = 30 * time.Minute
+	MaxPendingAgentApprovals   = 20
+	AgentApprovalBodyBindBytes = 1 << 20
+)
+
+// Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
+// request denied, or expired, within AgentApprovalOutcomeWindow is told so
+// instead of asking again; a denial note holds at most
+// MaxAgentApprovalNoteChars characters.
+const (
+	AgentApprovalOutcomeWindow = 30 * time.Minute
+	MaxAgentApprovalNoteChars  = 280
+)
+
+// AgentApprovalEmailInterval is the least time between two emails to one
+// person about one agent key's approval requests (ADR-20261107140000 §2).
+const AgentApprovalEmailInterval = 10 * time.Minute
+
+// MaxAgentApprovalChannels is how many notification channels one scope (an
+// account's agents, or an organization's for one admin) may route agent
+// approval requests to (ADR-20261107140000 §3).
+const MaxAgentApprovalChannels = 5
 
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
@@ -249,7 +290,15 @@ const (
 	RequestBodySpoolOwnerShareDivisor       = 4
 	RequestBodySpoolClientIPv6Prefix        = 56
 	RequestBodyMemoryNodeBytes        int64 = 96 << 20
-	RequestBodyBudgetRetryAfter             = 5 * time.Second
+	// One app owner holds at most a third of RequestBodyMemoryNodeBytes
+	// (32 MiB, above the 25 MiB validate cap), one client IP (an IPv6 /56)
+	// at most RequestBodyMemoryPerClient bodies, and a body of unknown
+	// length reserves RequestBodyMemoryReserveStep at a time as it is read
+	// (ADR-091 amendment 2026-11-04, round 12).
+	RequestBodyMemoryOwnerShareDivisor       = 3
+	RequestBodyMemoryPerClient               = 4
+	RequestBodyMemoryReserveStep       int64 = 64 << 10
+	RequestBodyBudgetRetryAfter              = 5 * time.Second
 )
 
 // The project scan reads Kubernetes manifests under k8s/, kubernetes/,
@@ -575,6 +624,10 @@ const (
 	PrimeRuntimePublicationBusyAttempts   = 5
 	PrimeRuntimePublicationBusyBackoff    = 500 * time.Millisecond
 	PrimeRuntimePublicationBusyMaxBackoff = 4 * time.Second
+	// Scheduler workers and direct session-pool capacity share this budget.
+	// Prime can also run once inline when all off-loop slots are occupied.
+	SnapshotPrimeConcurrentSlots = 4
+	SnapshotPrimeInlineSlots     = 1
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
@@ -2727,6 +2780,19 @@ const ObjectOwnedCleanupBucketBatch = 20
 
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
+// Operator usage evidence is bounded independently of customer plan allowances.
+// Access-log identities remain in memory only for one complete export attempt.
+const (
+	MaxObjectStorageUsageReportBytes       = 4 << 20
+	MaxObjectStorageUsageReportRows        = 10_000
+	MaxObjectStorageUsagePriceBytes        = 128
+	MaxObjectStorageAccessLogObjects       = 10_000
+	MaxObjectStorageAccessLogBytes         = 64 << 20
+	MaxObjectStorageAccessLogRecords       = 1_000_000
+	MaxObjectStorageAccessLogLineBytes     = 1 << 20
+	MaxObjectStorageAccessLogCoverageBytes = 8 << 20
+)
+
 // Permanent immutable deletion is a single bounded provider attempt. Its
 // durable public selector makes retry safe after an uncertain acknowledgment.
 const ObjectVersionDeleteOperationTimeout = time.Minute
@@ -3433,6 +3499,51 @@ func ValidGuestVCPUMillicores(v int) bool {
 	return v >= GuestVCPUMillicoresMin && v <= GuestVCPUMillicoresMax
 }
 
+// Snapshot refresh after a release (ADR-20261106214916). schedd's
+// `snapshot_refresh` runtime config is off, shadow (find and count the
+// snapshots a release made stale, boot nothing) or on.
+const (
+	SnapshotRefreshOff    = "off"
+	SnapshotRefreshShadow = "shadow"
+	SnapshotRefreshOn     = "on"
+	// DefaultSnapshotRefresh is the compiled `snapshot_refresh`.
+	DefaultSnapshotRefresh = SnapshotRefreshOff
+
+	// DefaultSnapshotRefreshWindowHours is the compiled
+	// `snapshot_refresh_window_hours`: an app parked on a node within this
+	// many hours is a candidate on that node.
+	DefaultSnapshotRefreshWindowHours = 168
+	SnapshotRefreshWindowHoursMin     = 1
+	// SnapshotRefreshWindowHoursMax stays inside the 30-day retention of the
+	// parked instance rows the window is read from (DefaultInstanceRetention).
+	SnapshotRefreshWindowHoursMax = 720
+
+	// SnapshotRefreshPassMaxApps bounds one node's pass, most recently parked
+	// first.
+	SnapshotRefreshPassMaxApps = 1000
+
+	// SnapshotRefreshMaxResidencyPercent: a refresh boots only while the
+	// node's admitted tenant RAM is below this share of its ceiling, the
+	// headroom the builder's opportunistic slot requires. A refresh never
+	// waits for room; the next pass tries again.
+	SnapshotRefreshMaxResidencyPercent = 60
+	// SnapshotRefreshMaxRuntime is how long a refresh VM may live. A refresh
+	// parks within a cold boot and a capture; one older than this was left
+	// by a scheduler that stopped mid-refresh and is retired.
+	SnapshotRefreshMaxRuntime = 10 * time.Minute
+)
+
+// ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
+func ValidSnapshotRefresh(v string) bool {
+	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
+}
+
+// ValidSnapshotRefreshWindowHours reports whether v is a valid
+// `snapshot_refresh_window_hours`.
+func ValidSnapshotRefreshWindowHours(v int) bool {
+	return v >= SnapshotRefreshWindowHoursMin && v <= SnapshotRefreshWindowHoursMax
+}
+
 // CPUShape holds the runtime-config values that shape the CPU of an app on
 // schedd's `guest_vcpu_from_cpu_apps` list (ADR-20261101215228). A zero field
 // takes the compiled value, so the zero CPUShape is ADR-20261101160231 as
@@ -3899,7 +4010,12 @@ type ObjectStoragePlanLimits struct {
 	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
 	// grant a paid account another (ObjectStorageLimitsFor), and the account's
 	// spend cap tightens it (WithSpendCap).
-	MaxAccountBytes       int64
+	MaxAccountBytes int64
+	// MaxMonthlyRequests is the requests the account may make each month
+	// (ADR-20261104145353): Free 50,000, Hobby 500,000, Pro 2,500,000, Scale
+	// 10,000,000. Requests are not billed, so this bounds the provider's
+	// per-request charge: even all writes stay below the plan's price. The
+	// operator policy still applies when it is tighter.
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
 	// IncludedBytes is average stored bytes over a billing month of
@@ -3936,7 +4052,17 @@ const (
 	// (ADR-20261103163954 §4).
 	PublicReadNewHostLookupsPerSecond = 25
 	PublicReadNewHostLookupBurst      = 500
-	PublicReadKnownHostsMax           = 100_000
+	// Wildcard recovery stays bounded while ordinary unknown-host floods cannot
+	// monopolize legacy wildcard customers' first lookup after a restart.
+	PublicReadWildcardRecoveryPerSecond = 5
+	PublicReadWildcardRecoveryBurst     = 50
+	PublicReadKnownHostsMax             = 100_000
+	// PublicReadHostLookupTimeout bounds one host's mount lookup (app and
+	// buckets). Concurrent misses for a host share that one lookup, so it runs
+	// apart from the request that started it; each waiting request still
+	// leaves at its own deadline. It covers dialing a fresh control-plane
+	// connection from a compute edge.
+	PublicReadHostLookupTimeout = 2 * time.Second
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -4306,12 +4432,18 @@ type Limits struct {
 	EgressMbit int // per-instance egress bandwidth cap via tc
 	// MonthlyEgressGiB is the application egress a month includes: the
 	// host-interface bytes the subject's instances send (state.Usage
-	// NetTxBytes, the egress meter's source). While egress is not billed for
-	// the plan, meterd stops the subject's apps at it until the month ends or
-	// the plan grows; once the egress meter bills live it is the included
-	// allowance and usage above it is overage under the spend cap
-	// (ADR-20261103131742). It matches the plan's object storage egress.
+	// NetTxBytes, the egress meter's source). meterd stops the subject's apps
+	// at it until the month ends or the plan grows, on every plan and even
+	// once the egress meter bills live: usage above it is overage only for a
+	// subject that opted into egress overage, which none can yet
+	// (ADR-20261103131742, ADR-20261104090000). It matches the plan's object
+	// storage egress.
 	MonthlyEgressGiB int64
+	// EgressOverageElectable is whether the plan's billing subject may elect
+	// to pay for egress above MonthlyEgressGiB instead of stopping at it
+	// (PUT /v1/account/egress-overage, ADR-20261104204500). The election takes
+	// effect only while the egress meter bills live; Free never can.
+	EgressOverageElectable bool
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -5804,7 +5936,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       20,
 		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
 		// ten times that (ADR-20261031122757).
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -6221,7 +6353,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6230,6 +6362,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 100,
 		EgressMbit:                     25,
 		MonthlyEgressGiB:               100,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -6668,7 +6801,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6679,6 +6812,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 500,
 		EgressMbit:                     100,
 		MonthlyEgressGiB:               500,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -7080,7 +7214,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -7093,6 +7227,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitBurst:                 2000,
 		EgressMbit:                     250,
 		MonthlyEgressGiB:               2000,
+		EgressOverageElectable:         true,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
@@ -7544,6 +7679,28 @@ const (
 	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
+	// The idle ladder (ADR-20261107122928, proposed): how long a
+	// request-serving instance has had nothing in flight when it reaches
+	// each level. L1 quiet pause, L2 a vmmd-local freeze, L3 and L4 compress
+	// the pages left untouched for that long, and L5 snapshots (parks) the
+	// instance. vmmd's idle_ladder observe mode measures the levels instances
+	// would reach; nothing acts on them yet.
+	IdleLadderQuietPauseAfterMillis = 1000
+	IdleLadderFreezeAfterSeconds    = 10
+	IdleLadderColdAge1Seconds       = 60
+	IdleLadderColdAge2Seconds       = 180
+	IdleLadderSnapshotAfterSeconds  = 600
+	// The idle ladder's activity guard (ADR-20261107122928 §6): an app quiet
+	// pause does not pause counts as idle only when, over the last
+	// IdleLadderQuietPauseAfterMillis, nothing was in flight, its VM cgroup
+	// used at most IdleLadderGuardCPUMaxMillis of CPU and its veth moved at
+	// most IdleLadderGuardNetMaxBytes in each direction.
+	IdleLadderGuardCPUMaxMillis = 10
+	IdleLadderGuardNetMaxBytes  = 512
+	// IdleLadderFreezeLevel is the idle_ladder_level vmmd reports for L2: a
+	// quiet-paused instance quiet for IdleLadderFreezeAfterSeconds, which
+	// measured admission books like a frozen instance.
+	IdleLadderFreezeLevel = 2
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -8296,6 +8453,12 @@ const (
 	// not the cap).
 	MaxEdgeRuleMaintenanceRetryAfterSeconds = 24 * 60 * 60 // 86400 (24h)
 
+	// MaxEdgeJWTIdentityBytes bounds the issuer and subject a kind=jwt rule
+	// hands the app (X-Faas-Edge-Jwt-*) and an async route stores on its
+	// invocation; a longer value is not forwarded (ADR-091 amendment
+	// 2026-11-04, round 11). A global bound, not a plan quota.
+	MaxEdgeJWTIdentityBytes = 1024
+
 	// --- ADR-201 §1: kind=retry bounds -------------------------------
 	// These are global bounds, not plan quotas. The per-plan rule count
 	// is EdgeRulesRetryPerApp above.
@@ -8975,6 +9138,11 @@ const (
 	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
 	// keeps per app to seed new instances of that app.
 	DNSGatedEgressAppSeedMax = 4096
+
+	// Timed egress grants are bounded per instance and address family by the
+	// corresponding kernel set capacities (ADR 20261105120000).
+	DNSGatedEgressInstanceFamilyMax = 65535
+	DatabaseEgressInstanceFamilyMax = 1024
 	// ADR-371 egress flow log: rows are kept EgressFlowLogRetentionDays
 	// (long enough to answer a provider abuse report, which can arrive
 	// weeks later) and an operator lookup returns at most
@@ -9629,6 +9797,11 @@ const (
 	OnDemandTLSAskKnownHostPageSize  = 1024
 	OnDemandTLSAskKnownHostRefresh   = 5 * time.Minute
 	OnDemandTLSAskKnownHostRetry     = time.Second
+	// The admission ledger retains one week, with at most 150 new hosts
+	// per three hours. One extra window covers boundary timestamps.
+	OnDemandTLSAskRecentHostRows    = OnDemandTLSFleetNewHostsPer3h * (7*24/3 + 1)
+	OnDemandTLSAskRecentHostRetry   = time.Second
+	OnDemandTLSAskRecentHostWaiters = 512
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -9776,8 +9949,14 @@ const (
 	// unbounded body exhausted schedd's memory (bug hunt 2026-10-28 H56).
 	TriggerBrokerStatsMaxBytes int64 = 4 << 10
 
-	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
+	// Free-tier disk reaper (spec §4.3, ADR-20261105120000): a Free app with
+	// no request, start, park or deployment this long loses its snapshots;
+	// its live app layer stays and the next request cold-boots.
 	FreeTierColdEvictDays = 14
+	// FreeTierColdEvictAppsPerTick bounds the apps one imaged GC tick evicts
+	// (ADR-20261105120000), so a first sweep over a large backlog is spread
+	// over several ticks.
+	FreeTierColdEvictAppsPerTick = 50
 
 	// Instance retention (spec §17 follow-up, PR #74; issue #2415):
 	// STOPPED/FAILED rows are deleted from their terminal_at anchor and
@@ -10652,6 +10831,31 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 		return 0, false
 	}
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
+// Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
+// owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
+// cap is an operator change.
+const (
+	HobbyMaxSelfServiceOverageCapCents int64 = 7_500
+	ProMaxSelfServiceOverageCapCents   int64 = 20_000
+	ScaleMaxSelfServiceOverageCapCents int64 = 100_000
+)
+
+// MaxSelfServiceOverageCapCents is the largest spend cap a paid subject may
+// set through the API or dashboard, and the cap a paid subject without one
+// (NULL, saved before ADR-20261105120000) is held to. Free has none: Free
+// stops at its allowance whatever its cap.
+func (p Plan) MaxSelfServiceOverageCapCents() (int64, bool) {
+	switch p {
+	case PlanHobby:
+		return HobbyMaxSelfServiceOverageCapCents, true
+	case PlanPro:
+		return ProMaxSelfServiceOverageCapCents, true
+	case PlanScale:
+		return ScaleMaxSelfServiceOverageCapCents, true
+	}
+	return 0, false
 }
 
 // Valid reports whether p is a known plan.
@@ -12485,6 +12689,86 @@ func (p Plan) ConcurrencyPerVMBound() int {
 	return l.ConcurrencyPerVMBound
 }
 
+// RequestConcurrencyBound is the largest per_instance_concurrency an app on p
+// may declare in this process: app_request_concurrency_max once runtime
+// config sets it, else ConcurrencyPerVMBound (ADR-20261101215228). Unknown
+// plans fail closed (return 0).
+func (p Plan) RequestConcurrencyBound() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.RequestConcurrencyBound()
+}
+
+// AppRequestConcurrencyBound is the largest value runtime config may set for
+// app_request_concurrency_default or app_request_concurrency_max, and the
+// largest per-instance limit vmmd accepts from a wake (ADR-20261101215228).
+const AppRequestConcurrencyBound = 10000
+
+// RequestConcurrency holds the runtime-config request limits per instance
+// (ADR-20261101215228): `app_request_concurrency_default`, for an app that
+// declares no per_instance_concurrency, and `app_request_concurrency_max`, the
+// largest declaration. A zero field is unset. With both unset every plan keeps
+// its concurrency_per_vm bound, as before.
+type RequestConcurrency struct {
+	Default int
+	Max     int
+}
+
+// requestConcurrency is the process's applied RequestConcurrency. Only a
+// daemon's runtime-config watcher sets it (SetRequestConcurrency); vmmd never
+// does and takes each instance's limit from its wake instead.
+var requestConcurrency atomic.Pointer[RequestConcurrency]
+
+// SetRequestConcurrency applies the runtime-config request limits to this
+// process. Values outside [0, AppRequestConcurrencyBound] are clamped.
+func SetRequestConcurrency(rc RequestConcurrency) {
+	rc.Default = min(max(rc.Default, 0), AppRequestConcurrencyBound)
+	rc.Max = min(max(rc.Max, 0), AppRequestConcurrencyBound)
+	requestConcurrency.Store(&rc)
+}
+
+// CurrentRequestConcurrency is the process's applied RequestConcurrency.
+func CurrentRequestConcurrency() RequestConcurrency {
+	if rc := requestConcurrency.Load(); rc != nil {
+		return *rc
+	}
+	return RequestConcurrency{}
+}
+
+// Set reports whether either limit is set.
+func (rc RequestConcurrency) Set() bool { return rc.Default > 0 || rc.Max > 0 }
+
+// Bound is the largest per-instance limit an app on l may declare: the
+// configured maximum, or the plan's concurrency_per_vm while it is unset.
+func (rc RequestConcurrency) Bound(l Limits) int {
+	if rc.Max > 0 {
+		return rc.Max
+	}
+	return l.ConcurrencyPerVMBound
+}
+
+// PerInstance resolves an app's declared per_instance_concurrency on l: the
+// declaration up to Bound, or for none the configured default (at most the
+// bound). With nothing set it is l's plan resolution.
+func (rc RequestConcurrency) PerInstance(l Limits, requested int) int {
+	bound := rc.Bound(l)
+	if requested > 0 {
+		return min(requested, bound)
+	}
+	if rc.Default > 0 {
+		return min(rc.Default, bound)
+	}
+	return bound
+}
+
+// RequestConcurrencyBound is the largest per_instance_concurrency an app on
+// l may declare in this process (CurrentRequestConcurrency).
+func (l Limits) RequestConcurrencyBound() int {
+	return CurrentRequestConcurrency().Bound(l)
+}
+
 // PerInstanceConcurrency resolves an app's declared
 // scaling_policy.per_instance_concurrency against the plan's
 // ConcurrencyPerVMBound (ADR-20261022203523). It is the one resolver the
@@ -12492,11 +12776,12 @@ func (p Plan) ConcurrencyPerVMBound() int {
 // in-flight scale-in floor, and apid's effective limits all use. Zero (the
 // default) and any value above the bound, which a plan downgrade can leave
 // behind, resolve to the bound: exactly the pre-ADR behaviour.
+//
+// Runtime config (ADR-20261101215228) replaces the bound with
+// app_request_concurrency_max and the zero case with
+// app_request_concurrency_default once they are set in this process.
 func (l Limits) PerInstanceConcurrency(requested int) int {
-	if requested <= 0 || requested > l.ConcurrencyPerVMBound {
-		return l.ConcurrencyPerVMBound
-	}
-	return requested
+	return CurrentRequestConcurrency().PerInstance(l, requested)
 }
 
 // LogDeploymentFilterMax returns the per-plan cap on the
@@ -13151,22 +13436,23 @@ const (
 	// a restart, each host's first request, which the burst covers. A flood
 	// of random names under the apps wildcard spends this budget instead of
 	// control-plane Postgres reads. A read waits up to
-	// GatewayNewHostLookupMaxWait for budget; past that the request is
-	// answered 503 traffic_policy_unavailable with Retry-After, never 404
-	// (ADR-20261103163954 §4).
-	GatewayNewHostLookupsPerSecond = 25
-	GatewayNewHostLookupBurst      = 500
-	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
+	// GatewayNewHostLookupMaxWait for budget; past that it may wait for a
+	// shared recent-host catch-up before returning 503 with Retry-After,
+	// never 404 (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond   = 25
+	GatewayNewHostLookupBurst        = 500
+	GatewayWildcardRecoveryPerSecond = 5
+	GatewayWildcardRecoveryBurst     = 50
+	GatewayNewHostLookupMaxWait      = 100 * time.Millisecond
 	// The gateway and the edge preload every app slug and verified custom
-	// domain (at most KnownRouteHostsMax of each), refreshed every
-	// KnownRouteHostsRefreshInterval, so a real app's host never spends the
-	// new-host budgets above or PublicReadNewHostLookups*. Only names that
-	// are not an app's do: after a restart a flood of random names no longer
-	// answers 503 for apps the process has not yet served. Wildcard custom
-	// domains are not preloaded (ADR-20261103163954 §4).
+	// domain or admitted concrete wildcard host (at most KnownRouteHostsMax
+	// of each), refreshed every KnownRouteHostsRefreshInterval. Concrete names
+	// can skip the lookup budget; wildcard patterns only qualify for the
+	// separately bounded recovery budget (ADR-520 amendment 14).
 	KnownRouteHostsMax             = 1_000_000
 	KnownRouteHostsRefreshInterval = time.Minute
 	KnownRouteHostsRefreshTimeout  = 20 * time.Second
+	KnownRouteRecentHostTimeout    = 3 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -13932,6 +14218,25 @@ const (
 	VmmdLogRingBudgetBytes int64 = 512 << 20
 	VmmdLogRingFloorBytes  int64 = 256 << 10
 )
+
+// A release that OOMs on every request looped forever: each kill re-staled
+// its snapshots and the next wake cold-booted into the same OOM (bug hunt
+// H34). Only the first kill in WorkloadOOMBackoffWindow re-stales them, and
+// WorkloadOOMBackoffKills kills in the window back off the deployment's
+// wakes with a 503, starting at WorkloadOOMBackoffInitial and doubling up
+// to WorkloadOOMBackoffMax while the kills continue.
+const (
+	WorkloadOOMBackoffWindow  = 5 * time.Minute
+	WorkloadOOMBackoffKills   = 5
+	WorkloadOOMBackoffInitial = 30 * time.Second
+	WorkloadOOMBackoffMax     = 5 * time.Minute
+)
+
+// VmmdScanRefusalRefreshTTL is how long one canonical re-read of a refused
+// base's scan sidecar answers the boots that follow it. Concurrent refusals
+// share the re-read, so a cold burst against a fail-closed sidecar costs one
+// object-store read per interval instead of one per wake (bug hunt O36).
+const VmmdScanRefusalRefreshTTL = 5 * time.Second
 
 // UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
 // a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
@@ -15112,6 +15417,9 @@ const (
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
+	// AppHealthCollectorWorkers collect due apps concurrently in each sweep
+	// (bug hunt O35); each claims up to AppHealthCollectorBatch apps.
+	AppHealthCollectorWorkers       = 4
 	AppHealthHistoryPageSize        = 20
 	AppHealthHistoryMaxPage         = 100
 	AppHealthHistoryMaxEntries      = 100
@@ -15347,6 +15655,20 @@ const (
 	DataAPIChangeHooksDrainWait        = 45 * time.Second
 	DataAPIChangeHooksDrainCronTimeout = 60 * time.Second
 	DataAPIChangeHooksDrainPath        = "/__gregale/hooks/drain"
+	// The change event table stops recording while this many changes wait to
+	// publish (ADR-20261022121642 amendment 2): a stage or an installation
+	// without workload identity never publishes, and the trigger would
+	// otherwise grow the table until it fills the customer's database. The
+	// CLI renders it into `data-api hooks export`; status warns from
+	// DataAPIChangeHooksBacklogWarnPercent of it.
+	DataAPIChangeHooksBacklogMax         = 100_000
+	DataAPIChangeHooksBacklogWarnPercent = 90
+	// The runtime rereads its access gate (which relations are row-secured,
+	// whether public reads and RPCs are still safe) at most this often while
+	// it serves, and after every snapshot restore (ADR 20261026140223
+	// amendment 1): a migration that disables RLS reaches the gate within it,
+	// not at the next refresh. Each reread is one short catalog connection.
+	DataAPIAccessRecheckInterval = time.Minute
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
@@ -17533,6 +17855,7 @@ const (
 	DataPipelineCheckConcurrency           = 2
 	DataPipelineSetupConcurrency           = 2
 	DataPipelineWorkerIdleInterval         = time.Second
+	DataPipelineCatalogRetryMax            = 30 * time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17567,22 +17890,23 @@ const (
 // Pipeline health webhooks have one encrypted destination per pipeline. The
 // independent catalog worker debounces incidents and recovery before delivery.
 const (
-	DataPipelineAlertDebounce           = 2 * time.Minute
-	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
-	DataPipelineAlertCheckInterval      = 15 * time.Second
-	DataPipelineAlertWorkerInterval     = time.Second
-	DataPipelineAlertBatch              = 32
-	DataPipelineAlertHistoryMax         = 100
-	DataPipelineAlertPendingMax         = 100
-	DataPipelineAlertAttemptsMax        = 7
-	DataPipelineAlertAttemptTimeout     = 10 * time.Second
-	DataPipelineAlertLease              = 30 * time.Second
-	DataPipelineAlertRetryBase          = 30 * time.Second
-	DataPipelineAlertRetryMax           = 6 * time.Hour
-	DataPipelineAlertURLMaxBytes        = 2048
-	DataPipelineAlertSecretMinBytes     = 32
-	DataPipelineAlertSecretMaxBytes     = 256
-	DataPipelineAlertRetryAfterMaxBytes = 256
+	DataPipelineAlertDebounce            = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce    = 30 * time.Second
+	DataPipelineAlertCheckInterval       = 15 * time.Second
+	DataPipelineAlertWorkerInterval      = time.Second
+	DataPipelineAlertBatch               = 32
+	DataPipelineAlertDeliveryConcurrency = 8
+	DataPipelineAlertHistoryMax          = 100
+	DataPipelineAlertPendingMax          = 100
+	DataPipelineAlertAttemptsMax         = 7
+	DataPipelineAlertAttemptTimeout      = 10 * time.Second
+	DataPipelineAlertLease               = 30 * time.Second
+	DataPipelineAlertRetryBase           = 30 * time.Second
+	DataPipelineAlertRetryMax            = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes         = 2048
+	DataPipelineAlertSecretMinBytes      = 32
+	DataPipelineAlertSecretMaxBytes      = 256
+	DataPipelineAlertRetryAfterMaxBytes  = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
@@ -17759,6 +18083,14 @@ const (
 	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
 	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
 	PublicEntryTrackedSourcesMax          = 65536
+	// One address in Cloudflare's ranges carries many clients, but those
+	// ranges also carry every other Cloudflare customer's traffic, so they
+	// get a backstop PublicEntryProxyFactor times the per-source one rather
+	// than none (ADR-20261104221012).
+	PublicEntryProxyFactor                     = 16
+	PublicEntryProxyConnsPerSourceMax          = PublicEntryProxyFactor * PublicEntryConnsPerSourceMax
+	PublicEntryProxyNewConnsPerSecondPerSource = PublicEntryProxyFactor * PublicEntryNewConnsPerSecondPerSource
+	PublicEntryProxyNewConnsBurstPerSource     = PublicEntryProxyFactor * PublicEntryNewConnsBurstPerSource
 	// PublicBlockListRefreshInterval is how often vmmd re-reads the
 	// operator's block list (/etc/faas/public-block-list) and adds its
 	// entries to the firewall's block sets: an edit takes effect within
@@ -17836,6 +18168,15 @@ const (
 	// One verification pass shares workers between custom domains and tenant
 	// hostnames, leaving time for the doctor on the same 30-second ticker.
 	DomainVerificationWorkers        = 16
+	DomainVerificationManualWorkers  = 8
+	DomainPlanMaxBindings            = 20
+	DomainPlanMaxBytes               = 128 << 10
+	DomainVerificationManualTimeout  = 12 * time.Second
+	DomainVerificationManualCooldown = 15 * time.Second
 	DomainVerificationPassTimeout    = 25 * time.Second
 	DomainVerificationCleanupTimeout = 3 * time.Second
 )
+
+// MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
+// (ADR-20261106114500); the catalog CHECK enforces the same bound.
+const MaxObjectKeyScopeBytes = 512

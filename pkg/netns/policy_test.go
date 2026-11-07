@@ -1160,8 +1160,8 @@ func TestHostPolicyPublicEntryAddrsLimitEachSource(t *testing.T) {
 
 // The vmmd drop-in sends Cloudflare's ranges beside the entry addresses, so a
 // vmmd that predates them stays Cloudflare-only; this one renders the entry
-// rules, as the nftables role does, and uses the ranges only to exempt
-// Cloudflare from the per-source backstop.
+// rules, as the nftables role does, and uses the ranges only to give
+// Cloudflare its own, higher per-source backstop (ADR-20261104221012).
 func TestHostPolicyPublicEntryAddrsTakePrecedenceOverCloudflareSources(t *testing.T) {
 	entry := DefaultHostPolicy
 	entry.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
@@ -1174,6 +1174,13 @@ func TestHostPolicyPublicEntryAddrsTakePrecedenceOverCloudflareSources(t *testin
 	}
 	got = strings.Replace(got, exemption, "", 1)
 	got = strings.ReplaceAll(got, " ip saddr != @public_entry_proxy_v4", "")
+	var kept []string
+	for _, line := range strings.SplitAfter(got, "\n") {
+		if !strings.Contains(line, "ip saddr @public_entry_proxy_v4") {
+			kept = append(kept, line)
+		}
+	}
+	got = strings.Join(kept, "")
 	if want := entry.Render(); got != want {
 		t.Fatalf("with Cloudflare's sources beside the entry addresses the policy changed beyond the exemption:\n%s\nwant:\n%s", got, want)
 	}
@@ -1192,6 +1199,15 @@ func TestHostPolicyPublicEntryBackstopExemptsCloudflare(t *testing.T) {
 	}
 	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr != @public_entry_proxy_v4 ct state new add"); got != 2 {
 		t.Fatalf("v4 backstop rules exempting Cloudflare = %d, want 2:\n%s", got, out)
+	}
+	// ADR-20261104221012: Cloudflare's ranges carry every Cloudflare
+	// customer's traffic, so they get a higher backstop, not none.
+	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr @public_entry_proxy_v4 ct state new add"); got != 2 {
+		t.Fatalf("v4 proxy backstop rules = %d, want 2:\n%s", got, out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("ct count over %d", api.PublicEntryProxyConnsPerSourceMax)) ||
+		!strings.Contains(out, fmt.Sprintf("limit rate over %d/second burst %d packets", api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource)) {
+		t.Fatalf("proxy backstop limits missing:\n%s", out)
 	}
 	if strings.Contains(out, "public_entry_proxy_v6") {
 		t.Fatalf("v6 entry exempts a Cloudflare set with no v6 ranges:\n%s", out)

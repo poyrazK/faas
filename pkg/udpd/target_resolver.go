@@ -57,12 +57,22 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	running := make([]state.Instance, 0, len(instances))
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.IsFork(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.NeverServes(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
 	if len(running) > 0 {
+		running, err = ingressroute.ReadyInstances(ctx, r.Store, route.AppID, deploymentID, running)
+		if err != nil {
+			return gateway.Target{}, err
+		}
+		if len(running) == 0 {
+			return gateway.Target{}, ingressroute.ErrNoReadyInstance
+		}
 		if err := r.validateIntent(ctx, route); err != nil {
+			return gateway.Target{}, err
+		}
+		if err := ingressroute.RequireDeployment(ctx, r.Store, route.AppID, deploymentID); err != nil {
 			return gateway.Target{}, err
 		}
 		instance := running[(r.cursor.Add(1)-1)%uint64(len(running))]
@@ -78,8 +88,18 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if capacity || instance == "" || node == "" || deployment != deploymentID {
 		return gateway.Target{}, errors.New("UDP admission produced no routable instance")
 	}
+	ready, err := ingressroute.ReadyInstances(ctx, r.Store, route.AppID, deploymentID, []state.Instance{{ID: instance, AppID: route.AppID, DeploymentID: deploymentID, NodeID: node, WakeID: wake}})
+	if err != nil {
+		return gateway.Target{}, err
+	}
+	if len(ready) == 0 {
+		return gateway.Target{}, ingressroute.ErrNoReadyInstance
+	}
 	// Waking may outlast an intent change; never admit a peer from stale intent.
 	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
+	}
+	if err := ingressroute.RequireDeployment(ctx, r.Store, route.AppID, deploymentID); err != nil {
 		return gateway.Target{}, err
 	}
 	return gateway.Target{AppID: route.AppID, InstanceID: instance, NodeID: node, DeploymentID: deployment, WakeID: wake, Port: route.GuestPort}, nil
@@ -104,6 +124,11 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	}
 	if app.Visibility == api.AppVisibilityInternal {
 		return errors.New("UDP app is internal")
+	}
+	// The public access gates an HTTP request meets
+	// (ADR-20261104221012).
+	if err := ingressroute.CheckApp(ctx, app); err != nil {
+		return err
 	}
 	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {

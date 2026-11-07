@@ -403,3 +403,7 @@ func newGithubdClient(ctx context.Context, socketPath string, tlsCfg *tls.Config
 	}
 	return &liveClient{c: c, log: log}
 }
+
+func (l *liveClient) GetInstallationAccess(ctx context.Context, accountID string, installationID int64) (githubdgrpc.InstallationAccess, error) {
+	return l.c.GetInstallationAccess(ctx, accountID, installationID)
+}

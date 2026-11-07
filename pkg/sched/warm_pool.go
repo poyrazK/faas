@@ -148,10 +148,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if err != nil {
 		return err
 	}
-	desired := app.WarmPoolSize
-	if desired < 0 {
-		desired = 0
-	}
+	desired := warmPoolTarget(app, acct.Plan)
 	// A missing stage release cannot borrow the shared App's production target.
 	// Only proven orphaned owners enter obsolete without a selected deployment.
 	if depErr != nil && !reaperProductionScope(scope) && app.Status == state.AppActive && acct.Active() && api.Plan(acct.Plan).WarmPoolAllowed() {
@@ -474,4 +471,16 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	e.recordCommittedInstanceTransition(ctx, fresh, state.StateWaking, state.StateWarm, app.ID, "warm_pool_restore", "")
 	return nil
+}
+
+// warmPoolTarget is how many paused VMs app keeps under plan. apid checks
+// warm_pool_size against max_concurrency only when it is written, so a pool
+// saved under a larger plan is capped here by the current plan's
+// concurrency (ADR-20261105120000). An unknown plan keeps no pool.
+func warmPoolTarget(app state.App, plan api.Plan) int {
+	limits, ok := api.LimitsFor(plan)
+	if !ok || app.WarmPoolSize <= 0 {
+		return 0
+	}
+	return min(app.WarmPoolSize, effectiveMaxConcurrency(app, limits))
 }

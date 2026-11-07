@@ -815,11 +815,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261101215228: the values that shape a listed app's CPU, and the
 	// list itself, are runtime config.
 	cpuShape := &cpuShapeConfig{engine: engine}
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...),
+	requestConcurrency := &runtimeconfig.RequestConcurrency{}
+	// ADR-20261106214916: after a node takes a release, find the recently
+	// active apps whose snapshots there the release made stale.
+	snapshotRefresher := sched.NewSnapshotRefresher(engine, ops.Registry(), log)
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, cpuShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			if handled, err := requestConcurrency.Apply(key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
 			if handled, err := cpuShape.apply(key, value); handled {
 				if err == nil {
 					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
+			if handled, err := applySnapshotRefreshConfig(snapshotRefresher, key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied snapshot refresh setting (ADR-20261106214916)", "key", key, "value", string(value))
 				}
 				return err
 			}
@@ -848,6 +864,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go func() {
 		if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
 			log.Error("schedd: runtime config watcher exited", "err", err)
+		}
+	}()
+	go func() {
+		if err := snapshotRefresher.Run(runtimeCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("schedd: snapshot refresher exited", "err", err)
 		}
 	}()
 
@@ -2562,7 +2583,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
 		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
-			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
+			Enabled: true, Owner: owner, NodeID: strings.TrimSpace(ownerNodeID), MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}

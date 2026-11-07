@@ -46,5 +46,9 @@ export type APIKeyResponse = {
    * Project slugs the key was limited to, on the create response of a limited agent key.
    */
   projects?: Array<string>;
+  /**
+   * Kinds of action the agent key must have a person approve, on the create response when the request chose them.
+   */
+  approval_categories?: Array<'delete' | 'production' | 'credentials' | 'billing'>;
 };
 

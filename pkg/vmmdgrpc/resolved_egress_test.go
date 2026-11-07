@@ -2,8 +2,12 @@
 package vmmdgrpc_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +72,31 @@ func TestAllowResolvedEgressRPC(t *testing.T) {
 	plain := vmmdgrpc.New(&fakeVMM{}, wire.NewOpsMetrics("vmmd_test_plain"), "1.10.0", nil)
 	if _, err := plain.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{SourceIp: "10.100.0.7"}); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("manager without the hook: code = %v, want Unimplemented", status.Code(err))
+	}
+}
+
+// rc.324 refused every builder's DNS grants without a log line on either
+// side. A refusal is logged with the instance, once per interval.
+func TestAllowResolvedEgressLogsARefusalOncePerInterval(t *testing.T) {
+	var logs bytes.Buffer
+	a := &recordingAllower{fakeVMM: &fakeVMM{}, err: fmt.Errorf("teardown: %w", fcvm.ErrResolvedEgressNoInstance)}
+	s := vmmdgrpc.New(a, wire.NewOpsMetrics("vmmd_test_refusal_log"), "1.10.0", slog.New(slog.NewJSONHandler(&logs, nil)))
+	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: "10.100.0.8", InstanceId: "build-1", NetworkGeneration: "generation", Addresses: []string{"104.16.212.131"}}
+	for range 3 {
+		if ack, err := s.AllowResolvedEgress(context.Background(), req); err != nil || ack.GetMatched() {
+			t.Fatalf("refused grant = %v, %v; want matched=false, no error", ack, err)
+		}
+	}
+	if got := strings.Count(logs.String(), "DNS answer not granted to its guest"); got != 1 {
+		t.Fatalf("refusal log lines = %d, want 1:\n%s", got, logs.String())
+	}
+	for _, want := range []string{`"instance":"build-1"`, `"source":"10.100.0.8"`, `"reason"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("refusal log lacks %s:\n%s", want, logs.String())
+		}
+	}
+	req.InstanceId = "build-2"
+	if _, err := s.AllowResolvedEgress(context.Background(), req); err != nil || strings.Count(logs.String(), "DNS answer not granted") != 2 {
+		t.Fatalf("another instance's refusal was not logged: %v\n%s", err, logs.String())
 	}
 }

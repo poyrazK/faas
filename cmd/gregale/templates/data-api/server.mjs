@@ -20,7 +20,7 @@ import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial, createAccessSafety } from './access.mjs'
 import { changeEventsTable, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
@@ -87,11 +87,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (!changes) return problem(res, 409, 'data_api_change_hooks_off')
       const state = await changes.drain(limits.changeHooksDrainWaitMs)
       if (!state) return problem(res, 503, 'data_api_change_hooks_unavailable')
+      if (state.refused) return problem(res, 409, 'data_api_change_hooks_not_production')
       return healthResponse(res, state.publishing === 'retrying' ? 503 : 200, { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
         ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}) })
     }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
+    // Keep the access gate current with the owner's migrations (amendment 1).
+    config.accessSafety?.maybeRefresh()
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
     let storage = null
     if (config.storage && req.url.startsWith('/storage/v1/') && !guarded) {
@@ -129,7 +132,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Never downgrade a present but invalid credential to anonymous access.
       const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
       if (target.code === 'public_rpc_requires_get') res.setHeader('Allow', 'GET, HEAD')
-      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405 }[target.code] ?? 401, target.code)
+      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
       access = 'anonymous'
       publicCache = storage ? null : publicReadCache(req, config, target)
     } else if (!token) return problem(res, 401, 'token_required')
@@ -391,15 +394,17 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
 }
 
 export async function main(env = process.env) {
-  const config = runtimeConfig(env)
+  const config = await startupStage('configuration', 'data_api_configuration_invalid', () => runtimeConfig(env))
   if (config.connectionObservation || config.sqlDeadline) {
-    const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
-    if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    await startupStage('engine', 'data_api_configuration_invalid', async () => {
+      const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
+      if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    })
   }
-  if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
+  if (config.sqlDeadline) await startupStage('database', 'data_api_configuration_invalid', () => checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh }))
   // Inspection connects first, with the full query budget, so a suspended
   // database is awake before the configuration checks run.
-  const snapshot = await inspect(config.connection, config.schemas)
+  const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
   config.snapshot = snapshot
   config.functions = snapshot.functions
   if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
@@ -422,7 +427,11 @@ export async function main(env = process.env) {
     // them off, the API keeps serving and recorded changes wait in the table.
     // An unreachable database fails the boot instead, because hooks turned
     // off here would be captured in the snapshot every wake restores.
-    try { await checkChangeEvents(config.connection, config.changeEvents.schema) } catch (error) {
+    try {
+      const { bounded } = await checkChangeEvents(config.connection, config.changeEvents.schema)
+      // Hooks installed before the backlog bound still publish; say so once.
+      if (!bounded) runtimeFailure('data_api_change_hooks_unbounded')
+    } catch (error) {
       if (!(error instanceof UnsafeConfiguration)) {
         runtimeFailure('data_api_database_unavailable')
         throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
@@ -457,10 +466,16 @@ export async function main(env = process.env) {
       server.close()
     } })
   // A snapshot must not capture SQL sessions (lifecycle hooks set by the CLI).
+  // The access gate read at boot is rechecked while serving and after every
+  // restore, so a migration since cannot leave it stale (amendment 1).
+  config.accessSafety = createAccessSafety(config)
   config.lifecycle = {
-    ready: waitMs => engine.ready(waitMs),
+    ready: async waitMs => {
+      const started = Date.now()
+      return await engine.ready(waitMs) && await config.accessSafety.ready(waitMs - (Date.now() - started))
+    },
     beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
-    afterRestore: () => engine.start(),
+    afterRestore: () => { engine.start(); config.accessSafety.restored() },
   }
   engine.start()
   server = createServer(config, verify)
@@ -484,8 +499,22 @@ export async function main(env = process.env) {
 async function bootCheck(check, unsafeEvent, unsafeMessage) {
   try { await check() } catch (error) {
     const unsafe = error instanceof UnsafeConfiguration
-    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable')
+    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable', { stage: 'database', error })
     throw Object.assign(new Error(unsafe ? unsafeMessage : 'Database unavailable during startup'), { cause: error, reported: true })
+  }
+}
+
+// startupStage reports which startup step failed and a safe reason before the
+// process exits, so a crash during snapshot_prepare is diagnosable from the
+// deployment log (ChronoLake finding 19). The event stays
+// data_api_configuration_invalid, as before; stage and reason are added.
+async function startupStage(stage, event, step) {
+  try { return await step() } catch (error) {
+    if (error?.reported !== true) {
+      runtimeFailure(event, { stage, error })
+      if (error && typeof error === 'object') error.reported = true
+    }
+    throw error
   }
 }
 
@@ -493,4 +522,4 @@ export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid', { stage: 'startup', error }); process.exitCode = 1 })

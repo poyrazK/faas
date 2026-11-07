@@ -31,10 +31,15 @@ operation receipts alone cannot reconstruct uncaptured old values. Identity
 primary keys are supported; identity columns cannot be selected as repair fields.
 Columns included in a covering primary-key index remain ordinary mutable fields.
 
-Selected fields and primary keys cannot contain arrays or PostgreSQL `json`,
-including through domains or composite members: JSON journals lose array bounds
-and duplicate JSON keys. JSONB and supported scalar fields remain available.
-Unselected array/json columns are preserved as native values during repair.
+Selected fields and primary keys cannot contain arrays, PostgreSQL `json`, or
+catalog-reference aliases (`regclass`, `regcollation`, `regconfig`,
+`regdictionary`, `regnamespace`, `regoper`, `regoperator`, `regproc`,
+`regprocedure`, `regrole`, `regtype`), including through domains, composite members,
+ranges or multiranges. JSON journals lose array bounds and duplicate JSON keys;
+catalog names can resolve a different object after renames or name reuse. JSONB,
+ordinary `oid` values and supported scalar fields remain available. Unselected
+array/json columns and catalog references are preserved as native values during
+repair.
 Existing enrollments with lossy selected types are blocked, and validation or
 verification reports `schema_changed`; old journals cannot recover the lost
 details. No upgrade turns that evidence into an exact restoration guarantee.
@@ -317,6 +322,10 @@ Observations contain only fields changed by the recorded operation. They are
 bounded to 16 KiB per row and 256 KiB across the plan; an observation over either
 budget is omitted with `observation_omitted: true`. Its reason, version and
 classification remain available. Omission does not make a conflict eligible.
+The hosted review keeps a pending preparation ID across failed submissions.
+Retrying the same source reuses that ID; Refresh reads the pending operation,
+including when preparation began from retained history.
+
 Exact JSON text preserves large integer keys and numeric values in the browser.
 
 These values describe preparation time. Loading or replaying a saved plan never
@@ -511,7 +520,25 @@ multiranges. Callback and pooled-session settings are preserved. Older captures
 with selected interval values or keys cannot prove their original interpretation;
 planning, replacement and apply reject them, and validation/verification report
 `schema_changed`. Historical evidence, approvals and committed receipts remain
-readable and are never rewritten. New version-3 captures can authorize repairs.
+readable and are never rewritten. Version-3 and later captures retain this interval proof.
+
+Capture contract version 4 also uses function-local `lc_monetary=C` when
+recording, comparing and restoring `money` values and keys, including nested
+types. This preserves the native value across locales with different currency
+symbols, separators or fractional digits. The application's callback and pooled
+connection keep their own settings. Captures before version 4 with selected
+`money` fields or keys lack this interpretation proof: planning, replacement and
+apply reject them, while validation and verification report `schema_changed`.
+Historical journals, plans, approvals and committed receipts remain unchanged;
+receipt recovery remains available.
+
+New enrollments save `fingerprint_monetary=C`. The explicit owner upgrade fills
+this setting for older enrollments only when the upgrade connection reproduces
+the saved fingerprint. If it remains unknown, review the schema and repeat the
+upgrade under its original `lc_monetary`. This preserves existing defaults and
+checks containing monetary constants. Apply the owner upgrade before updating
+executors and SDKs. See [preparation recovery and monetary
+locales](adr/20261105110000-repair-prepare-recovery-and-money-locales.md).
 
 Range qualification checks canonicalization, subtype-difference functions,
 subtype operator classes and subtype constraints even without an index. Custom
@@ -1138,6 +1165,15 @@ Approval records the authenticated operator, exact digest and timestamp. Apply
 uses the original candidate list and checks every identity/version again. A
 later edit aborts all selected inverse writes, with no repair receipt. Prepare a
 new plan and review its changed candidate/conflict selection.
+
+Outcome resolution also works after an expired, unapproved source plan's
+payload and journal have been compacted. It uses the retained identity, digest
+and source row lock to record `not_committed`, without reconstructing values or
+restoring write authority. A matching committed receipt still takes precedence.
+The hosted operation can then settle and release its pending-operation slot.
+Apply the explicit owner `schema --upgrade` before updating executors and SDKs.
+See [catalog references and retained outcome
+resolution](adr/20261105185744-repair-catalog-references-and-retained-resolution.md).
 
 After a network failure, inspect `get PLAN_UUID`. `applied_at` and
 `repair_operation_id` establish a committed correction. Repeat apply only with

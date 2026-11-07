@@ -1,0 +1,20 @@
+function:
+  runtime: node22
+  handler: handler.handler
+
+# Fixed for every run, so the source digest stays the same and a deploy is a
+# build-cache hit. TestEventDelivery publishes its own event ids; a
+# concurrent run's events only add recipients its assertions ignore.
+# A handler that throws is retried until the attempts run out, then
+# dead-lettered (ADR-20261031100001). Without a policy the plan sets the
+# budget: about 95 minutes of backoff on Scale. Two attempts a second apart
+# dead-letter the journey's failing event within seconds on every plan.
+retry_policy:
+  max_attempts: 2
+  base_seconds: 1
+  max_seconds: 2
+
+event_triggers:
+  - source: e2ej.journeys
+    type: journey.ping
+    filter: '{"data":{"deliver":true}}'
