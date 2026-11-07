@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -78,6 +79,20 @@ type servedCert struct {
 	notAfter time.Time
 }
 
+// servedFor is the certificate set serves for exactly names, if it has one
+// still valid at now. A nil set has none.
+func (set *servedSet) servedFor(names []string, now time.Time) (servedCert, bool) {
+	if set == nil {
+		return servedCert{}, false
+	}
+	for _, c := range set.certs {
+		if slices.Equal(c.names, names) && c.notAfter.After(now) {
+			return c, true
+		}
+	}
+	return servedCert{}, false
+}
+
 // NewServed returns an empty copy of ca's certificates, opened with
 // identities. Load fills it.
 func NewServed(ca string, identities []*age.X25519Identity, store LiveStore, log *slog.Logger) (*Served, error) {
@@ -114,10 +129,20 @@ func (s *Served) Load(ctx context.Context) (bool, error) {
 	}
 	next := &servedSet{}
 	var failed []string
+	current := s.set.Load()
+	now := s.now()
 	for _, row := range rows {
 		cert, err := s.open(row)
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("certificate %d: %v", row.ID, err))
+			// The read returns only the newest certificate per set of
+			// names. One this edge cannot open (a seal identity it does
+			// not hold yet, a bad row) must not take those names'
+			// certificate away while other sets load: keep serving the
+			// one it has for them while that is still valid.
+			if kept, ok := current.servedFor(row.Names, now); ok {
+				next.certs = append(next.certs, kept)
+			}
 			continue
 		}
 		next.certs = append(next.certs, servedCert{id: row.ID, names: row.Names, cert: cert, notAfter: row.NotAfter})
@@ -132,16 +157,22 @@ func (s *Served) Load(ctx context.Context) (bool, error) {
 		}
 		return false, fmt.Errorf("edgecert: no live certificate from %s", s.ca)
 	}
-	if current := s.set.Load(); current != nil && sameIDs(current, next) {
+	// Rows it could not open are reported even when what it serves is
+	// unchanged: the newest certificate for those names is not served.
+	var openErr error
+	if len(failed) > 0 {
+		openErr = fmt.Errorf("edgecert: %d live certificate(s) could not be opened; kept what was served for their names", len(failed))
+	}
+	if current != nil && sameIDs(current, next) {
 		s.loads.WithLabelValues("unchanged").Inc()
-		return false, nil
+		return false, openErr
 	}
 	s.set.Store(next)
 	s.loads.WithLabelValues("loaded").Inc()
 	for _, c := range next.certs {
 		s.log.Info("edgecert: serving certificate", "id", c.id, "names", strings.Join(c.names, ","), "ca", s.ca, "not_after", c.notAfter)
 	}
-	return true, nil
+	return true, openErr
 }
 
 // open builds the TLS certificate from row: its chain and its key, opened

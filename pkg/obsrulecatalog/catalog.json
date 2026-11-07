@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "83c2bb95112224a65281361b6b49bb70403c488f1274ac93d9c959af651b30d5",
+      "revision": "bb034bc7437e8c085d8b2b0f115b64876ffbdb957bbd7966e54fa49791965194",
       "files": [
         "faas.rules.yml"
       ],
@@ -2433,11 +2433,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasGithubWebhookDeliveryDead",
           "definition": {
-            "expression_hash": "38c5c834004658c21c4be39f9b794a93d409e10df6cffc2d3e69c7101a9d9add",
+            "expression_hash": "e01d30e3a0d8af5bf60f6e47c2fde99a8e8738be75e612da9730e7b41b8024fd",
             "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ddf116fb75859ba7412c0586e1c578ac3acc217285ec3c5bdb39482c5aa2e660"
+            "fingerprint": "b525206fcd1f08a5c5533fe0af0e8b6202c91c77f867016ca22046e8ef4c7aae"
           }
         },
         {
@@ -6864,7 +6864,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "48b7b8d6dccd35670697a61db0ac0c1a95efbbb92f1b163c8a61b9c75fd50247",
+      "revision": "d18d2fca093f7584541daf5f427e0c7a3c7df33f85d59e2f2a8b9d47300959cf",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9388,11 +9388,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasGithubWebhookDeliveryDead",
           "definition": {
-            "expression_hash": "38c5c834004658c21c4be39f9b794a93d409e10df6cffc2d3e69c7101a9d9add",
+            "expression_hash": "e01d30e3a0d8af5bf60f6e47c2fde99a8e8738be75e612da9730e7b41b8024fd",
             "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ddf116fb75859ba7412c0586e1c578ac3acc217285ec3c5bdb39482c5aa2e660"
+            "fingerprint": "b525206fcd1f08a5c5533fe0af0e8b6202c91c77f867016ca22046e8ef4c7aae"
           }
         },
         {
