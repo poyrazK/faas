@@ -2,20 +2,20 @@ package api
 
 import "testing"
 
-// A paid subject's self-service spend cap is at most 100x its plan's default;
+// A paid subject's self-service spend cap is at most Hobby $75, Pro $200, Scale $1,000;
 // Free has no ceiling and may clear its cap.
 // adr: 20261105120000
 func TestOverageCapProblem(t *testing.T) {
 	cents := func(v int64) *int64 { return &v }
 	hobbyMax, ok := PlanHobby.MaxSelfServiceOverageCapCents()
-	if !ok || hobbyMax != 20_000 {
-		t.Fatalf("Hobby ceiling = %d, %v; want 20000 cents ($200)", hobbyMax, ok)
+	if !ok || hobbyMax != 7_500 {
+		t.Fatalf("Hobby ceiling = %d, %v; want 7500 cents ($75)", hobbyMax, ok)
 	}
-	if v, _ := PlanPro.MaxSelfServiceOverageCapCents(); v != 100_000 {
-		t.Fatalf("Pro ceiling = %d, want 100000", v)
+	if v, _ := PlanPro.MaxSelfServiceOverageCapCents(); v != 20_000 {
+		t.Fatalf("Pro ceiling = %d, want 20000", v)
 	}
-	if v, _ := PlanScale.MaxSelfServiceOverageCapCents(); v != 300_000 {
-		t.Fatalf("Scale ceiling = %d, want 300000", v)
+	if v, _ := PlanScale.MaxSelfServiceOverageCapCents(); v != 100_000 {
+		t.Fatalf("Scale ceiling = %d, want 100000", v)
 	}
 	if _, ok := PlanFree.MaxSelfServiceOverageCapCents(); ok {
 		t.Fatal("Free has a self-service ceiling")

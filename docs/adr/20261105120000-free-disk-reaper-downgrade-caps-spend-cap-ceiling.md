@@ -68,9 +68,8 @@ A cost-control audit (2026-11-05, round 9) found three gaps:
      concurrency)` under the current plan (`warmPoolTarget`).
    - Stored values are kept, so an upgrade restores them.
 3. **Paid spend caps have a self-service ceiling.**
-   - `SelfServiceOverageCapMultiplier` is 100 × the plan's default cap:
-     Hobby $200, Pro $1,000, Scale $3,000. **These are assumed numbers,
-     pending the owner's.**
+   - The ceilings (`<Plan>MaxSelfServiceOverageCapCents`) are Hobby $75,
+     Pro $200, Scale $1,000 (the owner's numbers, 2026-11-07).
    - On a paid plan, `POST /v1/account/overage-cap`, the organization route
      and the dashboard form refuse `null` (422 `overage_cap_required`) and
      any value above the ceiling (422 `overage_cap_above_max`, with limit,

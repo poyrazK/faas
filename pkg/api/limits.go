@@ -10640,22 +10640,29 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
 }
 
-// SelfServiceOverageCapMultiplier bounds the spend cap a paid subject may set
-// itself, in multiples of its plan's default cap (ADR-20261105120000).
-// ASSUMED 100x, pending the owner's numbers: Hobby $200, Pro $1,000,
-// Scale $3,000. A larger cap is an operator change.
-const SelfServiceOverageCapMultiplier = 100
+// Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
+// owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
+// cap is an operator change.
+const (
+	HobbyMaxSelfServiceOverageCapCents int64 = 7_500
+	ProMaxSelfServiceOverageCapCents   int64 = 20_000
+	ScaleMaxSelfServiceOverageCapCents int64 = 100_000
+)
 
 // MaxSelfServiceOverageCapCents is the largest spend cap a paid subject may
 // set through the API or dashboard, and the cap a paid subject without one
 // (NULL, saved before ADR-20261105120000) is held to. Free has none: Free
 // stops at its allowance whatever its cap.
 func (p Plan) MaxSelfServiceOverageCapCents() (int64, bool) {
-	def, ok := p.DefaultOverageCapCents()
-	if !ok {
-		return 0, false
+	switch p {
+	case PlanHobby:
+		return HobbyMaxSelfServiceOverageCapCents, true
+	case PlanPro:
+		return ProMaxSelfServiceOverageCapCents, true
+	case PlanScale:
+		return ScaleMaxSelfServiceOverageCapCents, true
 	}
-	return def * SelfServiceOverageCapMultiplier, true
+	return 0, false
 }
 
 // Valid reports whether p is a known plan.
