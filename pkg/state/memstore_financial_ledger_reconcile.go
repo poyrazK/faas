@@ -10,10 +10,35 @@ import (
 )
 
 var (
-	_ BillingDeliveryReader      = (*MemStore)(nil)
-	_ FinancialHourlyUsageReader = (*MemStore)(nil)
-	_ HourlyMeterUsageReader     = (*MemStore)(nil)
+	_ BillingDeliveryReader         = (*MemStore)(nil)
+	_ BillingDeliverySourceRecorder = (*MemStore)(nil)
+	_ FinancialHourlyUsageReader    = (*MemStore)(nil)
+	_ HourlyMeterUsageReader        = (*MemStore)(nil)
 )
+
+func (m *MemStore) RecordBillingDeliveryFromSource(_ context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64, source string) error {
+	if err := validDeliverySource(meter, quantity, source); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter,
+			hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity, deliveredAt: m.clock(), source: source}
+	}
+	return nil
+}
+
+func (m *MemStore) BillingDeliverySource(_ context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return d.source, nil
+}
 
 func (m *MemStore) DeliveredComputeMBSeconds(_ context.Context, provider, accountID string, start, end time.Time) (int64, error) {
 	return m.deliveredMeterQuantity(provider, accountID, BillingMeterCompute, start, end)

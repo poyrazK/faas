@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,37 @@ type BillingDeliveryReader interface {
 	// provider and accountID in hour windows starting in [start, end), in
 	// shadow or live delivery.
 	DeliveredEgressBytes(ctx context.Context, provider, accountID string, start, end time.Time) (int64, error)
+}
+
+// The usage sources a delivery receipt records: which source quantified the
+// hour the pusher billed (ADR-20261107105126).
+const (
+	UsageSourceUsageMinutes = "usage_minutes"
+	UsageSourceLedger       = "ledger"
+)
+
+// BillingDeliverySourceRecorder writes delivery receipts with the usage source
+// that quantified their hour, and reads it back. The first receipt for an hour
+// wins, as with RecordBillingMeterUsageDelivery.
+type BillingDeliverySourceRecorder interface {
+	RecordBillingDeliveryFromSource(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64, source string) error
+	// BillingDeliverySource returns the source of the receipt for the hour
+	// starting at windowStart: empty for a receipt written without one,
+	// ErrNotFound without a receipt.
+	BillingDeliverySource(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time) (string, error)
+}
+
+func validDeliverySource(meter BillingMeter, quantity int64, source string) error {
+	if meter != BillingMeterCompute && meter != BillingMeterEgress {
+		return fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	if quantity < 0 {
+		return fmt.Errorf("billing usage quantity must be non-negative")
+	}
+	if source != UsageSourceUsageMinutes && source != UsageSourceLedger {
+		return fmt.Errorf("unsupported usage source %q", source)
+	}
+	return nil
 }
 
 // HourQuantity is one meter's quantity for one UTC hour.

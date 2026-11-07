@@ -21023,6 +21023,9 @@ type billingUsageDelivery struct {
 	hour                time.Time
 	quantity            int64
 	deliveredAt         time.Time
+	// source is the usage source that quantified the hour; empty for a
+	// receipt written without one (ADR-20261107105126).
+	source string
 }
 
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {

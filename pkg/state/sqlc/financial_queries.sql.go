@@ -11,6 +11,109 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const billingMeterUsageDeliveryRecordFromSource = `-- name: BillingMeterUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity, usage_source)
+VALUES ($1::text, $2::uuid, $3::text,
+        $4::timestamptz, $5::bigint, $6::text)
+ON CONFLICT (provider, account_id, meter, window_start) DO NOTHING
+`
+
+type BillingMeterUsageDeliveryRecordFromSourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Quantity    int64
+	UsageSource string
+}
+
+// ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
+func (q *Queries) BillingMeterUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliveryRecordFromSourceParams) error {
+	_, err := db.Exec(ctx, billingMeterUsageDeliveryRecordFromSource,
+		arg.Provider,
+		arg.AccountID,
+		arg.Meter,
+		arg.WindowStart,
+		arg.Quantity,
+		arg.UsageSource,
+	)
+	return err
+}
+
+const billingMeterUsageDeliverySource = `-- name: BillingMeterUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_meter_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid
+  AND meter = $3::text AND window_start = $4::timestamptz
+`
+
+type BillingMeterUsageDeliverySourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+}
+
+func (q *Queries) BillingMeterUsageDeliverySource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliverySourceParams) (string, error) {
+	row := db.QueryRow(ctx, billingMeterUsageDeliverySource,
+		arg.Provider,
+		arg.AccountID,
+		arg.Meter,
+		arg.WindowStart,
+	)
+	var usage_source string
+	err := row.Scan(&usage_source)
+	return usage_source, err
+}
+
+const billingUsageDeliveryRecordFromSource = `-- name: BillingUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_usage_deliveries (provider, account_id, window_start, mb_seconds, usage_source)
+VALUES ($1::text, $2::uuid, $3::timestamptz,
+        $4::bigint, $5::text)
+ON CONFLICT (provider, account_id, window_start) DO NOTHING
+`
+
+type BillingUsageDeliveryRecordFromSourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	MbSeconds   int64
+	UsageSource string
+}
+
+// ADR-20261107105126. A compute delivery receipt with the usage source that
+// quantified its hour; the first receipt for an hour wins.
+func (q *Queries) BillingUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingUsageDeliveryRecordFromSourceParams) error {
+	_, err := db.Exec(ctx, billingUsageDeliveryRecordFromSource,
+		arg.Provider,
+		arg.AccountID,
+		arg.WindowStart,
+		arg.MbSeconds,
+		arg.UsageSource,
+	)
+	return err
+}
+
+const billingUsageDeliverySource = `-- name: BillingUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid
+  AND window_start = $3::timestamptz
+`
+
+type BillingUsageDeliverySourceParams struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	WindowStart pgtype.Timestamptz
+}
+
+func (q *Queries) BillingUsageDeliverySource(ctx context.Context, db DBTX, arg BillingUsageDeliverySourceParams) (string, error) {
+	row := db.QueryRow(ctx, billingUsageDeliverySource, arg.Provider, arg.AccountID, arg.WindowStart)
+	var usage_source string
+	err := row.Scan(&usage_source)
+	return usage_source, err
+}
+
 const deletedAppIDsInBillingWindow = `-- name: DeletedAppIDsInBillingWindow :many
 SELECT app.id FROM apps app
 WHERE app.status = 'deleted' AND EXISTS (

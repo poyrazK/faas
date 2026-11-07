@@ -2,18 +2,64 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var (
-	_ BillingDeliveryReader      = (*PgStore)(nil)
-	_ FinancialHourlyUsageReader = (*PgStore)(nil)
-	_ HourlyMeterUsageReader     = (*PgStore)(nil)
+	_ BillingDeliveryReader         = (*PgStore)(nil)
+	_ BillingDeliverySourceRecorder = (*PgStore)(nil)
+	_ FinancialHourlyUsageReader    = (*PgStore)(nil)
+	_ HourlyMeterUsageReader        = (*PgStore)(nil)
 )
+
+func (s *PgStore) RecordBillingDeliveryFromSource(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time, quantity int64, source string) error {
+	if err := validDeliverySource(meter, quantity, source); err != nil {
+		return err
+	}
+	id, err := parsePgUUID(accountID)
+	if err != nil {
+		return ErrInvalidArgument
+	}
+	hour := pgtype.Timestamptz{Time: windowStart.UTC().Truncate(time.Hour), Valid: true}
+	if meter == BillingMeterCompute {
+		err = sqlc.New().BillingUsageDeliveryRecordFromSource(ctx, s.pool, sqlc.BillingUsageDeliveryRecordFromSourceParams{
+			Provider: provider, AccountID: id, WindowStart: hour, MbSeconds: quantity, UsageSource: source})
+	} else {
+		err = sqlc.New().BillingMeterUsageDeliveryRecordFromSource(ctx, s.pool, sqlc.BillingMeterUsageDeliveryRecordFromSourceParams{
+			Provider: provider, AccountID: id, Meter: string(meter), WindowStart: hour, Quantity: quantity, UsageSource: source})
+	}
+	if err != nil {
+		return fmt.Errorf("record %s delivery: %w", meter, err)
+	}
+	return nil
+}
+
+func (s *PgStore) BillingDeliverySource(ctx context.Context, provider, accountID string, meter BillingMeter, windowStart time.Time) (string, error) {
+	id, err := parsePgUUID(accountID)
+	if err != nil {
+		return "", ErrInvalidArgument
+	}
+	hour := pgtype.Timestamptz{Time: windowStart.UTC().Truncate(time.Hour), Valid: true}
+	var source string
+	switch meter {
+	case BillingMeterCompute:
+		source, err = sqlc.New().BillingUsageDeliverySource(ctx, s.pool, sqlc.BillingUsageDeliverySourceParams{Provider: provider, AccountID: id, WindowStart: hour})
+	case BillingMeterEgress:
+		source, err = sqlc.New().BillingMeterUsageDeliverySource(ctx, s.pool, sqlc.BillingMeterUsageDeliverySourceParams{Provider: provider, AccountID: id, Meter: string(meter), WindowStart: hour})
+	default:
+		return "", fmt.Errorf("unsupported billing meter %q", meter)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return source, err
+}
 
 func (s *PgStore) DeliveredComputeMBSeconds(ctx context.Context, provider, accountID string, start, end time.Time) (int64, error) {
 	if !validDeliveredComputeRange(provider, accountID, start, end) {

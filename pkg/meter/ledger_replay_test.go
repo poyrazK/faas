@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // replayEvent happens at a minute: a plan change, an egress overage switch,
@@ -56,75 +57,83 @@ type replayBackend struct {
 }
 
 func TestLedgerReplayClosedMonthMatches(t *testing.T) {
-	t.Run("mem", func(t *testing.T) {
-		mem := state.NewMemStore()
-		replayLedgerMonth(t, replayBackend{
-			store: statetest.NewMem(ledgerRetention{MemStore: mem}),
-			markComplete: func(t *testing.T, from, to time.Time) {
-				t.Helper()
-				for minute := from; minute.Before(to); minute = minute.Add(time.Minute) {
-					if err := mem.RecordFinancialSamplingWindow(context.Background(), minute, true, true); err != nil {
-						t.Fatal(err)
-					}
-				}
-			},
-			bindOrg: func(t *testing.T, orgID string, from time.Time) {
-				t.Helper()
-				if err := mem.UpsertBillingIdentity(context.Background(), state.BillingIdentity{AccountID: orgID, Provider: "polar",
-					CustomerID: "cus-" + orgID, SubscriptionID: "sub-" + orgID, BillingFrom: from}); err != nil {
+	for _, source := range []meter.UsageSource{meter.UsageSourceOff, meter.UsageSourceLedgerShadow, meter.UsageSourceLedger} {
+		t.Run("mem/"+string(source), func(t *testing.T) { replayMem(t, source) })
+	}
+	for _, source := range []meter.UsageSource{meter.UsageSourceLedgerShadow, meter.UsageSourceLedger} {
+		t.Run("postgres/"+string(source), func(t *testing.T) { replayPostgres(t, source) })
+	}
+}
+
+func replayMem(t *testing.T, source meter.UsageSource) {
+	mem := state.NewMemStore()
+	replayLedgerMonth(t, source, replayBackend{
+		store: statetest.NewMem(ledgerRetention{MemStore: mem}),
+		markComplete: func(t *testing.T, from, to time.Time) {
+			t.Helper()
+			for minute := from; minute.Before(to); minute = minute.Add(time.Minute) {
+				if err := mem.RecordFinancialSamplingWindow(context.Background(), minute, true, true); err != nil {
 					t.Fatal(err)
 				}
-			},
-		})
+			}
+		},
+		bindOrg: func(t *testing.T, orgID string, from time.Time) {
+			t.Helper()
+			if err := mem.UpsertBillingIdentity(context.Background(), state.BillingIdentity{AccountID: orgID, Provider: "polar",
+				CustomerID: "cus-" + orgID, SubscriptionID: "sub-" + orgID, BillingFrom: from}); err != nil {
+				t.Fatal(err)
+			}
+		},
 	})
-	t.Run("postgres", func(t *testing.T) {
-		pool := pgtest.OpenMigrated(t)
-		ctx := context.Background()
-		if err := db.MigrateUp(ctx, pool); err != nil {
-			t.Fatalf("migrate: %v", err)
-		}
-		// The ledger keeps evidence for the whole replayed year.
-		if _, err := pool.Exec(ctx, `UPDATE financial_evidence_coverage SET retained_from = $1 WHERE singleton`,
-			time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
-			t.Fatal(err)
-		}
-		store := state.NewPgStore(pool)
-		replayLedgerMonth(t, replayBackend{
-			store: store,
-			markComplete: func(t *testing.T, from, to time.Time) {
-				t.Helper()
-				if _, err := pool.Exec(ctx, `
+}
+
+func replayPostgres(t *testing.T, source meter.UsageSource) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// The ledger keeps evidence for the whole replayed year.
+	if _, err := pool.Exec(ctx, `UPDATE financial_evidence_coverage SET retained_from = $1 WHERE singleton`,
+		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	replayLedgerMonth(t, source, replayBackend{
+		store: store,
+		markComplete: func(t *testing.T, from, to time.Time) {
+			t.Helper()
+			if _, err := pool.Exec(ctx, `
 					INSERT INTO financial_sampling_windows(minute, compute_complete, egress_complete)
 					SELECT m, true, true FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 minute', interval '1 minute') AS m
 					ON CONFLICT(minute) DO UPDATE SET compute_complete = true, egress_complete = true`, from, to); err != nil {
-					t.Fatalf("mark %s..%s complete: %v", from, to, err)
-				}
-			},
-			// An organization binds through its own customer and
-			// subscription columns, as the provider webhooks do; the
-			// binding bills from the moment it is made, so the replay
-			// moves it to the start of its billing.
-			bindOrg: func(t *testing.T, orgID string, from time.Time) {
-				t.Helper()
-				if err := store.UpdateAccountProviderCustomerID(ctx, orgID, "cus-"+orgID); err != nil {
-					t.Fatal(err)
-				}
-				if err := store.UpdateAccountStripeSubscriptionItem(ctx, orgID, "sub-"+orgID); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := pool.Exec(ctx, `UPDATE billing_identities SET billing_from = $2 WHERE account_id = $1 AND provider = 'polar'`,
-					orgID, from); err != nil {
-					t.Fatal(err)
-				}
-			},
-		})
+				t.Fatalf("mark %s..%s complete: %v", from, to, err)
+			}
+		},
+		// An organization binds through its own customer and
+		// subscription columns, as the provider webhooks do; the
+		// binding bills from the moment it is made, so the replay
+		// moves it to the start of its billing.
+		bindOrg: func(t *testing.T, orgID string, from time.Time) {
+			t.Helper()
+			if err := store.UpdateAccountProviderCustomerID(ctx, orgID, "cus-"+orgID); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateAccountStripeSubscriptionItem(ctx, orgID, "sub-"+orgID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `UPDATE billing_identities SET billing_from = $2 WHERE account_id = $1 AND provider = 'polar'`,
+				orgID, from); err != nil {
+				t.Fatal(err)
+			}
+		},
 	})
 }
 
 // replayLedgerMonth replays October 2026 for eight paid billing subjects
-// against the backend, delivering through a real Polar provider as the
-// hourly pusher does, then reconciles the closed month.
-func replayLedgerMonth(t *testing.T, backend replayBackend) {
+// against the backend, delivering from source through a real Polar provider
+// as the hourly pusher does, then reconciles the closed month.
+func replayLedgerMonth(t *testing.T, source meter.UsageSource, backend replayBackend) {
 	ctx := context.Background()
 	store, markComplete := backend.store, backend.markComplete
 	deliveries, ok := store.(state.BillingDeliveryReader)
@@ -241,12 +250,13 @@ func replayLedgerMonth(t *testing.T, backend replayBackend) {
 	)
 	sort.SliceStable(events, func(i, j int) bool { return events[i].at.Before(events[j].at) })
 
+	ops := wire.NewOpsMetrics("meter_test_replay")
 	marked := month.Add(-time.Hour)
 	checkpoint := func(at time.Time) {
 		t.Helper()
 		markComplete(t, marked, at)
 		marked = at
-		p := meter.NewPusher(store, provider, discardLog(), func() time.Time { return at }, nil)
+		p := meter.NewPusher(store, provider, discardLog(), func() time.Time { return at }, ops).WithUsageSource(source)
 		if _, err := p.PushPending(ctx, 40*24*time.Hour); err != nil {
 			t.Fatalf("push at %s: %v", at, err)
 		}
@@ -290,7 +300,7 @@ func replayLedgerMonth(t *testing.T, backend replayBackend) {
 	// The month closed; the pusher delivers its last hours.
 	checkpoint(end.Add(2 * time.Hour))
 
-	clocked := meter.NewPusher(store, provider, discardLog(), func() time.Time { return end.Add(2 * time.Hour) }, nil)
+	clocked := meter.NewPusher(store, provider, discardLog(), func() time.Time { return end.Add(2 * time.Hour) }, nil).WithUsageSource(source)
 	reconciler := meter.NewLedgerReconciler(clocked, "polar", prometheus.NewRegistry())
 	passes, err := reconciler.RunOnce(ctx)
 	if err != nil {
@@ -308,6 +318,25 @@ func replayLedgerMonth(t *testing.T, backend replayBackend) {
 	}
 	if got := october.EgressResults; len(got) != 1 || got[meter.LedgerMatch] != len(subjects) {
 		t.Errorf("October egress results = %v (drift %d bytes), want every subject matched", got, october.EgressDriftBytes)
+	}
+
+	// Both sources agree on every hour, and each receipt names the source
+	// that billed it.
+	compared := counterTotal(t, ops.Registry(), "meterd_billing_usage_source_compared_windows_total")
+	if mismatched := counterTotal(t, ops.Registry(), "meterd_billing_usage_source_mismatch_windows_total"); mismatched != 0 {
+		t.Errorf("%v of %v compared windows disagreed", mismatched, compared)
+	}
+	if want := source != meter.UsageSourceOff; (compared > 0) != want {
+		t.Errorf("compared windows = %v; want some only when comparing (%s)", compared, source)
+	}
+	receipt := state.UsageSourceUsageMinutes
+	if source == meter.UsageSourceLedger {
+		receipt = state.UsageSourceLedger
+	}
+	if recorder, ok := store.(state.BillingDeliverySourceRecorder); !ok {
+		t.Errorf("%T records no receipt source", store)
+	} else if got, err := recorder.BillingDeliverySource(ctx, "polar", subjects["steady"], state.BillingMeterCompute, day(21, 10)); err != nil || got != receipt {
+		t.Errorf("steady's day-21 receipt source = %q (%v), want %q", got, err, receipt)
 	}
 
 	// What each subject's October was delivered, worked by hand.

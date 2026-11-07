@@ -154,6 +154,33 @@ WHERE account_id = sqlc.arg(account_id)::uuid
 GROUP BY 1
 ORDER BY 1;
 
+-- ADR-20261107105126. A compute delivery receipt with the usage source that
+-- quantified its hour; the first receipt for an hour wins.
+-- name: BillingUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_usage_deliveries (provider, account_id, window_start, mb_seconds, usage_source)
+VALUES (sqlc.arg(provider)::text, sqlc.arg(account_id)::uuid, sqlc.arg(window_start)::timestamptz,
+        sqlc.arg(mb_seconds)::bigint, sqlc.arg(usage_source)::text)
+ON CONFLICT (provider, account_id, window_start) DO NOTHING;
+
+-- ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
+-- name: BillingMeterUsageDeliveryRecordFromSource :exec
+INSERT INTO billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity, usage_source)
+VALUES (sqlc.arg(provider)::text, sqlc.arg(account_id)::uuid, sqlc.arg(meter)::text,
+        sqlc.arg(window_start)::timestamptz, sqlc.arg(quantity)::bigint, sqlc.arg(usage_source)::text)
+ON CONFLICT (provider, account_id, meter, window_start) DO NOTHING;
+
+-- name: BillingUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_usage_deliveries
+WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
+  AND window_start = sqlc.arg(window_start)::timestamptz;
+
+-- name: BillingMeterUsageDeliverySource :one
+SELECT coalesce(usage_source, '')::text AS usage_source
+FROM billing_meter_usage_deliveries
+WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
+  AND meter = sqlc.arg(meter)::text AND window_start = sqlc.arg(window_start)::timestamptz;
+
 -- One account's usage_minutes summed by UTC hour: compute MB-seconds and
 -- interface egress bytes, so the pusher can apply its hour rules to a month.
 -- name: UsageMinutesHourly :many

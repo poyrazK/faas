@@ -32789,9 +32789,11 @@ CREATE TABLE public.billing_meter_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     quantity bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
-    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
+    CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0)),
+    CONSTRAINT billing_meter_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 
@@ -33073,8 +33075,10 @@ CREATE TABLE public.billing_usage_deliveries (
     window_start timestamp with time zone NOT NULL,
     mb_seconds bigint NOT NULL,
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_source text,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
-    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+    CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_usage_deliveries_usage_source_chk CHECK (((usage_source IS NULL) OR (usage_source = ANY (ARRAY['usage_minutes'::text, 'ledger'::text]))))
 );
 
 

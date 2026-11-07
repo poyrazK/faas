@@ -98,17 +98,13 @@ var errNoHourlyUsage = errors.New("meter: store reads no hourly usage")
 
 // monthLiveEgressBilled is the egress acct is billed in live delivery for
 // the UTC month containing month, before through, by the hour rules, read
-// from usage_minutes. It is what the spend cap reserves for egress. A
-// provider that bills no egress returns 0; a store without hourly usage
+// through usage. It is what the spend cap reserves for egress. A provider
+// that bills no egress returns 0; a store without hourly usage
 // errNoHourlyUsage.
-func monthLiveEgressBilled(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, month, through time.Time) (int64, error) {
+func monthLiveEgressBilled(ctx context.Context, usage usageReader, provider billing.Provider, acct state.Account, month, through time.Time) (int64, error) {
 	policies, ok := provider.(billing.MeterUsagePolicyProvider)
 	if !ok {
 		return 0, nil
-	}
-	reader, ok := store.(state.HourlyMeterUsageReader)
-	if !ok {
-		return 0, errNoHourlyUsage
 	}
 	month, through = month.UTC(), through.UTC()
 	monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -118,12 +114,11 @@ func monthLiveEgressBilled(ctx context.Context, store state.Store, provider bill
 	if !through.After(monthStart) {
 		return 0, nil
 	}
-	rows, err := reader.HourlyMeterUsage(ctx, acct.ID, state.BillingMeterEgress, monthStart, through)
+	rows, err := usage.hourly(ctx, acct.ID, state.BillingMeterEgress, monthStart, through)
 	if err != nil {
 		return 0, err
 	}
-	grants := &monthGrants{store: store, byKey: map[string][]state.FinancialPriceSnapshot{}}
-	hours, err := billEgressHours(ctx, store, policies, grants, acct, rows, 0)
+	hours, err := billEgressHours(ctx, usage.store, policies, newMonthGrants(usage), acct, rows, 0)
 	if err != nil {
 		return 0, err
 	}

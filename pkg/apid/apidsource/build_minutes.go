@@ -33,10 +33,12 @@ func buildMinutesProblem(ctx context.Context, store Store, appID string, kind st
 	}
 	app, err := quota.AppByID(ctx, appID)
 	if err != nil {
+		buildMinutesUnreadable(log, appID, err)
 		return nil
 	}
 	owner, err := state.AppResourceAccount(ctx, quota, app)
 	if err != nil {
+		buildMinutesUnreadable(log, appID, err)
 		return nil
 	}
 	limits, ok := api.LimitsFor(owner.Plan)
@@ -47,13 +49,19 @@ func buildMinutesProblem(ctx context.Context, store Store, appID string, kind st
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	seconds, err := quota.BillingSubjectBuildSeconds(ctx, owner.ResourceOwnerID(), month, month.AddDate(0, 1, 0))
 	if err != nil {
-		if log != nil {
-			log.Warn("apidsource: build minutes unreadable; build admitted", "app_id", appID, "err", err)
-		}
+		buildMinutesUnreadable(log, appID, err)
 		return nil
 	}
 	if used := seconds / 60; used >= int64(limits.MonthlyBuildMinutes) {
 		return api.ErrPlanLimitBuildMinutes(limits, used)
 	}
 	return nil
+}
+
+// buildMinutesUnreadable logs a read the build quota could not make; the
+// build is admitted.
+func buildMinutesUnreadable(log *slog.Logger, appID string, err error) {
+	if log != nil {
+		log.Warn("apidsource: build minutes unreadable; build admitted", "app_id", appID, "err", err)
+	}
 }
