@@ -50,3 +50,16 @@ func (c *Client) SignInMethods(ctx context.Context) (SignInMethodsResponse, erro
 func (c *Client) LeaveOrg(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/orgs/"+url.PathEscape(slug)+"/leave", nil, nil)
 }
+
+// UnlinkSignInMethod removes a linked sign-in provider ("google" or
+// "github"). The account's last sign-in method cannot be removed.
+func (c *Client) UnlinkSignInMethod(ctx context.Context, provider string) error {
+	return c.do(ctx, "DELETE", "/v1/account/sign-in-methods/"+url.PathEscape(provider), nil, nil)
+}
+
+// RegenerateRecoveryCodes replaces the account's MFA recovery codes. The
+// call needs a recent step-up; the new codes are returned once.
+func (c *Client) RegenerateRecoveryCodes(ctx context.Context) (RecoveryCodesResponse, error) {
+	var out RecoveryCodesResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/recovery-codes", nil, &out)
+}

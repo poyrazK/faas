@@ -41919,6 +41919,10 @@ components:
         email:
           type: string
           format: email
+        display_name:
+          type: string
+          maxLength: 80
+          description: The member's display name; absent when unset.
           example: "bob@acme.com"
         role:
           type: string

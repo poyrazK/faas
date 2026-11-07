@@ -3595,6 +3595,16 @@ type AccountData struct {
 	// DisplayName and DisplayNameConfirmToken back the profile name form.
 	DisplayName             string
 	DisplayNameConfirmToken string
+	// Sessions lists signed-in browsers; SessionRevokeConfirmToken backs
+	// their "Sign out" buttons.
+	Sessions                  []AccountSessionRow
+	SessionRevokeConfirmToken string
+	// Providers lists linked Google/GitHub sign-ins; HasPassword and
+	// ProviderUnlinkConfirmToken back their "Remove" buttons.
+	Providers                  []AccountProviderRow
+	HasPassword                bool
+	MFAEnabled                 bool
+	ProviderUnlinkConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -3622,6 +3632,23 @@ type AccountData struct {
 	// window-selector nav; AsOf is the pre-formatted
 	// timestamp.
 	SLODuration views.SLOStamp
+}
+
+// AccountSessionRow is one signed-in browser on the account page.
+type AccountSessionRow struct {
+	ID        string
+	IssuedAt  string
+	IssuedIP  string
+	IssuedUA  string
+	LastSeen  string
+	IsCurrent bool
+}
+
+// AccountProviderRow is one linked Google or GitHub sign-in.
+type AccountProviderRow struct {
+	Provider string
+	Email    string
+	LinkedAt string
 }
 
 // ManagedPostgresData is the customer-facing database overview payload.

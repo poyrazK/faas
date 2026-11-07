@@ -3,8 +3,6 @@ package apidserver
 import (
 	"net/http"
 
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,15 +33,8 @@ func (s *server) resendEmailVerification(w http.ResponseWriter, r *http.Request,
 // dashboardResendVerification is the account page's form for the same
 // action. It redirects back to the account page with a flash.
 func (s *server) dashboardResendVerification(w http.ResponseWriter, r *http.Request) {
-	acct, ok := AccountFrom(r.Context())
+	acct, ok := s.accountFormAccount(w, r, dashboardVerifyResendAction, dashboardVerifyResendCSRFCookie)
 	if !ok {
-		writeDashboardUnauthorized(w, r)
-		return
-	}
-	if err := middleware.VerifyAuthenticatedNamed(
-		s.sessions, r, dashboardVerifyResendAction, acct.ID, dashboardVerifyResendCSRFCookie); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	if !acct.EmailVerified() {

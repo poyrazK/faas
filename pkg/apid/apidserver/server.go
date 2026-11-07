@@ -5171,6 +5171,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))
+	mux.Handle("POST /login/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.fromTrustedOrigin(browserAuthForm(http.HandlerFunc(s.postV1AuthSignupMagicLink), auth.finishBrowserMagicLink))))
 	mux.Handle("POST /v1/auth/signup/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.postV1AuthSignupMagicLink)))
@@ -5307,6 +5310,8 @@ func (s *server) handler() http.Handler {
 	// cancelDeletion from handlers_account.go so audit, email, and
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardDelete)))))
+	mux.Handle("POST /dashboard/account/sessions/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRevokeSession))))
+	mux.Handle("POST /dashboard/account/providers/{provider}/unlink", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUnlinkProvider))))
 	mux.Handle("POST /dashboard/account/display-name", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetDisplayName))))
 	mux.Handle("POST /dashboard/account/email", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRequestEmailChange))))
 	mux.Handle("POST /dashboard/account/verify-email/resend", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardResendVerification))))

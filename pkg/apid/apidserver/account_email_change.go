@@ -39,21 +39,14 @@ type emailChangeInput struct {
 
 // dashboardRequestEmailChange is the account page form.
 func (s *server) dashboardRequestEmailChange(w http.ResponseWriter, r *http.Request) {
-	acct, ok := AccountFrom(r.Context())
+	acct, ok := s.accountFormAccount(w, r, dashboardEmailChangeAct, dashboardEmailChangeCSRFC)
 	if !ok {
-		writeDashboardUnauthorized(w, r)
-		return
-	}
-	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardEmailChangeAct, acct.ID, dashboardEmailChangeCSRFC); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	in := emailChangeInput{Email: r.FormValue("email"), CurrentPassword: r.FormValue("current_password")}
-	if !s.requestEmailChange(w, r, acct, in) {
-		return
-	}
-	http.Redirect(w, r, "/dashboard/account?email_change=sent", http.StatusSeeOther)
+	runAccountForm(w, r, "email_change=sent", func(cw http.ResponseWriter) bool {
+		return s.requestEmailChange(cw, r, acct, in)
+	})
 }
 
 // postAccountEmailChange is POST /v1/account/email for the web console. It

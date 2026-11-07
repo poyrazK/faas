@@ -417,7 +417,11 @@ func cmdOrgsMembersLs(args []string) int {
 		return jsonOut(writeNDJSON(resp.Members))
 	}
 	for _, m := range resp.Members {
-		fmt.Printf("%-36s %-32s %-12s %s\n", m.AccountID, m.Email, m.Role, m.JoinedAt)
+		name := m.DisplayName
+		if name == "" {
+			name = "-"
+		}
+		fmt.Printf("%-36s %-32s %-24s %-12s %s\n", m.AccountID, m.Email, name, m.Role, m.JoinedAt)
 	}
 	return 0
 }

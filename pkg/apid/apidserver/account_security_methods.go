@@ -96,11 +96,19 @@ func (s *server) unlinkSignInMethod(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, csrfMismatchProblem)
 		return
 	}
-	provider := r.PathValue("provider")
-	methods, err := s.signInMethods(r.Context(), acct)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load sign-in methods"))
+	if problem := s.unlinkProvider(r.Context(), acct, r.PathValue("provider")); problem != nil {
+		api.WriteProblem(w, problem)
 		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// unlinkProvider removes a linked provider unless it is the last way to
+// sign in. Shared by the API and the account page.
+func (s *server) unlinkProvider(ctx context.Context, acct state.Account, provider string) *api.Problem {
+	methods, err := s.signInMethods(ctx, acct)
+	if err != nil {
+		return api.ErrCapacity("could not load sign-in methods")
 	}
 	linked, others := false, 0
 	for _, p := range methods.Providers {
@@ -111,20 +119,17 @@ func (s *server) unlinkSignInMethod(w http.ResponseWriter, r *http.Request, acct
 		}
 	}
 	if !linked {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not linked", provider+" is not linked to this account"))
-		return
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not linked", provider+" is not linked to this account")
 	}
 	if !methods.Password && others == 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Last sign-in method", "set a password or link another provider before removing this one"))
-		return
+		return api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Last sign-in method", "set a password or link another provider before removing this one")
 	}
-	if _, err := s.store.(state.AccountFlowStore).DeleteOAuthLink(r.Context(), acct.ID, provider); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not remove the sign-in method"))
-		return
+	if _, err := s.store.(state.AccountFlowStore).DeleteOAuthLink(ctx, acct.ID, provider); err != nil {
+		return api.ErrCapacity("could not remove the sign-in method")
 	}
-	s.audit.Emit(r.Context(), "account.sign_in_method_unlinked", &acct.ID, map[string]any{"provider": provider})
-	w.WriteHeader(http.StatusNoContent)
+	s.audit.Emit(ctx, "account.sign_in_method_unlinked", &acct.ID, map[string]any{"provider": provider})
+	return nil
 }
 
 // alertSignInMethodLinked mails the account when an OAuth provider is newly

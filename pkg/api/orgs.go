@@ -263,26 +263,30 @@ type OrgWithRole struct {
 type OrgMemberResponse struct {
 	AccountID string `json:"account_id"`
 	Email     string `json:"email"`
-	Role      string `json:"role"`
-	JoinedAt  string `json:"joined_at"`
+	// DisplayName is the member's optional name; omitted when unset.
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role"`
+	JoinedAt    string `json:"joined_at"`
 }
 
 // OrgMemberRow is the typed counterpart, joined with the account row.
 type OrgMemberRow struct {
-	AccountID string
-	Email     string
-	Role      string
-	JoinedAt  time.Time
+	AccountID   string
+	Email       string
+	DisplayName string
+	Role        string
+	JoinedAt    time.Time
 }
 
 // OrgMemberResponseFromRow renders a typed OrgMemberRow as the
 // wire-shaped OrgMemberResponse.
 func OrgMemberResponseFromRow(r OrgMemberRow) OrgMemberResponse {
 	return OrgMemberResponse{
-		AccountID: r.AccountID,
-		Email:     r.Email,
-		Role:      r.Role,
-		JoinedAt:  FormatAlertTime(r.JoinedAt),
+		AccountID:   r.AccountID,
+		Email:       r.Email,
+		DisplayName: r.DisplayName,
+		Role:        r.Role,
+		JoinedAt:    FormatAlertTime(r.JoinedAt),
 	}
 }
 

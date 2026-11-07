@@ -62,6 +62,54 @@
         <button type="submit">Change email</button>
       </form>
       <p class="muted">We email a confirmation link to the new address. Accounts with two-factor authentication confirm with a code first.</p>
+
+      <h2>Sign-in methods</h2>
+      <p>Password: {{if $d.HasPassword}}set{{else}}not set{{end}} · Two-factor authentication: {{if $d.MFAEnabled}}on{{else}}off{{end}}</p>
+      {{if $d.Providers}}
+        <table>
+          <thead><tr><th>Provider</th><th>Email</th><th>Linked</th><th></th></tr></thead>
+          <tbody>
+            {{range $d.Providers}}
+              <tr>
+                <td>{{.Provider}}</td>
+                <td><code>{{.Email}}</code></td>
+                <td>{{.LinkedAt}}</td>
+                <td>
+                  <form class="inline" method="POST" action="/dashboard/account/providers/{{.Provider}}/unlink">
+                    <input type="hidden" name="csrf_token" value="{{$d.ProviderUnlinkConfirmToken}}">
+                    <button type="submit">Remove</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="muted">No Google or GitHub sign-in is linked. Use "Continue with Google" or "Continue with GitHub" on the sign-in page with this email to link one.</p>
+      {{end}}
+
+      <h2>Sessions</h2>
+      {{if $d.Sessions}}
+        <table>
+          <thead><tr><th>Signed in</th><th>Address</th><th>Browser</th><th>Last seen</th><th></th></tr></thead>
+          <tbody>
+            {{range $d.Sessions}}
+              <tr>
+                <td>{{.IssuedAt}}</td>
+                <td><code>{{.IssuedIP}}</code></td>
+                <td>{{.IssuedUA}}</td>
+                <td>{{.LastSeen}}</td>
+                <td>
+                  <form class="inline" method="POST" action="/dashboard/account/sessions/{{.ID}}/revoke">
+                    <input type="hidden" name="csrf_token" value="{{$d.SessionRevokeConfirmToken}}">
+                    <button type="submit">{{if .IsCurrent}}Sign out (this browser){{else}}Sign out{{end}}</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
       <h2>API keys</h2>
       <p>Create a key with the CLI: <code>gregale keys add &lt;label&gt;</code>. Plaintext shows ONCE; store it now.</p>
       {{if $d.Keys}}

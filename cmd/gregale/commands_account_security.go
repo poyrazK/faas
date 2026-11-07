@@ -52,7 +52,7 @@ func cmdAccountSessionsList(args []string) int {
 		if s.CurrentSession {
 			current = " (this browser)"
 		}
-		fmt.Fprintf(osStdout, "%s  %s  %s  %s%s\n", s.ID, s.IssuedAt, s.IssuedIP, s.IssuedUA, current)
+		_, _ = fmt.Fprintf(osStdout, "%s  %s  %s  %s%s\n", s.ID, s.IssuedAt, s.IssuedIP, s.IssuedUA, current)
 	}
 	return 0
 }
@@ -191,10 +191,10 @@ func cmdAccountProvider(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	fmt.Fprintf(osStdout, "password:   %s\n", onOff(out.Password))
-	fmt.Fprintf(osStdout, "two-factor: %s\n", onOff(out.MFA))
+	_, _ = fmt.Fprintf(osStdout, "password:   %s\n", onOff(out.Password))
+	_, _ = fmt.Fprintf(osStdout, "two-factor: %s\n", onOff(out.MFA))
 	for _, p := range out.Providers {
-		fmt.Fprintf(osStdout, "%-10s  %s  linked %s\n", p.Provider, p.Email, p.LinkedAt)
+		_, _ = fmt.Fprintf(osStdout, "%-10s  %s  linked %s\n", p.Provider, p.Email, p.LinkedAt)
 	}
 	PrintProgress(osStdout, "Remove a linked provider from the account page: %s", dashboardAccountURL(apiBase()))
 	return 0

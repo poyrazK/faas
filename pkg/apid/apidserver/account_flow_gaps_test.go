@@ -400,6 +400,140 @@ func TestSignInIsNew(t *testing.T) {
 	}
 }
 
+// flowAccountPage renders /dashboard/account and returns the body and the
+// form CSRF cookies it set.
+func flowAccountPage(t *testing.T, h http.Handler, session *http.Cookie, query string) (string, []*http.Cookie) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/account"+query, nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("account page = %d: %s", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String(), rec.Result().Cookies()
+}
+
+func flowFormToken(t *testing.T, body, action string) string {
+	t.Helper()
+	m := regexp.MustCompile(`action="` + regexp.QuoteMeta(action) + `">\s*<input type="hidden" name="csrf_token" value="([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no form for %s on the account page", action)
+	}
+	return m[1]
+}
+
+func flowDashboardPost(h http.Handler, path string, form url.Values, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// The account page lists sessions and linked providers, and every form on
+// it answers a refusal with a redirect to a fixed message, not JSON.
+func TestAccountPageSecurityForms(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	mgr := *srv.Sessions()
+	flowSignup(t, h, "page@example.com", "page-password-123!")
+	acct, err := store.AccountByEmail(t.Context(), "page@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertOAuthLink(t.Context(), acct.ID, "github", "gh-page", acct.Email, true); err != nil {
+		t.Fatal(err)
+	}
+	other := "33333333-3333-3333-3333-333333333333"
+	if _, err := store.CreateSession(t.Context(), other, acct.ID, "203.0.113.9", "other-browser"); err != nil {
+		t.Fatal(err)
+	}
+	session := flowSession(t, store, mgr, acct.ID)
+	body, cookies := flowAccountPage(t, h, session, "")
+	for _, want := range []string{"Sign-in methods", "github", "Sessions", "other-browser", "Sign out (this browser)"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("account page lacks %q", want)
+		}
+	}
+	all := append([]*http.Cookie{session}, cookies...)
+
+	rec := flowDashboardPost(h, "/dashboard/account/email", url.Values{
+		"csrf_token": {flowFormToken(t, body, "/dashboard/account/email")}, "email": {"page2@example.com"}, "current_password": {"wrong-password-123!"},
+	}, all...)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "account_error=password") {
+		t.Fatalf("wrong password on the email form = %d %q, want a redirect with account_error=password", rec.Code, rec.Header().Get("Location"))
+	}
+	if page, _ := flowAccountPage(t, h, session, "?account_error=password"); !strings.Contains(page, "Your current password was not correct.") {
+		t.Fatal("account page does not explain the refused email change")
+	}
+	if page, _ := flowAccountPage(t, h, session, "?account_error=%3Cscript%3E"); strings.Contains(page, "<script>") {
+		t.Fatal("account page echoed an unknown error key")
+	}
+
+	rec = flowDashboardPost(h, "/dashboard/account/sessions/"+other+"/revoke", url.Values{
+		"csrf_token": {regexp.MustCompile(`action="/dashboard/account/sessions/` + other + `/revoke">\s*<input type="hidden" name="csrf_token" value="([^"]+)"`).FindStringSubmatch(body)[1]},
+	}, all...)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "session=revoked") {
+		t.Fatalf("revoke other session = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if got, err := store.GetSession(t.Context(), other); err != nil || got.RevokedAt == nil {
+		t.Fatalf("other session not revoked: %+v %v", got, err)
+	}
+
+	rec = flowDashboardPost(h, "/dashboard/account/providers/github/unlink", url.Values{
+		"csrf_token": {flowFormToken(t, body, "/dashboard/account/providers/github/unlink")},
+	}, all...)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "provider=removed") {
+		t.Fatalf("unlink github with a password set = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = flowDashboardPost(h, "/dashboard/account/display-name", url.Values{"csrf_token": {"stale"}, "display_name": {"x"}}, all...)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "account_error=expired") {
+		t.Fatalf("stale CSRF token = %d %q, want account_error=expired", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// The sign-in page offers a magic link and answers the browser form with
+// the same page and a constant message.
+func TestLoginPageMagicLink(t *testing.T) {
+	srv, mailer, _ := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if !strings.Contains(page.Body.String(), `action="/login/magic-link"`) {
+		t.Fatal("sign-in page has no magic link form")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/login/magic-link", strings.NewReader(url.Values{"email": {"linky@example.com"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "a sign-in link is on its way") {
+		t.Fatalf("magic link form = %d: %s", rec.Code, rec.Body.String())
+	}
+	flowLastToken(t, mailer, flowMagicLinkToken)
+}
+
+// Org member lists carry each member's display name.
+func TestOrgMembersShowDisplayName(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	org := apidserver.SeedSharedOrgWithOwner(t, e, "named-team", "Named Team", api.PlanPro)
+	dev, _ := sharedAppMember(t, store, org, state.OrgRoleDeveloper, api.ScopesAdminOnly)
+	if err := store.SetAccountDisplayName(t.Context(), dev.ID, "Dev Person"); err != nil {
+		t.Fatal(err)
+	}
+	r := e.Do(t, http.MethodGet, "/v1/orgs/"+org.Slug+"/members", nil, nil)
+	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), `"display_name":"Dev Person"`) {
+		t.Fatalf("members = %d %s", r.Code, r.Body)
+	}
+}
+
 // Any non-owner member can leave an org; the owner must transfer first and
 // nobody leaves a personal org. DELETE /members/{self} stays refused.
 func TestLeaveOrg(t *testing.T) {
