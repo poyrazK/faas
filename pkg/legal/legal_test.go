@@ -1,6 +1,7 @@
 package legal
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -185,5 +186,21 @@ func TestOperatorValuesAreEscaped(t *testing.T) {
 	}
 	if strings.Contains(string(body), "<script>x") {
 		t.Fatal("operator name rendered unescaped")
+	}
+}
+
+// docs/DPA.md is shipped to every control-plane host (FAAS_DPA_PATH) and
+// vendored by the docs site as-is, so it must read as a finished agreement:
+// the live page once showed raw {{CUSTOMER_NAME}} placeholders (#2644).
+func TestDPAHasNoPlaceholders(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/DPA.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blank := regexp.MustCompile(`_{4,}`)
+	for _, re := range []*regexp.Regexp{leftover, blank} {
+		if m := re.Find(raw); m != nil {
+			t.Errorf("docs/DPA.md contains placeholder %q", m)
+		}
 	}
 }
