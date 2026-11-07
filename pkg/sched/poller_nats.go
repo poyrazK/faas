@@ -52,6 +52,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -101,7 +102,11 @@ func NewNATSBroker(rawURL string) (*natsBroker, error) {
 		nats.Name("gregale-schedd"),
 		nats.SetCustomDialer(newNATSEgressDialer(5 * time.Second)),
 		nats.MaxReconnects(-1),
-		nats.ReconnectWait(2 * time.Second),
+		// Durable consumers reconnect for the daemon's lifetime, but an outage
+		// must not make every trigger reconnect on the same fixed cadence.
+		nats.CustomReconnectDelay(func(attempt int) time.Duration {
+			return retry.Delay(2*time.Second, 30*time.Second, attempt)
+		}),
 		nats.Timeout(5 * time.Second),
 		nats.PingInterval(20 * time.Second),
 	}

@@ -47,20 +47,21 @@ func TestPlanComputeCaps(t *testing.T) {
 		{name: "a held suspension is not rewritten", ceiling: 25 * hour, ledger: 25 * hour,
 			scopes:   []computeCapScope{{used: 25 * hour, quota: 25 * hour}},
 			wantUsed: 25 * hour, wantRemaining: 0, wantTargets: []int64{25 * hour}, wantApply: []bool{false}},
-		// ADR-20261025094915 amendment 2026-11-04: the provider's counters
-		// trail use, so the quotas keep back what each scope can use unseen.
-		{name: "the counter lag is kept back", ceiling: 5 * hour, ledger: 0,
-			scopes:   []computeCapScope{{used: hour, lag: 1800}},
-			wantUsed: hour, wantRemaining: 4*hour - 1800, wantTargets: []int64{5*hour - 1800}, wantApply: []bool{true}},
-		{name: "every scope's lag is kept back", ceiling: 25 * hour, ledger: 0,
-			scopes:   []computeCapScope{{used: hour, lag: 1800}, {used: 2 * hour, lag: 3600}},
-			wantUsed: 3 * hour, wantRemaining: 22*hour - 5400, wantTargets: []int64{23*hour - 5400, 24*hour - 5400}, wantApply: []bool{true, true}},
-		{name: "use within the lag of the ceiling suspends", ceiling: 5 * hour, ledger: 0,
-			scopes:   []computeCapScope{{used: 5*hour - 1800, quota: 5 * hour, lag: 1800}},
-			wantUsed: 5*hour - 1800, wantRemaining: 0, wantTargets: []int64{5*hour - 1800}, wantApply: []bool{true}},
-		{name: "a lag above the ceiling suspends without overflow", ceiling: 5 * hour, ledger: 0,
-			scopes:   []computeCapScope{{used: 0, lag: 1 << 62}},
-			wantUsed: 0, wantRemaining: 0, wantTargets: []int64{1}, wantApply: []bool{true}},
+		// ADR-20261025094915 amendment 2026-11-05: a provider that reports
+		// use counts it as the ledger plus each scope's use since the
+		// ledger's coverage; the quotas stay on the provider's counters.
+		{name: "reported use adds to the ledger", ceiling: 5 * hour, ledger: 2 * hour,
+			scopes:   []computeCapScope{{used: hour, quota: 5 * hour, reported: true, unreported: 1800}},
+			wantUsed: 2*hour + 1800, wantRemaining: 3*hour - 1800, wantTargets: []int64{4*hour - 1800}, wantApply: []bool{true}},
+		{name: "a stale counter does not hide reported use", ceiling: 5 * hour, ledger: 4 * hour,
+			scopes:   []computeCapScope{{used: 600, quota: 5 * hour, reported: true, unreported: hour}},
+			wantUsed: 5 * hour, wantRemaining: 0, wantTargets: []int64{600}, wantApply: []bool{true}},
+		{name: "every scope's reported use counts", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: hour, reported: true, unreported: 600}, {used: 0, reported: true, unreported: 1200}},
+			wantUsed: hour + 1800, wantRemaining: 24*hour - 1800, wantTargets: []int64{25*hour - 1800, 24*hour - 1800}, wantApply: []bool{true, true}},
+		{name: "one unreported scope keeps the counters", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: 3 * hour, reported: true, unreported: 600}, {used: hour}},
+			wantUsed: 4 * hour, wantRemaining: 21 * hour, wantTargets: []int64{24 * hour, 22 * hour}, wantApply: []bool{true, true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +101,24 @@ type capTestProvider struct {
 	observed map[string]ComputeCapObservation
 	setErr   map[string]error
 	set      map[string]int64
+	holds    map[string]bool
+}
+
+func (p *capTestProvider) ComputeHeld(_ context.Context, id string) (bool, error) {
+	return p.holds[id], nil
+}
+
+func (p *capTestProvider) HoldForDeletion(_ context.Context, id string) error {
+	if p.holds == nil {
+		p.holds = map[string]bool{}
+	}
+	p.holds[id] = true
+	return nil
+}
+
+func (p *capTestProvider) ReleaseDeletionHold(_ context.Context, id string) error {
+	delete(p.holds, id)
+	return nil
 }
 
 func (p *capTestProvider) ObserveComputeCap(_ context.Context, id string) (ComputeCapObservation, error) {
@@ -121,8 +140,22 @@ func (p *capTestProvider) SetComputeCap(_ context.Context, id string, quota int6
 // capTestStore serves only the two reads the enforcer makes.
 type capTestStore struct {
 	UsageStore
-	databases []Database
-	ledger    map[string]int64
+	databases  []Database
+	ledger     map[string]int64
+	holdClaims *MemoryStore
+}
+
+func (s *capTestStore) ClaimComputeHold(ctx context.Context, database Database, token string, now, until time.Time) (Database, error) {
+	if s.holdClaims == nil {
+		s.holdClaims = NewMemoryStore()
+		for _, row := range s.databases {
+			s.holdClaims.databases[row.ID] = cloneDatabase(row)
+		}
+	}
+	return s.holdClaims.ClaimComputeHold(ctx, database, token, now, until)
+}
+func (s *capTestStore) ReleaseComputeHold(ctx context.Context, id, token string, now time.Time) error {
+	return s.holdClaims.ReleaseComputeHold(ctx, id, token, now)
 }
 
 func (s *capTestStore) ListUsageDatabases(_ context.Context, after UsageDatabaseCursor, limit int) ([]Database, error) {

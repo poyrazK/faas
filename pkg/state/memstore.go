@@ -211,6 +211,8 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	checkedRollbackReleaseReviews        map[string][]ReleaseRun
+	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
 	alertHistoricalClaims                map[string]string
 	recoveryPredecessors                 map[string]string
@@ -587,7 +589,8 @@ type MemStore struct {
 	githubBindings map[string]GitHubBinding
 	// githubInstalls is keyed by accountID + NUL + installationID so an
 	// account can retain personal and organization installations.
-	githubInstalls map[string]GitHubInstall
+	githubInstalls      map[string]GitHubInstall
+	githubVerifications map[string]GitHubConnectionVerification
 	// githubWebhookSecrets is the per-tenant webhook secret
 	// store (PR-D / ADR-012 §7 amendment). Keyed by
 	// installation_id so the resolver cache at
@@ -615,6 +618,8 @@ type MemStore struct {
 	deployFailedEmailAt          map[string]time.Time
 	deployments                  map[string]Deployment
 	deploymentSubmissionReceipts map[string]api.DeploymentSubmissionReceipt
+	environmentRollbackReceipts  map[string]api.EnvironmentRollbackReceipt
+	environmentPromotionReceipts map[string]api.EnvironmentPromotionReceipt
 	deploymentPromotionReceipts  map[string]api.DeploymentPromotionReceipt
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
@@ -1047,6 +1052,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
+	// amendment 1), keyed by task id.
+	releaseOutcomeChecks map[string]ReleaseOutcomeCheck
 	// appForks are production fork intents (ADR-732), keyed by fork id.
 	appForks map[string]AppFork
 	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
@@ -1457,6 +1465,8 @@ type MemStore struct {
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
 	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
+	projectSharedSecretGenerations            map[string]int64
+	projectAppStageAdmissions                 map[string]string
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -1512,11 +1522,12 @@ type MemStore struct {
 	resourceLabels map[LabelKind]map[string]map[string]string
 }
 
-// installRepoKey mirrors the projects_install_repo_uniq partial index
-// (install_id, repo_full_name) from migration 00073. Standalone
+// installRepoKey mirrors the projects_account_install_repo_uniq partial index
+// (account_id, install_id, repo_full_name). Standalone
 // projects (install_id == nil, repo_full_name == "") never enter this
 // map; the indexed lookups are bound-only.
 type installRepoKey struct {
+	AccountID    string
 	InstallID    int64
 	RepoFullName string
 }
@@ -3795,11 +3806,11 @@ func (m *MemStore) CreateProject(ctx context.Context, p Project) (Project, error
 			return Project{}, ErrConflict
 		}
 	}
-	// (install_id, repo_full_name) uniqueness — mirrors
-	// projects_install_repo_uniq. Standalone projects
+	// (account_id, install_id, repo_full_name) uniqueness — mirrors
+	// projects_account_install_repo_uniq. Standalone projects
 	// (InstallID == 0 or empty RepoFullName) skip this check entirely.
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		key := installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName}
+		key := installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName}
 		if _, taken := m.projectsByInstallRepo[key]; taken {
 			return Project{}, ErrConflict
 		}
@@ -3818,7 +3829,7 @@ func (m *MemStore) CreateProject(ctx context.Context, p Project) (Project, error
 	}
 	m.projectsByAccountSlug[p.AccountID][p.Slug] = p.ID
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		m.projectsByInstallRepo[installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName}] = p.ID
+		m.projectsByInstallRepo[installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName}] = p.ID
 	}
 	m.seedProjectProductionEnvironmentLocked(p)
 	return p, nil
@@ -3871,25 +3882,36 @@ func (m *MemStore) ProjectBySlug(_ context.Context, accountID, slug string) (Pro
 	return p, nil
 }
 
-// ProjectByRepo looks up by (install_id, repo_full_name). The
-// accountID filter is optional — passing "" matches the first hit
-// across accounts (mirrors the SQL `($3 = ”)` clause in pgstore).
-// This is the push-dispatch lookup Phase 5 wires to githubd.
+// ProjectByRepo resolves a repository within one account. An unscoped lookup
+// fails closed when more than one account has imported the repository.
 func (m *MemStore) ProjectByRepo(_ context.Context, accountID string, installID int64, repoFullName string) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id, ok := m.projectsByInstallRepo[installRepoKey{InstallID: installID, RepoFullName: repoFullName}]
-	if !ok {
+	if accountID != "" {
+		id, ok := m.projectsByInstallRepo[installRepoKey{AccountID: accountID, InstallID: installID, RepoFullName: repoFullName}]
+		if !ok {
+			return Project{}, ErrNotFound
+		}
+		project, ok := m.projects[id]
+		if !ok {
+			return Project{}, ErrNotFound
+		}
+		return project, nil
+	}
+	var found Project
+	for _, p := range m.projects {
+		if p.InstallID != installID || p.RepoFullName != repoFullName {
+			continue
+		}
+		if found.ID != "" {
+			return Project{}, ErrConflict
+		}
+		found = p
+	}
+	if found.ID == "" {
 		return Project{}, ErrNotFound
 	}
-	p, ok := m.projects[id]
-	if !ok {
-		return Project{}, ErrNotFound
-	}
-	if accountID != "" && p.AccountID != accountID {
-		return Project{}, ErrNotFound
-	}
-	return p, nil
+	return found, nil
 }
 
 func (m *MemStore) ListProjectsForAccount(_ context.Context, accountID string) ([]Project, error) {
@@ -3985,7 +4007,7 @@ func (m *MemStore) UpdateProjectBinding(ctx context.Context, accountID, projectI
 		return Project{}, ErrNotFound
 	}
 	if installID != 0 && repoFullName != "" {
-		key := installRepoKey{InstallID: installID, RepoFullName: repoFullName}
+		key := installRepoKey{AccountID: p.AccountID, InstallID: installID, RepoFullName: repoFullName}
 		if existing, exists := m.projectsByInstallRepo[key]; exists && existing != projectID {
 			return Project{}, ErrConflict
 		}
@@ -3994,10 +4016,10 @@ func (m *MemStore) UpdateProjectBinding(ctx context.Context, accountID, projectI
 	// update must leave the prior binding reachable, matching PostgreSQL's
 	// statement-atomic UPDATE behavior.
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		delete(m.projectsByInstallRepo, installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName})
+		delete(m.projectsByInstallRepo, installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName})
 	}
 	if installID != 0 && repoFullName != "" {
-		key := installRepoKey{InstallID: installID, RepoFullName: repoFullName}
+		key := installRepoKey{AccountID: p.AccountID, InstallID: installID, RepoFullName: repoFullName}
 		m.projectsByInstallRepo[key] = projectID
 	}
 	p.RepoFullName = repoFullName
@@ -4050,7 +4072,17 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			detachedApps[appID] = app
 		}
 	}
+	for id, receipt := range m.environmentPromotionReceipts {
+		if receipt.ProjectID == projectID {
+			delete(m.environmentPromotionReceipts, id)
+		}
+	}
 	delete(m.projects, projectID)
+	for id, receipt := range m.environmentRollbackReceipts {
+		if receipt.ProjectID == projectID {
+			delete(m.environmentRollbackReceipts, id)
+		}
+	}
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.ProjectID == projectID {
 			delete(m.environmentGitOps, sourceID)
@@ -4066,7 +4098,7 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 	// the installRepoKey struct; only present for projects
 	// bound to a GitHub install.
 	if p.InstallID != 0 && p.RepoFullName != "" {
-		delete(m.projectsByInstallRepo, installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName})
+		delete(m.projectsByInstallRepo, installRepoKey{AccountID: p.AccountID, InstallID: p.InstallID, RepoFullName: p.RepoFullName})
 	}
 	// Walk apps and null project_id where it points here. This
 	// mirrors the PG trigger ON DELETE SET NULL on the
@@ -4291,7 +4323,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			continue
 		}
 		for _, deployment := range m.deployments {
-			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
+			if deployment.AppID == app.ID && !deployment.Status.IsTerminal() &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
 				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
@@ -4316,6 +4348,16 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 
 	m.deleteEnvironmentInvocationsLocked(environmentID)
+	// Retirement is atomic with deletion: history keeps its terminal outcome,
+	// but a recreated slug cannot reactivate a release whose settings are gone.
+	now := time.Now().UTC()
+	for id, deployment := range m.deployments {
+		if app := m.apps[deployment.AppID]; app.ProjectID == projectID &&
+			normalizedDeploymentScope(deployment.Scope) == slug && deployment.DeletedAt == nil {
+			deployment.DeletedAt, deployment.DeletedByPrincipal = &now, "system:environment-deletion"
+			m.putDeploymentLocked(id, deployment)
+		}
+	}
 
 	for key, env := range m.envs {
 		if env.Scope != slug {
@@ -5054,7 +5096,7 @@ func (m *MemStore) ApplyProjectReconcile(
 	m.apps, m.crons = stagedApps, stagedCrons
 	for _, spec := range stagedSpecs {
 		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
-		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(spec.EnvironmentID, spec.AppID)] = spec.ID
+		m.putWorkloadSpecHeadLocked(spec)
 	}
 	// Allocate addresses only once both traffic and capacity validation have
 	// accepted the proposed topology. Refused creates must not consume indices.
@@ -8169,8 +8211,8 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 // (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
-// PgStore holds. Installation ownership is globally exclusive, just as the
-// PostgreSQL unique index requires.
+// PgStore holds. Each account has an independent deployment authorization;
+// GitHub login identity ownership is enforced separately by UpsertOAuthLink.
 func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) error {
 	if inst.AccountID == "" {
 		return ErrNotFound
@@ -8183,11 +8225,6 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, existing := range m.githubInstalls {
-		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
-			return ErrConflict
-		}
-	}
 	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
@@ -8247,8 +8284,8 @@ func (m *MemStore) GitHubInstallForAccountInstallation(_ context.Context, accoun
 }
 
 // RecordGitHubInstallationSync mirrors PgStore's health projection for the
-// on-demand dashboard sync path. The installation ID is globally unique, so
-// the account key can be found without widening the public Store interface.
+// installation-wide sync path. Every independently authorized account gets
+// the same remote installation health projection.
 func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationID int64, syncedAt time.Time, syncErr string, remoteRepoCount, detachedCount int) error {
 	if installationID <= 0 {
 		return nil
@@ -8271,7 +8308,6 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 		inst.LastReconcileRepositoryCount = remoteRepoCount
 		inst.LastReconcileDetachedCount = detachedCount
 		m.githubInstalls[key] = inst
-		return nil
 	}
 	return nil
 }
@@ -8403,6 +8439,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(app, normalizedDeploymentScope(d.Scope)); err != nil {
+		return Deployment{}, 0, err
 	}
 	if err := guardReleaseAdditionDeployment(d, m.projectReleaseAdditions[d.AppID]); err != nil {
 		return Deployment{}, 0, err
@@ -8701,7 +8740,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	m.recordRecoveryPredecessorLocked(d)
 	if reviewedSpec.ID != "" {
 		m.projectEnvironmentWorkloadSpecs[reviewedSpec.ID] = reviewedSpec
-		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(reviewedSpec.EnvironmentID, app.ID)] = reviewedSpec.ID
+		m.putWorkloadSpecHeadLocked(reviewedSpec)
 	}
 	for id, row := range proposed {
 		m.putDeploymentLocked(id, row)
@@ -8770,6 +8809,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 		}
 		d.StagedReview = &review
 	}
+	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
 }
 
@@ -9660,7 +9700,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID, scope st
 	found := false
 	for _, d := range m.deployments {
 		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
-		if d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
+		if d.DeletedAt == nil && d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
 	}
@@ -9686,7 +9726,7 @@ func (m *MemStore) GetDeploymentByIDScopedToSuperseded(_ context.Context, appID,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[deploymentID]
-	if !ok || d.AppID != appID {
+	if !ok || d.AppID != appID || d.DeletedAt != nil {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q: %w", deploymentID, appID, ErrNoRollbackTarget)
 	}
 	if d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
@@ -9959,6 +9999,9 @@ func (m *MemStore) UpdateDeploymentStatus(ctx context.Context, id string, status
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	if d.DeletedAt != nil && !status.IsTerminal() {
+		return ErrInvalidStateTransition
+	}
 
 	if status == DeployLive && d.Status != DeployLive && (d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope)) {
 		return ErrInvalidStateTransition
@@ -10051,6 +10094,11 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	if previousStatus != DeployFailed {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
+	}
+	// A late failure can still finish its historical record, but its old
+	// environment may already have been recreated with different releases.
+	if d.DeletedAt != nil {
+		return
 	}
 
 	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
@@ -10152,8 +10200,23 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if !ok {
 		return ErrNotFound
 	}
+	if err = m.checkDatabaseSwitchLeaseLocked(ctx, d); err != nil {
+		return err
+	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, d); err != nil {
+		return err
+	}
+	if err := m.checkWorkerDeploymentActivationLocked(ctx, d); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
 		return ErrConflict
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[d.AppID], normalizedDeploymentScope(d.Scope)); err != nil {
+		return err
+	}
+	if d.DeletedAt != nil {
+		return ErrInvalidStateTransition
 	}
 	if recovery {
 		if d.Status == DeploySuperseded {
@@ -10241,6 +10304,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		delete(m.rollbackPrepared, id)
 		return ErrDeploymentSuperseded
+	}
+	if err = m.checkPlainRollbackReleasesLocked(ctx, d); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -10400,11 +10466,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
 			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
-				if other.TrafficPercent > 0 {
-					if _, exists := m.revisionPins[otherID]; !exists {
-						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-					}
-				}
+				m.retainServingRevisionLocked(other, time.Now().UTC())
 				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
@@ -10975,7 +11037,11 @@ func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string
 		return Deployment{}, ErrNotFound
 	}
 	now := time.Now().UTC()
-	newDep, err := retryDeploymentInput(src, now)
+	legacyService := m.apps[src.AppID].Manifest.ExecutionMode == api.ExecutionModeService
+	if spec, ok := m.projectEnvironmentWorkloadSpecs[m.projectEnvironmentWorkloadDeploymentSpecs[failedID]]; ok {
+		legacyService = spec.Settings.Manifest.ExecutionMode == api.ExecutionModeService
+	}
+	newDep, err := retryDeploymentInput(src, now, legacyService)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -11029,7 +11095,16 @@ func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string
 		}
 	}
 	m.publicBuildURLs[newDep.ID] = maps.Clone(m.publicBuildURLs[failedID])
+	// A retry executes the original immutable workload revision. Retain its
+	// environment lifetime even if the pin was removed by environment deletion.
+	if ownerID := m.deploymentRuntimeEnvironmentOwners[failedID]; ownerID != "" {
+		m.deploymentRuntimeEnvironmentOwners[newDep.ID] = ownerID
+	}
+	if specID := m.projectEnvironmentWorkloadDeploymentSpecs[failedID]; specID != "" {
+		m.projectEnvironmentWorkloadDeploymentSpecs[newDep.ID] = specID
+	}
 	m.putDeploymentLocked(newDep.ID, newDep)
+	newDep.StageState = m.deployments[newDep.ID].StageState
 	return newDep, nil
 }
 
@@ -11230,8 +11305,17 @@ func (m *MemStore) PrepareDeploymentRollback(ctx context.Context, appID, targetD
 }
 func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
 	target, ok := m.deployments[targetDeploymentID]
-	if !ok || target.AppID != appID {
+	if !ok || target.AppID != appID || target.DeletedAt != nil {
 		return Deployment{}, ErrNoRollbackTarget
+	}
+	if err := m.checkProjectDeploymentEnvironmentLocked(m.apps[target.AppID], normalizedDeploymentScope(target.Scope)); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkAppRollbackGraphLocked(appID, target.Scope, target.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkDatabaseSwitchLeaseLocked(ctx, target); err != nil {
+		return Deployment{}, err
 	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
@@ -11249,6 +11333,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(target)); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.preserveRollbackSuccessLocked(target); err != nil {
+		return Deployment{}, err
+	}
+
 	now := time.Now().UTC()
 	var prior StageState
 	if len(target.StageState) > 0 {
@@ -11286,6 +11374,11 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 		m.rollbackPrepared = map[string]time.Time{}
 	}
 	m.rollbackPrepared[targetDeploymentID] = now
+	if m.plainRollbackReleaseReviews == nil {
+		m.plainRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.plainRollbackReleaseReviews[targetDeploymentID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
+
 	return target, nil
 }
 
@@ -12247,9 +12340,12 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 // status pinned to 'failed'; error_code is the RFC 7807 code lifted
 // from pkg/api.SentinelToCode; error keeps the free-text message.
 // Returns the refreshed row.
-func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message string) (Deployment, error) {
+func (m *MemStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkDeploymentActivationFailureLocked(ctx, m.deployments[id]); err != nil {
+		return Deployment{}, err
+	}
 	return m.setDeploymentFailedLocked(id, code, message)
 }
 
@@ -12302,13 +12398,19 @@ func (m *MemStore) ClaimDeployFailedEmail(_ context.Context, appID string, at ti
 // migration 00290. The unit-test suite that exercises MemStore stays
 // aligned with PgStore.
 func (m *MemStore) SetDeploymentFailedEx(
-	_ context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
+	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
+	}
+	if err := m.checkDeploymentActivationFailureLocked(ctx, d); err != nil {
+		return Deployment{}, err
+	}
+	if err := checkSnapshotPrimeFailure(ctx, d); err != nil {
+		return Deployment{}, err
 	}
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
@@ -13228,7 +13330,8 @@ func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token 
 	}
 	d := CustomDomain{
 		Domain: domain, AppID: appID, ChallengeToken: token,
-		CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now,
+		BindingVersion: uuid.NewString(),
+		CertStatus:     CustomDomainCertPending, VerificationNextCheckAt: now,
 		VerificationExpiresAt: now.Add(7 * 24 * time.Hour),
 	}
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
@@ -13476,6 +13579,9 @@ func (m *MemStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctor
 	defer m.mu.Unlock()
 	if !customDomainProbeMatches(ctx, m.domains[obs.Domain]) {
 		return ErrStaleCustomDomainProbe
+	}
+	if _, bound := CustomDomainProbe(ctx); bound && obs.ObservedAt.Before(m.domains[obs.Domain].DNSLastCheckedAt) {
+		return ErrStaleCustomDomainObservation
 	}
 	if existing, ok := m.doctorObs[obs.Domain]; ok {
 		if staleDoctorObservation(existing, obs) {
@@ -17428,7 +17534,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
+		if ins.AppID != appID || ins.State != "running" || NeverServes(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
@@ -17502,12 +17608,18 @@ func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, e
 	return m.createSnapshotLocked(snap)
 }
 
-func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
+func (m *MemStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	dep, ok := m.deployments[snap.DeploymentID]
 	if !ok {
 		return Snapshot{}, ErrNotFound
+	}
+	if err := m.checkDeploymentActivationAttemptLocked(ctx, dep); err != nil {
+		return Snapshot{}, err
+	}
+	if err := checkActivationSnapshotSource(ctx, sourceStartedAt); err != nil {
+		return Snapshot{}, err
 	}
 	app, found := m.apps[dep.AppID]
 	if !found {
@@ -24684,6 +24796,16 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	for promotionID := range m.environmentPromotionReceipts {
+		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
+			delete(m.environmentPromotionReceipts, promotionID)
+		}
+	}
+	for promotionID := range m.environmentRollbackReceipts {
+		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
+			delete(m.environmentRollbackReceipts, promotionID)
+		}
+	}
 	if m.internalCI != nil {
 		m.internalCI.RemoveAccount(id)
 	}

@@ -455,7 +455,9 @@ jobs:
     name: Publish the npm channel
     needs: [build]
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # Two public-availability waits of up to 20 minutes each
+    # (scripts/publish-npm-packages.mjs) plus staging and uploads.
+    timeout-minutes: 55
     concurrency:
       group: gregale-npm-publish
       cancel-in-progress: false
@@ -953,7 +955,12 @@ jobs:
 
       - name: Build canonical daemon tarball and SPDX SBOM
         env:
+          GH_TOKEN: ${{ github.token }}
           GIT_SHA: ${{ github.sha }}
+          # ADR-20261105150000: ship the previous signed release's guest-init
+          # while the one just built runs the same code, so the runtime bases
+          # keep their bytes and ADR-510 keeps restoring snapshots.
+          REUSE_GUEST_INIT: "true"
           # The production manifest is not a repository variable or the
           # illustrative manifest
           # in deploy/manifest/examples. The production manifest is

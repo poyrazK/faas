@@ -12,7 +12,7 @@ type memoryHealthEntry struct {
 }
 
 func healthIdentityMatches(a, b Database) bool {
-	return a.ID == b.ID && a.AccountID == b.AccountID && a.ProviderResourceID == b.ProviderResourceID &&
+	return a.ID == b.ID && a.AccountID == b.AccountID && databaseDataResource(a) == databaseDataResource(b) &&
 		a.BackendID == b.BackendID && a.BackendFingerprint == b.BackendFingerprint && a.DesiredGeneration == b.DesiredGeneration
 }
 

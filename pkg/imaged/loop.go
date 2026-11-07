@@ -59,6 +59,10 @@ type Loop struct {
 	// deployment, so the security lease waits for it once (amendment 14).
 	leaseRescanMu sync.Mutex
 	leaseRescans  map[string]time.Time
+	// sweepNode caches this imaged's compute node ID for the node-scoped
+	// security sweeps (bug hunt O32).
+	sweepNodeMu sync.Mutex
+	sweepNode   string
 	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
 	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
 	crashCaptureCryptoEvery time.Duration
@@ -78,6 +82,11 @@ type Loop struct {
 	securityScanRunning atomic.Bool
 	// prep prepares deployments' images off the loop; nil prepares inline.
 	prep *imagePrepWorkers
+	// releaseApprovalOffset rotates the bounded approval recovery scan.
+	releaseApprovalOffset int
+	// staleDeploymentOffset rotates past active builds and intentional holds.
+	// Both offsets are owned by the loop goroutine.
+	staleDeploymentOffset int
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
@@ -458,7 +467,7 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 			}
 		}
 		return kept
-	})
+	}, &l.staleDeploymentOffset)
 	if err != nil {
 		l.log.Warn("imaged: list stale deployments", "err", err)
 	}
@@ -478,24 +487,38 @@ func staleDeploymentFilter(cutoff time.Time) state.OperatorDeploymentFilter {
 	}
 }
 
-// operatorDeploymentPages bounds one sweep's listing; a backlog past it is
-// reached on the next sweep.
+// operatorDeploymentPages bounds read-only backlog observations. Mutating
+// recovery carries its cursor between ticks and uses a single page.
 const operatorDeploymentPages = 64
 
 // pageOperatorDeployments lists filter page by page. visit returns how many
 // of a page's rows it left in place (did not move out of the filter), so the
-// next page starts after them and none is visited twice in a pass.
-func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int) error {
-	for page := 0; page < operatorDeploymentPages && ctx.Err() == nil; page++ {
+// next page starts after them and none is visited twice in a pass. A cursor
+// limits mutating recovery to one batch per tick and continues on the next
+// tick; read-only observations without a cursor can scan multiple pages.
+func (l *Loop) pageOperatorDeployments(ctx context.Context, filter state.OperatorDeploymentFilter, visit func([]state.Deployment) int, cursor *int) error {
+	pages := operatorDeploymentPages
+	if cursor != nil {
+		filter.Offset = *cursor
+		pages = 1
+	}
+
+	for page := 0; page < pages && ctx.Err() == nil; page++ {
 		rows, err := l.store.ListDeploymentsForOperator(ctx, filter)
 		if err != nil {
 			return err
 		}
 		kept := visit(rows)
 		if len(rows) < filter.Limit {
+			if cursor != nil {
+				*cursor = 0
+			}
 			return nil
 		}
 		filter.Offset += kept
+		if cursor != nil {
+			*cursor = filter.Offset
+		}
 	}
 	return ctx.Err()
 }
@@ -575,7 +598,7 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 			}
 		}
 		return len(rows)
-	})
+	}, nil)
 	if err != nil {
 		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
 		return

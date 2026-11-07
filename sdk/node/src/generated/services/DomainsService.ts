@@ -5,7 +5,11 @@
 import type { CreateCustomDomainRequest } from '../models/CreateCustomDomainRequest.js';
 import type { CustomDomainHostsResponse } from '../models/CustomDomainHostsResponse.js';
 import type { CustomDomainResponse } from '../models/CustomDomainResponse.js';
+import type { DomainApplyRequest } from '../models/DomainApplyRequest.js';
+import type { DomainApplyResponse } from '../models/DomainApplyResponse.js';
 import type { DomainDoctorReport } from '../models/DomainDoctorReport.js';
+import type { DomainManifest } from '../models/DomainManifest.js';
+import type { DomainPlan } from '../models/DomainPlan.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { SetCustomDomainHostsRequest } from '../models/SetCustomDomainHostsRequest.js';
@@ -68,6 +72,101 @@ export class DomainsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Review a declarative set of domain bindings.
+   * Reads one consistent snapshot without DNS probes or writes. Lists creates,
+   * moves and unchanged bindings, serving destination deployments, and default
+   * selections that a move clears. Omitted domains remain attached. All apps
+   * must share an account namespace and organization and the caller needs
+   * deployment-write access to every source and destination. A move requires
+   * verified ownership and a serving destination; it does not smoke-test the
+   * application. Traffic publication is validated again during atomic apply.
+   *
+   * @returns DomainPlan Proposed binding changes and their private-identity-bound fingerprint.
+   * @throws ApiError
+   */
+  public static planDomains({
+    requestBody,
+  }: {
+    requestBody: DomainManifest,
+  }): CancelablePromise<DomainPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/domains/plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically apply reviewed domain bindings.
+   * Reauthorizes every binding, captures its current claim and serving
+   * deployment set under routing and billing-subject locks, and requires the
+   * exact reviewed fingerprint. A stale plan returns 409 without changes.
+   * Moves retain TXT proof, verification, certificate state, wildcard host
+   * allowlists and issuance budgets; source default-domain selections are
+   * cleared. New claims follow normal DNS verification and pending quotas.
+   * No provider DNS, deployment traffic, or application policy is changed.
+   * Use the returned rollback manifest to review a move back. Rollback does
+   * not detach new claims or restore default selections. Reuse the plan
+   * fingerprint as Idempotency-Key for request-bound response replay.
+   *
+   * @returns DomainApplyResponse Committed bindings, the reviewed plan and previous binding manifest.
+   * @throws ApiError
+   */
+  public static applyDomains({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: DomainApplyRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DomainApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/domains/apply',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -167,12 +266,16 @@ export class DomainsService {
   }
   /**
    * Re-verify a domain's DNS + cert.
-   * Re-runs the DNS verifier + cert dial; returns the canonical
-   * CustomDomainResponse. Used by `gregale domains verify
-   * <domain>`. Idempotent: POSTing twice does not change the
-   * durable verification state.
+   * Runs a bounded ownership TXT check and routing/TLS probes using the
+   * background verifier's claim-bound logic. Concurrent checks for the same
+   * claim are coalesced; a durable 15-second cooldown limits repeated probes
+   * across API processes. Returns CustomDomainResponse with independent
+   * readiness states, DNS diagnostics, and retry scheduling. DNS or TLS that
+   * is not ready is a successful check with a non-ready response, not a
+   * transport failure. Expired claims require recreation. The same
+   * Idempotency-Key replays its original response; use a new key to recheck.
    *
-   * @returns CustomDomainResponse The row + cert details. `cert_not_after` / `cert_sans` populated when the cert dial succeeds.
+   * @returns CustomDomainResponse Current ownership, routing and TLS readiness with fresh diagnostic checks. Retry-After indicates the minimum manual-check interval.
    * @throws ApiError
    */
   public static verifyDomain({
@@ -202,16 +305,17 @@ export class DomainsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        422: `code: domain_verification_failed | domain_cert_not_issued.
-        DNS walk found a missing/mismatched TXT record, or the
-        port-443 cert is a CDN cert whose SANs do not include
-        the customer's domain.
+        422: `Older servers report domain_verification_failed or
+        domain_cert_not_issued for TLS probe failures. Current servers
+        return a non-ready CustomDomainResponse with HTTP 200 for DNS
+        and certificate configuration problems.
         `,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }

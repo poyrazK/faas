@@ -291,10 +291,11 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout, close: closeFactories}, true
 }
 
-// computeCapQualifyTimeout covers the compute cap probe, which waits a whole
-// Neon counter lag twice (over an hour), on top of provisioning and the usage
-// checks. FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
-const computeCapQualifyTimeout = 150 * time.Minute
+// computeCapQualifyTimeout covers the compute cap probe (about 20 minutes:
+// a 12-minute report reading and the hold) on top of provisioning and the
+// usage checks, which took about 50 minutes in production on 2026-11-05.
+// FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
+const computeCapQualifyTimeout = 120 * time.Minute
 
 // runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
 // disposable resource and writes the artifact that

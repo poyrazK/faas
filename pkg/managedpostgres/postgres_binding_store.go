@@ -349,14 +349,30 @@ func (s *PostgresStore) FinishBindingProvision(ctx context.Context, bindingID, l
 	if err != nil {
 		return Binding{}, err
 	}
-	row, err := sqlc.New().FinishManagedPostgresBindingProvision(ctx, s.catalog, sqlc.FinishManagedPostgresBindingProvisionParams{ProviderIdentityID: providerIdentityID, CredentialRef: credentialRef, Now: pgtype.Timestamptz{Time: now, Valid: true}, ID: id, LeaseToken: leaseToken})
+	tx, err := s.catalog.Begin(ctx)
+	if err != nil {
+		return Binding{}, mapPostgresError(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if err := q.LockManagedPostgresRotationApp(ctx, tx, id); err != nil {
+		return Binding{}, mapPostgresError(err)
+	}
+	row, err := q.FinishManagedPostgresBindingProvision(ctx, tx, sqlc.FinishManagedPostgresBindingProvisionParams{ProviderIdentityID: providerIdentityID, CredentialRef: credentialRef, Now: pgtype.Timestamptz{Time: now, Valid: true}, ID: id, LeaseToken: leaseToken})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Binding{}, ErrConflict
 	}
 	if err != nil {
 		return Binding{}, mapPostgresError(err)
 	}
-	return bindingFromDeliveryRow(row), nil
+	binding, err := ensurePostgresRotationRefresh(ctx, tx, bindingFromDeliveryRow(row))
+	if err != nil {
+		return Binding{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Binding{}, mapPostgresError(err)
+	}
+	return binding, nil
 }
 
 func (s *PostgresStore) ReleaseBinding(ctx context.Context, bindingID, leaseToken string, next BindingState, errorCode string, now, retryAt time.Time) error {

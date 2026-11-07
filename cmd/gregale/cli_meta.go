@@ -674,6 +674,7 @@ var cliCommands = []cliCommand{
 				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},
 				{Name: "label", Short: "bucket-scoped compute credential label", Value: "LABEL"},
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
+				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix (preview)", Value: "KEYS/"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog", Examples: []string{
@@ -721,6 +722,13 @@ var cliCommands = []cliCommand{
 				{Name: "parts", Short: "List uploaded multipart parts", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "part-number-marker", Value: "N", Short: "last part from the previous page"}}},
 			}},
 			{Name: "upload", Short: "Upload a file with resumable multipart transfers", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "content-type", Value: "TYPE", Short: "object MIME type"}, {Name: "if-match", Value: "ETAG", Short: "replace a matching object (single PUT only)"}, {Name: "if-none-match", Value: "*", Short: "create only if absent (single PUT only)"}, {Name: "resume", Value: "UPLOAD-ID", Short: "resume a multipart upload from its local checkpoint"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
+			{Name: "sign", Short: "Mint a short-lived signed URL to download or upload one object", Positionals: []string{"<app>", "<bucket-id>", "<key>"}, Flags: []cliFlag{
+				{Name: "method", Value: "METHOD", Short: "GET to download (default), PUT to upload", ClosedSet: []string{"GET", "PUT"}},
+				{Name: "expires", Value: "DURATION", Short: "URL lifetime, at most 15m (default 5m)"},
+				{Name: "size-bytes", Value: "N", Short: "exact upload size; required with --method PUT"},
+				{Name: "content-type", Value: "TYPE", Short: "upload content type"},
+			}, Notes: []string{"Send the URL with exactly the printed headers and no Gregale credentials; it needs no S3 SDK.", "A PUT URL writes once, and each URL reserves storage when issued, so do not retry signing automatically."},
+				Examples: []string{"gregale bucket sign my-api 4f2c… v1/stream/segment.gz --expires 15m", "gregale bucket sign my-api 4f2c… avatars/42.png --method PUT --size-bytes 18231 --content-type image/png"}},
 			{Name: "download", Short: "Download an object to a file after a complete transfer", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "version-id", Value: "VERSION", Short: "download this owned immutable version"}, {Name: "force", Short: "replace destination after a complete transfer"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
 			{Name: "versions", Short: "Browse retained object versions and delete markers", Subcommands: []cliSub{
 				{Name: "list", Short: "List a page of owned public versions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{
@@ -2865,6 +2873,10 @@ var cliCommands = []cliCommand{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
+			{Name: "resolve", Short: "Record a database check after a release command was lost", Notes: []string{"Use it when a release command ended without an exit code: the next release command of the scope waits for this check."}, Examples: []string{"gregale release resolve v41 --app my-api --note \"migration 42 applied; schema matches\""}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "note", Value: "TEXT", Short: "what you checked in the database", Req: true},
+				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
+			}},
 			{Name: "timeline", Short: "Show a release's rollout, gates, approvals and history", Examples: []string{"gregale release timeline v42 --app my-api", "gregale release timeline v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
@@ -2939,7 +2951,10 @@ var cliCommands = []cliCommand{
 			// (default = the failing stage on the row, fetched
 			// via the existing GET /v1/deployments/{id}/stages
 			// read surface).
-			{Name: "retry", Short: "Retry a failed deployment from a specific stage", Notes: []string{"Choose the stage with --from."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
+			{Name: "retry", Short: "Retry a failed deployment from a specific stage", Notes: []string{
+				"Choose the stage with --from.",
+				"A retry is a new deployment. Stage outputs are not kept between deployments, so a source build restarts from the original source; the build cache makes unchanged layers fast.",
+			}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "from", Short: "retry from this stage (defaults to the failing stage)", Value: "STAGE", ClosedSet: stageNamesForCLIValues()},
 			}},
 		},
@@ -3107,7 +3122,7 @@ var cliCommands = []cliCommand{
 		Name:      "deploy-tokens",
 		DocSlug:   "deploys",
 		Short:     "Manage per-app deploy tokens for CI",
-		HelpNotes: []string{"Adding or rotating a token needs an MFA step-up from the last 5 minutes: run `gregale account mfa verify` first."},
+		HelpNotes: []string{"When MFA is enabled, browser token creation or rotation needs verification from the last 5 minutes. CLI bearer credentials retain their configured scopes."},
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List an app's deploy tokens", Flags: []cliFlag{{Name: "app", Short: "app the tokens deploy", Value: "SLUG", Req: true}}},
 			{Name: subAdd, Short: "Mint a deploy token (shown once)", Examples: []string{"gregale app deploy-token create --app my-api --label github-actions"}, Flags: []cliFlag{
@@ -3130,6 +3145,22 @@ var cliCommands = []cliCommand{
 		DocSlug: "domains",
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
+			{Name: "plan", Short: "Review declared domain bindings without changing them", Flags: []cliFlag{
+				{Name: "file", Short: "domain manifest YAML or JSON", Value: "PATH", Req: true},
+				{Name: "out", Short: "save a new reviewed JSON plan", Value: "PATH"},
+			}},
+			{Name: "apply", Short: "Atomically apply a reviewed domain plan", Flags: []cliFlag{
+				{Name: "plan", Short: "reviewed plan JSON", Value: "PATH", Req: true},
+				{Name: "confirm", Short: "confirm every reviewed binding change"},
+				{Name: "rollback-out", Short: "save previous bindings as a new manifest", Value: "PATH"},
+			}},
+			{Name: "move", Short: "Move a verified domain to a serving app or environment", Positionals: []string{"<domain>"}, Notes: []string{"Keeps TXT proof, certificate state and wildcard issuance budgets. Use --dry-run to review or --confirm to commit."}, Flags: []cliFlag{
+				{Name: "app", Short: "destination app slug", Value: "SLUG", Req: true},
+				{Name: "environment", Short: "destination environment; omitted selects default routing", Value: "ENV"},
+				{Name: "dry-run", Short: "review without applying"},
+				{Name: "confirm", Short: "confirm the move"},
+				{Name: "rollback-out", Short: "save previous binding as a new manifest", Value: "PATH"},
+			}},
 			{Name: "setup", Short: "Guide DNS setup and wait for verification and TLS", Notes: []string{"Offers a default-domain change at the end."}, Positionals: []string{"<domain>"}, Examples: []string{"gregale domain setup api.example.com --app my-api"}, Flags: []cliFlag{
 				{Name: "app", Short: "app to attach to", Value: "SLUG", Req: true},
 				{Name: "environment", Short: "project environment to route to", Value: "SLUG"},
@@ -3144,7 +3175,11 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
-			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending."}, Positionals: []string{"<domain>"}},
+			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending.", "Checks ownership and routing immediately; --wait waits for HTTPS readiness."}, Positionals: []string{"<domain>"}, Flags: []cliFlag{
+				{Name: "wait", Short: "wait for verified ownership, correct routing, and HTTPS"},
+				{Name: "timeout", Short: "maximum wait (default 10m, maximum 1h)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "check interval (5s..1m, default 5s)", Value: "DURATION"},
+			}},
 			{Name: subDomainsShow, Short: "Show a domain's cert details", Positionals: []string{"<domain>"}},
 			{Name: subDomainsStatus, Short: "Show TLS status for all domains, or one domain's conditions", Notes: []string{"With a domain, prints its Ready, Verified and CertificateReady conditions (preview)."}, Positionals: []string{"[<domain>]"}, Examples: []string{"gregale domain status", "gregale domain status shop.example.com"}},
 			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<domain>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale domain wait shop.example.com"}, Flags: []cliFlag{
@@ -5164,6 +5199,7 @@ var cliCommands = []cliCommand{
 			{Name: "since", Short: "lookback window", Value: "WINDOW"},
 			{Name: "until", Short: "exclusive RFC3339 end", Value: "TIMESTAMP"},
 			{Name: "by", Short: "grouping dimension", Value: "DIMENSION", ClosedSet: []string{"route", "country", "referrer_host", "ua_family", "status", "consumer_id"}},
+			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},
@@ -5957,6 +5993,15 @@ var cliCommands = []cliCommand{
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
 				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 			}, Examples: []string{"gregale postgres attach orders my-api --env DATABASE_URL --access read_write"}},
+			{Name: "connect", Short: "Open psql against a database through a bound app's tunnel", Notes: []string{"Reads the binding inside a task VM of the bound app and relays a local port to the database; credentials never print. Extra arguments after -- go to psql."}, Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "app", Short: "bound app whose credentials to use (default: the best ready binding)", Value: "SLUG"},
+				{Name: "env", Short: "binding environment key", Value: "KEY"},
+				{Name: "access", Short: "binding access (default prefers read_write, then migration, then read_only)", Value: "MODE", ClosedSet: []string{"read_write", "migration", "read_only"}},
+				{Name: "port", Short: "local port (default: a free port)", Value: "N"},
+				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
+				{Name: "proxy", Short: "keep the tunnel open for another client instead of starting psql"},
+				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
+			}, Examples: []string{"gregale postgres connect orders", "gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'", "gregale postgres connect orders --proxy --port 5433"}},
 		},
 	},
 	{
@@ -6448,9 +6493,10 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "confirm project deletion"},
 				{Name: "detach-services", Short: "delete even though its services call each other by name", Bool: true},
 			}},
-			{Name: "rollback", Short: "Roll every service back to its previous deployment, dependencies first", Notes: []string{"Stops at the first service that fails and names the rest."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
-				{Name: "dry-run", Short: "print the rollback order", Bool: true},
-				{Name: "yes", Short: "roll every service back", Bool: true},
+			{Name: "rollback", Short: "Roll the latest project deploy back, callers first", Notes: []string{"Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.", "Stops at the first service that fails; run it again to finish."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "print the rollback plan", Bool: true},
+				{Name: "yes", Short: "roll the latest deploy back", Bool: true},
+				{Name: "all", Short: "roll back every service, not only those the latest deploy changed", Bool: true},
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},
@@ -6771,6 +6817,28 @@ var cliCommands = []cliCommand{
 				Name:        "status",
 				Short:       "Show live deployment traffic weights for an app",
 				Positionals: []string{"<slug>"},
+			},
+			{
+				Name:        "rollback",
+				Short:       "Undo a traffic split: all traffic back to the earlier release",
+				Positionals: []string{"<slug>"},
+				Notes: []string{
+					"It acts on one environment: --env, or the only one the app is live in.",
+					"While a canary rollout runs there, this aborts it, as gregale rollouts recover --action abort does.",
+					"Otherwise the release with the largest share of the split gets 100%; --to names another live release, and a tie needs it.",
+					"It refuses if the traffic changes between reading and writing; run it again after checking release traffic status.",
+					"When one release already serves everything, use gregale rollback to go back to an earlier one.",
+				},
+				Examples: []string{
+					"gregale release traffic rollback my-api",
+					"gregale release traffic rollback my-api --to v6",
+				},
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug", Value: "SLUG"},
+					{Name: "env", Short: "environment whose split to undo", Value: "SCOPE"},
+					{Name: "to", Short: "release to give all traffic; default: the largest share", Value: "ID"},
+					{Name: "reason", Short: "reason recorded when a canary rollout is aborted", Value: "TEXT"},
+				},
 			},
 		},
 	},

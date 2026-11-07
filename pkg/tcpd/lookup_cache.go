@@ -2,6 +2,7 @@ package tcpd
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -136,6 +137,12 @@ func (c *CachedInstanceSource) LiveDeployments(ctx context.Context, appID string
 	return c.deployments.get(appID, func() ([]state.Deployment, error) { return c.next.LiveDeployments(ctx, appID) })
 }
 
+// Raw admission verifies durable security quarantine independently of cached
+// routing weights, including a quarantine recorded after target selection.
+func (c *CachedInstanceSource) LiveDeploymentsForRawIngress(ctx context.Context, appID string) ([]state.Deployment, error) {
+	return c.next.LiveDeployments(ctx, appID)
+}
+
 func (c *CachedInstanceSource) ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error) {
 	return c.next.ListInstancesForApp(ctx, appID)
 }
@@ -159,4 +166,15 @@ func (c *CachedInstanceSource) ListLiveInstancesForApps(ctx context.Context, app
 		}
 	}
 	return out, nil
+}
+
+// Readiness is authoritative per connection, independent of routing cache TTL.
+func (c *CachedInstanceSource) LatestInstanceReadinessForTargets(ctx context.Context, targets []state.ReadinessTarget) (map[string]map[string]state.InstanceReadiness, error) {
+	reader, ok := c.next.(interface {
+		LatestInstanceReadinessForTargets(context.Context, []state.ReadinessTarget) (map[string]map[string]state.InstanceReadiness, error)
+	})
+	if !ok {
+		return nil, errors.New("TCP readiness source is unavailable")
+	}
+	return reader.LatestInstanceReadinessForTargets(ctx, targets)
 }

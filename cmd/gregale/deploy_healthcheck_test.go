@@ -107,6 +107,7 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 			main.WithCwd(t, repo)
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			var got *api.DeploymentHealthcheck
+			var gotRoot string
 			stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *main.ZeroConfigStubServer) {
 				switch {
 				case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
@@ -122,6 +123,7 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 					}
 					if req.DeployOptions != nil {
 						got = req.DeployOptions.Healthcheck
+						gotRoot = req.DeployOptions.SourceRoot
 					}
 					w.WriteHeader(http.StatusCreated)
 					_ = json.NewEncoder(w).Encode(api.UploadStartResponse{UploadID: "probe-upload", ChunkSize: 8 * 1024 * 1024, TotalSize: req.TotalSize})
@@ -147,6 +149,7 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 						if err := json.Unmarshal([]byte(r.FormValue("healthcheck")), &got); err != nil {
 							t.Error(err)
 						}
+						gotRoot = r.FormValue("source_root")
 					}
 					w.WriteHeader(http.StatusAccepted)
 					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: "pending"})
@@ -170,6 +173,9 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 			want := &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("transport=%s probe=%+v want=%+v", transport, got, want)
+			}
+			if transport != "image" && gotRoot != "." {
+				t.Fatalf("transport=%s source_root=%q; want explicit archive root", transport, gotRoot)
 			}
 		})
 	}

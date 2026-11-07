@@ -73,7 +73,7 @@ func adoptionManager(t *testing.T, f *adoptionFixture, block resourceAdoption) (
 	t.Helper()
 	f.must(f.journal.recordAdoption(f.lease, f.process, block))
 	vmm := &adoptingVMM{fakeVMM: &fakeVMM{}, root: f.jailRoot}
-	m := newTestManager(&fakeRunner{}, vmm)
+	m := newTestManager(&fakeRunner{}, vmm).WithCaptureRunner(&adoptedPolicyCapture{})
 	f.must(m.WithResourceJournal(f.journal))
 	opts := restartInventoryOptions{procRoot: f.proc, netRoot: f.netDir, netnsRoot: filepath.Join(f.root, "netns"), jailRoot: filepath.Join(f.root, "jail")}
 	if _, err := m.recoverRestartQuarantine(t.Context(), opts); err != nil {

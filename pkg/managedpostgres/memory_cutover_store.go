@@ -51,6 +51,9 @@ func (s *MemoryStore) ReserveCutover(_ context.Context, r PrepareCutoverRequest,
 	if !sourceOK || !targetOK || source.AccountID != r.AccountID || target.AccountID != r.AccountID {
 		return Cutover{}, false, ErrNotFound
 	}
+	if !target.RestoreSlotUntil.IsZero() {
+		return Cutover{}, false, ErrConflict
+	}
 	for _, c := range s.cutovers {
 		if c.ID == r.ID || (!c.State.Closed() && c.AppID == r.AppID && c.Scope == r.Scope) {
 			if !sameCutoverRequest(c, r) {

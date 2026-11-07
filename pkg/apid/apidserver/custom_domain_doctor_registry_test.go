@@ -56,6 +56,9 @@ func TestCustomDomainDoctorRevokesDriftDespiteOverlappingSurface(t *testing.T) {
 			if err = (*e.S()).RunDoctorForDomain(ctx, slog.New(slog.DiscardHandler), host); err != nil {
 				t.Fatal(err)
 			}
+			if err = (*e.S()).RunDoctorForDomain(ctx, slog.New(slog.DiscardHandler), host); err != nil {
+				t.Fatal(err)
+			}
 			d, err := store.DomainByName(ctx, host)
 			if err != nil || d.Verified() || d.CertStatus != state.CustomDomainCertDNSDrifted {
 				t.Fatalf("custom claim not revoked: %+v %v", d, err)

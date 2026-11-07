@@ -1120,8 +1120,9 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
 		// through the accessor to 0 — same fail-closed contract
-		// as MaxMinInstances.
-		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
+		// as MaxMinInstances. app_request_concurrency_max replaces it
+		// once runtime config sets it (ADR-20261101215228).
+		ConcurrencyPerVMBound: plan.RequestConcurrencyBound(),
 		EffectiveLimits:       appEffectiveLimits(a, plan),
 		ConfiguredResources: api.AppConfiguredResources{
 			MemoryMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),

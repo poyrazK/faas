@@ -400,7 +400,9 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 		return state.ObjectBucket{}, err
 	}
 	for _, old := range items {
-		if old.Name == req.Name && old.Scope == req.Scope {
+		// A deleted bucket frees its name (object_buckets_name_idx skips
+		// deleted rows); matching it refused every re-create with a conflict.
+		if old.Name == req.Name && old.Scope == req.Scope && old.State != "deleted" {
 			if req.Region != "" && old.Region != req.Region {
 				return old, state.ErrConflict
 			}

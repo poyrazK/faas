@@ -76,6 +76,7 @@ func (m *Manager) replaceNetworkPolicy(ctx context.Context, inst *Instance, nc n
 	m.mu.Lock()
 	inst.AllowlistHandleV4, inst.AllowlistHandleV6 = 0, 0
 	inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+	inst.egressAllowlistUncertain, inst.egressPortsUncertain = true, true
 	m.markAdoptionDirty(inst.Lease.Instance)
 	m.mu.Unlock()
 	if err != nil {
@@ -87,6 +88,7 @@ func (m *Manager) replaceNetworkPolicy(ctx context.Context, inst *Instance, nc n
 	}
 	m.mu.Lock()
 	inst.AllowlistHandleV4, inst.AllowlistHandleV6 = h4, h6
+	inst.egressAllowlistUncertain, inst.egressPortsUncertain = false, false
 	m.markAdoptionDirty(inst.Lease.Instance)
 	m.mu.Unlock()
 	return nil

@@ -748,6 +748,28 @@ enabled. Database owners can bypass enforcement; restrict policy administration.
 
 ### Explicit migrations and role grants
 
+Tasks now save the tool's advertised `outputSchema` in a nullable `output_schema`
+JSONB column when admitted. Dedicated and retained-version workers validate final
+successful `structuredContent` against that saved contract before completing the
+task. Local references work without fetching external schemas or changing result
+values. Invalid output fails the task with a redacted error and is never stored as
+a successful result; `isError: true` tool results may omit structured output.
+Retries, input pauses, worker restarts and later catalog replacements retain the
+original contract. Schemas are reviewed catalog metadata stored in plaintext;
+arguments, results, errors and input state keep their existing encryption.
+
+Existing queues must run `npm run tasks:migrate -- apply` to add this column,
+even when schema version 1 is already installed. Startup checks the column
+without running DDL. Migrate first, then upgrade and drain every older worker
+before deploying producers that rely on output validation: older workers ignore
+the saved contract. Tasks admitted without a schema retain their prior behavior;
+the migration does not infer a contract from today's catalog.
+
+Node awaits asynchronous task validators before inserting a row and rechecks
+drain state afterward. Task-capable calls return the accepted handle without
+applying the final output schema to it; discovery and synchronous calls keep the
+advertised schema and normal SDK validation.
+
 Before starting any Task process, run `npm run tasks:migrate -- apply` with
 `MCP_TASK_MIGRATION_DATABASE_URL`, `MCP_TASK_NAMESPACE`, the stable owner secret
 and candidate payload-key ring. The migration account must own the dedicated

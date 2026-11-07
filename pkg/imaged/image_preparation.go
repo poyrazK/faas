@@ -95,7 +95,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 			h.markFailedOnUnhandledError(ctx, dep.ID, &err)
 		}
 	}()
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func (h *Handler) finishImageHandoff(ctx context.Context, images state.Deploymen
 		return nil
 	}
 	dep = current
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return imageRecoveryError(err)
 	}

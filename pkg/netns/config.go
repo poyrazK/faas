@@ -172,9 +172,9 @@ type Config struct {
 	// emits one or two rules in the per-netns forward chain(s),
 	// partitioned by `prefix.Addr().Is4()`:
 	//   * the v4 half lands on `ip faas forward` as
-	//     `iifname "tap0" ip daddr { … } tcp dport != 25 accept`
+	//     `iifname "tap0" ip daddr { … } tcp dport != { blocked ports } accept`
 	//   * the v6 half lands on `ip6 faas forward` as
-	//     `iifname "tap0" ip6 daddr { … } accept`
+	//     `iifname "tap0" ip6 daddr { … } tcp dport != { blocked ports } accept`
 	// (nft rejects mixing `ip` and `ip6` matches in one table —
 	// ADR-023; the renderer partitions internally so the wire shape
 	// stays a single repeated string at proto AppSpec field 7).
@@ -1033,7 +1033,7 @@ const (
 	EgressDatabaseSet = "egress_db"
 	// egressDatabaseSetSize bounds the set: a database host answers with a
 	// handful of addresses and an app binds a few databases.
-	egressDatabaseSetSize = 1024
+	egressDatabaseSetSize = api.DatabaseEgressInstanceFamilyMax
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
@@ -1066,7 +1066,7 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 		cmds = append(cmds,
 			nft("add", "counter", family, "faas", EgressUnresolvedCounter, "{}"),
 			nft("add", "set", family, "faas", EgressResolvedSet, "{", "type", addrType, ";", "flags", "timeout", ";",
-				"size", strconv.Itoa(egressDstSetSize), ";", "}"))
+				"size", strconv.Itoa(api.DNSGatedEgressInstanceFamilyMax), ";", "}"))
 	}
 	if c.DatabaseEgress {
 		cmds = append(cmds, nft("add", "set", family, "faas", EgressDatabaseSet, "{", "type", addrType, ".", "inet_service", ";", "flags", "timeout", ";",
@@ -1171,9 +1171,10 @@ func (c Config) egressDNSGateRule(nft func(...string) []string, family string) [
 		family, "daddr", "!=", "@"+EgressResolvedSet, "counter", "name", EgressUnresolvedCounter, "drop")
 }
 
-// ResolvedEgressAddCommands adds resolved addresses to the egress_resolved
+// ResolvedEgressAddCommands adds fresh addresses to the egress_resolved
 // sets (ADR-373), each expiring after ttl. v4 and v6 addresses go to their
 // family's set. Run them as one nft -f transaction.
+// Use ResolvedEgressRefreshCommands to renew existing elements.
 func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
@@ -1221,6 +1222,7 @@ func (c Config) egressDatabaseRule(nft func(...string) []string, family string) 
 // DatabaseEgressAddCommands adds address . port pairs to the egress_db sets,
 // each expiring after ttl. v4 and v6 addresses go to their family's set. Run
 // them as one nft -f transaction.
+// Use DatabaseEgressRefreshCommands to renew existing elements.
 func (c Config) DatabaseEgressAddCommands(addrs []netip.Addr, port uint16, ttl time.Duration) [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
@@ -1240,6 +1242,35 @@ func (c Config) DatabaseEgressAddCommands(addrs []netip.Addr, port uint16, ttl t
 	}
 	if len(v6) > 0 {
 		cmds = append(cmds, nft("add", "element", "ip6", "faas", EgressDatabaseSet, "{", strings.Join(v6, ", "), "}"))
+	}
+	return cmds
+}
+
+// ResolvedEgressRefreshCommands renews timeouts on Linux 6.8 too, where
+// adding an existing element succeeds without updating its expiration.
+// Run the entire result in one atomic nft transaction.
+func (c Config) ResolvedEgressRefreshCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
+	return refreshTimedElements(c.ResolvedEgressAddCommands(addrs, ttl))
+}
+
+// DatabaseEgressRefreshCommands renews bound database grants atomically.
+func (c Config) DatabaseEgressRefreshCommands(addrs []netip.Addr, port uint16, ttl time.Duration) [][]string {
+	return refreshTimedElements(c.DatabaseEgressAddCommands(addrs, port, ttl))
+}
+
+func refreshTimedElements(adds [][]string) [][]string {
+	var cmds [][]string
+	for _, add := range adds {
+		// Ensure an absent key exists before deletion. Deleting and adding it
+		// in the same transaction resets the expiration without a traffic gap.
+		del := append([]string(nil), add...)
+		del[5] = "delete"
+		keys := strings.Split(del[len(del)-2], ", ")
+		for i, key := range keys {
+			keys[i], _, _ = strings.Cut(key, " timeout ")
+		}
+		del[len(del)-2] = strings.Join(keys, ", ")
+		cmds = append(cmds, add, del, add)
 	}
 	return cmds
 }
@@ -1524,7 +1555,8 @@ func AllowlistBlockedPortsSet() string {
 // ADR-023). Order in the v6 chain: AFTER the v6 lateral-movement
 // deny (deny > allow on overlap), BEFORE chain-default accept
 // (unlisted destinations drop when an allowlist exists on the v6
-// chain).
+// chain). The canonical TCP blocked-port exclusion matches the v4 public rule
+// and distinguishes its handle from private and database exceptions.
 //
 // Exported for the same reason as ForwardAllowlistRule: the live
 // in-place patch path runs against the same argv shape, just on

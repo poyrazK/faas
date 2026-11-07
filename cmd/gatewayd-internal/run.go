@@ -1031,6 +1031,12 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
 	req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+	// An async route's caller, as a kind=jwt rule verified it at admission,
+	// read from the stored row by prepareInvocation (ADR-091 amendment
+	// 2026-11-04, round 11). The forwarder renders it as X-Faas-Edge-Jwt-*;
+	// copies in the persisted headers are x-faas-* and never cross.
+	//nolint:contextcheck // gateway.WithEdgeJWTIdentity inherits req.Context.
+	req = req.WithContext(gateway.WithEdgeJWTIdentity(req.Context(), gateway.EdgeJWTIdentity{Issuer: inv.EdgeJWTIssuer, Subject: inv.EdgeJWTSubject}))
 
 	rec := httptest.NewRecorder()
 	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
@@ -2195,9 +2201,14 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if pool != nil {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
+		// ADR-20261101215228: per-instance request limits.
+		requestConcurrency := &runtimeconfig.RequestConcurrency{}
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones},
+			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...),
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+				if handled, err := requestConcurrency.Apply(key, value); handled {
+					return err
+				}
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
 					return err

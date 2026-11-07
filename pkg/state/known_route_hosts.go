@@ -8,11 +8,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// KnownRouteHostStore lists every app slug and verified custom domain, at
-// most limit of each. The gateway and the edge preload them so a real app's
-// host never spends their new-host lookup budget (ADR-20261103163954 §4); a
-// listed name only skips that budget, and routing still reads and checks the
-// row.
+// KnownRouteHostStore lists app slugs, verified custom-domain claims and
+// admitted concrete wildcard hosts, at most limit of each. Exact names may
+// skip the new-host budget; wildcard patterns qualify only for a separately
+// bounded recovery budget. Routing still reads and checks the live row.
 type KnownRouteHostStore interface {
 	KnownRouteHosts(ctx context.Context, limit int) (slugs, domains []string, err error)
 }
@@ -51,6 +50,14 @@ func (m *MemStore) KnownRouteHosts(_ context.Context, limit int) ([]string, []st
 	for name, d := range m.domains {
 		if len(domains) < limit && d.Verified() {
 			domains = append(domains, strings.ToLower(name))
+		}
+	}
+	for host, admission := range m.customDomainTLSHosts {
+		if len(domains) >= limit {
+			break
+		}
+		if d, ok := m.domains[admission.wildcardDomain]; ok && d.Verified() && IsWildcardCustomDomain(d.Domain) {
+			domains = append(domains, strings.ToLower(host))
 		}
 	}
 	return slugs, domains, nil

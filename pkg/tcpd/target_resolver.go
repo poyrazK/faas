@@ -112,12 +112,22 @@ func (r *StoreTargetResolver) resolveInstance(ctx context.Context, route Route) 
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.IsFork(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && !state.NeverServes(instance.Mode) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
 	if len(running) > 0 {
+		running, err = ingressroute.ReadyInstances(ctx, r.Instances, route.AppID, deploymentID, running)
+		if err != nil {
+			return gateway.Target{}, err
+		}
+		if len(running) == 0 {
+			return gateway.Target{}, ingressroute.ErrNoReadyInstance
+		}
 		if err := r.validateIntent(ctx, route); err != nil {
+			return gateway.Target{}, err
+		}
+		if err := ingressroute.RequireDeployment(ctx, r.Instances, route.AppID, deploymentID); err != nil {
 			return gateway.Target{}, err
 		}
 		idx := (r.cursor.Add(1) - 1) % uint64(len(running))
@@ -143,8 +153,18 @@ func (r *StoreTargetResolver) resolveInstance(ctx context.Context, route Route) 
 	if atCapacity || instanceID == "" || nodeID == "" || deploymentID != selectedDeploymentID {
 		return gateway.Target{}, fmt.Errorf("app %q has no routable instance after TCP admission", route.AppID)
 	}
+	ready, err := ingressroute.ReadyInstances(ctx, r.Instances, route.AppID, deploymentID, []state.Instance{{ID: instanceID, AppID: route.AppID, DeploymentID: deploymentID, NodeID: nodeID, WakeID: wakeID}})
+	if err != nil {
+		return gateway.Target{}, err
+	}
+	if len(ready) == 0 {
+		return gateway.Target{}, ingressroute.ErrNoReadyInstance
+	}
 	// A cold wake can outlast a visibility or listener-policy change.
 	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
+	}
+	if err := ingressroute.RequireDeployment(ctx, r.Instances, route.AppID, deploymentID); err != nil {
 		return gateway.Target{}, err
 	}
 	return gateway.Target{

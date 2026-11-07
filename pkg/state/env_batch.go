@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -38,10 +40,45 @@ type EnvBatchStore interface {
 	ApplyEnvBatch(context.Context, EnvBatchChange) (api.EnvBatchResponse, error)
 }
 
+// EnvBatchReceiptReader is optional; older stores fail closed for receipt reads.
+type EnvBatchReceiptReader interface {
+	EnvBatchReceipt(context.Context, string, string, string, string, string) (api.EnvBatchResponse, error)
+}
+
 type envBatchRecord struct {
 	Hash      [32]byte
 	Receipt   api.EnvBatchResponse
+	ProofHash string
 	CreatedAt time.Time
+	Rollback  *api.ConfigRollbackReceipt
+}
+
+// Stored beside the receipt but never returned by the native API.
+type storedEnvBatchReceipt struct {
+	api.EnvBatchResponse
+	ProofHash string `json:"_receipt_proof_hash,omitempty"`
+}
+
+func envBatchProofHash(proof string) string {
+	if proof == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(proof))
+	return hex.EncodeToString(sum[:])
+}
+
+func envBatchProofMatches(hash, proof string) bool {
+	if hash == "" {
+		return proof == ""
+	}
+	if !api.ValidEnvBatchReceiptProof(hash) || !api.ValidEnvBatchReceiptProof(proof) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(hash), []byte(envBatchProofHash(proof))) == 1
+}
+
+func envBatchEnvironmentMatches(receiptID, currentID string) bool {
+	return receiptID == "" && currentID == "" || sameStandardUUID(receiptID, currentID)
 }
 
 func validateEnvBatch(in *EnvBatchChange) ([32]byte, error) {
@@ -50,6 +87,9 @@ func validateEnvBatch(in *EnvBatchChange) ([32]byte, error) {
 	}
 	if in.Request.Validate(in.Limits) != nil {
 		return [32]byte{}, ErrInvalidArgument
+	}
+	if in.Request.ExpectedAppID != "" && (!sameStandardUUID(in.Request.ExpectedAppID, in.AppID) || (in.Scope == DefaultEnvScope) != (in.Request.ExpectedEnvironmentID == "")) {
+		return [32]byte{}, ErrConflict
 	}
 	data, err := json.Marshal(in.Request)
 	return sha256.Sum256(data), err
@@ -77,7 +117,7 @@ func envBatchRevisionMatches(latest ConfigRevision, exists bool, variables map[s
 }
 
 func envBatchReceipt(in EnvBatchChange, revision int64, guard *api.ConfigGuardSummary) api.EnvBatchResponse {
-	return api.EnvBatchResponse{RequestID: in.Request.RequestID, AppID: in.AppID, Scope: in.Scope,
+	return api.EnvBatchResponse{RequestID: in.Request.RequestID, AppID: in.AppID, Scope: in.Scope, EnvironmentID: in.Request.ExpectedEnvironmentID,
 		UpdatedKeys: append([]string{}, slices.Sorted(maps.Keys(in.Request.Values))...), DeletedKeys: append([]string{}, in.Request.Delete...),
 		ConfigChange: api.ConfigChangeReceipt{Revision: revision, Guard: guard}}
 }
@@ -95,6 +135,15 @@ func (m *MemStore) ApplyEnvBatch(ctx context.Context, in EnvBatchChange) (api.En
 	app, ok := m.apps[in.AppID]
 	if !ok || app.AccountID != in.AccountID || app.Status == AppDeleted {
 		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	if in.Request.ExpectedEnvironmentID != "" {
+		env, err := m.workloadSpecEnvironmentLocked(in.AccountID, app.ProjectID, in.Scope, app.ID)
+		if err != nil {
+			return api.EnvBatchResponse{}, err
+		}
+		if !sameStandardUUID(env.ID, in.Request.ExpectedEnvironmentID) || env.Protected {
+			return api.EnvBatchResponse{}, ErrConflict
+		}
 	}
 	key := in.AppID + "/" + in.Scope + "/" + in.Request.RequestID
 	for k, receipt := range m.envBatchReceipts {
@@ -198,8 +247,33 @@ func (m *MemStore) ApplyEnvBatch(ctx context.Context, in EnvBatchChange) (api.En
 	if m.envBatchReceipts == nil {
 		m.envBatchReceipts = map[string]envBatchRecord{}
 	}
-	m.envBatchReceipts[key] = envBatchRecord{Hash: hash, Receipt: cloneEnvBatchReceipt(receipt), CreatedAt: now}
+	m.envBatchReceipts[key] = envBatchRecord{Hash: hash, Receipt: cloneEnvBatchReceipt(receipt), ProofHash: envBatchProofHash(in.Request.ReceiptProof), CreatedAt: now}
 	return receipt, nil
+}
+
+func (m *MemStore) EnvBatchReceipt(ctx context.Context, accountID, appID, scope, requestID, proof string) (api.EnvBatchResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return api.EnvBatchResponse{}, err
+	}
+	app, ok := m.apps[appID]
+	if !ok || app.AccountID != accountID || app.Status == AppDeleted {
+		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	environmentID := ""
+	if scope != DefaultEnvScope {
+		env, err := m.workloadSpecEnvironmentLocked(accountID, app.ProjectID, scope, appID)
+		if err != nil {
+			return api.EnvBatchResponse{}, err
+		}
+		environmentID = env.ID
+	}
+	record, ok := m.envBatchReceipts[appID+"/"+scope+"/"+requestID]
+	if !ok || record.Rollback != nil || !envBatchProofMatches(record.ProofHash, proof) || !envBatchEnvironmentMatches(record.Receipt.EnvironmentID, environmentID) || record.Receipt.AppID != appID || record.Receipt.Scope != scope || record.Receipt.RequestID != requestID {
+		return api.EnvBatchResponse{}, ErrNotFound
+	}
+	return cloneEnvBatchReceipt(record.Receipt), nil
 }
 
 func cloneEnvBatchReceipt(in api.EnvBatchResponse) api.EnvBatchResponse {

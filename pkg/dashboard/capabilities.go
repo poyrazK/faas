@@ -8,8 +8,10 @@ var capabilityDecider atomic.Pointer[func(accountID, plan, capability string) bo
 
 // SetCapabilityDecider installs the function pages use to hide links to
 // capabilities whose platform flag is off for the signed-in account.
-func SetCapabilityDecider(decide func(accountID, plan, capability string) bool) {
-	capabilityDecider.Store(&decide)
+// The returned function restores the previous wiring when its owner stops.
+func SetCapabilityDecider(decide func(accountID, plan, capability string) bool) func() {
+	previous := capabilityDecider.Swap(&decide)
+	return func() { capabilityDecider.CompareAndSwap(&decide, previous) }
 }
 
 // On reports whether a capability is released to the page's account.

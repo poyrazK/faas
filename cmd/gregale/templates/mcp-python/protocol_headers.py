@@ -29,6 +29,10 @@ def validate_mcp_headers(headers, message, protocol, catalog):
 def _validate_params(headers, schema, arguments):
     arguments = arguments if isinstance(arguments, dict) else {}
     for name, prop in schema.get("properties", {}).items():
+        # Boolean schemas have no header annotations. The compiled tool
+        # validator still enforces them before application code is invoked.
+        if not isinstance(prop, dict):
+            continue
         value = arguments.get(name)
         suffix = prop.get("x-mcp-header")
         if isinstance(suffix, str) and suffix:

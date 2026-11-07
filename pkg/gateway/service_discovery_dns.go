@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -40,6 +41,7 @@ type ServiceDiscoveryDNSHandler struct {
 	onBlocked       func(category string)
 	onResolved      ResolvedEgressHook
 	prepareResolved ResolvedEgressPreparation
+	egressWarns     guestDNSWarnLimiter
 	serviceAddr     ServiceAddressLookup
 	scenarioChaos   *serviceDiscoveryDNSChaos
 	database        databaseRoute
@@ -389,7 +391,9 @@ func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg)
 		hook, err = h.prepareResolved(ctx, remote, name)
 		if err != nil {
 			hook = nil
-			h.log.Warn("guest DNS owner capture failed", "remote", remote, "err", err)
+			if h.egressWarns.admit("capture", remote, time.Now()) {
+				h.log.Warn("guest DNS owner capture failed", "remote", remote, "err", err)
+			}
 		}
 	}
 	for _, upstream := range h.upstream {
@@ -402,8 +406,8 @@ func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg)
 		}
 		if resp.Rcode == dns.RcodeSuccess && hook != nil {
 			if addrs, ttl := answerAddresses(resp); len(addrs) > 0 {
-				if hookErr := hook(ctx, remote, name, addrs, ttl); hookErr != nil {
-					h.log.Warn("guest DNS answer not registered for egress", "remote", remote, "addresses", len(addrs), "err", hookErr)
+				if hookErr := hook(ctx, remote, name, addrs, ttl); hookErr != nil && h.egressWarns.admit("grant", remote, time.Now()) {
+					h.log.Warn("guest DNS answer not registered for egress", "remote", remote, "name", name, "addresses", len(addrs), "err", hookErr)
 				}
 			}
 		}
@@ -434,4 +438,46 @@ func privateServiceName(name, domain string) string {
 		return ""
 	}
 	return service
+}
+
+// guestDNSWarnInterval is how often one guest's DNS egress warnings are
+// logged: a guest retries a lookup whose answer it cannot reach many times.
+const guestDNSWarnInterval = time.Minute
+
+// guestDNSWarnSources bounds the guests guestDNSWarnLimiter remembers.
+const guestDNSWarnSources = 4096
+
+// guestDNSWarnLimiter admits one warning per kind and guest address per
+// guestDNSWarnInterval. The zero value is ready to use.
+type guestDNSWarnLimiter struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *guestDNSWarnLimiter) admit(kind, remote string, now time.Time) bool {
+	host := remote
+	if h, _, err := net.SplitHostPort(remote); err == nil {
+		host = h
+	}
+	key := kind + " " + host
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if last, ok := l.last[key]; ok && now.Sub(last) < guestDNSWarnInterval {
+		return false
+	}
+	if len(l.last) >= guestDNSWarnSources {
+		for k, last := range l.last {
+			if now.Sub(last) >= guestDNSWarnInterval {
+				delete(l.last, k)
+			}
+		}
+		if len(l.last) >= guestDNSWarnSources {
+			clear(l.last)
+		}
+	}
+	if l.last == nil {
+		l.last = make(map[string]time.Time)
+	}
+	l.last[key] = now
+	return true
 }

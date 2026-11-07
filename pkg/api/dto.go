@@ -4540,6 +4540,12 @@ type RotateOrgAPIKeyResponse struct {
 // alt names, useful for the `gregale domains show` listing). All three
 // fields are omitempty so pre-PR-3 clients see bit-identical payloads.
 type CustomDomainResponse struct {
+	// Readiness keeps DNS ownership, routing, and HTTPS readiness independent.
+	Readiness               *DomainReadiness    `json:"readiness,omitempty"`
+	VerificationNextCheckAt string              `json:"verification_next_check_at,omitempty"`
+	VerificationAttempts    int                 `json:"verification_attempts,omitempty"`
+	CertRetryAt             string              `json:"cert_retry_at,omitempty"`
+	Checks                  []DomainDoctorCheck `json:"checks,omitempty"`
 	// VerificationExpiresAt is the hard deadline for an unverified claim.
 	// Expired claims require a fresh create request and a new TXT proof.
 	VerificationExpiresAt string   `json:"verification_expires_at,omitempty"`
