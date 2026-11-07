@@ -2051,6 +2051,7 @@ from .request_analytics_group import RequestAnalyticsGroup
 from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
 from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
+from .request_analytics_response_sampled_measures import RequestAnalyticsResponseSampledMeasures
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
@@ -4548,6 +4549,7 @@ __all__ = (
     "RequestAnalyticsGroupMethod",
     "RequestAnalyticsResponse",
     "RequestAnalyticsResponseGroupBy",
+    "RequestAnalyticsResponseSampledMeasures",
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",

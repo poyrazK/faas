@@ -20,8 +20,7 @@ func TestRuntimeConfigSnapshotRefreshKeysCheckTheirValues(t *testing.T) {
 	}{
 		{runtimeconfig.KeySnapshotRefresh, `"off"`, true},
 		{runtimeconfig.KeySnapshotRefresh, `"shadow"`, true},
-		// on is accepted once schedd can perform a refresh.
-		{runtimeconfig.KeySnapshotRefresh, `"on"`, false},
+		{runtimeconfig.KeySnapshotRefresh, `"on"`, true},
 		{runtimeconfig.KeySnapshotRefresh, `"yes"`, false},
 		{runtimeconfig.KeySnapshotRefresh, `true`, false},
 		{runtimeconfig.KeySnapshotRefreshWindowHours, "1", true},

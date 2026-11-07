@@ -17432,6 +17432,26 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_hours",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "cold_boots",
+      "deployment_id",
+      "dimension",
+      "dimension_kind",
+      "error_requests",
+      "latency_hist",
+      "latency_max_ms",
+      "method",
+      "request_time_ms",
+      "requests",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_minutes",
     "columns": [
       "account_id",
@@ -17463,7 +17483,8 @@
     "table": "request_analytics_rollup_coverage",
     "columns": [
       "app_id",
-      "covered_since"
+      "covered_since",
+      "hours_covered_since"
     ],
     "kind": "operational"
   },

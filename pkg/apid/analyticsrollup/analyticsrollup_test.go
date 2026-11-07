@@ -55,3 +55,27 @@ func TestHistPercentileAndHours(t *testing.T) {
 		t.Fatal("route filters are answerable only by route and status groups")
 	}
 }
+
+func TestHourRangeTakesWholeCoveredHoursOnly(t *testing.T) {
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 3, h, m, 0, 0, time.UTC) }
+	cases := []struct {
+		name               string
+		from, until, since time.Time
+		has                bool
+		wantFrom, wantTo   time.Time
+	}{
+		{"no hourly coverage", at(1, 0), at(9, 0), time.Time{}, false, at(9, 0), at(9, 0)},
+		{"partial edges stay on minutes", at(1, 30), at(9, 15), at(0, 0), true, at(2, 0), at(9, 0)},
+		{"aligned window", at(2, 0), at(9, 0), at(0, 0), true, at(2, 0), at(9, 0)},
+		{"coverage plus settle lag starts the tier", at(1, 0), at(9, 0), at(3, 58), true, at(4, 0), at(9, 0)},
+		{"coverage on the hour still waits the lag", at(1, 0), at(9, 0), at(4, 0), true, at(5, 0), at(9, 0)},
+		{"window inside one hour", at(4, 10), at(4, 50), at(0, 0), true, at(4, 50), at(4, 50)},
+		{"no whole hour across a boundary", at(4, 30), at(5, 30), at(0, 0), true, at(5, 30), at(5, 30)},
+	}
+	for _, tc := range cases {
+		gotFrom, gotTo := analyticsrollup.HourRange(tc.from, tc.until, tc.since, tc.has)
+		if !gotFrom.Equal(tc.wantFrom) || !gotTo.Equal(tc.wantTo) {
+			t.Errorf("%s: HourRange = [%s, %s), want [%s, %s)", tc.name, gotFrom, gotTo, tc.wantFrom, tc.wantTo)
+		}
+	}
+}
