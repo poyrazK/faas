@@ -5,6 +5,7 @@ package state_test
 import (
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -44,7 +45,8 @@ func TestPgAppEgressPolicyReconcilesAndRecordsPerNodeApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create compute node: %v", err)
 	}
-	if _, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, node.ID, ""); err != nil {
+	instance, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, node.ID, "")
+	if err != nil {
 		t.Fatalf("create live instance: %v", err)
 	}
 
@@ -104,6 +106,47 @@ func TestPgAppEgressPolicyReconcilesAndRecordsPerNodeApply(t *testing.T) {
 	}
 	if desired, err := store.LatestAppEgressPolicyRevision(ctx, app.ID); err != nil || desired != 2 {
 		t.Fatalf("revision after unrelated setting = %d, %v; want 2", desired, err)
+	}
+
+	// Found on n2 (ADR-20261106105015 check): vmmd keeps the node's last
+	// policy for the app and lays it over every later wake request. With
+	// nothing serving, the node must still receive a new revision, or the
+	// next wake (or an app task VM) boots with the old allowlist.
+	if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateParked)); err != nil {
+		t.Fatalf("park instance: %v", err)
+	}
+	if targets = loadPending(); len(targets) != 0 {
+		t.Fatalf("targets for an applied parked app = %+v, want none", targets)
+	}
+	parkedAllowlist := []netip.Prefix{netip.MustParsePrefix("198.18.0.254/32")}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
+		EgressAllowlist: &parkedAllowlist, SetEgressAllowlist: true,
+	}); err != nil {
+		t.Fatalf("update allowlist while parked: %v", err)
+	}
+	targets = loadPending()
+	if len(targets) != 1 || targets[0].NodeID != node.ID || targets[0].Revision != 3 || len(targets[0].Allowlist) != 1 || targets[0].Allowlist[0] != parkedAllowlist[0] {
+		t.Fatalf("parked targets = %+v; want revision 3 with %v on the node that cached revision 2", targets, parkedAllowlist)
+	}
+	if all, err := store.ListPendingAppEgressPolicyTargets(ctx, "", time.Minute, 1000); err != nil || !slices.ContainsFunc(all, func(target state.AppEgressPolicyApplyTarget) bool {
+		return target.AppID == app.ID && target.Revision == 3
+	}) {
+		t.Fatalf("periodic scan missed the parked app's revision: %v", err)
+	}
+	// A cache-only node is offered each revision once, so a node that has
+	// gone away is not retried on every tick.
+	if err := store.RecordAppEgressPolicyApply(ctx, app.ID, node.ID, 3, errors.New("vmmd unavailable")); err != nil {
+		t.Fatalf("record failed parked apply: %v", err)
+	}
+	if targets = loadPending(); len(targets) != 0 {
+		t.Fatalf("targets after a failed cache-only attempt = %+v, want none", targets)
+	}
+	// Serving again restores the retry-until-applied contract.
+	if _, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, node.ID, ""); err != nil {
+		t.Fatalf("serve again: %v", err)
+	}
+	if targets = loadPending(); len(targets) != 1 || targets[0].Revision != 3 {
+		t.Fatalf("targets once serving again = %+v, want revision 3", targets)
 	}
 }
 
