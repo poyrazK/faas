@@ -62,31 +62,43 @@ several `Set-Cookie` headers are sent.
 ### Minimal handler
 
 ```python
-# /app/handler.py
-import json, base64
-
-def handler(request):
-    body = base64.b64encode(json.dumps({"hello": "world"}).encode()).decode()
+# handler.py
+def handler(event, ctx):
+    # event: {"method", "path", "headers", "query", "body", "body_b64"}
+    # body is parsed JSON when the request was JSON, else a string or None.
     return {
-        "status": 200,
+        "status": 200,                                  # or "statusCode"
         "headers": {"content-type": "application/json"},
-        "body_b64": body,
+        "body": {"hello": "world", "path": event["path"]},  # dicts are sent as JSON
     }
 ```
 
-### Local smoke test
+The runner always calls `handler(event, ctx)` with both arguments. It may
+be `async def`. A `str` or `bytes` body is sent as is and any other value
+is JSON-encoded; returning a dict without a `"body"` key sends the whole
+dict as JSON. `event["headers"]` ignores case on lookup, and
+`event["body_b64"]` holds the exact request bytes, for signature checks.
 
-The §4.9 envelope round-trips with bash and `base64` — the runner
-starts `python3 /app/handler.py` and pipes newline-framed envelope JSON over
-stdin:
+### Testing locally
 
+The handler is a plain function, so a test calls it directly:
+
+```python
+# test_handler.py — run with `python -m pytest`
+from handler import handler
+
+def test_hello():
+    event = {"method": "GET", "path": "/hello", "headers": {}, "query": "",
+             "body": None, "body_b64": ""}
+    res = handler(event, None)
+    assert res["status"] == 200
+    assert res["body"] == {"hello": "world", "path": "/hello"}
 ```
-echo '{"method":"GET","path":"/hello","headers":{},"query":"","body_b64":""}' \
-  | python3 /app/handler.py
-```
 
-prints a JSON response envelope on stdout. The platform runs the same
-script in production; nothing else differs.
+Pass a small stand-in for `ctx` if your handler uses it (for example
+`ctx.invocation_id`). To send a real request through the platform, use
+`gregale invoke APP --path /hello`, or `gregale dev` for a live
+edit-and-reload loop.
 
 ### CGO
 

@@ -24,8 +24,10 @@ loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
-A function request must start its response within 3 seconds by default.
-For slower work, raise the function's request timeout:
+A function request must start its response within 30 seconds by default
+([ADR-20261107190000](adr/20261107190000-function-request-default-30s.md)).
+Set a shorter timeout when callers need a fast failure, or a longer one for
+slower work:
 `gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
 Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
 a streamed response included, may run for the longer of that timeout and
