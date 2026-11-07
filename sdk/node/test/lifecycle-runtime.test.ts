@@ -68,7 +68,11 @@ test('overlapping deliveries share one run', async () => {
 
 // Review finding 10: a timed-out delivery must not let a retry start the
 // callbacks again while the first run is still going.
-test('a retry after the budget waits for the still-running run', async () => {
+test('a retry after the budget waits for the still-running run', async (t) => {
+  // The SDK unrefs its budget timers so they never hold a process open; keep
+  // the test's event loop alive while it waits for them.
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
   const hooks = new LifecycleHooks({budgetMs: 20});
   let runs = 0, running = 0, maxRunning = 0;
   let release!: () => void;
