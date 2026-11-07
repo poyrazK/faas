@@ -19,6 +19,8 @@ export type { ActivityActorResponse } from './models/ActivityActorResponse.js';
 export type { ActivityResourceResponse } from './models/ActivityResourceResponse.js';
 export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
+export type { AgentActivityEntry } from './models/AgentActivityEntry.js';
+export type { AgentActivityResponse } from './models/AgentActivityResponse.js';
 export type { AgentApprovalChannelsRequest } from './models/AgentApprovalChannelsRequest.js';
 export type { AgentApprovalChannelsResponse } from './models/AgentApprovalChannelsResponse.js';
 export type { AgentApprovalPendingInfo } from './models/AgentApprovalPendingInfo.js';

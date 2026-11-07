@@ -73,6 +73,9 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_activity_entry import AgentActivityEntry
+from .agent_activity_entry_method import AgentActivityEntryMethod
+from .agent_activity_response import AgentActivityResponse
 from .agent_approval_channels_request import AgentApprovalChannelsRequest
 from .agent_approval_channels_response import AgentApprovalChannelsResponse
 from .agent_approval_pending_info import AgentApprovalPendingInfo
@@ -6426,6 +6429,9 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentActivityEntry",
+    "AgentActivityEntryMethod",
+    "AgentActivityResponse",
     "AgentApprovalChannelsRequest",
     "AgentApprovalChannelsResponse",
     "AgentApprovalPendingInfo",

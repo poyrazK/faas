@@ -81,6 +81,8 @@ export type { AdoptEnvironmentGitOpsResponse } from './AdoptEnvironmentGitOpsRes
 export type { AdvanceAutomationLiveSuiteRequest } from './AdvanceAutomationLiveSuiteRequest.js';
 export type { AdvanceCanaryRequest } from './AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './AfterRestoreHook.js';
+export type { AgentActivityEntry } from './AgentActivityEntry.js';
+export type { AgentActivityResponse } from './AgentActivityResponse.js';
 export type { AgentApprovalChannelsRequest } from './AgentApprovalChannelsRequest.js';
 export type { AgentApprovalChannelsResponse } from './AgentApprovalChannelsResponse.js';
 export type { AgentApprovalPendingInfo } from './AgentApprovalPendingInfo.js';

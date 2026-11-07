@@ -149,6 +149,25 @@ gregale webhook account add --target-url https://example.com/approvals \
 Each event names the request, the key, the category, the method and path,
 and, for a new request, its review link. It never includes the request body.
 
+## See what an agent changed
+
+Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
+`DELETE`) for 7 days: when, method, path, the response status, and the
+approval request it went through on, if any. Reads are not listed, and
+neither are requests waiting for approval. Request bodies are never kept.
+
+```sh
+gregale mcp connection list                 # find the agent's id
+gregale mcp connection activity <id>
+gregale mcp connection activity <id> --org acme   # an agent acting in an organization
+```
+
+You can read the activity of agents you connected; owners and admins of an
+organization can read the activity of every agent acting in it. An agent reads
+its own with `gregale mcp connection activity --self`, for example to check
+what it already did before repeating work. Pages hold 50 rows; pass the
+printed `--cursor` value for older ones.
+
 ## Run the CLI non-interactively
 
 Put the global `--non-interactive` and `--json` options before the command:

@@ -17,7 +17,7 @@ func cmdMCPConnectionActivity(args []string) int {
 	fs := newFlagSet("mcp-connections-activity", flag.ContinueOnError)
 	self := fs.Bool("self", false, "the calling agent's own activity (with its agent key)")
 	org := fs.String("org", "", "an agent acting in this organization, for its owners and admins")
-	before := fs.String("before", "", "next_before cursor from an earlier page")
+	before := fs.String("before", "", "cursor printed by an earlier page")
 	limit := fs.Int("limit", 0, fmt.Sprintf("rows per page, 1 to %d (default %d)", api.MaxAgentActivityPage, api.DefaultAgentActivityPage))
 	flags, positional := splitArgsForFlags(args, "self")
 	if err := fs.Parse(flags); err != nil {
@@ -41,12 +41,11 @@ func cmdMCPConnectionActivity(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	q := api.AgentActivityQuery{Before: *before, Limit: *limit}
 	var out api.AgentActivityResponse
 	if *org != "" {
-		out, err = client.OrgAgentConnectionActivity(context.Background(), *org, id, q)
+		out, err = client.OrgAgentConnectionActivity(context.Background(), *org, id, *before, *limit)
 	} else {
-		out, err = client.AgentConnectionActivity(context.Background(), id, q)
+		out, err = client.AgentConnectionActivity(context.Background(), id, *before, *limit)
 	}
 	if err != nil {
 		return printErr("Could not read the agent's activity", err)
@@ -72,6 +71,6 @@ func printAgentActivity(out api.AgentActivityResponse) {
 		_, _ = fmt.Fprintf(osStdout, "%-20s  %-6s  %-6d  %-36s  %s\n", oneLine(e.CreatedAt), e.Method, e.Status, approval, oneLine(e.Path))
 	}
 	if out.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "More: gregale mcp connection activity ... --before %s\n", out.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "More: gregale mcp connection activity ... --cursor %s\n", out.NextBefore)
 	}
 }

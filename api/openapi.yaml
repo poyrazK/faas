@@ -53951,6 +53951,76 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-connections/self/activity:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfActivity
+      summary: Read the calling agent's own activity.
+      description: |
+        The write requests (POST, PUT, PATCH, DELETE) the calling agent key
+        made in the last 7 days, newest first. Only an agent key can call it;
+        a person reads an agent's log by its connection id.
+      parameters:
+      - name: before
+        in: query
+        required: false
+        description: The `next_before` value of an earlier page; omit it for the newest rows.
+        schema: { type: string }
+      - name: limit
+        in: query
+        required: false
+        description: Rows per page, 1 to 200. Default 50.
+        schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: One page of write requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentActivityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The connected agent's API key id.
+        schema: { type: string }
+    get:
+      tags: [keys]
+      operationId: agentConnectionActivity
+      summary: Read a connected agent's activity.
+      description: |
+        The write requests one of the account's agents made in the last 7
+        days, newest first: when, method, path, response status and the
+        approval request it went through on. Reads and requests the approval
+        gate answered are not listed. An agent key may read only its own.
+      parameters:
+      - name: before
+        in: query
+        required: false
+        description: The `next_before` value of an earlier page; omit it for the newest rows.
+        schema: { type: string }
+      - name: limit
+        in: query
+        required: false
+        description: Rows per page, 1 to 200. Default 50.
+        schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: One page of write requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentActivityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/agent-connections/{id}:
     parameters:
       - name: id
@@ -54075,6 +54145,45 @@ paths:
               schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The API key id of an agent acting in the organization.
+        schema: { type: string }
+    get:
+      tags: [orgs, keys]
+      operationId: orgAgentConnectionActivity
+      summary: Read the activity of an agent acting in an organization.
+      description: |
+        The write requests an agent acting in the organization made in the
+        last 7 days, newest first. Owners and admins only; an id that is not
+        one of the organization's agents is 404.
+      parameters:
+      - name: before
+        in: query
+        required: false
+        description: The `next_before` value of an earlier page; omit it for the newest rows.
+        schema: { type: string }
+      - name: limit
+        in: query
+        required: false
+        description: Rows per page, 1 to 200. Default 50.
+        schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: One page of write requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentActivityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/orgs/{slug}/agent-connections/{id}:
@@ -113243,6 +113352,32 @@ components:
           description: Channel names, in alphabetical order.
           items: { type: string }
 
+    AgentActivityResponse:
+      type: object
+      description: One page of an agent's write requests, newest first.
+      required: [activity]
+      properties:
+        activity:
+          type: array
+          items: { $ref: '#/components/schemas/AgentActivityEntry' }
+        next_before:
+          type: string
+          description: Pass as `before` to read the next older page; absent on the last page.
+    AgentActivityEntry:
+      type: object
+      description: One write request an agent key made.
+      required: [id, method, path, status, created_at]
+      properties:
+        id: { type: string }
+        method: { type: string, enum: [POST, PUT, PATCH, DELETE] }
+        path:
+          type: string
+          description: The request path, without its query string.
+        status: { type: integer, description: The HTTP status the request was answered with. }
+        approval_id:
+          type: string
+          description: The approval request the write went through on, when it needed one.
+        created_at: { type: string, format: date-time }
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
       type: object
