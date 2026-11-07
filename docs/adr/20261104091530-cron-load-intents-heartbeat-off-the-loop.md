@@ -65,3 +65,12 @@ aggressive reaper) lost their signal together.
 - Scale-up and scale-in keep their signal past 1 MiB of exposition. Deleted
   apps no longer add to it; apps that stay but go quiet still keep their
   rows.
+
+## Amendment 1 (2026-11-05): a cron pass owns its minute
+
+The minute tick and the sweep's resumed passes share one coalesced work slot
+(`cron_sweep`), where the latest submit wins. A resume submitted after a slow
+pass could replace the queued tick, and the pass then ran the new minute with
+the previous minute's tried set, skipping every-minute crons once. A pass now
+resets the tried set itself when the minute changes, so whichever submit runs
+starts the minute correctly.
