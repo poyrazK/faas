@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Contained environment branches (ADR-20261031193635 section 7, slice 6a).
@@ -58,6 +60,9 @@ func (c Config) EnvironmentBranchNftCommands() [][]string {
 	if c.HostBridgeIP.IsValid() {
 		bridge := c.HostBridgeIP.String()
 		rule("iifname", c.Tap, "ip", "saddr", GuestIP, "ip", "daddr", bridge, "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		// Slice 6c: the bridge object relay, which forwards only requests
+		// signed with this branch's own object storage keys.
+		rule("iifname", c.Tap, "ip", "saddr", GuestIP, "ip", "daddr", bridge, "tcp", "dport", strconv.Itoa(api.EnvironmentBranchObjectRelayPort), "accept")
 		for _, protocol := range []string{"tcp", "udp"} {
 			rule("iifname", c.Tap, "ip", "saddr", GuestIP, "ip", "daddr", bridge, protocol, "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
 		}

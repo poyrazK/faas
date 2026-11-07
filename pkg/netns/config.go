@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Inner-world constants (ADR-009, spec §7). Every guest sees the IDENTICAL
@@ -700,6 +702,11 @@ func (c Config) NftCommands() [][]string {
 		}
 		if c.RehearsalRunID != "" && !c.QualificationOnly {
 			proxyPorts = append(proxyPorts, rehearsalPostgresProxyPort, rehearsalObjectProxyPort)
+		}
+		// ADR-20261031193635 slice 6c: only a contained branch guest reaches
+		// the bridge object relay; nobody else has a use for it.
+		if c.EnvironmentBranchContained {
+			proxyPorts = append(proxyPorts, api.EnvironmentBranchObjectRelayPort)
 		}
 		for _, port := range proxyPorts {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,

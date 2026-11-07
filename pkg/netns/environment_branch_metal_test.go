@@ -27,7 +27,7 @@ import socket, threading, time
 def serve(s):
     while True:
         c,_=s.accept(); c.sendall(b"ok"); c.close()
-for ip,port in [("10.100.0.1",10081),("10.100.0.1",10083),("198.51.100.10",5432)]:
+for ip,port in [("10.100.0.1",10081),("10.100.0.1",10083),("10.100.0.1",10085),("198.51.100.10",5432)]:
     s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
     s.bind((ip,port)); s.listen(8)
     threading.Thread(target=serve,args=(s,),daemon=True).start()
@@ -81,6 +81,9 @@ time.sleep(120)
 		}
 		if _, ok := topo.try("tcp", "10.100.0.1", 10081); !ok {
 			t.Fatal("the canonical service proxy is blocked")
+		}
+		if _, ok := topo.try("tcp", "10.100.0.1", 10085); !ok {
+			t.Fatal("the bridge object relay is blocked")
 		}
 		if reply, ok := topo.try("udp", "10.100.0.1", 53); !ok || reply != "dns:q" {
 			t.Fatalf("the bridge resolver is blocked: ok=%v reply=%q", ok, reply)

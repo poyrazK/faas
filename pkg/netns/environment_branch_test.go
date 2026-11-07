@@ -22,6 +22,9 @@ func TestEnvironmentBranchContainedProfile(t *testing.T) {
 	if len(cfg.EnvironmentBranchNftCommands()) != 0 || strings.Contains(joinCommands(cfg.NftCommands()), EnvironmentBranchTable) {
 		t.Fatal("an ordinary instance gained the contained branch profile")
 	}
+	if strings.Contains(joinCommands(cfg.NftCommands()), "dport 10085") {
+		t.Fatal("an ordinary instance reaches the bridge object relay")
+	}
 	cfg.EnvironmentBranchContained = true
 	cfg.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}
 	cfg.OperatorExceptions = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
@@ -36,6 +39,7 @@ func TestEnvironmentBranchContainedProfile(t *testing.T) {
 		"ct direction reply ct state established,related accept",
 		"ct status dnat accept",
 		"ip daddr 10.100.0.1 tcp dport 10081 accept",
+		"ip daddr 10.100.0.1 tcp dport 10085 accept",
 		"ip daddr 10.100.0.1 tcp dport 53 accept",
 		"ip daddr 10.100.0.1 udp dport 53 accept",
 		"ip saddr 10.0.0.2 ip daddr . tcp dport @branch_db accept",
@@ -59,6 +63,11 @@ func TestEnvironmentBranchContainedProfile(t *testing.T) {
 	full := cfg.NftCommands()
 	if !strings.Contains(joinCommands(full[len(full)-len(cfg.EnvironmentBranchNftCommands()):]), "policy drop") {
 		t.Fatal("the full render omits the contained profile")
+	}
+	// The ordinary forward chain admits the relay port too, or the contained
+	// accept would be dropped there.
+	if !strings.Contains(joinCommands(full), "ip faas forward iifname tap0 ip daddr 10.100.0.1 tcp dport 10085 accept") {
+		t.Fatal("the ordinary chain drops the bridge object relay")
 	}
 }
 
