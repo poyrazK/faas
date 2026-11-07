@@ -29,8 +29,21 @@ var ManifestNames = []string{"gregale.yaml", "gregale.yml"}
 // Config is the project block. The legacy file's whole document has the same
 // shape.
 type Config struct {
+	// Name and App are the checkout's default CLI target: the project slug and
+	// the app slug that app-scoped commands use when no flag and no
+	// .gregale/project.json select one (ADR-20261107180000 slice 3). App
+	// without Name targets a standalone app. They are not service settings and
+	// are never deployed.
+	Name          string             `yaml:"name,omitempty" json:"name,omitempty"`
+	App           string             `yaml:"app,omitempty" json:"app,omitempty"`
 	ServicePolicy string             `yaml:"service_policy,omitempty" json:"service_policy,omitempty"`
 	Services      map[string]Service `yaml:"services,omitempty" json:"services,omitempty"`
+}
+
+// HasServiceSettings reports whether the block declares service settings,
+// the part the legacy .gregale/project.yaml also holds.
+func (c Config) HasServiceSettings() bool {
+	return strings.TrimSpace(c.ServicePolicy) != "" || len(c.Services) > 0
 }
 
 // Service is one service's project-wide settings.
@@ -38,11 +51,6 @@ type Service struct {
 	ServicePolicy string   `yaml:"service_policy,omitempty" json:"service_policy,omitempty"`
 	Visibility    string   `yaml:"visibility,omitempty" json:"visibility,omitempty"`
 	DependsOn     []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-}
-
-// Empty reports whether the block declares nothing.
-func (c Config) Empty() bool {
-	return strings.TrimSpace(c.ServicePolicy) == "" && len(c.Services) == 0
 }
 
 // Validate checks values that do not depend on the scanned services. Service

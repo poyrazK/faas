@@ -61,7 +61,9 @@ func manifestProjectConfig(fsys fs.FS) (projectconfig.Config, string, error) {
 		if err != nil {
 			return projectconfig.Config{}, "", fmt.Errorf("reposcan: parse %s: %w", name, err)
 		}
-		if !found {
+		// A block that only names the CLI target (name, app) carries no
+		// service settings and does not conflict with the legacy file.
+		if !found || !cfg.HasServiceSettings() {
 			return projectconfig.Config{}, "", nil
 		}
 		return cfg, name + " `project:`", nil
