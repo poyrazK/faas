@@ -93,7 +93,7 @@ func TestEnvironmentBranchContainedObjectsMetal(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update apps set project_id = $1, workload_name = 'web' where id = $2`, project.ID, appID); err != nil {
 		t.Fatalf("attach app to project: %v", err)
 	}
-	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/buckets", map[string]any{"name": "assets", "scope": "production"})
+	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/buckets", map[string]any{"name": "assets"})
 	var bucket api.ObjectBucket
 	if status != http.StatusCreated || json.Unmarshal(raw, &bucket) != nil {
 		t.Fatalf("create bucket: status=%d body=%s", status, raw)
@@ -151,8 +151,8 @@ func TestEnvironmentBranchContainedObjectsMetal(t *testing.T) {
 		return envelope[name]
 	}
 	branchCredential := aws.Credentials{AccessKeyID: secret("pr-1", keys.AccessKeyID), SecretAccessKey: secret("pr-1", keys.SecretAccessKey)}
-	parentCredential := aws.Credentials{AccessKeyID: secret("production", keys.AccessKeyID), SecretAccessKey: secret("production", keys.SecretAccessKey)}
-	branchBucket, parentBucket := secret("pr-1", keys.Bucket), secret("production", keys.Bucket)
+	parentCredential := aws.Credentials{AccessKeyID: secret(api.DefaultEnvScope, keys.AccessKeyID), SecretAccessKey: secret(api.DefaultEnvScope, keys.SecretAccessKey)}
+	branchBucket, parentBucket := secret("pr-1", keys.Bucket), secret(api.DefaultEnvScope, keys.Bucket)
 
 	client := h.HTTPClient()
 	host := environmentBranchHost(t, store, account.ID, project.ID, "pr-1", appID)
