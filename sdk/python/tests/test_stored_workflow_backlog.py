@@ -7,11 +7,11 @@ from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import EnableAlertPresetRequest
 
 
-def test_automation_backlog_preset_decodes_due_age_and_keeps_notification_defaults():
+def test_stored_workflow_backlog_preset_decodes_due_age_and_keeps_notification_defaults():
     rule = {
         "id": "0123456789abcdef0123456789abcdef",
         "app_id": "1123456789abcdef0123456789abcdef",
-        "name": "Automation backlog exceeds five minutes",
+        "name": "Stored workflow backlog exceeds five minutes",
         "enabled": True,
         "metric": "workflow_due_age_seconds",
         "comparison": "gte",
@@ -28,7 +28,7 @@ def test_automation_backlog_preset_decodes_due_age_and_keeps_notification_defaul
 
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/v1/apps/billing/alert-presets/automation_backlog/enable"
+        assert request.url.path == "/v1/apps/billing/alert-presets/stored_workflow_backlog/enable"
         body = json.loads(request.content)
         assert body["webhook_url"] == rule["webhook_url"]
         assert body["webhook_secret"] == "test-secret"
@@ -40,7 +40,7 @@ def test_automation_backlog_preset_decodes_due_age_and_keeps_notification_defaul
     ) as client:
         result = enable_alert_preset.sync(
             "billing",
-            "automation_backlog",
+            "stored_workflow_backlog",
             client=client,
             body=EnableAlertPresetRequest(webhook_url=rule["webhook_url"], webhook_secret="test-secret"),
         )

@@ -3,13 +3,13 @@ import datetime
 import httpx
 import pytest
 
-from faas_sdk.preview.api.workflows import get_automation_health
+from faas_sdk.preview.api.workflows import get_stored_workflow_health
 from faas_sdk.client import AuthenticatedClient
 from faas_sdk.types import UNSET
 
 
 @pytest.mark.parametrize("with_queue", [True, False])
-def test_automation_health_window_and_current_or_legacy_queue(with_queue):
+def test_stored_workflow_health_window_and_current_or_legacy_queue(with_queue):
     queue = {
         "observed_at": "2026-10-07T12:00:00+00:00",
         "waiting_run_count": 3,
@@ -33,14 +33,14 @@ def test_automation_health_window_and_current_or_legacy_queue(with_queue):
 
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        assert request.url.path == "/v1/apps/billing/automations/paid-invoice/health"
+        assert request.url.path == "/v1/apps/billing/workflows/stored/paid-invoice/health"
         assert request.url.params["created_after"] == "2026-10-01T00:00:00+00:00"
         assert request.url.params["created_before"] == "2026-10-05T23:59:59+00:00"
         return httpx.Response(
             200,
             json={
                 "app_slug": "billing",
-                "automation_name": "paid-invoice",
+                "stored_workflow_name": "paid-invoice",
                 "window_start": "2026-10-01T00:00:00Z",
                 "window_end": "2026-10-05T23:59:59Z",
                 "run_count": 0,
@@ -64,7 +64,7 @@ def test_automation_health_window_and_current_or_legacy_queue(with_queue):
     with AuthenticatedClient(
         base_url="https://example.test", token="test-token", httpx_args={"transport": httpx.MockTransport(respond)}
     ) as client:
-        result = get_automation_health.sync(
+        result = get_stored_workflow_health.sync(
             "billing",
             "paid-invoice",
             client=client,
@@ -72,7 +72,7 @@ def test_automation_health_window_and_current_or_legacy_queue(with_queue):
             created_before=datetime.datetime(2026, 10, 5, 23, 59, 59, tzinfo=datetime.UTC),
         )
 
-    assert result is not None and result.run_count == 0 and result.automation_name == "paid-invoice"
+    assert result is not None and result.run_count == 0 and result.stored_workflow_name == "paid-invoice"
     if with_queue:
         assert result.queue is not UNSET
         assert result.queue.to_dict() == queue

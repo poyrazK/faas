@@ -61,7 +61,7 @@ BEGIN
             EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', new_table, r.conname, left(renamed, 63));
         END LOOP;
         FOR r IN SELECT indexname FROM pg_indexes
-                 WHERE schemaname = 'public' AND tablename = new_table
+                 WHERE schemaname = current_schema() AND tablename = new_table
                    AND (strpos(indexname, old_table) = 1 OR strpos(indexname, old_prefix) = 1) LOOP
             renamed := CASE WHEN strpos(r.indexname, old_table) = 1
                 THEN new_table || substr(r.indexname, length(old_table) + 1)
@@ -74,6 +74,8 @@ BEGIN
         CASE WHEN forward THEN 'stored_workflow_live_suites' ELSE 'workflow_automation_live_suites' END,
         CASE WHEN forward THEN 'stored_workflow_live_verifications' ELSE 'workflow_automation_live_verifications' END] LOOP
         EXECUTE format('ALTER TABLE %I RENAME COLUMN %I TO %I', new_table, old_column, new_column);
+        EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', new_table,
+            new_table || '_' || old_column || '_check', new_table || '_' || new_column || '_check');
     END LOOP;
 
     -- The failure index on workflow_runs and the version sequence carry the
@@ -88,7 +90,7 @@ BEGIN
 
     -- Function bodies resolve table names when they run.
     FOR r IN SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-             WHERE n.nspname = 'public'
+             WHERE n.nspname = current_schema()
                AND strpos(p.prosrc, CASE WHEN forward THEN 'workflow_automation_' ELSE 'stored_workflow' END) > 0 LOOP
         def := pg_get_functiondef(r.oid);
         FOR i IN 1 .. array_length(pairs, 1) / 2 LOOP
@@ -204,7 +206,7 @@ BEGIN
             EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', new_table, r.conname, left(renamed, 63));
         END LOOP;
         FOR r IN SELECT indexname FROM pg_indexes
-                 WHERE schemaname = 'public' AND tablename = new_table
+                 WHERE schemaname = current_schema() AND tablename = new_table
                    AND (strpos(indexname, old_table) = 1 OR strpos(indexname, old_prefix) = 1) LOOP
             renamed := CASE WHEN strpos(r.indexname, old_table) = 1
                 THEN new_table || substr(r.indexname, length(old_table) + 1)
@@ -217,6 +219,8 @@ BEGIN
         CASE WHEN forward THEN 'stored_workflow_live_suites' ELSE 'workflow_automation_live_suites' END,
         CASE WHEN forward THEN 'stored_workflow_live_verifications' ELSE 'workflow_automation_live_verifications' END] LOOP
         EXECUTE format('ALTER TABLE %I RENAME COLUMN %I TO %I', new_table, old_column, new_column);
+        EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', new_table,
+            new_table || '_' || old_column || '_check', new_table || '_' || new_column || '_check');
     END LOOP;
 
     -- The failure index on workflow_runs and the version sequence carry the
@@ -231,7 +235,7 @@ BEGIN
 
     -- Function bodies resolve table names when they run.
     FOR r IN SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-             WHERE n.nspname = 'public'
+             WHERE n.nspname = current_schema()
                AND strpos(p.prosrc, CASE WHEN forward THEN 'workflow_automation_' ELSE 'stored_workflow' END) > 0 LOOP
         def := pg_get_functiondef(r.oid);
         FOR i IN 1 .. array_length(pairs, 1) / 2 LOOP

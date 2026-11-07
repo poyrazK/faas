@@ -3,13 +3,13 @@ import json
 import httpx
 
 from faas_sdk.preview.api.workflows import (
-    get_automation_failure_policy,
-    resume_automation_failure_pause,
-    set_automation_failure_policy,
+    get_stored_workflow_failure_policy,
+    resume_stored_workflow_failure_pause,
+    set_stored_workflow_failure_policy,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.preview.models.resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
-from faas_sdk.preview.models.set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
+from faas_sdk.preview.models.resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
+from faas_sdk.preview.models.set_stored_workflow_failure_policy_request import SetStoredWorkflowFailurePolicyRequest
 
 
 def test_failure_policy_wire_preserves_false_and_generation():
@@ -25,7 +25,7 @@ def test_failure_policy_wire_preserves_false_and_generation():
     def respond(request: httpx.Request) -> httpx.Response:
         calls.append(request.method)
         assert request.headers["Authorization"] == "Bearer token"
-        assert request.url.path.startswith("/v1/apps/billing/automations/invoice/failure-policy")
+        assert request.url.path.startswith("/v1/apps/billing/workflows/stored/invoice/failure-policy")
         if request.method == "PUT":
             assert json.loads(request.content) == body
         if request.method == "POST":
@@ -50,14 +50,14 @@ def test_failure_policy_wire_preserves_false_and_generation():
     client = AuthenticatedClient(
         base_url="https://api.example.com", token="token", httpx_args={"transport": httpx.MockTransport(respond)}
     )
-    preview = get_automation_failure_policy.sync(slug="billing", name="invoice", client=client)
+    preview = get_stored_workflow_failure_policy.sync(slug="billing", name="invoice", client=client)
     assert preview.paused and preview.retained_events == 4
-    updated = set_automation_failure_policy.sync(
-        slug="billing", name="invoice", client=client, body=SetAutomationFailurePolicyRequest.from_dict(body)
+    updated = set_stored_workflow_failure_policy.sync(
+        slug="billing", name="invoice", client=client, body=SetStoredWorkflowFailurePolicyRequest.from_dict(body)
     )
     assert not updated.policy.enabled and updated.paused
-    resumed = resume_automation_failure_pause.sync(
-        slug="billing", name="invoice", client=client, body=ResumeAutomationFailurePauseRequest(expected_generation=7)
+    resumed = resume_stored_workflow_failure_pause.sync(
+        slug="billing", name="invoice", client=client, body=ResumeStoredWorkflowFailurePauseRequest(expected_generation=7)
     )
     assert not resumed.paused and resumed.generation == 8
     assert calls == ["GET", "PUT", "POST"]

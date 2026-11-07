@@ -2,10 +2,10 @@ import json
 
 import httpx
 
-from faas_sdk.preview.api.workflows import delete_automation, publish_automation, save_automation_draft
+from faas_sdk.preview.api.workflows import delete_stored_workflow, publish_stored_workflow, save_stored_workflow_draft
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.preview.models.publish_automation_request import PublishAutomationRequest
-from faas_sdk.preview.models.save_automation_draft_request import SaveAutomationDraftRequest
+from faas_sdk.preview.models.publish_stored_workflow_request import PublishStoredWorkflowRequest
+from faas_sdk.preview.models.save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
 from faas_sdk.preview.models.workflow_spec import WorkflowSpec
 
 
@@ -20,7 +20,7 @@ def test_authoring_requests_preserve_revision_ownership_and_draft():
     def respond(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         assert request.headers["Authorization"] == "Bearer test-token"
-        assert request.url.path.startswith("/v1/apps/billing/automations/invoice")
+        assert request.url.path.startswith("/v1/apps/billing/workflows/stored/invoice")
         if request.method == "PUT":
             assert json.loads(request.content) == {"expected_version": 7, "definition": definition}
         elif request.method == "POST":
@@ -36,21 +36,21 @@ def test_authoring_requests_preserve_revision_ownership_and_draft():
     with AuthenticatedClient(
         base_url="https://example.test", token="test-token", httpx_args={"transport": httpx.MockTransport(respond)}
     ) as client:
-        saved = save_automation_draft.sync(
+        saved = save_stored_workflow_draft.sync(
             "billing",
             "invoice",
             client=client,
-            body=SaveAutomationDraftRequest(expected_version=7, definition=WorkflowSpec.from_dict(definition)),
+            body=SaveStoredWorkflowDraftRequest(expected_version=7, definition=WorkflowSpec.from_dict(definition)),
         )
         assert saved is not None
         assert saved.draft.to_dict() == definition
-        publish_automation.sync(
+        publish_stored_workflow.sync(
             "billing",
             "invoice",
             client=client,
-            body=PublishAutomationRequest(expected_version=8, take_over_manifest=True),
+            body=PublishStoredWorkflowRequest(expected_version=8, take_over_manifest=True),
         )
-        delete_automation.sync("billing", "invoice", client=client, expected_version=9, restore_manifest=True)
+        delete_stored_workflow.sync("billing", "invoice", client=client, expected_version=9, restore_manifest=True)
     assert len(calls) == 3
 
 

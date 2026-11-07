@@ -17,13 +17,13 @@ test('publishing policy and server checks preserve receipts and explicit null as
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       res.setHeader('content-type', 'application/json');
       if (req.method === 'GET') {
-        assert.equal(req.url, '/v1/apps/billing/automations:publish-policy');
+        assert.equal(req.url, '/v1/apps/billing/workflows/stored:publish-policy');
         res.end(JSON.stringify({ mode: 'coverage', version: 2 }));
       } else if (req.url?.endsWith('/publish-check')) {
         assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), body);
         res.end(JSON.stringify({ receipt, expires_at: '2026-10-09T10:30:00Z', evidence: { server_verified: true } }));
       } else {
-        assert.equal(req.url, '/v1/apps/billing/automations/checked/publish');
+        assert.equal(req.url, '/v1/apps/billing/workflows/stored/checked/publish');
         assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { expected_version: 7, check_receipt: receipt });
         res.end(JSON.stringify({ name: 'checked', version: 8 }));
       }
@@ -33,9 +33,9 @@ test('publishing policy and server checks preserve receipts and explicit null as
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const policy = await WorkflowsService.getAutomationPublishPolicy({ slug: 'billing' });
+  const policy = await WorkflowsService.getStoredWorkflowPublishPolicy({ slug: 'billing' });
   assert.equal(policy.mode, 'coverage');
-  const checked = await WorkflowsService.checkAutomationPublication({ slug: 'billing', name: 'checked', requestBody: body });
+  const checked = await WorkflowsService.checkStoredWorkflowPublication({ slug: 'billing', name: 'checked', requestBody: body });
   assert.equal(checked.evidence.server_verified, true);
-  await WorkflowsService.publishAutomation({ slug: 'billing', name: 'checked', requestBody: { expected_version: 7, check_receipt: checked.receipt } });
+  await WorkflowsService.publishStoredWorkflow({ slug: 'billing', name: 'checked', requestBody: { expected_version: 7, check_receipt: checked.receipt } });
 });

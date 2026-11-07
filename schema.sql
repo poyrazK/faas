@@ -57244,12 +57244,12 @@ CREATE TABLE public.stored_workflow_live_suites (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     managed boolean DEFAULT false NOT NULL,
-    CONSTRAINT stored_workflow_live_suites_automation_version_check CHECK ((workflow_version > 0)),
     CONSTRAINT stored_workflow_live_suites_cases_check CHECK (((jsonb_typeof(cases) = 'array'::text) AND ((jsonb_array_length(cases) >= 1) AND (jsonb_array_length(cases) <= 32)) AND (octet_length((cases)::text) <= 16384))),
     CONSTRAINT stored_workflow_live_suites_check CHECK (((published_version > 0) AND (published_version <= workflow_version))),
     CONSTRAINT stored_workflow_live_suites_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT stored_workflow_live_suites_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT stored_workflow_live_suites_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128)))
+    CONSTRAINT stored_workflow_live_suites_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT stored_workflow_live_suites_workflow_version_check CHECK ((workflow_version > 0))
 );
 
 
@@ -57272,7 +57272,6 @@ CREATE TABLE public.stored_workflow_live_verifications (
     report jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT stored_workflow_live_verification_request_fingerprint_check CHECK ((octet_length(request_fingerprint) = 32)),
-    CONSTRAINT stored_workflow_live_verifications_automation_version_check CHECK ((workflow_version > 0)),
     CONSTRAINT stored_workflow_live_verifications_case_name_check CHECK (((octet_length(case_name) >= 1) AND (octet_length(case_name) <= 128))),
     CONSTRAINT stored_workflow_live_verifications_check CHECK (((published_version > 0) AND (published_version <= workflow_version))),
     CONSTRAINT stored_workflow_live_verifications_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
@@ -57280,7 +57279,8 @@ CREATE TABLE public.stored_workflow_live_verifications (
     CONSTRAINT stored_workflow_live_verifications_inputs_hash_check CHECK ((inputs_hash ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT stored_workflow_live_verifications_live_test_check CHECK ((jsonb_typeof(live_test) = 'object'::text)),
     CONSTRAINT stored_workflow_live_verifications_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
-    CONSTRAINT stored_workflow_live_verifications_report_check CHECK (((report IS NULL) OR (jsonb_typeof(report) = 'object'::text)))
+    CONSTRAINT stored_workflow_live_verifications_report_check CHECK (((report IS NULL) OR (jsonb_typeof(report) = 'object'::text))),
+    CONSTRAINT stored_workflow_live_verifications_workflow_version_check CHECK ((workflow_version > 0))
 );
 
 

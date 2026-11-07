@@ -2,9 +2,9 @@ import json
 
 import httpx
 
-from faas_sdk.preview.api.workflows import get_automation_revision, list_automation_revisions, restore_automation_revision
+from faas_sdk.preview.api.workflows import get_stored_workflow_revision, list_stored_workflow_revisions, restore_stored_workflow_revision
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.preview.models.restore_automation_revision_request import RestoreAutomationRevisionRequest
+from faas_sdk.preview.models.restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
 
 
 def test_revision_history_and_restore_requests():
@@ -45,16 +45,16 @@ def test_revision_history_and_restore_requests():
     with AuthenticatedClient(
         base_url="https://example.test", token="test-token", httpx_args={"transport": httpx.MockTransport(respond)}
     ) as client:
-        page = list_automation_revisions.sync("billing", "paid-invoice", client=client, limit=10)
+        page = list_stored_workflow_revisions.sync("billing", "paid-invoice", client=client, limit=10)
         assert page is not None and page.total == 1 and page.revisions[0].version == 42
-        got = get_automation_revision.sync("billing", "paid-invoice", 42, client=client)
+        got = get_stored_workflow_revision.sync("billing", "paid-invoice", 42, client=client)
         assert got is not None and got.definition_hash == "a" * 64
-        restored = restore_automation_revision.sync(
+        restored = restore_stored_workflow_revision.sync(
             "billing",
             "paid-invoice",
             42,
             client=client,
-            body=RestoreAutomationRevisionRequest(expected_version=47),
+            body=RestoreStoredWorkflowRevisionRequest(expected_version=47),
             idempotency_key="restore-v42",
         )
         assert restored is not None and restored.version == 48 and restored.draft.name == "paid-invoice"

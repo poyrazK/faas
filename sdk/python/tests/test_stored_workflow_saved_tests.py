@@ -1,6 +1,6 @@
-from faas_sdk.preview.models.automation_response import AutomationResponse
-from faas_sdk.preview.models.automation_test_report import AutomationTestReport
-from faas_sdk.preview.models.save_automation_test_suite_request import SaveAutomationTestSuiteRequest
+from faas_sdk.preview.models.stored_workflow_response import StoredWorkflowResponse
+from faas_sdk.preview.models.stored_workflow_test_report import StoredWorkflowTestReport
+from faas_sdk.preview.models.save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
 
 
 def test_saved_suite_null_and_large_integer_roundtrip():
@@ -15,7 +15,7 @@ def test_saved_suite_null_and_large_integer_roundtrip():
         ],
     }
     for body in [{"expected_version": 7, "suite": suite}, {"expected_version": 7, "suite": None}]:
-        assert SaveAutomationTestSuiteRequest.from_dict(body).to_dict() == body
+        assert SaveStoredWorkflowTestSuiteRequest.from_dict(body).to_dict() == body
     report = {
         "checked_version": 7,
         "checked_at": "2026-10-15T10:00:00+00:00",
@@ -32,7 +32,7 @@ def test_saved_suite_null_and_large_integer_roundtrip():
             }
         ],
     }
-    assert AutomationTestReport.from_dict(report).to_dict() == report
+    assert StoredWorkflowTestReport.from_dict(report).to_dict() == report
     response = {
         "name": "tests",
         "version": 7,
@@ -42,4 +42,4 @@ def test_saved_suite_null_and_large_integer_roundtrip():
         "test_suite": suite,
         "test_report": report,
     }
-    assert AutomationResponse.from_dict(response).to_dict() == response
+    assert StoredWorkflowResponse.from_dict(response).to_dict() == response

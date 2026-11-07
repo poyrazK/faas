@@ -1,8 +1,8 @@
-from faas_sdk.preview.api.workflows.start_automation_live_verification import _get_kwargs
-from faas_sdk.preview.models.automation_live_expectation import AutomationLiveExpectation
-from faas_sdk.preview.models.automation_live_verification import AutomationLiveVerification
-from faas_sdk.preview.models.automation_test_case import AutomationTestCase
-from faas_sdk.preview.models.start_automation_live_verification_request import StartAutomationLiveVerificationRequest
+from faas_sdk.preview.api.workflows.start_stored_workflow_live_verification import _get_kwargs
+from faas_sdk.preview.models.stored_workflow_live_expectation import StoredWorkflowLiveExpectation
+from faas_sdk.preview.models.stored_workflow_live_verification import StoredWorkflowLiveVerification
+from faas_sdk.preview.models.stored_workflow_test_case import StoredWorkflowTestCase
+from faas_sdk.preview.models.start_stored_workflow_live_verification_request import StartStoredWorkflowLiveVerificationRequest
 
 
 def test_live_expectations_preserve_null_zero_and_large_numbers():
@@ -11,14 +11,14 @@ def test_live_expectations_preserve_null_zero_and_large_numbers():
         {"step": "main", "output": {"id": 9007199254740993}, "state": "succeeded"},
         {"step": "main", "state": "succeeded"},
     ]:
-        assert AutomationLiveExpectation.from_dict(value).to_dict() == value
+        assert StoredWorkflowLiveExpectation.from_dict(value).to_dict() == value
     case = {
         "name": "synthetic",
         "simulation": {"input": {"id": 9007199254740993}},
         "expectations": [{"step": "main", "state": "mocked"}],
         "live": {"expectations": [{"step": "main", "state": "succeeded", "output": None}]},
     }
-    assert AutomationTestCase.from_dict(case).to_dict() == case
+    assert StoredWorkflowTestCase.from_dict(case).to_dict() == case
 
 
 def test_live_start_requires_explicit_key_and_target_fences():
@@ -29,11 +29,11 @@ def test_live_start_requires_explicit_key_and_target_fences():
         "case_name": "synthetic",
         "confirm_real_actions": True,
     }
-    request = StartAutomationLiveVerificationRequest.from_dict(body)
+    request = StartStoredWorkflowLiveVerificationRequest.from_dict(body)
     assert request.to_dict() == body
     kwargs = _get_kwargs("billing", "report", body=request, idempotency_key="stable-live-key")
     assert kwargs["headers"]["Idempotency-Key"] == "stable-live-key"
-    assert kwargs["url"] == "/v1/apps/billing/automations/report/live-verifications"
+    assert kwargs["url"] == "/v1/apps/billing/workflows/stored/report/live-verifications"
     assert kwargs["json"] == body
     report = {
         "run_id": "018e7310-2222-4333-8444-555555555555",
@@ -56,17 +56,17 @@ def test_live_start_requires_explicit_key_and_target_fences():
             "steps": [{"step": "main", "passed": False, "state": "succeeded", "mismatches": ["output"]}],
         },
     }
-    assert AutomationLiveVerification.from_dict(report).to_dict() == report
+    assert StoredWorkflowLiveVerification.from_dict(report).to_dict() == report
 
 
 def test_shared_suite_metadata_routes_and_missing_run_identity():
     from uuid import UUID
 
-    from faas_sdk.preview.api.workflows.get_automation_live_suite import _get_kwargs as get_kwargs
-    from faas_sdk.preview.api.workflows.list_automation_live_suites import _get_kwargs as list_kwargs
-    from faas_sdk.preview.api.workflows.save_automation_live_suite import _get_kwargs as save_kwargs
-    from faas_sdk.preview.models.automation_live_suite import AutomationLiveSuite
-    from faas_sdk.preview.models.save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
+    from faas_sdk.preview.api.workflows.get_stored_workflow_live_suite import _get_kwargs as get_kwargs
+    from faas_sdk.preview.api.workflows.list_stored_workflow_live_suites import _get_kwargs as list_kwargs
+    from faas_sdk.preview.api.workflows.save_stored_workflow_live_suite import _get_kwargs as save_kwargs
+    from faas_sdk.preview.models.stored_workflow_live_suite import StoredWorkflowLiveSuite
+    from faas_sdk.preview.models.save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
 
     suite_id = UUID("00000000-0000-4000-8000-000000000010")
     run_id = "00000000-0000-4000-8000-000000000011"
@@ -77,10 +77,10 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
         "expected_deployment_id": deployment_id,
         "cases": [{"name": "first", "run_id": run_id}, {"name": "second"}],
     }
-    request = SaveAutomationLiveSuiteRequest.from_dict(body)
+    request = SaveStoredWorkflowLiveSuiteRequest.from_dict(body)
     assert request.to_dict() == body
     kwargs = save_kwargs("billing", "case/report", suite_id, body=request)
-    root = "/v1/apps/billing/automations/case%2Freport/live-suites"
+    root = "/v1/apps/billing/workflows/stored/case%2Freport/live-suites"
     assert kwargs["method"] == "put" and kwargs["json"] == body
     assert kwargs["url"] == root + "/" + str(suite_id)
     assert get_kwargs("billing", "case/report", suite_id)["url"] == kwargs["url"]
@@ -113,20 +113,20 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
             {"name": "second", "outcome": "not_started"},
         ],
     }
-    assert AutomationLiveSuite.from_dict(view).to_dict() == view
+    assert StoredWorkflowLiveSuite.from_dict(view).to_dict() == view
 
 
 def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
     from uuid import UUID
 
-    from faas_sdk.preview.api.workflows.compare_automation_live_suites import _get_kwargs
-    from faas_sdk.preview.models.automation_live_suite_comparison import AutomationLiveSuiteComparison
+    from faas_sdk.preview.api.workflows.compare_stored_workflow_live_suites import _get_kwargs
+    from faas_sdk.preview.models.stored_workflow_live_suite_comparison import StoredWorkflowLiveSuiteComparison
 
     candidate = UUID("00000000-0000-4000-8000-000000000001")
     baseline = UUID("00000000-0000-4000-8000-000000000002")
     kwargs = _get_kwargs("billing", "case/report", candidate, baseline)
     assert kwargs["method"] == "get" and "json" not in kwargs
-    assert kwargs["url"] == f"/v1/apps/billing/automations/case%2Freport/live-suites/{candidate}/compare/{baseline}"
+    assert kwargs["url"] == f"/v1/apps/billing/workflows/stored/case%2Freport/live-suites/{candidate}/compare/{baseline}"
     summary = {
         "id": str(baseline),
         "name": "report",
@@ -163,17 +163,17 @@ def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
             }
         ],
     }
-    assert AutomationLiveSuiteComparison.from_dict(view).to_dict() == view
+    assert StoredWorkflowLiveSuiteComparison.from_dict(view).to_dict() == view
 
 
 def test_managed_suites_preserve_target_and_explicit_continuation():
     from uuid import UUID
 
-    from faas_sdk.preview.api.workflows.advance_automation_live_suite import _get_kwargs as advance_kwargs
-    from faas_sdk.preview.api.workflows.start_automation_live_suite import _get_kwargs as start_kwargs
-    from faas_sdk.preview.models.advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
-    from faas_sdk.preview.models.automation_live_suite_summary import AutomationLiveSuiteSummary
-    from faas_sdk.preview.models.start_automation_live_suite_request import StartAutomationLiveSuiteRequest
+    from faas_sdk.preview.api.workflows.advance_stored_workflow_live_suite import _get_kwargs as advance_kwargs
+    from faas_sdk.preview.api.workflows.start_stored_workflow_live_suite import _get_kwargs as start_kwargs
+    from faas_sdk.preview.models.advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
+    from faas_sdk.preview.models.stored_workflow_live_suite_summary import StoredWorkflowLiveSuiteSummary
+    from faas_sdk.preview.models.start_stored_workflow_live_suite_request import StartStoredWorkflowLiveSuiteRequest
 
     suite_id = UUID("0199e820-0000-7000-8000-000000000010")
     body = {
@@ -183,14 +183,14 @@ def test_managed_suites_preserve_target_and_explicit_continuation():
         "cases": ["first", "second"],
         "confirm_real_actions": True,
     }
-    request = StartAutomationLiveSuiteRequest.from_dict(body)
+    request = StartStoredWorkflowLiveSuiteRequest.from_dict(body)
     assert request.to_dict() == body
-    root = "/v1/apps/billing/automations/case%2Freport/live-suites/" + str(suite_id)
+    root = "/v1/apps/billing/workflows/stored/case%2Freport/live-suites/" + str(suite_id)
     start = start_kwargs("billing", "case/report", suite_id, body=request)
     assert start["method"] == "post" and start["url"] == root + "/start"
     assert start["json"] == body
     advance = advance_kwargs(
-        "billing", "case/report", suite_id, body=AdvanceAutomationLiveSuiteRequest(confirm_real_actions=True)
+        "billing", "case/report", suite_id, body=AdvanceStoredWorkflowLiveSuiteRequest(confirm_real_actions=True)
     )
     assert advance["method"] == "post" and advance["url"] == root + "/advance"
     assert advance["json"] == {"confirm_real_actions": True}
@@ -206,18 +206,18 @@ def test_managed_suites_preserve_target_and_explicit_continuation():
         "case_count": 2,
         "linked_runs": 1,
     }
-    assert AutomationLiveSuiteSummary.from_dict(summary).to_dict() == summary
+    assert StoredWorkflowLiveSuiteSummary.from_dict(summary).to_dict() == summary
 
 
 def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     from uuid import UUID
 
-    from faas_sdk.preview.api.workflows.get_automation_live_baseline import _get_kwargs as get_head
-    from faas_sdk.preview.api.workflows.get_automation_live_baseline_history import _get_kwargs as get_history
-    from faas_sdk.preview.api.workflows.promote_automation_live_baseline import _get_kwargs as promote
-    from faas_sdk.preview.models.automation_live_baseline import AutomationLiveBaseline
-    from faas_sdk.preview.models.automation_live_baseline_history import AutomationLiveBaselineHistory
-    from faas_sdk.preview.models.promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
+    from faas_sdk.preview.api.workflows.get_stored_workflow_live_baseline import _get_kwargs as get_head
+    from faas_sdk.preview.api.workflows.get_stored_workflow_live_baseline_history import _get_kwargs as get_history
+    from faas_sdk.preview.api.workflows.promote_stored_workflow_live_baseline import _get_kwargs as promote
+    from faas_sdk.preview.models.stored_workflow_live_baseline import StoredWorkflowLiveBaseline
+    from faas_sdk.preview.models.stored_workflow_live_baseline_history import StoredWorkflowLiveBaselineHistory
+    from faas_sdk.preview.models.promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
 
     promotion_id = UUID("00000000-0000-4000-8000-000000000020")
     suite_id = "00000000-0000-4000-8000-000000000010"
@@ -231,9 +231,9 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
         "expected_deployment_id": deployment_id,
         "policy": policy,
     }
-    body = PromoteAutomationLiveBaselineRequest.from_dict(request)
+    body = PromoteStoredWorkflowLiveBaselineRequest.from_dict(request)
     kwargs = promote("billing", "case/report", "production", promotion_id, body=body)
-    root = "/v1/apps/billing/automations/case%2Freport/live-baselines/production"
+    root = "/v1/apps/billing/workflows/stored/case%2Freport/live-baselines/production"
     assert kwargs["method"] == "put" and kwargs["url"] == f"{root}/promotions/{promotion_id}"
     assert kwargs["json"] == request
     for reader, suffix in [(get_head, ""), (get_history, "/history")]:
@@ -264,16 +264,16 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
         "oldest_run_created_at": "2026-10-16T09:59:00+00:00",
         "evidence_age_seconds": 60.0,
     }
-    assert AutomationLiveBaseline.from_dict(receipt).to_dict() == receipt
+    assert StoredWorkflowLiveBaseline.from_dict(receipt).to_dict() == receipt
     history = {"promotions": [receipt]}
-    assert AutomationLiveBaselineHistory.from_dict(history).to_dict() == history
+    assert StoredWorkflowLiveBaselineHistory.from_dict(history).to_dict() == history
 
-    from faas_sdk.preview.api.workflows.list_automation_live_baselines import _get_kwargs as list_baselines
-    from faas_sdk.preview.models.list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
+    from faas_sdk.preview.api.workflows.list_stored_workflow_live_baselines import _get_kwargs as list_baselines
+    from faas_sdk.preview.models.list_stored_workflow_live_baselines_response import ListStoredWorkflowLiveBaselinesResponse
 
     listing = list_baselines("billing", "case/report")
     assert listing["method"] == "get"
-    assert listing["url"] == "/v1/apps/billing/automations/case%2Freport/live-baselines"
+    assert listing["url"] == "/v1/apps/billing/workflows/stored/case%2Freport/live-baselines"
     assert "json" not in listing
     payload = {
         "observed_at": "2026-10-16T12:00:00+00:00",
@@ -290,21 +290,21 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
             }
         ],
     }
-    assert ListAutomationLiveBaselinesResponse.from_dict(payload).to_dict() == payload
+    assert ListStoredWorkflowLiveBaselinesResponse.from_dict(payload).to_dict() == payload
 
 
 def test_baseline_retirement_request_and_history_roundtrip():
-    from faas_sdk.preview.api.workflows.retire_automation_live_baseline import _get_kwargs
-    from faas_sdk.preview.models.automation_live_baseline_history import AutomationLiveBaselineHistory
-    from faas_sdk.preview.models.automation_live_baseline_retirement import AutomationLiveBaselineRetirement
-    from faas_sdk.preview.models.retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
+    from faas_sdk.preview.api.workflows.retire_stored_workflow_live_baseline import _get_kwargs
+    from faas_sdk.preview.models.stored_workflow_live_baseline_history import StoredWorkflowLiveBaselineHistory
+    from faas_sdk.preview.models.stored_workflow_live_baseline_retirement import StoredWorkflowLiveBaselineRetirement
+    from faas_sdk.preview.models.retire_stored_workflow_live_baseline_request import RetireStoredWorkflowLiveBaselineRequest
 
     identity = "00000000-0000-4000-8000-000000000014"
-    request = RetireAutomationLiveBaselineRequest(expected_revision=3)
+    request = RetireStoredWorkflowLiveBaselineRequest(expected_revision=3)
     kwargs = _get_kwargs("billing", "case/report", "production", identity, body=request)
     assert kwargs["method"] == "put"
     assert (
-        kwargs["url"] == f"/v1/apps/billing/automations/case%2Freport/live-baselines/production/retirements/{identity}"
+        kwargs["url"] == f"/v1/apps/billing/workflows/stored/case%2Freport/live-baselines/production/retirements/{identity}"
     )
     assert kwargs["json"] == {"expected_revision": 3}
     receipt = {
@@ -317,6 +317,6 @@ def test_baseline_retirement_request_and_history_roundtrip():
         "actor_account_id": "00000000-0000-4000-8000-000000000002",
         "retired_at": "2026-10-16T12:00:00+00:00",
     }
-    assert AutomationLiveBaselineRetirement.from_dict(receipt).to_dict() == receipt
+    assert StoredWorkflowLiveBaselineRetirement.from_dict(receipt).to_dict() == receipt
     history = {"promotions": [], "retirement": receipt}
-    assert AutomationLiveBaselineHistory.from_dict(history).to_dict() == history
+    assert StoredWorkflowLiveBaselineHistory.from_dict(history).to_dict() == history

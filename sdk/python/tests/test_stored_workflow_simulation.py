@@ -4,10 +4,10 @@ import httpx
 import pytest
 
 from faas_sdk import AuthenticatedClient
-from faas_sdk.preview.api.workflows import simulate_automation
-from faas_sdk.preview.models.automation_simulation_step import AutomationSimulationStep
-from faas_sdk.preview.models.simulate_automation_request import SimulateAutomationRequest
-from faas_sdk.preview.models.simulate_automation_response import SimulateAutomationResponse
+from faas_sdk.preview.api.workflows import simulate_stored_workflow
+from faas_sdk.preview.models.stored_workflow_simulation_step import StoredWorkflowSimulationStep
+from faas_sdk.preview.models.simulate_stored_workflow_request import SimulateStoredWorkflowRequest
+from faas_sdk.preview.models.simulate_stored_workflow_response import SimulateStoredWorkflowResponse
 from faas_sdk.types import UNSET
 
 REQUEST = {
@@ -68,13 +68,13 @@ RESPONSE = {
 
 def handle(request):
     assert request.method == "POST"
-    assert request.url.path == "/v1/apps/billing/automations:simulate"
+    assert request.url.path == "/v1/apps/billing/workflows/stored:simulate"
     assert json.loads(request.content) == REQUEST
     return httpx.Response(200, json=RESPONSE)
 
 
 def assert_trace(response):
-    assert isinstance(response, SimulateAutomationResponse)
+    assert isinstance(response, SimulateStoredWorkflowResponse)
     assert response.definition_valid is True
     assert response.complete is False
     assert response.trace[0].output is None
@@ -91,12 +91,12 @@ def assert_trace(response):
 
 def test_simulation_sync_preserves_samples_and_trace():
     client = AuthenticatedClient(base_url="https://api.example.com", token="token")
-    body = SimulateAutomationRequest.from_dict(REQUEST)
+    body = SimulateStoredWorkflowRequest.from_dict(REQUEST)
     assert body.to_dict() == REQUEST
     with httpx.Client(base_url="https://api.example.com", transport=httpx.MockTransport(handle)) as transport:
         client.set_httpx_client(transport)
-        assert_trace(simulate_automation.sync(slug="billing", client=client, body=body))
-    missing = AutomationSimulationStep.from_dict({"step_name": "a", "kind": "run", "state": "would_execute"})
+        assert_trace(simulate_stored_workflow.sync(slug="billing", client=client, body=body))
+    missing = StoredWorkflowSimulationStep.from_dict({"step_name": "a", "kind": "run", "state": "would_execute"})
     assert missing.output is UNSET
     assert "output" not in missing.to_dict()
 
@@ -109,7 +109,7 @@ async def test_simulation_async_preserves_samples_and_trace():
     ) as transport:
         client.set_async_httpx_client(transport)
         assert_trace(
-            await simulate_automation.asyncio(
-                slug="billing", client=client, body=SimulateAutomationRequest.from_dict(REQUEST)
+            await simulate_stored_workflow.asyncio(
+                slug="billing", client=client, body=SimulateStoredWorkflowRequest.from_dict(REQUEST)
             )
         )

@@ -4,19 +4,19 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { FaaSClient, WorkflowsService } from '../src/preview.js';
 
-test('automation revision SDK lists, reads, and restores immutable revisions as drafts', async t => {
+test('stored workflow revision SDK lists, reads, and restores immutable revisions as drafts', async t => {
   const server = createServer((req, res) => {
     void (async () => {
       res.setHeader('content-type', 'application/json');
-      if (req.method === 'GET' && req.url === '/v1/apps/billing/automations/paid-invoice/revisions?limit=10') {
+      if (req.method === 'GET' && req.url === '/v1/apps/billing/workflows/stored/paid-invoice/revisions?limit=10') {
         res.end(JSON.stringify({ revisions: [{ version: 42, definition: { name: 'paid-invoice', steps: [] }, definition_hash: 'a'.repeat(64), recorded_at: '2026-10-04T12:00:00Z', legacy_snapshot: false, published_by_account_id: 'account' }], total: 1, limit: 10, offset: 0 }));
         return;
       }
-      if (req.method === 'GET' && req.url === '/v1/apps/billing/automations/paid-invoice/revisions/42') {
+      if (req.method === 'GET' && req.url === '/v1/apps/billing/workflows/stored/paid-invoice/revisions/42') {
         res.end(JSON.stringify({ version: 42, definition: { name: 'paid-invoice', steps: [] }, definition_hash: 'a'.repeat(64), recorded_at: '2026-10-04T12:00:00Z', legacy_snapshot: false, published_by_account_id: 'account' }));
         return;
       }
-      if (req.method === 'POST' && req.url === '/v1/apps/billing/automations/paid-invoice/revisions/42/restore') {
+      if (req.method === 'POST' && req.url === '/v1/apps/billing/workflows/stored/paid-invoice/revisions/42/restore') {
         assert.equal(req.headers['idempotency-key'], 'restore-v42');
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -33,12 +33,12 @@ test('automation revision SDK lists, reads, and restores immutable revisions as 
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
 
-  const page = await WorkflowsService.listAutomationRevisions({ slug: 'billing', name: 'paid-invoice', limit: 10 });
+  const page = await WorkflowsService.listStoredWorkflowRevisions({ slug: 'billing', name: 'paid-invoice', limit: 10 });
   assert.equal(page.total, 1);
   assert.equal(page.revisions[0]?.version, 42);
-  const revision = await WorkflowsService.getAutomationRevision({ slug: 'billing', name: 'paid-invoice', version: 42 });
+  const revision = await WorkflowsService.getStoredWorkflowRevision({ slug: 'billing', name: 'paid-invoice', version: 42 });
   assert.equal(revision.definition_hash, 'a'.repeat(64));
-  const restored = await WorkflowsService.restoreAutomationRevision({
+  const restored = await WorkflowsService.restoreStoredWorkflowRevision({
     slug: 'billing', name: 'paid-invoice', version: 42,
     requestBody: { expected_version: 47 }, idempotencyKey: 'restore-v42',
   });

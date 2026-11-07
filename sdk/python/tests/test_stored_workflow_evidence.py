@@ -1,5 +1,5 @@
-from faas_sdk.preview.models.automation_revision_response import AutomationRevisionResponse
-from faas_sdk.preview.models.publish_automation_request import PublishAutomationRequest
+from faas_sdk.preview.models.stored_workflow_revision_response import StoredWorkflowRevisionResponse
+from faas_sdk.preview.models.publish_stored_workflow_request import PublishStoredWorkflowRequest
 
 EVIDENCE = {
     "definition_hash": "a" * 64,
@@ -15,7 +15,7 @@ EVIDENCE = {
 
 def test_check_evidence_roundtrip():
     body = {"expected_version": 7, "check_evidence": EVIDENCE}
-    assert PublishAutomationRequest.from_dict(body).to_dict() == body
+    assert PublishStoredWorkflowRequest.from_dict(body).to_dict() == body
     revision = {
         "version": 9,
         "definition": {"name": "invoice", "steps": []},
@@ -25,6 +25,6 @@ def test_check_evidence_roundtrip():
         "published_by_account_id": "00000000-0000-0000-0000-000000000001",
         "check_evidence": EVIDENCE,
     }
-    assert AutomationRevisionResponse.from_dict(revision).to_dict() == revision
+    assert StoredWorkflowRevisionResponse.from_dict(revision).to_dict() == revision
     del revision["check_evidence"]
-    assert "check_evidence" not in AutomationRevisionResponse.from_dict(revision).to_dict()
+    assert "check_evidence" not in StoredWorkflowRevisionResponse.from_dict(revision).to_dict()

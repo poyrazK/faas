@@ -23,10 +23,10 @@ test('failure policy preserves explicit disable, generation and retained work pr
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const preview = await WorkflowsService.getAutomationFailurePolicy({ slug: 'billing', name: 'invoice' });
+  const preview = await WorkflowsService.getStoredWorkflowFailurePolicy({ slug: 'billing', name: 'invoice' });
   assert.equal(preview.paused, true); assert.equal(preview.retained_events, 4);
-  await WorkflowsService.setAutomationFailurePolicy({ slug: 'billing', name: 'invoice', requestBody: body });
-  const resumed = await WorkflowsService.resumeAutomationFailurePause({ slug: 'billing', name: 'invoice', requestBody: { expected_generation: 7 } });
+  await WorkflowsService.setStoredWorkflowFailurePolicy({ slug: 'billing', name: 'invoice', requestBody: body });
+  const resumed = await WorkflowsService.resumeStoredWorkflowFailurePause({ slug: 'billing', name: 'invoice', requestBody: { expected_generation: 7 } });
   assert.equal(resumed.paused, false); assert.equal(resumed.generation, 8);
-  assert.deepEqual(calls, ['GET /v1/apps/billing/automations/invoice/failure-policy', 'PUT /v1/apps/billing/automations/invoice/failure-policy', 'POST /v1/apps/billing/automations/invoice/failure-policy/resume']);
+  assert.deepEqual(calls, ['GET /v1/apps/billing/workflows/stored/invoice/failure-policy', 'PUT /v1/apps/billing/workflows/stored/invoice/failure-policy', 'POST /v1/apps/billing/workflows/stored/invoice/failure-policy/resume']);
 });

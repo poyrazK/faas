@@ -3,10 +3,10 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { FaaSClient, WorkflowsService } from '../src/preview.js';
-import type { SimulateAutomationRequest } from '../src/generated/models/SimulateAutomationRequest.js';
+import type { SimulateStoredWorkflowRequest } from '../src/generated/models/SimulateStoredWorkflowRequest.js';
 
 test('simulation SDK preserves null mocks, loop order and false decisions', async t => {
-  const requestBody: SimulateAutomationRequest = {
+  const requestBody: SimulateStoredWorkflowRequest = {
     definition: { name: 'sample', steps: [{ name: 'a', run: 'a' }, { name: 'b', run: 'b' }, { name: 'approval', wait_for_callback: true }] },
     input: { active: false }, mock_outputs: { a: null }, mock_item_outputs: { batch: [false, null] },
     mock_item_attempts: { retry_batch: { '0': [{ outcome: 'timeout' }, { outcome: 'success', output: null }], '2': [{ outcome: 'failure', http_status: 400 }] } },
@@ -15,7 +15,7 @@ test('simulation SDK preserves null mocks, loop order and false decisions', asyn
   const server = createServer((req, res) => {
     void (async () => {
       assert.equal(req.method, 'POST');
-      assert.equal(req.url, '/v1/apps/billing/automations:simulate');
+      assert.equal(req.url, '/v1/apps/billing/workflows/stored:simulate');
       assert.equal(req.headers.authorization, 'Bearer token');
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -28,7 +28,7 @@ test('simulation SDK preserves null mocks, loop order and false decisions', asyn
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const response = await WorkflowsService.simulateAutomation({ slug: 'billing', requestBody });
+  const response = await WorkflowsService.simulateStoredWorkflow({ slug: 'billing', requestBody });
   assert.equal(response.definition_valid, true);
   assert.equal(response.complete, false);
   const row = response.trace[0]; assert.ok(row);
