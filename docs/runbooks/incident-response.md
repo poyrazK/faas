@@ -11,7 +11,30 @@ Use this runbook for any operator alert, customer report, or security signal tha
 | 5–10 min | Freeze unrelated changes and choose the safest mitigation. | Roll back or contain only when the criteria below are met; preserve evidence first. | Post the approved status-page update for customer-facing impact. |
 | 10–15 min | Confirm the next decision, owner, and deadline; escalate if progress is blocked. | Execute the mitigation and report measured effect. | Start the update cadence and record commands, links, and decisions. |
 
-If no responder has acknowledged a page after five minutes, use the escalation matrix in [`docs/ops/escalation.md`](../ops/escalation.md). A SEV1 with no working IC at 15 minutes is an escalation failure: page the secondary on-call and engineering manager immediately.
+If no responder has acknowledged a page after five minutes, follow the escalation matrix in [`docs/ops/escalation.md`](../ops/escalation.md). Secondary on-call and the platform owner are reached by phone or direct message; Alertmanager pages only the primary. A SEV1 with no working IC at 15 minutes is an escalation failure: call the secondary on-call and the platform owner immediately.
+
+## Scenario playbooks
+
+Alerts link to their own runbook through `runbook_url`. For incidents that
+start without an alert, or span many alerts, start here:
+
+| Scenario | Playbook |
+|---|---|
+| Sealed customer secrets may have been read; honeytoken used | [customer-secret-store-compromise.md](customer-secret-store-compromise.md) |
+| Personal data exposed; notification duties | [breach-notification.md](breach-notification.md) |
+| GitHub account, workflow, CI secret or release tag compromised | [release-pipeline-compromise.md](release-pipeline-compromise.md) |
+| Operator device or credential lost, stolen or phished | [operator-credential-compromise.md](operator-credential-compromise.md) |
+| DNS records or registrar changed by someone else | [dns-registrar-compromise.md](dns-registrar-compromise.md) |
+| Internal mTLS CA key or daemon leaf exposed | [internal-ca-compromise.md](internal-ca-compromise.md) |
+| Cloud provider zone or region down, project suspended, admin lost | [cloud-provider-loss.md](cloud-provider-loss.md) |
+| Cloudflare, GitHub, email, Polar or ACME CA down | [third-party-outage.md](third-party-outage.md) |
+| Control-plane host lost | [ControlPlaneFailover.md](ControlPlaneFailover.md), then [ControlPlaneStateBackup.md](ControlPlaneStateBackup.md) |
+| Data changed or deleted by our own command, script or migration | [operator-error-recovery.md](operator-error-recovery.md), [migration-rollback.md](migration-rollback.md) |
+| Abusive tenant | [tenant-abuse.md](tenant-abuse.md) |
+| Need to stop deploys | [DeployFreeze.md](DeployFreeze.md) |
+| Status page itself is down or stale | [StatusPageDegraded.md](StatusPageDegraded.md) |
+
+How often each is rehearsed: [docs/drills/README.md](../drills/README.md).
 
 ## Severity decision matrix
 
