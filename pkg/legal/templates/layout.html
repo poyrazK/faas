@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Gregale</title>
+<style nonce="{{.Nonce}}">
+:root { color-scheme: light dark; --fg: #1a1a1a; --muted: #5f6368; --rule: #e3e3e3; --link: #0b57d0; --bg: #fff; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e8e8e8; --muted: #a0a4a8; --rule: #333; --link: #8ab4f8; --bg: #141414; } }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 16px 4rem; }
+header { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: baseline; padding: 1.25rem 0; border-bottom: 1px solid var(--rule); }
+header strong { margin-right: auto; }
+a { color: var(--link); }
+nav a { text-decoration: none; }
+nav a[aria-current="page"] { font-weight: 600; text-decoration: underline; }
+h1 { font-size: 1.9rem; margin: 2rem 0 .25rem; }
+h2 { font-size: 1.2rem; margin: 2.25rem 0 .5rem; }
+.meta { color: var(--muted); margin: 0 0 1.5rem; }
+li { margin: .25rem 0; }
+footer { color: var(--muted); font-size: .9rem; border-top: 1px solid var(--rule); margin-top: 3rem; padding-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<strong><a href="https://gregale.dev/">Gregale</a></strong>
+<nav>{{range .Documents}}<a href="{{.Path}}"{{if eq .Title $.Title}} aria-current="page"{{end}}>{{.Title}}</a> {{end}}</nav>
+</header>
+<main>
+<h1>{{.Title}}</h1>
+<p class="meta">Effective {{.C.EffectiveDate}} · Version {{.C.Version}}</p>
+{{if eq .Doc "terms"}}{{template "terms" .}}{{else if eq .Doc "privacy"}}{{template "privacy" .}}{{else}}{{template "acceptable-use" .}}{{end}}
+</main>
+<footer>
+Gregale is operated by {{.C.OperatorName}}, {{.C.OperatorAddress}}, {{.C.OperatorCountry}}.
+Questions about these documents: <a href="mailto:{{.C.ContactEmail}}">{{.C.ContactEmail}}</a>.
+</footer>
+</div>
+</body>
+</html>

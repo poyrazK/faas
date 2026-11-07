@@ -1750,7 +1750,10 @@
       "acceptance_test": "cmd/gatewayd-public/main_test.go::TestInstallPublicStaticRoutes_SecurityTxt",
       "core": true,
       "routes": [
-        "/docs"
+        "/acceptable-use",
+        "/docs",
+        "/privacy",
+        "/terms"
       ]
     },
     {

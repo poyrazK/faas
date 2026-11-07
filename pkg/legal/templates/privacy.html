@@ -1,0 +1,61 @@
+{{define "privacy"}}
+<p>This policy explains what personal data {{.C.OperatorName}} ("Gregale", "we", "us") collects when you use the Gregale website, dashboard, API, command-line tool and SDKs (the "Service"), why, and what rights you have. We are the controller of the data described here.</p>
+<p>It does not cover data that you, as our customer, process in your own apps on Gregale. For that data you are the controller and we are your processor under our <a href="https://gregale.dev/docs/dpa">Data Processing Agreement</a>.</p>
+
+<h2>1. What we collect</h2>
+<ul>
+<li><strong>Account data:</strong> your email address, a hash of your password if you set one, your MFA settings, and the profile details a sign-in provider (GitHub or Google) returns when you use it, such as your user ID, username and verified email.</li>
+<li><strong>Organization data:</strong> organizations you create or join, your role and invitations.</li>
+<li><strong>Security and usage data:</strong> IP addresses, user agents, sign-in and session records, API key and token usage, and an audit log of the actions taken in your account.</li>
+<li><strong>Billing data:</strong> your plan, usage measurements and invoice records. Card and payment details are collected by Polar, our merchant of record, and never reach us; Polar shares the billing name, country and tax details needed to sell to you.</li>
+<li><strong>Support and communications:</strong> messages you send us and the replies.</li>
+<li><strong>Platform telemetry about your apps:</strong> request counts, latencies, status codes and resource use we measure to run, bill and protect the Service.</li>
+</ul>
+
+<h2>2. Why we use it, and on what legal basis</h2>
+<ul>
+<li>To provide the Service, run your account and bill you: <em>performance of our contract with you</em>.</li>
+<li>To keep the Service and its users secure, prevent fraud and abuse, and fix faults: <em>our legitimate interests</em> in a safe, working service.</li>
+<li>To send service, billing and security notices: <em>contract</em> and <em>legitimate interests</em>. We send product news only if you opt in, and you can opt out at any time.</li>
+<li>To meet legal obligations, such as tax records and lawful requests: <em>legal obligation</em>.</li>
+</ul>
+<p>We do not sell personal data, and we do not use it for advertising.</p>
+
+<h2>3. Cookies</h2>
+<p>The dashboard uses only cookies it needs to work: a session cookie that keeps you signed in, and short-lived security cookies that protect forms against cross-site request forgery. We use no advertising or cross-site tracking cookies.</p>
+
+<h2>4. Who we share it with</h2>
+<ul>
+<li><strong>Service providers</strong> that host and operate the Service for us: cloud and server hosting, content delivery and DDoS protection, email delivery, and our merchant of record. They process data only on our instructions. The current list, with locations, is published at <a href="https://gregale.dev/docs/subprocessors">gregale.dev/docs/subprocessors</a>, and we give 30 days' notice before adding one.</li>
+<li><strong>Sign-in providers</strong> you choose to use (GitHub, Google), under their own policies.</li>
+<li><strong>Authorities</strong> when the law requires it. We review each request and tell the affected customer unless we are legally barred from doing so.</li>
+<li><strong>A successor</strong>, including a company we set up to run the Service, under this policy.</li>
+</ul>
+
+<h2>5. International transfers</h2>
+<p>Some providers process data outside the European Economic Area and the United Kingdom. Where they do, we rely on an adequacy decision or the European Commission's Standard Contractual Clauses, with additional safeguards where needed.</p>
+
+<h2>6. How long we keep it</h2>
+<ul>
+<li>Account data: while your account exists. When you delete your account it enters a 30-day grace period, then it is deleted.</li>
+<li>Logs from your apps: for the retention period of your plan, published at <a href="https://gregale.dev/docs/logs">gregale.dev/docs/logs</a>, and never more than 90 days.</li>
+<li>Security and audit records: as long as needed to protect the Service and investigate incidents, then deleted or anonymised.</li>
+<li>Billing and tax records: as long as tax and accounting law requires.</li>
+<li>Backups: erased on their normal rotation after the data is deleted.</li>
+</ul>
+
+<h2>7. Security</h2>
+<p>Data is encrypted in transit, apps run in isolated virtual machines, secrets are encrypted at rest, and access to production systems is limited and logged. You can report a vulnerability to <a href="mailto:{{.C.SecurityEmail}}">{{.C.SecurityEmail}}</a>; see <a href="https://gregale.dev/.well-known/security.txt">security.txt</a>.</p>
+
+<h2>8. Your rights</h2>
+<p>Depending on where you live, you may have the right to access, correct, delete, restrict or object to our use of your personal data, to receive it in a portable form, and to withdraw consent where we rely on it. You can export your account data and delete your account yourself from the dashboard or the CLI. For anything else, write to <a href="mailto:{{.C.PrivacyEmail}}">{{.C.PrivacyEmail}}</a>; we answer within one month. You may also complain to your data protection authority.</p>
+
+<h2>9. Children</h2>
+<p>The Service is not for anyone under {{.C.MinimumAge}}, and we do not knowingly collect their data.</p>
+
+<h2>10. Changes</h2>
+<p>We will post changes here and update the effective date. For material changes we email account owners before they take effect.</p>
+
+<h2>11. Contact</h2>
+<p>{{.C.OperatorName}}, {{.C.OperatorAddress}}, {{.C.OperatorCountry}}. Email: <a href="mailto:{{.C.PrivacyEmail}}">{{.C.PrivacyEmail}}</a>.</p>
+{{end}}

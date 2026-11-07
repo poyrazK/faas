@@ -1,0 +1,84 @@
+{{define "terms"}}
+<p>These Terms of Service ("Terms") are an agreement between you and {{.C.OperatorName}} ("Gregale", "we", "us"), who operates the Gregale platform, its dashboard, API, command-line tool, SDKs and documentation (together, the "Service"). By creating an account or using the Service you accept these Terms. If you accept them for a company or other organization, you confirm that you may bind it, and "you" means that organization.</p>
+
+<h2>1. Who may use the Service</h2>
+<ul>
+<li>You must be at least {{.C.MinimumAge}} years old and able to form a binding contract.</li>
+<li>You may not use the Service if you are barred from receiving it under the laws that apply to you, including sanctions and export-control laws.</li>
+<li>You must give accurate sign-up details and keep your email address current. We send notices about your account, billing and security to that address.</li>
+</ul>
+
+<h2>2. Your account</h2>
+<ul>
+<li>You are responsible for everything done with your account, your API keys, deploy tokens and agent keys, and for keeping them secret. Tell us at <a href="mailto:{{.C.SecurityEmail}}">{{.C.SecurityEmail}}</a> as soon as you think one has been exposed.</li>
+<li>In an organization, the organization's owners decide who has access. Removing a member removes their access to the organization's apps and resources.</li>
+</ul>
+
+<h2>3. Plans, payment and taxes</h2>
+<ul>
+<li>The Service has a Free plan and paid plans. The plans, their limits and their prices are published at <a href="https://gregale.dev/docs/plans">gregale.dev/docs/plans</a>. Usage above a plan's included amount is charged at the published rates, up to any spending cap you set.</li>
+<li><strong>Polar is our merchant of record.</strong> Paid plans and usage are sold to you by Polar (<a href="https://polar.sh">polar.sh</a>), which takes payment, issues invoices and receipts, and collects and remits sales tax and VAT. Your purchase is also subject to Polar's terms for buyers, and refund requests are handled by Polar under its refund policy. We set the prices and provide the Service.</li>
+<li>Subscriptions renew automatically at the end of each billing period until you cancel. You can cancel at any time from the dashboard or the CLI. Cancelling stops the next renewal; the plan stays active until the end of the period you paid for.</li>
+<li>If a payment fails, we may limit paid features or move the account to the Free plan after the notices described in our billing documentation. We will not delete your data because of a failed payment without first giving you notice and a chance to pay or export it.</li>
+<li>We may change prices with at least 30 days' notice by email. A change applies from your next billing period after the notice ends.</li>
+</ul>
+
+<h2>4. Your content</h2>
+<ul>
+<li>"Your content" means the code, images, configuration, secrets, data, logs and other material you or your users put into the Service. You keep all rights in it.</li>
+<li>You give us the permission we need to host, copy, build, run, transmit, back up and display your content, only to provide and secure the Service for you. This permission ends when your content is deleted from the Service.</li>
+<li>You are responsible for your content and for your apps, including their compliance with law and with the rights of others, and for the end users of your apps.</li>
+<li>Where we process personal data on your behalf, our <a href="https://gregale.dev/docs/dpa">Data Processing Agreement</a> applies and is part of these Terms.</li>
+</ul>
+
+<h2>5. Acceptable use</h2>
+<p>You must follow the <a href="/acceptable-use">Acceptable Use Policy</a>. It is part of these Terms.</p>
+
+<h2>6. Previews, betas and free use</h2>
+<p>Features labelled beta or preview, and all use of the Free plan, are provided as they are. They may change, have lower limits, or be withdrawn, and the service credits or commitments we give for generally available features do not apply to them. We publish no service-level agreement unless a separate written agreement says otherwise.</p>
+
+<h2>7. Suspension</h2>
+<ul>
+<li>We may suspend an app, a resource or an account, without notice if needed, when we reasonably believe that it breaches these Terms or the Acceptable Use Policy, puts the Service, other customers or third parties at risk, or that we are required to by law.</li>
+<li>When we suspend, we will tell you why, unless the law or a security reason prevents it, and restore access once the cause is fixed. You can contest a suspension by replying to the notice or writing to <a href="mailto:{{.C.AbuseEmail}}">{{.C.AbuseEmail}}</a>.</li>
+</ul>
+
+<h2>8. Ending the agreement</h2>
+<ul>
+<li>You may stop using the Service and delete your account at any time from the dashboard or the CLI. Account deletion has a 30-day grace period during which you can restore the account; after it, your account and content are deleted. Deleted apps can be restored for 7 days.</li>
+<li>We may end these Terms with 30 days' notice, or immediately for a serious or repeated breach.</li>
+<li>Before your content is deleted you can export your account data from the dashboard or the CLI. Backups are erased on their normal schedule after deletion.</li>
+<li>Sections that by their nature should survive ending (payment owed, intellectual property, disclaimers, limits of liability, governing law) survive.</li>
+</ul>
+
+<h2>9. Our intellectual property and feedback</h2>
+<p>The Service, including its software, design and documentation, belongs to us and our licensors. These Terms give you no rights in it beyond using it as described here. Open-source components are licensed under their own licenses. If you send us feedback, we may use it without obligation to you.</p>
+
+<h2>10. Disclaimers</h2>
+<p>Except as stated in these Terms, the Service is provided "as is" and "as available". To the extent the law allows, we disclaim all implied warranties, including merchantability, fitness for a particular purpose and non-infringement, and we do not promise that the Service will be uninterrupted or error-free or that data will never be lost. You are responsible for keeping your own copies of data that matters to you.</p>
+
+<h2>11. Limit of liability</h2>
+<ul>
+<li>To the extent the law allows, neither party is liable for indirect, incidental, special or consequential damages, or for lost profits, revenue or data, even if told they were possible.</li>
+<li>To the extent the law allows, our total liability arising out of or relating to these Terms is limited to the greater of the amounts you paid for the Service in the 12 months before the event giving rise to the claim, and 100 euros.</li>
+<li>Nothing in these Terms limits liability that cannot be limited by law, such as liability for fraud, for death or personal injury caused by negligence, or your rights as a consumer under mandatory law.</li>
+</ul>
+
+<h2>12. Indemnity</h2>
+<p>If a third party makes a claim against us arising from your content, your apps or your breach of these Terms or the Acceptable Use Policy, you will cover the reasonable costs and damages that result, provided we tell you of the claim promptly and let you take part in the defence.</p>
+
+<h2>13. Changes to these Terms</h2>
+<p>We may update these Terms. We will email account owners and show a notice in the dashboard at least 30 days before a material change takes effect; the effective date at the top of this page shows the current version. If you do not agree to a change, you can close your account before it takes effect. Continuing to use the Service after that means you accept it.</p>
+
+<h2>14. Governing law and disputes</h2>
+<p>These Terms are governed by the laws of {{.C.GoverningLaw}}, excluding its conflict-of-law rules. The courts of {{.C.Courts}} have jurisdiction over disputes arising from them. If you are a consumer, you also keep the protection of the mandatory laws, and the right to sue in the courts, of the country where you live.</p>
+
+<h2>15. General</h2>
+<ul>
+<li>These Terms, together with the documents they refer to, are the whole agreement about the Service and replace earlier agreements on the same subject.</li>
+<li>If a provision is found unenforceable, the rest stays in force. Not enforcing a provision is not a waiver of it.</li>
+<li>You may not transfer these Terms without our consent. We may transfer them to a company we set up to run the Service, or to a successor to the Service, with notice to you.</li>
+<li>Neither party is liable for delays caused by events outside its reasonable control.</li>
+<li>Notices to us go to <a href="mailto:{{.C.ContactEmail}}">{{.C.ContactEmail}}</a>. Notices to you go to your account email.</li>
+</ul>
+{{end}}
