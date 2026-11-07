@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -152,7 +153,7 @@ func cmdChannelsUpdate(args []string) int {
 			return printErr("Could not read notification channel", err)
 		}
 		secret, err := bufio.NewReader(os.Stdin).ReadString('\n')
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return printErr("Could not read destination", err)
 		}
 		if current.Kind == "slack" {
