@@ -196,10 +196,10 @@ func floorApp(id string, _ api.Plan, minInstances int) state.App {
 // #1: an app with min_instances=2 and 0 running instances MUST be
 // admitted twice across consecutive ticks until the floor is met.
 func TestTick_AdmitsUpToFloor(t *testing.T) {
-	store := &fakeStore{apps: []state.App{floorApp("app1", api.PlanHobby, 2)}}
+	store := &fakeStore{apps: []state.App{floorApp("app1", api.PlanPro, 2)}}
 	ledger := &fakeLedger{conc: map[string]int{"app1": 0}, headroom: 47_600}
 	engine := &fakeEngine{}
-	resolver := &fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanHobby}}
+	resolver := &fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanPro}}
 	auditor := &fakeAuditor{}
 	tr := New(store, nil, ledger, engine, Options{
 		Metrics:      wire.NewOpsMetrics("schedd"),
@@ -309,10 +309,10 @@ func TestTick_BillableExceedsHeadroom(t *testing.T) {
 // the engine returning AtCapacity=true is SUCCESS (no FAILED row,
 // no backoff), but the trigger records the at_capacity outcome.
 func TestTick_AtCapacityRecordedNotErrored(t *testing.T) {
-	store := &fakeStore{apps: []state.App{floorApp("app1", api.PlanHobby, 2)}}
+	store := &fakeStore{apps: []state.App{floorApp("app1", api.PlanPro, 2)}}
 	ledger := &fakeLedger{conc: map[string]int{"app1": 1}, headroom: 47_600}
 	engine := &fakeEngine{results: map[string]AdmitResult{"app1": {AtCapacity: true}}}
-	resolver := &fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanHobby}}
+	resolver := &fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanPro}}
 	tr := New(store, nil, ledger, engine, Options{
 		Metrics:      wire.NewOpsMetrics("schedd"),
 		PlanResolver: resolver,

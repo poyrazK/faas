@@ -731,6 +731,9 @@ from .edge_waf_review_group import EdgeWAFReviewGroup
 from .edge_waf_review_group_assessment import EdgeWAFReviewGroupAssessment
 from .edge_waf_review_group_rule_mode import EdgeWAFReviewGroupRuleMode
 from .edge_waf_review_response import EdgeWAFReviewResponse
+from .egress_overage_request import EgressOverageRequest
+from .egress_overage_response import EgressOverageResponse
+from .egress_overage_response_billing import EgressOverageResponseBilling
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
@@ -3373,6 +3376,9 @@ __all__ = (
     "EdgeWAFReviewGroupAssessment",
     "EdgeWAFReviewGroupRuleMode",
     "EdgeWAFReviewResponse",
+    "EgressOverageRequest",
+    "EgressOverageResponse",
+    "EgressOverageResponseBilling",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableEdgeAttackModeRequest",

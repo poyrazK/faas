@@ -1378,6 +1378,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cpustats.NewWithDefaults() and skip the sample loop
 	// entirely via runCPUSampleInterval=0.
 	cpuCache := cpustats.NewWithDefaults()
+	// Netstats cache: per-instance byte-counter over root-side
+	// vethHost rx/tx_bytes, fed by runNetworkEgressPoll below and
+	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes wire field
+	// (ADR-046 step 7) and by the idle ladder's activity guard
+	// (ADR-20261107122928). nil-safe so tests can pass nil to
+	// vmmdgrpc.NewWithCPUAndNet and skip the sample loop entirely.
+	netCache := netstats.NewWithDefaults()
 	// ADR-20261027090012: pause an eligible agent run VM while it waits on
 	// the model. It shares ADR-1151's pause pass below.
 	if cfg.AgentWaitPause {
@@ -1422,10 +1429,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Activity: activityTracker,
 			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
 			On:       on,
+			Apps:     cfg.IdleLadderApps,
+			// The activity guard (ADR §6) watches apps quiet pause does not
+			// pause: their VM CPU and veth bytes.
+			CPU: agentWaitCPU{cache: cpuCache},
+			Net: idleLadderNet{cache: netCache},
 		})
 		go mgr.RunIdleLadderObserve(ctx)
 		if on {
-			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet")
+			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet",
+				"guarded_app_pause", cfg.IdleLadderApps)
 		} else {
 			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
 		}
@@ -1981,13 +1994,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Finding 5).
 	// cpuCache (created before quiet pause below) feeds
 	// vmmdgrpc.Server.Stats.
-	// Netstats cache: per-instance byte-counter over root-side
-	// vethHost.rx_bytes, fed by runNetworkEgressPoll below and
-	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes
-	// wire field. ADR-046 (step 7). nil-safe so tests can pass
-	// nil to vmmdgrpc.NewWithCPUAndNet and skip the sample
-	// loop entirely.
-	netCache := netstats.NewWithDefaults()
+	// netCache (created with cpuCache above) feeds
+	// vmmdgrpc.Server.Stats as the net_tx_bytes wire field.
 	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
 		wire.TraceServerOptions()...),
