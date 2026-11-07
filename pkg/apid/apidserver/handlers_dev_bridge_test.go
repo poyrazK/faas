@@ -93,7 +93,8 @@ func TestDevBridgeRejectsProductionAndProtectedEnvironments(t *testing.T) {
 		}
 	}
 	(*(*e.S()).DevBridgeEnabled()) = false
-	if response := e.Do(t, "POST", "/v1/dev/bridges", nil, nil); response.Code != 503 {
+	// A disabled preview is permanent, not retryable (ChronoLake finding 33).
+	if response := e.Do(t, "POST", "/v1/dev/bridges", nil, nil); response.Code != 403 {
 		t.Fatalf("disabled: %d", response.Code)
 	}
 }

@@ -199,6 +199,7 @@ func (d Deps) approvalResponse(ctx context.Context, approval state.AgentApproval
 		BodyBound: approval.BodySHA256 != nil, Status: approval.EffectiveStatus(time.Now()),
 		Agent:     AgentName(ctx, d.Store, approval),
 		CreatedAt: approval.CreatedAt.UTC().Format(time.RFC3339), ExpiresAt: approval.ExpiresAt.UTC().Format(time.RFC3339),
+		Note: approval.Note,
 	}
 	if !approval.DecidedAt.IsZero() {
 		out.DecidedAt = approval.DecidedAt.UTC().Format(time.RFC3339)
