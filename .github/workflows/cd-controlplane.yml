@@ -881,6 +881,8 @@ jobs:
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
+          POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+          POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
         run: |
           set -euo pipefail
@@ -918,6 +920,12 @@ jobs:
           # root alone (step 2). A release cut before the script stages nothing.
           if [[ -f scripts/ci/postgres_runtime_roles_vars.sh ]]; then
             bash scripts/ci/postgres_runtime_roles_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261023104734 step 3: one role per compute daemon; the roles'
+          # SCRAM verifiers derive from POSTGRES_COMPUTE_ROLE_KEY. Off unless
+          # POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED is true.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py verifiers "$work/vars.yml"
           fi
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
@@ -1060,7 +1068,16 @@ jobs:
           trap - EXIT
 
           ident_file="$(sudo -u postgres psql -X -A -t -c 'show ident_file')"
-          if ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+          # ADR-20261023104734 step 2: once the postgres role has contracted
+          # the owner (its marker beside pg_ident.conf), only root may map to
+          # `faas`; outboundd logs in as faas_outboundd. Drop the legacy line
+          # instead of adding it back.
+          if [[ -e "$(dirname "$ident_file")/faas-owner-contracted" ]]; then
+            if grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+              sed -i -E '/^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$/d' "$ident_file"
+              systemctl reload postgresql@16-main.service
+            fi
+          elif ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
             printf 'faas_map  faas-outboundd  faas\n' >> "$ident_file"
             systemctl reload postgresql@16-main.service
           fi
@@ -1745,6 +1762,8 @@ jobs:
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
+          POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
+          POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
           HOSTED_RUNNER: ${{ inputs.hosted_runner }}
           ROLES: ${{ steps.plan.outputs.roles }}
@@ -1784,6 +1803,12 @@ jobs:
           # root alone (step 2). A release cut before the script stages nothing.
           if [[ -f scripts/ci/postgres_runtime_roles_vars.sh ]]; then
             bash scripts/ci/postgres_runtime_roles_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261023104734 step 3: one role per compute daemon; the roles'
+          # SCRAM verifiers derive from POSTGRES_COMPUTE_ROLE_KEY. Off unless
+          # POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED is true.
+          if [[ -f scripts/ci/compute_db_roles.py ]]; then
+            python3 -I scripts/ci/compute_db_roles.py verifiers "$work/vars.yml"
           fi
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"

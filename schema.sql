@@ -183,6 +183,19 @@ END $$;
 CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent,
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit, 0);
+END $$;
+
+
+--
+-- Name: admission_reserve_node(uuid, bigint, integer, boolean, integer, integer, integer, integer, integer, integer, integer, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_quiet_ram_mb integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     node_lifecycle text;
     node_generation bigint;
@@ -196,6 +209,7 @@ DECLARE
     used_cpu bigint;
     quiet_vcpu bigint;
     quiet_cpu bigint;
+    quiet_ram bigint;
 BEGIN
     PERFORM node_admission_lock_capacity();
     SELECT lifecycle::text, lifecycle_generation INTO node_lifecycle, node_generation
@@ -233,11 +247,20 @@ BEGIN
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
     cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
-    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > cap_mb THEN
+    -- ADR-20261107122928: the scheduler leaves out the reservations of
+    -- instances vmmd holds at the idle ladder's freeze level, which measured
+    -- admission books at their measured memory. Only a measured allowance
+    -- takes it, and at most api.IdleLadderReservationDiscountMaxPercent (200)
+    -- of the ceiling.
+    quiet_ram := 0;
+    IF coalesce(p_reservation_percent, 100) > 100 THEN
+        quiet_ram := least(greatest(coalesce(p_quiet_ram_mb, 0), 0), ceiling_mb * 2);
+    END IF;
+    IF ceiling_mb > 0 AND used_mb - quiet_ram + p_ram_mb + p_overhead_mb > cap_mb THEN
         RAISE EXCEPTION 'node RAM headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
-                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
-                                  used_mb, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
+                  DETAIL = format('used_mb=%s discount_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
+                                  used_mb, quiet_ram, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
     END IF;
     IF coalesce(p_vcpu, 0) <= 0 AND coalesce(p_cpu_millicores, 0) <= 0 THEN
         RETURN;
@@ -378,13 +401,29 @@ END $$;
 CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_owner_node_id uuid) RETURNS SETOF public.instances
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    RETURN QUERY SELECT * FROM admit_wake_instance(p_app_id, p_deployment_id, p_state, p_ram_mb, p_node_id, p_wake_id, p_mode,
+        p_expected_generation, p_counts, p_overhead_mb, p_bind_recovery, p_snapshot_id, p_guard_generation, p_reservation_percent,
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit,
+        p_owner_node_id, 0);
+END $$;
+
+
+--
+-- Name: admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint, integer, integer, integer, integer, integer, integer, integer, uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer, p_owner_node_id uuid, p_quiet_ram_mb integer) RETURNS SETOF public.instances
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     admitted instances%ROWTYPE;
     bound integer;
     current_generation bigint;
 BEGIN
     PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent,
-        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit);
+        p_vcpu, p_quiet_vcpu, p_cpu_millicores, p_quiet_cpu_millicores, p_default_cpu_millicores, p_cpu_overcommit,
+        p_quiet_ram_mb);
     -- ADR-20261028200212: the admitting scheduler must still own the app.
     PERFORM admission_check_app_owner(p_app_id, p_owner_node_id);
     INSERT INTO instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
@@ -29683,6 +29722,78 @@ CREATE VIEW public.active_environment_git_sources AS
 
 
 --
+-- Name: agent_approval_channel_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_approval_channel_bindings (
+    account_id uuid NOT NULL,
+    org_id uuid,
+    channel_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE agent_approval_channel_bindings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_approval_channel_bindings IS 'ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.';
+
+
+--
+-- Name: agent_approval_email_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_approval_email_log (
+    recipient_account_id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    last_sent_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE agent_approval_email_log; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_approval_email_log IS 'ADR-20261107140000 when meterd last emailed a recipient about an agent key; meterd is the only writer.';
+
+
+--
+-- Name: agent_approval_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_approval_notifications (
+    approval_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    key_id uuid NOT NULL,
+    agent_name text NOT NULL,
+    review_url text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_until timestamp with time zone,
+    finished_at timestamp with time zone,
+    channels_notified_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_approval_notifications_agent_name_check CHECK (((char_length(agent_name) >= 1) AND (char_length(agent_name) <= 200))),
+    CONSTRAINT agent_approval_notifications_attempts_check CHECK (((attempts >= 0) AND (attempts <= 10))),
+    CONSTRAINT agent_approval_notifications_check CHECK (((state = 'pending'::text) = (finished_at IS NULL))),
+    CONSTRAINT agent_approval_notifications_last_error_check CHECK (((last_error IS NULL) OR (char_length(last_error) <= 256))),
+    CONSTRAINT agent_approval_notifications_review_url_check CHECK (((char_length(review_url) >= 1) AND (char_length(review_url) <= 2048))),
+    CONSTRAINT agent_approval_notifications_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sent'::text, 'skipped'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE agent_approval_notifications; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_approval_notifications IS 'ADR-20261107140000 agent approval requests to tell people about; apid inserts, meterd delivers.';
+
+
+--
 -- Name: agent_approval_requests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29701,6 +29812,7 @@ CREATE TABLE public.agent_approval_requests (
     decided_at timestamp with time zone,
     consumed_at timestamp with time zone,
     expires_at timestamp with time zone NOT NULL,
+    decision_note text,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
     CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
@@ -32567,7 +32679,7 @@ CREATE TABLE public.app_webhooks (
     previous_secret_expires_at timestamp with time zone,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text, 'datadog'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
-    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 6)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text, 'environment.gitops.changed'::text, 'agent_run.finished'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
+    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 9)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text, 'environment.gitops.changed'::text, 'agent_run.finished'::text, 'agent.approval.requested'::text, 'agent.approval.approved'::text, 'agent.approval.denied'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
@@ -48919,7 +49031,8 @@ CREATE TABLE public.org_agent_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by uuid,
     approval_categories text[] DEFAULT '{}'::text[] NOT NULL,
-    CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text]))
+    CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text])),
+    CONSTRAINT org_agent_policies_approval_categories_check CHECK ((approval_categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))
 );
 
 
@@ -58832,6 +58945,30 @@ ALTER TABLE ONLY public.accounts
 
 
 --
+-- Name: agent_approval_email_log agent_approval_email_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_email_log
+    ADD CONSTRAINT agent_approval_email_log_pkey PRIMARY KEY (recipient_account_id, key_id);
+
+
+--
+-- Name: agent_approval_notifications agent_approval_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_notifications
+    ADD CONSTRAINT agent_approval_notifications_pkey PRIMARY KEY (approval_id);
+
+
+--
+-- Name: agent_approval_requests agent_approval_requests_decision_note_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_decision_note_check CHECK (((decision_note IS NULL) OR ((status = 'denied'::text) AND ((char_length(decision_note) >= 1) AND (char_length(decision_note) <= 280))))) NOT VALID;
+
+
+--
 -- Name: agent_approval_requests agent_approval_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67232,14 +67369,6 @@ ALTER TABLE ONLY public.org_activity
 
 
 --
--- Name: org_agent_policies org_agent_policies_approval_categories_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE public.org_agent_policies
-    ADD CONSTRAINT org_agent_policies_approval_categories_check CHECK ((approval_categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text])) NOT VALID;
-
-
---
 -- Name: org_agent_policies org_agent_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71671,6 +71800,27 @@ CREATE INDEX accounts_mfa_required_pending_idx ON public.accounts USING btree (i
 --
 
 CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: agent_approval_channel_bindings_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_approval_channel_bindings_org_idx ON public.agent_approval_channel_bindings USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: agent_approval_channel_bindings_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_approval_channel_bindings_uniq ON public.agent_approval_channel_bindings USING btree (account_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), channel_id);
+
+
+--
+-- Name: agent_approval_notifications_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_approval_notifications_due_idx ON public.agent_approval_notifications USING btree (available_at) WHERE (state = 'pending'::text);
 
 
 --
@@ -89700,6 +89850,30 @@ ALTER TABLE ONLY public.account_spend_cap_holds
 
 ALTER TABLE ONLY public.account_spend_snapshot
     ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_approval_channel_bindings agent_approval_channel_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_channel_bindings
+    ADD CONSTRAINT agent_approval_channel_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_approval_channel_bindings agent_approval_channel_bindings_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_channel_bindings
+    ADD CONSTRAINT agent_approval_channel_bindings_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_approval_notifications agent_approval_notifications_approval_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_notifications
+    ADD CONSTRAINT agent_approval_notifications_approval_id_fkey FOREIGN KEY (approval_id) REFERENCES public.agent_approval_requests(id) ON DELETE CASCADE;
 
 
 --

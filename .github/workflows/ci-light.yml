@@ -354,6 +354,7 @@ jobs:
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
           python3 scripts/ci/binary_code_test.py
+          python3 scripts/ci/compute_db_roles_test.py
           python3 scripts/ci/guest_init_reuse_test.py
           python3 scripts/ci/guest_init_stability_test.py
           python3 scripts/ci/warm_unit_build_cache_test.py

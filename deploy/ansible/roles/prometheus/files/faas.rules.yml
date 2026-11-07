@@ -898,6 +898,46 @@ groups:
   # node's textfile collector; a reader daemon exports faas_seal_domain_loaded
   # from its start. Neither series exists until the domain is staged, so both
   # alerts stay quiet before a rollout.
+  # ADR-20261107203000: Alloy on each host counts security events it sees in
+  # the journal, kernel log and audit log as faas_security_events_total{event}.
+  # The counter starts at 1 when a host first sees an event, which increase()
+  # cannot see, so each alert also fires on a series that did not exist 15m
+  # before. The page events cannot happen under host_hardening's settings
+  # (no root or password SSH, auditd on); the warn events can be legitimate
+  # and need a look.
+  - name: faas_host_security
+    interval: 30s
+    rules:
+      - alert: FaasHostSecurityCritical
+        expr: |
+          sum by (host, event) (increase(faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled"}[15m])) > 0
+            or sum by (host, event) (
+              faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled"}
+                unless faas_security_events_total{event=~"ssh_root_login|ssh_password_login|audit_disabled"} offset 15m
+            )
+        labels:
+          severity: page
+          family: host_security
+        annotations:
+          summary: "Host security event {{ $labels.event }} on {{ $labels.host }}"
+          description: "{{ $labels.host }} logged {{ $labels.event }}, which host_hardening's settings forbid: a root or password SSH login, or the kernel audit switched off. Treat the host as compromised until shown otherwise. The lines are in Loki under {job=\"faas-security\", host=\"{{ $labels.host }}\", event=\"{{ $labels.event }}\"}."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+
+      - alert: FaasHostSecurityEvent
+        expr: |
+          sum by (host, event) (increase(faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended"}[15m])) > 0
+            or sum by (host, event) (
+              faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended"}
+                unless faas_security_events_total{event=~"sudo_denied|account_change|kernel_lockdown|kernel_taint|audit_lost|auditd_stopped|secret_read_interactive|host_config_write_unattended"} offset 15m
+            )
+        labels:
+          severity: warn
+          family: host_security
+        annotations:
+          summary: "Host security event {{ $labels.event }} on {{ $labels.host }}"
+          description: "{{ $labels.host }} logged {{ $labels.event }}. It can be an operator, a package upgrade or a deploy; check who and what in Loki under {job=\"faas-security\", host=\"{{ $labels.host }}\", event=\"{{ $labels.event }}\"} before closing it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
+
   # ADR 20261024014500: a honeytoken is a decoy API key that belongs to no
   # account, so nothing legitimate presents one. A single presentation means
   # the place it was planted, usually the secret store, has been read.
@@ -4148,7 +4188,11 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubdPathFilterDegraded.md"
 
       - alert: FaasGithubWebhookDeliveryDead
-        expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > 0
+        # A delivery died within the last day: the dead count is above its
+        # 24 h low. Dead rows stay retryable for 7 days and are then pruned;
+        # firing on any dead row held this alert on for stale rows and hid
+        # new failures behind them.
+        expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > min_over_time(githubd_recovery_queue_items{queue="webhook_delivery",status="dead"}[24h])
         for: 5m
         labels:
           severity: warn
@@ -4373,6 +4417,18 @@ groups:
         annotations:
           summary: "meterd sample ticks keep failing"
           description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 72 h."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdQuotaFailing
+        expr: increase(meterd_ops_total{op="quota",code="err"}[10m]) >= 3
+        for: 10m
+        labels:
+          severity: page
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd quota sweeps keep failing"
+          description: "meterd's one-minute quota sweep failed at least three times in 10 minutes, for 10 minutes. This sweep stops Free accounts at their allowance, applies the egress ceiling and records the spend-cap holds schedd enforces; while it fails, those stops are not applied (holds already recorded stay). The tick error names the step: list accounts, spend caps, or an account's usage, hold or enforcement (ADR-20261104211412)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdBillingPushFailing
         expr: increase(meterd_ops_total{op="stripe",code="err"}[3h]) >= 2

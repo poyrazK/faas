@@ -109,6 +109,46 @@ toolset) with `deploy`, `restart`, `scale` or `env_change` to learn whether
 its credential and connection allow it. A yes isn't a guarantee: quotas and
 the exact request are checked again when the change runs.
 
+## Approve an agent's risky requests
+
+An agent key, and an agent you connect to the hosted MCP server, must ask a
+person before it deletes something, deploys or rolls back a production app,
+creates or rotates credentials, or changes billing. Previews are not
+gated. Choose the categories when you create the key:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
+```
+
+`--approvals` takes `delete`, `production`, `credentials`, `billing`, `all`
+(the default) or `none`. An organization can require categories for every
+agent acting in it with `gregale org agent policy set --approvals`.
+
+When a request needs approval, Gregale answers `428 approval_required` with
+a review link. The agent shows you the link; you open it signed in to the
+dashboard and approve or deny. Only the member who connected the agent, or an
+owner or admin of its organization, can decide, and only from a signed-in
+session, never with an API key. After you approve, the agent repeats exactly
+the same request once. A request expires 30 minutes after it was made.
+
+If you deny, you can give the agent a reason. When the agent repeats a
+request you denied, or one that expired, within 30 minutes, it gets
+`403 approval_denied` (with your reason) or `410 approval_expired` instead of
+a new link, so it knows to stop and ask you. `GET /v1/agent-approvals/{id}`
+shows a request's status.
+
+To hear about requests when nobody is watching the agent, subscribe an
+account webhook to `agent.approval.requested`, `agent.approval.approved` and
+`agent.approval.denied`:
+
+```sh
+gregale webhook account create --target-url https://example.com/approvals \
+  --event agent.approval.requested --event agent.approval.denied
+```
+
+Each event names the request, the key, the category, the method and path,
+and, for a new request, its review link. It never includes the request body.
+
 ## Run the CLI non-interactively
 
 Put the global `--non-interactive` and `--json` options before the command:

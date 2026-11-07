@@ -160,9 +160,10 @@ type Loop struct {
 	cronMetrics         *commandCronMetrics
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
-	// dispatched (runCronSweep).
+	// dispatched (runCronSweep) and cronSweepMinute the minute it belongs to.
 	cronResume            chan struct{}
 	cronSweepTried        map[string]struct{}
+	cronSweepMinute       time.Time
 	cronSweepSlice        time.Duration
 	audit                 *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog              *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
@@ -4776,8 +4777,13 @@ func (l *Loop) resumeCronSweep() {
 // for one slice, and asks for another pass when the slice runs out. A cron
 // whose dispatch failed is tried again on the next minute, as before.
 func (l *Loop) runCronSweep(ctx context.Context) {
-	if l.cronSweepTried == nil {
+	// The tried set belongs to one minute. A tick and a resume share one
+	// coalesced work slot (cron_sweep) where the latest submit wins, so a
+	// resume can replace the minute's tick; the pass then starts the new
+	// minute itself instead of skipping crons tried the minute before.
+	if minute := l.now().Truncate(time.Minute); l.cronSweepTried == nil || !minute.Equal(l.cronSweepMinute) {
 		l.cronSweepTried = map[string]struct{}{}
+		l.cronSweepMinute = minute
 	}
 	slice := l.cronSweepSlice
 	if slice <= 0 {

@@ -1930,6 +1930,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause admission enabled (ADR-1151)",
 			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
 			"peer_nodes", ownerNodeID != "")
+		// ADR-20261107122928: instances vmmd holds at the idle ladder's
+		// freeze level leave measured admission's cap on reservations, and
+		// the durable guard applies the same discount. Only a vmmd with
+		// idle_ladder on reports the level.
+		ladderFrozen := instancestats.IdleLadderFrozenAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableIdleLadderAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return ladderFrozen(nodeID, time.Now())
+		})
 	}
 	// ADR 20261029151111 measured CPU admission reads instances' measured
 	// CPU the same way: own node locally, peer nodes from the fleet reader.
