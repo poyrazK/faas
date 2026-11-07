@@ -13,7 +13,7 @@ import (
 )
 
 func TestOAuthProviderQualification(t *testing.T) {
-	for _, scenario := range []string{"healthy", "oauth_metadata", "partial_metadata", "issuer_mismatch", "jwks_mismatch", "malformed", "oversized", "private_key", "invalid_key", "redirect", "deadline"} {
+	for _, scenario := range []string{"healthy", "oauth_metadata", "partial_metadata", "issuer_mismatch", "jwks_mismatch", "malformed", "oversized", "private_key", "invalid_key", "redirect", "deadline", "key_ops_verify", "key_ops_encrypt", "key_ops_sign", "key_ops_empty", "key_ops_null", "key_ops_string", "key_ops_mixed", "key_ops_null_item", "key_ops_other_valid"} {
 		t.Run(scenario, func(t *testing.T) {
 			var server *httptest.Server
 			redirects := 0
@@ -71,14 +71,30 @@ func TestOAuthProviderQualification(t *testing.T) {
 					t.Errorf("followed unreviewed provider URL: %s", r.URL.Path)
 				}
 				curve := elliptic.P256().Params()
-				key := map[string]string{"kty": "EC", "crv": "P-256", "alg": "ES256", "x": base64.RawURLEncoding.EncodeToString(curve.Gx.FillBytes(make([]byte, 32))), "y": base64.RawURLEncoding.EncodeToString(curve.Gy.FillBytes(make([]byte, 32)))}
+				key := map[string]any{"kty": "EC", "crv": "P-256", "alg": "ES256", "x": base64.RawURLEncoding.EncodeToString(curve.Gx.FillBytes(make([]byte, 32))), "y": base64.RawURLEncoding.EncodeToString(curve.Gy.FillBytes(make([]byte, 32)))}
 				if scenario == "private_key" {
 					key["d"] = "PRIVATE_SENTINEL"
 				}
 				if scenario == "invalid_key" {
 					key["x"] = "invalid"
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{key}})
+				operations := map[string]string{
+					"key_ops_verify": `["verify"]`, "key_ops_encrypt": `["encrypt"]`, "key_ops_sign": `["sign"]`,
+					"key_ops_empty": `[]`, "key_ops_null": `null`, "key_ops_string": `"verify"`,
+					"key_ops_mixed": `["verify",1]`, "key_ops_null_item": `["verify",null]`, "key_ops_other_valid": `["encrypt"]`,
+				}
+				keys := []any{key}
+				if raw, exists := operations[scenario]; exists {
+					if scenario == "key_ops_other_valid" {
+						other := map[string]any{}
+						for field, value := range key {
+							other[field] = value
+						}
+						keys = append(keys, other)
+					}
+					key["key_ops"] = json.RawMessage(raw)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
 			}))
 			defer server.Close()
 			client := server.Client()
@@ -97,7 +113,7 @@ func TestOAuthProviderQualification(t *testing.T) {
 					t.Fatal("provider body leaked")
 				}
 			}
-			if passed != (scenario == "healthy" || scenario == "oauth_metadata") || redirects != 0 {
+			if passed != (scenario == "healthy" || scenario == "oauth_metadata" || scenario == "key_ops_verify" || scenario == "key_ops_other_valid") || redirects != 0 {
 				t.Fatalf("unexpected result: %+v redirects=%d", checks, redirects)
 			}
 		})

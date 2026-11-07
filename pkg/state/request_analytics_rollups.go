@@ -126,6 +126,15 @@ func (s *PgStore) AddRequestAnalyticsRollups(ctx context.Context, rows []Request
 			return fmt.Errorf("add request analytics rollups: %w", mapErr(err))
 		}
 	}
+	// The same flush, folded to UTC hours, feeds the hourly tier long
+	// windows read (ADR-20261103113952 amendment 2).
+	hours := requestAnalyticsHourRows(rows)
+	for start := 0; start < len(hours); start += api.RequestAnalyticsRollupFlushRowsMax {
+		end := min(start+api.RequestAnalyticsRollupFlushRowsMax, len(hours))
+		if err := q.AddRequestAnalyticsHours(ctx, tx, sqlc.AddRequestAnalyticsHoursParams(requestAnalyticsMinutesParams(hours[start:end]))); err != nil {
+			return fmt.Errorf("add hourly request analytics rollups: %w", mapErr(err))
+		}
+	}
 	if len(coverage) > 0 {
 		arg := sqlc.RecordRequestAnalyticsRollupCoverageParams{
 			AppIds:       make([]pgtype.UUID, len(coverage)),
@@ -155,7 +164,54 @@ func (s *PgStore) RequestAnalyticsRollupCoverage(ctx context.Context, appID uuid
 		}
 		return time.Time{}, false, fmt.Errorf("read request analytics rollup coverage: %w", mapErr(err))
 	}
-	return since.Time, since.Valid, nil
+	return since.CoveredSince.Time, since.CoveredSince.Valid, nil
+}
+
+// RequestAnalyticsRollupHoursCoverage returns the first minute the hourly
+// tier holds, and false when it holds none for the app.
+func (s *PgStore) RequestAnalyticsRollupHoursCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error) {
+	row, err := sqlc.New().GetRequestAnalyticsRollupCoverage(ctx, s.pool, NewPgtypeUUID(appID))
+	if err != nil {
+		if errors.Is(mapErr(err), ErrNotFound) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("read request analytics rollup coverage: %w", mapErr(err))
+	}
+	return row.HoursCoveredSince.Time, row.HoursCoveredSince.Valid, nil
+}
+
+// requestAnalyticsHourRows folds minute rows into UTC hour rows, merging
+// rows that share an hour key, in a stable order.
+func requestAnalyticsHourRows(rows []RequestAnalyticsRollup) []RequestAnalyticsRollup {
+	type key struct {
+		app, deployment   uuid.UUID
+		hour              int64
+		kind, dim, method string
+		status            int16
+	}
+	index := make(map[key]int, len(rows))
+	hours := make([]RequestAnalyticsRollup, 0, len(rows))
+	for _, r := range rows {
+		hour := r.BucketStart.UTC().Truncate(time.Hour)
+		k := key{r.AppID, r.DeploymentID, hour.Unix(), r.DimensionKind, r.Dimension, r.Method, r.Status}
+		i, ok := index[k]
+		if !ok {
+			r.BucketStart = hour
+			hours = append(hours, r)
+			index[k] = len(hours) - 1
+			continue
+		}
+		h := &hours[i]
+		h.Requests += r.Requests
+		h.ErrorRequests += r.ErrorRequests
+		h.ColdBoots += r.ColdBoots
+		h.RequestTimeMS += r.RequestTimeMS
+		h.LatencyMaxMS = max(h.LatencyMaxMS, r.LatencyMaxMS)
+		for b := range h.LatencyHist {
+			h.LatencyHist[b] += r.LatencyHist[b]
+		}
+	}
+	return hours
 }
 
 func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddRequestAnalyticsMinutesParams {
@@ -198,6 +254,7 @@ func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddReques
 // RequestAnalyticsRollupReader reads the analytics rollups.
 type RequestAnalyticsRollupReader interface {
 	RequestAnalyticsRollupCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error)
+	RequestAnalyticsRollupHoursCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error)
 	RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.RequestAnalyticsRollupGroupsParams) ([]sqlc.RequestAnalyticsRollupGroupsRow, error)
 	RequestAnalyticsRollupHasGap(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error)
 	RequestAnalyticsRollupRouteDeployments(ctx context.Context, arg sqlc.RequestAnalyticsRollupRouteDeploymentsParams) ([]sqlc.RequestAnalyticsRollupRouteDeploymentsRow, error)

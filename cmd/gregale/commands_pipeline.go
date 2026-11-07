@@ -95,7 +95,7 @@ func cmdPipelineConnection(args []string) int {
 			return printErr("Could not inspect connection", err)
 		}
 		for _, c := range items.Items {
-			if c.ID == fs.Arg(0) {
+			if pipelineID(c.ID) == pipelineID(fs.Arg(0)) {
 				out, err := client.RotateDataConnection(ctx, c.ID, api.RotateDataConnectionRequest{ExpectedRevision: c.Revision, ConnectionURL: raw})
 				if err != nil {
 					return printErr("Could not rotate connection", err)
@@ -305,6 +305,9 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 		if expected == "verified" && p.ObservationFresh && p.Verification == "inconclusive" {
 			return p, errors.New("verification was inconclusive; inspect saved progress in Data connections, then retry or use explicit recovery")
 		}
+		if expected == "verified" && p.ObservationFresh && p.DesiredState == "paused" && p.State == "paused" && p.Verification == "pending" {
+			return p, errors.New("verification is paused; resume the pipeline to continue")
+		}
 		qualificationRunning := (p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification") && p.Verification == "pending"
 		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || qualificationRunning
 		if (p.State == "resync_required" || (p.ObservationFresh && p.State == "blocked" && !progressing)) && expected != "deleted" && expected != "paused" {
@@ -314,11 +317,11 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 		case <-ctx.Done():
 			return p, ctx.Err()
 		case <-ticker.C:
-			var err error
-			p, err = client.GetDataPipeline(ctx, p.ID)
+			current, err := client.GetDataPipeline(ctx, p.ID)
 			if err != nil {
 				return p, err
 			}
+			p = current
 		}
 	}
 }

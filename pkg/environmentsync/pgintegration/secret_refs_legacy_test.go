@@ -358,6 +358,15 @@ func TestEnvironmentSecretReferenceCatalogRemovalInvalidatesCapturedIntent(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := store.DeleteProjectEnvironment(t.Context(), source.AccountID, source.ProjectID, env.Slug); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("active deployment did not block environment deletion: %v", err)
+		}
+		if err := store.MarkDeploymentSuperseded(t.Context(), dep.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.LatestSnapshot(t.Context(), dep.ID); err != nil {
+			t.Fatalf("retirement removed the cache before catalog deletion: %v", err)
+		}
 		if err := store.DeleteProjectEnvironment(t.Context(), source.AccountID, source.ProjectID, env.Slug); err != nil {
 			t.Fatal(err)
 		}

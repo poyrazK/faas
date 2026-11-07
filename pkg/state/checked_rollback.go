@@ -37,6 +37,15 @@ func rollbackRequestID(ctx context.Context) string {
 func rollbackTerminal(r api.RollbackOperation) bool {
 	return r.Status == "complete" || r.Status == "failed"
 }
+
+// CheckedRollbackCompleted authenticates the durable handoff independently of
+// later traffic changes. A subsequent deployment cannot undo this completion.
+func CheckedRollbackCompleted(r api.RollbackOperation, d Deployment) bool {
+	h := d.ServiceRolloutHandoff
+	return r.Service && r.Status == "routing" && r.AuditID != "" && d.ID == r.TargetDeploymentID && d.AppID == r.AppID && normalizedDeploymentScope(d.Scope) == r.Scope &&
+		h.Phase == ServiceRolloutPhaseComplete && h.Action == ServiceRolloutActionPromote && h.PredecessorDeploymentID == r.CurrentDeploymentID &&
+		h.BindingsCheck != nil && h.BindingsCheck.Status == "passed" && h.BindingsCheck.Action == ServiceRolloutActionPromote && h.BindingsCheck.DeploymentID == r.TargetDeploymentID && h.BindingsCheck.RequestID == r.ID && h.BindingsCheck.AuditID == r.AuditID
+}
 func newCheckedRollback(appID, scope, target, current, reason string, service bool) api.RollbackOperation {
 	now := time.Now().UTC()
 	return api.RollbackOperation{ID: uuid.NewString(), AppID: appID, Scope: normalizedDeploymentScope(scope), TargetDeploymentID: target, CurrentDeploymentID: current, Status: "preparing", Reason: reason, Service: service, CreatedAt: now, UpdatedAt: now}

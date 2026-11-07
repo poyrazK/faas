@@ -83,7 +83,23 @@ type ListConfigRevisionsResponse struct {
 // ConfigRollbackRequest restores a scope's variables to a revision. The
 // scope is the `?scope=` query parameter, as on the env endpoints.
 type ConfigRollbackRequest struct {
-	Revision int64 `json:"revision"`
+	Revision              int64  `json:"revision"`
+	ExpectedRevision      *int64 `json:"expected_revision,omitempty"`
+	ExpectedAppID         string `json:"expected_app_id,omitempty"`
+	ExpectedEnvironmentID string `json:"expected_environment_id,omitempty"`
+	RequestID             string `json:"request_id,omitempty"`
+	ReceiptProof          string `json:"receipt_proof,omitempty"`
+}
+
+// ConfigRollbackReceipt is a value-free durable record of a reviewed rollback.
+type ConfigRollbackReceipt struct {
+	RequestID        string `json:"request_id"`
+	AppID            string `json:"app_id"`
+	Scope            string `json:"scope"`
+	EnvironmentID    string `json:"environment_id,omitempty"`
+	RestoredRevision int64  `json:"restored_revision"`
+	ConfigRevision   int64  `json:"config_revision"`
+	Changed          bool   `json:"changed"`
 }
 
 // ConfigSecretDifference is a secret a config rollback could not restore.

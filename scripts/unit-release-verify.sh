@@ -10,7 +10,8 @@
 # SPEC is SERVICE or SERVICE=READYZ_URL. A leading `?` marks an optional
 # unit (apid-clone-worker, s3-gatewayd, bridged): deployctl does not manage
 # it, so it is restarted here, and only when the operator enabled it and it
-# still runs an older binary. An optional unit that is not active is skipped.
+# still runs an older binary. An optional unit that is stopped is skipped;
+# an activating or reloading unit must also converge onto this release.
 #
 # UNIT_VERIFY_TIMEOUT (seconds, default 60) bounds each service's wait.
 # UNIT_VERIFY_PROC (default /proc) is a test seam.
@@ -59,17 +60,33 @@ for spec in "$@"; do
     echo "unit-release-verify: bad service name in $spec" >&2
     exit 2
   }
+  deadline=$(( SECONDS + timeout ))
   if [[ "$optional" == true ]]; then
-    if ! systemctl is-active --quiet "faas-$service.service"; then
-      echo "faas-$service.service is not active; optional unit left as is"
+    if ! state="$(systemctl show "faas-$service.service" -p ActiveState --value)"; then
+      load_state="$(systemctl show "faas-$service.service" -p LoadState --value 2>/dev/null || true)"
+      if [[ "$load_state" == not-found ]]; then
+        echo "faas-$service.service is not installed; optional unit left as is"
+        continue
+      fi
+      echo "::error::cannot determine state of faas-$service.service" >&2
+      status=1
       continue
     fi
+    case "$state" in
+      inactive|failed) echo "faas-$service.service is not active; optional unit left as is"; continue ;;
+      active|activating|reloading|refreshing) ;;
+      *) echo "::error::faas-$service.service has unexpected state '$state'" >&2; status=1; continue ;;
+    esac
     if ! running_from "$service"; then
       echo "restarting optional faas-$service.service onto the new release"
-      systemctl restart "faas-$service.service"
+      remaining=$(( deadline - SECONDS ))
+      if (( remaining <= 0 )) || ! timeout --kill-after=1s "${remaining}s" systemctl restart --no-block "faas-$service.service"; then
+        echo "::error::could not restart faas-$service.service within ${timeout}s" >&2
+        status=1
+        continue
+      fi
     fi
   fi
-  deadline=$(( SECONDS + timeout ))
   until ready "$service" "$url"; do
     if (( SECONDS >= deadline )); then
       echo "::error::faas-$service.service is not healthy on $release_root after ${timeout}s" >&2

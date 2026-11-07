@@ -102,7 +102,7 @@ type ObjectMultipartCompletionResult struct {
 	RecoveryCursor    string                `json:"-"`
 	VersionsObserved  bool                  `json:"-"`
 	// ProviderGenerationVersion marks ProviderVersionID as a generation (GCS),
-	// which alone never shows retained versions (ADR-20261105120000).
+	// which alone never shows retained versions (ADR-20261107123000).
 	ProviderGenerationVersion bool                 `json:"-"`
 	VerifiedProtection        string               `json:"-"`
 	VerifiedEncryption        api.ObjectEncryption `json:"-"`

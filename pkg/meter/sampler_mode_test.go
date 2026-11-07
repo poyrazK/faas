@@ -70,11 +70,10 @@ func TestSampler_PlanStampedOnRow(t *testing.T) {
 	}
 }
 
-// TestSampler_WorkerModeRowNotSkipped pins the per-mode skip
-// predicate widening (commit 9): worker / service / job modes
-// are NOT mirror, so they pass IsMeteredSkippableMode and reach
-// the row constructor. Mirror is still skipped upstream. A
-// regression here would silence worker billing entirely.
+// TestSampler_WorkerModeRowNotSkipped pins that every execution mode
+// bills: worker / service / job / normal, and mirror VMs too
+// (ADR-20261104145353: ADR-124 told customers a mirror wake bills
+// per running second). A regression here would silence billing.
 func TestSampler_WorkerModeRowNotSkipped(t *testing.T) {
 	cases := []struct {
 		name string
@@ -84,7 +83,7 @@ func TestSampler_WorkerModeRowNotSkipped(t *testing.T) {
 		{"worker_not_skipped", state.InstanceModeWorker, true},
 		{"service_not_skipped", state.InstanceModeService, true},
 		{"job_not_skipped", state.InstanceModeJob, true},
-		{"mirror_skipped", state.InstanceModeMirror, false},
+		{"mirror_billed", state.InstanceModeMirror, true},
 		{"normal_not_skipped", state.InstanceModeNormal, true},
 	}
 	for _, tc := range cases {
@@ -114,7 +113,7 @@ func TestSampler_WorkerModeRowNotSkipped(t *testing.T) {
 // outcome: rows tagged worker + hobby must accumulate onto
 // metered_mb_seconds_total{mode="worker",plan="hobby"}; rows
 // tagged normal + pro must accumulate onto the pro tuple; mirror
-// is filtered, empty mode falls back to "normal". A regression
+// bills under its own mode label, empty mode falls back to "normal". A regression
 // here would either merge unrelated plan/mode tuples or fail to
 // record the worker billing — both are silent customer-trust bugs.
 func TestEmitMeteredMB_AccumulatesByModeAndPlan(t *testing.T) {
@@ -123,8 +122,8 @@ func TestEmitMeteredMB_AccumulatesByModeAndPlan(t *testing.T) {
 		{Mode: "worker", Plan: "hobby", MBSeconds: 1000},
 		{Mode: "worker", Plan: "hobby", MBSeconds: 500},
 		{Mode: "normal", Plan: "pro", MBSeconds: 250},
-		{Mode: "mirror", Plan: "pro", MBSeconds: 999}, // filtered
-		{Mode: "", Plan: "free", MBSeconds: 42},       // empty → "normal"
+		{Mode: "mirror", Plan: "pro", MBSeconds: 999},
+		{Mode: "", Plan: "free", MBSeconds: 42}, // empty → "normal"
 	}
 	l := &Loop{ops: ops}
 	l.emitMeteredMB(context.Background(), rows)
@@ -136,37 +135,13 @@ func TestEmitMeteredMB_AccumulatesByModeAndPlan(t *testing.T) {
 		{"worker", "hobby", 1500},
 		{"normal", "pro", 250},
 		{"normal", "free", 42},
+		{"mirror", "pro", 999},
 	}
 	for _, tc := range cases {
 		got := readMeteredCounter(t, ops, tc.mode, tc.plan)
 		if got != tc.want {
 			t.Errorf("metered_mb_seconds_total{mode=%q,plan=%q} = %d; want %d",
 				tc.mode, tc.plan, got, tc.want)
-		}
-	}
-	// Mirror must not have any series registered. The helper
-	// returns 0 when no series matches — so a (mode=mirror,
-	// plan=pro) tuple that has been WithLabelValues'd (via the
-	// pre-instantiation) would still return its initial 0. We
-	// instead check the metric explicitly: the pre-instantiation
-	// table does NOT include "mirror" (it's filtered upstream), so
-	// the gather below must NOT surface a mirror series. If a future
-	// refactor accidentally adds "mirror" to the instantiator
-	// list, this assertion will trip.
-	mfs, err := ops.Registry().Gather()
-	if err != nil {
-		t.Fatalf("gather: %v", err)
-	}
-	for _, mf := range mfs {
-		if !strings.HasSuffix(mf.GetName(), "_metered_mb_seconds_total") {
-			continue
-		}
-		for _, m := range mf.GetMetric() {
-			for _, l := range m.GetLabel() {
-				if l.GetName() == "mode" && l.GetValue() == "mirror" {
-					t.Errorf("unexpected mirror-mode series registered; mirror is filtered upstream and must not be pre-instantiated")
-				}
-			}
 		}
 	}
 }

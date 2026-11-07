@@ -15,13 +15,17 @@ import (
 
 type holdingProvider struct {
 	*fakeProvider
-	held       map[string]bool
-	holdErr    error
-	releaseErr error
+	held                 map[string]bool
+	holdErr              error
+	releaseErr           error
+	applyHoldBeforeError bool
 }
 
 func (p *holdingProvider) HoldForDeletion(_ context.Context, id string) error {
 	if p.holdErr != nil {
+		if p.applyHoldBeforeError {
+			p.held[id] = true
+		}
 		return p.holdErr
 	}
 	p.held[id] = true
@@ -140,7 +144,7 @@ func TestUndeleteAfterTheWindowOrAPurgeIsGone(t *testing.T) {
 	}
 }
 
-func TestScheduleDeleteFailuresLeaveTheDatabaseUsable(t *testing.T) {
+func TestScheduleDeleteFailuresLeaveTheDatabaseRecoverable(t *testing.T) {
 	t.Run("the provider cannot hold", func(t *testing.T) {
 		provider := newHoldingProvider()
 		provider.holdErr = ErrUnavailable
@@ -150,7 +154,7 @@ func TestScheduleDeleteFailuresLeaveTheDatabaseUsable(t *testing.T) {
 			t.Fatalf("ScheduleDelete = %v", err)
 		}
 		current, err := f.service.Get(context.Background(), "account-a", database.ID)
-		if err != nil || current.State != StateReady || !current.PurgeAfter.IsZero() || current.LeaseToken != "" {
+		if err != nil || !current.Restorable(*f.clock) || current.LastErrorCode != deletionHoldPendingCode || !current.RetryAt.Equal(current.PurgeAfter) || current.LeaseToken != "" {
 			t.Fatalf("after a failed hold: %+v, %v", current, err)
 		}
 	})
@@ -167,7 +171,7 @@ func TestScheduleDeleteFailuresLeaveTheDatabaseUsable(t *testing.T) {
 			t.Fatalf("Undelete = %v", err)
 		}
 		current, err := f.service.Get(context.Background(), "account-a", database.ID)
-		if err != nil || !current.Restorable(*f.clock) || !current.RetryAt.Equal(scheduled.PurgeAfter) || current.LeaseToken != "" {
+		if err != nil || !current.Restorable(*f.clock) || !current.PurgeAfter.Equal(scheduled.PurgeAfter) || current.LastErrorCode != deletionHoldPendingCode || current.LeaseToken != "" {
 			t.Fatalf("a failed undo changed the schedule: %+v, %v", current, err)
 		}
 		provider.releaseErr = nil

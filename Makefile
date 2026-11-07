@@ -31,6 +31,14 @@ GO_BUILD_FLAGS := -trimpath -buildvcs=false
 # serves the pages or sets grpc.EnableTracing
 # (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
 DAEMON_TAGS := metal,grpcnotrace
+# Build tags of the release's guest-init (PID 1 of every microVM). Every
+# runtime base embeds it and ADR-510 refuses a snapshot whose base changed, so
+# its code should change only when it must. guest/init links gRPC, whose trace
+# package keeps every exported method of every type it converts to an
+# interface (all of pkg/api's), so a change to the body of any of their methods
+# changed PID 1. Comma-separated; scripts/ci/daemon_deps.json forbids the
+# template packages (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md).
+GUEST_TAGS := grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
@@ -175,7 +183,7 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$c ./cmd/$$c || exit 1; \
 	done
 	@echo "building init (guest PID 1)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(GUEST_TAGS) -o $(BINDIR)/init ./guest/init
 	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
 
 # Function-runner shims live in the guest at /usr/local/bin/faas-runner and
@@ -214,7 +222,7 @@ build-release-batch: ## Build the complete static release binary set in batched 
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(CLIS))
 	@echo "building init (guest PID 1)"
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
-	  $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	  $(GO_BUILD_FLAGS) -tags $(GUEST_TAGS) -o $(BINDIR)/init ./guest/init
 	@echo "building function runners (batched)"
 	@runner_out=$$(mktemp -d); \
 	  trap 'rm -rf "$$runner_out"' EXIT; \
@@ -405,6 +413,10 @@ coverage-checker-test: ## Exercise coverage block union and exact-package gates 
 .PHONY: daemon-deps-check
 daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
 	python3 scripts/ci/check_daemon_deps.py
+
+.PHONY: guest-init-stability-check
+guest-init-stability-check: ## Build guest-init at HEAD with and without an unreferenced pkg/api file; fail if its code differs (ADR-20261105150000; two builds)
+	python3 scripts/ci/guest_init_stability.py
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
@@ -640,6 +652,15 @@ hobby-route-audit: ## Tier A (ADR-093): Hobby-tier app audit. Read-only harness 
 .PHONY: test-load
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.
 	$(GO) test -tags=load -race -count=1 -v -timeout=10m ./pkg/gateway/...
+
+.PHONY: test-outbound-resilience
+test-outbound-resilience: ## Deadline, pool saturation/recovery and retry regressions; optional DATABASE_URL for Postgres
+	$(GO_TEST) -race -p=1 -count=1 -timeout=10m -run 'Test(Arch_ApidWarmsPoolBeforeBgBefore|BoundedPool|PoolConfig|PoolCollector|DaemonMinConnections|ConnectionWarmup|CanceledAcquires|OutboundRedisPool|ClientDeadline|RemoteCompilerDeadline|AMQPCallInterruptsStalledBroker|Delay|Cancellation|AcquireDeadline|QueryDeadline)' ./pkg/db ./pkg/pgpoolbounds ./pkg/gateway ./pkg/outbound ./pkg/livequery ./pkg/retry ./pkg/sched
+
+.PHONY: test-outbound-resilience-load
+test-outbound-resilience-load: ## Explicit Postgres/Redis fixtures: concurrency, latency, pool recovery and retry accounting
+	@test -n "$$FAAS_RESILIENCE_DATABASE_URL" -a -n "$$FAAS_RESILIENCE_REDIS_URL" || (echo 'Set FAAS_RESILIENCE_DATABASE_URL and FAAS_RESILIENCE_REDIS_URL to isolated test services'; exit 1)
+	$(GO_TEST) -race -p=1 -tags=load -count=1 -timeout=3m -v ./tests/outboundresilience
 
 .PHONY: gateway-bench
 gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; emits ns/op + allocs/op

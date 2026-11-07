@@ -4,7 +4,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
--- ADR-20261105120000 (amends ADR-628): a GCS generation names every object,
+-- ADR-20261107123000 (amends ADR-628): a GCS generation names every object,
 -- versioned bucket or not, so a non-null native version identity is no longer
 -- by itself evidence of retained versions. Drop the CHECK that forced
 -- versions_observed for every non-null identity. The previous release still

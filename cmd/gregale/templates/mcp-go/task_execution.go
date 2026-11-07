@@ -90,11 +90,11 @@ func (runtime *mcpTaskRuntime) claim(ctx context.Context) (*durableMCPTask, erro
 		UPDATE gregale_mcp_tasks AS task SET status='running',attempt_count=task.attempt_count+CASE WHEN task.resume_pending THEN 0 ELSE 1 END,
 		resume_pending=false,next_attempt_at=NULL,lease_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
 		FROM candidate WHERE task.namespace=candidate.namespace AND task.task_id=candidate.task_id AND task.cancel_requested_at IS NULL
-		RETURNING task.task_id::text,task.tool_name,task.handler_version,task.status,task.created_at,task.updated_at,task.expires_at,task.attempt_count,task.lease_token::text,task.cancel_requested_at,task.arguments_encrypted,task.input_methods,task.result_encrypted,task.error_encrypted,task.input_state_encrypted`, strings.Join(filters, " OR "))
+		RETURNING task.task_id::text,task.tool_name,task.handler_version,task.status,task.created_at,task.updated_at,task.expires_at,task.attempt_count,task.lease_token::text,task.cancel_requested_at,task.arguments_encrypted,task.input_methods,task.result_encrypted,task.error_encrypted,task.input_state_encrypted,task.output_schema`, strings.Join(filters, " OR "))
 	var task durableMCPTask
 	var args, result, taskError, inputs []byte
 	task.leaseDeadline = time.Now().Add(mcpTaskLeaseDuration)
-	err = tx.QueryRow(ctx, query, params...).Scan(&task.ID, &task.ToolName, &task.HandlerVersion, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt, &task.AttemptCount, &task.LeaseToken, &task.CancelAt, &args, &task.InputMethods, &result, &taskError, &inputs)
+	err = tx.QueryRow(ctx, query, params...).Scan(&task.ID, &task.ToolName, &task.HandlerVersion, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt, &task.AttemptCount, &task.LeaseToken, &task.CancelAt, &args, &task.InputMethods, &result, &taskError, &inputs, &task.OutputSchema)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, tx.Commit(ctx)
 	}

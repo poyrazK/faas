@@ -366,7 +366,7 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 		ID: credentialID, AccountID: acct.ID, BucketID: plan.bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
+		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix, KeyPrefix: plan.objectCred.KeyPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		return fmt.Errorf("create isolated object storage credential: %w", err)

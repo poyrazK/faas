@@ -87,6 +87,20 @@ then never billed (ADR-20261103121407).
    bill it, lift the suspension before the hours expire; otherwise the loss is
    accepted and the alert clears when they leave the lookback.
 
+## FaasMeterdQuotaFailing
+
+Three or more quota sweeps failed in 10 minutes. While they fail, Free accounts
+are not stopped at their allowance, the egress ceiling is not applied and new
+spend-cap holds are not recorded; holds already recorded stay in force. The
+tick error (meterd `/healthz` tick detail and logs) names the step:
+`quota list accounts`, `load spend caps`, or `account <id> usage`, `spend cap
+hold` or `enforce`.
+
+1. `quota list accounts` or `load spend caps`: check Postgres reachability and
+   pool headroom (`FaasDBPoolStarved`, `FaasPostgresConnectionsHigh`).
+2. One account failing every tick: read its error in the meterd log and fix
+   the row; the other accounts are still swept.
+
 ## FaasMeterdSampleFailing
 
 Five or more sample ticks failed in 15 minutes. The tick error names the step:

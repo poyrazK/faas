@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +17,20 @@ import (
 	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestPipelineVerificationWaitReportsCurrentPause(t *testing.T) {
+	p := api.DataPipeline{ID: uuid.NewString(), State: "paused", DesiredState: "paused", Verification: "pending", ObservationFresh: true}
+	reader := &pipelineStatusReader{next: p}
+	_, err := main.WaitDataPipeline(t.Context(), reader, p, "verified", time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "resume") || reader.calls != 0 {
+		t.Fatalf("current pause was not reported: %v, polls %d", err, reader.calls)
+	}
+	p.ObservationFresh = false
+	reader = &pipelineStatusReader{next: api.DataPipeline{ID: p.ID, State: "live", DesiredState: "running", Verification: "passed", ObservationFresh: true}}
+	if _, err = main.WaitDataPipeline(t.Context(), reader, p, "verified", time.Millisecond); err != nil || reader.calls != 1 {
+		t.Fatalf("stale pause ended verification wait: %v, polls %d", err, reader.calls)
+	}
+}
 
 func TestPipelineResumeWaitObservesCurrentRevision(t *testing.T) {
 	main.ResetJSONOut(t)
@@ -150,5 +167,74 @@ func TestPipelineResumeWaitPollsSchemaAPIRefresh(t *testing.T) {
 	defer mu.Unlock()
 	if code != 0 || reads != 3 || controls != 1 {
 		t.Error("healthy approved workflow progress ended the CLI wait as a terminal failure")
+	}
+}
+
+type pipelineFailReader struct{}
+
+func (pipelineFailReader) GetDataPipeline(context.Context, string) (api.DataPipeline, error) {
+	return api.DataPipeline{}, errors.New("temporary API outage")
+}
+
+type pipelineCheckFailReader struct{}
+
+func (pipelineCheckFailReader) ListDataConnections(context.Context) (api.DataConnectionList, error) {
+	return api.DataConnectionList{}, nil
+}
+func (pipelineCheckFailReader) RequestDataConnectionCheck(context.Context, string, api.RequestDataConnectionCheck) (api.DataConnectionCheck, error) {
+	return api.DataConnectionCheck{}, nil
+}
+func (pipelineCheckFailReader) GetDataConnectionCheck(context.Context, string) (api.DataConnectionCheck, error) {
+	return api.DataConnectionCheck{}, errors.New("temporary API outage")
+}
+
+func TestPipelineConnectionCheckWaitKeepsLastStateOnPollFailure(t *testing.T) {
+	before := api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: uuid.NewString(), State: "running"}
+	got, err := main.WaitPipelineConnectionCheck(t.Context(), pipelineCheckFailReader{}, before, time.Millisecond)
+	if err == nil || got.ID != before.ID || got.ConnectionID != before.ConnectionID || got.State != before.State {
+		t.Fatalf("lost saved check after poll error: got=%+v err=%v", got, err)
+	}
+}
+func TestPipelineWaitKeepsLastStateOnPollFailure(t *testing.T) {
+	before := api.DataPipeline{ID: uuid.NewString(), State: "copying", Revision: 3}
+	got, err := main.WaitDataPipeline(t.Context(), pipelineFailReader{}, before, "live", time.Millisecond)
+	if err == nil || got.ID != before.ID || got.Revision != before.Revision {
+		t.Fatalf("lost saved pipeline after poll error: got=%+v err=%v", got, err)
+	}
+}
+func TestPipelineConnectionCommandsAcceptEquivalentUUID(t *testing.T) {
+	main.ResetJSONOut(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "local-test-token")
+	id := "aa000000-0000-4000-8000-000000000001"
+	var requested, rotated int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/data/connections":
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: id, Revision: 1}}})
+		case "POST /v1/data/connections/" + id + "/check":
+			requested++
+			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: id, State: "pending"})
+		case "PUT /v1/data/connections/" + id:
+			rotated++
+			main.WriteJSONTest(w, api.DataConnection{ID: id, Revision: 2})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	path := filepath.Join(t.TempDir(), "source")
+	if err := os.WriteFile(path, []byte("postgres://reader:secret@source.example/orders?sslmode=verify-full"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := main.CmdPipeline([]string{"connection", "check", strings.ToUpper(id), "--wait=false"}); code != 0 {
+		t.Errorf("uppercase UUID rejected by check, exit %d", code)
+	}
+	if code := main.CmdPipeline([]string{"connection", "rotate", strings.ToUpper(id), "--url-file", path}); code != 0 {
+		t.Errorf("uppercase UUID rejected by rotation, exit %d", code)
+	}
+	if requested != 1 || rotated != 1 {
+		t.Errorf("matching UUID never reached API: checks=%d rotations=%d", requested, rotated)
 	}
 }

@@ -97,7 +97,7 @@ RULES = [
     (r"grype|vuln|secret-scan|show-scan|scanview", "Deploy-time vulnerability scan"),
     (r"focus", "Plans, usage, invoices"),
     (r"release-command|release-config\.|^release$", "Release commands"),
-    (r"after-restore|before-checkpoint|lifecycle-config\.(after|before)", "Snapshot lifecycle hooks"),
+    (r"after-restore|before-checkpoint|lifecycle-config\.(after|before)|lifecycle-hooks", "Snapshot lifecycle hooks"),
     (r"scaling-schedule|scaling-target|scaling-config|worker-scale-spec", "Autoscaling and min instances"),
     (r"amqp|rabbitmq|kafka-config|nats-config|redis-streams-config|sqs-compat-config|sasl-config|tls-config\.|filter-criteria|filter-clause|retry-policy-config|function-bucket-event|function-webhook|^trigger\.|event-trigger", "Triggers and event sources"),
     (r"path-route|async-route\.", "Edge rules (incl"),

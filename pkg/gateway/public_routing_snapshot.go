@@ -146,10 +146,11 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
-	var frozen PublicRoutingSnapshot
-	if err := json.Unmarshal(encoded, &frozen); err != nil {
+	sealed, err := h.publicRoutingFreezes.seal(encoded)
+	if err != nil {
 		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
+	frozen := sealed.frozen
 	h.selectPublicRoutingDeployment(r, app, inputs, &frozen)
 	if frozen.SelectedDeploymentID == "" && !inputs.Async && frozen.ReleaseVerdict != "gone" && frozen.ReleaseVerdict != "conflict" &&
 		(!frozen.RevisionChecked || frozen.RevisionAllowed) {
@@ -176,15 +177,12 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		}
 		return h.refusePublicRouting(w, r, app, publicRoutingSelectionStage(frozen), nil, &frozen)
 	}
-	proof, err := json.Marshal(struct {
-		Base    string
-		Routing json.RawMessage
-	}{TrafficPolicyRevision(r.Context()), encoded})
+	proof, err := sealed.proof(TrafficPolicyRevision(r.Context()))
 	if err != nil {
 		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	ctx := context.WithValue(r.Context(), publicRoutingSnapshotKey{}, frozen)
-	*r = *r.WithContext(context.WithValue(ctx, effectiveTrafficPolicyKey{}, policyDigest(proof)))
+	*r = *r.WithContext(context.WithValue(ctx, effectiveTrafficPolicyKey{}, proof))
 	return false
 }
 

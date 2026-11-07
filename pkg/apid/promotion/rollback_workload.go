@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -91,6 +93,15 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 		}
 		if candidate.ID == "" || !hasCurrent || current.ID != candidate.ID || candidate.Status != state.DeployLive {
 			return "", "", fmt.Errorf("%w: target changed after promotion; refusing to overwrite it", state.ErrConflict)
+		}
+		if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(previous.Scope) {
+			check, err := openapidiff.CheckDeploymentRollback(ctx, store, appID, previous.ID, candidate.ID, previous.Scope)
+			if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
+				return "", "", fmt.Errorf("could not inspect rollback API contract: %w", err)
+			}
+			if check.Diff.Blocking() {
+				return "", "", &openapidiff.GateError{Diff: check.Diff}
+			}
 		}
 		if err := durable.TransferPromotionValidator(ctx, previous, previous.ID); err != nil {
 			return "", "", err

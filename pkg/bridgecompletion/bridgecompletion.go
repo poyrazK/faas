@@ -41,8 +41,9 @@ type tracker struct {
 	mu      sync.Mutex
 	entries map[string]*exchange
 	// open counts exchanges whose handler has not returned. Only they are
-	// bounded by TrafficBridgeCompletionMaxEntries.
-	open int
+	// bounded, by maxOpen (TrafficBridgeCompletionMaxEntries).
+	open    int
+	maxOpen int
 	// retained holds the most recent completions; the oldest is forgotten
 	// when a new one arrives, so an exchange nobody waits for cannot leak.
 	retained []*exchange
@@ -58,9 +59,16 @@ type tracker struct {
 // a caller that read a retained exchange's response to a clean end of stream
 // already knows it completed and need not wait.
 func Wrap(next http.Handler) http.Handler {
+	return WrapLimit(next, api.TrafficBridgeCompletionMaxEntries)
+}
+
+// WrapLimit is Wrap with at most maxOpen open exchanges. Tests use a small
+// limit; production bridges use Wrap.
+func WrapLimit(next http.Handler, maxOpen int) http.Handler {
 	t := &tracker{
 		entries:  make(map[string]*exchange),
 		retained: make([]*exchange, api.TrafficBridgeCompletionRetained),
+		maxOpen:  maxOpen,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if id := r.Header.Get(WaitHeader); id != "" {
@@ -92,7 +100,7 @@ func (t *tracker) begin(id string) (*exchange, bool) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, exists := t.entries[id]; exists || t.open >= api.TrafficBridgeCompletionMaxEntries {
+	if _, exists := t.entries[id]; exists || t.open >= t.maxOpen {
 		return nil, false
 	}
 	ex := &exchange{id: id, done: make(chan struct{})}

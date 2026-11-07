@@ -77,6 +77,9 @@ type AsyncRouteRequest struct {
 	Payload          json.RawMessage
 	Headers          map[string]string
 	IdempotencyKey   string
+	// EdgeJWT is the caller a kind=jwt rule verified (ADR-091 amendment
+	// 2026-11-04, round 11); zero when no rule did.
+	EdgeJWT EdgeJWTIdentity
 }
 
 type AsyncRouteAccepted struct {
@@ -152,7 +155,11 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 	deadlineAt := asyncRouteDeadlineAt(time.Now().UTC(), rule.MaxAgeSeconds, limits.MaxAsyncInvocationDeadlineSeconds)
+	// The stored request keeps no Authorization header, so the caller a jwt
+	// rule verified travels with the invocation instead.
+	edgeJWT, _ := EdgeJWTIdentityFrom(r.Context())
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
+		EdgeJWT:          edgeJWT,
 		AppID:            app.ID,
 		AccountID:        app.AccountID,
 		Scope:            app.Scope,

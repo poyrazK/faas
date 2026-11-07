@@ -91,3 +91,8 @@ type StoreInstalls interface {
 type ScopedStoreInstalls interface {
 	ForAccountInstallation(ctx context.Context, accountID string, installationID int64) (state.GitHubInstall, error)
 }
+
+// InstallTokenRefresher must update an existing authorization, never upsert it.
+type InstallTokenRefresher interface {
+	RefreshToken(context.Context, []byte, state.GitHubInstall) error
+}

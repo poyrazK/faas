@@ -159,11 +159,11 @@ func (s *PgStore) beginTrafficTenantBinding(ctx context.Context, account string,
 	return s.beginTrafficBinding(ctx, TrafficPolicyWriterTenantBinding, account, hosts, "")
 }
 
-func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account string, hosts []string, appID string) (*trafficTenantBindingTx, error) {
+func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account string, hosts []string, appID string, budgets ...string) (*trafficTenantBindingTx, error) {
 	start := time.Now()
 	for {
 		attempt := time.Now()
-		tx, retry, err := s.tryBeginTrafficBinding(ctx, writer, account, hosts, appID)
+		tx, retry, err := s.tryBeginTrafficBinding(ctx, writer, account, hosts, appID, budgets...)
 		if err != nil || !retry {
 			observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 			return tx, err
@@ -179,7 +179,7 @@ func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account strin
 	}
 }
 
-func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account string, requested []string, appID string) (*trafficTenantBindingTx, bool, error) {
+func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account string, requested []string, appID string, budgets ...string) (*trafficTenantBindingTx, bool, error) {
 	var hosts, accounts []string
 	var scope trafficBindingScope
 	var routes *trafficRouteScope
@@ -223,6 +223,9 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 	}
 	for _, owner := range accounts {
 		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.account.v1:" + owner})
+	}
+	for _, subject := range budgets {
+		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.domain-claims.v1:" + subject})
 	}
 	// The lock statements are try-locks, not analysis, so the bound does not
 	// time them. They take the connection over and give it back when busy.

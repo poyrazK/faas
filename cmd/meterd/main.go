@@ -186,10 +186,7 @@ func (a *scheddCPUAdapter) refreshContext(ctx context.Context) {
 		// tripwire).
 		return
 	}
-	m := make(map[string]scheddgrpc.InstanceStatsRow, len(rows))
-	for _, r := range rows {
-		m[r.InstanceID] = r
-	}
+	m := preferLiveStatsRows(rows)
 	a.mu.Lock()
 	a.rows = m
 	a.fetched = a.now()
@@ -1212,6 +1209,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261022111812: apid relays the test sends it cannot open here;
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
+	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,

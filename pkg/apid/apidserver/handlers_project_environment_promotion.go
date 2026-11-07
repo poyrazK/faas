@@ -16,9 +16,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
+	"github.com/onebox-faas/faas/pkg/apid/environmentrollback"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	promotionapi "github.com/onebox-faas/faas/pkg/apid/promotion"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -647,6 +649,11 @@ func projectEnvironmentPromotionFallbackRoute(ctx context.Context, store state.S
 }
 
 func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	attemptCtx, problem := promotionapi.EnvironmentAttempt(r.Context(), r.Header)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	projectSlug := r.PathValue("slug")
 	toEnvironment := strings.TrimSpace(r.PathValue("environment"))
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -672,8 +679,8 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			"Promotion token does not match", "preview the exact source and target environments again"))
 		return
 	}
-	idempotencyKey = projectaccess.IdempotencyKey(r, idempotencyKey)
-	existing, existingWorkloads, lookupErr := s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
+	idempotencyKey = promotionapi.EnvironmentIdempotencyKey(projectaccess.IdempotencyKey(r, idempotencyKey))
+	existing, existingWorkloads, lookupErr := s.store.ProjectEnvironmentPromotionByIdempotencyKey(attemptCtx, acct.ID, projectSlug, idempotencyKey)
 	if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 		api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
 		return
@@ -685,6 +692,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 				"Idempotency-Key already used", "use a new key for a different environment promotion"))
 			return
 		}
+		if problem := promotionapi.EnvironmentExistingAttemptProblem(attemptCtx, s.store, existing); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		if existing.Status == "succeeded" {
 			writeJSON(w, http.StatusOK, projectEnvironmentPromotionResponse(existing, existingWorkloads))
 			return
@@ -692,9 +703,9 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		var plan projectEnvironmentPromotionPlan
 		var problem *api.Problem
 		if existing.ReleaseGraphMode {
-			plan, problem = s.buildProjectEnvironmentPromotionResumePlan(r.Context(), acct, existing, existingWorkloads)
+			plan, problem = s.buildProjectEnvironmentPromotionResumePlan(attemptCtx, acct, existing, existingWorkloads)
 		} else {
-			plan, problem = s.buildProjectEnvironmentPromotionSecretPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
+			plan, problem = s.buildProjectEnvironmentPromotionSecretPlan(attemptCtx, acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
 		}
 		if problem == nil {
 			problem = validateProjectEnvironmentPromotionResume(wire, existing, existingWorkloads, plan)
@@ -703,7 +714,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, problem)
 			return
 		}
-		response, problem := s.dispatchProjectEnvironmentPromotion(r.Context(), acct, existing, existingWorkloads, plan)
+		response, problem := s.dispatchProjectEnvironmentPromotion(attemptCtx, acct, existing, existingWorkloads, plan)
 		if problem != nil {
 			api.WriteProblem(w, problem)
 			return
@@ -723,7 +734,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	plan, problem := s.buildProjectEnvironmentPromotionSecretPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
+	plan, problem := s.buildProjectEnvironmentPromotionSecretPlan(attemptCtx, acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -747,7 +758,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	if problem := s.revalidateProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, plan); problem != nil {
+	if problem := s.revalidateProjectEnvironmentPromotionPlan(attemptCtx, acct, projectSlug, fromEnvironment, toEnvironment, plan); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -755,7 +766,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	if problem := s.promotionApprovalProblem(r.Context(), plan, toEnvironment); problem != nil {
+	if problem := s.promotionApprovalProblem(attemptCtx, plan, toEnvironment); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -768,9 +779,9 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		}
 		// The approval stands in for each app's own release approval policy,
 		// so it is held to it: who approved, against who promotes.
-		if approval, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, projectSlug, toEnvironment,
+		if approval, err := s.store.ProjectEnvironmentApprovalByToken(attemptCtx, acct.ID, projectSlug, toEnvironment,
 			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken)); err == nil {
-			if problem := s.protectedPromotionApprovalProblem(r.Context(), plan, toEnvironment, approval.ApprovedByAccountID, actorAccount(r, acct).ID); problem != nil {
+			if problem := s.protectedPromotionApprovalProblem(attemptCtx, plan, toEnvironment, approval.ApprovedByAccountID, actorAccount(r, acct).ID); problem != nil {
 				api.WriteProblem(w, problem)
 				return
 			}
@@ -810,9 +821,13 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), promotionRecord,
+	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(attemptCtx, promotionRecord,
 		projectEnvironmentPromotionWorkloads(plan))
 	if err != nil {
+		if problem := promotionapi.EnvironmentAttemptProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		if promotionapi.WriteAdmissionError(w, err) {
 			return
 		}
@@ -820,7 +835,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrCapacity("could not create environment promotion"))
 			return
 		}
-		promotion, workloads, err = s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
+		promotion, workloads, err = s.store.ProjectEnvironmentPromotionByIdempotencyKey(attemptCtx, acct.ID, projectSlug, idempotencyKey)
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, promotionResumeConflict("environment configuration or feature flags changed during promotion creation; preview again"))
 			return
@@ -835,14 +850,18 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 				"Idempotency-Key already used", "use a new key for a different environment promotion"))
 			return
 		}
+		if problem := promotionapi.EnvironmentExistingAttemptProblem(attemptCtx, s.store, promotion); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		if promotion.Status == "succeeded" {
 			writeJSON(w, http.StatusOK, projectEnvironmentPromotionResponse(promotion, workloads))
 			return
 		}
 		if promotion.ReleaseGraphMode {
-			plan, problem = s.buildProjectEnvironmentPromotionResumePlan(r.Context(), acct, promotion, workloads)
+			plan, problem = s.buildProjectEnvironmentPromotionResumePlan(attemptCtx, acct, promotion, workloads)
 		} else {
-			plan, problem = s.buildProjectEnvironmentPromotionSecretPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
+			plan, problem = s.buildProjectEnvironmentPromotionSecretPlan(attemptCtx, acct, projectSlug, fromEnvironment, toEnvironment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
 		}
 		if problem == nil {
 			problem = validateProjectEnvironmentPromotionResume(wire, promotion, workloads, plan)
@@ -852,8 +871,8 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	promotionapi.RecordAdmissionApproval(r.Context(), s.audit, promotion.ConsumedApproval)
-	response, problem := s.dispatchProjectEnvironmentPromotion(r.Context(), acct, promotion, workloads, plan)
+	promotionapi.RecordAdmissionApproval(attemptCtx, s.audit, promotion.ConsumedApproval)
+	response, problem := s.dispatchProjectEnvironmentPromotion(attemptCtx, acct, promotion, workloads, plan)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -884,14 +903,19 @@ func (s *server) getProjectEnvironmentPromotionStatus(w http.ResponseWriter, r *
 }
 
 func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	attemptCtx, problem := environmentrollback.Attempt(r.Context(), r.Header)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 255 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Idempotency-Key required", "promotion rollbacks require an Idempotency-Key of 1..255 characters"))
 		return
 	}
-	idempotencyKey = projectaccess.IdempotencyKey(r, idempotencyKey)
-	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
+	idempotencyKey = environmentrollback.BoundedIdempotencyKey(projectaccess.IdempotencyKey(r, idempotencyKey))
+	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(attemptCtx, acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Environment promotion not found", "no promotion exists with that id"))
@@ -905,8 +929,12 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 			"Promotion is still running", "wait for the promotion to finish before requesting a rollback"))
 		return
 	}
-	started, err := s.store.StartProjectEnvironmentPromotionRollback(r.Context(), acct.ID, promotion.ID, idempotencyKey)
+	started, err := s.store.StartProjectEnvironmentPromotionRollback(attemptCtx, acct.ID, promotion.ID, idempotencyKey)
 	if err != nil {
+		if problem := environmentrollback.Problem(err); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Rollback idempotency key already used", "retry with the original rollback key or choose a new promotion"))
@@ -920,14 +948,27 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := s.applyProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workloads); err != nil {
-		_, _, loadErr := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err := s.applyProjectEnvironmentPromotionRollback(attemptCtx, acct, promotion, workloads); err != nil {
+		_, _, loadErr := s.store.ProjectEnvironmentPromotionByID(attemptCtx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
 		if loadErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
 			return
 		}
+		var contractErr *openapidiff.GateError
+		if errors.As(err, &contractErr) {
+			api.WriteProblem(w, contractGateProblem(contractErr.Diff))
+			return
+		}
+		if errors.Is(err, state.ErrRollbackCrossesRelease) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRollbackCrossesRelease, "Rollback crosses release commands", "Review migration history and use an explicit app rollback with acknowledgement before retrying this project rollback."))
+			return
+		}
+		if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRollbackTargetDatabaseRestored, "Rollback target's migration was undone", "Choose a deployment whose release command was not undone by a database restore."))
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
-			s.log.WarnContext(r.Context(), "project environment rollback stopped because target changed", "promotion_id", promotion.ID, "err", err)
+			s.log.WarnContext(attemptCtx, "project environment rollback stopped because target changed", "promotion_id", promotion.ID, "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Rollback stopped because the target changed",
 				"A target deployment changed after promotion. Review the current deployment state before retrying.").
@@ -940,12 +981,12 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 		}
 		return
 	}
-	completed, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	completed, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(attemptCtx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
 		return
 	}
-	s.audit.Emit(r.Context(), "project.environment.promotion_rolled_back", &acct.ID, map[string]any{
+	s.audit.Emit(attemptCtx, "project.environment.promotion_rolled_back", &acct.ID, map[string]any{
 		"promotion_id": promotion.ID, "project_slug": promotion.ProjectSlug,
 		"from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment,
 		"workload_count": len(finalWorkloads), "rollback_idempotency_key": idempotencyKey,
@@ -1084,6 +1125,13 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
 			fmt.Errorf("%w: active target release graph changed after promotion", state.ErrConflict))
 	}
+	restoring := fallbackMembers
+	if previousGraph != nil {
+		restoring = previousGraph.Members
+	}
+	if err := promotionapi.CheckRollbackContracts(ctx, s.store, promotion.ToEnvironment, active.Members, restoring); err != nil {
+		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, err)
+	}
 	if previousGraph != nil {
 		if err := s.durable.CheckProjectValidatorMembers(ctx, previousGraph.Members); err != nil {
 			return err
@@ -1105,7 +1153,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		}
 		if err != nil {
 			return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
-				fmt.Errorf("%w: could not atomically restore previous release graph", state.ErrConflict))
+				fmt.Errorf("could not atomically restore previous release graph: %w", err))
 		}
 		promotion, err = s.store.UpdateProjectEnvironmentPromotionReleaseSets(ctx, acct.ID, promotion.ID, "", restored.ID)
 		if err != nil {
@@ -1115,7 +1163,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		if err := publisher.DeactivateProjectReleaseSetIfActive(ctx, acct.ID, promotion.ProjectID,
 			promotion.ToEnvironment, promotion.TargetReleaseSetID, fallbackMembers); err != nil {
 			return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
-				fmt.Errorf("%w: target route changed; refusing to remove the promoted graph", state.ErrConflict))
+				fmt.Errorf("could not remove the promoted graph: %w", err))
 		}
 	}
 	return s.completeProjectEnvironmentPromotionGraphRollback(ctx, acct, promotion, workloads)
@@ -1169,6 +1217,16 @@ func (s *server) recordProjectEnvironmentPromotionRollbackFailure(ctx context.Co
 }
 
 func projectEnvironmentRollbackFailureMessage(err error) string {
+	var contractErr *openapidiff.GateError
+	if errors.As(err, &contractErr) {
+		return "Restoring this deployment would break its published API contract. Deploy a compatible release before retrying."
+	}
+	if errors.Is(err, state.ErrRollbackCrossesRelease) {
+		return "A release command ran after this deployment last served. Review migrations and use an explicit app rollback with acknowledgement."
+	}
+	if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+		return "This deployment's release command was undone by a database restore. Choose a compatible deployment."
+	}
 	if errors.Is(err, state.ErrConflict) {
 		return "A target deployment changed after promotion; review its current state before retrying rollback."
 	}

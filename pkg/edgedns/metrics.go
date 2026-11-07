@@ -29,11 +29,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"name", "action", "dry_run"}),
 		probeFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "edge_dns_probe_failures_total",
-			Help: "Readiness probes of a compute node's edge that failed (ADR-20261102081618).",
+			Help: "Readiness probes of a compute node that failed: its edge's /readyz, or, while a managed name is DNS-only, a verified TLS handshake on its public address (ADR-20261102081618 and its 2026-11-05 amendment).",
 		}, []string{"node"}),
 		nodeIn: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "edge_dns_node_in",
-			Help: "1 while a compute node's address is in the managed names' records, 0 while it is withdrawn (ADR-20261102081618).",
+			Help: "1 while a compute node's address is in the records of any managed name, 0 while it is withdrawn from all of them (ADR-20261102081618).",
 		}, []string{"node"}),
 		errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "edge_dns_errors_total",

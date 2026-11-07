@@ -32,9 +32,12 @@ var ErrAppTaskCoordinatorNotWired = errors.New("sched: app task coordinator is n
 // exact opt-in so the coordinator can land before the vmmd adapter without
 // claiming durable work that no runtime can execute.
 type AppTaskCoordinatorConfig struct {
-	Metrics            *AppTaskMetrics
-	Enabled            bool
-	Owner              string
+	Metrics *AppTaskMetrics
+	Enabled bool
+	Owner   string
+	// NodeID scopes claims to apps this schedd's node owns or apps without an
+	// owner (state.NodeScopedAppTaskClaimer). Empty claims any app.
+	NodeID             string
 	MaxConcurrent      int
 	LeaseDuration      time.Duration
 	LeaseRenewInterval time.Duration
@@ -207,12 +210,22 @@ func (c *AppTaskCoordinator) Run(ctx context.Context) error {
 	return nil
 }
 
+// claimNext claims the next task this schedd may place. A node-scoped
+// schedd claims only its own and unowned apps; any other node's app would be
+// refused by placement after the claim.
+func (c *AppTaskCoordinator) claimNext(ctx context.Context) (state.AppTask, error) {
+	if claimer, ok := c.store.(state.NodeScopedAppTaskClaimer); ok && c.config.NodeID != "" {
+		return claimer.ClaimNextAppTaskForNode(ctx, c.config.Owner, c.config.NodeID, c.now().UTC(), c.config.LeaseDuration)
+	}
+	return c.store.ClaimNextAppTask(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+}
+
 // ProcessNext claims and fully handles at most one task.
 func (c *AppTaskCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 	if c == nil || c.store == nil || c.backend == nil {
 		return false, ErrAppTaskCoordinatorNotWired
 	}
-	task, err := c.store.ClaimNextAppTask(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+	task, err := c.claimNext(ctx)
 	c.config.Metrics.operation(ctx, "claim", err)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
@@ -314,6 +327,13 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			// No command was dispatched. Leave the restoring lease to the
 			// normal safe replay sweep; the next claim remains budget-gated.
 			return restoreErr
+		}
+		if errors.Is(restoreErr, ErrAppTaskNotOwner) {
+			// No command was dispatched, and another node owns the app (its
+			// owner changed after the claim). The sweep requeues the expired
+			// restoring lease for the owner's schedd.
+			c.log.Info("schedd: app task left for its owning node", "task_id", task.ID, "node_id", c.config.NodeID)
+			return nil
 		}
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"

@@ -4005,12 +4005,20 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 		"cold", cold,
 		"request_id", logsanitize.Field(requestID),
 	}
-	hotSuccess := len(code) == 3 && code[0] == '2'
-	if cold || !hotSuccess {
+	if requestLogLevel(code, cold) == slog.LevelInfo {
 		l.log.Info("gateway_request", fields...)
 		return
 	}
 	l.log.Debug("gateway_request", fields...)
+}
+
+// requestLogLevel is the level requestLogger.Log writes a request at: a warm
+// 2xx at Debug, anything else at Info.
+func requestLogLevel(code string, cold bool) slog.Level {
+	if cold || len(code) != 3 || code[0] != '2' {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
 }
 
 // Issue #676 / ADR-080 follow-up, PR-B: closed-set label constants

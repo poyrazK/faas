@@ -34,6 +34,9 @@ ARG BUILDKIT_SOURCE_SHA256=b19deba3f8cf3eb05407aa85c246e22839770c437439a04d880ef
 ARG BUILDKIT_REVISION=991535e0973488b6a429096d21fa13f81f2d89d8
 ARG GO_ARCHIVE_VERSION=0.3.0
 ARG BUILDKIT_GRPC_VERSION=1.83.2
+# BuildKit 0.32.2 selects klauspost/compress v1.19.1 (GO-2026-6865, HIGH);
+# buildkitd and buildctl get the patched release.
+ARG BUILDKIT_COMPRESS_VERSION=1.20.3
 # BuildKit 0.32.2 pins containerd v2.3.3 (GHSA-p7v4-vr35-mj6f, HIGH) and
 # Railpack 0.38.0 v2.3.4; both get the patched release.
 ARG CONTAINERD_VERSION=2.3.6
@@ -170,12 +173,13 @@ ARG TARGETARCH
 ARG BUILDKIT_SOURCE_SHA256
 ARG GO_ARCHIVE_VERSION
 ARG BUILDKIT_GRPC_VERSION
+ARG BUILDKIT_COMPRESS_VERSION
 ARG CONTAINERD_VERSION
 COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
-# BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
-# v1.82.1. Keep the source release's vendored dependency graph for a fast,
-# reproducible build, with fixed module floors. Pin x/net and x/crypto to
+# BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0, gRPC
+# v1.82.1 and klauspost/compress v1.19.1. Keep the source release's vendored
+# dependency graph for a fast, reproducible build, with fixed module floors. Pin x/net and x/crypto to
 # patched versions, then regenerate the vendor tree from the selected graph
 # so the modules and their transitive source match module metadata.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
@@ -191,6 +195,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -require=golang.org/x/net@v0.60.0 && \
       go mod edit -require=golang.org/x/crypto@v0.57.0 && \
       go mod edit -require=google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} && \
+      go mod edit -require=github.com/klauspost/compress@v${BUILDKIT_COMPRESS_VERSION} && \
       go mod edit -require=github.com/containerd/containerd/v2@v${CONTAINERD_VERSION} && \
       go mod tidy && \
       go mod vendor && \
@@ -200,7 +205,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
         go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildkitd ./cmd/buildkitd && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildctl ./cmd/buildctl && \
-      go version -m /out/buildkitd | grep -q "github.com/containerd/containerd/v2.*v${CONTAINERD_VERSION}"
+      go version -m /out/buildkitd | grep -q "github.com/containerd/containerd/v2.*v${CONTAINERD_VERSION}" && \
+      ! go version -m /out/buildctl /out/buildkitd | grep "github.com/klauspost/compress" | grep -vq "v${BUILDKIT_COMPRESS_VERSION}"
 
 # ---- stage 2: assemble the runtime rootfs -------------------------------
 # See the stage 1 FROM above re: $TARGETPLATFORM handling.

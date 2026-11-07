@@ -102,7 +102,7 @@ func objectVersionReferencesSuite(t *testing.T, st accountingStore) {
 	}
 }
 
-// adr: 20261105120000
+// adr: 20261107123000
 func TestGenerationVersionObservationMem(t *testing.T) {
 	generationVersionObservation(t, state.NewMemStore())
 }

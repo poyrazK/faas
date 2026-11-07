@@ -36,13 +36,22 @@ AND (d.claim_until IS NULL OR d.claim_until<=clock_timestamp()) AND (dst.claim_u
 AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.channel_id=d.channel_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
 ORDER BY d.delivery_seq LIMIT 1;
 -- name: IssueSlackClaim :exec
-UPDATE issue_team_slack_deliveries SET status='in_flight',claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1;
+UPDATE issue_team_slack_deliveries SET status='in_flight',claim_id=$2,claim_until=$3,attempt_claim_id=NULL,updated_at=clock_timestamp() WHERE id=$1;
 -- name: IssueSlackAttemptStart :execrows
-UPDATE issue_team_slack_deliveries d SET attempt=attempt+1,total_attempts=total_attempts+1,updated_at=clock_timestamp()
+UPDATE issue_team_slack_deliveries d SET attempt_claim_id=d.claim_id,updated_at=clock_timestamp()
 WHERE d.id=sqlc.arg(id) AND d.claim_id=sqlc.arg(claim_id) AND d.status='in_flight'
 AND d.claim_until>clock_timestamp() AND d.expires_at>clock_timestamp() AND d.attempt=sqlc.arg(previous_attempt)
-AND EXISTS (SELECT 1 FROM issue_team_slack_destinations dst WHERE dst.id=d.destination_id
- AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.enabled AND dst.revision=d.destination_revision);
+AND d.attempt_claim_id IS DISTINCT FROM d.claim_id
+AND EXISTS (SELECT 1 FROM issue_team_slack_destinations dst
+ JOIN apps a ON a.id=dst.app_id JOIN app_resource_accounts owner ON owner.app_id=a.id
+ LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
+ JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id AND src.eligible
+ WHERE dst.id=d.destination_id AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp()
+ AND dst.enabled AND dst.revision=d.destination_revision AND a.account_id=dst.account_id
+ AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+ AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id)
+   OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL))
+ AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]));
 -- name: IssueSlackDestinationLease :exec
 UPDATE issue_team_slack_destinations SET claim_id=$2,claim_until=$3 WHERE id=$1;
 -- name: IssueSlackTerminal :exec
@@ -66,7 +75,10 @@ AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.enable
 AND a.account_id=dst.account_id AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]));
 -- name: IssueSlackFinish :exec
-UPDATE issue_team_slack_deliveries SET status=$2,last_error=$3,response_code=$4,next_attempt_at=$5,claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp() WHERE id=$1;
+UPDATE issue_team_slack_deliveries SET status=$2,last_error=$3,response_code=$4,next_attempt_at=$5,
+ attempt=attempt+CASE WHEN sqlc.arg(attempted)::boolean THEN 1 ELSE 0 END,
+ total_attempts=total_attempts+CASE WHEN sqlc.arg(attempted)::boolean THEN 1 ELSE 0 END,
+ claim_id=NULL,claim_until=NULL,attempt_claim_id=NULL,updated_at=clock_timestamp() WHERE id=$1;
 -- name: IssueSlackRelease :exec
 UPDATE issue_team_slack_destinations SET claim_id=NULL,claim_until=NULL,next_send_at=$3 WHERE id=$1 AND claim_id=$2;
 -- name: IssueSlackDeliveryList :many
@@ -110,7 +122,7 @@ FROM candidates c JOIN issue_team_slack_destinations dst ON dst.team_id=c.team_i
 JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN app_issue_teams t ON t.id=dst.team_id AND t.app_id=a.id
 JOIN app_issue_team_members tm ON tm.team_id=t.id
-WHERE tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)
+WHERE issue_actor_current_member(a.id,tm.account_id)
 GROUP BY dst.id,dst.revision,dst.channel_id,t.name,c.priority ORDER BY c.priority LIMIT 1;
 -- name: IssueApplicationSlackHistoryTrim :execrows
 DELETE FROM issue_team_slack_deliveries WHERE id IN (

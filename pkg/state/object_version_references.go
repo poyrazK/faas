@@ -17,13 +17,13 @@ type ObjectVersionIdentity struct {
 	ProviderVersionID string `json:"-"`
 	DeleteMarker      bool   `json:"-"`
 	// GenerationVersion marks ProviderVersionID as a generation every object
-	// carries (GCS), not evidence of retained versions (ADR-20261105120000).
+	// carries (GCS), not evidence of retained versions (ADR-20261107123000).
 	GenerationVersion bool `json:"-"`
 }
 
 // ProviderVersionObserved reports whether a provider version ID shows the
 // provider keeps noncurrent versions: an S3 ID other than "null" does, a
-// generation (generation=true) never does on its own (ADR-20261105120000).
+// generation (generation=true) never does on its own (ADR-20261107123000).
 func ProviderVersionObserved(id string, generation bool) bool {
 	return !generation && id != "" && id != "null"
 }

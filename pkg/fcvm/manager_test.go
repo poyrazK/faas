@@ -2736,7 +2736,7 @@ func TestCaptureAllowlistHandlesForWake_SkipsUnrepresentedFamily(t *testing.T) {
 	if len(cap.commands) != 1 {
 		t.Fatalf("v4-only allowlist made %d nft capture calls, want 1", len(cap.commands))
 	}
-	if !strings.Contains(strings.Join(cap.commands[0], " "), " nft -a list chain ip faas forward") {
+	if !strings.Contains(strings.Join(cap.commands[0], " "), " nft -a -n list chain ip faas forward") {
 		t.Fatalf("v4-only capture used unexpected command: %v", cap.commands[0])
 	}
 }

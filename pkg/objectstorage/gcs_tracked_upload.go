@@ -225,7 +225,7 @@ func (p *GCS) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r 
 
 // gcsNoncurrentListed reports whether a version listing holds a noncurrent
 // generation, the only GCS evidence of retained versions: every live object
-// has a generation, versioned bucket or not (ADR-20261105120000).
+// has a generation, versioned bucket or not (ADR-20261107123000).
 func gcsNoncurrentListed(objects []gcsObjectState) bool {
 	for _, object := range objects {
 		if !object.ValidUntil.IsZero() {

@@ -75,9 +75,12 @@ type ObjectVersionListRequest struct {
 type ListedObjectVersion struct {
 	Object
 	ProviderVersionID string `json:"-"`
-	IsLatest          bool
-	DeleteMarker      bool
-	StorageClass      string
+	// GCS records the instant a generation became noncurrent, even when no
+	// live generation remains. It is independent of mutable metadata times.
+	NoncurrentSince time.Time `json:"-"`
+	IsLatest        bool
+	DeleteMarker    bool
+	StorageClass    string
 }
 
 type ObjectVersionListPage struct {
@@ -86,7 +89,7 @@ type ObjectVersionListPage struct {
 	NextKeyMarker             string
 	NextProviderVersionMarker string `json:"-"`
 	// GenerationVersions marks the provider IDs as generations (GCS): a latest
-	// version alone is not evidence of retained versions (ADR-20261105120000).
+	// version alone is not evidence of retained versions (ADR-20261107123000).
 	GenerationVersions bool `json:"-"`
 }
 

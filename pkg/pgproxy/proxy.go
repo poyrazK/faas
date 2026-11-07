@@ -132,6 +132,8 @@ type Proxy struct {
 	handshakes  int
 
 	pools *poolSet
+	// statementSequence gives every fresh Parse its own backend name.
+	statementSequence atomic.Uint64
 
 	cancelMu sync.Mutex
 	cancels  map[cancelKey]canceler
@@ -370,6 +372,10 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		return none, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
+	ctx, cancelSetup := context.WithTimeout(ctx, p.cfg.HandshakeTimeout)
+	defer cancelSetup()
+	finishClientSetup := interruptSetup(ctx, conn)
+	defer func() { _ = finishClientSetup() }()
 	if c, ok := msg.(*pgproto3.CancelRequest); ok {
 		p.handleCancel(ctx, c.ProcessID, c.SecretKey, false)
 		return none, errCancelServed
@@ -417,6 +423,11 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 			pl.leave()
 			return none, err
 		}
+		if err := finishClientSetup(); err != nil {
+			release()
+			pl.leave()
+			return none, err
+		}
 		return established{pool: pl, canceler: c, databaseID: databaseID, release: release}, nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
@@ -432,6 +443,8 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	backend := pgproto3.NewFrontend(session, session)
+	finishBackendSetup := interruptSetup(wakeCtx, session)
+	defer func() { _ = finishBackendSetup() }()
 	if err := loginBackend(backend, forwardParams(startup.Parameters), clientKey, verifier.ServerKey); err != nil {
 		_ = session.Close()
 		var f *fatal
@@ -454,6 +467,11 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		return key
 	}
 	if err := relayUntilReady(backend, client, swapKey); err != nil {
+		release()
+		_ = session.Close()
+		return none, err
+	}
+	if err := errors.Join(finishBackendSetup(), finishClientSetup()); err != nil {
 		release()
 		_ = session.Close()
 		return none, err

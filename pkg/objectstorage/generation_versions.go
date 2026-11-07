@@ -4,7 +4,7 @@ package objectstorage
 // version identifier whether or not the bucket keeps noncurrent versions:
 // a GCS generation names each write even with object versioning off. Such an
 // identifier is not evidence that the provider retains old versions, unlike
-// an S3 version ID other than "null" (ADR-20261105120000).
+// an S3 version ID other than "null" (ADR-20261107123000).
 type GenerationVersionProvider interface {
 	GenerationVersionIDs() bool
 }
