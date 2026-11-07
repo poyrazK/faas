@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func TestPgStoreAppWebhookRetryAndDeleteResolveDeadLetters(t *testing.T) {
 		t.Fatalf("webhook retry left the failed event active: exists=%v replayed=%v", exists, replayed)
 	}
 	// Retrying a delivery that is no longer dead is still a conflict.
-	if err := s.ResetAppWebhookDeliveryFromDead(ctx, retried.ID, hook.ID, acct, time.Now().UTC()); err != state.ErrConflict {
+	if err := s.ResetAppWebhookDeliveryFromDead(ctx, retried.ID, hook.ID, acct, time.Now().UTC()); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("second retry = %v, want ErrConflict", err)
 	}
 
@@ -63,7 +64,7 @@ func TestPgStoreAppWebhookRetryAndDeleteResolveDeadLetters(t *testing.T) {
 			t.Fatalf("deleted webhook left dead-letter event for delivery %s", id)
 		}
 	}
-	if err := s.DeleteAppWebhook(ctx, hook.ID); err != state.ErrNotFound {
+	if err := s.DeleteAppWebhook(ctx, hook.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second delete = %v, want ErrNotFound", err)
 	}
 }
