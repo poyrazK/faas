@@ -65,8 +65,6 @@ type Config struct {
 func (c Config) Missing() []string {
 	var out []string
 	required := []struct{ name, value string }{
-		{"governing_law", c.GoverningLaw},
-		{"courts", c.Courts},
 		{"effective_date", c.EffectiveDate},
 		{"contact_email", c.ContactEmail},
 		{"privacy_email", c.PrivacyEmail},
@@ -74,10 +72,13 @@ func (c Config) Missing() []string {
 		{"security_email", c.SecurityEmail},
 		{"support_email", c.SupportEmail},
 	}
-	// A company operator must be named with its registered address. An
-	// individual operator may publish under the Gregale name alone.
+	// A company operator must be named with its registered address and
+	// choose a governing law and courts. An individual operator may publish
+	// under the Gregale name alone, without a choice of law.
 	if !c.IndividualOperator {
 		required = append(required,
+			struct{ name, value string }{"governing_law", c.GoverningLaw},
+			struct{ name, value string }{"courts", c.Courts},
 			struct{ name, value string }{"operator_name", c.OperatorName},
 			struct{ name, value string }{"operator_address", c.OperatorAddress},
 			struct{ name, value string }{"operator_country", c.OperatorCountry})
@@ -86,6 +87,9 @@ func (c Config) Missing() []string {
 		if strings.TrimSpace(f.value) == "" {
 			out = append(out, f.name)
 		}
+	}
+	if (strings.TrimSpace(c.GoverningLaw) == "") != (strings.TrimSpace(c.Courts) == "") {
+		out = append(out, "governing_law and courts (set both or neither)")
 	}
 	if c.EffectiveDate != "" {
 		if _, err := time.Parse("2006-01-02", c.EffectiveDate); err != nil {

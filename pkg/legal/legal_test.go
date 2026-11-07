@@ -135,6 +135,40 @@ func TestBrandOnlyIndividualOperator(t *testing.T) {
 	}
 }
 
+// The interim operator may leave the choice of law out; the Terms then
+// carry a complaints step and say the clause comes with the company.
+func TestInterimWithoutGoverningLaw(t *testing.T) {
+	c := fullConfig(t)
+	c.IndividualOperator = true
+	c.GoverningLaw, c.Courts = "", ""
+	if m := c.Missing(); len(m) > 0 {
+		t.Fatalf("interim operator without governing law should publish, missing %v", m)
+	}
+	terms, err := Render(c, Terms, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(terms)
+	for _, want := range []string{"<h2>14. Disputes</h2>", "do not yet choose a governing law", "we will add a governing-law and courts clause"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("terms: missing %q", want)
+		}
+	}
+	if strings.Contains(s, "governed by the laws of") {
+		t.Error("terms: names a governing law")
+	}
+	c.Courts = "Exampletown"
+	if c.Published() {
+		t.Fatal("courts without governing_law must stay unpublished")
+	}
+	c = fullConfig(t)
+	c.IndividualOperator = false
+	c.GoverningLaw, c.Courts = "", ""
+	if c.Published() {
+		t.Fatal("a company operator must choose a governing law")
+	}
+}
+
 func TestUnknownDocument(t *testing.T) {
 	if _, err := Render(fullConfig(t), "cookies", ""); err == nil {
 		t.Fatal("unknown document must error")
