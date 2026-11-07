@@ -1054,18 +1054,24 @@ draft, then pass the version returned by each write to the next command:
 gregale automation list --app billing
 gregale automation get --app billing --name paid-invoice
 gregale automation health --app billing --name paid-invoice
-gregale automation pause --app billing --name paid-invoice --expected-version 8
-gregale automation resume --app billing --name paid-invoice --expected-version 9
+gregale automation pause --app billing --name paid-invoice --expected-version VERSION
+gregale automation resume --app billing --name paid-invoice --expected-version VERSION
 gregale automation get --app billing --name paid-invoice --definition-out paid-invoice.json
 gregale automation get --app billing --name paid-invoice --definition-out published.json --published
 gregale automation revisions list --app billing --name paid-invoice
 gregale automation revisions show --app billing --name paid-invoice --revision 42
 gregale automation validate --app billing --file paid-invoice.yaml
 gregale automation apply --app billing --file paid-invoice.yaml --expected-version 0
-gregale automation publish --app billing --name paid-invoice --expected-version 1
-gregale automation restore --app billing --name paid-invoice --revision 42 --expected-version 47
-gregale automation delete --app billing --name paid-invoice --expected-version 48 --yes
+gregale automation publish --app billing --name paid-invoice --expected-version VERSION
+gregale automation restore --app billing --name paid-invoice --revision 42 --expected-version VERSION
+gregale automation delete --app billing --name paid-invoice --expected-version VERSION --yes
 ```
+
+`VERSION` is the `version` returned by the previous write (or shown by
+`get`/`list`). Versions come from one counter shared by every automation in
+the app, and are never reused after a delete, so a new draft saved with
+`--expected-version 0` usually returns a version greater than 1. Publish with
+the version that `apply` returned, not `1`.
 
 List and get show the current version, publication version, ownership, and enabled
 state without returning definition contents. Definition export is explicit: use
@@ -1081,7 +1087,9 @@ retrying. Publishing is a separate step. If the name is currently owned by the
 app's YAML manifest, pass `--take-over-manifest` only when you intend the saved
 automation to take ownership.
 
-Revision listing defaults to 50 entries and accepts `--limit` (1..100) and
+Each revision is identified by the version at which it was published. Listings
+report it as `revision` (and, for compatibility, `version`); pass it to
+`revisions show --revision` and `restore --revision`. Revision listing defaults to 50 entries and accepts `--limit` (1..100) and
 `--offset` for paging. Revision details show the timestamp, definition hash, and
 whether the snapshot was migrated from legacy publication history. Definitions
 stay out of normal terminal and JSON output; `revisions show --definition-out`
