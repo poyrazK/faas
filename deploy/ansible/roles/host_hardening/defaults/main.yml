@@ -14,6 +14,9 @@ faas_hardening_caddy: true
 faas_hardening_caddy_dropin: /etc/systemd/system/caddy.service.d/90-gregale-hardening.conf
 faas_hardening_journald: true
 faas_hardening_rsyslog: true
+# The group that may read /var/log/audit; Alloy reads it as a member of adm
+# and ships it off the host (ADR-20261107203000).
+faas_hardening_auditd_log_group: adm
 
 # Bound the local replay buffer. Logs are shipped off-host when the optional
 # Promtail overlay is enabled, but the journal remains the source of truth while
