@@ -756,9 +756,11 @@ jobs:
             # deadline on a light runner. Give its full race suite 24m while
             # retaining a 50m job limit and running every test.
             # mcpmanagement's full protocol suite also exceeds 10m under
-            # this shard's 2 GiB / GOGC=10 race-test bounds.
+            # this shard's 2 GiB / GOGC=10 race-test bounds. financialfixture
+            # builds a non-race meterd inside the test; the race-only cache
+            # makes that a cold build of ~8m before its scenarios start.
             package_timeout=10m
-            if [[ " $PKGS " == *" ./pkg/mcpmanagement "* ]]; then package_timeout=18m; fi
+            if [[ " $PKGS " == *" ./pkg/mcpmanagement "* || " $PKGS " == *" ./pkg/e2etest/financialfixture "* ]]; then package_timeout=18m; fi
             if [[ " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=24m; fi
             if (( ${#race_pkgs[@]} )); then
               GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" "${race_pkgs[@]}" || status=1
