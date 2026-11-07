@@ -196,8 +196,9 @@ as "Gregale credit".
 
 This financial visibility preview reports supported usage costs and budget
 policies. Enabled monitored notification policies send spending alerts; disabled
-drafts do not. Monitored preview stopping and strict app compute are local
-candidates pending native acceptance; see their sections below.
+drafts do not. Monitored budgets, including preview stopping, are generally
+available; strict budgets are in beta (ADR-20261107160000); see their
+sections below.
 Coverage and unavailable bill components are reported explicitly.
 
 ```bash
@@ -742,7 +743,14 @@ spending. It does not establish a strict compute or full-invoice ceiling.
 ## Strict compute budgets
 
 Strict budgets, which hold an app's compute when it reaches a funded limit,
-are not released yet. Creating or enabling one returns 422
-`financial_budget_activation_unavailable` ("Strict budgets not released").
+are in beta and not released to accounts yet. Creating or enabling one returns
+422 `financial_budget_activation_unavailable` ("Strict budgets not released").
+
+A strict budget covers only what its owner pays for
+([ADR 20261107160000](adr/20261107160000-budgets-ga-and-strict-billing-subject.md)).
+An app that an organization pays for is never funded, held or stopped by the
+strict budget of the member who created it, and it does not have to be idle
+for that member's account budget to start. Organizations cannot have strict
+budgets yet.
 Budgets use USD; historical EUR invoices and budget revisions are retained
 without conversion.
