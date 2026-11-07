@@ -17429,6 +17429,14 @@ const (
 	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
 	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
 	PublicEntryTrackedSourcesMax          = 65536
+	// One address in Cloudflare's ranges carries many clients, but those
+	// ranges also carry every other Cloudflare customer's traffic, so they
+	// get a backstop PublicEntryProxyFactor times the per-source one rather
+	// than none (ADR-20261104221012).
+	PublicEntryProxyFactor                     = 16
+	PublicEntryProxyConnsPerSourceMax          = PublicEntryProxyFactor * PublicEntryConnsPerSourceMax
+	PublicEntryProxyNewConnsPerSecondPerSource = PublicEntryProxyFactor * PublicEntryNewConnsPerSecondPerSource
+	PublicEntryProxyNewConnsBurstPerSource     = PublicEntryProxyFactor * PublicEntryNewConnsBurstPerSource
 	// PublicBlockListRefreshInterval is how often vmmd re-reads the
 	// operator's block list (/etc/faas/public-block-list) and adds its
 	// entries to the firewall's block sets: an edit takes effect within

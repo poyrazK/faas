@@ -9,7 +9,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// activeAccountReader answers the raw ingress safety check's account reads
+// with an active, unheld account (ADR-20261104221012).
+type activeAccountReader struct{}
+
+func (activeAccountReader) AccountByID(_ context.Context, id string) (state.Account, error) {
+	return state.Account{ID: id, Status: state.AccountActive}, nil
+}
+func (activeAccountReader) OrgByID(context.Context, string) (state.Org, error) {
+	return state.Org{}, state.ErrNotFound
+}
+
 type targetSourceFixture struct {
+	activeAccountReader
 	app         state.App
 	instances   []state.Instance
 	deployments []state.Deployment

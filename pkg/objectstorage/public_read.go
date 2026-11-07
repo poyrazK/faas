@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -417,4 +418,32 @@ func copyPublicObjectHeaders(dst, src http.Header) {
 			dst.Set(name, value)
 		}
 	}
+	if sandboxedPublicType(dst.Get("Content-Type")) {
+		dst.Set("Content-Security-Policy", publicObjectSandboxCSP)
+	}
+}
+
+// publicObjectSandboxCSP runs an SVG or XML object opened directly with no
+// script and no access to the app's origin. An <img> or CSS use is
+// unaffected (ADR-20261104221012).
+const publicObjectSandboxCSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+
+// sandboxedPublicType reports an active type that is not a page: SVG and XML
+// are images and data, so a public object of that type gets
+// publicObjectSandboxCSP. HTML and XHTML stay as uploaded, since a bucket
+// owner may host pages, and upload routes cannot put them in a public bucket.
+func sandboxedPublicType(contentType string) bool {
+	if !ActiveContentType(contentType) {
+		return false
+	}
+	media, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return true
+	}
+	switch media {
+	case "text/html", "application/xhtml+xml", "text/javascript", "application/javascript",
+		"application/x-javascript", "text/ecmascript", "application/ecmascript", "text/jscript", "application/x-ecmascript":
+		return false
+	}
+	return true
 }

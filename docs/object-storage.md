@@ -77,6 +77,13 @@ bucket serves at most 100 reads per second (bursts to 200); past either limit,
 readers get `429`. The mount path cannot change after creation. Buckets are
 private unless created public.
 
+Reads of a mount are served before your app's edge rules and access control:
+`ip`, `jwt`, `geo`, `limit` and other rules, and the app's public auth mode
+(Basic, bearer, IP allowlist), do not apply to them. Put anything that needs
+those behind your app instead. SVG and XML objects are served with
+`Content-Security-Policy: sandbox`, so opening one directly cannot run script
+on your app's hostname.
+
 ## Upload and download files
 
 From the CLI:
@@ -136,6 +143,12 @@ has `storage:write`. The route itself authorizes writes to its bucket, so the ke
 needs no bucket grant; each key's uploads land under its own key ID below the
 route's prefix. Send an `Idempotency-Key` header so retries cannot store a
 file twice; `GET /uploads/avatar/receipts/{id}` reports an upload's status.
+
+Active content (HTML, SVG, XML, XSL and JavaScript types) is accepted only when
+the route lists the exact type: an empty list or a wildcard such as `image/*`
+never admits it, so `image/*` does not admit `image/svg+xml`. A route on a
+public bucket mount cannot list an active type at all, and such uploads are
+refused with `415`, because the file would be served on your app's hostname.
 
 ## Use an S3 SDK
 

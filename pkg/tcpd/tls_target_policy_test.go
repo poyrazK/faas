@@ -9,6 +9,7 @@ import (
 )
 
 type tlsPolicySource struct {
+	activeAccountReader
 	intent    state.TCPListener
 	domain    state.CustomDomain
 	instances []state.Instance

@@ -5398,6 +5398,22 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	// A browser resends cached Basic credentials with any request to the
+	// app's origin, including one another site starts: a WebSocket it can
+	// read (CORS does not cover WebSockets) or a form post that changes
+	// state (ADR-20261104221012).
+	if h.crossOriginBasicAuthRequest(r, app) {
+		h.emitAuthnAudit(r, app, nil, "instances.public_auth_cross_origin", map[string]any{
+			"app_id": app.ID,
+			"slug":   r.Host,
+			"mode":   publicAuthModeBasic,
+		})
+		rec.status = http.StatusForbidden
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Cross-origin request refused", "this app uses basic auth; a browser request that changes state or opens a WebSocket must come from the app's own origin or one its CORS rule allows with credentials"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	// (1) Basic extraction — fail-fast at 401 if no header.
 	user, pass, ok := basicCredsFromHeader(r.Header.Get("Authorization"))
 	if !ok {
@@ -5476,6 +5492,45 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	return true
+}
+
+// crossOriginBasicAuthRequest reports a browser request, from an origin other
+// than the app's own, that would ride the browser's cached Basic credentials:
+// a WebSocket handshake or a method other than GET, HEAD and OPTIONS. A
+// request without Origin is not a browser's cross-origin request and passes;
+// so does an origin a CORS rule of the app's owner allows with credentials,
+// which is how an app opts a separate front end in. "null" and malformed
+// origins are refused.
+func (h *Handler) crossOriginBasicAuthRequest(r *http.Request, app App) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		if !isWebSocketHandshake(r) {
+			return false
+		}
+	}
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
+		return false
+	}
+	if len(origins) != 1 {
+		return true
+	}
+	parsed, err := url.Parse(strings.TrimSpace(origins[0]))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return true
+	}
+	if hostname(parsed.Host) == hostname(r.Host) {
+		return false
+	}
+	if h.edgeRules == nil {
+		return true
+	}
+	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	if rule == nil || rule.AccountID != app.AccountID || !rule.AllowCredentials {
+		return true
+	}
+	allowed := matchOrigin(rule.AllowOrigins, origins[0])
+	return allowed == "" || allowed == "*"
 }
 
 // basicCredsFromHeader parses an `Authorization: Basic

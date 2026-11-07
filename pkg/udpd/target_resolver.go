@@ -99,6 +99,11 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	if app.Visibility == api.AppVisibilityInternal {
 		return errors.New("UDP app is internal")
 	}
+	// The account, safety and access gates an HTTP request meets
+	// (ADR-20261104221012).
+	if err := ingressroute.CheckApp(ctx, r.Store, app); err != nil {
+		return err
+	}
 	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {
 		return err

@@ -34,6 +34,12 @@ func (s *Service) configureObjectUploadRoute(ctx context.Context, b state.Object
 			return state.ObjectUploadRoute{}, 0, objectstorage.ErrInvalid
 		}
 		req.AllowedContentTypes[i] = strings.ToLower(strings.TrimSpace(value))
+		// A bucket served on the app's hostname never takes an active file
+		// from the app's users (ADR-20261104221012); the edge refuses the
+		// upload, so naming the type would only promise what it refuses.
+		if objectstorage.PublicServed(b) && objectstorage.ActiveContentType(req.AllowedContentTypes[i]) {
+			return state.ObjectUploadRoute{}, 0, objectstorage.ErrInvalid
+		}
 	}
 	encryption, err := s.resolveObjectURLEncryption(b, objectstorage.SignRequest{Encryption: req.Encryption})
 	if err != nil {
