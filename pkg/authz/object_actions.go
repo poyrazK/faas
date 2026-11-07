@@ -86,4 +86,7 @@ var objectStorageActions = map[string]OrgAction{
 	"PUT /v1/apps/{slug}/buckets/{bucket}/objects/tags":                                         ManageObjectStorage,
 	"PUT /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}":    ManageObjectStorage,
 	"PUT /v1/apps/{slug}/buckets/{bucket}/versioning":                                           ManageObjectStorage,
+	// The dashboard's bucket create and delete, as their /v1 twins.
+	"POST /dashboard/apps/{slug}/storage/buckets":                 ManageObjectStorage,
+	"POST /dashboard/apps/{slug}/storage/buckets/{bucket}/delete": ManageObjectStorage,
 }

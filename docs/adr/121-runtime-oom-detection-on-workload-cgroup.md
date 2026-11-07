@@ -512,3 +512,28 @@ Unit: guest/init (unlimited leaf and its fallback, the exit-race report,
 keeps serving with the instance's plan RAM, a pre-live deployment is
 stamped), pkg/fcvm (a failed startup after a report is `app_runtime_oom`,
 a successful one is not). Metal: see the PR for the n2 run.
+
+## Amendment 2 (2026-11-05): repeated OOM kills of a live release back off
+
+Bug hunt H34. The previous amendment left repeated kills unescalated, and
+each kill marked the deployment's warm and init snapshots stale on every
+CPU platform. A release that OOMs on every request (a large upload, a leak
+that fills plan RAM in seconds) therefore looped forever: cold boot, OOM,
+stale both tiers, cold boot.
+
+schedd now keeps a per-deployment window of OOM kills
+(`api.WorkloadOOMBackoffWindow`, 5 minutes):
+
+- Only the first kill in the window marks the snapshots stale. Later kills
+  keep them, so the loop stops paying a cold boot per request.
+- `api.WorkloadOOMBackoffKills` (5) kills in the window back off the
+  deployment's wakes: the wake returns 503 `app_runtime_oom` with
+  `Retry-After`, for 30 s at first, doubling while kills continue, up to
+  5 minutes. Operator and failover wakes that bypass the wake gates are
+  not held.
+- The release is not failed or parked, and keeps its traffic; a window
+  without kills clears the backoff.
+
+The window lives in schedd's memory, like the liveness window: a restart
+forgets it and the next kills rebuild it. Parking the deployment after
+repeated kills, which would need a new `parked_reason`, is not decided here.

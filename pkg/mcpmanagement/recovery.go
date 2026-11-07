@@ -77,7 +77,7 @@ func plannerFor(p *releasePlan) string {
 		switch p.Operation.Kind {
 		case "env":
 			return "gregale_plan_env_change"
-		case "config_rollback":
+		case "config_rollback", "config_rollback_guarded":
 			return "gregale_plan_config_rollback"
 		case "cron_update", "cron_delete":
 			return "gregale_plan_cron_change"
@@ -151,7 +151,7 @@ func safePlanRetry(p *releasePlan, tool string) bool {
 		return p.Provision.Native != nil
 	}
 	if p.Operation != nil {
-		return p.Operation.Kind != "config_rollback"
+		return p.Operation.Kind != "config_rollback" && p.Operation.Kind != "config_rollback_guarded" && p.Operation.Kind != "cron_update" && p.Operation.Kind != "cron_delete"
 	}
 	return p.Action == "deploy" && p.Source == nil && tool == "gregale_apply_deploy"
 }
@@ -163,7 +163,11 @@ func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bo
 	status := "outcome_unknown"
 	if p.configReceipt != nil {
 		status = "partial"
-	} else if !priorAttempt && p.Operation.Kind != "config_rollback" {
+	} else if p.Operation.Kind == "scale" && knownScalingRefusal(err) {
+		// Atomic receipts are returned before revision checks, so this native
+		// conflict proves the reviewed request did not commit, even on retry.
+		status = "refused"
+	} else if !priorAttempt && p.Operation.Kind != "config_rollback" && p.Operation.Kind != "config_rollback_guarded" {
 		var native *api.APIError
 		if errors.As(err, &native) && native.Problem.Status >= 400 && native.Problem.Status < 500 &&
 			native.Problem.Status != 408 && native.Problem.Status != 425 && native.Problem.Status != 429 {

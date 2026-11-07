@@ -210,9 +210,56 @@ func (j *nativeHostHelperJournal) requireDeviceNamespacesRemoved(ctx context.Con
 	return nil
 }
 
+// nativeDeviceTimings records where one native jail device setup spent its wall
+// clock, so the native path reports the same bind_tun sub-phases as the legacy
+// one. It is observation only: nothing reads it to decide anything.
+type nativeDeviceTimings struct {
+	// prepareStart is when the helper journal began waiting for the jailer's
+	// namespace and root; zero when setup failed before it got there.
+	prepareStart time.Time
+	// waitMntns and waitChroot are the two jailer waits inside that window.
+	waitMntns, waitChroot time.Duration
+}
+
+// nativeJailDeviceWaits is implemented by device inputs that measured how long
+// they waited for the jailer.
+type nativeJailDeviceWaits interface {
+	JailWaits() (mntns, chroot time.Duration)
+}
+
+func (t *nativeDeviceTimings) notePrepare(start time.Time, inputs nativeJailDeviceInputs) {
+	if t == nil {
+		return
+	}
+	t.prepareStart = start
+	if waits, ok := inputs.(nativeJailDeviceWaits); ok && inputs != nil {
+		t.waitMntns, t.waitChroot = waits.JailWaits()
+	}
+}
+
+// partition splits the setup window [started, ended] into the journal checks
+// that precede the wait for the jailer, the two jailer waits, and the rest (the
+// journaled helper process, its receipt, and descriptor handoff). The four
+// parts add up to the window, as the legacy path's do.
+func (t *nativeDeviceTimings) partition(started, ended time.Time) bindTunTimings {
+	total := ended.Sub(started)
+	if t == nil || t.prepareStart.IsZero() {
+		return bindTunTimings{JournalChecksMs: total.Milliseconds()}
+	}
+	checks := min(max(t.prepareStart.Sub(started), 0), total)
+	rest := max(total-checks-t.waitMntns-t.waitChroot, 0)
+	return bindTunTimings{
+		JournalChecksMs: checks.Milliseconds(),
+		WaitMntnsMs:     t.waitMntns.Milliseconds(),
+		WaitChrootMs:    t.waitChroot.Milliseconds(),
+		SetupJailMs:     rest.Milliseconds(),
+	}
+}
+
 func (v *JailerVMM) bindNativeJailDevices(ctx context.Context, expected nativeLaunchRecord, root, instance string, uid, gid int) (timings bindTunTimings, result error) {
 	started := time.Now()
-	defer func() { timings.SetupJailMs = time.Since(started).Milliseconds() }()
+	var capture nativeDeviceTimings
+	defer func() { timings = capture.partition(started, time.Now()) }()
 	r := v.nativeRecovery
 	if r == nil || expected.Generation != r.generation(instance) || expected.Lease.Instance != instance || expected.Lease.UID != uid || expected.Lease.GID != gid || root != v.chrootRoot(instance) {
 		return timings, errors.New("native jail device setup: original local lease authority is unavailable")
@@ -234,7 +281,7 @@ func (v *JailerVMM) bindNativeJailDevices(ctx context.Context, expected nativeLa
 	}
 	var output nativeHostHelperOutput
 	command.Stdout, command.Stderr = &output, &output
-	j := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups, startTime: r.startTime, purpose: nativeHostHelperJailDevices, deviceRoot: root}
+	j := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups, startTime: r.startTime, purpose: nativeHostHelperJailDevices, deviceRoot: root, deviceTimings: &capture}
 	if err := j.run(ctx, expected, command, v.nativeCleanupBudget()); err != nil {
 		// The trusted setup helper emits bounded syscall/protocol diagnostics,
 		// not guest output or runtime secrets. Preserve the original cause.

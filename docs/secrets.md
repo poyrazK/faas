@@ -90,6 +90,13 @@ Apps that can reload credentials in-process may opt in via an OCI image label:
 LABEL com.gregale.secret-reload-signal="SIGHUP"
 ```
 
+`gregale deploy check` (and the deploy preflight) warns with
+`after_restore_without_secret_reload` when `gregale.yaml` declares
+`lifecycle.after_restore` but the directory's Dockerfile has no such label:
+the snapshot keeps the environment it was captured with, so a restored app
+must reread `FAAS_SECRETS_SNAPSHOT_FILE`, and without the label its wakes fall
+back to cold boots.
+
 The supported signals are `SIGHUP`, `SIGUSR1`, and `SIGUSR2`; the selected
 signal must differ from the image's `STOPSIGNAL`. On rotation, guest-init polls
 the deployment's current secret scope, atomically replaces a JSON map at the

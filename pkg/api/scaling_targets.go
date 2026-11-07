@@ -258,10 +258,12 @@ func ErrScalingTargetConflict() *Problem {
 }
 
 // ValidatePerInstanceConcurrency bounds scaling_policy.per_instance_concurrency
-// (ADR-20261022203523) to [0, the plan's concurrency_per_vm]. Zero means the
-// plan bound. The problem carries the limit and the requested value.
+// (ADR-20261022203523) to [0, the plan's concurrency_per_vm], which runtime
+// config may replace with app_request_concurrency_max (ADR-20261101215228).
+// Zero means the default. The problem carries the limit and the requested
+// value.
 func ValidatePerInstanceConcurrency(plan Plan, requested int) *Problem {
-	limit := plan.ConcurrencyPerVMBound()
+	limit := plan.RequestConcurrencyBound()
 	if requested >= 0 && requested <= limit {
 		return nil
 	}

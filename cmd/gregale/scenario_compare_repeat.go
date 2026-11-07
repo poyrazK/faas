@@ -47,9 +47,6 @@ func evaluateTestComparisonRepeatBudget(comparison testReportComparison, before,
 		}
 		gate.add(testComparisonGateCheck{Run: run.Key, Metric: "run.status", Status: status, Reason: reason})
 	}
-	if !budget.hasPerformanceBudgets() {
-		return gate, nil
-	}
 
 	keys := make(map[testComparisonRepeatKey]bool, len(beforeGroups)+len(afterGroups))
 	for key := range beforeGroups {
@@ -90,10 +87,6 @@ func evaluateTestComparisonRepeatBudget(comparison testReportComparison, before,
 		}
 	}
 	return gate, nil
-}
-
-func (budget testComparisonBudget) hasPerformanceBudgets() bool {
-	return budget.RunDurationIncreasePercent != nil || budget.HTTPDurationIncreasePercent != nil || budget.hasLoadBudgets()
 }
 
 func groupTestComparisonReceipts(receipts []testRunReceipt) map[testComparisonRepeatKey][]testRunReceipt {
@@ -157,8 +150,8 @@ func addTestRepeatedHTTPChecks(gate *testComparisonGate, name string, before, af
 			gate.addInconclusive(name, "http."+step+".duration_ms", "HTTP step is present in only one report")
 			continue
 		}
-		if old.Method != current.Method || old.Path != current.Path {
-			gate.addInconclusive(name, "http."+step+".duration_ms", "HTTP step method or path changed")
+		if old.Method != current.Method || old.Path != current.Path || old.PathTemplateSHA256 != current.PathTemplateSHA256 {
+			gate.addInconclusive(name, "http."+step+".duration_ms", "HTTP step method, path or query template changed")
 			continue
 		}
 		oldValues := make([]float64, len(old.Durations))
@@ -174,9 +167,10 @@ func addTestRepeatedHTTPChecks(gate *testComparisonGate, name string, before, af
 }
 
 type testRepeatedHTTPStep struct {
-	Method    string
-	Path      string
-	Durations []int64
+	Method             string
+	Path               string
+	PathTemplateSHA256 string
+	Durations          []int64
 }
 
 func repeatedTestHTTPSteps(receipts []testRunReceipt) (map[string]testRepeatedHTTPStep, error) {
@@ -193,7 +187,10 @@ func repeatedTestHTTPSteps(receipts []testRunReceipt) (map[string]testRepeatedHT
 	}
 	result := make(map[string]testRepeatedHTTPStep, len(stepsByRun[0]))
 	for name, first := range stepsByRun[0] {
-		result[name] = testRepeatedHTTPStep{Method: first.Method, Path: first.Path, Durations: make([]int64, 0, len(receipts))}
+		if !validTestHTTPPathTemplateDigest(first.PathTemplateSHA256) {
+			return nil, fmt.Errorf("HTTP path template identity is missing or invalid")
+		}
+		result[name] = testRepeatedHTTPStep{Method: first.Method, Path: first.Path, PathTemplateSHA256: first.PathTemplateSHA256, Durations: make([]int64, 0, len(receipts))}
 	}
 	for _, steps := range stepsByRun {
 		if len(steps) != len(result) {
@@ -201,7 +198,7 @@ func repeatedTestHTTPSteps(receipts []testRunReceipt) (map[string]testRepeatedHT
 		}
 		for name, step := range steps {
 			group, exists := result[name]
-			if !exists || group.Method != step.Method || group.Path != step.Path {
+			if !exists || group.Method != step.Method || group.Path != step.Path || group.PathTemplateSHA256 != step.PathTemplateSHA256 {
 				return nil, fmt.Errorf("HTTP step identity changed")
 			}
 			group.Durations = append(group.Durations, step.DurationMS)
@@ -234,9 +231,6 @@ func addTestRepeatedLoadChecks(gate *testComparisonGate, name string, before, af
 	addTestRepeatedLoadMetric(gate, name, "load.p95_latency", "ms", oldLoads, newLoads, func(load *testLoadEvidence) float64 { return load.Latency.P95MS }, budget.LoadP95IncreasePercent, budget)
 	addTestRepeatedLoadMetric(gate, name, "load.p99_latency", "ms", oldLoads, newLoads, func(load *testLoadEvidence) float64 { return load.Latency.P99MS }, budget.LoadP99IncreasePercent, budget)
 	addTestRepeatedLoadMetric(gate, name, "load.error_rate", "%", oldLoads, newLoads, func(load *testLoadEvidence) float64 { return load.ErrorRate }, budget.LoadErrorRateIncreasePoints, budget)
-	if budget.LoadP95IncreasePercent == nil && budget.LoadP99IncreasePercent == nil && budget.LoadErrorRateIncreasePoints == nil {
-		return
-	}
 	oldSteps, oldErr := repeatedTestLoadSteps(oldLoads, budget.LoadMinSamples)
 	newSteps, newErr := repeatedTestLoadSteps(newLoads, budget.LoadMinSamples)
 	if oldErr != nil || newErr != nil {
@@ -282,8 +276,8 @@ func repeatedTestLoads(receipts []testRunReceipt, minSamples int) ([]*testLoadEv
 		if load.Workload == nil || load.Workload.Version != 1 || load.Workload.SHA256 == "" {
 			return nil, fmt.Errorf("report lacks supported workload identity metadata")
 		}
-		if err := testBenchmarkMetricsValid(load.testLoadMetrics); err != nil {
-			return nil, fmt.Errorf("load metrics are invalid: %w", err)
+		if err := validateTestBenchmarkEvidence(load); err != nil {
+			return nil, fmt.Errorf("load evidence is invalid: %w", err)
 		}
 		if load.Latency.Samples < minSamples {
 			return nil, fmt.Errorf("need at least %d samples in every attempt; found %d", minSamples, load.Latency.Samples)
@@ -413,7 +407,7 @@ func compareRepeatedTestGateErrorRate(run, metric string, before, after []float6
 		check.Reason = fmt.Sprintf("need at least %d attempts in each report", minRuns)
 		return check
 	}
-	if oldSpread > maxSpreadPoints || newSpread > maxSpreadPoints {
+	if !testRateAtMost(oldSpread/100, maxSpreadPoints/100) || !testRateAtMost(newSpread/100, maxSpreadPoints/100) {
 		check.Status = "inconclusive"
 		check.Reason = fmt.Sprintf("repeat spread exceeds %.3g percentage-point limit", maxSpreadPoints)
 		return check

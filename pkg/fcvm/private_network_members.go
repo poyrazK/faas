@@ -109,6 +109,9 @@ func (m *Manager) changePrivateNetworkService(ctx context.Context, inst *Instanc
 		if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", nc.Netns, "ip", "addr", "replace", service.String() + "/32", "dev", nc.PrivateVethPeer}); err != nil {
 			return err
 		}
+		if err := m.runCommands(ctx, nc.PrivateNetworkAnnounceCommands(newResourceLinkAddress())); err != nil {
+			return fmt.Errorf("announce private service address: %w", err)
+		}
 	}
 	m.mu.Lock()
 	if m.live[inst.Lease.Instance] == inst {
@@ -165,7 +168,7 @@ func (m *Manager) ReconcilePrivateNetworkServices(ctx context.Context) error {
 }
 
 func (m *Manager) releaseAllPrivateNetworkMembers(ctx context.Context, nc netns.Config, instance string) error {
-	if (nc.PrivateNetworkAppID != "" || nc.PrivateVethHost != "") && m.privateNetworkMemberRelease != nil {
+	if m.privateNetworkMemberRelease != nil {
 		if err := m.privateNetworkMemberRelease(ctx, nc.PrivateNetworkAccountID, nc.PrivateNetworkAppID, "", instance, false); err != nil {
 			return fmt.Errorf("release private members after teardown: %w", err)
 		}
@@ -195,6 +198,11 @@ func (m *Manager) reconcilePrivateNetworkService(ctx context.Context, expected *
 	if identity.Address != nc.PrivateNetworkAddress {
 		return errors.New("private instance address changed")
 	}
+	// A failed announcement may have bound the VIP without publishing it in
+	// the cached/adopted config. The durable claim supplies its cleanup identity.
+	if !identity.Service.IsValid() && !nc.PrivateNetworkServiceAddress.IsValid() && identity.WithdrawService.IsValid() {
+		nc.PrivateNetworkServiceAddress = identity.WithdrawService
+	}
 	if identity.Service == nc.PrivateNetworkServiceAddress {
 		return nil
 	}
@@ -203,4 +211,13 @@ func (m *Manager) reconcilePrivateNetworkService(ctx context.Context, expected *
 		return err
 	}
 	return m.changePrivateNetworkService(networkCtx, inst, nc, identity.Service)
+}
+
+// Allocation precedes physical setup. Release it only after rollback has
+// confirmed removal; failed cleanup keeps ownership fenced for detach/teardown.
+func (m *Manager) rollbackPrivateNetworkAttachment(ctx context.Context, nc netns.Config, instance string) error {
+	if err := m.removeNetworkLink(ctx, nc.Instance, nc.PrivateVethHost); err != nil {
+		return fmt.Errorf("rollback private side-link: %w", err)
+	}
+	return m.releasePrivateNetworkMember(ctx, nc, instance, false)
 }

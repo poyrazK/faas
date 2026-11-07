@@ -61,6 +61,11 @@ type Config struct {
 	// Amendment 1). Older vmmd binaries refuse such a journal: enable it only
 	// once every compute node and any rollback target can read version three.
 	NativeLaunchOwnerRecords bool `toml:"native_launch_owner_records"`
+	// NativeQualificationCapture opens GitOps qualification capture, restore
+	// and retirement on this host (ADR 20261023093000). It requires native
+	// process recovery and both private roots above, and stays off on a host
+	// whose native qualification acceptance has not passed.
+	NativeQualificationCapture bool `toml:"native_qualification_capture"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -139,6 +144,18 @@ type Config struct {
 	// quiet_pause wins when both are set. Off by default.
 	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// IdleLadder selects the idle ladder mode (ADR-20261107122928,
+	// proposed): "off" (the default), "observe" or "on". Observe measures,
+	// for every request-serving instance whatever its declared pause, the
+	// ladder level its idle time reaches, the RAM held at each level and the
+	// billed MB-seconds the unbilled levels would not bill
+	// (vmmd_idle_ladder_observed_*); it pauses nothing and runs beside quiet
+	// pause. On also applies levels L1 and L2 to the instances quiet pause
+	// pauses: it pauses them after 1 s, and reports those quiet for 10 s at
+	// L2 (InstanceStats.idle_ladder_level), whose memory measured admission
+	// charges with the frozen floor. On needs quiet_pause. FAAS_IDLE_LADDER
+	// overrides TOML.
+	IdleLadder string `toml:"idle_ladder"`
 	// AgentWaitPause enables the model-wait pause of agent runs
 	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
 	// outbound relay and nothing else, and resumes it on the relay's next
@@ -771,6 +788,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := validateNativeRuntimeCaptureConfig(c); err != nil {
 		return nil, err
 	}
+	if err := validateNativeQualificationCaptureConfig(c); err != nil {
+		return nil, err
+	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_VMMD_ROLE. Setting Role in
 	// the defaults-struct literal lets toml.Unmarshal overwrite it,
@@ -962,6 +982,17 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE_OBSERVE must be a boolean (got %q)", v)
 		}
 		c.QuietPauseObserve = enabled
+	}
+	if v := os.Getenv("FAAS_IDLE_LADDER"); v != "" {
+		c.IdleLadder = v
+	}
+	idleLadder, ierr := parseIdleLadderMode(c.IdleLadder)
+	if ierr != nil {
+		return nil, ierr
+	}
+	c.IdleLadder = idleLadder
+	if c.IdleLadder == idleLadderOn && !c.QuietPause {
+		return nil, fmt.Errorf("vmmd: idle_ladder = on needs quiet_pause on (FAAS_IDLE_LADDER, FAAS_QUIET_PAUSE)")
 	}
 	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
@@ -1271,6 +1302,19 @@ func validateNativeRuntimeCaptureConfig(c *Config) error {
 	return nil
 }
 
+// Qualification capture publishes through the native producer and restores
+// through the journal-backed lifecycle; without them every attempt would be
+// refused after a candidate had already booted.
+func validateNativeQualificationCaptureConfig(c *Config) error {
+	if !c.NativeQualificationCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" {
+		return fmt.Errorf("vmmd: native_qualification_capture requires native_process_recovery = true, native_snapshot_publication_root and native_image_staging_root")
+	}
+	return nil
+}
+
 func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {
 	return validateNativePrivateRootConfig(nativeRecovery, root, "native_image_staging_root")
 }
@@ -1490,5 +1534,24 @@ func (c *Config) resourceJournal() fcvm.ResourceJournalConfig {
 		Dir:            c.ResourceJournalDir,
 		VolatileDir:    c.ResourceJournalVolatileDir,
 		VolatileWrites: c.ResourceJournalVolatileWrites,
+	}
+}
+
+// Idle ladder modes (ADR-20261107122928).
+const (
+	idleLadderOff     = "off"
+	idleLadderObserve = "observe"
+	idleLadderOn      = "on"
+)
+
+// parseIdleLadderMode normalizes idle_ladder / FAAS_IDLE_LADDER; empty is off.
+func parseIdleLadderMode(v string) (string, error) {
+	switch mode := strings.ToLower(strings.TrimSpace(v)); mode {
+	case "", idleLadderOff:
+		return idleLadderOff, nil
+	case idleLadderObserve, idleLadderOn:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("vmmd: idle_ladder (FAAS_IDLE_LADDER) must be off, observe or on (got %q)", v)
 	}
 }

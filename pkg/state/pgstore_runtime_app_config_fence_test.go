@@ -21,6 +21,22 @@ func TestPgLegacyRuntimeConfigFenceProjection(t *testing.T) {
 	testLegacyRuntimeConfigFenceProjection(t, store)
 }
 
+func TestPgFrozenRuntimeConfigFenceProjection(t *testing.T) {
+	store, ctx, pool := pgWithPool(t)
+	testFrozenRuntimeConfigFenceProjection(t, store, func(t *testing.T, id, raw string) {
+		t.Helper()
+		// Store the frozen runtime without the candidate transition triggers.
+		if _, err := pool.Exec(ctx, `ALTER TABLE deployments DISABLE TRIGGER USER`); err != nil {
+			t.Fatal(err)
+		}
+		_, err := pool.Exec(ctx, `UPDATE deployments SET environment_workload_runtime=$2::jsonb WHERE id=$1`, id, raw)
+		_, enableErr := pool.Exec(ctx, `ALTER TABLE deployments ENABLE TRIGGER USER`)
+		if err != nil || enableErr != nil {
+			t.Fatal(err, enableErr)
+		}
+	})
+}
+
 func TestPgRuntimePublicationRejectsCorruptPinnedSettings(t *testing.T) {
 	for _, mutation := range []string{"unknown", "changed"} {
 		t.Run(mutation, func(t *testing.T) {

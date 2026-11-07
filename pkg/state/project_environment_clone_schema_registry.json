@@ -38,6 +38,26 @@
     "kind": "operational"
   },
   {
+    "table": "agent_approval_requests",
+    "columns": [
+      "account_id",
+      "body_sha256",
+      "category",
+      "consumed_at",
+      "created_at",
+      "decided_at",
+      "decided_by",
+      "expires_at",
+      "id",
+      "key_id",
+      "method",
+      "org_id",
+      "path",
+      "status"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "alert_test_sends",
     "columns": [
       "id",
@@ -53,6 +73,15 @@
       "completed_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "api_key_approval_categories",
+    "columns": [
+      "categories",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "api_key_project_limits",
@@ -1853,6 +1882,17 @@
     "kind": "operational"
   },
   {
+    "table": "app_scaling_receipts",
+    "columns": [
+      "app_id",
+      "request_hash",
+      "request_id",
+      "response",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_secret_revocation_targets",
     "columns": [
       "ack_at",
@@ -2680,6 +2720,7 @@
       "runtime",
       "scaling_policy",
       "scaling_policy_revision",
+      "scaling_revision",
       "security_policy",
       "service_address_index",
       "slug",
@@ -4002,9 +4043,11 @@
     "columns": [
       "app_id",
       "app_id_redirect",
+      "binding_version",
       "cert_expires_at",
       "cert_failed_at",
       "cert_last_error",
+      "cert_retry_at",
       "cert_status",
       "challenge_token",
       "dns_last_checked_at",
@@ -4014,6 +4057,7 @@
       "org_id",
       "verification_attempts",
       "verification_expires_at",
+      "verification_manual_check_at",
       "verification_next_check_at",
       "verified_at"
     ],
@@ -4522,6 +4566,20 @@
       "app_id",
       "config",
       "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_change_hook_reports",
+    "columns": [
+      "app_id",
+      "reported_at",
+      "pending",
+      "failed",
+      "oldest_pending_at",
+      "last_published_at",
+      "last_failure_code",
+      "publishing"
     ],
     "kind": "operational"
   },
@@ -5389,6 +5447,21 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_promotion_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id",
+      "environment_id",
+      "expected_serving_deployment_id",
+      "project_id",
+      "request_hash",
+      "scope"
+    ]
+  },
+  {
     "table": "deployment_submission_receipts",
     "kind": "operational",
     "columns": [
@@ -5475,6 +5548,7 @@
       "revision",
       "rollback_on_5xx",
       "rollback_prepared_at",
+      "rollback_release_review",
       "rollout_aborted_at",
       "rollout_aborted_reason",
       "rollout_completed_at",
@@ -5707,6 +5781,24 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "edge_tls_certificates",
+    "columns": [
+      "account_uri",
+      "ca",
+      "chain_pem",
+      "id",
+      "issued_at",
+      "key_kid",
+      "key_sealed",
+      "names",
+      "not_after",
+      "not_before",
+      "serial",
+      "sha256"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "edge_crawler_ip_ranges",
@@ -7575,6 +7667,27 @@
     "kind": "operational"
   },
   {
+    "table": "github_connection_verifications",
+    "columns": [
+      "access",
+      "account_id",
+      "installation_id",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "github_delivery_targets",
+    "columns": [
+      "account_id",
+      "delivery_id",
+      "skip_reason",
+      "status",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "github_deploy_branches",
     "columns": [
       "branch",
@@ -7637,6 +7750,16 @@
       "token_expires_at"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "github_transport_recoveries",
+    "columns": [
+      "attempts",
+      "created_at",
+      "delivery_guid",
+      "next_attempt_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "github_webhook_deliveries",
@@ -8081,6 +8204,7 @@
       "app_id",
       "application_standard_boot_token",
       "application_standard_promotion_token",
+      "booked_cpu_millicores",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",
@@ -8681,6 +8805,8 @@
       "deadline_at",
       "deployment_scope",
       "due_at",
+      "edge_jwt_issuer",
+      "edge_jwt_subject",
       "environment_id",
       "failure_rules",
       "headers",
@@ -9158,6 +9284,7 @@
       "assigned_account_id",
       "assigned_team_id",
       "attempt",
+      "attempt_claim_id",
       "channel_id",
       "claim_id",
       "claim_until",
@@ -10240,11 +10367,21 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_live_login_attempts",
+    "columns": [
+      "attempted_at",
+      "database_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_live_logins",
     "columns": [
       "account_id",
+      "authorized_identity_id",
       "awake",
       "created_at",
+      "data_resource_id",
       "database_id",
       "provider_identity_id",
       "recipient",
@@ -12849,6 +12986,7 @@
       "id",
       "issuer_access_revision",
       "issuer_account_id",
+      "key_prefix",
       "kid",
       "label",
       "last_used_at",
@@ -13335,6 +13473,7 @@
     "columns": [
       "agents_allowed",
       "allowed_scopes",
+      "approval_categories",
       "org_id",
       "updated_at",
       "updated_by"
@@ -14753,6 +14892,7 @@
   {
     "table": "pr_preview_sets",
     "columns": [
+      "account_id",
       "closed_at",
       "commit_sha",
       "installation_id",
@@ -15339,6 +15479,7 @@
       "account_id",
       "approval_token_hash",
       "approved_by_account_id",
+      "approved_by_principal",
       "consumed_at",
       "created_at",
       "environment_slug",
@@ -16546,6 +16687,21 @@
     ]
   },
   {
+    "table": "project_environment_promotion_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "attempt_id",
+      "environment_id",
+      "from_environment_id",
+      "project_id",
+      "promotion_hash",
+      "promotion_id",
+      "request_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_promotion_release_config",
     "kind": "operational",
     "columns": [
@@ -16684,6 +16840,21 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_rollback_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "attempt_id",
+      "environment_id",
+      "from_environment_id",
+      "project_id",
+      "promotion_hash",
+      "promotion_id",
+      "request_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_route_policies",
     "columns": [
       "account_id",
@@ -16773,6 +16944,15 @@
     }
   },
   {
+    "table": "project_app_stage_admissions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "project_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "project_environments",
     "columns": [
       "account_id",
@@ -16780,6 +16960,7 @@
       "id",
       "project_id",
       "protected",
+      "shared_secret_generation",
       "slug",
       "updated_at"
     ],
@@ -16927,6 +17108,7 @@
       "deactivation",
       "environment_slug",
       "expires_at",
+      "fallback_hidden_at",
       "id",
       "project_id",
       "rollback_previous_release_id",
@@ -17250,6 +17432,26 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_hours",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "cold_boots",
+      "deployment_id",
+      "dimension",
+      "dimension_kind",
+      "error_requests",
+      "latency_hist",
+      "latency_max_ms",
+      "method",
+      "request_time_ms",
+      "requests",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_minutes",
     "columns": [
       "account_id",
@@ -17270,10 +17472,19 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_rollup_gaps",
+    "columns": [
+      "app_id",
+      "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_rollup_coverage",
     "columns": [
       "app_id",
-      "covered_since"
+      "covered_since",
+      "hours_covered_since"
     ],
     "kind": "operational"
   },
@@ -17303,6 +17514,7 @@
       "country",
       "deployment_created_at",
       "deployment_id",
+      "deployment_pinned",
       "deployment_tag",
       "flag_evidence",
       "guest_cpu_time_ms",
@@ -17316,6 +17528,7 @@
       "image_digest",
       "instance_id",
       "latency_ms",
+      "long_lived",
       "method",
       "node_id",
       "platform_refusal",
@@ -17752,6 +17965,7 @@
       "environment_id",
       "instance_id",
       "node_id",
+      "prime_activation_handoff",
       "scope",
       "secret_fingerprint",
       "wake_id"
@@ -19679,6 +19893,19 @@
       "decision",
       "deployment_id",
       "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_outcome_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checked_at",
+      "checked_by",
+      "deployment_id",
+      "note",
+      "task_id"
     ],
     "kind": "operational"
   },

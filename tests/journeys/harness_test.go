@@ -357,6 +357,12 @@ func idempotentCommand(args []string) bool {
 		return sub == "bucket"
 	case "postgres":
 		return sub == "list" || sub == "get" || sub == "capabilities" || sub == "usage"
+	case "event":
+		// A publish with an explicit --id names one identity: repeating it
+		// answers the original receipt.
+		return sub == "get" || sub == "subscription" || (sub == "publish" && slices.Contains(args, "--id"))
+	case "dlq":
+		return sub == "list"
 	}
 	return false
 }

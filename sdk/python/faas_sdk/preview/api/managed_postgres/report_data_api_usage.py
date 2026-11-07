@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -82,10 +87,13 @@ def sync_detailed(
 ) -> Response[DataAPIUsageReportResponse | Problem]:
     """Report Data API usage deltas
 
-     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account,
-    app and instance come from it, never from the body. Each report id is applied once, so retried or
-    snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API
-    keys and application JWTs are not accepted.
+     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a
+    live instance of an active app; account, app and instance come from it, never from the body. Only a
+    production deployment reports; a stage, preview or cloned environment is refused for good with 403
+    workload_not_production, so its usage never counts against production's caps and its access settings
+    never govern production's live reads. Each report id is applied once, so retried or snapshot-
+    duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and
+    application JWTs are not accepted.
 
     Args:
         body (DataAPIUsageReport): Private versioned runtime usage report. A report id names the
@@ -117,10 +125,13 @@ def sync(
 ) -> DataAPIUsageReportResponse | Problem | None:
     """Report Data API usage deltas
 
-     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account,
-    app and instance come from it, never from the body. Each report id is applied once, so retried or
-    snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API
-    keys and application JWTs are not accepted.
+     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a
+    live instance of an active app; account, app and instance come from it, never from the body. Only a
+    production deployment reports; a stage, preview or cloned environment is refused for good with 403
+    workload_not_production, so its usage never counts against production's caps and its access settings
+    never govern production's live reads. Each report id is applied once, so retried or snapshot-
+    duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and
+    application JWTs are not accepted.
 
     Args:
         body (DataAPIUsageReport): Private versioned runtime usage report. A report id names the
@@ -147,10 +158,13 @@ async def asyncio_detailed(
 ) -> Response[DataAPIUsageReportResponse | Problem]:
     """Report Data API usage deltas
 
-     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account,
-    app and instance come from it, never from the body. Each report id is applied once, so retried or
-    snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API
-    keys and application JWTs are not accepted.
+     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a
+    live instance of an active app; account, app and instance come from it, never from the body. Only a
+    production deployment reports; a stage, preview or cloned environment is refused for good with 403
+    workload_not_production, so its usage never counts against production's caps and its access settings
+    never govern production's live reads. Each report id is applied once, so retried or snapshot-
+    duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and
+    application JWTs are not accepted.
 
     Args:
         body (DataAPIUsageReport): Private versioned runtime usage report. A report id names the
@@ -180,10 +194,13 @@ async def asyncio(
 ) -> DataAPIUsageReportResponse | Problem | None:
     """Report Data API usage deltas
 
-     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account,
-    app and instance come from it, never from the body. Each report id is applied once, so retried or
-    snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API
-    keys and application JWTs are not accepted.
+     Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a
+    live instance of an active app; account, app and instance come from it, never from the body. Only a
+    production deployment reports; a stage, preview or cloned environment is refused for good with 403
+    workload_not_production, so its usage never counts against production's caps and its access settings
+    never govern production's live reads. Each report id is applied once, so retried or snapshot-
+    duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and
+    application JWTs are not accepted.
 
     Args:
         body (DataAPIUsageReport): Private versioned runtime usage report. A report id names the

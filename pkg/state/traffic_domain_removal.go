@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -162,7 +161,9 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 	if budget != "" {
 		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.domain-claims.v1:" + budget})
 	}
-	conn, release, busy, err := s.acquireTrafficBindingSessionLocks(ctx, locks)
+	// Waiting for a pool connection and the lock statements are not analysis,
+	// so the analysis bound does not time them (Hunt 31 H31-11).
+	conn, release, busy, err := s.tryAcquireTrafficPolicySessionLocks(ctx, locks)
 	if err != nil || busy {
 		return nil, busy, err
 	}
@@ -174,48 +175,45 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 	guarded := &trafficDomainBindingTx{Tx: tx, accounts: accounts, appsSuffix: s.trafficAppsSuffix, appID: originalApp,
 		scoped: s.trafficScopedBinding, routes: routes, account: originalAccount.String(), release: release}
 	retry := false
+	// Account row locks and the access fence wait on other transactions, not
+	// on analysis, so the bound times only the reads that follow.
+	err = lockTrafficDomainRows(ctx, tx, accounts)
 	before := time.Now()
-	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		for _, account := range accounts {
-			if _, err := sqlc.New().LockTrafficPolicyAccount(bounded, tx, uuidToPgtype(account)); err != nil {
+	if err == nil {
+		err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+			var claims trafficBindingClaims
+			var err error
+			if guarded.scoped {
+				claims, guarded.scope, guarded.lookup, err = readTrafficBindingScopeClaims(bounded, tx, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix)
+			} else if claims, err = readTrafficBindingClaims(bounded, tx, s.trafficAppsSuffix); err == nil {
+				guarded.scope, err = declareTrafficBindingScope(bounded, tx, claims, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix)
+			}
+			if err != nil {
 				return err
 			}
-		}
-		if err := guardOrgAccessTx(bounded, tx); err != nil {
-			return err
-		}
-		var claims trafficBindingClaims
-		var err error
-		if guarded.scoped {
-			claims, guarded.scope, guarded.lookup, err = readTrafficBindingScopeClaims(bounded, tx, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix)
-		} else if claims, err = readTrafficBindingClaims(bounded, tx, s.trafficAppsSuffix); err == nil {
-			guarded.scope, err = declareTrafficBindingScope(bounded, tx, claims, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix)
-		}
-		if err != nil {
-			return err
-		}
-		guarded.beforeClaims, guarded.beforeTenants, guarded.beforeAliases = claims.Domains, claims.Tenants, claims.Aliases
-		account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
-		if err != nil {
-			return err
-		}
-		if account != originalAccount {
-			return ErrNotFound
-		}
-		if requireClaim {
-			claim, found := trafficDomainClaimByName(guarded.beforeClaims, domain)
-			if !found || claim.App != originalApp.String() || claim.Account != originalAccount.String() {
+			guarded.beforeClaims, guarded.beforeTenants, guarded.beforeAliases = claims.Domains, claims.Tenants, claims.Aliases
+			account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
+			if err != nil {
+				return err
+			}
+			if account != originalAccount {
 				return ErrNotFound
 			}
-		}
-		fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, guarded.beforeTenants, domain, originalAccount.String(), routes)
-		if err != nil {
-			return err
-		}
-		// A scoped write must still declare exactly what it locked.
-		retry = !slices.Equal(accounts, fresh) || guarded.scoped && !guarded.scope.equal(scope)
-		return nil
-	})
+			if requireClaim {
+				claim, found := trafficDomainClaimByName(guarded.beforeClaims, domain)
+				if !found || claim.App != originalApp.String() || claim.Account != originalAccount.String() {
+					return ErrNotFound
+				}
+			}
+			fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, guarded.beforeTenants, domain, originalAccount.String(), routes)
+			if err != nil {
+				return err
+			}
+			// A scoped write must still declare exactly what it locked.
+			retry = !slices.Equal(accounts, fresh) || guarded.scoped && !guarded.scope.equal(scope)
+			return nil
+		})
+	}
 	if err != nil || retry {
 		_ = guarded.Rollback(context.WithoutCancel(ctx))
 		var pgErr *pgconn.PgError
@@ -344,16 +342,15 @@ func (tx *trafficDomainBindingTx) checkOwners(ctx context.Context, claims traffi
 	})
 }
 
-func (s *PgStore) acquireTrafficBindingSessionLocks(ctx context.Context, locks []trafficSessionLock) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
-	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		var acquireErr error
-		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionLocks(bounded, locks)
-		return acquireErr
-	})
-	if err != nil && release != nil {
-		release(context.WithoutCancel(ctx))
+// lockTrafficDomainRows takes each owner's account lock, then the request's
+// access fence.
+func lockTrafficDomainRows(ctx context.Context, tx pgx.Tx, accounts []string) error {
+	for _, account := range accounts {
+		if _, err := sqlc.New().LockTrafficPolicyAccount(ctx, tx, uuidToPgtype(account)); err != nil {
+			return err
+		}
 	}
-	return
+	return guardOrgAccessTx(ctx, tx)
 }
 
 func (tx *trafficDomainBindingTx) Rollback(ctx context.Context) error {

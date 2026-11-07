@@ -95,6 +95,9 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// AgentApproval is the request behind approval_required: the link a
+	// person opens to approve it (ADR-20261104140058).
+	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`
 	// Freezes lists the active freezes behind release_frozen
 	// (ADR-20261019071733).
 	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
@@ -707,6 +710,11 @@ const (
 	// (ADR-20261027125625). Nothing was accepted; retry after Retry-After.
 	CodeEventsPaused = "events_paused"
 	CodeUnauthorized = "unauthorized"
+	// CodeWorkloadNotProduction refuses a private runtime report (Data API
+	// usage, change events, change hook status) from a valid workload that
+	// does not serve a production deployment: a stage, preview or cloned
+	// environment. The refusal is final; the runtime stops reporting.
+	CodeWorkloadNotProduction = "workload_not_production"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -822,6 +830,8 @@ const (
 	// the dashboard can pivot the message from "your key is wrong"
 	// to "complete enrollment or step-up to continue".
 	CodeMFARequired = "mfa_required"
+	// The remaining code can reset the factor, preserving a way back in.
+	CodeMFALastRecoveryCode = "mfa_last_recovery_code"
 	// CodeStepUpRequired is returned by RequireStepUp (ADR-077 +
 	// PR-8 acceptance) when a session-cookie principal's
 	// Envelope.StepUpAt stamp is missing or older than the route's
@@ -981,6 +991,9 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeProjectReleaseRollbackRequired means a graph still selects another
+	// deployment, so changing app weights cannot recover the environment.
+	CodeProjectReleaseRollbackRequired = "project_release_rollback_required"
 	// CodeRollbackTargetDatabaseRestored means a database switch restored
 	// the app's database to before the target's own release command
 	// (ADR-20261023181931). The target cannot run on that database; deploy
@@ -1863,6 +1876,12 @@ const (
 	// fails before serving VMs are booted so the command cannot be silently
 	// skipped.
 	CodeReleasePhaseUnavailable = "release_phase_unavailable"
+	// CodeReleaseOutcomeUncertain means an earlier release command of the
+	// app scope started but ended without an exit code, so its effect on the
+	// database is unknown. The deployment fails before its own release
+	// command runs; a person checks the database and records it with
+	// POST /v1/deployments/{id}/release-outcome (ADR-1448 amendment 1).
+	CodeReleaseOutcomeUncertain = "release_outcome_uncertain"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -2369,7 +2388,8 @@ func StatusForCode(code string) int {
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
-		CodeReleasePhaseUnavailable:
+		CodeReleasePhaseUnavailable,
+		CodeReleaseOutcomeUncertain:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail
@@ -7169,6 +7189,13 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
+}
+
+// ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
+func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
+	p := ErrOrgFreeLimitExceeded(limit, observed)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade or delete one before accepting another.", observed, limit)
+	return p
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

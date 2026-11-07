@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/githubscope"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
@@ -53,7 +54,7 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	// still reports only its own environment.
 	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids, coalesce(setup_error, '')
 		from pr_preview_sets where installation_id = $1 and repo_full_name = $2
-		  and commit_sha = $3 and closed_at is null order by pr_number`, installationID, repo, commitSHA)
+		  and commit_sha = $3 and closed_at is null and ($4='' or account_id::text=$4) order by pr_number`, installationID, repo, commitSHA, githubscope.Account(ctx))
 	if err != nil {
 		return previewSetCheck{}, fmt.Errorf("githubd: load preview sets for commit: %w", err)
 	}
@@ -115,7 +116,7 @@ func commitHeadsOtherOpenPR(ctx context.Context, pool *pgxpool.Pool, installatio
 	var shared bool
 	if err := pool.QueryRow(ctx, `select exists (select 1 from pr_preview_sets
 		where installation_id = $1 and repo_full_name = $2 and commit_sha = $3
-		  and closed_at is null and pr_number <> $4)`, installationID, repo, commitSHA, prNumber).Scan(&shared); err != nil {
+		  and closed_at is null and pr_number <> $4 and ($5='' or account_id::text=$5))`, installationID, repo, commitSHA, prNumber, githubscope.Account(ctx)).Scan(&shared); err != nil {
 		return false, fmt.Errorf("githubd: find open PRs sharing a preview commit: %w", err)
 	}
 	return shared, nil

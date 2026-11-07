@@ -101,3 +101,37 @@ func completenessValue(v *bool) any {
 	}
 	return *v
 }
+
+// The raw reads that add only sampled detail (deployment costs, route
+// deployment splits, sampled CPU) used to fail the whole analytics response
+// when they errored, and ran unbounded beside rollup-answered windows. They
+// now leave the detail out and say so in sampled_measures.
+func TestRequestAnalyticsSampledReadsAreBestEffort(t *testing.T) {
+	failed := func(context.Context) (int, error) { return 0, errors.New("statement timeout") }
+	if n, ok, err := apidserver.RequestAnalyticsSampledRead(t.Context(), false, failed); n != 0 || ok || err != nil {
+		t.Fatalf("failed raw read = %d %v %v, want left out without an error", n, ok, err)
+	}
+	slow := func(ctx context.Context) (int, error) {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+	start := time.Now()
+	if n, ok, err := apidserver.RequestAnalyticsSampledRead(t.Context(), true, slow); n != 0 || ok || err != nil {
+		t.Fatalf("slow read beside rollups = %d %v %v, want left out without an error", n, ok, err)
+	}
+	if took := time.Since(start); took > api.RequestAnalyticsSampledMeasuresTimeout+2*time.Second {
+		t.Fatalf("bounded read took %s, want about %s", took, api.RequestAnalyticsSampledMeasuresTimeout)
+	}
+	if n, ok, err := apidserver.RequestAnalyticsSampledRead(t.Context(), true, func(context.Context) (int, error) { return 7, nil }); n != 7 || !ok || err != nil {
+		t.Fatalf("read = %d %v %v, want 7 included", n, ok, err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, _, err := apidserver.RequestAnalyticsSampledRead(cancelled, false, failed); !errors.Is(err, context.Canceled) {
+		t.Fatalf("read for a cancelled request = %v, want the cancellation", err)
+	}
+	if apidserver.RequestAnalyticsSampledMeasuresState(true) != api.RequestAnalyticsSampledMeasuresIncluded ||
+		apidserver.RequestAnalyticsSampledMeasuresState(false) != api.RequestAnalyticsSampledMeasuresOmitted {
+		t.Fatal("sampled_measures states")
+	}
+}

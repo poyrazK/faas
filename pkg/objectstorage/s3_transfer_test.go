@@ -26,6 +26,9 @@ func TestS3NativeTransferUsesStreamBudget(t *testing.T) {
 		w.Header().Set("ETag", `"local-transfer"`)
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Length", "1")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			time.Sleep(100 * time.Millisecond)
 			_, _ = io.WriteString(w, "x")
 		}
 	}))
@@ -38,12 +41,13 @@ func TestS3NativeTransferUsesStreamBudget(t *testing.T) {
 	}
 	p := provider.(*S3)
 	options := p.client.Options()
+	options.RetryMaxAttempts = 1
 	httpClient := *options.HTTPClient.(*http.Client)
 	// Keep the metadata bound short to qualify real SDK streams quickly.
 	httpClient.Timeout = 30 * time.Millisecond
 	options.HTTPClient = &httpClient
 	p.client = s3.New(options)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	out, err := p.WriteObject(ctx, "physical", "key", strings.NewReader("x"), 1, ObjectMetadata{ContentType: "text/plain"})
 	if err != nil || out.ETag != `"local-transfer"` {
@@ -57,6 +61,15 @@ func TestS3NativeTransferUsesStreamBudget(t *testing.T) {
 	closeErr := body.Close()
 	if readErr != nil || closeErr != nil || string(data) != "x" {
 		t.Fatal("S3 stream body", readErr, closeErr)
+	}
+	pinned, err := p.ReadObjectVersion(ctx, "physical", "key", "pinned-version")
+	if err != nil {
+		t.Fatal("S3 version reader used metadata timeout", err)
+	}
+	data, readErr = io.ReadAll(pinned)
+	closeErr = pinned.Close()
+	if readErr != nil || closeErr != nil || string(data) != "x" {
+		t.Fatal("S3 pinned stream body", readErr, closeErr)
 	}
 	if _, err = p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("physical"), Key: aws.String("key")}); err == nil {
 		t.Fatal("S3 metadata escaped its shorter bound")

@@ -20,8 +20,8 @@ import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
-import { changeEventsTable, createChangeRelay, checkChangeEvents } from './changes.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial, createAccessSafety } from './access.mjs'
+import { changeEventsTable, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -79,8 +79,22 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       res.writeHead(204)
       return res.end()
     }
+    // A drain schedule's platform cron (ADR-20261022121642 amendment 1) wakes
+    // a parked API so changes other writers recorded meanwhile publish. Only
+    // invocations the platform dispatches carry x-faas-cron; the answer is
+    // delivery counts, and a drain publishes nothing that would not publish.
+    if (req.method === 'POST' && req.url === changeHooksDrainPath && req.headers['x-faas-cron'] === 'true') {
+      if (!changes) return problem(res, 409, 'data_api_change_hooks_off')
+      const state = await changes.drain(limits.changeHooksDrainWaitMs)
+      if (!state) return problem(res, 503, 'data_api_change_hooks_unavailable')
+      if (state.refused) return problem(res, 409, 'data_api_change_hooks_not_production')
+      return healthResponse(res, state.publishing === 'retrying' ? 503 : 200, { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
+        ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}) })
+    }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
+    // Keep the access gate current with the owner's migrations (amendment 1).
+    config.accessSafety?.maybeRefresh()
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
     let storage = null
     if (config.storage && req.url.startsWith('/storage/v1/') && !guarded) {
@@ -118,7 +132,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Never downgrade a present but invalid credential to anonymous access.
       const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
       if (target.code === 'public_rpc_requires_get') res.setHeader('Allow', 'GET, HEAD')
-      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405 }[target.code] ?? 401, target.code)
+      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
       access = 'anonymous'
       publicCache = storage ? null : publicReadCache(req, config, target)
     } else if (!token) return problem(res, 401, 'token_required')
@@ -411,7 +425,11 @@ export async function main(env = process.env) {
     // them off, the API keeps serving and recorded changes wait in the table.
     // An unreachable database fails the boot instead, because hooks turned
     // off here would be captured in the snapshot every wake restores.
-    try { await checkChangeEvents(config.connection, config.changeEvents.schema) } catch (error) {
+    try {
+      const { bounded } = await checkChangeEvents(config.connection, config.changeEvents.schema)
+      // Hooks installed before the backlog bound still publish; say so once.
+      if (!bounded) runtimeFailure('data_api_change_hooks_unbounded')
+    } catch (error) {
       if (!(error instanceof UnsafeConfiguration)) {
         runtimeFailure('data_api_database_unavailable')
         throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
@@ -446,10 +464,16 @@ export async function main(env = process.env) {
       server.close()
     } })
   // A snapshot must not capture SQL sessions (lifecycle hooks set by the CLI).
+  // The access gate read at boot is rechecked while serving and after every
+  // restore, so a migration since cannot leave it stale (amendment 1).
+  config.accessSafety = createAccessSafety(config)
   config.lifecycle = {
-    ready: waitMs => engine.ready(waitMs),
+    ready: async waitMs => {
+      const started = Date.now()
+      return await engine.ready(waitMs) && await config.accessSafety.ready(waitMs - (Date.now() - started))
+    },
     beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
-    afterRestore: () => engine.start(),
+    afterRestore: () => { engine.start(); config.accessSafety.restored() },
   }
   engine.start()
   server = createServer(config, verify)

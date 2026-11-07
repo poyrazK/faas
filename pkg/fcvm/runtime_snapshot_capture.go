@@ -130,6 +130,14 @@ func (m *Manager) pauseMeasuredSnapshotProbes(ctx context.Context, inst *Instanc
 	if spec.admittedParent.Binding.ProtocolVersion == 0 {
 		return func(bool) {}
 	}
+	return m.suspendSnapshotProbes(ctx, inst)
+}
+
+// suspendSnapshotProbes stops the guest's probes while a native capture holds
+// it paused: a paused guest answers no probe, and the plan's liveness default
+// (3 misses 5 s apart) destroys it mid-capture. The returned func restarts them
+// once the capture has resumed the guest and it is still live.
+func (m *Manager) suspendSnapshotProbes(ctx context.Context, inst *Instance) func(bool) {
 	m.DeleteLivenessConsecutiveFailures(inst.Lease.Instance)
 	m.cancelLivenessLoop(inst.Lease.Instance)
 	m.cancelReadinessLoop(inst.Lease.Instance)

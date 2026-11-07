@@ -118,16 +118,20 @@ type resourceAdoptionInstance struct {
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
 	// HealthcheckGRPC selects gRPC readiness (main's health.v1 checks); later
 	// readers, such as rehearsal suspend, branch on it.
-	HealthcheckGRPC          bool            `json:"healthcheck_grpc,omitempty"`
-	ImageHealthcheckRequired bool            `json:"image_healthcheck_required,omitempty"`
-	StartupDeadlineS         int             `json:"startup_deadline_s,omitempty"`
-	ExecutionMode            string          `json:"execution_mode,omitempty"`
-	Runtime                  string          `json:"runtime,omitempty"`
-	WorkloadNames            []string        `json:"workload_names,omitempty"`
-	LivenessProbe            json.RawMessage `json:"liveness_probe,omitempty"`
-	ReadinessProbe           json.RawMessage `json:"readiness_probe,omitempty"`
-	QuietPauseAfterMs        int64           `json:"quiet_pause_after_ms,omitempty"`
-	FrameworkReadyAt         *time.Time      `json:"framework_ready_at,omitempty"`
+	HealthcheckGRPC          bool `json:"healthcheck_grpc,omitempty"`
+	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
+	StartupDeadlineS         int  `json:"startup_deadline_s,omitempty"`
+	// RequestConcurrency is the wake's per-instance request limit (0 = the
+	// plan's); without it an adopted guest falls back to the plan cap.
+	RequestConcurrency int             `json:"request_concurrency,omitempty"`
+	ExecutionMode      string          `json:"execution_mode,omitempty"`
+	Runtime            string          `json:"runtime,omitempty"`
+	WorkloadNames      []string        `json:"workload_names,omitempty"`
+	LivenessProbe      json.RawMessage `json:"liveness_probe,omitempty"`
+	ReadinessProbe     json.RawMessage `json:"readiness_probe,omitempty"`
+	QuietPauseAfterMs  int64           `json:"quiet_pause_after_ms,omitempty"`
+	IdleLadderEligible bool            `json:"idle_ladder_eligible,omitempty"`
+	FrameworkReadyAt   *time.Time      `json:"framework_ready_at,omitempty"`
 	// WarmPaused is a resident warm-pool restore (Instance.Paused), claimed
 	// or not. WarmSpare is one not yet claimed: its pause must survive
 	// adoption, unlike a quiet pause, which is resumed.
@@ -359,7 +363,8 @@ func (r resourceJournalRecord) validateAdoption() error {
 			return errors.New("invalid adoption instance string")
 		}
 	}
-	if len(in.WorkloadNames) > adoptionMaxWorkloads || in.Port < 0 || in.Port > 65535 || in.StartupDeadlineS < 0 || in.QuietPauseAfterMs < 0 {
+	if len(in.WorkloadNames) > adoptionMaxWorkloads || in.Port < 0 || in.Port > 65535 || in.StartupDeadlineS < 0 || in.QuietPauseAfterMs < 0 ||
+		in.RequestConcurrency < 0 || in.RequestConcurrency > api.AppRequestConcurrencyBound {
 		return errors.New("invalid adoption instance configuration")
 	}
 	for _, name := range in.WorkloadNames {
@@ -501,12 +506,14 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			HealthcheckGRPC:          inst.HealthcheckGRPC,
 			ImageHealthcheckRequired: inst.ImageHealthcheckRequired,
 			StartupDeadlineS:         inst.StartupDeadlineS,
+			RequestConcurrency:       inst.RequestConcurrency,
 			ExecutionMode:            inst.ExecutionMode,
 			Runtime:                  inst.Runtime,
 			WorkloadNames:            append([]string(nil), inst.WorkloadNames...),
 			LivenessProbe:            append(json.RawMessage(nil), inst.LivenessProbe...),
 			ReadinessProbe:           append(json.RawMessage(nil), inst.ReadinessProbe...),
 			QuietPauseAfterMs:        inst.QuietPauseAfter.Milliseconds(),
+			IdleLadderEligible:       inst.IdleLadderEligible,
 			WarmPaused:               inst.Paused,
 			WarmSpare:                inst.warmSpare,
 			DevPatched:               inst.devPatched,

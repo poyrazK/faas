@@ -50,6 +50,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/releaseretention"
 	"github.com/onebox-faas/faas/pkg/roleTemplating"
@@ -976,6 +977,8 @@ func openPgPoolFromEnv(ctx context.Context) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database DSN: %w", err)
 	}
+	cfg.MaxConns = 2
+	dbbounds.ConfigureTimeouts(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open pgxpool: %w", err)

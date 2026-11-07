@@ -41,6 +41,15 @@ faas_edge_public_tls_client_ca: /etc/faas/secrets/edge-tls/origin-pull-ca.pem
 # public_edge.front and the firewall follow in a later step; until then
 # "none" is for a hand-run pilot only.
 faas_edge_public_front: cloudflare
+# ADR-20261103163954 §3: where the edge's certificate comes from. "file", the
+# default, is faas_edge_public_tls_cert and _key above. "database" is the
+# apps domains' certificate edgednsd stores: the edge opens its key with the
+# edge-tls seal domain's identity (which the seal_domains role stages at
+# faas_edge_public_tls_identity and hands the edge) and holds it in memory
+# only, and serves only certificates from faas_edge_public_tls_cert_ca.
+faas_edge_public_tls_cert_source: file
+faas_edge_public_tls_cert_ca: letsencrypt
+faas_edge_public_tls_identity: /etc/faas/secrets/domains/edge-tls.age
 
 # Cloudflare Tunnel connector, pinned by version and per-architecture SHA-256
 # (cloudflare/cloudflared release notes, matching GitHub's asset digests).

@@ -321,6 +321,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("agent_approval") {
+		h.renderAgentApprovalPage(w, r)
+		return
+	}
 	if r.URL.Query().Has("secret") {
 		h.renderSecretEntryPage(w, r)
 		return
@@ -419,6 +423,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 	if r.PostForm.Has("approval") {
 		h.postPromotionApprovalPage(w, r)
+		return
+	}
+	if r.PostForm.Has("agent_approval") {
+		h.postAgentApprovalPage(w, r)
 		return
 	}
 	if r.PostForm.Has("secret") {

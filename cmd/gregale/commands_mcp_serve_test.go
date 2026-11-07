@@ -80,8 +80,8 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) == 0 || requests.Load() != 0 {
-		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
+	if err != nil || len(tools.Tools) != 23 || requests.Load() != 0 {
+		t.Fatalf("discovery count=%d discovery=%+v error=%v requests=%d", len(tools.Tools), tools, err, requests.Load())
 	}
 	listed := map[string]bool{}
 	for _, tool := range tools.Tools {
@@ -90,7 +90,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 			t.Errorf("read-only stdio connection lists mutation %s", tool.Name)
 		}
 	}
-	for _, name := range []string{"gregale_plan_local_deploy", "gregale_plan_env_change", "gregale_get_plan"} {
+	for _, name := range []string{"gregale_plan_local_deploy", "gregale_plan_env_change", "gregale_get_plan", "gregale_get_saved_plan", "gregale_check_plan", "gregale_list_actions", "gregale_get_action", "gregale_get_action_outcome"} {
 		if !listed[name] {
 			t.Errorf("local stdio connection omitted %s", name)
 		}
