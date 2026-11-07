@@ -21,7 +21,7 @@ import (
 
 const (
 	forgotPasswordPath = "/login/forgot"
-	resetRequestSent   = "If that address belongs to a verified account, a reset link is on its way. It expires in 15 minutes."
+	resetRequestSent   = "If that address has a Gregale account, a link is on its way. It expires in 15 minutes."
 )
 
 // browserFormPost reports whether r is an HTML form submission from a browser:

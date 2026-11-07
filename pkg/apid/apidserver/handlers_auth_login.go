@@ -132,8 +132,8 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	if !acct.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, acct)
+	if s.unverifiedSignInRefused(w, r, acct) {
+		return
 	}
 	s.issueSessionCookie(w, r, acct)
 	writeLoginJSON(w, acct)
@@ -235,10 +235,10 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 					api.WriteProblem(w, api.ErrInvalidCredentials())
 					return
 				}
-				s.issueSessionCookie(w, r, existing)
-				if !existing.EmailVerified() {
-					s.sendEmailVerification(r.Context(), r, existing)
+				if s.unverifiedSignInRefused(w, r, existing) {
+					return
 				}
+				s.issueSessionCookie(w, r, existing)
 				writeLoginJSON(w, existing)
 				return
 			}
@@ -279,10 +279,10 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	s.issueSessionCookie(w, r, acct)
-	if !acct.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, acct)
+	if s.unverifiedSignInRefused(w, r, acct) {
+		return
 	}
+	s.issueSessionCookie(w, r, acct)
 	writeLoginJSON(w, acct)
 }
 
@@ -317,12 +317,26 @@ func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // forgotPasswordFor mails a reset link when email belongs to a verified
-// account. Lookup may fail because the email is unbound or the store is
+// account. An unverified account gets a magic sign-in link instead: its
+// password may belong to whoever signed up with the address first, so a
+// reset must not keep that account's other credentials. Redeeming the
+// magic link claims the account (claimAccountByEmailOwnership clears the
+// password, sessions, keys and MFA, then marks the address verified), and
+// the owner sets a new password from the account page. Without this, an
+// owner who never clicked the verification link and forgot the password
+// had no way back in except an OAuth provider with the same address.
+// Lookup may fail because the email is unbound or the store is
 // unreachable; either way nothing is sent and nothing surfaces.
 func (s *server) forgotPasswordFor(ctx context.Context, base, email string) {
-	if acct, err := s.store.AccountByEmail(ctx, email); err == nil && acct.EmailVerified() {
-		s.sendPasswordResetEmail(ctx, base, acct, email)
+	acct, err := s.store.AccountByEmail(ctx, email)
+	if err != nil {
+		return
 	}
+	if acct.EmailVerified() {
+		s.sendPasswordResetEmail(ctx, base, acct, email)
+		return
+	}
+	s.sendMagicLinkEmailAt(ctx, base, acct, email)
 }
 
 // passwordResetLinkBase is the scheme and host a reset link points at: the
@@ -1020,8 +1034,8 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 					api.WriteProblem(w, api.ErrInvalidCredentials())
 					return
 				}
-				if !existing.EmailVerified() {
-					s.sendEmailVerification(r.Context(), r, existing)
+				if s.unverifiedSignInRefused(w, r, existing) {
+					return
 				}
 				s.mintAndWriteV1AuthJSON(w, r, existing, email)
 				return
@@ -1057,8 +1071,8 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	if !existing.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, existing)
+	if s.unverifiedSignInRefused(w, r, existing) {
+		return
 	}
 	s.mintAndWriteV1AuthJSON(w, r, existing, email)
 }
@@ -1085,8 +1099,8 @@ func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	if !acct.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, acct)
+	if s.unverifiedSignInRefused(w, r, acct) {
+		return
 	}
 	s.mintAndWriteV1AuthJSON(w, r, acct, email)
 }
@@ -1323,6 +1337,12 @@ func writeV1AuthJSON(w http.ResponseWriter, acct state.Account, requestEmail, pl
 // via the platform mailer. Mailer errors are logged but never
 // surface — the public endpoint remains a constant 200.
 func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+	s.sendMagicLinkEmailAt(ctx, s.passwordResetLinkBase(r), acct, email)
+}
+
+// sendMagicLinkEmailAt sends the magic link with base (scheme://host) as
+// the link prefix, for callers that no longer hold the request.
+func (s *server) sendMagicLinkEmailAt(ctx context.Context, base string, acct state.Account, email string) {
 	if !s.allowSecurityMail(ctx, acct, "magic_link") {
 		return
 	}
@@ -1341,16 +1361,7 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		s.log.Error("v1auth_signup_magic.issue_token", "err", err)
 		return
 	}
-	scheme := schemeHTTP
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-		scheme = schemeHTTPS
-	}
-	host := r.Host
-	if platform := s.platformHost(); platform != "" && platform != domainUnset {
-		host = platform
-		scheme = schemeHTTPS
-	}
-	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.MagicLinkBodyV1(link)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
@@ -1382,16 +1393,7 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 		s.log.Error("email_verification.issue_token", "err", err, "account_id", acct.ID)
 		return
 	}
-	scheme := schemeHTTP
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-		scheme = schemeHTTPS
-	}
-	host := r.Host
-	if platform := s.platformHost(); platform != "" && platform != domainUnset {
-		host = platform
-		scheme = schemeHTTPS
-	}
-	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", s.passwordResetLinkBase(r), emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.EmailVerificationBody(acct.Email, link, expiresAt)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{acct.Email},

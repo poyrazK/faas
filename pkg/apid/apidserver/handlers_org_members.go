@@ -330,6 +330,59 @@ func (s *server) removeOrgMember(w http.ResponseWriter, r *http.Request, acct st
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// leaveOrg lets the caller end their own membership. DELETE on
+// /members/{user_id} refuses self-removal because an admin removing
+// themselves by accident locks them out; leaving is a separate, explicit
+// verb any role may use. The owner must transfer ownership first (the
+// exactly-one-owner invariant), nobody leaves their personal org, and
+// the billing contact must be replaced first, as with removal.
+//
+// Mounted at POST /v1/orgs/{slug}/leave.
+func (s *server) leaveOrg(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	mem, ok := s.requireMembership(w, r)
+	if !ok {
+		return
+	}
+	if problem := s.leaveOrgRefusal(r.Context(), mem); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if s.refuseBillingContactRemoval(r.Context(), w, mem.OrgID, acct.ID) {
+		return
+	}
+	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.member.left", "member", nil)
+	if err := s.removeOrgMemberWithActivity(r.Context(), mem.OrgID, acct.ID, activity); err != nil {
+		switch {
+		case errors.Is(err, state.ErrOrgLastOwner):
+			api.WriteProblem(w, api.ErrOrgLastOwner())
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"Not a member", "you are not an active member of this org"))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not leave the org; try again"))
+		}
+		return
+	}
+	s.audit.Emit(r.Context(), "org.member.left", &acct.ID, map[string]any{"org_id": mem.OrgID})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) leaveOrgRefusal(ctx context.Context, mem *state.OrgMembership) *api.Problem {
+	if mem.Role == state.OrgRoleOwner {
+		return api.NewProblem(http.StatusConflict, api.CodeOrgLastOwner,
+			"Owner cannot leave", "transfer ownership to another member before leaving")
+	}
+	org, err := s.store.OrgByID(ctx, mem.OrgID)
+	if err != nil {
+		return api.ErrCapacity("could not read the org; try again")
+	}
+	if org.Personal {
+		return api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Personal org", "you cannot leave your personal org")
+	}
+	return nil
+}
+
 // containsOrgMemberRoleForInvite is the membership check for the
 // invite-side role. Mirrors api.AllowedOrgMemberRolesForInvite but
 // accepts a flat string lookup rather than the slice index (the

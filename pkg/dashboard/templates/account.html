@@ -41,6 +41,12 @@
 
     {{if .Data}}
       {{$d := .Data}}
+      {{if $d.VerifyResendConfirmToken}}
+      <form method="POST" action="/dashboard/account/verify-email/resend">
+        <input type="hidden" name="csrf_token" value="{{$d.VerifyResendConfirmToken}}">
+        <button type="submit">Send a new verification link</button>
+      </form>
+      {{end}}
       <h2>API keys</h2>
       <p>Create a key with the CLI: <code>gregale keys add &lt;label&gt;</code>. Plaintext shows ONCE; store it now.</p>
       {{if $d.Keys}}

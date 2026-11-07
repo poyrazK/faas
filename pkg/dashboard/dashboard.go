@@ -3584,6 +3584,9 @@ type AccountData struct {
 	// a dedicated cookie name because the account page renders several
 	// independently action-bound forms at once.
 	PlanConfirmToken string
+	// VerifyResendConfirmToken backs the "send a new verification link"
+	// form shown while the account's address is unverified.
+	VerifyResendConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a

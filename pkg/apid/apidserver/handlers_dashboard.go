@@ -1948,6 +1948,15 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 	data.PlanConfirmToken = planTok
+	if !acct.EmailVerified() {
+		tok, err := s.issueDashboardFormToken(w, dashboardVerifyResendAction, dashboardVerifyResendCSRFCookie, view.ID)
+		if err != nil {
+			log.Error("dashboard renderAccount: csrf issue verify resend", "err", err, "account_id", view.ID)
+			renderProblem(w, log, err)
+			return
+		}
+		data.VerifyResendConfirmToken = tok
+	}
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
@@ -1994,6 +2003,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		if acct.Plan != api.PlanFree {
 			data.FlashSurface += " " + restoreSubscriptionNotice
 		}
+	}
+	if r.URL.Query().Get("verification") == "sent" {
+		data.FlashSurface = "If your address is still unverified, a new 24-hour verification link is on its way."
 	}
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":
