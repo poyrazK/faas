@@ -138,7 +138,7 @@ WHERE n.approval_id IN (
     LIMIT sqlc.arg(max_rows)::int
     FOR UPDATE SKIP LOCKED
 )
-RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.review_url, n.attempts;
+RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.review_url, n.attempts, n.channels_notified_at;
 
 -- name: PendingAgentApprovalNotificationsForKey :many
 -- The key's notifications still waiting whose requests are still pending and
@@ -181,3 +181,39 @@ WHERE recipient_account_id = sqlc.arg(recipient_account_id)::uuid AND key_id = s
 INSERT INTO agent_approval_email_log (recipient_account_id, key_id, last_sent_at)
 VALUES (sqlc.arg(recipient_account_id)::uuid, sqlc.arg(key_id)::uuid, now())
 ON CONFLICT (recipient_account_id, key_id) DO UPDATE SET last_sent_at = now();
+
+-- name: DeleteAgentApprovalChannelBindings :exec
+-- ADR-20261107140000 §3: clear one scope's bindings before setting them.
+DELETE FROM agent_approval_channel_bindings
+WHERE account_id = sqlc.arg(account_id)::uuid AND org_id IS NOT DISTINCT FROM sqlc.narg(org_id)::uuid;
+
+-- name: InsertAgentApprovalChannelBinding :exec
+-- The channel must be the account's own.
+INSERT INTO agent_approval_channel_bindings (account_id, org_id, channel_id)
+SELECT sqlc.arg(account_id)::uuid, sqlc.narg(org_id)::uuid, c.id
+  FROM notification_channels c
+ WHERE c.id = sqlc.arg(channel_id)::uuid AND c.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT DO NOTHING;
+
+-- name: ListAgentApprovalChannelBindings :many
+-- One scope's bound channels, by name.
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email,
+       c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at
+FROM agent_approval_channel_bindings b
+JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.org_id IS NOT DISTINCT FROM sqlc.narg(org_id)::uuid
+ORDER BY c.name;
+
+-- name: NotificationChannelsForAgentApproval :many
+-- The channels a request reaches: those the connector bound for its own keys
+-- and those bound for the organization the key acts in (§3).
+SELECT DISTINCT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email,
+       c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at
+FROM agent_approval_channel_bindings b
+JOIN notification_channels c ON c.id = b.channel_id
+WHERE (b.account_id = sqlc.arg(account_id)::uuid AND b.org_id IS NULL)
+   OR (sqlc.narg(org_id)::uuid IS NOT NULL AND b.org_id = sqlc.narg(org_id)::uuid);
+
+-- name: MarkAgentApprovalChannelsNotified :exec
+UPDATE agent_approval_notifications SET channels_notified_at = now()
+WHERE approval_id = sqlc.arg(approval_id)::uuid AND channels_notified_at IS NULL;

@@ -103,6 +103,17 @@ type AgentApprovalResponse struct {
 	Note string `json:"note,omitempty"`
 }
 
+// AgentApprovalChannelsRequest replaces the notification channels that get
+// the approval requests of the account's agents (ADR-20261107140000 §3).
+type AgentApprovalChannelsRequest struct {
+	Channels []string `json:"channels"`
+}
+
+// AgentApprovalChannelsResponse names those channels.
+type AgentApprovalChannelsResponse struct {
+	Channels []string `json:"channels"`
+}
+
 // AgentApprovalsResponse lists approval requests, newest first.
 type AgentApprovalsResponse struct {
 	Items []AgentApprovalResponse `json:"items"`

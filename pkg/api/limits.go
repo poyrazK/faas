@@ -207,6 +207,11 @@ const (
 // person about one agent key's approval requests (ADR-20261107140000 §2).
 const AgentApprovalEmailInterval = 10 * time.Minute
 
+// MaxAgentApprovalChannels is how many notification channels one scope (an
+// account's agents, or an organization's for one admin) may route agent
+// approval requests to (ADR-20261107140000 §3).
+const MaxAgentApprovalChannels = 5
+
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.

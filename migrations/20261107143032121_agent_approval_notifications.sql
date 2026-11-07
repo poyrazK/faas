@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS agent_approval_notifications (
     available_at timestamptz NOT NULL DEFAULT now(),
     lease_until  timestamptz,
     finished_at  timestamptz,
+    -- When the request went to the bound notification channels (§3); they
+    -- get each request once, whatever the email does.
+    channels_notified_at timestamptz,
     last_error   text CHECK (last_error IS NULL OR char_length(last_error) <= 256),
     created_at   timestamptz NOT NULL DEFAULT now(),
     CHECK ((state = 'pending') = (finished_at IS NULL))
@@ -37,11 +40,30 @@ CREATE TABLE IF NOT EXISTS agent_approval_email_log (
     PRIMARY KEY (recipient_account_id, key_id)
 );
 -- +goose StatementEnd
+-- +goose StatementBegin
+-- ADR-20261107140000 §3: notification channels that get agent approval
+-- requests. org_id NULL routes the requests of the account's agent keys;
+-- otherwise those of keys acting in the organization, bound by an owner or
+-- admin to channels of their own account.
+CREATE TABLE IF NOT EXISTS agent_approval_channel_bindings (
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    org_id     uuid,
+    channel_id uuid NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+-- +goose StatementEnd
+CREATE UNIQUE INDEX IF NOT EXISTS agent_approval_channel_bindings_uniq
+    ON agent_approval_channel_bindings (account_id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), channel_id);
+CREATE INDEX IF NOT EXISTS agent_approval_channel_bindings_org_idx
+    ON agent_approval_channel_bindings (org_id) WHERE org_id IS NOT NULL;
+COMMENT ON TABLE agent_approval_channel_bindings IS
+    'ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.';
 COMMENT ON TABLE agent_approval_notifications IS
     'ADR-20261107140000 agent approval requests to tell people about; apid inserts, meterd delivers.';
 COMMENT ON TABLE agent_approval_email_log IS
     'ADR-20261107140000 when meterd last emailed a recipient about an agent key; meterd is the only writer.';
 
 -- +goose Down
+DROP TABLE IF EXISTS agent_approval_channel_bindings;
 DROP TABLE IF EXISTS agent_approval_email_log;
 DROP TABLE IF EXISTS agent_approval_notifications;

@@ -4354,6 +4354,11 @@ func (s *server) handler() http.Handler {
 	// the ones they may decide. Deciding happens only on the review page.
 	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))
 	mux.HandleFunc("GET /v1/agent-approvals/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.GetApproval(agentConnections))))
+	// ADR-20261107140000 §3: the channels that also get the account's agents'
+	// requests. Only a person (admin scope, which agent keys never hold)
+	// changes them, so an agent cannot silence its own requests.
+	mux.HandleFunc("GET /v1/agent-approvals/channels", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.GetApprovalChannels(agentConnections))))
+	mux.HandleFunc("PUT /v1/agent-approvals/channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.PutApprovalChannels(agentConnections)))))
 
 	// Per-app deploy tokens. These credentials are minted by an
 	// administrator, carry only deploy:write, and are accepted by

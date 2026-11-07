@@ -53,6 +53,9 @@ type Notifier struct {
 	Mail  Mailer
 	Log   *slog.Logger
 	Now   func() time.Time
+	// Channels, when set, sends new requests to their bound notification
+	// channels (§3).
+	Channels ChannelSender
 	// Outcome, when set, counts each notification's outcome.
 	Outcome func(outcome string)
 }
@@ -95,6 +98,7 @@ func (n *Notifier) deliver(ctx context.Context, item state.AgentApprovalNotifica
 	if err != nil {
 		return n.retry(ctx, item, err)
 	}
+	n.notifyChannels(ctx, item, now)
 	recipients, err := n.recipients(ctx, item)
 	if err != nil {
 		return n.retry(ctx, item, err)

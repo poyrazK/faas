@@ -29,6 +29,9 @@ type AgentApprovalNotification struct {
 	AgentName  string
 	ReviewURL  string
 	Attempts   int
+	// ChannelsNotified reports that the request already went to its bound
+	// notification channels (§3).
+	ChannelsNotified bool
 }
 
 // PendingAgentApprovalLine is one still-pending request an email lists.
@@ -62,6 +65,12 @@ type AgentApprovalNotificationStore interface {
 	AgentApprovalEmailLastSent(ctx context.Context, recipientID, keyID string) (time.Time, bool, error)
 	// RecordAgentApprovalEmailSent notes an email to the recipient now.
 	RecordAgentApprovalEmailSent(ctx context.Context, recipientID, keyID string) error
+	// NotificationChannelsForAgentApproval returns the channels a request
+	// of a key with this connector and organization reaches.
+	NotificationChannelsForAgentApproval(ctx context.Context, accountID, orgID string) ([]NotificationChannel, error)
+	// MarkAgentApprovalChannelsNotified records that the request went to
+	// its channels.
+	MarkAgentApprovalChannelsNotified(ctx context.Context, approvalID string) error
 }
 
 func truncateLastError(s string) string {
@@ -101,6 +110,7 @@ func (s *PgStore) ClaimAgentApprovalNotifications(ctx context.Context, limit int
 		out = append(out, AgentApprovalNotification{
 			ApprovalID: pgUUIDString(row.ApprovalID), AccountID: pgUUIDString(row.AccountID), OrgID: pgUUIDString(row.OrgID),
 			KeyID: pgUUIDString(row.KeyID), AgentName: row.AgentName, ReviewURL: row.ReviewUrl, Attempts: int(row.Attempts),
+			ChannelsNotified: row.ChannelsNotifiedAt.Valid,
 		})
 	}
 	return out, nil

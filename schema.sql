@@ -29649,6 +29649,25 @@ CREATE VIEW public.active_environment_git_sources AS
 
 
 --
+-- Name: agent_approval_channel_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_approval_channel_bindings (
+    account_id uuid NOT NULL,
+    org_id uuid,
+    channel_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE agent_approval_channel_bindings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_approval_channel_bindings IS 'ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.';
+
+
+--
 -- Name: agent_approval_email_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29682,6 +29701,7 @@ CREATE TABLE public.agent_approval_notifications (
     available_at timestamp with time zone DEFAULT now() NOT NULL,
     lease_until timestamp with time zone,
     finished_at timestamp with time zone,
+    channels_notified_at timestamp with time zone,
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT agent_approval_notifications_agent_name_check CHECK (((char_length(agent_name) >= 1) AND (char_length(agent_name) <= 200))),
@@ -71717,6 +71737,20 @@ CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) 
 
 
 --
+-- Name: agent_approval_channel_bindings_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_approval_channel_bindings_org_idx ON public.agent_approval_channel_bindings USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: agent_approval_channel_bindings_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_approval_channel_bindings_uniq ON public.agent_approval_channel_bindings USING btree (account_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), channel_id);
+
+
+--
 -- Name: agent_approval_notifications_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -89750,6 +89784,22 @@ ALTER TABLE ONLY public.account_spend_cap_holds
 
 ALTER TABLE ONLY public.account_spend_snapshot
     ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_approval_channel_bindings agent_approval_channel_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_channel_bindings
+    ADD CONSTRAINT agent_approval_channel_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_approval_channel_bindings agent_approval_channel_bindings_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_approval_channel_bindings
+    ADD CONSTRAINT agent_approval_channel_bindings_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
 
 
 --

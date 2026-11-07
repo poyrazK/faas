@@ -202,6 +202,14 @@ type Agent struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
+// ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
+type AgentApprovalChannelBinding struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+	ChannelID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 // ADR-20261107140000 when meterd last emailed a recipient about an agent key; meterd is the only writer.
 type AgentApprovalEmailLog struct {
 	RecipientAccountID pgtype.UUID
@@ -211,19 +219,20 @@ type AgentApprovalEmailLog struct {
 
 // ADR-20261107140000 agent approval requests to tell people about; apid inserts, meterd delivers.
 type AgentApprovalNotification struct {
-	ApprovalID  pgtype.UUID
-	AccountID   pgtype.UUID
-	OrgID       pgtype.UUID
-	KeyID       pgtype.UUID
-	AgentName   string
-	ReviewUrl   string
-	State       string
-	Attempts    int32
-	AvailableAt pgtype.Timestamptz
-	LeaseUntil  pgtype.Timestamptz
-	FinishedAt  pgtype.Timestamptz
-	LastError   pgtype.Text
-	CreatedAt   pgtype.Timestamptz
+	ApprovalID         pgtype.UUID
+	AccountID          pgtype.UUID
+	OrgID              pgtype.UUID
+	KeyID              pgtype.UUID
+	AgentName          string
+	ReviewUrl          string
+	State              string
+	Attempts           int32
+	AvailableAt        pgtype.Timestamptz
+	LeaseUntil         pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	ChannelsNotifiedAt pgtype.Timestamptz
+	LastError          pgtype.Text
+	CreatedAt          pgtype.Timestamptz
 }
 
 // ADR-20261104140058 agent requests awaiting or holding a person's approval; apid is the only writer.

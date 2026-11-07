@@ -1401,11 +1401,12 @@ type MemStore struct {
 	keyApprovalCategories map[string][]string
 	agentApprovals        map[string]AgentApproval
 	// ADR-20261107140000: the notification outbox and email log.
-	agentApprovalNotifications map[string]*memAgentApprovalNotification
-	agentApprovalEmailLog      map[memEmailLogKey]time.Time
-	orgsBySlug                 map[string]string // lower(slug) -> id
-	memberships                map[orgAccountKey]OrgMembership
-	invitations                map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	agentApprovalNotifications   map[string]*memAgentApprovalNotification
+	agentApprovalEmailLog        map[memEmailLogKey]time.Time
+	agentApprovalChannelBindings []memApprovalChannelBinding
+	orgsBySlug                   map[string]string // lower(slug) -> id
+	memberships                  map[orgAccountKey]OrgMembership
+	invitations                  map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call

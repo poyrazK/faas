@@ -991,6 +991,8 @@ type Querier interface {
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error)
+	// ADR-20261107140000 §3: clear one scope's bindings before setting them.
+	DeleteAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg DeleteAgentApprovalChannelBindingsParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
 	DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
 	DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -2531,6 +2533,8 @@ type Querier interface {
 	InsertActivatedManagedPostgresBinding(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresBindingParams) error
 	InsertActivatedManagedPostgresSecret(ctx context.Context, db DBTX, arg InsertActivatedManagedPostgresSecretParams) error
 	InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAgentApprovalParams) error
+	// The channel must be the account's own.
+	InsertAgentApprovalChannelBinding(ctx context.Context, db DBTX, arg InsertAgentApprovalChannelBindingParams) error
 	// ADR-20261107140000 §5: tell people about a new request; apid inserts it in
 	// the request's transaction.
 	InsertAgentApprovalNotification(ctx context.Context, db DBTX, arg InsertAgentApprovalNotificationParams) error
@@ -3425,6 +3429,8 @@ type Querier interface {
 	// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
 	// Read only after the node's epoch moves, so a scan of the live set is fine.
 	ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error)
+	// One scope's bound channels, by name.
+	ListAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg ListAgentApprovalChannelBindingsParams) ([]NotificationChannel, error)
 	ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg ListAgentApprovalsForKeyParams) ([]AgentApprovalRequest, error)
 	ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error)
 	ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
@@ -4670,6 +4676,7 @@ type Querier interface {
 	ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error)
 	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
+	MarkAgentApprovalChannelsNotified(ctx context.Context, db DBTX, approvalID pgtype.UUID) error
 	MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppForkRunningParams) (AppFork, error)
 	MarkCheckedRollbackReady(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
@@ -4831,6 +4838,9 @@ type Querier interface {
 	//        'maintenance'     → drain_completed_at (last step of a
 	//                             successful operator drain)
 	NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLifecycleParams) (int64, error)
+	// The channels a request reaches: those the connector bound for its own keys
+	// and those bound for the organization the key acts in (§3).
+	NotificationChannelsForAgentApproval(ctx context.Context, db DBTX, arg NotificationChannelsForAgentApprovalParams) ([]NotificationChannel, error)
 	NotificationClaimAttempts(ctx context.Context, db DBTX, arg NotificationClaimAttemptsParams) (int32, error)
 	NotifyAlertRollbackTraffic(ctx context.Context, db DBTX, arg NotifyAlertRollbackTrafficParams) error
 	NotifyAlertServiceRollback(ctx context.Context, db DBTX, arg NotifyAlertServiceRollbackParams) error

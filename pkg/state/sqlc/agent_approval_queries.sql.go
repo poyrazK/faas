@@ -22,7 +22,7 @@ WHERE n.approval_id IN (
     LIMIT $2::int
     FOR UPDATE SKIP LOCKED
 )
-RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.review_url, n.attempts
+RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.review_url, n.attempts, n.channels_notified_at
 `
 
 type ClaimAgentApprovalNotificationsParams struct {
@@ -31,13 +31,14 @@ type ClaimAgentApprovalNotificationsParams struct {
 }
 
 type ClaimAgentApprovalNotificationsRow struct {
-	ApprovalID pgtype.UUID
-	AccountID  pgtype.UUID
-	OrgID      pgtype.UUID
-	KeyID      pgtype.UUID
-	AgentName  string
-	ReviewUrl  string
-	Attempts   int32
+	ApprovalID         pgtype.UUID
+	AccountID          pgtype.UUID
+	OrgID              pgtype.UUID
+	KeyID              pgtype.UUID
+	AgentName          string
+	ReviewUrl          string
+	Attempts           int32
+	ChannelsNotifiedAt pgtype.Timestamptz
 }
 
 // meterd leases due notifications; a lapsed lease makes a row due again.
@@ -58,6 +59,7 @@ func (q *Queries) ClaimAgentApprovalNotifications(ctx context.Context, db DBTX, 
 			&i.AgentName,
 			&i.ReviewUrl,
 			&i.Attempts,
+			&i.ChannelsNotifiedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -181,6 +183,22 @@ type DeferAgentApprovalNotificationParams struct {
 // The recipient was emailed about this key recently: wait for the window.
 func (q *Queries) DeferAgentApprovalNotification(ctx context.Context, db DBTX, arg DeferAgentApprovalNotificationParams) error {
 	_, err := db.Exec(ctx, deferAgentApprovalNotification, arg.AvailableAt, arg.ApprovalID)
+	return err
+}
+
+const deleteAgentApprovalChannelBindings = `-- name: DeleteAgentApprovalChannelBindings :exec
+DELETE FROM agent_approval_channel_bindings
+WHERE account_id = $1::uuid AND org_id IS NOT DISTINCT FROM $2::uuid
+`
+
+type DeleteAgentApprovalChannelBindingsParams struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+// ADR-20261107140000 §3: clear one scope's bindings before setting them.
+func (q *Queries) DeleteAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg DeleteAgentApprovalChannelBindingsParams) error {
+	_, err := db.Exec(ctx, deleteAgentApprovalChannelBindings, arg.AccountID, arg.OrgID)
 	return err
 }
 
@@ -361,6 +379,26 @@ func (q *Queries) InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAg
 	return err
 }
 
+const insertAgentApprovalChannelBinding = `-- name: InsertAgentApprovalChannelBinding :exec
+INSERT INTO agent_approval_channel_bindings (account_id, org_id, channel_id)
+SELECT $1::uuid, $2::uuid, c.id
+  FROM notification_channels c
+ WHERE c.id = $3::uuid AND c.account_id = $1::uuid
+ON CONFLICT DO NOTHING
+`
+
+type InsertAgentApprovalChannelBindingParams struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
+// The channel must be the account's own.
+func (q *Queries) InsertAgentApprovalChannelBinding(ctx context.Context, db DBTX, arg InsertAgentApprovalChannelBindingParams) error {
+	_, err := db.Exec(ctx, insertAgentApprovalChannelBinding, arg.AccountID, arg.OrgID, arg.ChannelID)
+	return err
+}
+
 const insertAgentApprovalNotification = `-- name: InsertAgentApprovalNotification :exec
 INSERT INTO agent_approval_notifications (approval_id, account_id, org_id, key_id, agent_name, review_url)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
@@ -422,6 +460,55 @@ func (q *Queries) InsertAgentApprovalWebhookDeliveries(ctx context.Context, db D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const listAgentApprovalChannelBindings = `-- name: ListAgentApprovalChannelBindings :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email,
+       c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at
+FROM agent_approval_channel_bindings b
+JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.account_id = $1::uuid AND b.org_id IS NOT DISTINCT FROM $2::uuid
+ORDER BY c.name
+`
+
+type ListAgentApprovalChannelBindingsParams struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+// One scope's bound channels, by name.
+func (q *Queries) ListAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg ListAgentApprovalChannelBindingsParams) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listAgentApprovalChannelBindings, arg.AccountID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAgentApprovalsForKey = `-- name: ListAgentApprovalsForKey :many
@@ -517,6 +604,66 @@ func (q *Queries) ListPendingAgentApprovals(ctx context.Context, db DBTX, arg Li
 			&i.ConsumedAt,
 			&i.ExpiresAt,
 			&i.DecisionNote,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markAgentApprovalChannelsNotified = `-- name: MarkAgentApprovalChannelsNotified :exec
+UPDATE agent_approval_notifications SET channels_notified_at = now()
+WHERE approval_id = $1::uuid AND channels_notified_at IS NULL
+`
+
+func (q *Queries) MarkAgentApprovalChannelsNotified(ctx context.Context, db DBTX, approvalID pgtype.UUID) error {
+	_, err := db.Exec(ctx, markAgentApprovalChannelsNotified, approvalID)
+	return err
+}
+
+const notificationChannelsForAgentApproval = `-- name: NotificationChannelsForAgentApproval :many
+SELECT DISTINCT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email,
+       c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at
+FROM agent_approval_channel_bindings b
+JOIN notification_channels c ON c.id = b.channel_id
+WHERE (b.account_id = $1::uuid AND b.org_id IS NULL)
+   OR ($2::uuid IS NOT NULL AND b.org_id = $2::uuid)
+`
+
+type NotificationChannelsForAgentApprovalParams struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+// The channels a request reaches: those the connector bound for its own keys
+// and those bound for the organization the key acts in (§3).
+func (q *Queries) NotificationChannelsForAgentApproval(ctx context.Context, db DBTX, arg NotificationChannelsForAgentApprovalParams) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, notificationChannelsForAgentApproval, arg.AccountID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

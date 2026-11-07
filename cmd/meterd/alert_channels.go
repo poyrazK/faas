@@ -66,7 +66,7 @@ func newAlertRuleSkipCounter(reg prometheus.Registerer) func(reason string, n in
 // startAgentApprovalNotifications emails the people who may decide agents'
 // approval requests (ADR-20261107140000 §2, §5). Without a mail transport
 // the rows wait; they are skipped once their requests expire.
-func startAgentApprovalNotifications(ctx context.Context, store any, m mail.Sender, reg prometheus.Registerer, log *slog.Logger) {
+func startAgentApprovalNotifications(ctx context.Context, store any, m mail.Sender, channels agentapprovalnotify.ChannelSender, reg prometheus.Registerer, log *slog.Logger) {
 	notifyStore, ok := store.(agentapprovalnotify.Store)
 	if !ok || m == nil {
 		log.Info("meterd: agent approval notifications off", "store", ok, "mail", m != nil)
@@ -83,7 +83,7 @@ func startAgentApprovalNotifications(ctx context.Context, store any, m mail.Send
 		reg.MustRegister(c)
 	}
 	n := &agentapprovalnotify.Notifier{
-		Store: notifyStore, Mail: meterdChannelMailer{m}, Log: log,
+		Store: notifyStore, Mail: meterdChannelMailer{m}, Channels: channels, Log: log,
 		Outcome: func(outcome string) { c.WithLabelValues(outcome).Inc() },
 	}
 	go n.Run(ctx)

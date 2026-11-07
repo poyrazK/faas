@@ -64,6 +64,10 @@ type OrgAgentPolicyRequest struct {
 	// organization must have a person approve; absent keeps the current
 	// ones (ADR-20261104140058).
 	ApprovalCategories *[]string `json:"approval_categories,omitempty"`
+	// ApprovalChannels names the caller's notification channels that get
+	// the approval requests of agents acting in the organization; absent
+	// keeps the current ones (ADR-20261107140000 §3).
+	ApprovalChannels *[]string `json:"approval_channels,omitempty"`
 }
 
 // OrgAgentPolicyResponse is an organization's agent policy. Revoked counts
@@ -73,7 +77,10 @@ type OrgAgentPolicyResponse struct {
 	AllowedScopes []string `json:"allowed_scopes"`
 	// ApprovalCategories is the organization's floor of approvals.
 	ApprovalCategories []string `json:"approval_categories"`
-	UpdatedAt          string   `json:"updated_at,omitempty"`
+	// ApprovalChannels are the caller's channels that get the
+	// organization's agents' approval requests.
+	ApprovalChannels []string `json:"approval_channels"`
+	UpdatedAt        string   `json:"updated_at,omitempty"`
 	Revoked            int      `json:"revoked,omitempty"`
 }
 
