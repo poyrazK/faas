@@ -38,6 +38,34 @@
     "kind": "operational"
   },
   {
+    "table": "agent_approval_email_log",
+    "columns": [
+      "key_id",
+      "last_sent_at",
+      "recipient_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_approval_notifications",
+    "columns": [
+      "account_id",
+      "agent_name",
+      "approval_id",
+      "attempts",
+      "available_at",
+      "created_at",
+      "finished_at",
+      "key_id",
+      "last_error",
+      "lease_until",
+      "org_id",
+      "review_url",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_approval_requests",
     "columns": [
       "account_id",

@@ -40,9 +40,11 @@ type AgentApproval struct {
 	ExpiresAt  time.Time
 	// Note is the person's reason for a denial; empty otherwise.
 	Note string
-	// ReviewURL is the review page, for the agent.approval.requested webhook
-	// event of a new request (ADR-20261107140000 §4). It is not stored.
+	// ReviewURL is the review page, and AgentName the connection's name, for
+	// a new request's webhook event and notification (ADR-20261107140000
+	// §4, §5). Neither is stored on the request.
 	ReviewURL string
+	AgentName string
 }
 
 // AgentApprovalBinding is what an approval allows: one request of the key
@@ -179,6 +181,9 @@ func (s *PgStore) RequestAgentApproval(ctx context.Context, request AgentApprova
 	}
 	request.Status = api.AgentApprovalPending
 	if err := enqueueAgentApprovalEvent(ctx, q, tx, api.AgentApprovalRequestedWebhookEvent, request.ID, request); err != nil {
+		return AgentApproval{}, err
+	}
+	if err := insertAgentApprovalNotification(ctx, q, tx, request); err != nil {
 		return AgentApproval{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -420,8 +425,8 @@ func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval
 	if _, err := uuid.Parse(request.ID); err != nil {
 		request.ID = uuid.NewString()
 	}
-	reviewURL := request.ReviewURL
-	request.Status, request.CreatedAt, request.ReviewURL = api.AgentApprovalPending, now, ""
+	reviewURL, agentName := request.ReviewURL, request.AgentName
+	request.Status, request.CreatedAt, request.ReviewURL, request.AgentName = api.AgentApprovalPending, now, "", ""
 	request.DecidedBy, request.DecidedAt, request.ConsumedAt = "", time.Time{}, time.Time{}
 	request.BodySHA256 = bytes.Clone(request.BodySHA256)
 	if m.agentApprovals == nil {
@@ -429,8 +434,9 @@ func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval
 	}
 	m.agentApprovals[request.ID] = request
 	event := request
-	event.ReviewURL = reviewURL
+	event.ReviewURL, event.AgentName = reviewURL, agentName
 	m.enqueueAgentApprovalEventLocked(api.AgentApprovalRequestedWebhookEvent, request.ID, event)
+	m.insertAgentApprovalNotificationLocked(event, now)
 	return cloneAgentApproval(request), nil
 }
 

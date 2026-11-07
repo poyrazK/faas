@@ -117,3 +117,67 @@ SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by)::uuid, decided_
 WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND expires_at > now()
 RETURNING id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
           created_at, decided_at, consumed_at, expires_at, decision_note;
+
+-- name: InsertAgentApprovalNotification :exec
+-- ADR-20261107140000 §5: tell people about a new request; apid inserts it in
+-- the request's transaction.
+INSERT INTO agent_approval_notifications (approval_id, account_id, org_id, key_id, agent_name, review_url)
+VALUES (sqlc.arg(approval_id)::uuid, sqlc.arg(account_id)::uuid, sqlc.narg(org_id)::uuid, sqlc.arg(key_id)::uuid,
+        sqlc.arg(agent_name), sqlc.arg(review_url))
+ON CONFLICT (approval_id) DO NOTHING;
+
+-- name: ClaimAgentApprovalNotifications :many
+-- meterd leases due notifications; a lapsed lease makes a row due again.
+UPDATE agent_approval_notifications n
+SET lease_until = now() + sqlc.arg(lease_seconds)::int * interval '1 second'
+WHERE n.approval_id IN (
+    SELECT c.approval_id FROM agent_approval_notifications c
+    WHERE c.state = 'pending' AND c.available_at <= now()
+      AND (c.lease_until IS NULL OR c.lease_until < now())
+    ORDER BY c.available_at
+    LIMIT sqlc.arg(max_rows)::int
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.review_url, n.attempts;
+
+-- name: PendingAgentApprovalNotificationsForKey :many
+-- The key's notifications still waiting whose requests are still pending and
+-- unexpired: what one email lists.
+SELECT n.approval_id, n.review_url, r.category, r.method, r.path, r.expires_at
+FROM agent_approval_notifications n
+JOIN agent_approval_requests r ON r.id = n.approval_id
+WHERE n.key_id = sqlc.arg(key_id)::uuid AND n.state = 'pending'
+  AND r.status = 'pending' AND r.expires_at > now()
+ORDER BY r.created_at;
+
+-- name: GetAgentApprovalRequestState :one
+SELECT status, expires_at FROM agent_approval_requests WHERE id = sqlc.arg(id)::uuid;
+
+-- name: FinishAgentApprovalNotifications :exec
+UPDATE agent_approval_notifications
+SET state = sqlc.arg(state), finished_at = now(), lease_until = NULL, last_error = sqlc.narg(last_error)
+WHERE approval_id = ANY(sqlc.arg(approval_ids)::uuid[]) AND state = 'pending';
+
+-- name: RetryAgentApprovalNotification :exec
+-- A failed send waits and tries again; after the last attempt it fails.
+UPDATE agent_approval_notifications
+SET attempts = attempts + 1, lease_until = NULL, last_error = sqlc.narg(last_error),
+    available_at = now() + sqlc.arg(delay_seconds)::int * interval '1 second',
+    state = CASE WHEN attempts + 1 >= sqlc.arg(max_attempts)::int THEN 'failed' ELSE 'pending' END,
+    finished_at = CASE WHEN attempts + 1 >= sqlc.arg(max_attempts)::int THEN now() ELSE NULL END
+WHERE approval_id = sqlc.arg(approval_id)::uuid AND state = 'pending';
+
+-- name: DeferAgentApprovalNotification :exec
+-- The recipient was emailed about this key recently: wait for the window.
+UPDATE agent_approval_notifications
+SET lease_until = NULL, available_at = sqlc.arg(available_at)
+WHERE approval_id = sqlc.arg(approval_id)::uuid AND state = 'pending';
+
+-- name: GetAgentApprovalEmailLastSent :one
+SELECT last_sent_at FROM agent_approval_email_log
+WHERE recipient_account_id = sqlc.arg(recipient_account_id)::uuid AND key_id = sqlc.arg(key_id)::uuid;
+
+-- name: RecordAgentApprovalEmailSent :exec
+INSERT INTO agent_approval_email_log (recipient_account_id, key_id, last_sent_at)
+VALUES (sqlc.arg(recipient_account_id)::uuid, sqlc.arg(key_id)::uuid, now())
+ON CONFLICT (recipient_account_id, key_id) DO UPDATE SET last_sent_at = now();

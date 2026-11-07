@@ -11,6 +11,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimAgentApprovalNotifications = `-- name: ClaimAgentApprovalNotifications :many
+UPDATE agent_approval_notifications n
+SET lease_until = now() + $1::int * interval '1 second'
+WHERE n.approval_id IN (
+    SELECT c.approval_id FROM agent_approval_notifications c
+    WHERE c.state = 'pending' AND c.available_at <= now()
+      AND (c.lease_until IS NULL OR c.lease_until < now())
+    ORDER BY c.available_at
+    LIMIT $2::int
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.review_url, n.attempts
+`
+
+type ClaimAgentApprovalNotificationsParams struct {
+	LeaseSeconds int32
+	MaxRows      int32
+}
+
+type ClaimAgentApprovalNotificationsRow struct {
+	ApprovalID pgtype.UUID
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	KeyID      pgtype.UUID
+	AgentName  string
+	ReviewUrl  string
+	Attempts   int32
+}
+
+// meterd leases due notifications; a lapsed lease makes a row due again.
+func (q *Queries) ClaimAgentApprovalNotifications(ctx context.Context, db DBTX, arg ClaimAgentApprovalNotificationsParams) ([]ClaimAgentApprovalNotificationsRow, error) {
+	rows, err := db.Query(ctx, claimAgentApprovalNotifications, arg.LeaseSeconds, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimAgentApprovalNotificationsRow{}
+	for rows.Next() {
+		var i ClaimAgentApprovalNotificationsRow
+		if err := rows.Scan(
+			&i.ApprovalID,
+			&i.AccountID,
+			&i.OrgID,
+			&i.KeyID,
+			&i.AgentName,
+			&i.ReviewUrl,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const consumeAgentApproval = `-- name: ConsumeAgentApproval :one
 UPDATE agent_approval_requests
 SET status = 'consumed', consumed_at = now()
@@ -109,6 +167,23 @@ func (q *Queries) DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAg
 	return i, err
 }
 
+const deferAgentApprovalNotification = `-- name: DeferAgentApprovalNotification :exec
+UPDATE agent_approval_notifications
+SET lease_until = NULL, available_at = $1
+WHERE approval_id = $2::uuid AND state = 'pending'
+`
+
+type DeferAgentApprovalNotificationParams struct {
+	AvailableAt pgtype.Timestamptz
+	ApprovalID  pgtype.UUID
+}
+
+// The recipient was emailed about this key recently: wait for the window.
+func (q *Queries) DeferAgentApprovalNotification(ctx context.Context, db DBTX, arg DeferAgentApprovalNotificationParams) error {
+	_, err := db.Exec(ctx, deferAgentApprovalNotification, arg.AvailableAt, arg.ApprovalID)
+	return err
+}
+
 const findPendingAgentApproval = `-- name: FindPendingAgentApproval :one
 SELECT id, expires_at FROM agent_approval_requests
 WHERE key_id = $1::uuid
@@ -145,6 +220,23 @@ func (q *Queries) FindPendingAgentApproval(ctx context.Context, db DBTX, arg Fin
 	var i FindPendingAgentApprovalRow
 	err := row.Scan(&i.ID, &i.ExpiresAt)
 	return i, err
+}
+
+const finishAgentApprovalNotifications = `-- name: FinishAgentApprovalNotifications :exec
+UPDATE agent_approval_notifications
+SET state = $1, finished_at = now(), lease_until = NULL, last_error = $2
+WHERE approval_id = ANY($3::uuid[]) AND state = 'pending'
+`
+
+type FinishAgentApprovalNotificationsParams struct {
+	State       string
+	LastError   pgtype.Text
+	ApprovalIds []pgtype.UUID
+}
+
+func (q *Queries) FinishAgentApprovalNotifications(ctx context.Context, db DBTX, arg FinishAgentApprovalNotificationsParams) error {
+	_, err := db.Exec(ctx, finishAgentApprovalNotifications, arg.State, arg.LastError, arg.ApprovalIds)
+	return err
 }
 
 const getAPIKeyApprovalCategories = `-- name: GetAPIKeyApprovalCategories :one
@@ -184,6 +276,39 @@ func (q *Queries) GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID)
 		&i.ExpiresAt,
 		&i.DecisionNote,
 	)
+	return i, err
+}
+
+const getAgentApprovalEmailLastSent = `-- name: GetAgentApprovalEmailLastSent :one
+SELECT last_sent_at FROM agent_approval_email_log
+WHERE recipient_account_id = $1::uuid AND key_id = $2::uuid
+`
+
+type GetAgentApprovalEmailLastSentParams struct {
+	RecipientAccountID pgtype.UUID
+	KeyID              pgtype.UUID
+}
+
+func (q *Queries) GetAgentApprovalEmailLastSent(ctx context.Context, db DBTX, arg GetAgentApprovalEmailLastSentParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, getAgentApprovalEmailLastSent, arg.RecipientAccountID, arg.KeyID)
+	var last_sent_at pgtype.Timestamptz
+	err := row.Scan(&last_sent_at)
+	return last_sent_at, err
+}
+
+const getAgentApprovalRequestState = `-- name: GetAgentApprovalRequestState :one
+SELECT status, expires_at FROM agent_approval_requests WHERE id = $1::uuid
+`
+
+type GetAgentApprovalRequestStateRow struct {
+	Status    string
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetAgentApprovalRequestState(ctx context.Context, db DBTX, id pgtype.UUID) (GetAgentApprovalRequestStateRow, error) {
+	row := db.QueryRow(ctx, getAgentApprovalRequestState, id)
+	var i GetAgentApprovalRequestStateRow
+	err := row.Scan(&i.Status, &i.ExpiresAt)
 	return i, err
 }
 
@@ -232,6 +357,36 @@ func (q *Queries) InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAg
 		arg.Path,
 		arg.BodySha256,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertAgentApprovalNotification = `-- name: InsertAgentApprovalNotification :exec
+INSERT INTO agent_approval_notifications (approval_id, account_id, org_id, key_id, agent_name, review_url)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+        $5, $6)
+ON CONFLICT (approval_id) DO NOTHING
+`
+
+type InsertAgentApprovalNotificationParams struct {
+	ApprovalID pgtype.UUID
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	KeyID      pgtype.UUID
+	AgentName  string
+	ReviewUrl  string
+}
+
+// ADR-20261107140000 §5: tell people about a new request; apid inserts it in
+// the request's transaction.
+func (q *Queries) InsertAgentApprovalNotification(ctx context.Context, db DBTX, arg InsertAgentApprovalNotificationParams) error {
+	_, err := db.Exec(ctx, insertAgentApprovalNotification,
+		arg.ApprovalID,
+		arg.AccountID,
+		arg.OrgID,
+		arg.KeyID,
+		arg.AgentName,
+		arg.ReviewUrl,
 	)
 	return err
 }
@@ -373,6 +528,53 @@ func (q *Queries) ListPendingAgentApprovals(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const pendingAgentApprovalNotificationsForKey = `-- name: PendingAgentApprovalNotificationsForKey :many
+SELECT n.approval_id, n.review_url, r.category, r.method, r.path, r.expires_at
+FROM agent_approval_notifications n
+JOIN agent_approval_requests r ON r.id = n.approval_id
+WHERE n.key_id = $1::uuid AND n.state = 'pending'
+  AND r.status = 'pending' AND r.expires_at > now()
+ORDER BY r.created_at
+`
+
+type PendingAgentApprovalNotificationsForKeyRow struct {
+	ApprovalID pgtype.UUID
+	ReviewUrl  string
+	Category   string
+	Method     string
+	Path       string
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// The key's notifications still waiting whose requests are still pending and
+// unexpired: what one email lists.
+func (q *Queries) PendingAgentApprovalNotificationsForKey(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]PendingAgentApprovalNotificationsForKeyRow, error) {
+	rows, err := db.Query(ctx, pendingAgentApprovalNotificationsForKey, keyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingAgentApprovalNotificationsForKeyRow{}
+	for rows.Next() {
+		var i PendingAgentApprovalNotificationsForKeyRow
+		if err := rows.Scan(
+			&i.ApprovalID,
+			&i.ReviewUrl,
+			&i.Category,
+			&i.Method,
+			&i.Path,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneAgentApprovals = `-- name: PruneAgentApprovals :exec
 DELETE FROM agent_approval_requests
 WHERE key_id = $1::uuid AND expires_at < now() - interval '7 days'
@@ -439,4 +641,47 @@ func (q *Queries) RecentAgentApprovalOutcome(ctx context.Context, db DBTX, arg R
 		&i.DecisionNote,
 	)
 	return i, err
+}
+
+const recordAgentApprovalEmailSent = `-- name: RecordAgentApprovalEmailSent :exec
+INSERT INTO agent_approval_email_log (recipient_account_id, key_id, last_sent_at)
+VALUES ($1::uuid, $2::uuid, now())
+ON CONFLICT (recipient_account_id, key_id) DO UPDATE SET last_sent_at = now()
+`
+
+type RecordAgentApprovalEmailSentParams struct {
+	RecipientAccountID pgtype.UUID
+	KeyID              pgtype.UUID
+}
+
+func (q *Queries) RecordAgentApprovalEmailSent(ctx context.Context, db DBTX, arg RecordAgentApprovalEmailSentParams) error {
+	_, err := db.Exec(ctx, recordAgentApprovalEmailSent, arg.RecipientAccountID, arg.KeyID)
+	return err
+}
+
+const retryAgentApprovalNotification = `-- name: RetryAgentApprovalNotification :exec
+UPDATE agent_approval_notifications
+SET attempts = attempts + 1, lease_until = NULL, last_error = $1,
+    available_at = now() + $2::int * interval '1 second',
+    state = CASE WHEN attempts + 1 >= $3::int THEN 'failed' ELSE 'pending' END,
+    finished_at = CASE WHEN attempts + 1 >= $3::int THEN now() ELSE NULL END
+WHERE approval_id = $4::uuid AND state = 'pending'
+`
+
+type RetryAgentApprovalNotificationParams struct {
+	LastError    pgtype.Text
+	DelaySeconds int32
+	MaxAttempts  int32
+	ApprovalID   pgtype.UUID
+}
+
+// A failed send waits and tries again; after the last attempt it fails.
+func (q *Queries) RetryAgentApprovalNotification(ctx context.Context, db DBTX, arg RetryAgentApprovalNotificationParams) error {
+	_, err := db.Exec(ctx, retryAgentApprovalNotification,
+		arg.LastError,
+		arg.DelaySeconds,
+		arg.MaxAttempts,
+		arg.ApprovalID,
+	)
+	return err
 }
