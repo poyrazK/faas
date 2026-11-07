@@ -126,6 +126,9 @@ func (s *Service) ruleForUpdate(ctx context.Context, acct state.Account, id stri
 	if err != nil || row.AccountID != acct.ID {
 		return state.EdgeRule{}, notFound
 	}
+	if prob := s.StoredRuleReachProblem(ctx, row); prob != nil {
+		return state.EdgeRule{}, prob
+	}
 	if row.AttackMode() {
 		return state.EdgeRule{}, api.ErrEdgeRuleConflict("this is the app's attack-mode rule; extend it or switch it off with " +
 			"PUT or DELETE /v1/apps/{slug}/edge-protection/attack-mode (gregale edge-rules attack-mode)")

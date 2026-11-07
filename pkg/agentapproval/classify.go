@@ -21,6 +21,8 @@ const (
 	TargetApp
 	// TargetDeployment: production only when the {id} deployment's app is.
 	TargetDeployment
+	// TargetEdgeRule: production only when the {id} edge rule's app is.
+	TargetEdgeRule
 )
 
 // Rule is the classification of one route.
@@ -67,7 +69,10 @@ var destructivePosts = map[string]bool{
 	"POST /v1/triggers/{}/records/{}/drop":        true,
 }
 
-// production routes deploy, roll back, restart or move traffic.
+// production routes deploy, roll back, restart or move traffic. Edge-rule
+// writes are here too (ADR-091 amendment 2026-11-07): a route, redirect,
+// maintenance, rewrite or async rule moves or stops a production app's
+// traffic as surely as a rollback, and a gate edit opens or closes it.
 var production = map[string]Target{
 	"POST /v1/apps/{}/deployments":                         TargetApp,
 	"POST /v1/apps/{}/deployments/source-ref":              TargetApp,
@@ -78,6 +83,11 @@ var production = map[string]Target{
 	"POST /v1/apps/{}/rollouts/recover":                    TargetApp,
 	"POST /v1/apps/{}/restart":                             TargetApp,
 	"POST /v1/apps/{}/edge-rules/rollback":                 TargetApp,
+	"POST /v1/apps/{}/edge-rules":                          TargetApp,
+	"PATCH /v1/edge-rules/{}":                              TargetEdgeRule,
+	"POST /v1/edge-rules/{}/waf-exclusions":                TargetEdgeRule,
+	"PUT /v1/apps/{}/edge-protection/attack-mode":          TargetApp,
+	"POST /v1/apps/{}/openapi/apply":                       TargetApp,
 	"PATCH /v1/deployments/{}/traffic":                     TargetDeployment,
 	"POST /v1/deployments/{}/promote":                      TargetDeployment,
 	"POST /v1/deployments/{}/promote-with-application-ack": TargetDeployment,

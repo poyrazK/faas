@@ -176,6 +176,20 @@ func (m *Middleware) productionTarget(w http.ResponseWriter, r *http.Request, ta
 		if appID, err = deployments.DeploymentAppID(ctx, id); err == nil {
 			app, err = apps.AppByID(ctx, appID)
 		}
+	case agentapproval.TargetEdgeRule:
+		rules, okRules := m.Authn.(EdgeRuleAppResolver)
+		apps, okApps := m.Authn.(AppByIDResolver)
+		if !okRules || !okApps {
+			return true, false
+		}
+		id := r.PathValue(firstWildcard(r.Pattern))
+		if uuid.Validate(id) != nil {
+			return false, false
+		}
+		var rule state.EdgeRule
+		if rule, err = rules.GetEdgeRuleByID(ctx, id); err == nil {
+			app, err = apps.AppByID(ctx, rule.AppID)
+		}
 	}
 	if errors.Is(err, state.ErrNotFound) {
 		// The handler answers 404 for an app or deployment that does not
