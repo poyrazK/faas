@@ -27,6 +27,10 @@ type HandshakeGate struct {
 	errs      chan error
 	done      chan struct{}
 	closeOnce sync.Once
+	// ctx and startOnce start the accept loop on the first Accept, so every
+	// With* option set before it happens-before the loop reads it.
+	ctx       context.Context
+	startOnce sync.Once
 
 	// settle, when set, decides a connection whose handshake completed:
 	// false resets it instead of serving it (WithSettle).
@@ -144,8 +148,8 @@ func NewHandshakeGate(ctx context.Context, inner net.Listener, max int, timeout 
 		ready:   make(chan net.Conn),
 		errs:    make(chan error),
 		done:    make(chan struct{}),
+		ctx:     ctx,
 	}
-	go g.acceptLoop(ctx)
 	return g
 }
 
@@ -221,6 +225,7 @@ func (g *HandshakeGate) deliver(c net.Conn) {
 
 // Accept returns the next connection whose handshake completed.
 func (g *HandshakeGate) Accept() (net.Conn, error) {
+	g.startOnce.Do(func() { go g.acceptLoop(g.ctx) })
 	select {
 	case c := <-g.ready:
 		return c, nil
