@@ -21,6 +21,11 @@ class CreateObjectStorageComputeBindingRequest:
     permission: CreateObjectStorageComputeBindingRequestPermission
     label: str | Unset = "compute"
     prefix: str | Unset = UNSET
+    key_prefix: str | Unset = UNSET
+    """Limit the binding's key to object keys under this literal prefix, such as segments/L0/. It must end in / and
+    may not contain *, ? or [, empty segments, or . and .. segments. Requests outside it, unscoped listings and
+    bucket-wide settings are denied. 403 object_storage_key_scopes_unavailable until key-scoped bindings are
+    released to the account."""
 
     def to_dict(self) -> dict[str, Any]:
         permission: str = self.permission
@@ -28,6 +33,8 @@ class CreateObjectStorageComputeBindingRequest:
         label = self.label
 
         prefix = self.prefix
+
+        key_prefix = self.key_prefix
 
         field_dict: dict[str, Any] = {}
 
@@ -40,6 +47,8 @@ class CreateObjectStorageComputeBindingRequest:
             field_dict["label"] = label
         if prefix is not UNSET:
             field_dict["prefix"] = prefix
+        if key_prefix is not UNSET:
+            field_dict["key_prefix"] = key_prefix
 
         return field_dict
 
@@ -52,10 +61,13 @@ class CreateObjectStorageComputeBindingRequest:
 
         prefix = d.pop("prefix", UNSET)
 
+        key_prefix = d.pop("key_prefix", UNSET)
+
         create_object_storage_compute_binding_request = cls(
             permission=permission,
             label=label,
             prefix=prefix,
+            key_prefix=key_prefix,
         )
 
         return create_object_storage_compute_binding_request

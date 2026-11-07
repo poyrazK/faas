@@ -18,7 +18,7 @@ func TestMemStoreOverageCap_NotSet(t *testing.T) {
 	t.Parallel()
 	s := state.NewMemStore()
 	ctx := context.Background()
-	acct, err := s.CreateAccount(ctx, "alice@example.com", api.PlanHobby)
+	acct, err := s.CreateAccount(ctx, "alice@example.com", api.PlanFree)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
@@ -27,10 +27,20 @@ func TestMemStoreOverageCap_NotSet(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if ok {
-		t.Fatalf("ok=true on a NULL column; want false")
+		t.Fatalf("ok=true on a Free NULL column; want false")
 	}
 	if cents != 0 {
 		t.Fatalf("cents = %d, want 0", cents)
+	}
+	// ADR-20261105120000: a paid subject without a cap is held to its plan's
+	// self-service ceiling.
+	paid, err := s.CreateAccount(ctx, "bob@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("create paid account: %v", err)
+	}
+	want, _ := api.PlanHobby.MaxSelfServiceOverageCapCents()
+	if cents, ok, err := s.GetAccountOverageCapCents(ctx, paid.ID); err != nil || !ok || cents != want {
+		t.Fatalf("paid NULL = (%d, %v, %v), want (%d, true, nil)", cents, ok, err, want)
 	}
 }
 
@@ -91,14 +101,19 @@ func TestMemStoreLoadAllOverageCapCents_OnlyCapBearing(t *testing.T) {
 	}
 	s.SetOverageCapCentsForTest(a.ID, 1000)
 	s.SetOverageCapCentsForTest(b.ID, 0) // zero is set, so it's a cap
-	// c is unset → NULL → dropped from the bulk read.
+	// c is unset on Scale → held to Scale's ceiling (ADR-20261105120000).
+	// d is unset on Free → dropped from the bulk read.
+	d, err := s.CreateAccount(ctx, "d@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
 
 	caps, err := s.LoadAllOverageCapCents(ctx)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(caps) != 2 {
-		t.Fatalf("len = %d, want 2", len(caps))
+	if len(caps) != 3 {
+		t.Fatalf("len = %d, want 3", len(caps))
 	}
 	if caps[a.ID] != 1000 {
 		t.Fatalf("a cents = %d, want 1000", caps[a.ID])
@@ -106,8 +121,11 @@ func TestMemStoreLoadAllOverageCapCents_OnlyCapBearing(t *testing.T) {
 	if caps[b.ID] != 0 {
 		t.Fatalf("b cents = %d, want 0", caps[b.ID])
 	}
-	if _, ok := caps[c.ID]; ok {
-		t.Fatalf("c (unset/NULL) leaked into the bulk read")
+	if want, _ := api.PlanScale.MaxSelfServiceOverageCapCents(); caps[c.ID] != want {
+		t.Fatalf("c (paid, unset) cents = %d, want the Scale ceiling %d", caps[c.ID], want)
+	}
+	if _, ok := caps[d.ID]; ok {
+		t.Fatalf("d (Free, unset) leaked into the bulk read")
 	}
 }
 

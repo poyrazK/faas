@@ -1002,12 +1002,19 @@ func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Pre
 // writePublicEntryAccept admits 443 on a public entry address, after dropping
 // a source's new connections past the kernel backstop: the edge's own
 // per-address limits act only on connections the kernel already accepted.
-// With exempt, Cloudflare's ranges skip the backstop.
+// With exempt, Cloudflare's ranges get a higher backstop rather than none:
+// those ranges also carry every other Cloudflare customer's zone, so an
+// address in them is not proof of a proxy we trust (ADR-20261104221012).
 func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
 	family := addrFamily(a)
 	suffix := publicEntrySetSuffix(family)
 	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
 	if exempt {
+		proxy := match + fmt.Sprintf(" %s saddr @public_entry_proxy_%s", family, suffix)
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
+			proxy, suffix, family, api.PublicEntryProxyNewConnsPerSecondPerSource, api.PublicEntryProxyNewConnsBurstPerSource, "public entry new connections per proxy source")
+		fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
+			proxy, suffix, family, api.PublicEntryProxyConnsPerSourceMax, "public entry connections per proxy source")
 		match += fmt.Sprintf(" %s saddr != @public_entry_proxy_%s", family, suffix)
 	}
 	fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",

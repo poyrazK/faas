@@ -37,6 +37,17 @@ func deploymentOutcomeBinding(entry actionRecord) string {
 	return hex.EncodeToString(digest[:])
 }
 func actionOutcomeBinding(entry actionRecord) string {
+	if cronHistoryAction(entry.Action) {
+		body, _ := json.Marshal(struct {
+			Target, Action string
+			Cron           *actionCron
+		}{budgetOutcomeBinding(entry), entry.Action, entry.Cron})
+		digest := sha256.Sum256(body)
+		return hex.EncodeToString(digest[:])
+	}
+	if entry.Action == "operation_env" {
+		return configOutcomeBinding(entry)
+	}
 	if deploymentOutcomeAction(entry.Action) || entry.Action == "rollback" || entry.Action == "service_abort" {
 		return deploymentOutcomeBinding(entry)
 	}

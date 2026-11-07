@@ -195,6 +195,11 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
+	if binding.Access != CredentialMigration {
+		if _, ok := s.bindings.(BindingRotationRefreshStore); !ok {
+			return Binding{}, ErrUnsupported
+		}
+	}
 	if binding.RotationPreviousGeneration == 0 {
 		if binding.State != BindingStateReady {
 			return Binding{}, ErrConflict
@@ -211,7 +216,7 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	case BindingStateProvisioning, BindingStateFailed:
 		return s.Reconcile(ctx, accountID, bindingID)
 	case BindingStateReady, BindingStateRetiring:
-		return binding, nil
+		return s.reconcileRotationRefresh(ctx, binding)
 	default:
 		return Binding{}, ErrConflict
 	}

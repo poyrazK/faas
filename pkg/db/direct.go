@@ -51,6 +51,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // DirectDSNEnv points session-scoped work at Postgres directly, bypassing a
@@ -65,11 +66,11 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 
 // directHubOnMaxConns caps the session-scoped pool while the ADR-190 notify
 // hub is active. The hub parks exactly ONE connection per pool no matter how
-// many channels the daemon subscribes to, and the only other session-scoped
-// work a compute daemon does is MigrateUp's advisory lock at boot. Two covers
-// both; anything larger re-inflates the very number the pooled fleet is
-// trying to shrink, because this budget is what postgres_capacity multiplies
-// across every node.
+// many channels the daemon subscribes to. Most daemons need only one other
+// session operation, such as MigrateUp's advisory lock at boot. The exceptions
+// below reserve their long-held and nested locks explicitly. This budget is
+// multiplied across every node by postgres_capacity, so increases must be
+// reflected in its fleet connection and memory plan.
 const directHubOnMaxConns int32 = 2
 
 // ADR-570: apid holds its outer edge mutation lock, and imaged its deployment
@@ -79,6 +80,11 @@ const directHubOnMaxConns int32 = 2
 // connection imaged's guard waited behind the parked hub connection and image
 // deploys stalled in snapshotting.
 const directNestedGuardHubOnMaxConns int32 = directHubOnMaxConns + 1
+
+// schedd retains a session lock throughout each prime's boot and capture.
+// Reserve its worker slots, inline overflow, the parked hub, and one short
+// session operation. Keep postgres_capacity's per-compute budget in sync.
+const directSchedulerHubOnMaxConns int32 = directHubOnMaxConns + api.SnapshotPrimeConcurrentSlots + api.SnapshotPrimeInlineSlots
 
 // directMaxConns resolves the session-scoped pool budget for the notify mode
 // this process runs in.
@@ -93,6 +99,9 @@ const directNestedGuardHubOnMaxConns int32 = directHubOnMaxConns + 1
 func directMaxConns(appName string) int32 {
 	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if notifyHubEnabled() {
+		if name == "schedd" {
+			return directSchedulerHubOnMaxConns
+		}
 		if name == "apid" || name == "imaged" {
 			return directNestedGuardHubOnMaxConns
 		}
@@ -180,6 +189,7 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
 		return nil, err
 	}
+	ConfigureTimeouts(cfg)
 	cfg.MaxConns = directMaxConns(appName)
 	cfg.MinConns = 0
 	// No MaxConnIdleTime: a LISTEN connection is idle by definition between
@@ -198,9 +208,11 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err != nil {
 		return nil, fmt.Errorf("db: open direct pool: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
+	if err := defaultBootWaiter(ctx).ping(ctx, func(ctx context.Context) error {
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		defer cancel()
+		return pool.Ping(pingCtx)
+	}); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("db: ping direct pool: %w", err)
 	}

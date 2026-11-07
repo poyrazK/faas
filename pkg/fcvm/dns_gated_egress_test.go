@@ -51,8 +51,8 @@ func TestAllowResolvedEgressAddsOncePerTTL(t *testing.T) {
 	}
 	got := string(run.input)
 	for _, want := range []string{
-		"add element ip faas egress_resolved { 198.51.100.10 timeout 600s }", // 30s clamped up to the floor
-		"add element ip6 faas egress_resolved { 2001:db8::7 timeout 600s }",
+		"add element ip faas egress_resolved { 198.51.100.10 timeout 599s }", // clamped to 600s, less elapsed time before rendering
+		"add element ip6 faas egress_resolved { 2001:db8::7 timeout 599s }",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("transaction:\n%s\nmissing %q", got, want)
@@ -63,7 +63,7 @@ func TestAllowResolvedEgressAddsOncePerTTL(t *testing.T) {
 	}
 	// A longer TTL extends the element.
 	if err := m.AllowResolvedEgress(t.Context(), source, resolvedOwner(t, m, source), addrs[:1], time.Hour, 0); err != nil || run.inputRuns != before+2 ||
-		!strings.Contains(string(run.input), "198.51.100.10 timeout 3600s") {
+		!strings.Contains(string(run.input), "198.51.100.10 timeout 3599s") {
 		t.Fatalf("a longer TTL did not extend the element (runs %d, err %v):\n%s", run.inputRuns-before, err, run.input)
 	}
 	if err := m.AllowResolvedEgress(t.Context(), netip.MustParseAddr("10.100.99.99"), resolvedOwner(t, m, netip.MustParseAddr("10.100.99.99")), addrs, time.Minute, 0); !errors.Is(err, ErrResolvedEgressNoInstance) {
@@ -96,8 +96,8 @@ func TestAllowResolvedEgressOpensTheBoundDatabasePort(t *testing.T) {
 		t.Fatalf("AllowResolvedEgress: %v", err)
 	}
 	got := string(run.input)
-	if run.inputRuns != before+1 || !strings.Contains(got, "add element ip faas egress_resolved { 198.51.100.20 timeout 600s }") ||
-		!strings.Contains(got, "add element ip faas egress_db { 198.51.100.20 . 5432 timeout 600s }") {
+	if run.inputRuns != before+1 || !strings.Contains(got, "add element ip faas egress_resolved { 198.51.100.20 timeout 599s }") ||
+		!strings.Contains(got, "add element ip faas egress_db { 198.51.100.20 . 5432 timeout 599s }") {
 		t.Fatalf("one transaction with both sets wanted (runs %d):\n%s", run.inputRuns-before, got)
 	}
 	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, resolvedOwner(t, m, nc.HostIP), []netip.Addr{addr}, time.Minute, 5432); err != nil || run.inputRuns != before+1 {

@@ -277,7 +277,7 @@ Not changed: environment promotions run their migrations behind the protected en
 Amendment 12 left three gaps (release review 2026-11-04):
 
 - **Sweeps reached only the oldest batch.** imaged's resume sweep listed the oldest 64 deployments in their release phase platform-wide, then filtered them. imaged's stale sweep (64) and apid's deployment watchdog (100) skipped waiting releases after the batch was fetched. One account's waiting releases (up to 7 days each) could fill a batch, so approved releases elsewhere never resumed and expired, and stuck deployments were never cleaned up. Now:
-  - imaged pages through every candidate in both sweeps;
+  - imaged pages through every candidate in both sweeps, carrying a cursor between ticks so each mutating sweep processes at most 64 candidates and wraps to revisit earlier holds;
   - the watchdog's query leaves out a release that may be waiting: `snapshotting` with a release command, no release task, and an app with an approval policy. imaged closes such a release at the policy's timeout.
 - **An outpaced release ran its migration.** The promotion fence (`MarkDeploymentLiveIfLatest`) supersedes a release that a newer revision overtook, but only at go-live, after its release command has run. Approving a release that waited while a newer one shipped ran the older migration against the newer schema. imaged now applies the fence's test (`SupersedeOutpacedRelease`) before admitting any release command:
   - it covers latest-revision kinds with no release task yet, and never a prepared rollback;

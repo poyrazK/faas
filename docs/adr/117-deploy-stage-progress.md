@@ -787,3 +787,27 @@ dashboard route (`GET .../stages-partial` for HTMX SSE
 swap). 1 new CLI subcommand (`gregale deploys retry`). 1 ADR
 amendment (this section). 25/25 CI gates must pass per
 commit (matching PR #1002's green run).
+
+## Amendment (2026-11-05): retain release intent through failures and retries
+
+`stage_state.retry_intent` records the accepted traffic percentage, whether it
+was explicit, and the zero-step service rollout marker, with version `v1`.
+Failure may zero the serving weight and abort a rollout; those execution fields
+cannot reconstruct the requested release. Retries use this retained intent,
+restart canaries at their first rung, and restart service readiness/routing
+coordination at zero traffic. Repeated failures retain the same intent. Approval
+admission uses the retained percentage so a failed public release cannot be
+mistaken for an intentionally dark one.
+
+The append-only migration captures inserts from every writer and preserves the
+member when an N-1 binary writes its smaller stage document. It also captures
+the pre-update intent of legacy active rows before failure clears it. An already
+failed legacy row with an explicit zero has no recoverable percentage: retry
+returns a conflict directing the caller to submit a fresh deployment with the
+intended percentage or `--no-traffic`. Other legacy retries retain the existing
+fallback, using the deployment's pinned workload mode for service coordination.
+
+A source retry rebuilds its artifact and clears the old derived OCI manifest
+digest before imaging pins the new result. Registry-image retries keep their
+reviewed image identity. Archive identity, build settings, approval/freezes,
+environment lifetime, workload revision and artifact verification remain fenced.

@@ -101,6 +101,14 @@ personal apps. Commit publications now carry `producer: app:<id>`, like an
 in-guest publish. Events accepted before the change keep their stored
 recipients.
 
+## Amendment 2026-11-05: app producer-key events
+
+Data API change events, published through the app producer-key path
+(`PublishAppProducerEvent`), had the same gap: the `app.<id>` source with no
+`producer`. They now carry `producer: app:<id>` too. Duplicate detection
+compares source, id, type, schema version and data, not the producer, so a
+retry of an event accepted before the change is still a duplicate.
+
 ## Alternatives
 
 - **Move company apps to an organization storage account.** The real fix for

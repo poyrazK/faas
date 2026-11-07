@@ -316,8 +316,9 @@ repository.
 ### Deploy tokens
 
 Other CI systems deploy with a deploy token: a credential that can only deploy
-one app. Minting and rotating one needs an MFA step-up from the last five
-minutes, so run `gregale account mfa verify` first. The token is shown once;
+one app. Browser sessions with MFA enabled need verification from the last
+five minutes when minting or rotating one. CLI requests use their scoped
+bearer credential. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
@@ -398,6 +399,23 @@ release it replaces keeps serving while the command runs and through the
 rollout, so the old code always runs against the new schema for a while.
 Write migrations that the previous release can live with: add columns and
 tables first, and remove what the old code uses only in a later release.
+
+Release commands of one app run one at a time per environment, oldest first.
+If you deploy again while a release's command is still waiting to start, the
+newer release replaces it and the older command never runs. A command that
+already started finishes before the next one starts.
+
+A release command can end without an exit code: its worker was lost, it timed
+out, or it was cancelled while running. It may have changed part of the
+database. The next release of that environment then fails with
+`release_outcome_uncertain` before its own command runs. Check the database,
+record what you found, and deploy again:
+
+```bash
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+A later release command of the environment that succeeds also clears it.
 
 A rollback restores code, never the database. Rolling back to the release
 that was serving when the migration ran is the usual case and needs nothing
@@ -634,6 +652,9 @@ It reports:
 
 A section shows as unknown when its history is gone: config history keeps
 the last 100 revisions per scope, and image releases have no build SBOM.
+A release whose build made no artifact (failed, cancelled or still running)
+has no runtime base yet: the runtime base is not listed as a changed setting,
+and the summary ends with `runtime base unknown: v2 made no build artifact`.
 The approval page and the "approval needed" message show the same
 comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
@@ -909,7 +930,9 @@ every account
 and new schedules then fail with 503 `platform_release_paused`, which nothing
 in the request overrides. A release you deployed earlier with `--no-traffic`
 can't take its first traffic during the pause either. Queued builds wait, and
-scheduled releases start once the pause is lifted. Your running apps keep
+scheduled releases start once the pause is lifted. A release deployed before
+the pause still finishes its build, but its release command (a migration)
+waits for the pause to be lifted. Your running apps keep
 serving, rollbacks to a release that served before still
 work, and you can still change env vars and secrets, so you can rotate a
 credential during the incident. Retry the deploy after the pause is lifted.
@@ -1087,7 +1110,12 @@ replaced. The check runs every 15 seconds, and the release keeps serving until
 the previous one is ready again. While a rollout runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
-`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale release traffic rollback my-api` (the same as
+`gregale rollouts recover my-api --action abort`). For a split you set by
+hand with `release traffic set`, the same command gives the release with the
+largest share all traffic; `--to v6` names another, and a tie needs it. It
+acts on one environment (`--env`, or the only one the app is live in), and
+refuses if traffic changes while it runs. If a rollout wedges,
 `gregale rollouts recover my-api --action advance|promote|abort` is the manual
 escape hatch.
 

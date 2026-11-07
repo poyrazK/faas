@@ -116,7 +116,7 @@ JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issu
 JOIN apps a ON a.id=i.app_id WHERE l.id=sqlc.arg(link_id) AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_at IS NULL AND a.status<>'deleted';
 -- name: IssueTrackerNotificationRecipients :many
 SELECT c.id FROM accounts c JOIN apps a ON a.id=sqlc.arg(app_id)
-WHERE (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+WHERE issue_actor_current_member(a.id,c.id)
 AND (c.id=sqlc.narg(assignee_account_id)::uuid OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=sqlc.narg(team_id)::uuid AND tm.account_id=c.id))
 ORDER BY c.id;
 -- name: IssueTrackerNotificationInsert :execrows
@@ -143,9 +143,9 @@ LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by
 LEFT JOIN accounts claim ON claim.id=tr.claimed_by
 WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND (sqlc.narg(team_filter)::uuid IS NULL OR n.team_id=sqlc.narg(team_filter))
-AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,sqlc.arg(actor_account_id)::uuid) OR (a.account_id=sqlc.arg(actor_account_id)::uuid AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid))) OR (
  sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))))
 ), inbox AS (SELECT notices.*,
  COALESCE(active AND snoozed_until>statement_timestamp(),false)::boolean AS snoozed,
@@ -159,33 +159,34 @@ ORDER BY sort_at DESC,id DESC LIMIT sqlc.arg(page_limit);
 -- name: IssueTrackerNotificationRecoveryRecipients :many
 SELECT c.id FROM accounts c JOIN apps a ON a.id=sqlc.arg(app_id)
 WHERE c.id=ANY(sqlc.arg(recipient_ids)::uuid[])
-AND (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+AND issue_actor_current_member(a.id,c.id)
 AND (sqlc.narg(team_id)::uuid IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm JOIN app_issue_teams t ON t.id=tm.team_id AND t.app_id=a.id WHERE tm.team_id=sqlc.narg(team_id) AND tm.account_id=c.id)) ORDER BY c.id;
 -- name: IssueTrackerNotificationCanRead :one
 SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
-AND a.deleted_at IS NULL AND a.status<>'deleted' AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR EXISTS(
+AND a.deleted_at IS NULL AND a.status<>'deleted' AND ((issue_actor_can_manage_tracker(a.id,sqlc.arg(actor_account_id)::uuid) OR (a.account_id=sqlc.arg(actor_account_id)::uuid AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid))) OR EXISTS(
  SELECT 1 FROM issue_tracker_sync_notifications n WHERE n.app_id=a.id AND n.account_id=a.account_id
  AND (sqlc.narg(link_id)::uuid IS NULL OR n.link_id=sqlc.narg(link_id))
  AND sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id))))));
 
 -- name: IssueTrackerTriageScope :one
 SELECT n.incident_id,n.link_id,statement_timestamp()::timestamptz AS checked_at,
  COALESCE(c.incident_id=n.incident_id AND c.escalated_at IS NOT NULL,false)::boolean AS escalated,
  (SELECT t.id FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
- SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL))))::uuid AS responsible_team_id,
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND issue_actor_current_member(a.id,tm.account_id)))::uuid AS responsible_team_id,
  COALESCE((SELECT t.name FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
- SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))), '')::text AS responsible_team_name,
- COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND issue_actor_current_member(a.id,tm.account_id))), '')::text AS responsible_team_name,
+ COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active,
+ issue_actor_can_manage_tracker(a.id,sqlc.arg(actor_account_id)::uuid)::boolean AS can_manage
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
 LEFT JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id
 WHERE n.id=sqlc.arg(notification_id) AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,sqlc.arg(actor_account_id)::uuid) OR (a.account_id=sqlc.arg(actor_account_id)::uuid AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid))) OR (
  sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))));
 -- name: IssueTrackerTriageGet :one
 SELECT tr.*, COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name
@@ -251,9 +252,9 @@ SELECT outcome,reason FROM issue_tracker_sync_notifications WHERE incident_id=$1
 SELECT n.reminder_sequence,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
 JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
 WHERE n.incident_id=sqlc.arg(incident_id) AND n.kind='reminder' AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
-AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,sqlc.arg(actor_account_id)::uuid) OR (a.account_id=sqlc.arg(actor_account_id)::uuid AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid))) OR (
  sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))))
 ORDER BY n.reminder_sequence DESC LIMIT sqlc.arg(history_limit);
 
@@ -302,8 +303,8 @@ WHERE link_id=sqlc.arg(link_id) AND incident_id=sqlc.arg(incident_id) AND escala
 SELECT n.team_id,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
 JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
 WHERE n.incident_id=sqlc.arg(incident_id) AND n.kind='escalation' AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
-AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+AND ((issue_actor_can_manage_tracker(a.id,sqlc.arg(actor_account_id)::uuid) OR (a.account_id=sqlc.arg(actor_account_id)::uuid AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid))) OR (
  sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND issue_actor_current_member(a.id,sqlc.arg(actor_account_id)::uuid)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))))
 ORDER BY n.created_at DESC LIMIT 1;

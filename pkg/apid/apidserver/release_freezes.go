@@ -365,7 +365,11 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
 			WithHint("A retry cannot override a freeze. Wait for it to end, lift it with `gregale freeze lift`, or deploy again with --override-freeze REASON; the override is audited.")
 	}
-	if dep.CanaryTotalSteps > 0 || (dep.TrafficPercentExplicit && dep.TrafficPercent == 0) {
+	percent, explicit, err := dep.RetryTrafficIntent()
+	if err != nil {
+		return api.AsProblem(retryTrafficProblem(err))
+	}
+	if dep.CanaryTotalSteps > 0 || (explicit && percent == 0) {
 		return nil
 	}
 	required, err := approval.CanaryRequired(ctx, s.store, app, dep.Scope, "")

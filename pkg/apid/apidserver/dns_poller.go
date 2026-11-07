@@ -20,10 +20,8 @@ import (
 // them verified in the Store. Spec §7: customer publishes a TXT at
 // _faas-verify.<domain>; apid polls and flips verified_at when it matches.
 //
-// This is a poll-only loop — it does NOT subscribe to pg_notify. A LISTEN
-// path would replace the ticker once a domain_verify producer lands. Channel
-// names use pkg/db constants to stay aligned with the apid NotifyChannels
-// table.
+// Creation and retry coalesce a local wake hint. The periodic durable scan
+// recovers work after a lost hint, restart, or creation by another API process.
 const verifyInterval = 30 * time.Second
 
 const (
@@ -60,6 +58,8 @@ func startDNSPoller(ctx context.Context, s *server, log *slog.Logger) {
 			select {
 			case <-ctx.Done():
 				return
+			case <-s.domainChecks.Wakes():
+				s.runVerifyOnce(ctx, log)
 			case <-t.C:
 				s.runVerifyOnce(ctx, log)
 				if s.runtimeBool(runtimeConfigDomainDoctor, api.DomainDoctorEnabled()) {
@@ -86,9 +86,7 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	if s.domainVerificationMetrics != nil {
-		s.domainVerificationMetrics.cycles.WithLabelValues("success").Inc()
 		s.domainVerificationMetrics.batch.Set(float64(len(pending)))
-		s.domainVerificationMetrics.lastSuccess.Set(float64(time.Now().Unix()))
 	}
 	if stats, ok := s.store.(interface {
 		CustomDomainVerificationStats(context.Context) (int, time.Duration, error)
@@ -123,6 +121,14 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 		}
 	}
 	domainverify.RunBatch(ctx, api.DomainVerificationWorkers, checks)
+	if s.domainVerificationMetrics != nil {
+		if ctx.Err() != nil {
+			s.domainVerificationMetrics.cycles.WithLabelValues("timeout").Inc()
+		} else {
+			s.domainVerificationMetrics.cycles.WithLabelValues("success").Inc()
+			s.domainVerificationMetrics.lastSuccess.Set(float64(time.Now().Unix()))
+		}
+	}
 	if ctx.Err() != nil {
 		s.releaseUnfinishedDomainVerifications(parent, log, pending, finished)
 	}
@@ -147,6 +153,10 @@ func (s *server) releaseUnfinishedDomainVerifications(ctx context.Context, log *
 }
 
 func (s *server) verifyCustomDomain(ctx context.Context, log *slog.Logger, d state.CustomDomain) {
+	s.verifyCustomDomainOwnership(ctx, log, d, true)
+}
+
+func (s *server) verifyCustomDomainOwnership(ctx context.Context, log *slog.Logger, d state.CustomDomain, triggerTLS bool) {
 	probeCtx := state.WithCustomDomainProbe(ctx, d)
 	checkedAt := time.Now().UTC()
 	matchedTXT := checkTXT(ctx, d.Domain, d.ChallengeToken)
@@ -161,8 +171,7 @@ func (s *server) verifyCustomDomain(ctx context.Context, log *slog.Logger, d sta
 			// Drifted domains must repair the routing target before the
 			// TXT challenge can restore verification. This prevents a
 			// stale TXT record from immediately re-enabling a wrong CNAME.
-			probeDomain, _ := state.WildcardProbeHost(d.Domain)
-			if pointsToG := checkPointsToGregale(ctx, probeDomain); pointsToG.Status != probeOK {
+			if pointsToG, _ := checkDomainRouting(ctx, d.Domain); pointsToG.Status != probeOK {
 				return
 			}
 		}
@@ -186,6 +195,9 @@ func (s *server) verifyCustomDomain(ctx context.Context, log *slog.Logger, d sta
 		// Verification publishes pending certificate state atomically. A
 		// later write here could erase a concurrently issued certificate.
 		if api.CustomDomainTLSOnDemand() {
+			if !triggerTLS {
+				return
+			}
 			// ADR-520: the edge issues on the first TLS handshake. Probe
 			// now so issuance starts without waiting for the doctor batch;
 			// the probe also records the resulting certificate status.
@@ -496,7 +508,9 @@ func (s *server) emitDoctorSkip(log *slog.Logger) {
 func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
 	// Order overlapping passes by when their work began. Completion time
 	// would make an older, slower DNS/TLS result appear newer.
-	observedAt := time.Now().UTC()
+	// Use the database's precision for both JSON observations and binary
+	// timestamp updates so they identify exactly the same DNS pass.
+	observedAt := time.Now().UTC().Truncate(time.Microsecond)
 	legacy, legacyErr := s.store.DomainByName(ctx, domain)
 	legacyLoaded := legacyErr == nil
 	if expected, bound := state.CustomDomainProbe(ctx); bound && (!legacyLoaded || !state.SameCustomDomainClaim(expected, legacy)) {
@@ -509,13 +523,13 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		ctx = state.WithCustomDomainProbe(ctx, legacy)
 	}
 
+	previous, _ := s.store.GetDoctorObservation(ctx, domain)
 	probeDomain, _ := state.WildcardProbeHost(domain)
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, domain)
+	dnsFound, pointsToG, caa, aaaa, routingProbe := runProbesParallel(ctx, domain)
 	// Translate probe results into the observation row
 	// shape. probeOK → true, probeFail → false, probePending
-	// → false (we treat "transient" as "not currently
-	// passing" so the dashboard reflects a degraded
-	// posture; the next 30s tick will refresh it). probeNA
+	// → a conservative boolean and a null DNS check time so newer
+	// readers can report uncertainty. probeNA
 	// → true for dns_found (a CNAME-only setup is healthy
 	// for the DNS check; the points_to_gregale check is
 	// the load-bearing one).
@@ -529,6 +543,12 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		ObservedAAAA:    aaaa.Observed,
 		CAAObserved:     caa.Observed,
 		DNSCheckedAt:    observedAt,
+	}
+	// The existing nullable DNS check time marks an inconclusive probe. Older
+	// readers still receive the conservative booleans, while newer readers
+	// avoid presenting a resolver failure as a definite DNS configuration.
+	if dnsFound.Status == probePending || pointsToG.Status == probePending || aaaa.Status == probePending {
+		obs.DNSCheckedAt = time.Time{}
 	}
 	// CAA is tri-state. ok = true; fail = false; pending
 	// stays nil (NULL in the column) when DNS or issuer restrictions
@@ -572,6 +592,10 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 			obs.CertState = certStatusDialFailed
 			obs.LastError = errCertRoutingMismatch.Error()
 			obs.CertCheckedAt = time.Now().UTC()
+		} else if routingProbe != probeDomain {
+			// The fixed TLS probe has an explicit DNS override. Do not dial it
+			// or issue a new certificate for an arbitrary sample hostname.
+			obs.CertState = certStatusPending
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
 			if obs.CertNotAfter.IsZero() {
@@ -587,14 +611,15 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		}
 
 		// F3: a verified custom domain is revoked when the periodic doctor
-		// sees a definite CNAME mismatch. The state mutation is optional so
+		// sees two consecutive definite routing mismatches for the current claim. The state mutation is optional so
 		// narrow Store test doubles remain source-compatible; production
 		// PgStore and MemStore both provide the atomic transition.
 		dnsCheckedAt := obs.DNSCheckedAt
 		if dnsCheckedAt.IsZero() {
-			dnsCheckedAt = time.Now().UTC()
+			dnsCheckedAt = observedAt
 		}
-		drifted := legacyLoaded && legacy.Verified() && pointsToG.Status == probeFail
+		drifted := legacyLoaded && legacy.Verified() && pointsToG.Status == probeFail &&
+			domainverify.ConfirmDrift(legacy, previous, obs)
 		if legacyLoaded && !legacy.Verified() && legacy.CertStatus == state.CustomDomainCertDNSDrifted {
 			// Preserve the durable drift state on subsequent passes. The TXT
 			// verifier clears it by writing pending when verification succeeds.

@@ -5,12 +5,15 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -67,6 +70,7 @@ type publicReadHandler struct {
 	now                   func() time.Time
 	log                   *slog.Logger
 	mounts                *publicMountCache
+	lookups               singleflight.Group
 	hostLookups           *HostLookupBudget
 	limiters              *publicReadLimiters
 }
@@ -97,7 +101,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 			clone.ResponseHeaderTimeout = 30 * time.Second
 			transport = clone
 		}
-		c.HTTPClient = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		c.HTTPClient = &http.Client{Transport: transport, Timeout: c.Registry.TransferTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
@@ -204,28 +208,17 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for name, values := range signed.Headers {
 		upstream.Header.Set(name, values)
 	}
-	for _, name := range []string{"Range", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
+	for _, name := range []string{"Range", "If-Range", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
 		if value := r.Header.Get(name); value != "" {
 			upstream.Header.Set(name, value)
 		}
 	}
-	if h.requestMetrics != nil && read == nil {
-		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), policy); err != nil {
-			writePublicReadRefusal(w, err)
-			return
-		}
-	}
-	response, err := h.client.Do(upstream)
-	if err != nil {
-		http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
+	response, read, ok := h.readPublicObject(w, r, upstream, bucket, key, policy, read)
+	if !ok {
 		return
 	}
 	defer func() { _ = response.Body.Close() }() // best effort; the provider response is already accounted
-	if response.StatusCode == http.StatusNotModified {
-		copyPublicObjectHeaders(w.Header(), response.Header)
-		w.Header().Set("Cache-Control", publicCacheControl)
-		w.Header().Del("Content-Disposition")
-		w.WriteHeader(response.StatusCode)
+	if writePublicReadCondition(w, response) {
 		return
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
@@ -236,8 +229,12 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if _, err := ProviderReadEncryption(backend.Provider, backend.Encryption, bucket.AccountID, response.Header); err != nil {
+		http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if _, gcs := backend.Provider.(*GCS); gcs {
-		if _, err := ProviderReadEncryption(backend.Provider, backend.Encryption, bucket.AccountID, response.Header); err != nil || response.Uncompressed {
+		if response.Uncompressed {
 			http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -267,6 +264,34 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.log.Warn("public object egress metric write failed", "bucket_id", bucket.ID)
 		}
 	}
+}
+
+// Conditions describe the selected public representation, not a provider
+// outage. Keep their HTTP status and safe validators, without exposing the
+// provider's XML error body, body framing or private response metadata.
+func writePublicReadCondition(w http.ResponseWriter, response *http.Response) bool {
+	switch response.StatusCode {
+	case http.StatusNotModified:
+		copyPublicObjectHeaders(w.Header(), response.Header)
+		w.Header().Set("Cache-Control", publicCacheControl)
+		w.Header().Del("Content-Disposition")
+	case http.StatusPreconditionFailed, http.StatusRequestedRangeNotSatisfiable:
+		for _, name := range []string{"ETag", "Last-Modified", "Accept-Ranges"} {
+			if value := response.Header.Get(name); value != "" {
+				w.Header().Set(name, value)
+			}
+		}
+		if response.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			if value := response.Header.Get("Content-Range"); value != "" {
+				w.Header().Set("Content-Range", value)
+			}
+		}
+		w.Header().Set("Cache-Control", "no-store")
+	default:
+		return false
+	}
+	w.WriteHeader(response.StatusCode)
+	return true
 }
 
 // admit admits an anonymous read. Under gateway safety with a read admitter
@@ -328,16 +353,51 @@ func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string,
 
 // hostMounts resolves host to its servable public buckets, reusing a recent
 // answer (see publicMountTTL). A host that names no app has no mounts.
+//
+// Concurrent misses for one host share one lookup. Each used to read the
+// control plane and spend the new-host budget on its own, so every expiry of a
+// busy host's mounts, and every host after an edge restart, sent one store
+// read per request in flight. The shared lookup runs apart from the request
+// that started it, bounded by api.PublicReadHostLookupTimeout, so one caller's
+// cancellation does not fail the others; each caller still leaves at its own
+// deadline.
 func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]state.ObjectBucket, error) {
+	checkTenant := !strings.HasSuffix(host, "."+h.appsDomain) && h.tenantSurfacesOn()
+	if buckets, ok := h.mounts.get(host, time.Now()); ok && (!checkTenant || len(buckets) == 0) {
+		return buckets, nil
+	}
+	key := host
+	if checkTenant {
+		key = "tenant\x00" + host
+	}
+	shared := h.lookups.DoChan(key, func() (any, error) {
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.PublicReadHostLookupTimeout)
+		defer cancel()
+		return h.resolveHostMounts(lookupCtx, host, checkTenant)
+	})
+	select {
+	case result := <-shared:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		buckets, _ := result.Val.([]state.ObjectBucket)
+		return buckets, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// resolveHostMounts reads host's mounts from the store and caches them. A
+// lookup that finished while this one waited to start is reused.
+func (h *publicReadHandler) resolveHostMounts(ctx context.Context, host string, checkTenant bool) ([]state.ObjectBucket, error) {
 	now := time.Now()
 	cacheKey := host
-	checkTenant := !strings.HasSuffix(host, "."+h.appsDomain) && h.tenantSurfacesOn()
 	var binding *state.PlatformTenantHostBinding
 	if checkTenant {
 		if buckets, ok := h.mounts.get(host, now); ok && len(buckets) == 0 {
 			return buckets, nil
 		}
-		if !h.hostLookups.admit(host) {
+		if !h.hostLookups.admit(ctx, host) {
 			return nil, errHostLookupShed
 		}
 		b, err := storageTenantBinding(ctx, h.store, host)
@@ -415,12 +475,12 @@ func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App
 		if slug == "" || strings.Contains(slug, ".") {
 			return state.App{}, false, nil
 		}
-		if !h.hostLookups.admit(host) {
+		if !h.hostLookups.admit(ctx, host) {
 			return state.App{}, false, errHostLookupShed
 		}
 		app, err = h.store.AppBySlug(ctx, slug)
 	} else {
-		if !h.hostLookups.admit(host) {
+		if !h.hostLookups.admit(ctx, host) {
 			return state.App{}, false, errHostLookupShed
 		}
 		app, err = storageDomainApp(ctx, h.store, host, h.tenantSurfacesOn())
@@ -449,4 +509,32 @@ func copyPublicObjectHeaders(dst, src http.Header) {
 			dst.Set(name, value)
 		}
 	}
+	if sandboxedPublicType(dst.Get("Content-Type")) {
+		dst.Set("Content-Security-Policy", publicObjectSandboxCSP)
+	}
+}
+
+// publicObjectSandboxCSP runs an SVG or XML object opened directly with no
+// script and no access to the app's origin. An <img> or CSS use is
+// unaffected (ADR-20261104221012).
+const publicObjectSandboxCSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+
+// sandboxedPublicType reports an active type that is not a page: SVG and XML
+// are images and data, so a public object of that type gets
+// publicObjectSandboxCSP. HTML and XHTML stay as uploaded, since a bucket
+// owner may host pages, and upload routes cannot put them in a public bucket.
+func sandboxedPublicType(contentType string) bool {
+	if !ActiveContentType(contentType) {
+		return false
+	}
+	media, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return true
+	}
+	switch media {
+	case "text/html", "application/xhtml+xml", "text/javascript", "application/javascript",
+		"application/x-javascript", "text/ecmascript", "application/ecmascript", "text/jscript", "application/x-ecmascript":
+		return false
+	}
+	return true
 }

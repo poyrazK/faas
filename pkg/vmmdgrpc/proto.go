@@ -370,14 +370,16 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// sidecar-init-failed dispatch can flip the deployments row
 		// back to status='failed' on init exit. Empty for legacy
 		// callers; the dispatch skips the flip on "".
-		DeploymentID:     deploymentIDFromContext(ctx),
-		BaseKey:          app.GetBaseKey(),
-		LayerKey:         app.GetLayerKey(),
-		VcpuCount:        int(app.GetVcpuCount()),
-		MemSizeMiB:       int(app.GetMemSizeMib()),
-		CPUMillicores:    int(app.GetCpuMillicores()),
-		EgressMbit:       int(app.GetEgressMbit()),
-		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
+		DeploymentID:  deploymentIDFromContext(ctx),
+		BaseKey:       app.GetBaseKey(),
+		LayerKey:      app.GetLayerKey(),
+		VcpuCount:     int(app.GetVcpuCount()),
+		MemSizeMiB:    int(app.GetMemSizeMib()),
+		CPUMillicores: int(app.GetCpuMillicores()),
+		EgressMbit:    int(app.GetEgressMbit()),
+		// ADR-20261101215228: negative values are ignored (plan bound).
+		RequestConcurrency: max(0, int(app.GetRequestConcurrency())),
+		SealedEnvEntries:   sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: plaintext api_env channel. apid
 		// enforces the per-plan EnvValueMaxBytes + EnvVarsMax
 		// quota upstream; vmmd just forwards to StageAPIEnv which
@@ -432,6 +434,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
+		IdleLadderEligible:       app.GetIdleLadderEligible(),
+		IdleLadderGuardedPause:   app.GetIdleLadderGuardedPause(),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -608,6 +612,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
+		IdleLadderEligible:       app.GetIdleLadderEligible(),
+		IdleLadderGuardedPause:   app.GetIdleLadderGuardedPause(),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),

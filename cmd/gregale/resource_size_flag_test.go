@@ -103,6 +103,16 @@ func TestDeployPreviewMatchesPlan(t *testing.T) {
 	if plan != preview || !strings.Contains(preview, "small") {
 		t.Fatalf("--preview output differs from --plan:\n%s\n---\n%s", preview, plan)
 	}
+	// Deploy accepts the explicit default --execution-mode request; the
+	// preview refused it (CLI journey 2026-11-05, #6632). It now plans the
+	// same request-mode app, with the mode no longer marked as a default.
+	explicitCode, explicit, explicitErr := deploy("--preview", "--name", "demo", "--size", "small", "--execution-mode", "request")
+	if explicitCode != 0 {
+		t.Fatalf("--preview --execution-mode request exit=%d %s", explicitCode, explicitErr)
+	}
+	if !strings.Contains(explicit, "execution:          request\n") || !strings.Contains(preview, "execution:          request (default)") {
+		t.Fatalf("explicit request mode preview:\n%s\n--- default:\n%s", explicit, preview)
+	}
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -112,6 +122,9 @@ func TestDeployPreviewMatchesPlan(t *testing.T) {
 		{[]string{"--preview", "--name", "demo", "--size", "huge"}, "Invalid --size"},
 		{[]string{"--preview", "--name", "demo", "--profile", "huge"}, "Invalid --profile"},
 		{[]string{"--preview", "--name", "demo", "--size", "small", "--profile", "large"}, "use --size or --profile, not both"},
+		// A non-request mode is not a simple app; the refusal names the
+		// preview that supports it (#6632).
+		{[]string{"--preview", "--name", "demo", "--execution-mode", "worker"}, "deploy --dry-run --execution-mode worker"},
 	} {
 		if code, _, stderr := deploy(tc.args...); code == 0 || !strings.Contains(stderr, tc.want) {
 			t.Errorf("%v: exit=%d stderr=%q, want %q", tc.args, code, stderr, tc.want)

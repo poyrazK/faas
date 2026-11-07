@@ -60,7 +60,7 @@ BEGIN
   RAISE EXCEPTION 'repair_capture_requires_existing_relation' USING ERRCODE='22023';
  END IF;
  INSERT INTO gregale_repair.operations(id,scope,release,enrollment_id,schema_fingerprint,transaction_id,repair_of,capture_relation_filenode,type_fingerprint,capture_type_state,capture_contract_version)
- VALUES(operation,operation_scope,release_version,e.enrollment_id,e.fingerprint,pg_current_xact_id()::text,source_operation,pg_relation_filenode(e.relation),e.type_fingerprint,gregale_repair.type_fingerprint(e.relation,true),3);
+ VALUES(operation,operation_scope,release_version,e.enrollment_id,e.fingerprint,pg_current_xact_id()::text,source_operation,pg_relation_filenode(e.relation),e.type_fingerprint,gregale_repair.type_fingerprint(e.relation,true),4);
  -- Retain an indexed proof of this transaction's first relation fence through
  -- deferred finalization, even after the active capture context is cleared.
  PERFORM set_config('gregale.repair_guarded_'||e.relation::oid::text,operation::text,true);
@@ -77,7 +77,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION gregale_repair.create_plan(operation uuid, expected_scope jsonb, checks_digest text, requested_plan uuid DEFAULT NULL) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' SET jit = 'off' AS $$
 DECLARE op gregale_repair.operations; e gregale_repair.enrollments; c gregale_repair.changes; current_row jsonb;
  items jsonb:='[]'; item jsonb; inverse jsonb; expected jsonb; observed jsonb; reason text; state text; fields text;
  observed_bytes bigint; observed_total bigint:=0; omitted boolean; values_match boolean;
@@ -156,7 +156,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION gregale_repair.apply_plan(plan uuid, expected_scope jsonb, expected_digest text, repair_operation uuid, repair_release text) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' SET jit = 'off' AS $$
 DECLARE p gregale_repair.plans; e gregale_repair.enrollments; item jsonb; current_row jsonb; assignments text; fields text; affected bigint; total int:=0; values_match boolean;
 BEGIN
  PERFORM pg_advisory_xact_lock_shared(hashtextextended(expected_scope::text,161018));

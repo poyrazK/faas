@@ -34,11 +34,17 @@ func rollbackReferenceMatches(entry actionRecord, ref rollbackOutcomeLookup) boo
 
 // Called under m.mu, before persisting the original attempt and sending a POST.
 func (m *management) prepareRollbackOutcome(ctx context.Context, p *releasePlan) (context.Context, error) {
+	if p.RolloutMode == api.ExecutionModeService {
+		return m.prepareServiceRollbackOutcome(ctx, p)
+	}
 	if p.RolloutMode != api.ExecutionModeRequest || p.Scope != api.DefaultEnvScope {
 		return ctx, nil
 	}
 	if m.rollbackOutcomes == nil {
 		m.rollbackOutcomes = map[string]rollbackOutcomeLookup{}
+	}
+	if _, collision := m.serviceRollbackOutcomes[p.ID]; collision {
+		return nil, invalid("invalid_plan", "ambiguous rollback outcome namespace")
 	}
 	ref, found := m.rollbackOutcomes[p.ID]
 	hash := api.RollbackRequestHash(p.AppID, rollbackRequest(p))

@@ -15,5 +15,9 @@ export type CreateOrgAPIKeyRequest = {
    * Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project.
    */
   projects?: Array<string>;
+  /**
+   * Kinds of action the organization's agent key must have a person approve; the organization's floor applies on top. Omit for every kind, empty for none.
+   */
+  approval_categories?: Array<'delete' | 'production' | 'credentials' | 'billing'>;
 };
 

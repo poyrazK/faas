@@ -94,6 +94,9 @@ func (s *PostgresStore) ReserveCutover(ctx context.Context, request PrepareCutov
 			target = r
 		}
 	}
+	if target.RestoreSlotUntil.Valid {
+		return Cutover{}, false, ErrConflict
+	}
 	existing, err := q.GetManagedPostgresCutover(ctx, tx, sqlc.GetManagedPostgresCutoverParams{AccountID: request.AccountID, ID: request.ID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, err = q.GetActiveManagedPostgresCutover(ctx, tx, sqlc.GetActiveManagedPostgresCutoverParams{AccountID: request.AccountID, AppID: request.AppID, Scope: request.Scope})

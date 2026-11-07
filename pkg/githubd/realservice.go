@@ -256,7 +256,7 @@ func (s *RealService) GetInstallState(accountID string) (githubdgrpc.InstallStat
 	s.installsMu.RLock()
 	st, ok := s.installs[accountID]
 	s.installsMu.RUnlock()
-	if ok {
+	if ok && s.Installs == nil {
 		return st.State, st.InstID, st.DefBranch, nil
 	}
 	if s.Installs == nil {
@@ -625,7 +625,7 @@ func (s *RealService) lookupInstall(ctx context.Context, accountID string) (int6
 	s.installsMu.RLock()
 	st, ok := s.installs[accountID]
 	s.installsMu.RUnlock()
-	if ok {
+	if ok && s.Installs == nil {
 		var id int64
 		if _, err := fmt.Sscanf(st.InstID, "%d", &id); err == nil && id > 0 {
 			return id, nil
@@ -722,10 +722,13 @@ func (s *RealService) ensureInstallTokenForInstallation(ctx context.Context, acc
 	if identities == nil && s.Identity != nil {
 		identities = []*age.X25519Identity{s.Identity}
 	}
-	if s.Installs != nil && len(identities) > 0 {
+	if s.Installs != nil {
 		inst, ierr := s.installForAccount(ctx, accountID, installID)
 		switch {
 		case ierr == nil:
+			if len(identities) == 0 {
+				return 0, "", fmt.Errorf("githubd: install token identity not configured")
+			}
 			now := time.Now()
 			if inst.TokenExpiresAt.After(now.Add(tokenRefreshSkew)) {
 				env, oerr := secretbox.OpenMulti(identities, inst.SealedToken)
@@ -743,7 +746,7 @@ func (s *RealService) ensureInstallTokenForInstallation(ctx context.Context, acc
 			// rotate it (mint + re-seal + persist + audit).
 			return s.rotateInstallToken(ctx, accountID, installID, inst)
 		case errors.Is(ierr, state.ErrNotFound):
-			// No durable row — fall through to a fresh mint.
+			return 0, "", state.ErrNotFound
 		default:
 			return 0, "", fmt.Errorf("githubd: durable rehydrate: %w", ierr)
 		}
@@ -790,7 +793,11 @@ func (s *RealService) rotateInstallToken(ctx context.Context, accountID string, 
 	if err != nil {
 		return 0, "", fmt.Errorf("githubd: seal rotated install token: %w", err)
 	}
-	if err := s.Installs.Upsert(ctx, state.GitHubInstall{
+	refresher, ok := s.Installs.(InstallTokenRefresher)
+	if !ok {
+		return 0, "", fmt.Errorf("githubd: safe install token refresh unavailable")
+	}
+	if err := refresher.RefreshToken(ctx, prev.SealedToken, state.GitHubInstall{
 		AccountID:        accountID,
 		InstallationID:   installID,
 		DefaultBranch:    prev.DefaultBranch,
@@ -835,11 +842,22 @@ func (s *RealService) UnbindAppRepo(appID, accountID string) error {
 	return nil
 }
 
-// GetAppBinding looks up the binding for an app. Cache-first;
-// falls back to the durable Store on miss and rebuilds the cache.
+// GetAppBinding reads the durable, account-scoped binding. Cache-only
+// operation is retained only for services without a configured store.
 // Returns the gRPC-facing AppBinding shape (BindingID empty = no
 // binding).
 func (s *RealService) GetAppBinding(appID, accountID string) (githubdgrpc.AppBinding, error) {
+	// A durable unbind on another worker must take effect immediately.
+	if s.Store != nil {
+		b, err := s.Store.GetForApp(context.Background(), appID, accountID)
+		if errors.Is(err, ErrAppNotFound) || errors.Is(err, state.ErrNotFound) {
+			return githubdgrpc.AppBinding{}, nil
+		}
+		if err != nil {
+			return githubdgrpc.AppBinding{}, err
+		}
+		return bindingToGRPC(b), nil
+	}
 	s.bindingsCacheMu.RLock()
 	if byApp, ok := s.bindingsCache[accountID]; ok {
 		if b, ok := byApp[appID]; ok {

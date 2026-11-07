@@ -17,7 +17,7 @@ func (m *MemStore) prepareServiceBindingLocked(ctx context.Context, target Deplo
 	if err := serviceBindingRequestMatches(ctx, target, action, recipientID, predecessorID); err != nil {
 		return target, err
 	}
-	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID == "" && target.ServiceRolloutHandoff.BindingsCheck != nil && target.ServiceRolloutHandoff.BindingsCheck.Action == action && target.ServiceRolloutHandoff.BindingsCheck.Status != "passed" {
+	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID == "" && target.ServiceRolloutHandoff.BindingsCheck != nil && target.ServiceRolloutHandoff.BindingsCheck.Action == action && target.ServiceRolloutHandoff.BindingsCheck.Status != "passed" && serviceBindingTraffic(target.ServiceRolloutHandoff.BindingsCheck) == serviceRolloutTraffic(ctx) {
 		return target, ErrBindingReleaseRequired
 	}
 	if recipientID == "" {
@@ -40,31 +40,45 @@ func (m *MemStore) prepareServiceBindingLocked(ctx context.Context, target Deplo
 	}
 	err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{recipientID: 100})
 	if IsBindingReleaseRequired(err) {
-		target = queueServiceBindingCheck(target, action, recipientID, predecessorID, reason)
+		target = queueServiceBindingCheck(ctx, target, action, recipientID, predecessorID, reason)
 		m.deployments[target.ID] = target
 		return target, ErrBindingReleaseRequired
 	}
 	if err != nil {
 		return target, err
 	}
-	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID != "" {
+	recipient, ok := m.deployments[recipientID]
+	if !ok || recipient.AppID != target.AppID {
+		return target, ErrConflict
+	}
+	sources, err := DeploymentReadinessSources(recipient)
+	if err != nil {
+		return target, err
+	}
+	deployed, err := m.serviceAppForDeploymentLocked(m.apps[target.AppID], recipient)
+	if err != nil {
+		return target, err
+	}
+	// Reverse routing and final teardown must retain a usable service recipient,
+	// including the boot-only readiness contract when no probes are configured.
+	reversing := action == ServiceRolloutActionAbort && deployed.Manifest.ExecutionMode == api.ExecutionModeService &&
+		(recipient.TrafficPercent < 100 || target.ServiceRolloutHandoff.Action == ServiceRolloutActionAbort)
+	if requestID != "" || len(sources) > 0 || reversing || serviceRolloutTraffic(ctx) < 100 {
 		desired := 1
-		if action == ServiceRolloutActionPromote {
-			manifest := m.apps[target.AppID].Manifest
-			if specID := m.projectEnvironmentWorkloadDeploymentSpecs[recipientID]; specID != "" {
-				spec, ok := m.projectEnvironmentWorkloadSpecs[specID]
-				if !ok || spec.AppID != target.AppID || spec.EnvironmentSlug != workloadEnvironmentSlug(target.Scope) {
-					return target, ErrConflict
-				}
-				manifest = spec.Settings.Manifest
-			}
-			if manifest.ServiceReplicas != nil {
-				desired = manifest.ServiceReplicas.Desired
+		if action == ServiceRolloutActionPromote && deployed.Manifest.ServiceReplicas != nil {
+			desired = ServiceRolloutReadyTarget(deployed.Manifest.ServiceReplicas.Desired, serviceRolloutTraffic(ctx))
+		}
+		var replicas []Instance
+		for _, instance := range m.instances {
+			if instance.DeploymentID == recipientID {
+				replicas = append(replicas, instance)
 			}
 		}
+		targets := serviceReadinessTargets(replicas)
+		signals := m.latestInstanceReadinessForTargetsLocked(targets)
 		ready := 0
-		for _, instance := range m.instances {
-			if instance.DeploymentID == recipientID && instance.Mode == string(InstanceModeService) && State(instance.State) == StateRunning {
+		for _, instance := range targets {
+			if serviceReplicaReady(sources, signals[instance.InstanceID]) {
 				ready++
 			}
 		}
@@ -72,6 +86,7 @@ func (m *MemStore) prepareServiceBindingLocked(ctx context.Context, target Deplo
 			return target, ErrServiceRolloutNotReady
 		}
 	}
+
 	return target, nil
 }
 
@@ -141,7 +156,7 @@ func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pr
 	if !found || previous.id != predecessorID {
 		return target, 0, ErrServiceRolloutInvalid
 	}
-	target = queueServiceBindingCheck(target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
+	target = queueServiceBindingCheck(ctx, target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	accountID := uuid.MustParse(m.apps[target.AppID].AccountID)
 	auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{DeploymentID: uuid.MustParse(id), AccountID: &accountID, Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: time.Now().UTC(), Data: serviceAbortReceiptData(ctx, target, reason)})
 	if err != nil {

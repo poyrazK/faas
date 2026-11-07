@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"path"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -42,6 +43,7 @@ type deploymentReleaseCommand struct {
 type sourceRefManifestStaged struct {
 	accountID             string
 	appID                 string
+	baselineDeploymentID  string
 	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
 	cronIntent            *api.DeploymentCronStagingRequest
@@ -61,6 +63,7 @@ type sourceRefManifestStaged struct {
 	appliedRetryPolicy    json.RawMessage
 	lifecycleChanged      bool
 	previousLifecycle     state.AppManifest
+	appliedLifecycle      state.AppManifest
 
 	// ADR-20261031130000: subscriptions this deploy disabled or re-enabled,
 	// restored if the deploy rolls back.
@@ -119,6 +122,9 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan, agen
 	}
 	if err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+	}
+	if m == nil {
+		return nil, nil
 	}
 	if prob := validateManifestAgainstPlan(m, plan, agentSteps); prob != nil {
 		return nil, prob
@@ -366,6 +372,13 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	if m == nil {
 		return staged, nil
+	}
+	if _, lifecycle := m.LifecycleRequest(); lifecycle || m.RetryPolicy != nil || m.ScalingPolicyRequest() != nil {
+		baseline, err := s.store.LatestDeployment(ctx, app.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return staged, api.ErrCapacity("could not read deployment before manifest settings")
+		}
+		staged.baselineDeploymentID = baseline.ID
 	}
 	if problem := s.applyManifestLabels(ctx, acct, app, m.Labels); problem != nil {
 		return staged, problem
@@ -833,10 +846,12 @@ func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Acc
 			return retryProblem
 		}
 		if !retryPoliciesEqual(app.RetryPolicyJSON, desired) {
-			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
-				RetryPolicyJSON: &desired,
-				SetRetryPolicy:  true,
-			})
+			updated, err := s.store.UpdateApp(ctx, app.ID, sourceManifestSettingsParams(*staged, func(current state.App) (state.UpdateAppParams, error) {
+				if !retryPoliciesEqual(current.RetryPolicyJSON, app.RetryPolicyJSON) {
+					return state.UpdateAppParams{}, state.ErrConflict
+				}
+				return state.UpdateAppParams{RetryPolicyJSON: &desired, SetRetryPolicy: true}, nil
+			}))
 			if err != nil {
 				return sourceRefRetryPolicyStoreProblem(err)
 			}
@@ -867,10 +882,12 @@ func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Acc
 		}
 		desired := policyPtrFromReq(scalingReq)
 		if !scalingPoliciesEqual(app.ScalingPolicy, desired) {
-			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
-				ScalingPolicy:    desired,
-				SetScalingPolicy: true,
-			})
+			updated, err := s.store.UpdateApp(ctx, app.ID, sourceManifestSettingsParams(*staged, func(current state.App) (state.UpdateAppParams, error) {
+				if !scalingPoliciesEqual(current.ScalingPolicy, app.ScalingPolicy) {
+					return state.UpdateAppParams{}, state.ErrConflict
+				}
+				return state.UpdateAppParams{ScalingPolicy: desired, SetScalingPolicy: true}, nil
+			}))
 			if err != nil {
 				return sourceRefScalingStoreProblem(err)
 			}
@@ -897,6 +914,11 @@ func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Acc
 // as it now is and the undo for a failed enqueue.
 func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem) {
 	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	baseline, err := s.store.LatestDeployment(ctx, app.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return app, func(context.Context) {}, api.ErrCapacity("could not read deployment before manifest settings")
+	}
+	staged.baselineDeploymentID = baseline.ID
 	undo := func(ctx context.Context) {
 		if err := s.rollbackSourceRefManifest(ctx, staged); err != nil {
 			s.log.Warn("apid: roll back GitHub deploy settings", "app_id", app.ID, "err", err)
@@ -934,7 +956,14 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	if !changed || reflect.DeepEqual(sourceLifecycleFields(*updated), sourceLifecycleFields(app.Manifest)) {
 		return nil
 	}
-	if _, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: updated}); err != nil {
+	applied, err := s.store.UpdateApp(ctx, app.ID, sourceManifestSettingsParams(*staged, func(current state.App) (state.UpdateAppParams, error) {
+		if !reflect.DeepEqual(sourceLifecycleFields(current.Manifest), sourceLifecycleFields(app.Manifest)) {
+			return state.UpdateAppParams{}, state.ErrConflict
+		}
+		manifest, _ := stateManifestForUpdate(current, &req)
+		return state.UpdateAppParams{Manifest: manifest}, nil
+	}))
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 		}
@@ -942,6 +971,7 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 	}
 	staged.lifecycleChanged = true
 	staged.previousLifecycle = sourceLifecycleFields(app.Manifest)
+	staged.appliedLifecycle = sourceLifecycleFields(applied.Manifest)
 	if !reflect.DeepEqual(updated.BeforeCheckpoint, app.Manifest.BeforeCheckpoint) ||
 		!reflect.DeepEqual(updated.Profiling, app.Manifest.Profiling) || !reflect.DeepEqual(updated.Tracing, app.Manifest.Tracing) {
 		// As PATCH /v1/apps/{slug} does: existing process snapshots were
@@ -958,18 +988,40 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 // rollbackSourceRefLifecycle restores only the fields a lifecycle or worker
 // block can set, so a concurrent change to other manifest fields survives.
 func (s *server) rollbackSourceRefLifecycle(ctx context.Context, staged sourceRefManifestStaged) error {
-	current, err := s.store.AppByID(ctx, staged.appID)
+	changed, err := s.rollbackSourceManifestSettings(ctx, staged, func(current state.App) (state.UpdateAppParams, error) {
+		if !reflect.DeepEqual(sourceLifecycleFields(current.Manifest), staged.appliedLifecycle) {
+			return state.UpdateAppParams{}, state.ErrConflict
+		}
+		restored := current.Manifest
+		copySourceLifecycleFields(&restored, staged.previousLifecycle)
+		return state.UpdateAppParams{Manifest: &restored}, nil
+	})
 	if err != nil {
-		return fmt.Errorf("rollback manifest lifecycle: read app: %w", err)
-	}
-	restored := current.Manifest
-	copySourceLifecycleFields(&restored, staged.previousLifecycle)
-	if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{Manifest: &restored}); err != nil {
 		return fmt.Errorf("rollback manifest lifecycle: %w", err)
 	}
-	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"updated","app_id":"%s","lifecycle_changed":true}`, staged.appID))
+	if changed {
+		_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+			fmt.Sprintf(`{"kind":"updated","app_id":"%s","lifecycle_changed":true}`, staged.appID))
+	}
 	return nil
+}
+
+// Compare and restore under the store's app lock. A newer accepted deployment
+// or edit owns its settings; a failed older request must leave them intact.
+func (s *server) rollbackSourceManifestSettings(ctx context.Context, staged sourceRefManifestStaged, prepare func(state.App) (state.UpdateAppParams, error)) (bool, error) {
+	_, err := s.store.UpdateApp(ctx, staged.appID, sourceManifestSettingsParams(staged, prepare))
+	if errors.Is(err, state.ErrConflict) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func sourceManifestSettingsParams(staged sourceRefManifestStaged, prepare func(state.App) (state.UpdateAppParams, error)) state.UpdateAppParams {
+	return state.UpdateAppParams{DeploySettingsGuard: &state.DeploySettingsGuard{
+		AppID: staged.appID, AccountID: staged.accountID,
+		DeploymentID: staged.baselineDeploymentID, MatchDeploymentIDOnly: true,
+		Prepare: prepare,
+	}}
 }
 
 // sourceLifecycleFields projects the manifest fields that
@@ -1035,6 +1087,8 @@ func cloneScalingPolicy(policy *state.ScalingPolicy) *state.ScalingPolicy {
 		return nil
 	}
 	clone := *policy
+	clone.Targets = append([]state.ScalingTarget(nil), policy.Targets...)
+	clone.Schedules = append([]state.ScalingSchedule(nil), policy.Schedules...)
 	if policy.Target != nil {
 		target := *policy.Target
 		clone.Target = &target
@@ -1046,18 +1100,11 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	if left.MinInstances != right.MinInstances || left.MaxInstances != right.MaxInstances ||
-		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
-		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
-		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
-		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds ||
-		left.PerInstanceConcurrency != right.PerInstanceConcurrency {
-		return false
-	}
-	if left.Target == nil || right.Target == nil {
-		return left.Target == nil && right.Target == nil
-	}
-	return left.Target.Metric == right.Target.Metric && left.Target.Value == right.Target.Value
+	// Compare every policy field, while treating omitted and empty lists alike.
+	leftFields, rightFields := *left, *right
+	leftFields.Targets, rightFields.Targets = nil, nil
+	leftFields.Schedules, rightFields.Schedules = nil, nil
+	return reflect.DeepEqual(leftFields, rightFields) && slices.Equal(left.Targets, right.Targets) && slices.Equal(left.Schedules, right.Schedules)
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {
@@ -1095,12 +1142,15 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		if restore == nil {
 			restore = &state.ScalingPolicy{}
 		}
-		if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{
-			ScalingPolicy:    restore,
-			SetScalingPolicy: true,
-		}); err != nil {
+		changed, err := s.rollbackSourceManifestSettings(ctx, staged, func(current state.App) (state.UpdateAppParams, error) {
+			if !scalingPoliciesEqual(current.ScalingPolicy, staged.appliedScalingPolicy) {
+				return state.UpdateAppParams{}, state.ErrConflict
+			}
+			return state.UpdateAppParams{ScalingPolicy: restore, SetScalingPolicy: true}, nil
+		})
+		if err != nil {
 			errs = append(errs, err)
-		} else {
+		} else if changed {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
 		}
@@ -1116,12 +1166,15 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			restore = json.RawMessage(`{}`)
 		}
 		restoreBytes := []byte(restore)
-		if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{
-			RetryPolicyJSON: &restoreBytes,
-			SetRetryPolicy:  true,
-		}); err != nil {
+		changed, err := s.rollbackSourceManifestSettings(ctx, staged, func(current state.App) (state.UpdateAppParams, error) {
+			if !retryPoliciesEqual(current.RetryPolicyJSON, staged.appliedRetryPolicy) {
+				return state.UpdateAppParams{}, state.ErrConflict
+			}
+			return state.UpdateAppParams{RetryPolicyJSON: &restoreBytes, SetRetryPolicy: true}, nil
+		})
+		if err != nil {
 			errs = append(errs, err)
-		} else {
+		} else if changed {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","retry_policy_changed":true}`, staged.appID))
 		}

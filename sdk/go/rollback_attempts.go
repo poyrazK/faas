@@ -7,7 +7,7 @@ import (
 
 const RollbackAttemptHeader = "Rollback-Attempt-ID"
 
-// ContextWithRollbackAttempt binds a checked request rollback to its retained
+// ContextWithRollbackAttempt binds an exact default-scope request or service rollback to its retained
 // operation UUID. Persist 32 lowercase hexadecimal characters before sending.
 func ContextWithRollbackAttempt(ctx context.Context, id string) context.Context {
 	return api.ContextWithRollbackAttempt(ctx, id)

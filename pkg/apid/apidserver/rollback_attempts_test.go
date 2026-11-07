@@ -5,14 +5,25 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestCheckedRollbackAttemptHTTP(t *testing.T) {
+func TestCheckedRollbackAttemptHTTP(t *testing.T)        { checkedRollbackAttemptHTTP(t, false) }
+func TestCheckedServiceRollbackAttemptHTTP(t *testing.T) { checkedRollbackAttemptHTTP(t, true) }
+func checkedRollbackAttemptHTTP(t *testing.T, service bool) {
 	e, app, target, current := apidserver.CheckedRollbackAPIFixture(t)
+	if service {
+		manifest := app.Manifest
+		manifest.ExecutionMode = api.ExecutionModeService
+		manifest.ServiceReplicas = &state.ServiceReplicas{Min: 1, Max: 2, Desired: 1}
+		if _, err := (*e.Store()).UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	req := api.RollbackRequest{TargetDeploymentID: &target.ID, ExpectedCurrentDeploymentID: &current.ID, Reason: "original"}
 	path := "/v1/apps/" + app.Slug + "/rollback"
 	attempt := strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -56,7 +67,7 @@ func TestCheckedRollbackAttemptHTTP(t *testing.T) {
 		t.Fatal("lost native network reply succeeded")
 	}
 	read, err := client.GetRollbackOperation(t.Context(), app.Slug, operationID)
-	if err != nil || read.ID != operationID || read.TargetDeploymentID != target.ID || read.Status != "preparing" {
+	if err != nil || read.Service != service || read.ID != operationID || read.TargetDeploymentID != target.ID || read.Status != "preparing" {
 		t.Fatalf("accepted receipt: %+v %v", read, err)
 	}
 	store := *e.Store()

@@ -85,13 +85,14 @@ type BackendConfig struct {
 // contains only environment-variable names and safe identity fields; secret
 // values never belong in the object-storage registry.
 type UsageConfig struct {
-	Driver               string `json:"driver,omitempty"`
-	ServiceNameEnv       string `json:"service_name_env,omitempty"`
-	ApplicationKeyEnv    string `json:"application_key_env,omitempty"`
-	ApplicationSecretEnv string `json:"application_secret_env,omitempty"`
-	ConsumerKeyEnv       string `json:"consumer_key_env,omitempty"`
-	RequestLogBucket     string `json:"request_log_bucket,omitempty"`
-	RequestLogPrefix     string `json:"request_log_prefix,omitempty"`
+	Driver                 string `json:"driver,omitempty"`
+	ServiceNameEnv         string `json:"service_name_env,omitempty"`
+	ApplicationKeyEnv      string `json:"application_key_env,omitempty"`
+	ApplicationSecretEnv   string `json:"application_secret_env,omitempty"`
+	ConsumerKeyEnv         string `json:"consumer_key_env,omitempty"`
+	RequestLogBucket       string `json:"request_log_bucket,omitempty"`
+	RequestLogPrefix       string `json:"request_log_prefix,omitempty"`
+	RequestLogCoveragePath string `json:"request_log_coverage_path,omitempty"`
 }
 
 type Registry struct {
@@ -216,6 +217,9 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 			return nil, fmt.Errorf("object storage: backend %s has an unknown usage driver", b.ID)
 		}
 		if b.Usage.Driver == "ovh" {
+			if path := b.Usage.RequestLogCoveragePath; path != "" && (!validUsageReportPath(path) || path == b.UsageReportsPath) {
+				return nil, fmt.Errorf("object storage: backend %s has an invalid request_log_coverage_path", b.ID)
+			}
 			if b.Driver != "s3" || b.UsageReportsPath == "" || b.Usage.ApplicationKeyEnv == "" || b.Usage.ApplicationSecretEnv == "" || b.Usage.ConsumerKeyEnv == "" || b.Usage.RequestLogBucket == "" {
 				return nil, fmt.Errorf("object storage: backend %s has incomplete ovh usage configuration", b.ID)
 			}

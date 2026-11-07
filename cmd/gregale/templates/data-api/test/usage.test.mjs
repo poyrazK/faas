@@ -119,6 +119,32 @@ test('caps compare month-to-date totals plus unreported counts', async () => {
   h.usage.stop()
 })
 
+test('a reached cap stays reached after a restore, before the platform answers', async () => {
+  const h = harness({ caps: { requests: 5, anonymous_requests: null }, answer: { requests: 9, anonymous_requests: 0 } })
+  await h.usage.report()
+  assert.equal(h.usage.capReached('user').name, 'requests')
+  // Restored after the app parked: the wall clock jumped, the platform is not reachable yet.
+  h.clock.wall += 10 * 60 * 1000
+  h.setStatus(503)
+  assert.equal(h.usage.capReached('user')?.name, 'requests', 'the last known totals are a floor for the month')
+  await h.usage.report()
+  assert.equal(h.usage.capReached('user')?.name, 'requests', 'and stay while the platform cannot be reached')
+  h.usage.stop()
+})
+
+test('a runtime the platform refuses (a stage) stops reporting', async () => {
+  const h = harness()
+  h.request({ access: 'user' })
+  h.setStatus(403)
+  await h.usage.report()
+  assert.equal(h.calls.length, 1)
+  h.setStatus(200)
+  h.request({ access: 'user' })
+  await h.usage.report()
+  assert.equal(h.calls.length, 1, 'nothing more is sent')
+  h.usage.stop()
+})
+
 test('a new month starts the caps afresh', async () => {
   const h = harness({ caps: { requests: 5, anonymous_requests: null }, start: Date.UTC(2026, 9, 31, 23, 59), answer: { requests: 9, anonymous_requests: 0 } })
   await h.usage.report()

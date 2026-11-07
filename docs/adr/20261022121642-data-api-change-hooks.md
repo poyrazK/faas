@@ -212,3 +212,34 @@ changes from other writers still wait for the next request, as before.
 customer credentials outside the Data API and wake Neon computes). LISTEN/
 NOTIFY from the database (it cannot wake a parked VM). Waking on every
 recorded change (needs a database-to-platform channel, the same problem).
+
+## Amendment 2 (2026-11-05): production only, a backlog bound, refusals before storing
+
+**Production only, finally.** Publication and delivery reports already took
+only production workloads, but refused a stage with the same `401` as a bad
+token, so its relay retried forever. A valid token from a non-production
+workload now gets `403 workload_not_production`. The relay returns its claim
+untouched and stops; writes no longer wake it, delivery reports stop, and a
+drain request answers `409 data_api_change_hooks_not_production`.
+
+**A backlog bound.** When nothing publishes (a stage, an installation without
+workload identity) or publishing keeps failing, the trigger kept recording
+every write, growing `gregale_change_events` until it filled the customer's
+database. `capture()` now records nothing while
+`DataAPIChangeHooksBacklogMax` (100,000) changes wait: it compares the
+identity sequence's last value with the oldest waiting (not rejected) change,
+through a new partial index `gregale_change_events_pending (id) WHERE
+failed_at IS NULL`. Counting identifiers errs early (rolled-back writes burn
+some) and costs one index lookup per hooked write, with no shared counter row
+for writers to contend on. Changes past the bound are lost, not queued:
+consumers that need every change must keep publishing healthy, and
+`hooks status` warns from 90% of the bound. Installations made before this
+amendment keep working unbounded; `gregale data-api hooks export --upgrade`
+prints the index and the bounded `capture()` from the same template, and the
+runtime logs `data_api_change_hooks_unbounded` at boot until it is applied.
+
+**Refuse before storing.** `hooks enable` now refuses, changing nothing, on a
+platform that takes no runtime reports (publishing needs the same workload
+identity) and on a non-production scope. With `--drain-every`, the drain cron
+is created first, so a plan that allows no crons (Free) refuses the schedule
+before hooks turn on, instead of leaving hooks on without it.

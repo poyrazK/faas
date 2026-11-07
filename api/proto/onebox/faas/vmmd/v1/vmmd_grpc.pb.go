@@ -64,6 +64,7 @@ const (
 	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_SnapshotBackingCurrent_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/SnapshotBackingCurrent"
 	Vmmd_RetireNativeRuntimeSnapshotObject_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/RetireNativeRuntimeSnapshotObject"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
@@ -308,6 +309,12 @@ type VmmdClient interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnapshotRequest, opts ...grpc.CallOption) (*DeleteWarmSnapshotResponse, error)
+	// SnapshotBackingCurrent answers, without starting a VM, whether a parked
+	// capture would restore on this node: the Firecracker version pin and the
+	// ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+	// after a release to find captures the release made stale and refresh them
+	// before a customer request wakes the app (ADR-20261106214916).
+	SnapshotBackingCurrent(ctx context.Context, in *SnapshotBackingCurrentRequest, opts ...grpc.CallOption) (*SnapshotBackingCurrentResponse, error)
 	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
 	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
 	// imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -1198,6 +1205,16 @@ func (c *vmmdClient) DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnaps
 	return out, nil
 }
 
+func (c *vmmdClient) SnapshotBackingCurrent(ctx context.Context, in *SnapshotBackingCurrentRequest, opts ...grpc.CallOption) (*SnapshotBackingCurrentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotBackingCurrentResponse)
+	err := c.cc.Invoke(ctx, Vmmd_SnapshotBackingCurrent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RetireNativeRuntimeSnapshotObject(ctx context.Context, in *RetireNativeRuntimeSnapshotObjectRequest, opts ...grpc.CallOption) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RetireNativeRuntimeSnapshotObjectResponse)
@@ -2037,6 +2054,12 @@ type VmmdServer interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error)
+	// SnapshotBackingCurrent answers, without starting a VM, whether a parked
+	// capture would restore on this node: the Firecracker version pin and the
+	// ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+	// after a release to find captures the release made stale and refresh them
+	// before a customer request wakes the app (ADR-20261106214916).
+	SnapshotBackingCurrent(context.Context, *SnapshotBackingCurrentRequest) (*SnapshotBackingCurrentResponse, error)
 	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
 	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
 	// imaged decides what to collect; vmmd accepts only a v2 capture object key
@@ -2616,6 +2639,9 @@ func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderRea
 }
 func (UnimplementedVmmdServer) DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteWarmSnapshot not implemented")
+}
+func (UnimplementedVmmdServer) SnapshotBackingCurrent(context.Context, *SnapshotBackingCurrentRequest) (*SnapshotBackingCurrentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotBackingCurrent not implemented")
 }
 func (UnimplementedVmmdServer) RetireNativeRuntimeSnapshotObject(context.Context, *RetireNativeRuntimeSnapshotObjectRequest) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetireNativeRuntimeSnapshotObject not implemented")
@@ -3482,6 +3508,24 @@ func _Vmmd_DeleteWarmSnapshot_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).DeleteWarmSnapshot(ctx, req.(*DeleteWarmSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_SnapshotBackingCurrent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotBackingCurrentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).SnapshotBackingCurrent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_SnapshotBackingCurrent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).SnapshotBackingCurrent(ctx, req.(*SnapshotBackingCurrentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4653,6 +4697,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteWarmSnapshot",
 			Handler:    _Vmmd_DeleteWarmSnapshot_Handler,
+		},
+		{
+			MethodName: "SnapshotBackingCurrent",
+			Handler:    _Vmmd_SnapshotBackingCurrent_Handler,
 		},
 		{
 			MethodName: "RetireNativeRuntimeSnapshotObject",

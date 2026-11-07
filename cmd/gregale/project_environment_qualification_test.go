@@ -157,6 +157,7 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	client.snapshot.Workloads[0].WorkloadConfigHash = api.EmptyProjectEnvironmentConfigHash()
+	client.snapshot.ProjectSecretsRevisionHash = strings.Repeat("a", 64)
 	client.snapshot.Workloads[0].Release.WorkloadConfigHash = api.EmptyProjectEnvironmentConfigHash()
 	got, err := main.QualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client())
 	if err != nil {
@@ -165,6 +166,9 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 	if !client.created || client.request.ReleaseSetID != releaseID || client.request.ConfigurationVersion != 3 ||
 		client.request.ConfigurationHash != api.EmptyProjectEnvironmentConfigHash() || got.Status != "passed" || len(got.Checks) != 2 {
 		t.Fatalf("request=%+v response=%+v", client.request, got)
+	}
+	if client.request.SecretRevisionHashes[api.ProjectSecretsRevisionKey] != client.snapshot.ProjectSecretsRevisionHash {
+		t.Fatal("shared-secret revision observed before probes was omitted")
 	}
 	if client.request.WorkloadConfigHashes["api"] != api.EmptyProjectEnvironmentConfigHash() || got.WorkloadConfigHashes["api"] != api.EmptyProjectEnvironmentConfigHash() {
 		t.Fatalf("tested workload hash was not recorded: request=%v receipt=%v", client.request.WorkloadConfigHashes, got.WorkloadConfigHashes)

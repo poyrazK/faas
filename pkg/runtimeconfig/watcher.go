@@ -55,6 +55,13 @@ const (
 	// whose vCPUs follow their CPU ceiling and that book their plan's
 	// baseline (ADR-20261101160231). Empty keeps every app on its plan.
 	KeyGuestVCPUFromCPUApps = "guest_vcpu_from_cpu_apps"
+
+	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
+	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
+	// is how recently an app must have parked on a node to be refreshed
+	// there. Defaults and bounds are in pkg/api/limits.go.
+	KeySnapshotRefresh            = "snapshot_refresh"
+	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

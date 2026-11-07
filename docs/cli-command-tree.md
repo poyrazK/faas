@@ -207,6 +207,8 @@ touch them. The tables below map each earlier name.
 | `gregale automations recovery-start` | `gregale automation recovery create` |
 | `gregale automations recovery-suppress` | `gregale automation recovery suppress` |
 | `gregale billing budget-preview` | `gregale billing budgets create --dry-run` |
+| `gregale billing egress-overage` | `gregale billing egress-overage get` |
+| `gregale billing egress-overage` | `gregale billing egress-overage set` |
 | `gregale billing payment-method` | `gregale billing payment-method get` |
 | `gregale billing portal` | `gregale billing portal open` |
 | `gregale bindings probe-policy` | `gregale app binding probe-policy set` |
@@ -300,6 +302,7 @@ touch them. The tables below map each earlier name.
 | `gregale deploy retry` | `gregale release attempt retry` |
 | `gregale deploy status` | `gregale release attempt get` |
 | `gregale deployment diff` | `gregale release diff` |
+| `gregale deployment resolve` | `gregale release resolve` |
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
@@ -533,6 +536,7 @@ touch them. The tables below map each earlier name.
 | `gregale projects environments release-sets stage` | `gregale environment release-sets stage create` |
 | `gregale projects environments release-sets verification-runs` | `gregale environment release-sets verification` |
 | `gregale projects environments` | `gregale environment` |
+| `gregale projects preview-secrets` | `gregale project preview secret` |
 | `gregale queue dead-letter` | `gregale queue dlq list` |
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |

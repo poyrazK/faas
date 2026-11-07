@@ -54,8 +54,8 @@ func (s *Service) enabledFor(r *http.Request, acct state.Account) bool {
 // Get serves GET /v1/service-map?range=.
 func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.enabledFor(r, acct) {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "service_map_unavailable",
-			"Service map unavailable", "the service map preview is not enabled").WithHint(api.PreviewNotEnabledHint))
+		api.WriteProblem(w, api.ErrPreviewNotEnabled("service_map_unavailable",
+			"Service map unavailable", "the service map preview is not enabled"))
 		return
 	}
 	if !acct.Plan.PerAppMetricsAllowed() {

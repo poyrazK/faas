@@ -168,5 +168,20 @@ func (l edgeClientLimits) tlsListener(ctx context.Context, raw net.Listener, cfg
 		Exempt:          l.proxies,
 	}, l.count, nil)
 	return clientlimit.NewHandshakeGate(ctx, tls.NewListener(limited, cfg),
-		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed)
+		api.EdgeTLSHandshakesInFlightPerCPU*runtime.GOMAXPROCS(0), api.EdgeTLSHandshakeTimeout, l.count, failed).
+		WithSettle(func(tc *tls.Conn) bool { return l.settle(limited, tc) })
+}
+
+// settle keeps a connection from Cloudflare's ranges exempt only when it
+// presented the zone's own client certificate. Every Cloudflare customer's
+// zone, Worker and WARP user connects from those ranges, so the address
+// alone proves nothing (ADR-20261104221012); without the certificate the
+// connection is counted against its address like any client's.
+func (l edgeClientLimits) settle(limited *clientlimit.Listener, tc *tls.Conn) bool {
+	vouched := len(tc.ConnectionState().VerifiedChains) > 0
+	reason, ok := limited.Settle(tc.NetConn(), vouched)
+	if !ok {
+		l.count(reason)
+	}
+	return ok
 }

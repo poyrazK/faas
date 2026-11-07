@@ -2,6 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AgentApprovalChannelsRequest } from '../models/AgentApprovalChannelsRequest.js';
+import type { AgentApprovalChannelsResponse } from '../models/AgentApprovalChannelsResponse.js';
+import type { AgentApprovalResponse } from '../models/AgentApprovalResponse.js';
+import type { AgentApprovalsResponse } from '../models/AgentApprovalsResponse.js';
 import type { AgentClientRequest } from '../models/AgentClientRequest.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
@@ -115,6 +119,120 @@ export class KeysService {
       url: '/v1/agent-connections',
       errors: {
         401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List agent approval requests.
+   * With an agent connection's key: that agent's requests that needed a
+   * person's approval, newest first. With any other credential: the
+   * pending requests the caller may decide, those of agents they
+   * connected and of agents acting in organizations they own or
+   * administer. A person decides only on the review page.
+   *
+   * @returns AgentApprovalsResponse The approval requests.
+   * @throws ApiError
+   */
+  public static listAgentApprovals(): CancelablePromise<AgentApprovalsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-approvals',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show where the account's agents' approval requests also go.
+   * The notification channels that get a message for each new approval
+   * request of the account's agents, besides the email to the person
+   * who connected the agent.
+   *
+   * @returns AgentApprovalChannelsResponse The account's approval channels.
+   * @throws ApiError
+   */
+  public static getAgentApprovalChannels(): CancelablePromise<AgentApprovalChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-approvals/channels',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Choose where the account's agents' approval requests also go.
+   * Replaces the notification channels that get the account's agents'
+   * approval requests. Name your own channels; an empty list leaves
+   * email only. Needs an admin credential, so an agent cannot change
+   * where its own requests go.
+   *
+   * @returns AgentApprovalChannelsResponse The channels now bound.
+   * @throws ApiError
+   */
+  public static setAgentApprovalChannels({
+    requestBody,
+  }: {
+    requestBody: AgentApprovalChannelsRequest,
+  }): CancelablePromise<AgentApprovalChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/agent-approvals/channels',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get an agent approval request.
+   * An agent reads its own request to learn whether a person approved
+   * it; a person reads one they may decide. Any other request answers
+   * 404.
+   *
+   * @returns AgentApprovalResponse The approval request.
+   * @throws ApiError
+   */
+  public static getAgentApproval({
+    id,
+  }: {
+    /**
+     * The approval request's id.
+     */
+    id: string,
+  }): CancelablePromise<AgentApprovalResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-approvals/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
