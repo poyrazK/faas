@@ -222,7 +222,9 @@ jobs:
     needs: go-lint
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # go vet ./... alone takes 37-45 min at GOMAXPROCS=2; 60 cancelled two
+    # of three nightly runs on 2026-11-07.
+    timeout-minutes: 90
     steps:
       - name: require all lint shards
         env:
