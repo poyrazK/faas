@@ -116704,6 +116704,13 @@ components:
           type: array
           description: "Why requests in this window may be missing from the totals. Empty or absent when the window is complete."
           items: { $ref: '#/components/schemas/RequestAnalyticsTelemetryGap' }
+        sampled_measures:
+          type: string
+          enum: [included, omitted]
+          description: |
+            Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
+            `deployment_costs`, and per-route deployment splits. `omitted` when reading it failed or ran past its
+            time budget; request counts, error rates and percentiles never depend on it.
 
     RequestAnalyticsTelemetryGap:
       type: string

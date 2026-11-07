@@ -13872,6 +13872,24 @@ type ReleaseSecretRekeyDocument struct {
 	Payload []byte
 }
 
+// Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
+type RequestAnalyticsHour struct {
+	AppID         pgtype.UUID
+	BucketStart   pgtype.Timestamptz
+	DimensionKind string
+	Dimension     string
+	Method        string
+	Status        int16
+	DeploymentID  pgtype.UUID
+	AccountID     pgtype.UUID
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	RequestTimeMs int64
+	LatencyMaxMs  int32
+	LatencyHist   []int64
+}
+
 // Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).
 type RequestAnalyticsMinute struct {
 	AppID         pgtype.UUID
@@ -13892,8 +13910,9 @@ type RequestAnalyticsMinute struct {
 
 // First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).
 type RequestAnalyticsRollupCoverage struct {
-	AppID        pgtype.UUID
-	CoveredSince pgtype.Timestamptz
+	AppID             pgtype.UUID
+	CoveredSince      pgtype.Timestamptz
+	HoursCoveredSince pgtype.Timestamptz
 }
 
 // App minutes whose analytics rollups apid lost; written only by apid, swept only by meterd (ADR-20261103113952 amendment 1).
