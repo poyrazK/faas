@@ -8,7 +8,7 @@
 -- carries the token whose keyed digest is token_hash. Confirming switches
 -- accounts.email and marks it verified. One pending change per account.
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE account_email_changes (
+CREATE TABLE IF NOT EXISTS account_email_changes (
     token_hash bytea PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     old_email text NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE account_email_changes (
     CONSTRAINT account_email_changes_window_check CHECK (expires_at > created_at),
     CONSTRAINT account_email_changes_consumed_check CHECK (consumed_at IS NULL OR consumed_at >= created_at)
 );
-CREATE UNIQUE INDEX account_email_changes_one_pending_idx
+CREATE UNIQUE INDEX IF NOT EXISTS account_email_changes_one_pending_idx
     ON account_email_changes (account_id) WHERE consumed_at IS NULL;
 -- +goose StatementEnd
 
