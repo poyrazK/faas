@@ -260,8 +260,10 @@ func validateEgressConfig(cfg Config) error {
 	if cfg.EgressUsageEventName == cfg.UsageEventName {
 		return errors.New("polar: egress usage event must be separate from compute usage event")
 	}
-	if cfg.EgressMillicentsPerGiB <= 0 || cfg.EgressMillicentsPerGiB%api.MillicentsPerCent != 0 {
-		return errors.New("polar: egress price must be a positive whole number of euro cents per GiB")
+	if cfg.EgressMillicentsPerGiB != api.EgressOverageMillicentsPerGiB {
+		// The published rate, like compute's, is a limits.go constant
+		// (ADR-20261103131742 amendment 2).
+		return fmt.Errorf("polar: egress price must be the published %d cents per GiB (got %d millicents)", api.EgressOverageMillicentsPerGiB/api.MillicentsPerCent, cfg.EgressMillicentsPerGiB)
 	}
 	for plan, included := range map[api.Plan]int64{
 		api.PlanHobby: cfg.HobbyIncludedEgressGiB,

@@ -436,16 +436,28 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			held.add(meter, heldReason(acct), window.Hour)
 			continue
 		}
-		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
-		if !configured {
-			continue
-		}
-		if err := validateMeterUsagePolicy(policy); err != nil {
+		// The plan the hour was used on prices it, not the current plan: a
+		// plan change after the hour must not move its allowance or price
+		// (ADR-20261103131742 amendment 2).
+		plan, err := grants.planAt(ctx, acct, window.Hour)
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			p.log.Warn("meter: invalid usage policy", "provider", ops.opLabel, "meter", meter, "plan", acct.Plan, "err", err)
 			continue
+		}
+		policy, configured := policyProvider.MeterUsagePolicy(plan, meter)
+		if !configured && plan != api.PlanFree {
+			continue
+		}
+		if configured {
+			if err := validateMeterUsagePolicy(policy); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				p.log.Warn("meter: invalid usage policy", "provider", ops.opLabel, "meter", meter, "plan", plan, "err", err)
+				continue
+			}
 		}
 		acct, err = p.accountForProvider(ctx, acct)
 		if err != nil {
@@ -460,14 +472,8 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			held.add(meter, UsageHeldIdentityIncomplete, window.Hour)
 			continue
 		}
-		free, err := grants.freeAt(ctx, acct, window.Hour)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if free || window.Hour.Before(policy.EffectiveFrom) {
+		if plan == api.PlanFree || window.Hour.Before(policy.EffectiveFrom) {
+			// A Free hour is never billed, also when the subject pays now.
 			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -797,12 +803,20 @@ func (g *monthGrants) included(ctx context.Context, acct state.Account, hour tim
 // and its unsettled Free hours come up as pending. A store without recorded
 // activations keeps the current plan.
 func (g *monthGrants) freeAt(ctx context.Context, acct state.Account, hour time.Time) (bool, error) {
+	plan, err := g.planAt(ctx, acct, hour)
+	return plan == api.PlanFree, err
+}
+
+// planAt is acct's plan for the hour starting at hour, by its month's
+// recorded plan history. A store without recorded activations keeps the
+// current plan.
+func (g *monthGrants) planAt(ctx context.Context, acct state.Account, hour time.Time) (api.Plan, error) {
 	hour = hour.UTC().Truncate(time.Hour)
 	snapshots, err := g.snapshots(ctx, acct, hour)
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return state.MonthPlanAt(acct.Plan, snapshots, hour.Add(time.Hour)) == api.PlanFree, nil
+	return state.MonthPlanAt(acct.Plan, snapshots, hour.Add(time.Hour)), nil
 }
 
 // snapshots returns acct's recorded plan activations for hour's month; nil
