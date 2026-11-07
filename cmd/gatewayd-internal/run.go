@@ -4174,6 +4174,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
+	// guestServiceCallerIdentity maps a bridge source address to its app and
+	// deployment; the bridge object relay (ADR-20261031193635 slice 6c)
+	// checks the deployment's branch before it forwards anything.
+	var guestServiceCallerIdentity func(context.Context, string) (string, string, error)
 	managedCircuitWired := false
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
@@ -4287,6 +4291,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return identityResolver.ResolveIdentity(ctx, remote)
 			}
+			guestServiceCallerIdentity = identityResolver.ResolveIdentity
 			guestServiceCallerResolver = func(ctx context.Context, remote string) (string, error) {
 				// DNS only publishes an alias address. Let the separate
 				// qualification alias check consider frozen graph bindings;
@@ -4615,6 +4620,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
 						return err
 					}
+					if guestServiceCallerIdentity != nil {
+						dnsHandler.WithObjectRelayName(api.EnvironmentBranchObjectRelayHost)
+					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket
@@ -4645,6 +4653,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						errc <- err
 					}
 				}()
+			}
+			if guestServiceCallerIdentity != nil && deps.pgStore != nil {
+				if err := startEnvironmentBranchObjectRelay(deps, bridgeIP, guestServiceCallerIdentity, addSrv, errc, log); err != nil {
+					return err
+				}
 			}
 		}
 	}
