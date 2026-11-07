@@ -316,7 +316,10 @@ func (m *Manager) candidateIdle(c quietCandidate, st *quietState, now time.Time)
 	if c.agent {
 		return m.agentWaitIdle(c.id, c.after, now)
 	}
-	return m.quietIdle(c.id, st, c.after, now)
+	if !m.quietIdle(c.id, st, c.after, now) {
+		return false
+	}
+	return !c.guarded || m.idleGuardAllows(c.id, now)
 }
 
 func (m *Manager) candidateEligibleLocked(c quietCandidate, inst *Instance) bool {

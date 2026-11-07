@@ -75,6 +75,10 @@ type idleGuardState struct {
 	// pausedAt is when the guard would have paused the instance; zero unless
 	// it would hold it paused now.
 	pausedAt time.Time
+	// wakeBase is the ingress byte count when the guard last allowed quiet
+	// pause to pause the app (idle_ladder_apps.go); wakeBaseSet marks it.
+	wakeBase    uint64
+	wakeBaseSet bool
 }
 
 func (m *Manager) idleGuardOn() bool { return m.idleCPU != nil && m.idleNet != nil }
