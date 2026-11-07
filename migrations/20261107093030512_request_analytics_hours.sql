@@ -1,4 +1,4 @@
--- filename: 20261105100407763_request_analytics_hours.sql
+-- filename: 20261107093030512_request_analytics_hours.sql
 -- migration-compat: expand
 -- ADR-20261103113952 amendment 2: an hourly rollup tier. apid adds every
 -- flush to request_analytics_hours as well as request_analytics_minutes, and
