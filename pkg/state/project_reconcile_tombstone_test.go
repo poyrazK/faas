@@ -40,7 +40,7 @@ func testProjectReconcileTombstoneGuards(t *testing.T, ctx context.Context, stor
 		t.Fatal(err)
 	}
 	limits := api.MustLimitsFor(api.PlanPro)
-	readd := []state.ProjectReconcileMutation{{Op: "create", App: state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "tombstone-api", WorkloadName: "api"}}}
+	readd := []state.ProjectReconcileMutation{{Op: "create", App: state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "tombstone-api", WorkloadName: "api", WorkloadClass: state.WorkloadClassHTTP}}}
 	result, err := store.ApplyProjectReconcile(ctx, project, readd, nil, state.ProjectScanSourceCompose, limits)
 	if err != nil || len(result.Added) != 1 {
 		t.Fatalf("create: %+v, %v", result, err)
