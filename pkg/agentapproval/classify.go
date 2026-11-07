@@ -88,6 +88,8 @@ var production = map[string]Target{
 	"POST /v1/edge-rules/{}/waf-exclusions":                TargetEdgeRule,
 	"PUT /v1/apps/{}/edge-protection/attack-mode":          TargetApp,
 	"POST /v1/apps/{}/openapi/apply":                       TargetApp,
+	"POST /v1/apps/{}/route-policy/apply":                  TargetApp,
+	"POST /v1/apps/{}/routes/insights/{}/fix":              TargetApp,
 	"PATCH /v1/deployments/{}/traffic":                     TargetDeployment,
 	"POST /v1/deployments/{}/promote":                      TargetDeployment,
 	"POST /v1/deployments/{}/promote-with-application-ack": TargetDeployment,

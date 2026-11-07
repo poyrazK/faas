@@ -29,6 +29,8 @@ func TestClassify(t *testing.T) {
 		{"POST /v1/edge-rules/{id}/waf-exclusions", api.AgentApprovalProduction, TargetEdgeRule},
 		{"PUT /v1/apps/{slug}/edge-protection/attack-mode", api.AgentApprovalProduction, TargetApp},
 		{"POST /v1/apps/{slug}/openapi/apply", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/route-policy/apply", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/apps/{slug}/routes/insights/{id}/fix", api.AgentApprovalProduction, TargetApp},
 		{"DELETE /v1/edge-rules/{id}", api.AgentApprovalDelete, TargetNone},
 		{"POST /v1/keys", api.AgentApprovalCredentials, TargetNone},
 		{"POST /v1/keys/{id}/rotate", api.AgentApprovalCredentials, TargetNone},
