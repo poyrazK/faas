@@ -37,7 +37,7 @@ another owner's claim. Plan artifacts contain no ownership tokens.
 ```sh
 gregale domain move api.example.com --app next-api --dry-run
 gregale domain move api.example.com --app next-api --confirm --rollback-out previous-binding.json
-gregale domain move api.example.com --app next-api --environment production --dry-run
+gregale domain move api.example.com --app next-api --env production --dry-run
 ```
 
 A move requires verified ownership and a serving destination deployment. It keeps

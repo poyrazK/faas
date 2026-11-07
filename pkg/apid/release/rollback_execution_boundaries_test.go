@@ -30,6 +30,20 @@ func startGraphRollbackMigration(t *testing.T, s state.Store, a state.Account, a
 	}
 	tasks := s.(state.AppTaskStore)
 	now := time.Now().UTC()
+	// One release command runs per app scope at a time (#6693), so a run
+	// started earlier in the test finishes before the next one is claimed.
+	previous, err := tasks.ListAppTasks(t.Context(), a.ID, app.ID, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range previous {
+		if p.Kind == state.AppTaskKindRelease && p.Status == state.AppTaskRunning && p.LeaseToken != nil {
+			exit := 0
+			if _, err = tasks.CompleteAppTask(t.Context(), state.CompleteAppTaskParams{ID: p.ID, LeaseToken: *p.LeaseToken, Status: state.AppTaskSucceeded, ExitCode: &exit, FinishedAt: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	task, err := tasks.CreateAppTask(t.Context(), state.CreateAppTaskParams{AccountID: a.ID, AppID: app.ID, DeploymentID: d.ID, Kind: state.AppTaskKindRelease, Command: []string{"bin/migrate"}, CreatedAt: now})
 	if err != nil {
 		t.Fatal(err)

@@ -67,7 +67,9 @@ func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, app
 	if dir == "." {
 		return "", "", nil
 	}
-	body, found, err := readSourceRefProcfileBytes(staged, app.RootDir)
+	// The service's own directory, as the origin below names it: an app
+	// without a RootDir would otherwise read the root Procfile reposcan owns.
+	body, found, err := readSourceRefProcfileBytes(staged, dir)
 	if err != nil {
 		return "", "", api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
